@@ -2,7 +2,7 @@
 
 ## 프로젝트 목표
 
-자동주문 없이 미국 급등주 후보를 관찰하고, 검증된 전략에 한해 진입가·손절가·목표가와 근거를 실시간 paper 의견으로 제공한다.
+미국 급등주 후보를 시점 가용 데이터로 관찰하고, 검증된 전략의 추천과 Alpaca Paper 전진검증을 한 프로젝트에서 운영한다. 실제 자금 주문은 영구 금지한다.
 
 ## 현재 상태
 
@@ -33,18 +33,21 @@
 - 2026-07-13 실제 KIS 폐장 위험 표본 163개와 27개 인접값 분석 저장, 폐장 호가 결손으로 식별력 없음 판정
 - 같은 폐장 표본의 volume·ADV 163개를 완전 저장하고 81개 스캐너 조합을 재선정했지만 후행성과·opening gap은 데이터 결손 유지
 - 실제 키 2회 QA에서 랭킹 1,200행·관찰 시각 2개 누적 확인
-- 주문·잔고·계좌 API 없음
+- Alpaca Paper 계좌·미체결 주문·포지션 GET-only adapter 완료
+- 실행 원장 Single Writer 잠금·append-only schema·계좌 fingerprint 결합 완료
+- GET-only bootstrap과 fail-closed preflight 실제 빈 Paper 계정 검증 완료
+- 주문 제출·취소·청산 API는 세션·주문스트림·보호청산·EOD 게이트 전까지 비공개
 
 ## 다음 우선순위
 
-1. 미국 정규장에서 영속 runner를 실행해 최소 3개월 paper 표본 누적
-2. 추천 카드 외부 전송 어댑터 연결
-3. ORB·VWAP·HOD 전략의 정규장 forward paper 표본을 전략별로 분리 축적
-4. 2029년 일정 게시 또는 임시 휴장 공지 시 캘린더 갱신
+1. 정규장/current-bar·order-stream heartbeat·전체 portfolio 위험 승인 상태기계 구현
+2. 부분체결 보호주문·취소·EOD 강제 평탄화와 재시작 대사 구현
+3. 위 게이트가 모두 통과한 뒤 ORB 한 전략만 Alpaca Paper POST pilot으로 연결
+4. broker fill과 conservative shadow fill을 분리 누적하고 최소 60일·100건 전진검증
 
 ## 시작 전 확인
 
-- `AGENTS.md`의 메모리·보안·주문 금지 규칙을 지킨다.
+- `AGENTS.md`의 메모리·보안·paper-only 주문 경계를 지킨다.
 - `docs/runtime_audit.md`의 인과성 결함과 수정 내역을 읽는다.
 - 실시간 작업 전 `uv run pytest -q`를 실행한다.
 - API 키·토큰을 프롬프트·로그·코드·리포트에 출력하지 않는다.
@@ -54,6 +57,6 @@
 
 ```text
 이 프로젝트의 README.md, CODEX_START_HERE.md, AGENTS.md와 docs/runtime_audit.md를 먼저 읽어줘.
-현재 KIS 읽기 전용 paper 추천 에이전트를 이어서 개발하되 자동주문은 추가하지 마.
-사용자가 지정한 메시지 채널로 local outbox를 전달하는 어댑터를 구현하고 테스트·수동 QA까지 완료해줘.
+현재 Single Writer Alpaca Paper 기반을 이어서 개발해줘.
+README의 다음 우선순위 1번인 정규장/current-bar·order-stream heartbeat·portfolio 위험 승인 상태기계를 먼저 TDD로 구현하되, 보호청산과 EOD 평탄화가 완성되기 전에는 주문 POST를 공개하지 마.
 ```

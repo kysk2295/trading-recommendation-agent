@@ -1,7 +1,7 @@
 [project]
 name = "trading-recommendation-agent"
 version = "0.1.0"
-description = "Read-only US momentum stock paper recommendation agent"
+description = "Paper-only US momentum research and recommendation agent"
 requires-python = ">=3.12"
 dependencies = [
   "httpx2[http2,brotli,zstd]",

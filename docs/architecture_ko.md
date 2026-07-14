@@ -2,7 +2,7 @@
 
 ## 목표
 
-미국 전체 종목을 스캔하되 장전·장중 급등 조건을 만족한 종목만 분석하고, 자동주문 없이 조건부 매수·매도·관망·무효화 의견을 실시간으로 기록한다.
+미국 전체 종목을 스캔하되 장전·장중 급등 조건을 만족한 종목만 분석하고, 조건부 추천에서 Alpaca Paper 전진검증까지 재현 가능한 원장으로 운영한다. 실제 자금 주문은 포함하지 않는다.
 
 ## 실행 흐름
 
@@ -18,6 +18,20 @@
 → 사용자 알림
 → 장 마감 결과 판정
 → 비용 민감도·연도별 paper 성과 보고서
+```
+
+Paper 실행 경계는 다음과 같이 별도 계층으로 둔다.
+
+```text
+하나의 Operator Writer
+→ 비차단 process lock
+→ append-only execution ledger
+→ Alpaca Paper broker adapter
+→ broker ledger + conservative shadow ledger
+
+Researcher·Developer·Reviewer
+→ mode=ro ledger snapshot
+→ 제안·검토 결과만 Writer에게 전달
 ```
 
 ## 책임 분리
@@ -46,7 +60,9 @@ research → historical_pass → paper → approved → suspended
 
 ## 강제 안전장치
 
-- 브로커 주문 API를 연결하지 않는다.
+- Alpaca Paper 외의 브로커 주문 API를 연결하지 않는다.
+- Alpaca Paper POST/DELETE는 정규장·현재 완료 봉·order stream·위험승인·보호청산·EOD 평탄화가 모두 준비되기 전까지 공개하지 않는다.
+- 실행 원장을 변경하는 프로세스는 하나만 허용하며 두 번째 Writer는 공급자 호출 전에 실패한다.
 - 추천 생성 시각 이후의 가격과 거래량을 입력 특성으로 사용하지 않는다.
 - 분봉이 없으면 ORB·VWAP·HOD 전략을 실행하지 않는다.
 - 같은 봉에서 손절과 목표가 모두 닿으면 손절을 먼저 적용한다.
@@ -57,6 +73,20 @@ research → historical_pass → paper → approved → suspended
 ## 첫 MVP
 
 첫 버전은 표준 CSV 분봉을 시간순으로 재생한다. 급등 스캐너와 5분 ORB를 실행하고 조건부 진입, 손절, 1R·2R 및 장 마감 결과를 SQLite에 저장한다. 실시간 공급자는 같은 입력 인터페이스를 구현해 이후 교체한다.
+
+## Alpaca Paper 실행 기반
+
+2026-07-14부터 다음 기반이 구현되어 있다.
+
+- 정확한 `https://paper-api.alpaca.markets`만 허용하고 live 도메인은 HTTP 전에 거절
+- Paper 전용 자격증명 파일과 exact mode 600 검사
+- cross-origin 인증 헤더 유출을 막기 위한 redirect 비활성화
+- 계좌 ID·계좌번호 대신 로컬 SHA-256 fingerprint만 원장에 결합
+- WAL·외래키·event dedupe·UPDATE/DELETE 금지 trigger가 있는 실행 원장
+- 비차단 파일 잠금으로 한 개 Writer만 허용하고 다수 reader는 `mode=ro` 사용
+- 주문 symbol·side·quantity·limit·TIF·extended-hours까지 비교하는 fail-closed 대사
+
+현재 외부 API 표면은 계좌·미체결 주문·포지션 조회 GET뿐이다. 실제 Paper 주문은 후속 실행 상태기계와 청산 안전장치가 완료된 뒤 별도 단계로 연다.
 
 ## KIS 실시간 시세 연결
 

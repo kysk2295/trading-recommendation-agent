@@ -1,5 +1,7 @@
 # Alpaca Paper-Only Foundation Implementation Plan
 
+> **2026-07-14 안전 검토 반영:** 이 문서의 공개 주문 제출·취소 예시는 현재 구현을 설명하지 않는다. 실제 foundation은 Single Writer 잠금, append-only 원장, 계좌 fingerprint 결합, GET-only Alpaca client, bootstrap과 preflight까지만 공개한다. 주문 POST/DELETE는 정규장/current-bar, order-stream heartbeat, 전체 portfolio 위험 승인, 부분체결 보호청산과 EOD 평탄화가 별도 계획으로 구현·검증된 뒤에만 연다. 아래 Task 4~5의 mutation 예시는 후속 설계 참고용이며 지금 실행하면 안 된다.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the paper-only configuration, risk sizing, append-only execution ledger, Alpaca REST adapter, reconciliation gate, and preflight CLI required before the first ORB paper order.
