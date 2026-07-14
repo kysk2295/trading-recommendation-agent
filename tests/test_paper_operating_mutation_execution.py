@@ -6,17 +6,19 @@ from contextlib import contextmanager
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
+from typing import cast
 
 import httpx2
 import pytest
 
+from tests.paper_entry_mutation_fixtures import FakeEntryMutationBroker
 from tests.paper_runtime_fixtures import market_clock
 from tests.paper_trade_update_ingestion_fixtures import (
     TradeUpdateStream,
     broker_state,
     recovery_state,
 )
-from tests.test_paper_mutation_executor import FakeMutationBroker, _oco_snapshot
+from tests.test_paper_mutation_executor import _oco_snapshot
 from tests.trade_update_ledger_fixtures import (
     FINGERPRINT,
     OBSERVED_AT,
@@ -30,9 +32,15 @@ from trading_agent.alpaca_paper_order_stream import (
 )
 from trading_agent.execution_ledger_reader import ReconciliationLedger
 from trading_agent.paper_execution_models import (
+    IntentId,
     PaperBrokerState,
     PaperMarketClockSnapshot,
     PaperPositionSnapshot,
+)
+from trading_agent.paper_mutation_arm import (
+    PAPER_MUTATION_ARM_VALUE,
+    InvalidPaperMutationArmError,
+    PaperMutationArm,
 )
 from trading_agent.paper_mutation_executor_models import PaperMutationExecutionState
 from trading_agent.paper_mutation_recovery_models import PaperMutationRecoveryState
@@ -40,9 +48,15 @@ from trading_agent.paper_operating_mutation_models import (
     PaperProtectiveMutationExecution,
     PaperSafetyMutationExecution,
 )
-from trading_agent.paper_operating_session_models import PaperOperatingSession
+from trading_agent.paper_operating_session import _LivePaperOperatingSession
+from trading_agent.paper_operating_session_models import (
+    PaperOperatingSession,
+    PaperOrderAdmissionRequest,
+    PaperPostMutationReconciliationError,
+)
 from trading_agent.paper_protective_exit import BlockedProtectiveExitPlan
-from trading_agent.paper_safety_models import PaperSafetyPhase
+from trading_agent.paper_risk import PaperRiskConfig
+from trading_agent.paper_safety_models import BlockedPaperSafetyPlan, PaperSafetyPhase
 from trading_agent.paper_stream_owner import PaperStreamOwnerDependencies
 from trading_agent.paper_stream_recovery import PaperRecoveryState
 from trading_agent.paper_stream_recovery_models import PaperProtectiveOcoMutationLookup
@@ -51,26 +65,60 @@ from trading_agent.paper_trade_update_runtime import (
     _open_paper_operating_session,
 )
 
+ARM = PaperMutationArm(PAPER_MUTATION_ARM_VALUE)
+
 
 def test_operating_session_surface_exposes_current_epoch_safety_execution() -> None:
     assert "execute_safety_actions" in PaperOperatingSession.__dict__
     assert "execute_protective_oco" in PaperOperatingSession.__dict__
 
 
-def test_current_epoch_entry_cutoff_executes_once_and_reconciles(
+def test_entry_execution_rejects_unvalidated_arm_before_session_state() -> None:
+    session = object.__new__(_LivePaperOperatingSession)
+    invalid_arm = cast(PaperMutationArm, "WRONG")
+
+    with pytest.raises(InvalidPaperMutationArmError):
+        _ = session.execute_entry(cast(PaperOrderAdmissionRequest, object()), invalid_arm)
+
+
+def test_safety_execution_rejects_unvalidated_arm_before_session_state() -> None:
+    session = object.__new__(_LivePaperOperatingSession)
+    invalid_arm = cast(PaperMutationArm, "WRONG")
+
+    with pytest.raises(InvalidPaperMutationArmError):
+        _ = session.execute_safety_actions(invalid_arm)
+
+
+def test_protective_oco_rejects_unvalidated_arm_before_session_state() -> None:
+    session = object.__new__(_LivePaperOperatingSession)
+    invalid_arm = cast(PaperMutationArm, "WRONG")
+
+    with pytest.raises(InvalidPaperMutationArmError):
+        _ = session.execute_protective_oco(IntentId("invalid-arm-test"), invalid_arm)
+
+
+@pytest.mark.parametrize("mode", ("acknowledged", "post_epoch_change", "scope_block"))
+def test_current_epoch_entry_cutoff_requires_post_mutation_reconciliation(
     tmp_path: Path,
+    mode: str,
 ) -> None:
     store = initialized_store(tmp_path)
-    broker = FakeMutationBroker(store.path)
+    broker = FakeEntryMutationBroker(store.path)
     evaluated_at = dt.datetime(2026, 7, 14, 19, 30, 2, tzinfo=dt.UTC)
 
     class CurrentStream(TradeUpdateStream):
+        @property
+        def connection_epoch(self) -> PaperStreamEpoch:
+            if mode == "post_epoch_change" and broker.calls and self.heartbeat_count >= 8:
+                return PaperStreamEpoch("epoch-after-mutation")
+            return PaperStreamEpoch("epoch-from-stream")
+
         def heartbeat(self, timeout_seconds: float) -> PaperOrderStreamHeartbeat:
             assert timeout_seconds == 5.0
             self.heartbeat_count += 1
             pong_at = evaluated_at + dt.timedelta(seconds=self.heartbeat_count - 2)
             return PaperOrderStreamHeartbeat(
-                self.connection_epoch,
+                PaperStreamEpoch("epoch-from-stream"),
                 evaluated_at - dt.timedelta(seconds=2),
                 evaluated_at - dt.timedelta(seconds=2),
                 pong_at,
@@ -90,7 +138,7 @@ def test_current_epoch_entry_cutoff_executes_once_and_reconciles(
     @contextmanager
     def broker_opener(
         _: AlpacaPaperCredentials,
-    ) -> Iterator[FakeMutationBroker]:
+    ) -> Iterator[FakeEntryMutationBroker]:
         yield broker
 
     def current_state(
@@ -138,20 +186,41 @@ def test_current_epoch_entry_cutoff_executes_once_and_reconciles(
         store,
         dependencies,
     ) as session:
-        first = session.execute_safety_actions()
-        replay = session.execute_safety_actions()
+        if mode == "post_epoch_change":
+            with pytest.raises(PaperPostMutationReconciliationError):
+                _ = session.execute_safety_actions(ARM)
+            replay = None
+        elif mode == "scope_block":
+            first = session.execute_safety_actions(
+                ARM,
+                PaperRiskConfig(max_notional_dollars=100.0, max_open_positions=1),
+            )
+            replay = None
+        else:
+            first = session.execute_safety_actions(ARM)
+            replay = session.execute_safety_actions(ARM)
 
-    assert isinstance(first, PaperSafetyMutationExecution)
-    assert first.plan.phase is PaperSafetyPhase.ENTRY_CUTOFF
-    assert tuple(result.state for result in first.results) == (PaperMutationExecutionState.ACKNOWLEDGED,)
+    if mode == "scope_block":
+        assert isinstance(first, BlockedPaperSafetyPlan)
+        assert any("notional" in reason for reason in first.reasons)
+        assert broker.calls == []
+        assert store.paper_mutation_events() == ()
+        return
+
     assert broker.calls == ["cancel:paper-order-1"]
-    assert isinstance(replay, PaperSafetyMutationExecution)
-    assert replay.results == ()
-    assert first.reconciled_at > evaluated_at
     assert tuple(event.event.event_type.value for event in store.paper_mutation_events()) == (
         "attempted",
         "acknowledged",
     )
+    if mode == "post_epoch_change":
+        return
+
+    assert isinstance(first, PaperSafetyMutationExecution)
+    assert first.plan.phase is PaperSafetyPhase.ENTRY_CUTOFF
+    assert tuple(result.state for result in first.results) == (PaperMutationExecutionState.ACKNOWLEDGED,)
+    assert isinstance(replay, PaperSafetyMutationExecution)
+    assert replay.results == ()
+    assert first.reconciled_at > evaluated_at
 
 
 @pytest.mark.parametrize("mode", ("acknowledged", "timeout", "epoch_change"))
@@ -167,7 +236,7 @@ def test_current_epoch_partial_fill_submits_one_protective_oco_and_recovers_time
             connection_epoch="epoch-from-stream",
             received_at=OBSERVED_AT,
         )
-    broker = FakeMutationBroker(store.path)
+    broker = FakeEntryMutationBroker(store.path)
     times_out = mode == "timeout"
     if times_out:
         broker.oco_failure = httpx2.ReadTimeout("timeout")
@@ -190,7 +259,7 @@ def test_current_epoch_partial_fill_submits_one_protective_oco_and_recovers_time
     @contextmanager
     def broker_opener(
         _: AlpacaPaperCredentials,
-    ) -> Iterator[FakeMutationBroker]:
+    ) -> Iterator[FakeEntryMutationBroker]:
         yield broker
 
     def current_state(
@@ -271,13 +340,13 @@ def test_current_epoch_partial_fill_submits_one_protective_oco_and_recovers_time
         store,
         dependencies,
     ) as session:
-        first = session.execute_protective_oco(store.intents()[0].intent_id)
+        first = session.execute_protective_oco(store.intents()[0].intent_id, ARM)
         if mode == "epoch_change":
             assert isinstance(first, BlockedProtectiveExitPlan)
             assert "연결 세대" in first.reasons[0]
             assert broker.calls == []
             return
-        replay = session.execute_protective_oco(store.intents()[0].intent_id)
+        replay = session.execute_protective_oco(store.intents()[0].intent_id, ARM)
 
     assert isinstance(first, PaperProtectiveMutationExecution)
     assert first.plan.quantity == 10

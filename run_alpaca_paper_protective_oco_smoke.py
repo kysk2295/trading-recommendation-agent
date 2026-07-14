@@ -52,6 +52,7 @@ from trading_agent.paper_operating_session import open_paper_operating_session
 from trading_agent.paper_operating_session_models import (
     PaperMutationRecoveryBarrierError,
     PaperOperatingSession,
+    PaperPostMutationReconciliationError,
 )
 from trading_agent.paper_protective_exit import BlockedProtectiveExitPlan, NoProtectiveExitRequired
 from trading_agent.paper_protective_oco_recovery_store import (
@@ -93,14 +94,14 @@ def main(
     session_opener: SessionOpener = open_paper_operating_session,
 ) -> int:
     args = _parser().parse_args(argv)
-    _ = PaperMutationArm(args.arm_paper_mutation)
+    arm = PaperMutationArm(args.arm_paper_mutation)
     store = ExecutionStore(args.database)
     if not store.is_initialized():
         _write_report(args.output_dir, "차단", ("결합된 실행 원장이 없습니다",))
         return 1
     try:
         with session_opener(credential_loader(), store) as session:
-            result = session.execute_protective_oco(IntentId(args.intent_id))
+            result = session.execute_protective_oco(IntentId(args.intent_id), arm)
     except (
         AccountBindingConflictError,
         AlpacaApiError,
@@ -120,6 +121,7 @@ def main(
         PaperMutationConflictError,
         PaperMutationRecoveryAccountError,
         PaperMutationRecoveryBarrierError,
+        PaperPostMutationReconciliationError,
         PaperOrderReadIncompleteError,
         PaperOrderStreamError,
         PaperRuntimeEpochChangedError,

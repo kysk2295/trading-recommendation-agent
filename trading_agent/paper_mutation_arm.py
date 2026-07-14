@@ -19,3 +19,9 @@ class PaperMutationArm:
     def __post_init__(self) -> None:
         if self.value != PAPER_MUTATION_ARM_VALUE:
             raise InvalidPaperMutationArmError
+
+
+def require_paper_mutation_arm(value: object) -> PaperMutationArm:
+    if not isinstance(value, PaperMutationArm) or value.value != PAPER_MUTATION_ARM_VALUE:
+        raise InvalidPaperMutationArmError
+    return value

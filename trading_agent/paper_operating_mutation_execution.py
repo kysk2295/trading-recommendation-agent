@@ -25,7 +25,11 @@ from trading_agent.paper_operating_mutation_models import (
     PaperProtectiveMutationExecution,
     PaperSafetyMutationExecution,
 )
-from trading_agent.paper_operating_session_models import PaperMutationRecoveryBarrierError, PaperOrderAdmissionRequest
+from trading_agent.paper_operating_session_models import (
+    PaperMutationRecoveryBarrierError,
+    PaperOrderAdmissionRequest,
+    PaperPostMutationReconciliationError,
+)
 from trading_agent.paper_order_gate_models import (
     ApprovedPaperOrderGateDecision,
     BlockedPaperOrderGateDecision,
@@ -44,6 +48,7 @@ from trading_agent.paper_safety_models import (
 from trading_agent.paper_safety_mutation_guard import (
     repeated_acknowledged_safety_action_reasons,
 )
+from trading_agent.paper_safety_mutation_scope import paper_safety_mutation_scope_reasons
 from trading_agent.paper_stream_owner import PaperRecoveryCheckpoint, PaperStreamOwner
 
 type PaperCheckpointBarrier = Callable[[PaperRecoveryCheckpoint], tuple[str, ...]]
@@ -112,12 +117,15 @@ class PaperOperatingMutationExecution:
         checkpoint, reasons = self._checkpoint_for_execution()
         if reasons:
             return BlockedPaperSafetyPlan(reasons)
-        decision = self._runtime.plan_safety_actions(config)
+        decision, planned_state = self._runtime.plan_safety_actions_with_state(config)
         reasons = self._barrier(checkpoint)
         if reasons:
             return BlockedPaperSafetyPlan(reasons)
         if isinstance(decision, BlockedPaperSafetyPlan):
             return decision
+        scope_reasons = paper_safety_mutation_scope_reasons(planned_state, decision, config)
+        if scope_reasons:
+            return BlockedPaperSafetyPlan(scope_reasons)
         if decision.phase is not PaperSafetyPhase.MONITORING:
             _ = self._owner.writer.save_paper_safety_plan(decision)
         stored = tuple(item for item in self._owner.store.paper_safety_plans() if item.plan == decision)
@@ -150,7 +158,7 @@ class PaperOperatingMutationExecution:
         reconciled = self._owner.recovery()
         reasons = self._barrier(reconciled)
         if reasons:
-            return BlockedPaperSafetyPlan(reasons)
+            raise PaperPostMutationReconciliationError
         recoveries = self._recover(reconciled)
         return PaperSafetyMutationExecution(
             decision,
@@ -190,7 +198,7 @@ class PaperOperatingMutationExecution:
         reconciled = self._owner.recovery()
         reasons = self._barrier(reconciled)
         if reasons:
-            return _blocked_entry(reasons)
+            raise PaperPostMutationReconciliationError
         recoveries = self._recover(reconciled)
         return PaperEntryMutationExecution(
             decision,
@@ -234,7 +242,7 @@ class PaperOperatingMutationExecution:
         reconciled = self._owner.recovery()
         reasons = self._barrier(reconciled)
         if reasons:
-            return BlockedProtectiveExitPlan(reasons)
+            raise PaperPostMutationReconciliationError
         recoveries = self._recover(reconciled)
         return PaperProtectiveMutationExecution(
             decision,

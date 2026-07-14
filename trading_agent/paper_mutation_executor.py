@@ -115,6 +115,9 @@ class PaperMutationExecutor:
         stored: StoredPaperSafetyPlan,
     ) -> tuple[PaperMutationExecutionResult, ...]:
         results: list[PaperMutationExecutionResult] = []
+        requires_cancel_reconciliation = any(
+            isinstance(action, PaperCancelOrderAction) for action in stored.plan.actions
+        )
         for sequence, action in enumerate(stored.plan.actions):
             intent = safety_action_mutation_intent(stored, sequence, action)
             match action:
@@ -124,6 +127,8 @@ class PaperMutationExecutor:
                         lambda action=action: self._dependencies.broker.cancel_order(action),
                     )
                 case PaperClosePositionAction():
+                    if requires_cancel_reconciliation:
+                        break
                     result = self._run(
                         intent,
                         lambda action=action: self._dependencies.broker.close_position(action),

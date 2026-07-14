@@ -14,6 +14,7 @@ from trading_agent.execution_ledger_reader import (
     trade_update_receipt_reasons,
 )
 from trading_agent.paper_execution_models import (
+    PaperBrokerState,
     PaperOrderIntent,
 )
 from trading_agent.paper_order_gate_models import (
@@ -189,11 +190,19 @@ class _LivePaperRuntimeSession:
         self,
         config: PaperRiskConfig = DEFAULT_PAPER_RISK_CONFIG,
     ) -> PaperSafetyPlanDecision:
+        decision, _ = self.plan_safety_actions_with_state(config)
+        return decision
+
+    def plan_safety_actions_with_state(
+        self,
+        config: PaperRiskConfig = DEFAULT_PAPER_RISK_CONFIG,
+    ) -> tuple[PaperSafetyPlanDecision, PaperBrokerState]:
+        readiness = self._collect_readiness(config)
         return plan_runtime_safety(
-            self._collect_readiness(config),
+            readiness,
             self._clock(),
             config,
-        )
+        ), readiness.broker_state
 
     def _require_active(self) -> None:
         if not self._active:

@@ -4,7 +4,7 @@ import datetime as dt
 from decimal import Decimal
 from pathlib import Path
 
-from tests.test_paper_mutation_executor import FakeMutationBroker
+from tests.paper_entry_mutation_fixtures import FakeEntryMutationBroker
 from tests.trade_update_ledger_fixtures import (
     FINGERPRINT,
     OBSERVED_AT,
@@ -24,7 +24,9 @@ from trading_agent.paper_safety_models import (
 )
 
 
-def test_safety_actions_execute_in_cancel_then_close_order(tmp_path: Path) -> None:
+def test_safety_cancel_stage_never_closes_before_current_epoch_reconciliation(
+    tmp_path: Path,
+) -> None:
     store = initialized_store(tmp_path)
     safety_plan = PaperSafetyPlan(
         FINGERPRINT,
@@ -40,7 +42,7 @@ def test_safety_actions_execute_in_cancel_then_close_order(tmp_path: Path) -> No
     )
     with store.writer() as writer:
         _ = writer.save_paper_safety_plan(safety_plan)
-    broker = FakeMutationBroker(store.path)
+    broker = FakeEntryMutationBroker(store.path)
 
     with store.writer() as writer:
         results = PaperMutationExecutor(
@@ -52,8 +54,36 @@ def test_safety_actions_execute_in_cancel_then_close_order(tmp_path: Path) -> No
             )
         ).execute_safety_plan(store.paper_safety_plans()[0])
 
-    assert tuple(result.state for result in results) == (
-        PaperMutationExecutionState.ACKNOWLEDGED,
-        PaperMutationExecutionState.ACKNOWLEDGED,
+    assert tuple(result.state for result in results) == (PaperMutationExecutionState.ACKNOWLEDGED,)
+    assert broker.calls == ["cancel:entry-1"]
+    assert tuple(stored.intent.operation.value for stored in store.paper_mutation_intents()) == ("cancel_order",)
+
+
+def test_safety_close_only_stage_executes_exact_position_close(tmp_path: Path) -> None:
+    store = initialized_store(tmp_path)
+    safety_plan = PaperSafetyPlan(
+        FINGERPRINT,
+        OBSERVED_AT,
+        dt.date(2026, 7, 14),
+        PaperSafetyPhase.EOD_FLATTEN,
+        Decimal("-5"),
+        Decimal("-7.5"),
+        (PaperClosePositionAction("AAA", PaperOrderSide.SELL, Decimal(10)),),
     )
-    assert broker.calls == ["cancel:entry-1", "close:AAA"]
+    with store.writer() as writer:
+        _ = writer.save_paper_safety_plan(safety_plan)
+    broker = FakeEntryMutationBroker(store.path)
+
+    with store.writer() as writer:
+        results = PaperMutationExecutor(
+            PaperMutationExecutorDependencies(
+                writer,
+                store.paper_mutation_events,
+                broker,
+                lambda: OBSERVED_AT,
+            )
+        ).execute_safety_plan(store.paper_safety_plans()[0])
+
+    assert tuple(result.state for result in results) == (PaperMutationExecutionState.ACKNOWLEDGED,)
+    assert broker.calls == ["close:AAA"]
+    assert tuple(stored.intent.operation.value for stored in store.paper_mutation_intents()) == ("close_position",)

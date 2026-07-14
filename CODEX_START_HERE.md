@@ -40,15 +40,17 @@
 - 활성 WSS의 두 Pong 사이 REST·단일 원장 대사와 공개 의존성 주입 없는 활성 세션 전용 승인 상태기계 완료
 - 브로커 주문·포지션·원장 intent 기반 부분체결 단일 노출, 기존 노출별 손절·최소비용 위험 재계산과 신규 수량 내부 산정 완료
 - 2026-07-14 실제 Paper 계정에서 WSS 인증·구독·Pong과 활성 연결 내부 계좌·시계·미체결·포지션·원장 대사 통과
-- 주문 제출·취소·청산 API는 보호청산·EOD 게이트 전까지 비공개
-- 체결된 parent intent 하나에 대해 명시적 arm과 current-epoch 복구 아래 보호 OCO smoke CLI 실행 가능. 실제 Paper POST 검증은 아직 0건
+- 읽기 client는 GET-only를 유지하고 mutation adapter는 단일 Writer/current-epoch 운영 세션 내부에서만 사용
+- entry·보호 OCO·cancel/EOD 평탄화 공개 운영 메서드는 모두 명시적 `PaperMutationArm`이 필수
+- 체결된 parent intent 하나에 대한 보호 OCO와 안전계획의 cancel·exact-position flatten smoke CLI 실행 가능. 실제 Paper POST/DELETE 검증은 아직 0건
+- 안전조치 smoke는 계획과 같은 REST snapshot에서 1 entry order·1 position·1 OCO·1 symbol 및 합산 100 USD를 mutation 전에 강제하고, mutation 뒤 current-epoch 대사 실패를 성공이나 일반 차단으로 축소하지 않음
 
 ## 다음 우선순위
 
-1. 열린 정규장에서 축소 entry smoke 1건을 실제 Paper로 제출하고, 체결 즉시 보호 OCO smoke CLI로 nested OCO·WSS·REST·원장 대사를 검증
-2. 보호 OCO 검증 뒤 취소·EOD 강제 평탄화 smoke를 별도 current-epoch 경계로 검증
+1. 부분체결 수량 증가 시 기존 보호 OCO를 current-epoch에서 cancel한 뒤 늘어난 exact 수량으로 교체하고 timeout·cancel/fill race를 재시작 복구하는 상태기계 구현
+2. 열린 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증
 3. 위 게이트가 모두 통과한 뒤 ORB 한 전략만 Alpaca Paper POST pilot으로 연결
-4. broker fill과 conservative shadow fill을 분리 누적하고 최소 60일·100건 전진검증
+4. broker fill과 conservative shadow fill을 분리 누적하고 5/10/20/60 적격일 롤링과 최소 60일·100건 최종검토를 운영
 
 ## 시작 전 확인
 

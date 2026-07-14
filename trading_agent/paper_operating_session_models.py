@@ -57,12 +57,14 @@ class PaperOperatingSession(Protocol):
 
     def execute_safety_actions(
         self,
+        arm: PaperMutationArm,
         config: PaperRiskConfig = DEFAULT_PAPER_RISK_CONFIG,
     ) -> PaperSafetyMutationExecution | BlockedPaperSafetyPlan: ...
 
     def execute_protective_oco(
         self,
         parent_intent_id: IntentId,
+        arm: PaperMutationArm,
     ) -> PaperProtectiveMutationExecution | NoProtectiveExitRequired | BlockedProtectiveExitPlan: ...
 
 
@@ -88,3 +90,9 @@ class PaperMutationRecoveryBarrierError(RuntimeError):
     @override
     def __str__(self) -> str:
         return "Paper mutation current-epoch 복구 경계가 바뀌었습니다: " + ", ".join(self.reasons)
+
+
+class PaperPostMutationReconciliationError(RuntimeError):
+    @override
+    def __str__(self) -> str:
+        return "Paper mutation 전송 후 current-epoch 대사가 완료되지 않았습니다"

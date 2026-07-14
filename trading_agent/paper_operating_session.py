@@ -15,7 +15,7 @@ from trading_agent.alpaca_paper_mutation_runtime import (
 from trading_agent.alpaca_paper_order_stream import open_alpaca_paper_order_stream
 from trading_agent.execution_store import ExecutionStore
 from trading_agent.paper_execution_models import IntentId
-from trading_agent.paper_mutation_arm import PaperMutationArm
+from trading_agent.paper_mutation_arm import PaperMutationArm, require_paper_mutation_arm
 from trading_agent.paper_mutation_recovery_models import PaperMutationRecoveryResult
 from trading_agent.paper_operating_mutation_execution import PaperOperatingMutationExecution
 from trading_agent.paper_operating_mutation_models import (
@@ -120,7 +120,7 @@ class _LivePaperOperatingSession:
         request: PaperOrderAdmissionRequest,
         arm: PaperMutationArm,
     ) -> PaperEntryMutationExecution | BlockedPaperOrderGateDecision:
-        _ = arm
+        _ = require_paper_mutation_arm(arm)
         with self._exclusive_operation():
             return self._mutations.execute_entry(request)
 
@@ -147,15 +147,19 @@ class _LivePaperOperatingSession:
 
     def execute_safety_actions(
         self,
+        arm: PaperMutationArm,
         config: PaperRiskConfig = DEFAULT_PAPER_RISK_CONFIG,
     ) -> PaperSafetyMutationExecution | BlockedPaperSafetyPlan:
+        _ = require_paper_mutation_arm(arm)
         with self._exclusive_operation():
             return self._mutations.execute_safety(config)
 
     def execute_protective_oco(
         self,
         parent_intent_id: IntentId,
+        arm: PaperMutationArm,
     ) -> PaperProtectiveMutationExecution | NoProtectiveExitRequired | BlockedProtectiveExitPlan:
+        _ = require_paper_mutation_arm(arm)
         with self._exclusive_operation():
             return self._mutations.execute_protection(parent_intent_id)
 

@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import sqlite3
 import sys
 from collections.abc import Callable, Sequence
@@ -37,7 +36,6 @@ from trading_agent.paper_account_activity_store import (
     InvalidPaperAccountActivityError,
     PaperAccountActivityConflictError,
 )
-from trading_agent.paper_execution_models import IntentId, PaperOrderIntent, PaperOrderSide
 from trading_agent.paper_mutation_arm import PAPER_MUTATION_ARM_VALUE, PaperMutationArm
 from trading_agent.paper_mutation_executor_models import PaperMutationExecutionState
 from trading_agent.paper_mutation_recovery import (
@@ -49,20 +47,29 @@ from trading_agent.paper_mutation_store import (
     PaperMutationConflictError,
 )
 from trading_agent.paper_mutation_validation import InvalidPaperMutationRecordError
+from trading_agent.paper_operating_mutation_models import PaperSafetyMutationExecution
 from trading_agent.paper_operating_session import open_paper_operating_session
 from trading_agent.paper_operating_session_models import (
     PaperMutationRecoveryBarrierError,
     PaperOperatingSession,
-    PaperOrderAdmissionRequest,
     PaperPostMutationReconciliationError,
 )
-from trading_agent.paper_order_gate_models import BlockedPaperOrderGateDecision, LatestCompletedBar
 from trading_agent.paper_protective_oco_recovery_store import (
     InvalidProtectiveOcoRecoveryError,
     ProtectiveOcoRecoveryConflictError,
 )
 from trading_agent.paper_risk import PaperRiskConfig
 from trading_agent.paper_runtime import PaperRuntimeEpochChangedError
+from trading_agent.paper_safety_models import (
+    BlockedPaperSafetyPlan,
+    PaperCancelOrderAction,
+    PaperClosePositionAction,
+    PaperSafetyAction,
+)
+from trading_agent.paper_safety_store import (
+    InvalidPaperSafetyPlanError,
+    PaperSafetyPlanConflictError,
+)
 from trading_agent.paper_stream_recovery import (
     InvalidPaperStreamRecoveryError,
     PaperStreamRecoveryConflictError,
@@ -82,6 +89,12 @@ SMOKE_RISK_CONFIG = PaperRiskConfig(
     daily_loss_limit_dollars=30.0,
     per_side_cost_bps=20.0,
 )
+_ACKNOWLEDGED_STATES = frozenset(
+    (
+        PaperMutationExecutionState.ACKNOWLEDGED,
+        PaperMutationExecutionState.ALREADY_ACKNOWLEDGED,
+    )
+)
 
 type CredentialLoader = Callable[[], AlpacaPaperCredentials]
 type SessionOpener = Callable[
@@ -90,30 +103,13 @@ type SessionOpener = Callable[
 ]
 
 
-def _aware_datetime(value: str) -> dt.datetime:
-    parsed = dt.datetime.fromisoformat(value)
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise argparse.ArgumentTypeError("timezone offset이 필요합니다")
-    return parsed
-
-
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="현재 1분봉 후보 하나를 최대 100 USD Alpaca Paper 주문으로 검증")
+    parser = argparse.ArgumentParser(
+        description="current-epoch Alpaca Paper cancel·EOD 평탄화를 축소 위험으로 단발 검증"
+    )
     parser.add_argument("--arm-paper-mutation", required=True, choices=(PAPER_MUTATION_ARM_VALUE,))
     parser.add_argument("--database", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--intent-id", required=True)
-    parser.add_argument("--symbol", required=True)
-    parser.add_argument("--side", choices=("buy", "sell"), default="buy")
-    parser.add_argument("--entry-limit", type=float, required=True)
-    parser.add_argument("--stop", type=float, required=True)
-    parser.add_argument("--target-1r", type=float, required=True)
-    parser.add_argument("--target-2r", type=float, required=True)
-    parser.add_argument("--created-at", type=_aware_datetime, required=True)
-    parser.add_argument("--bar-start", type=_aware_datetime, required=True)
-    parser.add_argument("--bar-first-observed", type=_aware_datetime, required=True)
-    parser.add_argument("--liquidity-quantity", type=int, required=True)
-    parser.add_argument("--spread-bps", type=float, required=True)
     return parser
 
 
@@ -124,17 +120,14 @@ def main(
     session_opener: SessionOpener = open_paper_operating_session,
 ) -> int:
     args = _parser().parse_args(argv)
+    arm = PaperMutationArm(args.arm_paper_mutation)
     store = ExecutionStore(args.database)
     if not store.is_initialized():
         _write_report(args.output_dir, "차단", ("결합된 실행 원장이 없습니다",))
         return 1
-    request = _request(args)
     try:
         with session_opener(credential_loader(), store) as session:
-            result = session.execute_entry(
-                request,
-                PaperMutationArm(args.arm_paper_mutation),
-            )
+            result = session.execute_safety_actions(arm, SMOKE_RISK_CONFIG)
     except (
         AccountBindingConflictError,
         AlpacaApiError,
@@ -145,6 +138,7 @@ def main(
         InvalidPaperMutationRecordError,
         InvalidPaperMutationRecoverySnapshotError,
         InvalidPaperMutationTransitionError,
+        InvalidPaperSafetyPlanError,
         InvalidPaperStreamRecoveryError,
         InvalidProtectiveOcoRecoveryError,
         InvalidTradeUpdateRawReceiptError,
@@ -158,6 +152,7 @@ def main(
         PaperOrderReadIncompleteError,
         PaperOrderStreamError,
         PaperRuntimeEpochChangedError,
+        PaperSafetyPlanConflictError,
         PaperStreamRecoveryConflictError,
         PaperStreamRecoveryIncompleteError,
         ProtectiveOcoRecoveryConflictError,
@@ -169,71 +164,92 @@ def main(
         OSError,
         sqlite3.Error,
     ) as error:
-        rendered = str(error)
+        rendered = _safe_error_reason(error)
         print(rendered, file=sys.stderr)
         _write_report(args.output_dir, "오류", (rendered,))
         return 2
-    if isinstance(result, BlockedPaperOrderGateDecision):
-        _write_report(args.output_dir, "차단", result.reasons)
+    if isinstance(result, BlockedPaperSafetyPlan):
+        _write_report(
+            args.output_dir,
+            "차단",
+            ("current-epoch 안전 게이트가 실행을 차단했습니다",),
+        )
         return 1
-    state = result.result.state
+    state = _execution_state(result)
+    _write_execution_report(args.output_dir, state, result)
+    return 0 if state in {"acknowledged", "no_action_required"} else 2
+
+
+def _execution_state(execution: PaperSafetyMutationExecution) -> str:
+    if not execution.plan.actions:
+        return "no_action_required" if not execution.results else "incomplete"
+    if len(execution.results) != len(execution.plan.actions):
+        return next(
+            (result.state.value for result in execution.results if result.state not in _ACKNOWLEDGED_STATES),
+            "incomplete",
+        )
+    if all(result.state in _ACKNOWLEDGED_STATES for result in execution.results):
+        return "acknowledged"
+    return next(result.state.value for result in execution.results if result.state not in _ACKNOWLEDGED_STATES)
+
+
+def _write_execution_report(
+    output_dir: Path,
+    state: str,
+    execution: PaperSafetyMutationExecution,
+) -> None:
+    action_lines = tuple(
+        _action_line(action, _result_state(execution, sequence))
+        for sequence, action in enumerate(execution.plan.actions)
+    )
     _write_report(
-        args.output_dir,
-        state.value,
+        output_dir,
+        state,
         (
-            f"intent: {result.approval.sized_order.intent.intent_id}",
-            f"symbol: {result.approval.sized_order.intent.symbol}",
-            f"notional: {result.approval.sized_order.notional:.2f} USD",
-            f"reconciled_at: {result.reconciled_at.isoformat()}",
+            f"단계: {execution.plan.phase.value}",
+            f"조치 수: {len(execution.plan.actions)}",
+            *(action_lines or ("조치: 없음",)),
+            f"reconciled_at: {execution.reconciled_at.isoformat()}",
         ),
     )
-    return (
-        0
-        if state
-        in {
-            PaperMutationExecutionState.ACKNOWLEDGED,
-            PaperMutationExecutionState.ALREADY_ACKNOWLEDGED,
-        }
-        else 2
-    )
 
 
-def _request(args: argparse.Namespace) -> PaperOrderAdmissionRequest:
-    intent = PaperOrderIntent(
-        IntentId(args.intent_id),
-        "orb",
-        "paper-smoke-v1",
-        args.symbol,
-        args.created_at,
-        PaperOrderSide(args.side),
-        args.entry_limit,
-        args.stop,
-        args.target_1r,
-        args.target_2r,
-    )
-    return PaperOrderAdmissionRequest(
-        LatestCompletedBar(args.symbol, args.bar_start, args.bar_first_observed),
-        intent,
-        args.liquidity_quantity,
-        args.spread_bps,
-        SMOKE_RISK_CONFIG,
-    )
+def _result_state(execution: PaperSafetyMutationExecution, sequence: int) -> str:
+    if sequence >= len(execution.results):
+        return "not_attempted"
+    return execution.results[sequence].state.value
+
+
+def _action_line(action: PaperSafetyAction, state: str) -> str:
+    match action:
+        case PaperCancelOrderAction():
+            target = "보호 OCO 취소" if action.protective_oco else "신규진입 주문 취소"
+            return f"{action.symbol}: {target} -> {state}"
+        case PaperClosePositionAction():
+            return f"{action.symbol}: {action.side.value} {action.quantity}주 평탄화 -> {state}"
+
+
+def _safe_error_reason(error: BaseException) -> str:
+    return f"안전 오류 유형: {type(error).__name__}"
 
 
 def _write_report(output_dir: Path, state: str, details: tuple[str, ...]) -> None:
     lines = (
-        "# Alpaca Paper 단발 진입 smoke",
+        "# Alpaca Paper cancel·EOD 평탄화 smoke",
         "",
         "- endpoint: paper-api.alpaca.markets 고정",
         "- live endpoint: 사용 불가",
         "- 최대 notional: 100 USD",
         "- 최대 계획위험: 10 USD",
+        "- 최대 포지션: 1",
+        "- 일손실 한도: 30 USD",
+        "- 편도 비용 가정: 20bp",
         f"- 결과: {state}",
         "- 상세:",
         *(f"  - {detail}" for detail in details),
     )
     output_dir.mkdir(parents=True, exist_ok=True)
-    destination = output_dir / "paper_entry_smoke_ko.md"
+    destination = output_dir / "paper_safety_mutation_smoke_ko.md"
     temporary = destination.with_suffix(".tmp")
     temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
     temporary.replace(destination)

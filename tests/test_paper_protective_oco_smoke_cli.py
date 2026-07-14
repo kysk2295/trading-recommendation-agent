@@ -13,6 +13,7 @@ from tests.trade_update_ledger_fixtures import OBSERVED_AT, initialized_store, i
 from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
 from trading_agent.execution_store import ExecutionStore
 from trading_agent.paper_execution_models import IntentId, PaperOrderSide
+from trading_agent.paper_mutation_arm import PAPER_MUTATION_ARM_VALUE, PaperMutationArm
 from trading_agent.paper_mutation_executor_models import (
     PaperMutationExecutionResult,
     PaperMutationExecutionState,
@@ -27,7 +28,7 @@ from trading_agent.paper_protective_oco_models import ProtectiveOcoClientOrderId
 @dataclass(frozen=True, slots=True)
 class _FakeSession(AbstractContextManager["_FakeSession"]):
     result: PaperProtectiveMutationExecution | BlockedProtectiveExitPlan | NoProtectiveExitRequired
-    calls: list[IntentId]
+    calls: list[tuple[IntentId, PaperMutationArm]]
 
     def __enter__(self) -> _FakeSession:
         return self
@@ -43,8 +44,9 @@ class _FakeSession(AbstractContextManager["_FakeSession"]):
     def execute_protective_oco(
         self,
         parent_intent_id: IntentId,
+        arm: PaperMutationArm,
     ) -> PaperProtectiveMutationExecution | BlockedProtectiveExitPlan | NoProtectiveExitRequired:
-        self.calls.append(parent_intent_id)
+        self.calls.append((parent_intent_id, arm))
         return self.result
 
 
@@ -72,7 +74,7 @@ def test_protective_oco_smoke_requires_an_initialized_ledger(tmp_path: Path) -> 
 
 def test_protective_oco_smoke_arms_exact_intent_and_writes_ack_report(tmp_path: Path) -> None:
     store = initialized_store(tmp_path)
-    calls: list[IntentId] = []
+    calls: list[tuple[IntentId, PaperMutationArm]] = []
     result = PaperProtectiveMutationExecution(
         _plan(),
         PaperMutationExecutionResult(
@@ -107,7 +109,7 @@ def test_protective_oco_smoke_arms_exact_intent_and_writes_ack_report(tmp_path: 
 
     report = (tmp_path / "report" / "paper_protective_oco_smoke_ko.md").read_text(encoding="utf-8")
     assert exit_code == 0
-    assert calls == [intent().intent_id]
+    assert calls == [(intent().intent_id, PaperMutationArm(PAPER_MUTATION_ARM_VALUE))]
     assert "- 결과: acknowledged" in report
     assert f"parent_intent: {intent().intent_id}" in report
     assert "quantity: 10" in report
