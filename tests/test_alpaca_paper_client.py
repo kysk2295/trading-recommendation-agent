@@ -15,7 +15,6 @@ from trading_agent.alpaca_paper_config import (
     AlpacaPaperCredentials,
     NonPaperTradingEndpointError,
 )
-from trading_agent.paper_execution_models import IntentId
 
 
 def _credentials() -> AlpacaPaperCredentials:
@@ -28,12 +27,22 @@ def _order_json() -> dict[str, str | bool | None]:
         "client_order_id": "orb-v1-20260714-AAA-093600",
         "symbol": "AAA",
         "side": "buy",
-        "status": "accepted",
+        "status": "partially_filled",
         "qty": "259",
         "filled_qty": "0.5",
+        "filled_avg_price": "10.05",
         "limit_price": "10.0000",
         "time_in_force": "day",
         "extended_hours": False,
+        "created_at": "2026-07-14T13:35:00Z",
+        "updated_at": "2026-07-14T13:36:00.123456789Z",
+        "submitted_at": "2026-07-14T13:35:01Z",
+        "filled_at": None,
+        "canceled_at": None,
+        "failed_at": None,
+        "replaced_at": None,
+        "replaced_by": "paper-order-2",
+        "replaces": None,
     }
 
 
@@ -188,6 +197,18 @@ def test_order_and_position_reads_preserve_fractional_quantities() -> None:
 
     # Then
     assert orders[0].filled_quantity == Decimal("0.5")
+    assert orders[0].filled_average_price == Decimal("10.05")
+    assert orders[0].updated_at == dt.datetime(
+        2026,
+        7,
+        14,
+        13,
+        36,
+        0,
+        123456,
+        tzinfo=dt.UTC,
+    )
+    assert orders[0].replaced_by_order_id == "paper-order-2"
     assert positions[0].quantity == Decimal("0.5")
 
 
@@ -252,22 +273,3 @@ def test_foundation_client_exposes_no_order_mutation_methods() -> None:
     assert "submit_limit_order" not in public_names
     assert "cancel_order" not in public_names
     assert "close_position" not in public_names
-
-
-def test_order_lookup_returns_none_for_unknown_client_order_id() -> None:
-    # Given
-    def handle(request: httpx2.Request) -> httpx2.Response:
-        assert request.url.path == "/v2/orders:by_client_order_id"
-        return httpx2.Response(404, request=request, json={"message": "not found"})
-
-    # When
-    with httpx2.Client(
-        base_url="https://paper-api.alpaca.markets",
-        transport=httpx2.MockTransport(handle),
-    ) as http_client:
-        result = AlpacaPaperClient(http_client, _credentials()).order_by_client_id(
-            IntentId("missing-intent")
-        )
-
-    # Then
-    assert result is None

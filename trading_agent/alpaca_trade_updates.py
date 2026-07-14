@@ -68,12 +68,21 @@ class AlpacaTradeUpdateEventType(StrEnum):
 
 
 EXPECTED_ORDER_STATUS: Final = {
+    AlpacaTradeUpdateEventType.NEW: "new",
     AlpacaTradeUpdateEventType.FILL: "filled",
     AlpacaTradeUpdateEventType.PARTIAL_FILL: "partially_filled",
     AlpacaTradeUpdateEventType.CANCELED: "canceled",
     AlpacaTradeUpdateEventType.EXPIRED: "expired",
     AlpacaTradeUpdateEventType.REJECTED: "rejected",
     AlpacaTradeUpdateEventType.REPLACED: "replaced",
+    AlpacaTradeUpdateEventType.DONE_FOR_DAY: "done_for_day",
+    AlpacaTradeUpdateEventType.ACCEPTED: "accepted",
+    AlpacaTradeUpdateEventType.PENDING_NEW: "pending_new",
+    AlpacaTradeUpdateEventType.STOPPED: "stopped",
+    AlpacaTradeUpdateEventType.PENDING_CANCEL: "pending_cancel",
+    AlpacaTradeUpdateEventType.PENDING_REPLACE: "pending_replace",
+    AlpacaTradeUpdateEventType.CALCULATED: "calculated",
+    AlpacaTradeUpdateEventType.SUSPENDED: "suspended",
 }
 
 

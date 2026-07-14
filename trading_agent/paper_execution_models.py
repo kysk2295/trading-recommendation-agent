@@ -93,6 +93,16 @@ class PaperOrderSnapshot:
     limit_price: Decimal | None
     time_in_force: str
     extended_hours: bool
+    filled_average_price: Decimal | None = None
+    created_at: dt.datetime | None = None
+    updated_at: dt.datetime | None = None
+    submitted_at: dt.datetime | None = None
+    filled_at: dt.datetime | None = None
+    canceled_at: dt.datetime | None = None
+    failed_at: dt.datetime | None = None
+    replaced_at: dt.datetime | None = None
+    replaced_by_order_id: BrokerOrderId | None = None
+    replaces_order_id: BrokerOrderId | None = None
 
 
 @dataclass(frozen=True, slots=True)

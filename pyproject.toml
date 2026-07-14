@@ -53,6 +53,7 @@ include = [
   "run_alpaca_paper_bootstrap.py",
   "run_alpaca_paper_preflight.py",
   "run_alpaca_paper_readiness.py",
+  "run_alpaca_paper_recovery.py",
   "trading_agent/alpaca_archive.py",
   "trading_agent/alpaca_daily_cache.py",
   "trading_agent/alpaca_daily_store.py",

@@ -17,12 +17,18 @@ from pathlib import Path
 import httpx2
 
 from trading_agent.alpaca_http import AlpacaApiError
+from trading_agent.alpaca_paper_client import PaperOrderReadIncompleteError
 from trading_agent.alpaca_paper_config import (
+    AlpacaPaperSecretEncodingError,
     AlpacaPaperSecretFileError,
     MissingAlpacaPaperCredentialsError,
     load_alpaca_paper_credentials,
 )
 from trading_agent.alpaca_paper_order_stream import PaperOrderStreamError
+from trading_agent.execution_errors import (
+    ExecutionSchemaIntegrityError,
+    UnsupportedExecutionSchemaError,
+)
 from trading_agent.execution_store import ExecutionStore
 from trading_agent.paper_runtime import CredentialLoader, PaperRuntimeEpochChangedError
 from trading_agent.paper_runtime_session import (
@@ -87,10 +93,14 @@ def main(
         state = readiness.broker_state
     except (
         AlpacaApiError,
+        AlpacaPaperSecretEncodingError,
         AlpacaPaperSecretFileError,
+        ExecutionSchemaIntegrityError,
         MissingAlpacaPaperCredentialsError,
+        PaperOrderReadIncompleteError,
         PaperOrderStreamError,
         PaperRuntimeEpochChangedError,
+        UnsupportedExecutionSchemaError,
         httpx2.HTTPError,
         OSError,
         sqlite3.Error,

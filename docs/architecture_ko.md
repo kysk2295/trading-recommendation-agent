@@ -87,9 +87,16 @@ research → historical_pass → paper → approved → suspended
 - 주문 symbol·side·quantity·limit·TIF·extended-hours까지 비교하는 fail-closed 대사
 - Alpaca Paper `/v2/clock`과 정확한 `wss://paper-api.alpaca.markets/stream`만 사용하는 주문 스트림 control plane
 - binary/text 인증 응답 검증, `trade_updates` 구독 승인, RFC 6455 Ping/Pong과 연결별 무작위 `connection_epoch`
+- 수신한 text/binary frame의 정확한 원문 BLOB·wire kind·수신시각·connection epoch를 먼저 append-only 확정하고, 검증 결과를 별도 disposition으로 기록하는 raw-first 경계
+- 프로세스가 raw commit 뒤 중단되어도 미분류 receipt를 SQLite 수신 순서대로 재처리하며, protocol·계좌·intent·주문 불일치는 정상 event가 아니라 quarantine으로 보존하는 재시작 복구
+- 두 heartbeat 사이 계좌·open 주문·미해결 intent별 주문·최근 7일 주문·포지션을 GET하고 하나의 recovery snapshot으로 확정하는 REST 대사
+- REST aggregate 체결량과 개별 execution event를 분리하고, execution 누락·가격 불일치·수량 회귀·terminal 상태 변경·immutable 충돌을 신규 주문 차단 사유로 보존하는 projection
+- v3 스키마의 table·trigger·unique index 정의와 저장 payload·receipt·recovery hash를 읽을 때도 다시 검증하는 손상 감지
 - 스트림의 두 Pong 사이에 계좌·미체결·포지션·시장시계를 GET하고 단일 SQLite 원장 snapshot과 대사·포트폴리오 집계를 끝내는 활성 세션 전용 승인 경계. 공개 factory에는 provider·clock 주입 인자가 없다.
 
-현재 외부 API 표면은 시장시계·계좌·미체결 주문·포지션 조회 GET과 주문 스트림 인증·구독·Ping뿐이다. 주문 POST/DELETE 메서드는 존재하지 않는다. 실제 Paper 주문은 체결 이벤트 영속화와 부분체결 보호청산·EOD 평탄화가 완료된 뒤 별도 단계로 연다.
+현재 외부 API 표면은 시장시계·계좌·주문·포지션 조회 GET과 주문 스트림 인증·구독·Ping뿐이다. 주문 POST/PATCH/DELETE 메서드는 존재하지 않는다. REST aggregate가 누락 체결을 발견하면 주문 상태·누적량은 복원하지만 존재하지 않는 개별 execution을 합성하지 않으며, 상세 체결은 불완전 상태로 남긴다. 일반 protocol quarantine은 이후 일관된 REST 복구로 해소할 수 있지만 immutable 충돌은 account activity나 수동 감사 근거 없이 자동 해소하지 않는다.
+
+주문 변경 기능을 열기 전 P0 경계는 **하나의 장수명 WSS 소유자**가 ingestion과 admission을 함께 직렬화하는 것이다. 현재 recovery probe와 readiness probe는 각각 안전한 읽기 전용 연결을 열 수 있지만, Pong은 이벤트 처리 high-water나 replay cursor가 아니다. 따라서 실제 주문 admission 시점에는 current epoch recovery가 끝난 뒤 ledger generation이 변하지 않았음을 같은 직렬화 경계 안에서 확인해야 한다. 이 경계와 account activity 기반 fill/correction/bust 복구, 보호청산·kill switch·EOD 평탄화가 완성될 때까지 POST/PATCH/DELETE는 닫아 둔다.
 
 신규 주문 승인 상태기계는 다음 순서를 고정한다.
 
@@ -108,7 +115,7 @@ research → historical_pass → paper → approved → suspended
 
 검사 순서를 건너뛰지 않으며 runtime admission의 대사·완전성 실패를 가장 먼저 차단한다. 정규장 첫 1분이 아직 완성되지 않은 09:30대에는 09:29 장전봉을 current bar로 인정하지 않는다. 포트폴리오는 브로커 주문·포지션과 원장 intent를 직접 결합해 만든다. 부분체결은 체결 포지션과 남은 주문 명목금액을 합친 한 노출로 세고, 미체결 주문이 사라진 완전체결 포지션은 로컬 `fill` 이벤트 증거까지 요구한다. 포지션 market value는 0·수량과 반대 부호면 불완전으로 차단하고, 유효해도 원장 진입가 기준 명목금액보다 작게 집계하지 않는다. 기존 활성 노출의 계획위험은 현재 거래당 예약 한도와 원장 수량 전체의 손절거리·설정된 최소비용 위험 중 큰 값이며, 기존 노출 각각에도 종목당 USD 75·USD 6,000 한도를 적용한다. 하나라도 결합할 수 없으면 `IncompletePaperPortfolio`로 차단한다. 신규 수량은 외부 계산값을 받지 않고 손절거리·스프레드·왕복 최소 20bp 비용을 포함해 내부 산정한다. 기본 하드 한도는 거래당 USD 75, 종목당 USD 6,000, 동시 3개, 총 계획위험 USD 225, gross exposure USD 18,000과 conservative equity 중 작은 값, 당일손실 정확히 −USD 300부터 중단이다.
 
-2026-07-14 21:03 KST 실제 Paper 계정 QA에서 WSS 인증·`trade_updates` 구독·Ping/Pong과 활성 연결 내부 계좌·시장시계·미체결·포지션 GET·원장·포트폴리오 대사를 확인했다. 당시 broker clock이 닫혀 있었고 후보 current bar도 없어서 신규 주문 승인은 미평가로 남겼다. 이 probe 결과는 세션 종료 뒤 승인에 재사용되지 않는다.
+2026-07-14 실제 Paper 계정 QA에서 v1 원장을 v3로 안전하게 migration한 뒤 bootstrap, recovery, readiness를 순서대로 실행했다. recovery는 WSS 인증·`trade_updates` 구독·두 heartbeat 사이 계좌·주문·포지션 GET snapshot을 저장했고, 당시 계정에는 주문·포지션·raw receipt가 없어 execution 상세가 완전한 빈 상태로 확인됐다. readiness도 스트림·REST·원장·포트폴리오 대사를 통과했다. broker clock이 열려 있어도 후보 current bar와 실제 주문 intent를 넣지 않았으므로 신규 주문 승인은 미평가로 남겼다. 모든 호출은 WSS와 REST GET뿐이었고 이 probe 결과는 세션 종료 뒤 승인에 재사용되지 않는다.
 
 구현 계약은 Alpaca의 [WebSocket streaming 문서](https://docs.alpaca.markets/us/docs/websocket-streaming), [Market Clock 문서](https://docs.alpaca.markets/us/v1.1/reference/getclock-1), [Paper Trading 설명](https://docs.alpaca.markets/us/docs/paper-trading)을 기준으로 한다. Alpaca 문서가 애플리케이션 heartbeat 주기나 reconnect replay를 보장하지 않으므로 Pong만으로 주문 상태를 복구했다고 간주하지 않고 매 연결 세대마다 REST 대사를 다시 요구한다.
 

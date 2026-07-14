@@ -7,6 +7,7 @@ import pytest
 from trading_agent.alpaca_paper_config import (
     ALPACA_PAPER_TRADING_URL,
     DEFAULT_ALPACA_PAPER_SECRET_PATH,
+    AlpacaPaperSecretEncodingError,
     AlpacaPaperSecretFileError,
     NonPaperTradingEndpointError,
     load_alpaca_paper_credentials,
@@ -84,3 +85,19 @@ def test_paper_credentials_reject_every_mode_except_600(
     # When / Then
     with pytest.raises(AlpacaPaperSecretFileError, match="정확히 600"):
         _ = load_alpaca_paper_credentials(secret)
+
+
+def test_paper_credentials_reject_invalid_utf8_without_rendering_bytes(
+    tmp_path: Path,
+) -> None:
+    secret = tmp_path / "alpaca-paper.env"
+    secret.write_bytes(b"APCA_API_KEY_ID=test-key\nAPCA_API_SECRET_KEY=\xffsecret\n")
+    secret.chmod(0o600)
+
+    with pytest.raises(AlpacaPaperSecretEncodingError) as captured:
+        _ = load_alpaca_paper_credentials(secret)
+
+    rendered = str(captured.value)
+    assert "test-key" not in rendered
+    assert "secret" not in rendered
+    assert "xff" not in rendered

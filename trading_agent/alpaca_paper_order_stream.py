@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Final, Literal, NewType, Protocol, assert_never, final, override
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
@@ -26,6 +27,17 @@ CONTROL_TIMEOUT_SECONDS: Final = 5.0
 TRADE_UPDATES_STREAM: Final = "trade_updates"
 
 PaperStreamEpoch = NewType("PaperStreamEpoch", str)
+
+
+class PaperTradeUpdateWireKind(StrEnum):
+    TEXT = "text"
+    BINARY = "binary"
+
+
+@dataclass(frozen=True, slots=True)
+class PaperTradeUpdateFrame:
+    payload: bytes
+    wire_kind: PaperTradeUpdateWireKind
 
 
 class PaperOrderStreamError(RuntimeError):
@@ -188,11 +200,22 @@ class ReadyPaperOrderStream:
         return self._connection_epoch
 
     def receive_trade_update(self, timeout_seconds: float) -> AlpacaTradeUpdate:
+        frame = self.receive_trade_update_frame(timeout_seconds)
+        return parse_alpaca_trade_update(frame.payload)
+
+    def receive_trade_update_frame(
+        self,
+        timeout_seconds: float,
+    ) -> PaperTradeUpdateFrame:
         if timeout_seconds <= 0:
             raise InvalidPaperOrderStreamTimeoutError
-        return parse_alpaca_trade_update(
-            self._connection.recv(timeout_seconds)
-        )
+        raw = self._connection.recv(timeout_seconds)
+        if isinstance(raw, str):
+            return PaperTradeUpdateFrame(
+                raw.encode("utf-8"),
+                PaperTradeUpdateWireKind.TEXT,
+            )
+        return PaperTradeUpdateFrame(raw, PaperTradeUpdateWireKind.BINARY)
 
     def heartbeat(
         self,

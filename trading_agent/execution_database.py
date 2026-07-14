@@ -8,6 +8,8 @@ from trading_agent.execution_errors import (
     UnsupportedExecutionSchemaError,
 )
 from trading_agent.execution_schema import CREATE_SCHEMA, SCHEMA_VERSION
+from trading_agent.paper_stream_recovery import CREATE_PAPER_STREAM_RECOVERY_SCHEMA
+from trading_agent.trade_update_receipt_schema import CREATE_TRADE_UPDATE_RECEIPT_SCHEMA
 from trading_agent.trade_update_schema import CREATE_TRADE_UPDATE_SCHEMA
 
 
@@ -22,7 +24,7 @@ def prepare_execution_writer_connection(
         "PRAGMA user_version"
     ).fetchone()
     version = 0 if version_row is None else version_row[0]
-    if version not in (0, 1, SCHEMA_VERSION):
+    if version not in (0, 1, 2, SCHEMA_VERSION):
         raise UnsupportedExecutionSchemaError(path, version)
     if version == 0:
         unexpected = _schema_object_names(connection)
@@ -31,14 +33,11 @@ def prepare_execution_writer_connection(
                 path,
                 tuple(f"unexpected-v0:{name}" for name in unexpected),
             )
+    if version > 0:
+        _require_schema_version(connection, path, version)
     if version == SCHEMA_VERSION:
-        _require_v2_schema(connection, path)
         return
-    schema = (
-        f"{CREATE_SCHEMA}\n{CREATE_TRADE_UPDATE_SCHEMA}"
-        if version == 0
-        else CREATE_TRADE_UPDATE_SCHEMA
-    )
+    schema = _migration_schema(version)
     try:
         connection.executescript(
             f"BEGIN IMMEDIATE;\n{schema}\n"
@@ -47,38 +46,39 @@ def prepare_execution_writer_connection(
     except sqlite3.Error:
         connection.rollback()
         raise
-    _require_v2_schema(connection, path)
+    _require_schema_version(connection, path, SCHEMA_VERSION)
 
 
-def _require_v2_schema(connection: sqlite3.Connection, path: Path) -> None:
-    required = frozenset(
-        (
-            "account_binding",
-            "order_intents",
-            "broker_order_events",
-            "trade_update_events",
-            "order_intents_no_update",
-            "order_intents_no_delete",
-            "broker_events_no_update",
-            "broker_events_no_delete",
-            "account_binding_no_update",
-            "account_binding_no_delete",
-            "trade_update_events_no_update",
-            "trade_update_events_no_delete",
-            "trade_update_execution_id_unique",
-        )
-    )
-    expected = _expected_v2_schema_definitions()
+def require_current_execution_schema(
+    connection: sqlite3.Connection,
+    path: Path,
+) -> None:
+    version_row: tuple[int] | None = connection.execute(
+        "PRAGMA user_version"
+    ).fetchone()
+    version = 0 if version_row is None else version_row[0]
+    if version != SCHEMA_VERSION:
+        raise UnsupportedExecutionSchemaError(path, version)
+    _require_schema_version(connection, path, SCHEMA_VERSION)
+
+
+def _require_schema_version(
+    connection: sqlite3.Connection,
+    path: Path,
+    version: int,
+) -> None:
+    expected = _expected_schema_definitions(version)
     actual = _schema_object_definitions(connection)
-    invalid = tuple(
-        sorted(
-            name if name not in actual else f"invalid:{name}"
-            for name in required
-            if actual.get(name) != expected.get(name)
-        )
+    invalid = sorted(
+        name if name not in actual else f"invalid:{name}"
+        for name in expected
+        if actual.get(name) != expected[name]
+    )
+    invalid.extend(
+        f"unexpected:{name}" for name in actual if name not in expected
     )
     if invalid:
-        raise ExecutionSchemaIntegrityError(path, invalid)
+        raise ExecutionSchemaIntegrityError(path, tuple(sorted(invalid)))
 
 
 def _schema_object_names(connection: sqlite3.Connection) -> tuple[str, ...]:
@@ -90,10 +90,40 @@ def _schema_object_names(connection: sqlite3.Connection) -> tuple[str, ...]:
     return tuple(row[0] for row in rows)
 
 
-def _expected_v2_schema_definitions() -> dict[str, tuple[str, str]]:
+def _expected_schema_definitions(version: int) -> dict[str, tuple[str, str]]:
     with sqlite3.connect(":memory:") as connection:
-        connection.executescript(f"{CREATE_SCHEMA}\n{CREATE_TRADE_UPDATE_SCHEMA}")
+        connection.executescript(_schema_through(version))
         return _schema_object_definitions(connection)
+
+
+def _schema_through(version: int) -> str:
+    if version == 1:
+        return CREATE_SCHEMA
+    if version == 2:
+        return f"{CREATE_SCHEMA}\n{CREATE_TRADE_UPDATE_SCHEMA}"
+    if version == SCHEMA_VERSION:
+        return (
+            f"{CREATE_SCHEMA}\n{CREATE_TRADE_UPDATE_SCHEMA}\n"
+            f"{CREATE_TRADE_UPDATE_RECEIPT_SCHEMA}\n"
+            f"{CREATE_PAPER_STREAM_RECOVERY_SCHEMA}"
+        )
+    raise ValueError(version)
+
+
+def _migration_schema(version: int) -> str:
+    if version == 0:
+        return _schema_through(SCHEMA_VERSION)
+    if version == 1:
+        return (
+            f"{CREATE_TRADE_UPDATE_SCHEMA}\n{CREATE_TRADE_UPDATE_RECEIPT_SCHEMA}\n"
+            f"{CREATE_PAPER_STREAM_RECOVERY_SCHEMA}"
+        )
+    if version == 2:
+        return (
+            f"{CREATE_TRADE_UPDATE_RECEIPT_SCHEMA}\n"
+            f"{CREATE_PAPER_STREAM_RECOVERY_SCHEMA}"
+        )
+    raise ValueError(version)
 
 
 def _schema_object_definitions(

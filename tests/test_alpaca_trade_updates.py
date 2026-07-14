@@ -140,6 +140,25 @@ def test_fill_event_with_a_nonfilled_order_status_fails_closed() -> None:
         _ = parse_alpaca_trade_update(json.dumps(payload))
 
 
+def test_new_event_with_a_terminal_order_status_fails_closed() -> None:
+    payload = _partial_fill_payload()
+    data = payload["data"]
+    assert isinstance(data, dict)
+    data["event"] = "new"
+    data.pop("execution_id")
+    data.pop("price")
+    data.pop("qty")
+    data.pop("position_qty")
+    order = data["order"]
+    assert isinstance(order, dict)
+    order["status"] = "canceled"
+    order["filled_qty"] = "0"
+    order["filled_avg_price"] = None
+
+    with pytest.raises(AlpacaTradeUpdateProtocolError, match="형식"):
+        _ = parse_alpaca_trade_update(json.dumps(payload))
+
+
 def test_non_equity_and_unknown_events_fail_closed() -> None:
     non_equity = _partial_fill_payload()
     non_equity_data = non_equity["data"]

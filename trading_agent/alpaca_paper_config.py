@@ -64,6 +64,12 @@ class MissingAlpacaPaperCredentialsError(RuntimeError):
         return f"Alpaca paper 자격증명이 없습니다: {', '.join(self.names)}"
 
 
+class AlpacaPaperSecretEncodingError(UnicodeError):
+    @override
+    def __str__(self) -> str:
+        return "Alpaca paper 비밀 파일은 유효한 UTF-8이어야 합니다"
+
+
 def load_alpaca_paper_credentials(
     path: Path = DEFAULT_ALPACA_PAPER_SECRET_PATH,
 ) -> AlpacaPaperCredentials:
@@ -77,11 +83,14 @@ def load_alpaca_paper_credentials(
     ):
         raise AlpacaPaperSecretFileError(path=path, mode=file_mode)
     values: dict[str, str] = {}
-    with path.open(encoding="utf-8") as handle:
-        for raw_line in handle:
-            name, separator, value = raw_line.rstrip("\n").partition("=")
-            if separator:
-                values[name] = value.strip()
+    try:
+        with path.open(encoding="utf-8") as handle:
+            for raw_line in handle:
+                name, separator, value = raw_line.rstrip("\n").partition("=")
+                if separator:
+                    values[name] = value.strip()
+    except UnicodeError:
+        raise AlpacaPaperSecretEncodingError from None
     key_id = values.get("APCA_API_KEY_ID", "")
     secret_key = values.get("APCA_API_SECRET_KEY", "")
     missing = tuple(

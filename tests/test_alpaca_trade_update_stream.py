@@ -6,6 +6,7 @@ import json
 from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
 from trading_agent.alpaca_paper_order_stream import (
     ALPACA_PAPER_ORDER_STREAM_URL,
+    PaperTradeUpdateWireKind,
     authenticate_paper_order_stream,
 )
 
@@ -84,3 +85,24 @@ def test_ready_stream_receives_a_typed_binary_trade_update() -> None:
     assert update.execution_id == "execution-1"
     assert update.intent_id == "orb-v1-20260714-AAA-093600"
     assert stream.connection_epoch != ""
+
+
+def test_ready_stream_exposes_the_exact_binary_frame_before_parsing() -> None:
+    raw = b"\xff\x00malformed-paper-frame"
+    connection = _Connection(
+        [
+            b'{"stream":"authorization","data":{"status":"authorized","action":"authenticate"}}',
+            b'{"stream":"listening","data":{"streams":["trade_updates"]}}',
+            raw,
+        ]
+    )
+    stream = authenticate_paper_order_stream(
+        connection,
+        AlpacaPaperCredentials("test-key", "test-secret"),
+        clock=lambda: dt.datetime(2026, 7, 14, tzinfo=dt.UTC),
+    )
+
+    frame = stream.receive_trade_update_frame(1.0)
+
+    assert frame.payload == raw
+    assert frame.wire_kind is PaperTradeUpdateWireKind.BINARY

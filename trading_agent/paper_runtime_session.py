@@ -9,7 +9,10 @@ from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
 from trading_agent.alpaca_paper_order_stream import (
     open_alpaca_paper_order_stream,
 )
-from trading_agent.execution_ledger_reader import ReconciliationLedger
+from trading_agent.execution_ledger_reader import (
+    ReconciliationLedger,
+    trade_update_receipt_reasons,
+)
 from trading_agent.paper_execution_models import (
     PaperOrderIntent,
 )
@@ -126,11 +129,20 @@ class _LivePaperRuntimeSession:
         after_rest = self._stream.heartbeat(5.0)
         if before_rest.connection_epoch != after_rest.connection_epoch:
             raise PaperRuntimeEpochChangedError
-        runtime_reasons = paper_runtime_receipt_reasons(
-            before_rest,
-            broker_state,
-            market_clock,
-            after_rest,
+        runtime_reasons = tuple(
+            sorted(
+                set(
+                    (
+                        *paper_runtime_receipt_reasons(
+                            before_rest,
+                            broker_state,
+                            market_clock,
+                            after_rest,
+                        ),
+                        *trade_update_receipt_reasons(ledger),
+                    )
+                )
+            )
         )
         return PaperRuntimeReadiness(
             broker_state=broker_state,

@@ -21,9 +21,7 @@ from tests.paper_runtime_fixtures import (
     stream_opener,
 )
 from trading_agent.alpaca_paper_order_stream import PaperStreamEpoch
-from trading_agent.paper_execution_models import (
-    PaperBrokerState,
-)
+from trading_agent.paper_execution_models import PaperBrokerState
 from trading_agent.paper_order_gate_models import (
     ApprovedPaperOrderGateDecision,
     PaperOrderGateState,

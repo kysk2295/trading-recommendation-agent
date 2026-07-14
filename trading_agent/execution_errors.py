@@ -98,5 +98,5 @@ class ExecutionSchemaIntegrityError(RuntimeError):
 
     @override
     def __str__(self) -> str:
-        missing = ", ".join(self.missing_objects)
-        return f"execution 원장 v2 무결성 검사에 실패했습니다: {missing} ({self.path})"
+        invalid = ", ".join(self.missing_objects)
+        return f"execution 원장 스키마 무결성 검사에 실패했습니다: {invalid} ({self.path})"
