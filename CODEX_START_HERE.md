@@ -36,14 +36,17 @@
 - Alpaca Paper 계좌·미체결 주문·포지션 GET-only adapter 완료
 - 실행 원장 Single Writer 잠금·append-only schema·계좌 fingerprint 결합 완료
 - GET-only bootstrap과 fail-closed preflight 실제 빈 Paper 계정 검증 완료
-- 주문 제출·취소·청산 API는 세션·주문스트림·보호청산·EOD 게이트 전까지 비공개
+- Paper 시장시계 GET과 `trade_updates` 인증·구독·Ping/Pong, reconnect별 고유 `connection_epoch` 완료
+- 활성 WSS의 두 Pong 사이 REST·단일 원장 대사와 공개 의존성 주입 없는 활성 세션 전용 승인 상태기계 완료
+- 브로커 주문·포지션·원장 intent 기반 부분체결 단일 노출, 기존 노출별 손절·최소비용 위험 재계산과 신규 수량 내부 산정 완료
+- 2026-07-14 실제 Paper 계정에서 WSS 인증·구독·Pong과 활성 연결 내부 계좌·시계·미체결·포지션·원장 대사 통과
+- 주문 제출·취소·청산 API는 보호청산·EOD 게이트 전까지 비공개
 
 ## 다음 우선순위
 
-1. 정규장/current-bar·order-stream heartbeat·전체 portfolio 위험 승인 상태기계 구현
-2. 부분체결 보호주문·취소·EOD 강제 평탄화와 재시작 대사 구현
-3. 위 게이트가 모두 통과한 뒤 ORB 한 전략만 Alpaca Paper POST pilot으로 연결
-4. broker fill과 conservative shadow fill을 분리 누적하고 최소 60일·100건 전진검증
+1. `trade_updates` 체결 이벤트 영속화와 부분체결 보호주문·취소·EOD 강제 평탄화·재시작 대사 구현
+2. 위 게이트가 모두 통과한 뒤 ORB 한 전략만 Alpaca Paper POST pilot으로 연결
+3. broker fill과 conservative shadow fill을 분리 누적하고 최소 60일·100건 전진검증
 
 ## 시작 전 확인
 
@@ -58,5 +61,5 @@
 ```text
 이 프로젝트의 README.md, CODEX_START_HERE.md, AGENTS.md와 docs/runtime_audit.md를 먼저 읽어줘.
 현재 Single Writer Alpaca Paper 기반을 이어서 개발해줘.
-README의 다음 우선순위 1번인 정규장/current-bar·order-stream heartbeat·portfolio 위험 승인 상태기계를 먼저 TDD로 구현하되, 보호청산과 EOD 평탄화가 완성되기 전에는 주문 POST를 공개하지 마.
+README의 다음 우선순위 1번인 trade_updates 체결 원장·부분체결 보호주문·취소·EOD 평탄화·재시작 대사를 TDD로 구현하되, 모든 청산 안전장치가 완성되기 전에는 주문 POST/DELETE를 공개하지 마.
 ```

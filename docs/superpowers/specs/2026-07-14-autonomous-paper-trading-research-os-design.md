@@ -316,6 +316,20 @@ signal_created
 - champion이 생기면 기본 paper 위험 예산의 60%를 champion, 40%를 challenger 탐색에 배정한다.
 - 전략별 성과와 실제 포트폴리오 성과를 별도 표로 보고한다.
 
+### 10.4 2026-07-14 구현 체크포인트
+
+주문 변경 권한을 열기 전 control plane과 승인 경계를 먼저 구현했다.
+
+- REST는 고정 Paper endpoint의 시장시계·계좌·미체결·포지션 GET만 공개한다.
+- WSS는 고정 Paper endpoint에서 인증·`trade_updates` 구독·Ping/Pong만 수행한다.
+- 연결마다 새 `connection_epoch`를 발급하고 두 heartbeat 사이에 REST·단일 원장 대사와 부분체결 포함 포트폴리오 집계를 완료한다.
+- 공개 factory는 production REST·WSS·UTC clock으로 고정하며, 그 factory가 연 활성 세션의 `evaluate_order`만 승인할 수 있다. 호출자는 ready boolean·평가시각·provider·사전 sizing 합계를 주입할 수 없다.
+- 브로커와 로컬 정규장, 폐장 30분 전 cutoff, 방금 완성된 정확한 정규장 1분봉, 최초 관찰 뒤 intent, 5초 이내 Pong을 순서대로 검증한다.
+- 브로커 주문·포지션·원장 intent에서 부분체결을 한 노출로 집계한다. 기존 노출도 원장 수량 전체의 손절거리와 최소 20bp 편도비용으로 위험을 다시 계산하고 시장가와 진입가 기준 명목금액 중 큰 값을 사용한다. account ACTIVE, 당일손실, 중복종목, 노출 수, buying power, 기존·신규 각 종목과 총 위험·gross exposure를 모두 통과해야 `APPROVED`다.
+- 신규 수량은 손절거리·spread·왕복 최소 20bp 비용을 포함해 게이트 내부에서 다시 계산한다.
+- 09:30대에는 09:29 장전봉을 최신 완료 정규장봉으로 인정하지 않는다.
+- 실제 Paper 계정에서 control plane과 빈 계정 REST 대사는 확인했지만 체결 이벤트 영속화와 주문 POST/DELETE는 아직 비활성이다.
+
 ## 11. 이중 체결 원장
 
 ### 11.1 Broker Paper Ledger

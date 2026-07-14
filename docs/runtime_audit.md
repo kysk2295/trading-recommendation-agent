@@ -329,3 +329,38 @@
 - 관찰: 세 코드가 모두 정상 응답을 반환했다. 단발 CLI는 원시 401행, 위험판정 18개, 최대 10개 선정을 별도 `daytime_*` 파일에 저장했고 종료코드 0, 최대 RSS 58,703,872바이트였다.
 - 수정: 서울 10:00부터 뉴욕 04:00 ET까지의 주간거래 게이트와 목표 뉴욕 거래일 매핑을 추가했다. 주간거래 코드는 `NAS/NYS/AMS`와 분리하고 정규장 시가·gap 또는 premarket RVOL로 재해석하지 않는다.
 - 결과: 미지원 가설은 기각했지만 전체시장 PIT 데이터 가설은 기각하지 못했다. 이 경로는 forward 후보 수집이며 3년 백테스트 대체물이 아니다.
+
+## H46: 정규장 직후 09:29 장전봉을 최신 완료 정규장봉으로 승인한다
+
+- 판별 기준: 09:30:05 ET에 broker clock이 open이고 09:29 봉이 09:30:02에 관찰된 후보를 주문 승인 게이트에 입력한다.
+- RED: 단순히 현재 분을 1분 내린 값만 비교해 09:29 장전봉이 `APPROVED`됐다.
+- 수정: 기대 봉의 시작·종료가 로컬 NYSE 정규장 경계 안에 모두 포함되는지 별도로 확인한다.
+- 결과: 09:30대 장전봉은 `CURRENT_BAR_BLOCKED`, 09:31 이후 방금 완성된 09:30 정규장봉부터만 다음 게이트로 진행한다.
+
+## H47: WebSocket 재연결 뒤 이전 REST 대사 결과를 재사용하거나 승인 provider를 주입한다
+
+- 판별 기준: 호출자가 `ready=True`와 복사한 epoch를 넣거나, 공개 factory에 fake stream·REST·clock을 주입해 세션 밖에서 승인을 만든다.
+- RED: 초기 모델은 공개 dataclass의 `ready` boolean과 epoch를 호출자가 직접 만들 수 있었고, 게이트 평가 시점에는 WSS가 이미 닫혀 있어도 승인할 수 있었다.
+- 수정: 열린 WSS의 첫 Pong 뒤 계좌·주문·포지션·시계와 단일 SQLite 원장 snapshot을 읽고 대사·포트폴리오 집계를 끝낸 다음 두 번째 Pong을 확인한다. 독립 증명 객체와 공개 단독 gate evaluator를 삭제했다. 공개 `open_paper_runtime_session(credentials, ledger)`는 production REST·WSS·UTC clock으로 고정하고, 공개 생성자가 없는 활성 세션의 `evaluate_order`만 승인한다.
+- 결과: 공개 factory에는 provider·clock 주입 인자가 없고, 오래된 epoch는 admission에서 차단되며 종료된 세션은 `InactivePaperRuntimeSessionError`로 재사용할 수 없다. 읽기 전용 probe 결과도 승인 artifact가 아니다.
+
+## H48: 이벤트가 조용한 주문 스트림을 정상이라고 추정한다
+
+- 판별 기준: 인증·`trade_updates` 구독 뒤 Pong 도착과 timeout을 각각 입력한다.
+- 수정: 이벤트 수신 여부를 heartbeat로 사용하지 않고 RFC 6455 Ping/Pong을 5초 timeout으로 확인한다. 인증·구독 응답과 Pong 순서가 틀리거나 Pong이 5초보다 오래되면 차단한다.
+- 실제 계정 관찰: 2026-07-14 장전 실제 Paper WSS에서 binary 인증 응답, `trade_updates` listening 승인과 Ping/Pong을 확인했다.
+- 결과: 스트림 control plane은 통과했지만 Alpaca가 reconnect replay를 보장하지 않으므로 REST 대사를 별도로 유지한다.
+
+## H49: 장외 연결 성공을 현재 주문 가능으로 보고한다
+
+- 판별 기준: broker clock이 closed인 실제 계정에서 runtime readiness CLI를 실행한다.
+- 관찰: WSS 인증·구독·Pong, 계좌·시계·미체결·포지션 GET과 원장 대사는 통과했고 미체결·포지션은 각각 0개였다.
+- 수정: 보고서에서 연결·REST 대사, 시장 개장, 신규 주문 승인을 분리한다. candidate/current-bar가 없는 readiness CLI는 신규 주문을 항상 `미평가`로 기록한다.
+- 결과: 2026-07-14 21:03 KST 최종 경로의 실제 실행은 종료코드 0, 최대 RSS 57,081,856바이트로 활성 스트림 내부 대사를 확인하면서도 `브로커 시장 개장: 아니오`, `신규 주문 승인: 미평가`, `POST/DELETE: 비활성`을 명시했다.
+
+## H50: 조작되거나 불완전한 sizing·portfolio 합계를 그대로 신뢰한다
+
+- 판별 기준: 비용을 뺀 사전 `SizedPaperOrder`, 호출자가 미리 합한 position/pending count와 부분체결 주문·포지션을 전달한다.
+- RED: 첫 수정도 외부 sizing을 재검산할 뿐 최소 거래비용을 강제하지 않아 USD 75 위험 한도를 우회할 수 있었다. 포지션과 남은 주문이 같은 종목인 정상 부분체결은 두 슬롯으로 세거나 불일치로 차단했고, 호출자가 만든 합계 자체를 신뢰했다.
+- 수정: 게이트 입력에서 `SizedPaperOrder`와 사전 합계를 제거했다. 브로커 주문·포지션과 원장 intent를 직접 결합하고, 부분체결은 현재 포지션 market value와 남은 주문 명목금액을 합친 단일 노출로 만든다. market value가 0·수량과 반대 부호면 불완전으로 차단하고, 유효해도 진입가 기준 명목금액보다 작게 세지 않는다. 미체결 주문이 없는 완전체결 포지션은 현재 세션의 유일한 intent와 로컬 `fill` 이벤트 증거가 모두 있어야 한다. 기존 노출 위험은 거래당 예약 한도와 원장 수량 전체의 손절거리·동일 config 최소비용 위험 중 큰 값으로 계산하고 각 노출의 위험·명목 한도도 별도 검사한다. join 누락·수량 불일치·동일 종목 중복·모호한 intent는 불완전 포트폴리오로 차단한다. 신규 주문은 conservative equity, 유동성 수량, spread, 손절거리와 왕복 최소 20bp 비용으로 내부 재산정한다.
+- 결과: 진입 100·손절 99·spread 0 예시는 주당위험 1.398, 53주, 계획위험 약 USD 74.094로만 승인된다. 20bp spread에서는 46주로 줄며, 70주 기존 주문 위험은 USD 97.86으로 재계산되어 종목 한도를 초과한다. torn partial fill, 축소된 market value와 외부 합계 조작 경로는 `PORTFOLIO_BLOCKED`다.
