@@ -1,0 +1,183 @@
+#!/usr/bin/env -S uv run --python 3.12 --with httpx2[http2,brotli,zstd] --with pydantic --with rich --with typer python
+
+from __future__ import annotations
+
+import datetime as dt
+from pathlib import Path
+
+import typer
+from rich import print as rprint
+
+from scr_backtest.kis_intraday import KisSession
+from trading_agent.bar_archive import track_candidates, tracked_candidates
+from trading_agent.causality import exclude_backdated_recommendations
+from trading_agent.engine import RecommendationEngine
+from trading_agent.kis_auth import (
+    KisMode,
+    create_kis_client,
+    get_access_token,
+    load_kis_credentials,
+)
+from trading_agent.kis_provider import KisRankedStock
+from trading_agent.kis_rankings import (
+    discover_rankings as _discover_rankings,
+)
+from trading_agent.kis_rankings import (
+    timestamp_rankings,
+)
+from trading_agent.kis_scan import KisPaperScanner, ScanObservation
+from trading_agent.kis_scan_report import ScanSummary, write_scan_summary
+from trading_agent.market_risk import (
+    MarketRiskConfig,
+    MarketRiskGate,
+    fetch_active_halts,
+    write_market_risk_screen,
+)
+from trading_agent.opening_gap import OpeningGapCapture, capture_opening_gaps
+from trading_agent.ranking_journal import RankingSnapshot, append_ranking_snapshot
+from trading_agent.replay import write_alert_outbox, write_report
+from trading_agent.risk import RiskConfig
+from trading_agent.scan_cycle import scan_exit_code
+from trading_agent.scanner import MomentumScanner, ScannerConfig
+from trading_agent.store import PaperStore
+from trading_agent.strategy_factory import StrategyMode, build_strategy
+
+
+def unselected_tracked_candidates(
+    selected: tuple[KisRankedStock, ...],
+    tracked: tuple[KisRankedStock, ...],
+) -> tuple[KisRankedStock, ...]:
+    selected_keys = {(stock.exchange, stock.symbol) for stock in selected}
+    return tuple(stock for stock in tracked if (stock.exchange, stock.symbol) not in selected_keys)
+
+
+def partition_halted_candidates(
+    candidates: tuple[KisRankedStock, ...],
+    halted_symbols: frozenset[str],
+) -> tuple[tuple[KisRankedStock, ...], tuple[KisRankedStock, ...]]:
+    allowed = tuple(stock for stock in candidates if stock.symbol.upper() not in halted_symbols)
+    blocked = tuple(stock for stock in candidates if stock.symbol.upper() in halted_symbols)
+    return allowed, blocked
+
+
+def main(
+    output_dir: str | None = None,
+    top: int = 3,
+    mode: KisMode = KisMode.LIVE,
+    range_minutes: int = 5,
+    max_pages: int = 10,
+    strategy: StrategyMode = StrategyMode.ORB,
+) -> None:
+    if not 1 <= top <= 10:
+        raise typer.BadParameter("top은 1~10이어야 합니다")
+    if not 1 <= range_minutes <= 30:
+        raise typer.BadParameter("range-minutes는 1~30이어야 합니다")
+    if not 1 <= max_pages <= 10:
+        raise typer.BadParameter("max-pages는 1~10이어야 합니다")
+    started_at = dt.datetime.now().astimezone()
+    output = _output_path(output_dir, started_at)
+    database = output / "paper_recommendations.sqlite3"
+    credentials = load_kis_credentials(mode)
+    store = PaperStore(database)
+    causality_exclusions = exclude_backdated_recommendations(store, started_at)
+    engine = RecommendationEngine(
+        MomentumScanner(ScannerConfig()),
+        build_strategy(strategy, range_minutes),
+        RiskConfig(),
+        store,
+    )
+    observations: list[ScanObservation] = []
+    with create_kis_client(mode) as client:
+        token = get_access_token(client, credentials, mode)
+        groups, checked_at = timestamp_rankings(
+            lambda: _discover_rankings(client, credentials, token),
+            lambda: dt.datetime.now().astimezone(),
+        )
+        halt_snapshot = fetch_active_halts(client)
+        checked_at = max(checked_at, halt_snapshot.observed_at).astimezone()
+        risk_screen = MarketRiskGate(
+            halt_snapshot,
+            MarketRiskConfig(),
+        ).screen(
+            tuple(group.stocks for group in groups),
+            top,
+        )
+        gap_cycle = capture_opening_gaps(
+            client,
+            OpeningGapCapture(
+                output,
+                KisSession(credentials, token),
+                checked_at,
+                risk_screen,
+            ),
+        )
+        candidates = risk_screen.selected
+        write_market_risk_screen(output / "market_risk_screen.csv", risk_screen)
+        append_ranking_snapshot(
+            output / "kis_ranking_snapshots.csv",
+            RankingSnapshot(checked_at, groups, candidates),
+        )
+        _ = track_candidates(database, checked_at, candidates)
+        followers = unselected_tracked_candidates(
+            candidates,
+            tracked_candidates(database, checked_at),
+        )
+        followers, blocked_followers = partition_halted_candidates(
+            followers,
+            halt_snapshot.symbols,
+        )
+        scanner = KisPaperScanner(
+            client,
+            KisSession(credentials, token),
+            engine,
+        )
+        for stock in candidates:
+            observations.append(scanner.observe(stock, max_pages))
+        for stock in followers:
+            observations.append(scanner.follow(stock, max_pages))
+        observations.extend(
+            ScanObservation(
+                stock.exchange,
+                stock.symbol,
+                stock.change_pct,
+                stock.price,
+                stock.spread_bps,
+                0,
+                "공식 현재 거래정지: 추적 중단",
+            )
+            for stock in blocked_followers
+        )
+    write_report(output / "recommendations_ko.md", store)
+    queued = write_alert_outbox(output, store, dt.datetime.now().astimezone())
+    write_scan_summary(
+        output / "kis_scan_summary_ko.md",
+        ScanSummary(
+            checked_at,
+            mode,
+            strategy,
+            len(halt_snapshot.symbols),
+            risk_screen,
+            tuple(observations),
+            len(store.recommendations()),
+        ),
+    )
+    rprint(
+        f"[green]완료[/green] 현재 후보 {len(candidates)}개, "
+        + f"추적 {len(followers) + len(blocked_followers)}개, 추천 "
+        + f"{len(store.recommendations())}개, 인과성 제외 {causality_exclusions}개, "
+        + f"신규 카드 {queued}개, {output}"
+    )
+    exit_code = scan_exit_code(tuple(observations), gap_cycle.failure_count)
+    if exit_code:
+        raise typer.Exit(code=exit_code)
+
+
+def _output_path(value: str | None, checked_at: dt.datetime) -> Path:
+    if value is not None:
+        return Path(value)
+    stamp = checked_at.strftime("%Y%m%d_%H%M%S")
+    return Path("outputs/live_runs") / stamp
+
+
+if __name__ == "__main__":
+    typer.run(main)

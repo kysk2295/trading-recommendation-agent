@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+import csv
+import datetime as dt
+from dataclasses import dataclass
+from enum import StrEnum
+from pathlib import Path
+from typing import Final
+
+from trading_agent.kis_provider import KisRankedStock
+
+RANKING_FIELDS: Final = (
+    "observed_at",
+    "ranking_source",
+    "exchange",
+    "source_rank",
+    "symbol",
+    "name",
+    "price",
+    "change_pct",
+    "bid",
+    "ask",
+    "spread_bps",
+    "volume",
+    "dollar_volume",
+    "average_daily_volume",
+    "selected",
+    "selection_input",
+)
+
+
+class RankingSource(StrEnum):
+    UPDOWN = "updown"
+    VOLUME = "volume"
+
+
+@dataclass(frozen=True, slots=True)
+class RankingGroup:
+    source: RankingSource
+    exchange: str
+    stocks: tuple[KisRankedStock, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RankingSnapshot:
+    observed_at: dt.datetime
+    groups: tuple[RankingGroup, ...]
+    selected: tuple[KisRankedStock, ...]
+
+
+def append_ranking_snapshot(path: Path, snapshot: RankingSnapshot) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _migrate_legacy_file(path)
+    has_header = path.is_file() and path.stat().st_size > 0
+    selected_keys = {
+        (stock.exchange, stock.symbol) for stock in snapshot.selected
+    }
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        if not has_header:
+            writer.writerow(RANKING_FIELDS)
+        for group in snapshot.groups:
+            writer.writerows(
+                (
+                    snapshot.observed_at.isoformat(),
+                    group.source.value,
+                    stock.exchange,
+                    stock.rank,
+                    stock.symbol,
+                    stock.name,
+                    stock.price,
+                    stock.change_pct,
+                    stock.bid,
+                    stock.ask,
+                    stock.spread_bps,
+                    stock.volume,
+                    stock.dollar_volume,
+                    stock.average_daily_volume,
+                    (stock.exchange, stock.symbol) in selected_keys,
+                    any(stock is chosen for chosen in snapshot.selected),
+                )
+                for stock in group.stocks
+            )
+
+
+def _migrate_legacy_file(path: Path) -> None:
+    if not path.is_file() or path.stat().st_size == 0:
+        return
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        fields = tuple(reader.fieldnames or ())
+        if "selection_input" in fields:
+            return
+        rows = tuple(reader)
+    temporary = path.with_suffix(".tmp")
+    with temporary.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=(*fields, "selection_input"),
+        )
+        writer.writeheader()
+        writer.writerows({**row, "selection_input": ""} for row in rows)
+    temporary.replace(path)

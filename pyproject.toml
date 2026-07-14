@@ -1,0 +1,58 @@
+[project]
+name = "trading-recommendation-agent"
+version = "0.1.0"
+description = "Read-only US momentum stock paper recommendation agent"
+requires-python = ">=3.12"
+dependencies = [
+  "httpx2[http2,brotli,zstd]",
+  "pydantic>=2.11",
+  "rich>=13.9",
+  "typer>=0.15",
+]
+
+[dependency-groups]
+dev = [
+  "basedpyright>=1.31",
+  "pytest>=8.3",
+  "ruff>=0.12",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.basedpyright]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+include = [
+  "trading_agent",
+  "scr_backtest",
+  "run_kis_paper_scan.py",
+  "run_kis_paper_watch.py",
+  "run_kis_daytime_scan.py",
+  "run_kis_premarket_scan.py",
+  "run_session_continuity.py",
+  "run_candidate_persistence.py",
+  "run_paper_metrics.py",
+  "run_orb_forward_metrics.py",
+  "run_market_risk_sensitivity.py",
+  "run_scanner_forward_metrics.py",
+  "run_scanner_candidate_sensitivity.py",
+  "run_alpaca_minute_archive.py",
+  "run_alpaca_staged_archive.py",
+  "run_alpaca_pilot_orb.py",
+  "run_alpaca_pilot_scanner.py",
+  "trading_agent/alpaca_archive.py",
+  "trading_agent/alpaca_daily_cache.py",
+  "trading_agent/alpaca_daily_store.py",
+  "trading_agent/alpaca_http.py",
+  "trading_agent/alpaca_models.py",
+  "trading_agent/alpaca_universe.py",
+]
