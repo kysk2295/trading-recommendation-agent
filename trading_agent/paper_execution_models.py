@@ -8,6 +8,7 @@ from typing import NewType
 
 IntentId = NewType("IntentId", str)
 BrokerOrderId = NewType("BrokerOrderId", str)
+BrokerEventKey = NewType("BrokerEventKey", str)
 
 
 class PaperOrderSide(StrEnum):
@@ -71,3 +72,13 @@ class PaperPositionSnapshot:
     symbol: str
     quantity: Decimal
     market_value: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerOrderEvent:
+    event_key: BrokerEventKey
+    intent_id: IntentId
+    occurred_at: dt.datetime
+    event_type: BrokerOrderEventType
+    broker_order_id: BrokerOrderId
+    payload_json: str
