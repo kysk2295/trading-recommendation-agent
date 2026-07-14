@@ -16,7 +16,7 @@ from trading_agent.bar_archive import (
 )
 from trading_agent.engine import RecommendationEngine
 from trading_agent.kis_daily import fetch_daily_context
-from trading_agent.kis_live import completed_regular_minutes, session_is_fresh
+from trading_agent.kis_live import completed_regular_minutes, regular_session_bounds, session_is_fresh
 from trading_agent.kis_provider import (
     KisRankedStock,
     fetch_latest_regular_session,
@@ -165,6 +165,44 @@ class KisPaperScanner:
             bars = ranking_to_bar_inputs(stock, completed, daily)
             _ = self.engine.advance_forward(bars)
             return _observation(stock, len(bars), "추적 추천 상태 갱신")
+        except (KisApiError, httpx2.HTTPError, ValueError) as error:
+            message = " ".join(str(error).splitlines())
+            return _observation(stock, 0, f"오류: {message}")
+
+    def catch_up_after_close(
+        self,
+        stock: KisRankedStock,
+        max_pages: int,
+        session_date: dt.date,
+        now: dt.datetime | None = None,
+    ) -> ScanObservation:
+        observed_at = dt.datetime.now().astimezone() if now is None else now
+        bounds = regular_session_bounds(session_date)
+        if bounds is None or observed_at.astimezone(bounds[0].tzinfo).date() != session_date or observed_at < bounds[1]:
+            return _observation(stock, 0, "오류: 장마감 catch-up 허용 시각 아님")
+        try:
+            minutes = fetch_latest_regular_session(
+                self.client,
+                self.session.credentials,
+                self.session.access_token,
+                stock,
+                max_pages=max_pages,
+            )
+            completed = tuple(
+                bar for bar in minutes if bounds[0] <= bar.exchange_timestamp.astimezone(bounds[0].tzinfo) < bounds[1]
+            )
+            _ = archive_candidate_bars(
+                self.engine.store.path,
+                CandidateBarBatch(stock.exchange, stock.symbol, observed_at, completed),
+            )
+            expected_last = bounds[1] - dt.timedelta(minutes=1)
+            if not completed or completed[-1].exchange_timestamp.astimezone(bounds[0].tzinfo) != expected_last:
+                return _observation(stock, len(completed), "오류: 장마감 마지막 완료 봉 없음")
+            bars = ranking_to_bar_inputs(stock, completed)
+            if not self.engine.store.open_recommendations(stock.symbol):
+                return _observation(stock, len(bars), "장마감 마지막 봉 보존")
+            _ = self.engine.advance_forward(bars)
+            return _observation(stock, len(bars), "장마감 마지막 봉 보존·열린 추천 갱신")
         except (KisApiError, httpx2.HTTPError, ValueError) as error:
             message = " ".join(str(error).splitlines())
             return _observation(stock, 0, f"오류: {message}")

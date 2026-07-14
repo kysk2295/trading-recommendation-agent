@@ -35,3 +35,12 @@ def test_retry_audit_writes_cycle_summary_and_safe_event_details(
     assert tuple(row["symbol"] for row in details) == ("GOOD", "BAD")
     assert tuple(row["outcome"] for row in details) == ("recovered", "failed")
     assert all("authorization" not in value for row in details for value in row.values())
+
+
+def test_retry_audit_can_isolate_eod_reads_from_regular_watch_cycles(tmp_path: Path) -> None:
+    started_at = dt.datetime(2026, 7, 14, 16, 1, tzinfo=ZoneInfo("America/New_York"))
+
+    append_kis_retry_audit(tmp_path, started_at, (), artifact_prefix="eod_kis_read_retry")
+
+    assert (tmp_path / "eod_kis_read_retry_cycles.csv").is_file()
+    assert not (tmp_path / "kis_read_retry_cycles.csv").exists()

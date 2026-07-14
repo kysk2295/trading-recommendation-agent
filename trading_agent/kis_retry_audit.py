@@ -11,11 +11,12 @@ def append_kis_retry_audit(
     output: Path,
     started_at: dt.datetime,
     events: RetryEvents,
+    artifact_prefix: str = "kis_read_retry",
 ) -> None:
     output.mkdir(parents=True, exist_ok=True)
     recovered = sum(event.outcome == "recovered" for event in events)
     _append_row(
-        output / "kis_read_retry_cycles.csv",
+        output / f"{artifact_prefix}_cycles.csv",
         (
             "started_at",
             "retry_count",
@@ -31,7 +32,7 @@ def append_kis_retry_audit(
     )
     for event in events:
         _append_row(
-            output / "kis_read_retry_events.csv",
+            output / f"{artifact_prefix}_events.csv",
             (
                 "started_at",
                 "endpoint",

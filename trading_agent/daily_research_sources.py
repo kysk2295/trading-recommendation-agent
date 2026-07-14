@@ -28,6 +28,11 @@ OPTIONAL_ARTIFACTS: Final = (
     "kis_read_retry_cycles.csv",
     "kis_read_retry_events.csv",
     "candidate_input_cycles.csv",
+    "eod_catchup_cycles.csv",
+    "kis_eod_catchup_summary.csv",
+    "kis_eod_catchup_observations.csv",
+    "eod_kis_read_retry_cycles.csv",
+    "eod_kis_read_retry_events.csv",
 )
 
 

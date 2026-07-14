@@ -6,7 +6,6 @@ import datetime as dt
 import subprocess
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -14,9 +13,15 @@ import typer
 from rich import print as rprint
 
 from trading_agent.engine import finalize_due_recommendations
+from trading_agent.kis_eod_watch import EodWaitConfig, eod_catchup_command, wait_for_eod_ready
 from trading_agent.kis_live import (
-    premarket_session_is_open,
     regular_session_is_open,
+)
+from trading_agent.kis_watch_wait import (
+    PremarketWaitConfig,
+    SessionWaitConfig,
+    collect_premarket_until_regular_open,
+    wait_for_session_open,
 )
 from trading_agent.replay import write_report
 from trading_agent.scan_cycle import (
@@ -27,64 +32,6 @@ from trading_agent.scan_cycle import (
 )
 from trading_agent.store import PaperStore
 from trading_agent.strategy_factory import StrategyMode
-
-
-@dataclass(frozen=True, slots=True)
-class SessionWaitConfig:
-    max_wait: dt.timedelta
-    poll_seconds: float
-
-
-@dataclass(frozen=True, slots=True)
-class PremarketWaitConfig:
-    max_wait: dt.timedelta
-    closed_poll_seconds: float
-    collection_interval_seconds: float
-
-
-@dataclass(frozen=True, slots=True)
-class PremarketWaitResult:
-    opened_at: dt.datetime | None
-    exit_codes: tuple[int, ...]
-
-
-def wait_for_session_open(
-    clock: Callable[[], dt.datetime],
-    sleeper: Callable[[float], None],
-    config: SessionWaitConfig,
-) -> dt.datetime | None:
-    observed_at = clock()
-    deadline = observed_at + config.max_wait
-    while not regular_session_is_open(observed_at):
-        remaining = (deadline - observed_at).total_seconds()
-        if remaining <= 0.0:
-            return None
-        sleeper(min(config.poll_seconds, remaining))
-        observed_at = clock()
-    return observed_at
-
-
-def collect_premarket_until_regular_open(
-    clock: Callable[[], dt.datetime],
-    sleeper: Callable[[float], None],
-    operation: Callable[[], int],
-    config: PremarketWaitConfig,
-) -> PremarketWaitResult:
-    observed_at = clock()
-    deadline = observed_at + config.max_wait
-    exit_codes: list[int] = []
-    while not regular_session_is_open(observed_at):
-        remaining = (deadline - observed_at).total_seconds()
-        if remaining <= 0.0:
-            return PremarketWaitResult(None, tuple(exit_codes))
-        if premarket_session_is_open(observed_at):
-            exit_codes.append(operation())
-            delay = config.collection_interval_seconds
-        else:
-            delay = config.closed_poll_seconds
-        sleeper(min(delay, remaining))
-        observed_at = clock()
-    return PremarketWaitResult(observed_at, tuple(exit_codes))
 
 
 def finalize_session_output(output: Path, observed_at: dt.datetime) -> int:
@@ -259,6 +206,23 @@ def main(
             lambda: regular_session_is_open(dt.datetime.now(ZoneInfo("America/New_York"))),
         ),
     )
+    session_date = checked_at.astimezone(ZoneInfo("America/New_York")).date()
+    eod_ready_at = wait_for_eod_ready(
+        lambda: dt.datetime.now(ZoneInfo("America/New_York")),
+        time.sleep,
+        session_date,
+        EodWaitConfig(
+            max_wait=dt.timedelta(minutes=3),
+            poll_seconds=15.0,
+            settlement_delay=dt.timedelta(seconds=65),
+        ),
+    )
+    eod_exit_code = None
+    if eod_ready_at is not None:
+        eod_exit_code = _run_and_audit(
+            eod_catchup_command(Path(__file__).parent, output, strategy, max_pages),
+            output / "eod_catchup_cycles.csv",
+        )
     ended_at = dt.datetime.now(ZoneInfo("America/New_York"))
     finalized = finalize_session_output(output, ended_at)
     metrics_exit_code = run_session_metrics(
@@ -267,13 +231,15 @@ def main(
         strategy=strategy,
     )
     failures = sum(code != 0 for code in (*premarket_exit_codes, *exit_codes))
+    failures += int(eod_exit_code not in (None, 0))
     failures += int(metrics_exit_code not in (None, 0))
     metrics_status = "skipped" if metrics_exit_code is None else str(metrics_exit_code)
+    eod_status = "skipped" if eod_exit_code is None else str(eod_exit_code)
     rprint(
         f"[green]감시 종료[/green] premarket_cycles={len(premarket_exit_codes)}, "
         + f"regular_cycles={len(exit_codes)}, "
         + f"failures={failures}, time_exits={finalized}, "
-        + f"metrics_exit={metrics_status}, {output}"
+        + f"eod_exit={eod_status}, metrics_exit={metrics_status}, {output}"
     )
     if failures:
         raise typer.Exit(code=1)

@@ -78,9 +78,7 @@ def test_watch_finalizes_open_recommendations_after_the_session_close(
 ) -> None:
     database = tmp_path / "paper_recommendations.sqlite3"
     store = PaperStore(database)
-    created_at = dt.datetime(
-        2026, 7, 10, 15, 50, tzinfo=ZoneInfo("America/New_York")
-    )
+    created_at = dt.datetime(2026, 7, 10, 15, 50, tzinfo=ZoneInfo("America/New_York"))
     store.save(
         Recommendation(
             "close-1",
@@ -96,9 +94,7 @@ def test_watch_finalizes_open_recommendations_after_the_session_close(
         )
     )
     store.set_last_processed_bar("CLOSE", created_at, 10.3)
-    observed_at = dt.datetime(
-        2026, 7, 10, 16, 0, tzinfo=ZoneInfo("America/New_York")
-    )
+    observed_at = dt.datetime(2026, 7, 10, 16, 0, tzinfo=ZoneInfo("America/New_York"))
 
     finalized = run_kis_paper_watch.finalize_session_output(
         tmp_path,
@@ -107,9 +103,7 @@ def test_watch_finalizes_open_recommendations_after_the_session_close(
 
     assert finalized == 1
     assert store.recommendations()[0].state is RecommendationState.TIME_EXIT
-    assert "장 마감 종료" in (tmp_path / "recommendations_ko.md").read_text(
-        encoding="utf-8"
-    )
+    assert "장 마감 종료" in (tmp_path / "recommendations_ko.md").read_text(encoding="utf-8")
 
 
 def test_ranking_snapshot_appends_raw_sources_and_selection(tmp_path: Path) -> None:

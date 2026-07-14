@@ -156,6 +156,10 @@ NASDAQ·NYSE·AMEX 상승률/거래량 랭킹
 
 정규장에서 최초 선택된 종목은 `tracked_candidates`에 뉴욕 거래일별로 보존한다. 이후 현재 상위 후보에서 빠진 종목은 `follow()` 경로로 분봉을 계속 저장한다. 열린 추천이 있으면 새 완료 봉으로 상태만 갱신하고, 열린 추천이 없으면 ORB 조건이 보여도 신규 추천을 생성하지 않는다. 따라서 현재 스캐너 선정과 과거 선정 종목 추적이 분리된다.
 
+정규장 390번째 scan은 실행시각에 따라 15:58까지만 완료된 상태로 끝날 수 있다. watcher는 세션 종료가 3분 이내일 때만 공식 close 65초 뒤까지 제한적으로 기다리고, 별도 EOD child를 단 한 번 실행한다. child는 날짜로 고정한 `tracked_candidates`를 읽어 종목별 최신 한 페이지를 순차 요청하고, 정확한 `close - 1분` 봉이 있는 경우에만 성공한다. 분봉은 실제 EOD 관찰시각으로 append-only 보존되어 이전 신호 입력에는 사용할 수 없고, `advance_forward()`로 열린 추천 상태만 갱신한다. 신규 scanner 신호와 `candidate_input_snapshots` 생성은 금지된다.
+
+EOD child가 끝난 뒤에만 parent가 time-exit, paper metrics, 일일 연구 원장을 순차 실행한다. EOD 종목 실패는 별도 종료코드·요약·종목별 CSV·retry 감사로 남는다. 정규장 retry cycle 수와 섞이면 일일 cycle 대조를 훼손하므로 EOD 재시도는 `eod_kis_read_retry_*`로 분리한다.
+
 랭킹 CSV는 종목 키의 선택 여부 `selected`와 실제 필터 입력 행 `selection_input`을 분리한다. 구형 행은 실제 입력 출처를 추정하지 않고 `selection_input`을 빈 값으로 migration한다. 랭킹 응답이 끝난 뒤 관찰 시각을 기록하며 forward 분석은 종목·거래일 최초 `selection_input=True`만 사용한다.
 
 `run_scanner_forward_metrics.py`는 관찰 뒤 다음 완전한 1분봉 시가를 진입 proxy로 사용한다. 공식 close 직전 봉까지 1분 간격이 모두 이어진 경로만 5/15/30분 수익, EOD, MFE, MAE와 편도 5/10/20bp 결과에 포함한다. 갭·거래대금 4×4 인접값 격자와 bootstrap CI를 만들지만 KIS 상위 랭킹 표본의 forward 진단일 뿐 전략 백테스트로 승격하지 않는다.

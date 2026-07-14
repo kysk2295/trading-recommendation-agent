@@ -170,12 +170,27 @@ def tracked_candidates(
 ) -> tuple[KisRankedStock, ...]:
     if not path.is_file() or not regular_session_is_open(observed_at):
         return ()
-    session_date = observed_at.astimezone(NEW_YORK).date().isoformat()
+    return tracked_candidates_for_session(
+        path,
+        observed_at.astimezone(NEW_YORK).date(),
+    )
+
+
+def tracked_candidates_for_session(
+    path: Path,
+    session_date: dt.date,
+) -> tuple[KisRankedStock, ...]:
+    if not path.is_file():
+        return ()
     with sqlite3.connect(path) as connection:
-        _ = connection.execute(CREATE_TRACKED_CANDIDATES)
+        present: tuple[int] | None = connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tracked_candidates'"
+        ).fetchone()
+        if present is None or present[0] == 0:
+            return ()
         rows: list[TrackedCandidateRow] = connection.execute(
             "SELECT * FROM tracked_candidates WHERE session_date = ? ORDER BY first_observed_at, exchange, symbol",
-            (session_date,),
+            (session_date.isoformat(),),
         ).fetchall()
     return tuple(
         KisRankedStock(
