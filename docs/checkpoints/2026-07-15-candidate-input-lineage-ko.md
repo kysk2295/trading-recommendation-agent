@@ -34,5 +34,10 @@
 - watcher 부모·Python 프로세스 RSS 합계는 약 38MiB로 10GiB 안전 한도보다 충분히 낮았다.
 - 이 기능 도입 전 cycle에는 입력 snapshot이 없으므로 해당 과거 구간을 현재 값으로 보간하지 않는다.
 - cycle 감사 기능도 장중 도입 전 행을 소급 생성하지 않으므로 이 거래일은 계속 비교 불가다.
+- cycle 감사 반영 뒤 기존 01:26 KST watcher는 `selected_count=10`, `context_count=9`, `scan_completed=True`를 첫 행으로 저장했다.
+- 같은 관찰시각 이후 SQLite에 실제 추가된 후보 입력도 9행으로 cycle 합계와 일치했다.
+- 누락 1종목 BTAI는 완료 일봉 GET이 두 번 모두 500이어서 입력 snapshot을 만들지 않았고, HODO 추적 분봉도 두 번 모두 500이었다.
+- KIS 읽기 재시도 7건 중 5건만 복구되고 2건이 최종 실패해 watch cycle 종료코드는 1을 유지했다.
+- 따라서 `scan_completed=True`는 runner가 끝까지 감사행을 썼다는 뜻일 뿐 데이터 성공을 뜻하지 않으며, 기존 watch 실패 게이트와 함께 해당 cycle을 부적격으로 처리한다.
 
 이 결과는 Paper 전진검증 데이터 계보이며 확정 수익 또는 전략 우위의 증거가 아니다. 다음 단계는 이 snapshot과 최초 관찰 분봉을 사용한 독립 challenger 장마감 replay다.
