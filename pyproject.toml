@@ -49,6 +49,8 @@ include = [
   "run_alpaca_staged_archive.py",
   "run_alpaca_pilot_orb.py",
   "run_alpaca_pilot_scanner.py",
+  "run_alpaca_paper_bootstrap.py",
+  "run_alpaca_paper_preflight.py",
   "trading_agent/alpaca_archive.py",
   "trading_agent/alpaca_daily_cache.py",
   "trading_agent/alpaca_daily_store.py",

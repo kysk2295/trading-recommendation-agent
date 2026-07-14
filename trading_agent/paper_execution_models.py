@@ -80,6 +80,13 @@ class PaperPositionSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class PaperBrokerState:
+    account: PaperAccountSnapshot
+    open_orders: tuple[PaperOrderSnapshot, ...]
+    positions: tuple[PaperPositionSnapshot, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class BrokerOrderEvent:
     event_key: BrokerEventKey
     intent_id: IntentId
