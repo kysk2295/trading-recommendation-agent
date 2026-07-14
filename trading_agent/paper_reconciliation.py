@@ -32,6 +32,20 @@ class ReconciliationResult:
 def reconcile_paper_state(
     snapshot: PaperReconciliationSnapshot,
 ) -> ReconciliationResult:
+    return _reconcile_paper_state(snapshot, reject_open_positions=True)
+
+
+def reconcile_operational_paper_state(
+    snapshot: PaperReconciliationSnapshot,
+) -> ReconciliationResult:
+    return _reconcile_paper_state(snapshot, reject_open_positions=False)
+
+
+def _reconcile_paper_state(
+    snapshot: PaperReconciliationSnapshot,
+    *,
+    reject_open_positions: bool,
+) -> ReconciliationResult:
     reasons: list[str] = []
     if snapshot.account.trading_blocked:
         reasons.append("Alpaca paper 계좌가 거래 차단 상태입니다")
@@ -52,6 +66,10 @@ def reconcile_paper_state(
         if intent is None:
             reasons.append(f"알 수 없는 paper 주문: {order.client_order_id}")
             continue
+        if order.client_order_id not in snapshot.unresolved_intent_ids:
+            reasons.append(
+                f"종료된 local intent에 열린 broker 주문이 있습니다: {order.client_order_id}"
+            )
         mismatches = _order_mismatches(intent, order)
         if mismatches:
             reasons.append(
@@ -61,9 +79,12 @@ def reconcile_paper_state(
     for intent_id in sorted(snapshot.unresolved_intent_ids):
         if intent_id not in open_order_ids:
             reasons.append(f"미해결 local intent의 broker 주문이 없습니다: {intent_id}")
-    for position in snapshot.positions:
-        if position.quantity != 0:
-            reasons.append(f"열린 paper 포지션: {position.symbol} ({position.quantity})")
+    if reject_open_positions:
+        for position in snapshot.positions:
+            if position.quantity != 0:
+                reasons.append(
+                    f"열린 paper 포지션: {position.symbol} ({position.quantity})"
+                )
 
     ordered_reasons = tuple(sorted(reasons))
     return ReconciliationResult(ready=not ordered_reasons, reasons=ordered_reasons)

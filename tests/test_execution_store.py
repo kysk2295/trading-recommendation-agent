@@ -257,3 +257,23 @@ def test_terminal_broker_event_resolves_local_intent(tmp_path: Path) -> None:
     # Then
     assert unresolved_before == frozenset({_intent().intent_id})
     assert store.unresolved_intent_ids() == frozenset()
+    assert store.reconciliation_ledger().filled_intent_ids == frozenset(
+        {_intent().intent_id}
+    )
+
+
+def test_reconciliation_ledger_is_read_as_one_complete_snapshot(
+    tmp_path: Path,
+) -> None:
+    store = ExecutionStore(tmp_path / "execution.sqlite3")
+    fingerprint = AccountFingerprint("a" * 64)
+    with store.writer() as writer:
+        _ = writer.bind_account(fingerprint, _intent().created_at)
+        _ = writer.save_intent(_intent(), quantity=259)
+
+    ledger = store.reconciliation_ledger()
+
+    assert ledger.account_fingerprint == fingerprint
+    assert ledger.intents[0].intent_id == _intent().intent_id
+    assert ledger.unresolved_intent_ids == frozenset({_intent().intent_id})
+    assert ledger.filled_intent_ids == frozenset()

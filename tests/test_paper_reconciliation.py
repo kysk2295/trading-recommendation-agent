@@ -19,6 +19,7 @@ from trading_agent.paper_execution_models import (
 )
 from trading_agent.paper_reconciliation import (
     PaperReconciliationSnapshot,
+    reconcile_operational_paper_state,
     reconcile_paper_state,
 )
 
@@ -35,6 +36,9 @@ def _account(
         observed_at=dt.datetime(2026, 7, 14, 13, 25, tzinfo=dt.UTC),
         status="ACTIVE",
         trading_blocked=blocked,
+        equity=Decimal("30000"),
+        last_equity=Decimal("30000"),
+        buying_power=Decimal("12000"),
         account_fingerprint=fingerprint,
     )
 
@@ -135,6 +139,20 @@ def test_exact_known_open_order_is_ready() -> None:
     assert result.ready is True
 
 
+def test_open_order_for_a_locally_terminal_intent_is_blocked() -> None:
+    intent = _stored_intent()
+    snapshot = _snapshot(
+        orders=(_order(),),
+        intents=(intent,),
+        unresolved=frozenset(),
+    )
+
+    result = reconcile_operational_paper_state(snapshot)
+
+    assert result.ready is False
+    assert any("종료된 local intent" in reason for reason in result.reasons)
+
+
 @pytest.mark.parametrize(
     "changed_order",
     (
@@ -201,3 +219,14 @@ def test_blocked_or_nonactive_account_blocks_readiness() -> None:
     assert "거래 차단" in blocked_result.reasons[0]
     assert inactive_result.ready is False
     assert "ACTIVE" in inactive_result.reasons[0]
+
+
+def test_operational_reconciliation_delegates_position_join_to_portfolio_builder() -> None:
+    position = PaperPositionSnapshot("AAA", Decimal("259"), Decimal("2600"))
+    snapshot = _snapshot(positions=(position,), intents=(_stored_intent(),))
+
+    preflight = reconcile_paper_state(snapshot)
+    operational = reconcile_operational_paper_state(snapshot)
+
+    assert preflight.ready is False
+    assert operational.ready is True

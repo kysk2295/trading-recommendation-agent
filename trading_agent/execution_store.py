@@ -9,6 +9,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Final, final, override
 
+from trading_agent.execution_ledger_reader import (
+    ReconciliationLedger,
+    read_reconciliation_ledger,
+)
 from trading_agent.execution_schema import (
     CREATE_SCHEMA,
     SCHEMA_VERSION,
@@ -249,6 +253,9 @@ class ExecutionStore:
                 (intent_id,),
             ).fetchall()
         return tuple(stored_broker_event(row) for row in rows)
+
+    def reconciliation_ledger(self) -> ReconciliationLedger:
+        return read_reconciliation_ledger(self.path)
 
     def _reader_connection(self) -> sqlite3.Connection:
         connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
