@@ -12,6 +12,8 @@ from zoneinfo import ZoneInfo
 import httpx2
 from pydantic import TypeAdapter
 
+from scr_backtest.kis_http import get_with_server_retry
+
 
 class KisMinuteRow(TypedDict):
     xymd: str
@@ -201,7 +203,8 @@ def fetch_minute_page(
     access_token: str,
     request: KisMinuteRequest,
 ) -> tuple[KisMinuteBar, ...]:
-    response = client.get(
+    response = get_with_server_retry(
+        client,
         "/uapi/overseas-price/v1/quotations/inquire-time-itemchartprice",
         params={
             "AUTH": "",

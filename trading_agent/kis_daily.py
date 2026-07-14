@@ -8,6 +8,7 @@ from typing import Final, NotRequired, TypedDict
 import httpx2
 from pydantic import TypeAdapter
 
+from scr_backtest.kis_http import get_with_server_retry
 from scr_backtest.kis_intraday import KisApiError, KisCredentials
 from trading_agent.kis_auth import quote_headers
 
@@ -42,7 +43,8 @@ def fetch_daily_context(
     symbol: str,
     session_date: dt.date,
 ) -> KisDailyContext:
-    response = client.get(
+    response = get_with_server_retry(
+        client,
         "/uapi/overseas-price/v1/quotations/dailyprice",
         params={
             "AUTH": "",

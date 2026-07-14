@@ -12,6 +12,7 @@ from typing import Final, assert_never
 import httpx2
 from pydantic import BaseModel, ConfigDict, NonNegativeInt, PositiveFloat
 
+from scr_backtest.kis_http import get_with_server_retry
 from scr_backtest.kis_intraday import KisApiError, KisSession
 from trading_agent.kis_auth import quote_headers
 from trading_agent.kis_live import regular_session_is_open
@@ -249,7 +250,8 @@ def _fetch_price_detail(
     session: KisSession,
     stock: KisRankedStock,
 ) -> KisPriceDetailOutput:
-    response = client.get(
+    response = get_with_server_retry(
+        client,
         PRICE_DETAIL_PATH,
         params={"AUTH": "", "EXCD": stock.exchange, "SYMB": stock.symbol},
         headers=quote_headers(

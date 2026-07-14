@@ -96,7 +96,7 @@ def test_capture_collects_all_risk_eligible_candidates_and_persists_gaps(
     assert tuple(row["status"] for row in rows) == ("ok", "ok")
 
 
-def test_capture_reuses_same_session_successes_and_retries_only_failures(
+def test_capture_reuses_success_after_one_inline_server_retry(
     tmp_path: Path,
 ) -> None:
     observed_at = dt.datetime(
@@ -177,9 +177,9 @@ def test_capture_reuses_same_session_successes_and_retries_only_failures(
     assert first.reused_success_count == 0
     assert first.attempted_count == 2
     assert second.eligible_count == 3
-    assert second.reused_success_count == 1
-    assert second.attempted_count == 2
-    assert second.new_success_count == 2
+    assert second.reused_success_count == 2
+    assert second.attempted_count == 1
+    assert second.new_success_count == 1
     assert second.success_count == 3
     assert second.failure_count == 0
     with (tmp_path / "kis_opening_gap_snapshots.csv").open(
@@ -189,7 +189,6 @@ def test_capture_reuses_same_session_successes_and_retries_only_failures(
         snapshots = tuple(csv.DictReader(csv_handle))
     assert tuple((row["symbol"], row["status"]) for row in snapshots) == (
         ("UP", "ok"),
-        ("RETRY", "error"),
         ("RETRY", "ok"),
         ("NEW", "ok"),
     )
@@ -206,7 +205,7 @@ def test_capture_reuses_same_session_successes_and_retries_only_failures(
         "success_count",
         "failure_count",
     ]
-    assert tuple(row["success_count"] for row in cycles) == ("1", "3")
+    assert tuple(row["success_count"] for row in cycles) == ("2", "3")
     with (tmp_path / "kis_opening_gap_reuse_cycles.csv").open(
         encoding="utf-8",
         newline="",
@@ -214,10 +213,10 @@ def test_capture_reuses_same_session_successes_and_retries_only_failures(
         reuse_cycles = tuple(csv.DictReader(csv_handle))
     assert tuple(row["reused_success_count"] for row in reuse_cycles) == (
         "0",
-        "1",
+        "2",
     )
-    assert tuple(row["attempted_count"] for row in reuse_cycles) == ("2", "2")
-    assert tuple(row["new_success_count"] for row in reuse_cycles) == ("1", "2")
+    assert tuple(row["attempted_count"] for row in reuse_cycles) == ("2", "1")
+    assert tuple(row["new_success_count"] for row in reuse_cycles) == ("2", "1")
 
 
 def test_capture_records_market_closed_without_requesting_stale_open(

@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 import httpx2
 from pydantic import TypeAdapter
 
+from scr_backtest.kis_http import get_with_server_retry
 from scr_backtest.kis_intraday import (
     KisApiError,
     KisCredentials,
@@ -214,7 +215,8 @@ def _fetch_ranking(
     params: dict[str, str],
     transaction_id: str,
 ) -> tuple[KisRankedStock, ...]:
-    response = client.get(
+    response = get_with_server_retry(
+        client,
         path,
         params=params,
         headers=quote_headers(credentials, access_token, transaction_id),
