@@ -22,6 +22,10 @@ from trading_agent.paper_execution_models import (
     PaperBrokerState,
     PaperOrderSnapshot,
 )
+from trading_agent.paper_mutation_recovery_lookups import (
+    paper_mutation_lookup_reasons,
+    read_paper_mutation_recovery_lookups,
+)
 from trading_agent.paper_protective_oco_store import (
     protective_oco_snapshot_matches_plan,
 )
@@ -42,6 +46,10 @@ from trading_agent.paper_stream_recovery_snapshot import (
 RECOVERY_ORDER_LOOKBACK = dt.timedelta(days=7)
 
 
+def _utc_now() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
+
+
 class PaperStreamRecoveryIncompleteError(RuntimeError):
     __slots__ = ("reasons",)
 
@@ -55,24 +63,24 @@ class PaperStreamRecoveryIncompleteError(RuntimeError):
 
 
 type PaperRecoveryStateLoader = Callable[
-    [AlpacaPaperCredentials, frozenset[IntentId]],
+    [AlpacaPaperCredentials, ReconciliationLedger],
     PaperRecoveryState,
 ]
 
 
 def read_paper_recovery_state(
     credentials: AlpacaPaperCredentials,
-    unresolved_intent_ids: frozenset[IntentId],
+    ledger: ReconciliationLedger,
 ) -> PaperRecoveryState:
     with create_alpaca_paper_read_client() as http_client:
-        client = AlpacaPaperClient(http_client, credentials)
+        client = AlpacaPaperClient(http_client, credentials, _clock=_utc_now)
         account = client.account()
         open_inventory = client.open_order_inventory()
         open_orders = open_inventory.entry_orders
         open_ids = frozenset(order.client_order_id for order in open_orders)
         targeted: list[PaperOrderSnapshot] = []
         missing: list[str] = []
-        for intent_id in sorted(unresolved_intent_ids - open_ids):
+        for intent_id in sorted(ledger.unresolved_intent_ids - open_ids):
             order = client.order_by_client_id(intent_id)
             if order is None:
                 missing.append(intent_id)
@@ -95,6 +103,11 @@ def read_paper_recovery_state(
             )
         }
         activities = client.fill_activities(account.observed_at - RECOVERY_ORDER_LOOKBACK)
+        mutation_lookups = read_paper_mutation_recovery_lookups(
+            client,
+            ledger,
+            _utc_now,
+        )
         return PaperRecoveryState(
             PaperBrokerState(
                 account,
@@ -106,6 +119,7 @@ def read_paper_recovery_state(
             recent_orders,
             activities,
             tuple(protective_ocos_by_parent.values()),
+            mutation_lookups,
         )
 
 
@@ -159,6 +173,7 @@ def _recovery_reasons(
         if not before.pong_at <= snapshot.observed_at <= after.pong_at
         or after.pong_at - snapshot.observed_at > MAX_RUNTIME_RECEIPT_AGE
     )
+    reasons.extend(paper_mutation_lookup_reasons(before, after, state, ledger))
     reasons.extend(
         f"REST 보호 OCO와 일치하는 immutable 계획이 유일하지 않습니다: {snapshot.take_profit.client_order_id}"
         for snapshot in state.protective_ocos

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from decimal import Decimal
+from typing import assert_never
 
 from trading_agent.alpaca_trade_updates import JsonValue
 from trading_agent.execution_ledger_reader import ReconciliationLedger
@@ -14,6 +15,9 @@ from trading_agent.paper_execution_models import (
     PaperPositionSnapshot,
 )
 from trading_agent.paper_stream_recovery_models import (
+    PaperCancelOrderMutationLookup,
+    PaperMutationRecoveryLookup,
+    PaperProtectiveOcoMutationLookup,
     PaperRecoveryOrderObservation,
     PaperRecoveryOrderSource,
     PaperRecoveryState,
@@ -99,6 +103,7 @@ def recovery_snapshot_json(
             for activity in state.activities
         ],
         "positions": [_position_json(position) for position in state.broker_state.positions],
+        "mutation_lookups": [_mutation_lookup_json(lookup) for lookup in state.mutation_lookups],
         "unresolved_intent_ids": [str(intent_id) for intent_id in sorted(unresolved_intent_ids)],
     }
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
@@ -143,3 +148,54 @@ def _position_json(position: PaperPositionSnapshot) -> dict[str, JsonValue]:
         "quantity": str(position.quantity),
         "market_value": str(position.market_value),
     }
+
+
+def _mutation_lookup_json(
+    lookup: PaperMutationRecoveryLookup,
+) -> dict[str, JsonValue]:
+    match lookup:
+        case PaperProtectiveOcoMutationLookup(
+            mutation_key=mutation_key,
+            observed_at=observed_at,
+            snapshot=snapshot,
+        ):
+            return {
+                "kind": "protective_oco_by_client_id",
+                "mutation_key": mutation_key,
+                "observed_at": observed_at.isoformat(),
+                "take_profit_order": (
+                    None
+                    if snapshot is None
+                    else {
+                        "broker_order_id": snapshot.take_profit.broker_order_id,
+                        "client_order_id": snapshot.take_profit.client_order_id,
+                        "symbol": snapshot.take_profit.symbol,
+                        "status": snapshot.take_profit.status,
+                    }
+                ),
+                "stop_order": (
+                    None
+                    if snapshot is None
+                    else {
+                        "broker_order_id": snapshot.stop_loss.broker_order_id,
+                        "client_order_id": snapshot.stop_loss.client_order_id,
+                        "symbol": snapshot.stop_loss.symbol,
+                        "status": snapshot.stop_loss.status,
+                    }
+                ),
+            }
+        case PaperCancelOrderMutationLookup(
+            mutation_key=mutation_key,
+            observed_at=observed_at,
+            broker_order_id=broker_order_id,
+            order=order,
+        ):
+            return {
+                "kind": "cancel_target_by_broker_id",
+                "mutation_key": mutation_key,
+                "observed_at": observed_at.isoformat(),
+                "broker_order_id": broker_order_id,
+                "order": None if order is None else _order_json(order),
+            }
+        case unreachable:
+            assert_never(unreachable)

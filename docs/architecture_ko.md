@@ -90,16 +90,16 @@ research → historical_pass → paper → approved → suspended
 - binary/text 인증 응답 검증, `trade_updates` 구독 승인, RFC 6455 Ping/Pong과 연결별 무작위 `connection_epoch`
 - 수신한 text/binary frame의 정확한 원문 BLOB·wire kind·수신시각·connection epoch를 먼저 append-only 확정하고, 검증 결과를 별도 disposition으로 기록하는 raw-first 경계
 - 프로세스가 raw commit 뒤 중단되어도 미분류 receipt를 SQLite 수신 순서대로 재처리하며, protocol·계좌·intent·주문 불일치는 정상 event가 아니라 quarantine으로 보존하는 재시작 복구
-- 두 heartbeat 사이 계좌·open 주문·미해결 intent별 주문·최근 7일 주문·포지션을 GET하고 하나의 recovery snapshot으로 확정하는 REST 대사
+- 두 heartbeat 사이 계좌·open 주문·미해결 intent별 주문·최근 7일 주문·포지션을 GET하고, 모호한 OCO는 deterministic client order ID와 `nested=true`, 취소는 exact broker order ID로 직접 조회해 하나의 recovery snapshot으로 확정하는 REST 대사
 - REST aggregate 체결량과 개별 execution event를 분리하고, execution 누락·가격 불일치·수량 회귀·terminal 상태 변경·immutable 충돌을 신규 주문 차단 사유로 보존하는 projection
 - v3 스키마의 table·trigger·unique index 정의와 저장 payload·receipt·recovery hash를 읽을 때도 다시 검증하는 손상 감지
 - 스트림의 두 Pong 사이에 계좌·미체결·포지션·시장시계를 GET하고 단일 SQLite 원장 snapshot과 대사·포트폴리오 집계를 끝내는 활성 세션 전용 승인 경계. 공개 factory에는 provider·clock 주입 인자가 없다.
 
-현재 외부 API 표면은 시장시계·계좌·주문·포지션 조회 GET과 주문 스트림 인증·구독·Ping뿐이다. 주문 POST/PATCH/DELETE 메서드는 존재하지 않는다. REST aggregate가 누락 체결을 발견하면 주문 상태·누적량은 복원하지만 존재하지 않는 개별 execution을 합성하지 않으며, 상세 체결은 불완전 상태로 남긴다. 일반 protocol quarantine은 이후 일관된 REST 복구로 해소할 수 있지만 immutable 충돌은 account activity나 수동 감사 근거 없이 자동 해소하지 않는다.
+현재 production 운영 표면은 시장시계·계좌·주문·포지션 조회 GET과 주문 스트림 인증·구독·Ping뿐이다. 정확한 Paper URL만 받는 별도 mutation adapter에는 OCO POST·개별 주문 DELETE·exact-quantity 포지션 DELETE가 있지만, 운영 세션과 CLI에는 아직 제출 경로를 공개하지 않았다. REST aggregate가 누락 체결을 발견하면 주문 상태·누적량은 복원하지만 존재하지 않는 개별 execution을 합성하지 않으며, 상세 체결은 불완전 상태로 남긴다. 일반 protocol quarantine은 이후 일관된 REST 복구로 해소할 수 있지만 immutable 충돌은 account activity나 수동 감사 근거 없이 자동 해소하지 않는다.
 
-schema v6는 current-epoch 계좌·시장시계·포트폴리오가 5초 경계에서 일치할 때만 cutoff·kill switch·EOD 조치 계획을 저장한다. 계획 단계 우선순위는 `KILL_SWITCH > EOD_FLATTEN > ENTRY_CUTOFF > MONITORING`이다. kill과 EOD는 entry 취소, 보호 OCO 부모 취소, 반대 방향 exact quantity 평탄화 순서를 고정하며 초기 pilot은 정수 주식만 허용한다. MTM 일손익뿐 아니라 열린 포지션의 계획위험을 차감한 보수적 일손익이 -USD 300에 닿아도 kill을 latch한다. 같은 계좌·뉴욕 거래일의 kill plan은 재시작 뒤에도 admission을 차단하고 남은 평탄화 계획을 재생성한다.
+schema v7는 v6의 cutoff·kill switch·EOD 조치 계획에 canonical request SHA-256을 가진 mutation intent와 `ATTEMPTED/ACKNOWLEDGED/REJECTED/AMBIGUOUS/RECOVERED_*` event를 추가한다. `ATTEMPTED` commit 뒤에만 broker adapter를 호출하고, ACK·거부·모호 상태에서는 같은 source identity를 재전송하지 않는다. current-epoch targeted REST가 정확한 주문을 찾으면 recovered acknowledged다. OCO는 exact client-ID 404와 open·최근 목록의 일치 주문 부재가 동시에 성립하고 30초 이상 1일 이하일 때만 recovered absent로 다음 시도를 허용한다. 이는 당일매매 mutation만 자동 재시도하고 오래된 모호 상태는 수동 감사 대상으로 남기는 경계다. targeted 404와 generic 목록이 충돌하거나 부분 평탄화처럼 포지션이 달라졌는데 대응 주문 ID가 없으면 계속 ambiguous다.
 
-단일 운영 세션은 Writer lease를 먼저 잡고 하나의 WSS를 연 뒤 미분류 raw receipt 재처리와 current-epoch REST recovery를 완료한다. 같은 객체의 `ingest_next`, `evaluate_order`, `plan_safety_actions`는 비차단 operation lock으로 직렬화되어 서로 겹칠 수 없다. 각 판단 직전 다시 current-epoch recovery를 append하고 `connection_epoch`, Writer 자체 변경 수와 SQLite `PRAGMA data_version`을 묶은 generation checkpoint를 만든다. 이후 활성 세션의 REST·원장·포트폴리오 평가 전후 값이 다르면 이미 계산된 승인이나 안전계획을 폐기한다. 공개 factory는 credentials와 `ExecutionStore`만 받고 provider·clock·stream·writer 주입을 노출하지 않는다. Alpaca WSS의 Pong은 이벤트 high-water나 replay cursor가 아니므로 이 경계만으로 체결 정정이 완성된 것은 아니다. 실제 보호주문·취소·평탄화 mutation과 모호한 timeout 복구가 검증될 때까지 POST/PATCH/DELETE는 계속 닫아 둔다.
+단일 운영 세션은 Writer lease를 먼저 잡고 하나의 WSS를 연 뒤 미분류 raw receipt 재처리와 current-epoch REST recovery를 완료한다. 같은 객체의 `ingest_next`, `evaluate_order`, `plan_safety_actions`, `recover_mutations`는 비차단 operation lock으로 직렬화되어 서로 겹칠 수 없다. 각 판단 직전 다시 current-epoch recovery를 append하고 `connection_epoch`, Writer 자체 변경 수와 SQLite `PRAGMA data_version`을 묶은 generation checkpoint를 만든다. mutation 복구도 이 checkpoint가 유지될 때만 v7 event를 append한다. Alpaca WSS의 Pong은 이벤트 high-water나 replay cursor가 아니므로 이 경계만으로 체결 정정이 완성된 것은 아니다. 실제 보호주문·취소·평탄화 mutation은 다음 열린 정규장의 최소수량 Paper smoke와 사후 REST 대사 전까지 계속 닫아 둔다.
 
 신규 주문 승인 상태기계는 다음 순서를 고정한다.
 

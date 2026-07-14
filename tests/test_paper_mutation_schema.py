@@ -7,9 +7,7 @@ from trading_agent.execution_database import _schema_through
 from trading_agent.execution_store import ExecutionStore
 
 
-def test_current_ledger_creates_append_only_paper_safety_tables(
-    tmp_path: Path,
-) -> None:
+def test_current_ledger_creates_append_only_mutation_tables(tmp_path: Path) -> None:
     database = tmp_path / "execution.sqlite3"
     with ExecutionStore(database).writer():
         pass
@@ -24,24 +22,22 @@ def test_current_ledger_creates_append_only_paper_safety_tables(
         )
 
     assert version == (7,)
-    assert {"paper_safety_plans", "paper_safety_actions"} <= tables
-    assert "paper_safety_plans_no_update" in triggers
-    assert "paper_safety_actions_no_delete" in triggers
+    assert {"paper_mutation_intents", "paper_mutation_events"} <= tables
+    assert "paper_mutation_intents_no_update" in triggers
+    assert "paper_mutation_events_no_delete" in triggers
 
 
-def test_v5_ledger_migrates_to_append_only_paper_safety_schema(
-    tmp_path: Path,
-) -> None:
+def test_v6_ledger_migrates_to_mutation_schema(tmp_path: Path) -> None:
     database = tmp_path / "execution.sqlite3"
     with sqlite3.connect(database) as connection:
-        connection.executescript(f"{_schema_through(5)}\nPRAGMA user_version = 5;")
+        connection.executescript(f"{_schema_through(6)}\nPRAGMA user_version = 6;")
 
     with ExecutionStore(database).writer():
         pass
 
     with sqlite3.connect(database) as connection:
         version = connection.execute("PRAGMA user_version").fetchone()
-        safety_table = connection.execute("SELECT name FROM sqlite_master WHERE name = 'paper_safety_plans'").fetchone()
+        table = connection.execute("SELECT name FROM sqlite_master WHERE name = 'paper_mutation_intents'").fetchone()
 
     assert version == (7,)
-    assert safety_table == ("paper_safety_plans",)
+    assert table == ("paper_mutation_intents",)

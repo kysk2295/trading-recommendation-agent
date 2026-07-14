@@ -110,7 +110,7 @@ def test_safety_cli_missing_ledger_fails_before_credentials(
     assert not database.exists()
 
 
-def test_safety_cli_migrates_existing_v5_ledger_before_network(
+def test_safety_cli_migrates_existing_v5_ledger_to_current_schema_before_network(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "execution.sqlite3"
@@ -131,4 +131,4 @@ def test_safety_cli_migrates_existing_v5_ledger_before_network(
     with sqlite3.connect(database) as connection:
         version = connection.execute("PRAGMA user_version").fetchone()
     assert code == 0
-    assert version == (6,)
+    assert version == (7,)

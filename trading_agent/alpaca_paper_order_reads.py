@@ -4,6 +4,7 @@ import datetime as dt
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final, assert_never, override
+from urllib.parse import quote
 
 import httpx2
 from pydantic import ValidationError
@@ -21,6 +22,7 @@ from trading_agent.paper_execution_models import (
 )
 from trading_agent.paper_protective_oco_models import (
     PaperOpenOrderInventory,
+    ProtectiveOcoClientOrderId,
     ProtectiveOcoLegKind,
     ProtectiveOcoLegSnapshot,
     ProtectiveOcoOrderType,
@@ -82,14 +84,40 @@ class AlpacaPaperOrderReader:
         if response.status_code == httpx2.codes.NOT_FOUND:
             return None
         require_success(response)
-        try:
-            payload = ORDER_ADAPTER.validate_json(response.content)
-        except ValidationError as error:
-            raise AlpacaApiError(
-                response.status_code,
-                "paper 주문 응답 형식 오류",
-            ) from error
-        return _order_snapshot(payload)
+        return paper_order_snapshot(_parse_order_response(response))
+
+    def order_by_id(
+        self,
+        broker_order_id: BrokerOrderId,
+    ) -> PaperOrderSnapshot | None:
+        response = self.client.get(
+            f"/v2/orders/{quote(broker_order_id, safe='')}",
+            headers=self.headers,
+        )
+        if response.status_code == httpx2.codes.NOT_FOUND:
+            return None
+        require_success(response)
+        return paper_order_snapshot(_parse_order_response(response))
+
+    def protective_oco_by_client_id(
+        self,
+        client_order_id: ProtectiveOcoClientOrderId,
+    ) -> ProtectiveOcoSnapshot | None:
+        response = self.client.get(
+            "/v2/orders:by_client_order_id",
+            params={"client_order_id": client_order_id, "nested": "true"},
+            headers=self.headers,
+        )
+        if response.status_code == httpx2.codes.NOT_FOUND:
+            return None
+        require_success(response)
+        inventory = parse_order_inventory(
+            (_parse_order_response(response),),
+            self.clock(),
+        )
+        if inventory.entry_orders or len(inventory.protective_ocos) != 1:
+            raise PaperOrderStructureIncompleteError
+        return inventory.protective_ocos[0]
 
 
 def parse_order_inventory(
@@ -103,7 +131,7 @@ def parse_order_inventory(
             case "" | "simple":
                 if payload.legs is not None:
                     raise PaperOrderStructureIncompleteError
-                entries.append(_order_snapshot(payload))
+                entries.append(paper_order_snapshot(payload))
             case "oco":
                 protections.append(_protective_snapshot(payload, observed_at))
             case "bracket" | "oto" | "mleg":
@@ -183,13 +211,25 @@ def parse_order_list_payload(
         raise AlpacaApiError(response.status_code, message) from error
 
 
+def _parse_order_response(
+    response: httpx2.Response,
+) -> AlpacaPaperOrderPayload:
+    try:
+        return ORDER_ADAPTER.validate_json(response.content)
+    except ValidationError as error:
+        raise AlpacaApiError(
+            response.status_code,
+            "paper 주문 응답 형식 오류",
+        ) from error
+
+
 def require_success(response: httpx2.Response) -> None:
     if response.is_success:
         return
     raise AlpacaApiError(response.status_code, "Alpaca paper 요청 실패")
 
 
-def _order_snapshot(payload: AlpacaPaperOrderPayload) -> PaperOrderSnapshot:
+def paper_order_snapshot(payload: AlpacaPaperOrderPayload) -> PaperOrderSnapshot:
     return PaperOrderSnapshot(
         broker_order_id=BrokerOrderId(payload.id),
         client_order_id=IntentId(payload.client_order_id),

@@ -13,6 +13,7 @@ from trading_agent.execution_ledger_reader import (
     trade_update_receipt_reasons,
 )
 from trading_agent.execution_store import ExecutionStore
+from trading_agent.paper_mutation_recovery_models import PaperMutationRecoveryResult
 from trading_agent.paper_operating_session import (
     PaperOperatingSessionDependencies as PaperOperatingSessionDependencies,
 )
@@ -47,6 +48,7 @@ __all__ = (
     "open_paper_trade_update_ingestion",
     "plan_current_paper_safety",
     "probe_paper_trade_update_recovery",
+    "recover_current_paper_mutations",
 )
 
 
@@ -56,6 +58,14 @@ def plan_current_paper_safety(
 ) -> PaperSafetyPlanDecision:
     with open_paper_operating_session(credentials, store) as session:
         return session.plan_safety_actions()
+
+
+def recover_current_paper_mutations(
+    credentials: AlpacaPaperCredentials,
+    store: ExecutionStore,
+) -> tuple[PaperMutationRecoveryResult, ...]:
+    with open_paper_operating_session(credentials, store) as session:
+        return session.recover_mutations()
 
 
 class PaperTradeUpdateRecoveryProbeError(RuntimeError):

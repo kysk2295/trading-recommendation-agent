@@ -15,6 +15,7 @@ from trading_agent.alpaca_paper_order_stream import (
     PaperTradeUpdateFrame,
     PaperTradeUpdateWireKind,
 )
+from trading_agent.execution_ledger_reader import ReconciliationLedger
 from trading_agent.paper_execution_models import (
     BrokerOrderId,
     IntentId,
@@ -60,9 +61,7 @@ class TradeUpdateStream:
         self.heartbeat_count += 1
         offset = self.heartbeat_count - 2
         return PaperOrderStreamHeartbeat(
-            connection_epoch=self.epochs[
-                min(self.heartbeat_count - 1, len(self.epochs) - 1)
-            ],
+            connection_epoch=self.epochs[min(self.heartbeat_count - 1, len(self.epochs) - 1)],
             authorized_at=OBSERVED_AT - dt.timedelta(seconds=2),
             subscribed_at=OBSERVED_AT - dt.timedelta(seconds=2),
             pong_at=OBSERVED_AT + dt.timedelta(seconds=offset),
@@ -112,11 +111,9 @@ def recovery_state(
 def state_loader(stream: TradeUpdateStream):
     def load(
         _: AlpacaPaperCredentials,
-        unresolved: frozenset[IntentId],
+        ledger: ReconciliationLedger,
     ) -> PaperRecoveryState:
-        observed_at = OBSERVED_AT + dt.timedelta(
-            seconds=stream.heartbeat_count - 1.5
-        )
-        return recovery_state(unresolved, observed_at)
+        observed_at = OBSERVED_AT + dt.timedelta(seconds=stream.heartbeat_count - 1.5)
+        return recovery_state(ledger.unresolved_intent_ids, observed_at)
 
     return load

@@ -10,9 +10,15 @@ from typing import Final, final
 from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
 from trading_agent.alpaca_paper_order_stream import open_alpaca_paper_order_stream
 from trading_agent.execution_store import ExecutionStore
+from trading_agent.paper_mutation_recovery import (
+    PaperMutationRecovery,
+    PaperMutationRecoveryDependencies,
+)
+from trading_agent.paper_mutation_recovery_models import PaperMutationRecoveryResult
 from trading_agent.paper_operating_session_models import (
     BusyPaperOperatingSessionError,
     InactivePaperOperatingSessionError,
+    PaperMutationRecoveryBarrierError,
     PaperOperatingSession,
     PaperOrderAdmissionRequest,
 )
@@ -101,6 +107,21 @@ class _LivePaperOperatingSession:
             if isinstance(decision, PaperSafetyPlan) and decision.phase is not PaperSafetyPhase.MONITORING:
                 _ = self._owner.writer.save_paper_safety_plan(decision)
             return decision
+
+    def recover_mutations(self) -> tuple[PaperMutationRecoveryResult, ...]:
+        with self._exclusive_operation():
+            checkpoint = self._owner.recovery()
+            barrier_reasons = self._barrier_reasons(checkpoint)
+            if barrier_reasons:
+                raise PaperMutationRecoveryBarrierError(barrier_reasons)
+            return PaperMutationRecovery(
+                PaperMutationRecoveryDependencies(
+                    self._owner.writer,
+                    self._owner.store.paper_mutation_intents,
+                    self._owner.store.paper_mutation_events,
+                    self._owner.store.protective_oco_plans,
+                )
+            ).recover(checkpoint.mutation_recovery)
 
     def _barrier_reasons(
         self,

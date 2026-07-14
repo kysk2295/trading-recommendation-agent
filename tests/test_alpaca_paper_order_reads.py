@@ -15,7 +15,7 @@ from trading_agent.alpaca_paper_client import (
     PaperOrderListTruncatedError,
 )
 from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
-from trading_agent.paper_execution_models import IntentId
+from trading_agent.paper_execution_models import BrokerOrderId, IntentId
 
 
 def _credentials() -> AlpacaPaperCredentials:
@@ -167,6 +167,28 @@ def test_order_lookup_returns_none_for_unknown_client_order_id() -> None:
         result = AlpacaPaperClient(http_client, _credentials()).order_by_client_id(IntentId("missing-intent"))
 
     assert result is None
+
+
+def test_order_lookup_by_broker_id_preserves_terminal_cancel_state() -> None:
+    requests: list[httpx2.Request] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            200,
+            request=request,
+            json={**_order_json(), "status": "canceled"},
+        )
+
+    with httpx2.Client(
+        base_url="https://paper-api.alpaca.markets",
+        transport=httpx2.MockTransport(handle),
+    ) as http_client:
+        order = AlpacaPaperClient(http_client, _credentials()).order_by_id(BrokerOrderId("paper-order-1"))
+
+    assert order is not None
+    assert order.status == "canceled"
+    assert requests[0].url.path == "/v2/orders/paper-order-1"
 
 
 def test_open_order_page_at_the_documented_maximum_fails_closed() -> None:

@@ -13,6 +13,9 @@ from trading_agent.execution_store import (
     ExecutionWriter,
 )
 from trading_agent.paper_execution_models import AccountFingerprint
+from trading_agent.paper_mutation_recovery_models import (
+    PaperMutationRecoverySnapshot,
+)
 from trading_agent.paper_runtime import PaperRuntimeEpochChangedError
 from trading_agent.paper_stream_recovery_runtime import (
     PaperRecoveryStateLoader,
@@ -43,6 +46,7 @@ class PaperRecoveryCheckpoint:
     account_fingerprint: AccountFingerprint
     connection_epoch: str
     ledger_generation: ExecutionLedgerGeneration
+    mutation_recovery: PaperMutationRecoverySnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +55,7 @@ class PaperStreamOwner:
     stream: PaperTradeUpdateStream
     writer: ExecutionWriter
     recovery: Callable[[], PaperRecoveryCheckpoint]
+    store: ExecutionStore
 
 
 @contextmanager
@@ -70,7 +75,7 @@ def open_paper_stream_owner(
                 ledger = store.reconciliation_ledger()
                 recovery_state = dependencies.state_loader(
                     credentials,
-                    ledger.unresolved_intent_ids,
+                    ledger,
                 )
                 after_rest = stream.heartbeat(5.0)
                 recovery = build_paper_stream_recovery_observation(
@@ -88,6 +93,12 @@ def open_paper_stream_owner(
                     recovery.account_fingerprint,
                     recovery.connection_epoch,
                     writer.ledger_generation(),
+                    PaperMutationRecoverySnapshot(
+                        recovery.connection_epoch,
+                        recovery.started_at,
+                        recovery.completed_at,
+                        recovery_state,
+                    ),
                 )
 
             checkpoint = recover()
@@ -103,7 +114,7 @@ def open_paper_stream_owner(
                 recover_after_quarantine,
             )
             try:
-                yield PaperStreamOwner(ingestion, stream, writer, recover)
+                yield PaperStreamOwner(ingestion, stream, writer, recover, store)
             finally:
                 ingestion._close()
 

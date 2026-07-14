@@ -22,7 +22,7 @@ def test_current_ledger_creates_append_only_protective_oco_tables(
             row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'").fetchall()
         )
 
-    assert version == (6,)
+    assert version == (7,)
     assert "protective_oco_plans" in tables
     assert "paper_recovery_protective_oco_legs" in tables
     assert "protective_oco_plans_no_update" in triggers

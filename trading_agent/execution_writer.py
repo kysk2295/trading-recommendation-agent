@@ -30,6 +30,15 @@ from trading_agent.paper_execution_models import (
     BrokerOrderEvent,
     PaperOrderIntent,
 )
+from trading_agent.paper_mutation_ledger_models import (
+    PaperMutationEvent,
+    PaperMutationIntent,
+)
+from trading_agent.paper_mutation_store import (
+    PaperMutationKey,
+    append_paper_mutation_event,
+    save_paper_mutation_intent,
+)
 from trading_agent.paper_protective_exit import ProtectiveOcoExitPlan
 from trading_agent.paper_protective_oco_store import save_protective_oco_plan
 from trading_agent.paper_safety_models import PaperSafetyPlan
@@ -231,6 +240,19 @@ class ExecutionWriter:
         self._require_active()
         self._require_bound_account(plan.account_fingerprint)
         return save_paper_safety_plan(self._connection, plan)
+
+    def save_paper_mutation_intent(self, intent: PaperMutationIntent) -> bool:
+        self._require_active()
+        self._require_bound_account(intent.account_fingerprint)
+        return save_paper_mutation_intent(self._connection, intent)
+
+    def append_paper_mutation_event(
+        self,
+        mutation_key: PaperMutationKey,
+        event: PaperMutationEvent,
+    ) -> bool:
+        self._require_active()
+        return append_paper_mutation_event(self._connection, mutation_key, event)
 
     def ledger_generation(self) -> ExecutionLedgerGeneration:
         self._require_active()

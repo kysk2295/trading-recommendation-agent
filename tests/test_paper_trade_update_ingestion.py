@@ -96,7 +96,7 @@ def test_ingestion_acquires_the_single_writer_before_opening_the_stream(
         _open_paper_trade_update_ingestion(
             AlpacaPaperCredentials("test-key", "test-secret"),
             store,
-            state_loader=lambda _, unresolved: recovery_state(unresolved),
+            state_loader=lambda _, ledger: recovery_state(ledger.unresolved_intent_ids),
             stream_opener=stream_opener,
             _clock=lambda: OBSERVED_AT,
         ),

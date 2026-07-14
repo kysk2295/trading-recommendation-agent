@@ -27,6 +27,12 @@ from trading_agent.paper_execution_models import (
     AccountFingerprint,
     IntentId,
 )
+from trading_agent.paper_mutation_store import (
+    StoredPaperMutationEvent,
+    StoredPaperMutationIntent,
+    read_paper_mutation_events,
+    read_paper_mutation_intents,
+)
 from trading_agent.paper_protective_oco_store import (
     StoredProtectiveOcoPlan,
     read_protective_oco_plans,
@@ -69,6 +75,8 @@ class ReconciliationLedger:
     unrecovered_trade_update_quarantine_keys: frozenset[TradeUpdateReceiptKey] = frozenset()
     protective_oco_plans: tuple[StoredProtectiveOcoPlan, ...] = ()
     paper_safety_plans: tuple[StoredPaperSafetyPlan, ...] = ()
+    paper_mutation_intents: tuple[StoredPaperMutationIntent, ...] = ()
+    paper_mutation_events: tuple[StoredPaperMutationEvent, ...] = ()
 
 
 def read_reconciliation_ledger(path: Path) -> ReconciliationLedger:
@@ -104,6 +112,8 @@ def read_reconciliation_ledger(path: Path) -> ReconciliationLedger:
         account_activities = read_paper_account_activities(connection)
         protective_oco_plans = read_protective_oco_plans(connection)
         paper_safety_plans = read_paper_safety_plans(connection)
+        paper_mutation_intents = read_paper_mutation_intents(connection)
+        paper_mutation_events = read_paper_mutation_events(connection)
     intents = tuple(stored_intent(row) for row in intent_rows)
     broker_events = tuple(stored_broker_event(row) for row in broker_rows)
     trade_updates = tuple(stored_trade_update(row) for row in trade_rows)
@@ -145,6 +155,8 @@ def read_reconciliation_ledger(path: Path) -> ReconciliationLedger:
         ),
         protective_oco_plans=protective_oco_plans,
         paper_safety_plans=paper_safety_plans,
+        paper_mutation_intents=paper_mutation_intents,
+        paper_mutation_events=paper_mutation_events,
     )
 
 

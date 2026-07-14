@@ -7,10 +7,12 @@ from typing import NewType, override
 
 from trading_agent.paper_execution_models import (
     AccountFingerprint,
+    BrokerOrderId,
     PaperBrokerState,
     PaperOrderSnapshot,
     PaperTradeActivity,
 )
+from trading_agent.paper_mutation_keys import PaperMutationKey
 from trading_agent.paper_protective_oco_models import ProtectiveOcoSnapshot
 
 PaperStreamRecoveryKey = NewType("PaperStreamRecoveryKey", str)
@@ -41,12 +43,31 @@ class PaperRecoveryOrderObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class PaperProtectiveOcoMutationLookup:
+    mutation_key: PaperMutationKey
+    observed_at: dt.datetime
+    snapshot: ProtectiveOcoSnapshot | None
+
+
+@dataclass(frozen=True, slots=True)
+class PaperCancelOrderMutationLookup:
+    mutation_key: PaperMutationKey
+    observed_at: dt.datetime
+    broker_order_id: BrokerOrderId
+    order: PaperOrderSnapshot | None
+
+
+type PaperMutationRecoveryLookup = PaperProtectiveOcoMutationLookup | PaperCancelOrderMutationLookup
+
+
+@dataclass(frozen=True, slots=True)
 class PaperRecoveryState:
     broker_state: PaperBrokerState
     targeted_orders: tuple[PaperOrderSnapshot, ...]
     recent_orders: tuple[PaperOrderSnapshot, ...] = ()
     activities: tuple[PaperTradeActivity, ...] = ()
     protective_ocos: tuple[ProtectiveOcoSnapshot, ...] = ()
+    mutation_lookups: tuple[PaperMutationRecoveryLookup, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

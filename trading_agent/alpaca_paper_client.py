@@ -37,6 +37,7 @@ from trading_agent.alpaca_paper_payloads import (
 )
 from trading_agent.paper_execution_models import (
     AccountFingerprint,
+    BrokerOrderId,
     IntentId,
     PaperAccountSnapshot,
     PaperMarketClockSnapshot,
@@ -44,7 +45,11 @@ from trading_agent.paper_execution_models import (
     PaperPositionSnapshot,
     PaperTradeActivity,
 )
-from trading_agent.paper_protective_oco_models import PaperOpenOrderInventory
+from trading_agent.paper_protective_oco_models import (
+    PaperOpenOrderInventory,
+    ProtectiveOcoClientOrderId,
+    ProtectiveOcoSnapshot,
+)
 
 
 @final
@@ -145,6 +150,26 @@ class AlpacaPaperClient:
             self._headers(),
             self._clock,
         ).order_by_client_id(client_order_id)
+
+    def order_by_id(
+        self,
+        broker_order_id: BrokerOrderId,
+    ) -> PaperOrderSnapshot | None:
+        return AlpacaPaperOrderReader(
+            self._client,
+            self._headers(),
+            self._clock,
+        ).order_by_id(broker_order_id)
+
+    def protective_oco_by_client_id(
+        self,
+        client_order_id: ProtectiveOcoClientOrderId,
+    ) -> ProtectiveOcoSnapshot | None:
+        return AlpacaPaperOrderReader(
+            self._client,
+            self._headers(),
+            self._clock,
+        ).protective_oco_by_client_id(client_order_id)
 
     def fill_activities(
         self,

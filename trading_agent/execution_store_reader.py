@@ -24,6 +24,12 @@ from trading_agent.paper_execution_models import (
     AccountFingerprint,
     IntentId,
 )
+from trading_agent.paper_mutation_store import (
+    StoredPaperMutationEvent,
+    StoredPaperMutationIntent,
+    read_paper_mutation_events,
+    read_paper_mutation_intents,
+)
 from trading_agent.paper_protective_oco_store import (
     StoredProtectiveOcoPlan,
     read_protective_oco_plans,
@@ -160,6 +166,18 @@ class ExecutionStoreReader:
             return ()
         with self._reader_connection() as connection:
             return read_paper_safety_plans(connection)
+
+    def paper_mutation_intents(self) -> tuple[StoredPaperMutationIntent, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            return read_paper_mutation_intents(connection)
+
+    def paper_mutation_events(self) -> tuple[StoredPaperMutationEvent, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            return read_paper_mutation_events(connection)
 
     def reconciliation_ledger(self) -> ReconciliationLedger:
         return read_reconciliation_ledger(self.path)

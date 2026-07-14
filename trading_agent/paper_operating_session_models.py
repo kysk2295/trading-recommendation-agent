@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol, override
 
 from trading_agent.paper_execution_models import PaperOrderIntent
+from trading_agent.paper_mutation_recovery_models import PaperMutationRecoveryResult
 from trading_agent.paper_order_gate_models import LatestCompletedBar, PaperOrderGateDecision
 from trading_agent.paper_risk import DEFAULT_PAPER_RISK_CONFIG, PaperRiskConfig
 from trading_agent.paper_safety_models import PaperSafetyPlanDecision
@@ -32,6 +33,8 @@ class PaperOperatingSession(Protocol):
         config: PaperRiskConfig = DEFAULT_PAPER_RISK_CONFIG,
     ) -> PaperSafetyPlanDecision: ...
 
+    def recover_mutations(self) -> tuple[PaperMutationRecoveryResult, ...]: ...
+
 
 class InactivePaperOperatingSessionError(RuntimeError):
     @override
@@ -43,3 +46,15 @@ class BusyPaperOperatingSessionError(RuntimeError):
     @override
     def __str__(self) -> str:
         return "Alpaca Paper 단일 운영 세션에서 다른 연산이 진행 중입니다"
+
+
+class PaperMutationRecoveryBarrierError(RuntimeError):
+    __slots__ = ("reasons",)
+
+    def __init__(self, reasons: tuple[str, ...]) -> None:
+        super().__init__()
+        self.reasons = reasons
+
+    @override
+    def __str__(self) -> str:
+        return "Paper mutation current-epoch 복구 경계가 바뀌었습니다: " + ", ".join(self.reasons)
