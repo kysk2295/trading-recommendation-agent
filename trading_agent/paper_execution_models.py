@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
 from typing import NewType
@@ -9,6 +9,7 @@ from typing import NewType
 IntentId = NewType("IntentId", str)
 BrokerOrderId = NewType("BrokerOrderId", str)
 BrokerEventKey = NewType("BrokerEventKey", str)
+AccountFingerprint = NewType("AccountFingerprint", str)
 
 
 class PaperOrderSide(StrEnum):
@@ -54,6 +55,7 @@ class PaperAccountSnapshot:
     observed_at: dt.datetime
     status: str
     trading_blocked: bool
+    account_fingerprint: AccountFingerprint = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True)

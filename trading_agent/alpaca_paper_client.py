@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 from typing import final
 
 import httpx2
@@ -19,6 +20,7 @@ from trading_agent.alpaca_paper_payloads import (
     AlpacaPaperOrderPayload,
 )
 from trading_agent.paper_execution_models import (
+    AccountFingerprint,
     BrokerOrderId,
     IntentId,
     PaperAccountSnapshot,
@@ -49,6 +51,11 @@ class AlpacaPaperClient:
             observed_at=observed_at,
             status=payload.status,
             trading_blocked=payload.trading_blocked,
+            account_fingerprint=AccountFingerprint(
+                hashlib.sha256(
+                    f"{payload.id}:{payload.account_number}".encode()
+                ).hexdigest()
+            ),
         )
 
     def open_orders(self) -> tuple[PaperOrderSnapshot, ...]:

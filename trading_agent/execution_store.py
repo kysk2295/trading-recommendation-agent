@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import fcntl
 import os
 import sqlite3
@@ -11,6 +12,7 @@ from typing import final, override
 from trading_agent.execution_schema import (
     CREATE_SCHEMA,
     SCHEMA_VERSION,
+    AccountBindingRow,
     BrokerEventRow,
     BrokerEventValues,
     IntentRow,
@@ -22,6 +24,7 @@ from trading_agent.execution_schema import (
     stored_intent,
 )
 from trading_agent.paper_execution_models import (
+    AccountFingerprint,
     BrokerEventKey,
     BrokerOrderEvent,
     IntentId,
@@ -71,6 +74,12 @@ class BrokerEventConflictError(RuntimeError):
         return f"같은 broker event key의 immutable 필드가 다릅니다: {self.event_key}"
 
 
+class AccountBindingConflictError(RuntimeError):
+    @override
+    def __str__(self) -> str:
+        return "실행 원장이 다른 Alpaca paper 계좌에 이미 결합되어 있습니다"
+
+
 @final
 class ExecutionWriter:
     __slots__ = ("_active", "_connection")
@@ -93,6 +102,27 @@ class ExecutionWriter:
         _ = self._connection.execute(
             "INSERT INTO order_intents VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             values,
+        )
+        self._connection.commit()
+        return True
+
+    def bind_account(
+        self,
+        account_fingerprint: AccountFingerprint,
+        bound_at: dt.datetime,
+    ) -> bool:
+        self._require_active()
+        existing: AccountBindingRow | None = self._connection.execute(
+            "SELECT account_fingerprint, bound_at FROM account_binding WHERE binding_id = 1"
+        ).fetchone()
+        if existing is not None:
+            if existing[0] != account_fingerprint:
+                raise AccountBindingConflictError
+            return False
+        _ = self._connection.execute(
+            """INSERT INTO account_binding
+            (binding_id, account_fingerprint, bound_at) VALUES (1, ?, ?)""",
+            (account_fingerprint, bound_at.isoformat()),
         )
         self._connection.commit()
         return True
@@ -163,6 +193,15 @@ class ExecutionStore:
                 "SELECT * FROM order_intents ORDER BY created_at, intent_id"
             ).fetchall()
         return tuple(stored_intent(row) for row in rows)
+
+    def account_fingerprint(self) -> AccountFingerprint | None:
+        if not self.path.is_file():
+            return None
+        with self._reader_connection() as connection:
+            row: tuple[str] | None = connection.execute(
+                "SELECT account_fingerprint FROM account_binding WHERE binding_id = 1"
+            ).fetchone()
+        return None if row is None else AccountFingerprint(row[0])
 
     def broker_events(self, intent_id: IntentId) -> tuple[StoredBrokerEvent, ...]:
         if not self.path.is_file():

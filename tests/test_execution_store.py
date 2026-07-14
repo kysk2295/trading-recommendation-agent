@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from trading_agent.execution_store import (
+    AccountBindingConflictError,
     BrokerEventConflictError,
     ExecutionStore,
     InactiveExecutionWriterError,
@@ -16,6 +17,7 @@ from trading_agent.execution_store import (
     WriterLeaseUnavailableError,
 )
 from trading_agent.paper_execution_models import (
+    AccountFingerprint,
     BrokerEventKey,
     BrokerOrderEvent,
     BrokerOrderEventType,
@@ -213,3 +215,19 @@ def test_database_blocks_direct_update_delete_and_orphan_event(tmp_path: Path) -
                 VALUES ('orphan', 'missing', '2026-07-14T13:36:00+00:00',
                 'accepted', 'paper-order-1', '{}')"""
             )
+
+
+def test_writer_binds_exactly_one_paper_account_fingerprint(tmp_path: Path) -> None:
+    # Given
+    store = ExecutionStore(tmp_path / "execution.sqlite3")
+    first = AccountFingerprint("a" * 64)
+    other = AccountFingerprint("b" * 64)
+    bound_at = dt.datetime(2026, 7, 14, 13, 25, tzinfo=dt.UTC)
+
+    # When / Then
+    with store.writer() as writer:
+        assert writer.bind_account(first, bound_at) is True
+        assert writer.bind_account(first, bound_at) is False
+        with pytest.raises(AccountBindingConflictError, match="다른 Alpaca paper 계좌"):
+            _ = writer.bind_account(other, bound_at)
+    assert store.account_fingerprint() == first

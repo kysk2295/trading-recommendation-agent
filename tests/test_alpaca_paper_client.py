@@ -78,6 +78,7 @@ def test_account_snapshot_discards_private_account_identifiers() -> None:
     # Then
     assert snapshot.status == "ACTIVE"
     assert snapshot.trading_blocked is False
+    assert len(snapshot.account_fingerprint) == 64
     assert "private-account" not in repr(snapshot)
 
 

@@ -11,6 +11,8 @@ from trading_agent.paper_execution_models import PaperOrderSide
 class AlpacaPaperAccountPayload(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    id: str
+    account_number: str
     status: str
     trading_blocked: bool
 

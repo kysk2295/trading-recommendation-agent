@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Final
 
 from trading_agent.paper_execution_models import (
+    AccountFingerprint,
     BrokerEventKey,
     BrokerOrderEvent,
     BrokerOrderEventType,
@@ -16,6 +17,11 @@ from trading_agent.paper_execution_models import (
 
 SCHEMA_VERSION: Final = 1
 CREATE_SCHEMA: Final = """
+CREATE TABLE IF NOT EXISTS account_binding (
+  binding_id INTEGER PRIMARY KEY CHECK(binding_id = 1),
+  account_fingerprint TEXT NOT NULL,
+  bound_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS order_intents (
   intent_id TEXT PRIMARY KEY,
   strategy_id TEXT NOT NULL,
@@ -47,11 +53,22 @@ CREATE TRIGGER IF NOT EXISTS broker_events_no_update
 BEFORE UPDATE ON broker_order_events BEGIN SELECT RAISE(ABORT, 'append-only'); END;
 CREATE TRIGGER IF NOT EXISTS broker_events_no_delete
 BEFORE DELETE ON broker_order_events BEGIN SELECT RAISE(ABORT, 'append-only'); END;
+CREATE TRIGGER IF NOT EXISTS account_binding_no_update
+BEFORE UPDATE ON account_binding BEGIN SELECT RAISE(ABORT, 'append-only'); END;
+CREATE TRIGGER IF NOT EXISTS account_binding_no_delete
+BEFORE DELETE ON account_binding BEGIN SELECT RAISE(ABORT, 'append-only'); END;
 """
 
 type IntentRow = tuple[str, str, str, str, str, str, str, str, str, str, int]
 type BrokerEventRow = tuple[int, str, str, str, str, str, str]
 type BrokerEventValues = tuple[str, str, str, str, str, str]
+type AccountBindingRow = tuple[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class StoredAccountBinding:
+    account_fingerprint: AccountFingerprint
+    bound_at: str
 
 
 @dataclass(frozen=True, slots=True)
