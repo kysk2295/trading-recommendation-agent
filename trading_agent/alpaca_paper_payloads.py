@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Final
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter
+from pydantic import AwareDatetime, BaseModel, ConfigDict, TypeAdapter
 
 from trading_agent.paper_execution_models import PaperOrderSide
 
@@ -15,6 +15,18 @@ class AlpacaPaperAccountPayload(BaseModel):
     account_number: str
     status: str
     trading_blocked: bool
+    equity: Decimal
+    last_equity: Decimal
+    buying_power: Decimal
+
+
+class AlpacaPaperClockPayload(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    timestamp: AwareDatetime
+    is_open: bool
+    next_open: AwareDatetime
+    next_close: AwareDatetime
 
 
 class AlpacaPaperOrderPayload(BaseModel):
@@ -41,6 +53,7 @@ class AlpacaPaperPositionPayload(BaseModel):
 
 
 ACCOUNT_ADAPTER: Final = TypeAdapter(AlpacaPaperAccountPayload)
+CLOCK_ADAPTER: Final = TypeAdapter(AlpacaPaperClockPayload)
 ORDER_ADAPTER: Final = TypeAdapter(AlpacaPaperOrderPayload)
 ORDERS_ADAPTER: Final = TypeAdapter(tuple[AlpacaPaperOrderPayload, ...])
 POSITIONS_ADAPTER: Final = TypeAdapter(tuple[AlpacaPaperPositionPayload, ...])

@@ -78,6 +78,9 @@ def test_account_snapshot_discards_private_account_identifiers() -> None:
                 "account_number": "private-account-number",
                 "status": "ACTIVE",
                 "trading_blocked": False,
+                "equity": "30000.00",
+                "last_equity": "29950.00",
+                "buying_power": "12000.00",
             },
         )
 
@@ -86,15 +89,81 @@ def test_account_snapshot_discards_private_account_identifiers() -> None:
         base_url="https://paper-api.alpaca.markets",
         transport=httpx2.MockTransport(handle),
     ) as http_client:
-        snapshot = AlpacaPaperClient(http_client, _credentials()).account(
-            dt.datetime(2026, 7, 14, 13, 25, tzinfo=dt.UTC)
-        )
+        snapshot = AlpacaPaperClient(
+            http_client,
+            _credentials(),
+            _clock=lambda: dt.datetime(2026, 7, 14, 13, 25, tzinfo=dt.UTC),
+        ).account()
 
     # Then
     assert snapshot.status == "ACTIVE"
     assert snapshot.trading_blocked is False
+    assert snapshot.equity == Decimal("30000.00")
+    assert snapshot.last_equity == Decimal("29950.00")
+    assert snapshot.buying_power == Decimal("12000.00")
     assert len(snapshot.account_fingerprint) == 64
     assert "private-account" not in repr(snapshot)
+
+
+def test_clock_snapshot_preserves_broker_time_and_receipt_time() -> None:
+    # Given
+    observed_at = dt.datetime(2026, 7, 14, 13, 36, 1, tzinfo=dt.UTC)
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        assert request.url.path == "/v2/clock"
+        return httpx2.Response(
+            200,
+            request=request,
+            json={
+                "timestamp": "2026-07-14T09:36:00-04:00",
+                "is_open": True,
+                "next_open": "2026-07-15T09:30:00-04:00",
+                "next_close": "2026-07-14T16:00:00-04:00",
+            },
+        )
+
+    # When
+    with httpx2.Client(
+        base_url="https://paper-api.alpaca.markets",
+        transport=httpx2.MockTransport(handle),
+    ) as http_client:
+        snapshot = AlpacaPaperClient(
+            http_client,
+            _credentials(),
+            _clock=lambda: observed_at,
+        ).clock()
+
+    # Then
+    assert snapshot.observed_at == observed_at
+    assert snapshot.market_timestamp == dt.datetime(
+        2026,
+        7,
+        14,
+        9,
+        36,
+        tzinfo=dt.timezone(dt.timedelta(hours=-4)),
+    )
+    assert snapshot.is_open is True
+
+
+def test_clock_rejects_broker_timestamps_without_timezone_offsets() -> None:
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            request=request,
+            json={
+                "timestamp": "2026-07-14T09:36:00",
+                "is_open": True,
+                "next_open": "2026-07-15T09:30:00",
+                "next_close": "2026-07-14T16:00:00",
+            },
+        )
+
+    with httpx2.Client(
+        base_url="https://paper-api.alpaca.markets",
+        transport=httpx2.MockTransport(handle),
+    ) as http_client, pytest.raises(AlpacaApiError, match="시계 응답 형식"):
+        _ = AlpacaPaperClient(http_client, _credentials()).clock()
 
 
 def test_order_and_position_reads_preserve_fractional_quantities() -> None:
@@ -142,7 +211,7 @@ def test_client_does_not_follow_redirects_with_custom_auth_headers() -> None:
     ) as http_client:
         client = AlpacaPaperClient(http_client, _credentials())
         with pytest.raises(AlpacaApiError):
-            _ = client.account(dt.datetime(2026, 7, 14, tzinfo=dt.UTC))
+            _ = client.account()
     assert len(requests) == 1
 
 
@@ -162,7 +231,7 @@ def test_api_failure_never_renders_credentials() -> None:
     ) as http_client:
         client = AlpacaPaperClient(http_client, _credentials())
         with pytest.raises(AlpacaApiError) as captured:
-            _ = client.account(dt.datetime(2026, 7, 14, tzinfo=dt.UTC))
+            _ = client.account()
 
     # Then
     rendered = str(captured.value)

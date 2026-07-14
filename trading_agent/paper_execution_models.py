@@ -55,7 +55,19 @@ class PaperAccountSnapshot:
     observed_at: dt.datetime
     status: str
     trading_blocked: bool
+    equity: Decimal
+    last_equity: Decimal
+    buying_power: Decimal
     account_fingerprint: AccountFingerprint = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class PaperMarketClockSnapshot:
+    observed_at: dt.datetime
+    market_timestamp: dt.datetime
+    is_open: bool
+    next_open: dt.datetime
+    next_close: dt.datetime
 
 
 @dataclass(frozen=True, slots=True)

@@ -26,6 +26,9 @@ def _account() -> PaperAccountSnapshot:
         observed_at=dt.datetime(2026, 7, 14, 13, 25, tzinfo=dt.UTC),
         status="ACTIVE",
         trading_blocked=False,
+        equity=Decimal("30000"),
+        last_equity=Decimal("30000"),
+        buying_power=Decimal("12000"),
         account_fingerprint=FINGERPRINT,
     )
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+from collections.abc import Callable
 from typing import final, override
 
 import httpx2
@@ -14,6 +15,7 @@ from trading_agent.alpaca_paper_config import (
 )
 from trading_agent.alpaca_paper_payloads import (
     ACCOUNT_ADAPTER,
+    CLOCK_ADAPTER,
     ORDER_ADAPTER,
     ORDERS_ADAPTER,
     POSITIONS_ADAPTER,
@@ -24,6 +26,7 @@ from trading_agent.paper_execution_models import (
     BrokerOrderId,
     IntentId,
     PaperAccountSnapshot,
+    PaperMarketClockSnapshot,
     PaperOrderSnapshot,
     PaperPositionSnapshot,
 )
@@ -35,14 +38,17 @@ class AlpacaPaperClient:
         self,
         client: httpx2.Client,
         credentials: AlpacaPaperCredentials,
+        *,
+        _clock: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
     ) -> None:
         _ = require_paper_trading_url(str(client.base_url).rstrip("/"))
         if client.follow_redirects:
             raise UnsafePaperRedirectPolicyError
         self._client = client
         self._credentials = credentials
+        self._clock = _clock
 
-    def account(self, observed_at: dt.datetime) -> PaperAccountSnapshot:
+    def account(self) -> PaperAccountSnapshot:
         response = self._client.get("/v2/account", headers=self._headers())
         self._raise_for_status(response)
         try:
@@ -50,14 +56,32 @@ class AlpacaPaperClient:
         except ValidationError as error:
             raise AlpacaApiError(response.status_code, "paper 계좌 응답 형식 오류") from error
         return PaperAccountSnapshot(
-            observed_at=observed_at,
+            observed_at=self._clock(),
             status=payload.status,
             trading_blocked=payload.trading_blocked,
+            equity=payload.equity,
+            last_equity=payload.last_equity,
+            buying_power=payload.buying_power,
             account_fingerprint=AccountFingerprint(
                 hashlib.sha256(
                     f"{payload.id}:{payload.account_number}".encode()
                 ).hexdigest()
             ),
+        )
+
+    def clock(self) -> PaperMarketClockSnapshot:
+        response = self._client.get("/v2/clock", headers=self._headers())
+        self._raise_for_status(response)
+        try:
+            payload = CLOCK_ADAPTER.validate_json(response.content)
+        except ValidationError as error:
+            raise AlpacaApiError(response.status_code, "paper 시계 응답 형식 오류") from error
+        return PaperMarketClockSnapshot(
+            observed_at=self._clock(),
+            market_timestamp=payload.timestamp,
+            is_open=payload.is_open,
+            next_open=payload.next_open,
+            next_close=payload.next_close,
         )
 
     def open_orders(self) -> tuple[PaperOrderSnapshot, ...]:
