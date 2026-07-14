@@ -26,6 +26,7 @@ from trading_agent.paper_order_gate_models import (
     PaperOrderGateState,
 )
 from trading_agent.paper_portfolio_builder import build_paper_portfolio
+from trading_agent.paper_protective_exit import missing_protective_oco_reasons
 from trading_agent.paper_reconciliation import (
     PaperReconciliationSnapshot,
     reconcile_operational_paper_state,
@@ -151,6 +152,7 @@ class _LivePaperRuntimeSession:
             reconciliation=reconciliation,
             portfolio=portfolio,
             runtime_reasons=runtime_reasons,
+            protective_exit_reasons=missing_protective_oco_reasons(portfolio),
         )
 
     def evaluate_order(
@@ -177,6 +179,11 @@ class _LivePaperRuntimeSession:
             return BlockedPaperOrderGateDecision(
                 PaperOrderGateState.PORTFOLIO_BLOCKED,
                 readiness.portfolio.reasons,
+            )
+        if readiness.protective_exit_reasons:
+            return BlockedPaperOrderGateDecision(
+                PaperOrderGateState.PORTFOLIO_BLOCKED,
+                readiness.protective_exit_reasons,
             )
         snapshot = PaperOrderGateSnapshot(
             market_clock=readiness.market_clock,

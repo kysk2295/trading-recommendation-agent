@@ -22,10 +22,7 @@ from tests.paper_runtime_fixtures import (
 )
 from trading_agent.alpaca_paper_order_stream import PaperStreamEpoch
 from trading_agent.paper_execution_models import PaperBrokerState
-from trading_agent.paper_order_gate_models import (
-    ApprovedPaperOrderGateDecision,
-    PaperOrderGateState,
-)
+from trading_agent.paper_order_gate_models import PaperOrderGateState
 from trading_agent.paper_risk import PaperRiskConfig
 from trading_agent.paper_runtime import PaperRuntimeEpochChangedError
 from trading_agent.paper_runtime_session import (
@@ -73,7 +70,7 @@ def test_probe_reconciles_rest_and_ledger_between_two_live_heartbeats() -> None:
     assert stream.active is False
 
 
-def test_live_session_aggregates_partial_fill_and_sizes_candidate_internally() -> None:
+def test_live_session_blocks_new_entry_until_partial_fill_has_protective_oco() -> None:
     stream = FakeReadyStream()
     ledger_reader = FakeLedgerReader(stream, ledger(with_existing=True))
     evaluated_at = dt.datetime(2026, 7, 14, 13, 36, 3, tzinfo=dt.UTC)
@@ -93,9 +90,8 @@ def test_live_session_aggregates_partial_fill_and_sizes_candidate_internally() -
         )
         assert stream.active is True
 
-    assert isinstance(decision, ApprovedPaperOrderGateDecision)
-    assert decision.sized_order.quantity == 53
-    assert decision.sized_order.planned_risk <= 75
+    assert decision.state is PaperOrderGateState.PORTFOLIO_BLOCKED
+    assert "보호 OCO" in " ".join(decision.reasons)
     assert stream.active is False
 
 
@@ -242,9 +238,7 @@ def test_live_session_rejects_state_older_than_the_freshness_boundary() -> None:
 
 
 def test_runtime_rejects_rest_state_spanning_two_connection_epochs() -> None:
-    stream = FakeReadyStream(
-        (PaperStreamEpoch("epoch-1"), PaperStreamEpoch("epoch-2"))
-    )
+    stream = FakeReadyStream((PaperStreamEpoch("epoch-1"), PaperStreamEpoch("epoch-2")))
 
     with pytest.raises(PaperRuntimeEpochChangedError, match="연결 세대"):
         _ = _probe_paper_runtime(

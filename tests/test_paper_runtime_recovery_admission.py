@@ -26,7 +26,7 @@ from trading_agent.paper_execution_models import (
     PaperOrderSnapshot,
     PaperPositionSnapshot,
 )
-from trading_agent.paper_order_gate_models import ApprovedPaperOrderGateDecision
+from trading_agent.paper_order_gate_models import PaperOrderGateState
 from trading_agent.paper_runtime_session import (
     _open_paper_runtime_session,
     _probe_paper_runtime,
@@ -66,7 +66,7 @@ def test_runtime_blocks_unclassified_or_unrecovered_raw_receipts(
     assert any("trade update raw receipt" in reason for reason in readiness.reasons)
 
 
-def test_runtime_can_admit_after_rest_terminal_fill_matches_current_position(
+def test_runtime_blocks_new_entry_after_rest_fill_until_protective_oco_exists(
     tmp_path: Path,
 ) -> None:
     store = initialized_store(tmp_path)
@@ -131,6 +131,7 @@ def test_runtime_can_admit_after_rest_terminal_fill_matches_current_position(
         )
 
     state = store.reconciliation_ledger().order_states[0]
-    assert isinstance(decision, ApprovedPaperOrderGateDecision)
+    assert decision.state is PaperOrderGateState.PORTFOLIO_BLOCKED
+    assert "보호 OCO" in " ".join(decision.reasons)
     assert state.execution_detail_complete is False
     assert state.warning_reasons

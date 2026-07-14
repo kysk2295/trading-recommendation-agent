@@ -46,11 +46,13 @@ class PaperRuntimeReadiness:
     reconciliation: ReconciliationResult
     portfolio: PaperPortfolioSnapshot
     runtime_reasons: tuple[str, ...] = ()
+    protective_exit_reasons: tuple[str, ...] = ()
 
     @property
     def ready(self) -> bool:
         return (
             not self.runtime_reasons
+            and not self.protective_exit_reasons
             and self.reconciliation.ready
             and isinstance(self.portfolio, CompletePaperPortfolio)
         )
@@ -66,6 +68,7 @@ class PaperRuntimeReadiness:
                 set(
                     (
                         *self.runtime_reasons,
+                        *self.protective_exit_reasons,
                         *self.reconciliation.reasons,
                         *portfolio_reasons,
                     )
@@ -125,9 +128,7 @@ def paper_runtime_receipt_reasons(
         return ("REST 응답 수신 시각이 timezone-aware 값이 아닙니다",)
     before, after = boundaries
     if before > after or any(
-        not before <= receipt <= after
-        or after - receipt > MAX_RUNTIME_RECEIPT_AGE
-        for receipt in receipts
+        not before <= receipt <= after or after - receipt > MAX_RUNTIME_RECEIPT_AGE for receipt in receipts
     ):
         return ("REST 응답 수신 시각이 현재 스트림 heartbeat 구간 밖입니다",)
     return ()
