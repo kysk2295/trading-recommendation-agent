@@ -11,24 +11,22 @@ from trading_agent.execution_errors import (
     AccountBindingConflictError,
     UnboundExecutionAccountError,
 )
-from trading_agent.execution_schema import (
-    AccountBindingRow,
-    BrokerEventValues,
-    IntentRow,
-    broker_event_values,
-    intent_values,
-)
+from trading_agent.execution_schema import AccountBindingRow, BrokerEventValues, broker_event_values
 from trading_agent.execution_store_errors import (
     BrokerEventConflictError,
     InactiveExecutionWriterError,
-    IntentConflictError,
     InvalidExecutionLedgerGenerationError,
+)
+from trading_agent.paper_entry_mutation_persistence import (
+    save_entry_mutation_intent,
+    save_order_intent,
 )
 from trading_agent.paper_execution_models import (
     AccountFingerprint,
     BrokerEventKey,
     BrokerOrderEvent,
     PaperOrderIntent,
+    SizedPaperOrder,
 )
 from trading_agent.paper_mutation_ledger_models import (
     PaperMutationEvent,
@@ -74,21 +72,16 @@ class ExecutionWriter:
 
     def save_intent(self, intent: PaperOrderIntent, quantity: int) -> bool:
         self._require_active()
-        values = intent_values(intent, quantity)
-        existing: IntentRow | None = self._connection.execute(
-            "SELECT * FROM order_intents WHERE intent_id = ?",
-            (intent.intent_id,),
-        ).fetchone()
-        if existing is not None:
-            if existing != values:
-                raise IntentConflictError(intent.intent_id)
-            return False
-        _ = self._connection.execute(
-            "INSERT INTO order_intents VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            values,
-        )
-        self._connection.commit()
-        return True
+        return save_order_intent(self._connection, intent, quantity)
+
+    def save_entry_mutation_intent(
+        self,
+        order: SizedPaperOrder,
+        mutation: PaperMutationIntent,
+    ) -> bool:
+        self._require_active()
+        self._require_bound_account(mutation.account_fingerprint)
+        return save_entry_mutation_intent(self._connection, order, mutation)
 
     def bind_account(
         self,

@@ -26,6 +26,7 @@ def paper_mutation_key(intent: PaperMutationIntent) -> PaperMutationKey:
         intent.broker_order_id,
         None if intent.side is None else intent.side.value,
         None if intent.quantity is None else str(intent.quantity),
+        intent.entry_intent_id,
     )
     return PaperMutationKey(_sha256(material))
 

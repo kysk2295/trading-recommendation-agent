@@ -1,0 +1,128 @@
+from __future__ import annotations
+
+import datetime as dt
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+
+import pytest
+
+import run_alpaca_paper_entry_smoke as smoke_cli
+from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
+from trading_agent.execution_store import ExecutionStore
+from trading_agent.paper_execution_models import AccountFingerprint, BrokerOrderId
+from trading_agent.paper_mutation_executor_models import (
+    PaperMutationExecutionResult,
+    PaperMutationExecutionState,
+)
+from trading_agent.paper_operating_mutation_models import PaperEntryMutationExecution
+from trading_agent.paper_operating_session_models import PaperOperatingSession
+from trading_agent.paper_order_gate_models import ApprovedPaperOrderGateDecision
+from trading_agent.paper_risk import PaperSizingContext, size_paper_order
+
+FINGERPRINT = AccountFingerprint("a" * 64)
+NOW = dt.datetime(2026, 7, 14, 13, 36, 4, tzinfo=dt.UTC)
+
+
+class FakeSession:
+    def __init__(self) -> None:
+        self.requests = []
+
+    def execute_entry(self, request, arm):
+        self.requests.append((request, arm))
+        sized = size_paper_order(
+            request.candidate_intent,
+            PaperSizingContext(30000.0, request.liquidity_allowed_quantity, request.estimated_spread_bps),
+            request.config,
+        )
+        assert sized is not None
+        return PaperEntryMutationExecution(
+            ApprovedPaperOrderGateDecision(sized),
+            PaperMutationExecutionResult(
+                "f" * 64,
+                PaperMutationExecutionState.ACKNOWLEDGED,
+                BrokerOrderId("entry-1"),
+            ),
+            (),
+            NOW,
+        )
+
+
+def _arguments(database: Path, output: Path) -> list[str]:
+    return [
+        "--arm-paper-mutation",
+        "ARM_ALPACA_PAPER_ONLY",
+        "--database",
+        str(database),
+        "--output-dir",
+        str(output),
+        "--intent-id",
+        "orb-AAPL-20260714-093600",
+        "--symbol",
+        "AAPL",
+        "--entry-limit",
+        "10",
+        "--stop",
+        "9.75",
+        "--target-1r",
+        "10.25",
+        "--target-2r",
+        "10.50",
+        "--created-at",
+        "2026-07-14T09:36:02-04:00",
+        "--bar-start",
+        "2026-07-14T09:35:00-04:00",
+        "--bar-first-observed",
+        "2026-07-14T09:36:01-04:00",
+        "--liquidity-quantity",
+        "100",
+        "--spread-bps",
+        "20",
+    ]
+
+
+def test_armed_smoke_uses_maximum_100_dollar_config_and_writes_report(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "execution.sqlite3"
+    output = tmp_path / "report"
+    with ExecutionStore(database).writer() as writer:
+        _ = writer.bind_account(FINGERPRINT, NOW)
+    session = FakeSession()
+
+    @contextmanager
+    def opener(
+        _: AlpacaPaperCredentials,
+        __: ExecutionStore,
+    ) -> Iterator[PaperOperatingSession]:
+        yield session
+
+    code = smoke_cli.main(
+        _arguments(database, output),
+        credential_loader=lambda: AlpacaPaperCredentials("key", "secret"),
+        session_opener=opener,
+    )
+
+    report = (output / "paper_entry_smoke_ko.md").read_text(encoding="utf-8")
+    assert code == 0
+    assert session.requests[0][0].config.max_notional_dollars == 100.0
+    assert session.requests[0][0].config.max_risk_dollars == 10.0
+    assert "결과: acknowledged" in report
+    assert "secret" not in report
+
+
+def test_wrong_arm_fails_in_parser_before_credentials(tmp_path: Path) -> None:
+    called = False
+
+    def credentials() -> AlpacaPaperCredentials:
+        nonlocal called
+        called = True
+        return AlpacaPaperCredentials("key", "secret")
+
+    args = _arguments(tmp_path / "db", tmp_path / "out")
+    args[1] = "WRONG"
+    with pytest.raises(SystemExit) as captured:
+        _ = smoke_cli.main(args, credential_loader=credentials)
+
+    assert captured.value.code == 2
+    assert called is False

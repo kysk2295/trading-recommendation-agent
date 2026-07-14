@@ -32,9 +32,20 @@ def require_mutation_intent(intent: PaperMutationIntent) -> None:
         or len(intent.symbol) > 16
     )
     match intent.operation:
+        case PaperMutationOperation.SUBMIT_ENTRY:
+            shape_invalid = (
+                not intent.entry_intent_id
+                or intent.protective_plan_key is not None
+                or intent.safety_plan_key is not None
+                or intent.action_sequence is not None
+                or intent.broker_order_id is not None
+                or intent.side is None
+                or not quantity_valid
+            )
         case PaperMutationOperation.SUBMIT_PROTECTIVE_OCO:
             shape_invalid = (
                 not _optional_hex64(intent.protective_plan_key)
+                or intent.entry_intent_id is not None
                 or intent.safety_plan_key is not None
                 or intent.action_sequence is not None
                 or intent.broker_order_id is not None
@@ -43,7 +54,8 @@ def require_mutation_intent(intent: PaperMutationIntent) -> None:
             )
         case PaperMutationOperation.CANCEL_ORDER:
             shape_invalid = (
-                intent.protective_plan_key is not None
+                intent.entry_intent_id is not None
+                or intent.protective_plan_key is not None
                 or not _optional_hex64(intent.safety_plan_key)
                 or intent.action_sequence is None
                 or intent.action_sequence < 0
@@ -53,7 +65,8 @@ def require_mutation_intent(intent: PaperMutationIntent) -> None:
             )
         case PaperMutationOperation.CLOSE_POSITION:
             shape_invalid = (
-                intent.protective_plan_key is not None
+                intent.entry_intent_id is not None
+                or intent.protective_plan_key is not None
                 or not _optional_hex64(intent.safety_plan_key)
                 or intent.action_sequence is None
                 or intent.action_sequence < 0

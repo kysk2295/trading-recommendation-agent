@@ -21,10 +21,16 @@ from trading_agent.paper_mutation_recovery_models import (
     PaperMutationRecoveryState,
 )
 from trading_agent.paper_operating_mutation_models import (
+    PaperEntryMutationExecution,
     PaperProtectiveMutationExecution,
     PaperSafetyMutationExecution,
 )
-from trading_agent.paper_operating_session_models import PaperMutationRecoveryBarrierError
+from trading_agent.paper_operating_session_models import PaperMutationRecoveryBarrierError, PaperOrderAdmissionRequest
+from trading_agent.paper_order_gate_models import (
+    ApprovedPaperOrderGateDecision,
+    BlockedPaperOrderGateDecision,
+    PaperOrderGateState,
+)
 from trading_agent.paper_protective_exit import (
     BlockedProtectiveExitPlan,
     NoProtectiveExitRequired,
@@ -77,6 +83,7 @@ class PaperOperatingMutationExecution:
         return PaperMutationRecovery(
             PaperMutationRecoveryDependencies(
                 self._owner.writer,
+                self._owner.store.intents,
                 self._owner.store.paper_mutation_intents,
                 self._owner.store.paper_mutation_events,
                 self._owner.store.protective_oco_plans,
@@ -152,6 +159,46 @@ class PaperOperatingMutationExecution:
             reconciled.mutation_recovery.completed_at,
         )
 
+    def execute_entry(
+        self,
+        request: PaperOrderAdmissionRequest,
+    ) -> PaperEntryMutationExecution | BlockedPaperOrderGateDecision:
+        checkpoint, reasons = self._checkpoint_for_execution()
+        if reasons:
+            return _blocked_entry(reasons)
+        decision = self._runtime.evaluate_order(
+            latest_bar=request.latest_bar,
+            candidate_intent=request.candidate_intent,
+            liquidity_allowed_quantity=request.liquidity_allowed_quantity,
+            estimated_spread_bps=request.estimated_spread_bps,
+            config=request.config,
+        )
+        reasons = self._barrier(checkpoint)
+        if reasons:
+            return _blocked_entry(reasons)
+        if not isinstance(decision, ApprovedPaperOrderGateDecision):
+            return decision
+        with self._broker_opener(self._credentials) as broker:
+            result = PaperMutationExecutor(
+                PaperMutationExecutorDependencies(
+                    self._owner.writer,
+                    self._owner.store.paper_mutation_events,
+                    broker,
+                    self._clock,
+                )
+            ).execute_entry(checkpoint.account_fingerprint, decision.sized_order)
+        reconciled = self._owner.recovery()
+        reasons = self._barrier(reconciled)
+        if reasons:
+            return _blocked_entry(reasons)
+        recoveries = self._recover(reconciled)
+        return PaperEntryMutationExecution(
+            decision,
+            result,
+            recoveries,
+            reconciled.mutation_recovery.completed_at,
+        )
+
     def execute_protection(
         self,
         parent_intent_id: IntentId,
@@ -195,3 +242,10 @@ class PaperOperatingMutationExecution:
             recoveries,
             reconciled.mutation_recovery.completed_at,
         )
+
+
+def _blocked_entry(reasons: tuple[str, ...]) -> BlockedPaperOrderGateDecision:
+    return BlockedPaperOrderGateDecision(
+        PaperOrderGateState.RECONCILIATION_BLOCKED,
+        reasons,
+    )

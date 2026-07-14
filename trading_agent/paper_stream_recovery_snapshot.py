@@ -16,6 +16,7 @@ from trading_agent.paper_execution_models import (
 )
 from trading_agent.paper_stream_recovery_models import (
     PaperCancelOrderMutationLookup,
+    PaperEntryOrderMutationLookup,
     PaperMutationRecoveryLookup,
     PaperProtectiveOcoMutationLookup,
     PaperRecoveryOrderObservation,
@@ -195,6 +196,19 @@ def _mutation_lookup_json(
                 "mutation_key": mutation_key,
                 "observed_at": observed_at.isoformat(),
                 "broker_order_id": broker_order_id,
+                "order": None if order is None else _order_json(order),
+            }
+        case PaperEntryOrderMutationLookup(
+            mutation_key=mutation_key,
+            observed_at=observed_at,
+            client_order_id=client_order_id,
+            order=order,
+        ):
+            return {
+                "kind": "entry_target_by_client_id",
+                "mutation_key": mutation_key,
+                "observed_at": observed_at.isoformat(),
+                "client_order_id": client_order_id,
                 "order": None if order is None else _order_json(order),
             }
         case unreachable:

@@ -15,9 +15,11 @@ from trading_agent.alpaca_paper_mutation_runtime import (
 from trading_agent.alpaca_paper_order_stream import open_alpaca_paper_order_stream
 from trading_agent.execution_store import ExecutionStore
 from trading_agent.paper_execution_models import IntentId
+from trading_agent.paper_mutation_arm import PaperMutationArm
 from trading_agent.paper_mutation_recovery_models import PaperMutationRecoveryResult
 from trading_agent.paper_operating_mutation_execution import PaperOperatingMutationExecution
 from trading_agent.paper_operating_mutation_models import (
+    PaperEntryMutationExecution,
     PaperProtectiveMutationExecution,
     PaperSafetyMutationExecution,
 )
@@ -112,6 +114,15 @@ class _LivePaperOperatingSession:
             )
             barrier_reasons = self._barrier_reasons(checkpoint)
             return decision if not barrier_reasons else _blocked_barrier(barrier_reasons)
+
+    def execute_entry(
+        self,
+        request: PaperOrderAdmissionRequest,
+        arm: PaperMutationArm,
+    ) -> PaperEntryMutationExecution | BlockedPaperOrderGateDecision:
+        _ = arm
+        with self._exclusive_operation():
+            return self._mutations.execute_entry(request)
 
     def plan_safety_actions(
         self,

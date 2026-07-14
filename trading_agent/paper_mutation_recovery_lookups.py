@@ -15,6 +15,7 @@ from trading_agent.paper_mutation_store import StoredPaperMutationIntent
 from trading_agent.paper_runtime import MAX_RUNTIME_RECEIPT_AGE
 from trading_agent.paper_stream_recovery_models import (
     PaperCancelOrderMutationLookup,
+    PaperEntryOrderMutationLookup,
     PaperMutationRecoveryLookup,
     PaperProtectiveOcoMutationLookup,
     PaperRecoveryState,
@@ -32,6 +33,19 @@ def read_paper_mutation_recovery_lookups(
     for stored_intent in recoverable_paper_mutation_intents(ledger):
         intent = stored_intent.intent
         match intent.operation:
+            case PaperMutationOperation.SUBMIT_ENTRY:
+                entry_id = intent.entry_intent_id
+                if entry_id is None:
+                    continue
+                order = client.order_by_client_id(entry_id)
+                lookups.append(
+                    PaperEntryOrderMutationLookup(
+                        stored_intent.mutation_key,
+                        clock(),
+                        entry_id,
+                        order,
+                    )
+                )
             case PaperMutationOperation.SUBMIT_PROTECTIVE_OCO:
                 plans = tuple(
                     stored for stored in ledger.protective_oco_plans if stored.plan_key == intent.protective_plan_key
@@ -90,6 +104,7 @@ def paper_mutation_lookup_reasons(
         for stored in recoverable_paper_mutation_intents(ledger)
         if stored.intent.operation
         in {
+            PaperMutationOperation.SUBMIT_ENTRY,
             PaperMutationOperation.SUBMIT_PROTECTIVE_OCO,
             PaperMutationOperation.CANCEL_ORDER,
         }

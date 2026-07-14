@@ -23,6 +23,7 @@ from trading_agent.paper_account_activity_store import (
     StoredPaperAccountActivity,
     read_paper_account_activities,
 )
+from trading_agent.paper_entry_mutation_state import inactive_entry_intent_ids
 from trading_agent.paper_execution_models import (
     AccountFingerprint,
     IntentId,
@@ -133,9 +134,15 @@ def read_reconciliation_ledger(path: Path) -> ReconciliationLedger:
         )
         for intent in intents
     )
+    inactive_entry_ids = inactive_entry_intent_ids(
+        paper_mutation_intents,
+        paper_mutation_events,
+    )
     return ReconciliationLedger(
         intents=intents,
-        unresolved_intent_ids=frozenset(state.intent_id for state in states if not state.terminal),
+        unresolved_intent_ids=frozenset(
+            state.intent_id for state in states if not state.terminal and state.intent_id not in inactive_entry_ids
+        ),
         account_fingerprint=(None if fingerprint_row is None else AccountFingerprint(fingerprint_row[0])),
         filled_intent_ids=frozenset(state.intent_id for state in states if state.has_fill_evidence),
         order_states=states,

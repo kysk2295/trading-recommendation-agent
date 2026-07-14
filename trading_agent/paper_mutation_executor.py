@@ -14,12 +14,14 @@ from trading_agent.alpaca_paper_mutation_client import (
     PaperMutationResponseError,
 )
 from trading_agent.execution_writer import ExecutionWriter
-from trading_agent.paper_execution_models import AccountFingerprint, BrokerOrderId
+from trading_agent.paper_execution_models import AccountFingerprint, SizedPaperOrder
+from trading_agent.paper_mutation_acknowledgement import acknowledged_mutation_event
 from trading_agent.paper_mutation_executor_models import (
     PaperMutationExecutionResult,
     PaperMutationExecutionState,
 )
 from trading_agent.paper_mutation_intents import (
+    entry_order_mutation_intent,
     protective_oco_mutation_intent,
     safety_action_mutation_intent,
 )
@@ -32,6 +34,7 @@ from trading_agent.paper_mutation_ledger_models import (
 from trading_agent.paper_mutation_models import (
     PaperCancelOrderReceipt,
     PaperClosePositionReceipt,
+    PaperEntryOrderReceipt,
     PaperProtectiveOcoReceipt,
 )
 from trading_agent.paper_mutation_store import StoredPaperMutationEvent
@@ -43,11 +46,15 @@ from trading_agent.paper_safety_models import (
 )
 from trading_agent.paper_safety_store import StoredPaperSafetyPlan
 
-type PaperMutationReceipt = PaperProtectiveOcoReceipt | PaperCancelOrderReceipt | PaperClosePositionReceipt
+type PaperMutationReceipt = (
+    PaperProtectiveOcoReceipt | PaperCancelOrderReceipt | PaperClosePositionReceipt | PaperEntryOrderReceipt
+)
 type MutationCall = Callable[[], PaperMutationReceipt]
 
 
 class PaperMutationBroker(Protocol):
+    def submit_entry(self, order: SizedPaperOrder) -> PaperEntryOrderReceipt: ...
+
     def submit_protective_oco(
         self,
         plan: ProtectiveOcoExitPlan,
@@ -90,6 +97,19 @@ class PaperMutationExecutor:
             lambda: self._dependencies.broker.submit_protective_oco(stored.plan),
         )
 
+    def execute_entry(
+        self,
+        account_fingerprint: AccountFingerprint,
+        order: SizedPaperOrder,
+    ) -> PaperMutationExecutionResult:
+        intent = entry_order_mutation_intent(account_fingerprint, order)
+        _ = self._dependencies.writer.save_entry_mutation_intent(order, intent)
+        return self._run(
+            intent,
+            lambda: self._dependencies.broker.submit_entry(order),
+            persist_intent=False,
+        )
+
     def execute_safety_plan(
         self,
         stored: StoredPaperSafetyPlan,
@@ -122,8 +142,11 @@ class PaperMutationExecutor:
         self,
         intent: PaperMutationIntent,
         invoke: MutationCall,
+        *,
+        persist_intent: bool = True,
     ) -> PaperMutationExecutionResult:
-        _ = self._dependencies.writer.save_paper_mutation_intent(intent)
+        if persist_intent:
+            _ = self._dependencies.writer.save_paper_mutation_intent(intent)
         mutation_key = paper_mutation_key(intent)
         events = tuple(stored.event for stored in self._dependencies.events() if stored.mutation_key == mutation_key)
         existing = _existing_result(mutation_key, events)
@@ -156,7 +179,7 @@ class PaperMutationExecutor:
             return self._ambiguous(mutation_key, attempt_number, "transport_error")
         except PaperMutationResponseError:
             return self._ambiguous(mutation_key, attempt_number, "response_incomplete")
-        event = _acknowledged_event(
+        event = acknowledged_mutation_event(
             receipt,
             attempt_number,
             self._dependencies.clock(),
@@ -235,34 +258,6 @@ def _existing_result(
         case unreachable:
             assert_never(unreachable)
     return PaperMutationExecutionResult(mutation_key, state, latest.broker_order_id)
-
-
-def _acknowledged_event(
-    receipt: PaperMutationReceipt,
-    attempt_number: int,
-    occurred_at: dt.datetime,
-) -> PaperMutationEvent:
-    match receipt:
-        case PaperProtectiveOcoReceipt():
-            status_code = 200
-            broker_order_id = receipt.snapshot.take_profit.broker_order_id
-        case PaperCancelOrderReceipt():
-            status_code = 204
-            broker_order_id = receipt.broker_order_id
-        case PaperClosePositionReceipt():
-            status_code = 200
-            broker_order_id = receipt.order.broker_order_id
-        case unreachable:
-            assert_never(unreachable)
-    return PaperMutationEvent(
-        attempt_number,
-        occurred_at,
-        PaperMutationEventType.ACKNOWLEDGED,
-        receipt.request_id,
-        status_code,
-        BrokerOrderId(broker_order_id),
-        _evidence_sha256(("acknowledged", receipt.request_id, status_code, broker_order_id)),
-    )
 
 
 def _evidence_sha256(material: tuple[str | int | None, ...]) -> str:

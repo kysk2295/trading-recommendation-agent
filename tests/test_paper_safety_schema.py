@@ -23,7 +23,7 @@ def test_current_ledger_creates_append_only_paper_safety_tables(
             row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'").fetchall()
         )
 
-    assert version == (7,)
+    assert version == (8,)
     assert {"paper_safety_plans", "paper_safety_actions"} <= tables
     assert "paper_safety_plans_no_update" in triggers
     assert "paper_safety_actions_no_delete" in triggers
@@ -43,5 +43,5 @@ def test_v5_ledger_migrates_to_append_only_paper_safety_schema(
         version = connection.execute("PRAGMA user_version").fetchone()
         safety_table = connection.execute("SELECT name FROM sqlite_master WHERE name = 'paper_safety_plans'").fetchone()
 
-    assert version == (7,)
+    assert version == (8,)
     assert safety_table == ("paper_safety_plans",)

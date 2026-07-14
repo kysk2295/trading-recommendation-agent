@@ -15,6 +15,19 @@ def require_mutation_source(
     connection: sqlite3.Connection,
     intent: PaperMutationIntent,
 ) -> None:
+    if intent.entry_intent_id is not None:
+        entry_row: tuple[str, str, int] | None = connection.execute(
+            "SELECT symbol, side, quantity FROM order_intents WHERE intent_id = ?",
+            (intent.entry_intent_id,),
+        ).fetchone()
+        entry_expected = (
+            intent.symbol,
+            intent.side.value if intent.side else "",
+            int(intent.quantity or 0),
+        )
+        if entry_row != entry_expected:
+            raise InvalidPaperMutationRecordError
+        return
     if intent.protective_plan_key is not None:
         protective_row: tuple[str, str, int] | None = connection.execute(
             "SELECT symbol, side, quantity FROM protective_oco_plans WHERE plan_key = ?",

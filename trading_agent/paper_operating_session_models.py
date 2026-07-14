@@ -4,12 +4,18 @@ from dataclasses import dataclass
 from typing import Protocol, override
 
 from trading_agent.paper_execution_models import IntentId, PaperOrderIntent
+from trading_agent.paper_mutation_arm import PaperMutationArm
 from trading_agent.paper_mutation_recovery_models import PaperMutationRecoveryResult
 from trading_agent.paper_operating_mutation_models import (
+    PaperEntryMutationExecution,
     PaperProtectiveMutationExecution,
     PaperSafetyMutationExecution,
 )
-from trading_agent.paper_order_gate_models import LatestCompletedBar, PaperOrderGateDecision
+from trading_agent.paper_order_gate_models import (
+    BlockedPaperOrderGateDecision,
+    LatestCompletedBar,
+    PaperOrderGateDecision,
+)
 from trading_agent.paper_protective_exit import (
     BlockedProtectiveExitPlan,
     NoProtectiveExitRequired,
@@ -35,6 +41,12 @@ class PaperOperatingSession(Protocol):
         self,
         request: PaperOrderAdmissionRequest,
     ) -> PaperOrderGateDecision: ...
+
+    def execute_entry(
+        self,
+        request: PaperOrderAdmissionRequest,
+        arm: PaperMutationArm,
+    ) -> PaperEntryMutationExecution | BlockedPaperOrderGateDecision: ...
 
     def plan_safety_actions(
         self,

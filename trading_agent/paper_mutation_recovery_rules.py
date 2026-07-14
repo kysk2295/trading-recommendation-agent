@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final, assert_never
 
+from trading_agent.execution_schema import StoredIntent
+from trading_agent.paper_entry_mutation_recovery import decide_entry_mutation_recovery
 from trading_agent.paper_execution_models import BrokerOrderId, PaperOrderSide
 from trading_agent.paper_mutation_ledger_models import (
     PaperMutationEvent,
@@ -22,6 +24,7 @@ from trading_agent.paper_protective_oco_store import (
 )
 from trading_agent.paper_stream_recovery_models import (
     PaperCancelOrderMutationLookup,
+    PaperEntryOrderMutationLookup,
     PaperProtectiveOcoMutationLookup,
 )
 
@@ -49,6 +52,7 @@ class PaperMutationRecoveryCase:
     stored_intent: StoredPaperMutationIntent
     attempted: PaperMutationEvent
     snapshot: PaperMutationRecoverySnapshot
+    order_intents: tuple[StoredIntent, ...]
     protective_plans: tuple[StoredProtectiveOcoPlan, ...]
 
 
@@ -64,6 +68,13 @@ def decide_paper_mutation_recovery(
 ) -> PaperMutationRecoveryResult:
     operation = case.stored_intent.intent.operation
     match operation:
+        case PaperMutationOperation.SUBMIT_ENTRY:
+            return decide_entry_mutation_recovery(
+                case.stored_intent,
+                case.attempted,
+                case.snapshot,
+                case.order_intents,
+            )
         case PaperMutationOperation.SUBMIT_PROTECTIVE_OCO:
             return _oco_decision(case)
         case PaperMutationOperation.CANCEL_ORDER:
@@ -109,7 +120,7 @@ def _oco_decision(case: PaperMutationRecoveryCase) -> PaperMutationRecoveryResul
                     None,
                 )
             return _unresolved(case)
-        case PaperCancelOrderMutationLookup():
+        case PaperCancelOrderMutationLookup() | PaperEntryOrderMutationLookup():
             return _unresolved(case)
         case unreachable:
             assert_never(unreachable)
@@ -139,7 +150,7 @@ def _cancel_decision(case: PaperMutationRecoveryCase) -> PaperMutationRecoveryRe
                 order.symbol,
                 order.status,
             )
-        case PaperProtectiveOcoMutationLookup():
+        case PaperProtectiveOcoMutationLookup() | PaperEntryOrderMutationLookup():
             return _unresolved(case)
         case unreachable:
             assert_never(unreachable)

@@ -15,7 +15,7 @@ from trading_agent.paper_execution_models import (
     PaperOrderSide,
 )
 
-SCHEMA_VERSION: Final = 7
+SCHEMA_VERSION: Final = 8
 CREATE_SCHEMA: Final = """
 CREATE TABLE IF NOT EXISTS account_binding (
   binding_id INTEGER PRIMARY KEY CHECK(binding_id = 1),

@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final, assert_never, final
 
+from trading_agent.execution_schema import StoredIntent
 from trading_agent.execution_writer import ExecutionWriter
 from trading_agent.paper_mutation_ledger_models import (
     PaperMutationEvent,
@@ -43,6 +44,7 @@ class PaperMutationRecoveryAccountError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class PaperMutationRecoveryDependencies:
     writer: ExecutionWriter
+    order_intents: Callable[[], tuple[StoredIntent, ...]]
     intents: Callable[[], tuple[StoredPaperMutationIntent, ...]]
     events: Callable[[], tuple[StoredPaperMutationEvent, ...]]
     protective_plans: Callable[[], tuple[StoredProtectiveOcoPlan, ...]]
@@ -84,6 +86,7 @@ class PaperMutationRecovery:
                     stored_intent,
                     attempted[0],
                     snapshot,
+                    self._dependencies.order_intents(),
                     protective_plans,
                 )
             )

@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass
 from urllib.parse import quote
 
+from trading_agent.paper_execution_models import SizedPaperOrder
 from trading_agent.paper_protective_oco_models import ProtectiveOcoExitPlan
 from trading_agent.paper_safety_models import (
     PaperCancelOrderAction,
@@ -32,6 +33,26 @@ class PaperMutationHttpRequest:
             separators=(",", ":"),
         )
         return hashlib.sha256(material.encode()).hexdigest()
+
+
+def entry_order_request(order: SizedPaperOrder) -> PaperMutationHttpRequest:
+    intent = order.intent
+    body = json.dumps(
+        {
+            "client_order_id": intent.intent_id,
+            "symbol": intent.symbol,
+            "qty": str(order.quantity),
+            "side": intent.side.value,
+            "type": "limit",
+            "time_in_force": "day",
+            "order_class": "simple",
+            "limit_price": str(intent.entry_limit),
+            "extended_hours": False,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    return PaperMutationHttpRequest("POST", "/v2/orders", (), body)
 
 
 def protective_oco_request(

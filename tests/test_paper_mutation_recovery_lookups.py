@@ -12,11 +12,17 @@ from tests.test_paper_mutation_recovery import (
     _plan,
     _record_ambiguous,
 )
-from tests.trade_update_ledger_fixtures import FINGERPRINT, OBSERVED_AT, initialized_store
+from tests.trade_update_ledger_fixtures import (
+    FINGERPRINT,
+    OBSERVED_AT,
+    initialized_store,
+    intent,
+)
 from trading_agent.alpaca_paper_client import AlpacaPaperClient
 from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
-from trading_agent.paper_execution_models import BrokerOrderId
+from trading_agent.paper_execution_models import BrokerOrderId, SizedPaperOrder
 from trading_agent.paper_mutation_intents import (
+    entry_order_mutation_intent,
     protective_oco_mutation_intent,
     safety_action_mutation_intent,
 )
@@ -30,12 +36,43 @@ from trading_agent.paper_safety_models import (
 )
 from trading_agent.paper_stream_recovery_models import (
     PaperCancelOrderMutationLookup,
+    PaperEntryOrderMutationLookup,
     PaperProtectiveOcoMutationLookup,
 )
 
 
 def _credentials() -> AlpacaPaperCredentials:
     return AlpacaPaperCredentials("test-key", "test-secret")
+
+
+def test_ambiguous_entry_lookup_uses_deterministic_intent_id(tmp_path: Path) -> None:
+    store = initialized_store(tmp_path)
+    order = SizedPaperOrder(intent(), 100, 0.25, 25.0, 1000.0)
+    with store.writer() as writer:
+        _record_ambiguous(
+            writer,
+            entry_order_mutation_intent(FINGERPRINT, order),
+        )
+    requests: list[httpx2.Request] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, request=request, json=_order_json())
+
+    with httpx2.Client(
+        base_url="https://paper-api.alpaca.markets",
+        transport=httpx2.MockTransport(handle),
+    ) as http_client:
+        lookups = read_paper_mutation_recovery_lookups(
+            AlpacaPaperClient(http_client, _credentials(), _clock=lambda: OBSERVED_AT),
+            store.reconciliation_ledger(),
+            lambda: OBSERVED_AT,
+        )
+
+    assert isinstance(lookups[0], PaperEntryOrderMutationLookup)
+    assert lookups[0].client_order_id == intent().intent_id
+    assert requests[0].url.path == "/v2/orders:by_client_order_id"
+    assert requests[0].url.params["client_order_id"] == intent().intent_id
 
 
 def test_ambiguous_oco_lookup_uses_deterministic_client_order_id(

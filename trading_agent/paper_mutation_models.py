@@ -28,3 +28,10 @@ class PaperClosePositionReceipt:
     request_id: PaperMutationRequestId
     received_at: dt.datetime
     order: PaperOrderSnapshot
+
+
+@dataclass(frozen=True, slots=True)
+class PaperEntryOrderReceipt:
+    request_id: PaperMutationRequestId
+    received_at: dt.datetime
+    order: PaperOrderSnapshot

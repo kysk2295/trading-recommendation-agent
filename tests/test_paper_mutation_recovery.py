@@ -16,9 +16,12 @@ from trading_agent.paper_execution_models import (
     PaperAccountSnapshot,
     PaperBrokerState,
     PaperOrderSide,
+    PaperOrderSnapshot,
     PaperPositionSnapshot,
+    SizedPaperOrder,
 )
 from trading_agent.paper_mutation_intents import (
+    entry_order_mutation_intent,
     protective_oco_mutation_intent,
     safety_action_mutation_intent,
 )
@@ -50,6 +53,7 @@ from trading_agent.paper_safety_models import (
 )
 from trading_agent.paper_stream_recovery import PaperRecoveryState
 from trading_agent.paper_stream_recovery_models import (
+    PaperEntryOrderMutationLookup,
     PaperProtectiveOcoMutationLookup,
 )
 
@@ -152,6 +156,7 @@ def _recover(store, writer, snapshot: PaperMutationRecoverySnapshot):
     return PaperMutationRecovery(
         PaperMutationRecoveryDependencies(
             writer,
+            store.intents,
             store.paper_mutation_intents,
             store.paper_mutation_events,
             store.protective_oco_plans,
@@ -190,6 +195,45 @@ def test_partial_position_change_without_close_order_stays_ambiguous(
 
     assert results[0].state is PaperMutationRecoveryState.UNRESOLVED
     assert store.paper_mutation_events()[-1].event.event_type is PaperMutationEventType.AMBIGUOUS
+
+
+def test_ambiguous_entry_is_recovered_by_exact_client_order_id(
+    tmp_path: Path,
+) -> None:
+    store = initialized_store(tmp_path)
+    sized = SizedPaperOrder(intent(), 100, 0.25, 25.0, 1000.0)
+    mutation = entry_order_mutation_intent(FINGERPRINT, sized)
+    observed_at = OBSERVED_AT + dt.timedelta(seconds=10)
+    order = PaperOrderSnapshot(
+        BrokerOrderId("entry-1"),
+        intent().intent_id,
+        "AAA",
+        PaperOrderSide.BUY,
+        "accepted",
+        Decimal(100),
+        Decimal(0),
+        Decimal("10.0"),
+        "day",
+        False,
+    )
+    with store.writer() as writer:
+        _record_ambiguous(writer, mutation)
+        state = PaperRecoveryState(
+            PaperBrokerState(_account(observed_at), (order,), ()),
+            (),
+            mutation_lookups=(
+                PaperEntryOrderMutationLookup(
+                    paper_mutation_key(mutation),
+                    observed_at,
+                    intent().intent_id,
+                    order,
+                ),
+            ),
+        )
+        results = _recover(store, writer, _recovery_snapshot(state))
+
+    assert results[0].state is PaperMutationRecoveryState.ACKNOWLEDGED
+    assert results[0].broker_order_id == BrokerOrderId("entry-1")
 
 
 def test_targeted_404_conflicting_with_generic_oco_stays_unresolved(

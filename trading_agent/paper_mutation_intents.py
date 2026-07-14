@@ -4,7 +4,7 @@ import datetime as dt
 from decimal import Decimal
 from typing import assert_never
 
-from trading_agent.paper_execution_models import AccountFingerprint
+from trading_agent.paper_execution_models import AccountFingerprint, SizedPaperOrder
 from trading_agent.paper_mutation_ledger_models import (
     PaperMutationIntent,
     PaperMutationOperation,
@@ -12,6 +12,7 @@ from trading_agent.paper_mutation_ledger_models import (
 from trading_agent.paper_mutation_requests import (
     cancel_order_request,
     close_position_request,
+    entry_order_request,
     protective_oco_request,
 )
 from trading_agent.paper_protective_oco_store import StoredProtectiveOcoPlan
@@ -21,6 +22,27 @@ from trading_agent.paper_safety_models import (
     PaperSafetyAction,
 )
 from trading_agent.paper_safety_store import StoredPaperSafetyPlan
+
+
+def entry_order_mutation_intent(
+    account_fingerprint: AccountFingerprint,
+    order: SizedPaperOrder,
+) -> PaperMutationIntent:
+    intent = order.intent
+    return PaperMutationIntent(
+        account_fingerprint=account_fingerprint,
+        created_at=intent.created_at,
+        operation=PaperMutationOperation.SUBMIT_ENTRY,
+        protective_plan_key=None,
+        safety_plan_key=None,
+        action_sequence=None,
+        request_sha256=entry_order_request(order).sha256,
+        symbol=intent.symbol,
+        broker_order_id=None,
+        side=intent.side,
+        quantity=Decimal(order.quantity),
+        entry_intent_id=intent.intent_id,
+    )
 
 
 def protective_oco_mutation_intent(

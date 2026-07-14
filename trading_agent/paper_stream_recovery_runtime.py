@@ -22,9 +22,11 @@ from trading_agent.paper_execution_models import (
     PaperBrokerState,
     PaperOrderSnapshot,
 )
+from trading_agent.paper_mutation_ledger_models import PaperMutationOperation
 from trading_agent.paper_mutation_recovery_lookups import (
     paper_mutation_lookup_reasons,
     read_paper_mutation_recovery_lookups,
+    recoverable_paper_mutation_intents,
 )
 from trading_agent.paper_protective_oco_store import (
     protective_oco_snapshot_matches_plan,
@@ -37,6 +39,7 @@ from trading_agent.paper_stream_recovery import (
     PaperRecoveryState,
     PaperStreamRecoveryObservation,
 )
+from trading_agent.paper_stream_recovery_models import PaperEntryOrderMutationLookup
 from trading_agent.paper_stream_recovery_snapshot import (
     execution_details_are_complete,
     recovery_order_observations,
@@ -80,10 +83,17 @@ def read_paper_recovery_state(
         open_ids = frozenset(order.client_order_id for order in open_orders)
         targeted: list[PaperOrderSnapshot] = []
         missing: list[str] = []
+        recoverable_entry_ids = frozenset(
+            stored.intent.entry_intent_id
+            for stored in recoverable_paper_mutation_intents(ledger)
+            if stored.intent.operation is PaperMutationOperation.SUBMIT_ENTRY
+            and stored.intent.entry_intent_id is not None
+        )
         for intent_id in sorted(ledger.unresolved_intent_ids - open_ids):
             order = client.order_by_client_id(intent_id)
             if order is None:
-                missing.append(intent_id)
+                if intent_id not in recoverable_entry_ids:
+                    missing.append(intent_id)
             else:
                 targeted.append(order)
         if missing:
@@ -188,7 +198,12 @@ def _recovery_reasons(
     counts: dict[IntentId, int] = {}
     for order in all_orders:
         counts[order.client_order_id] = counts.get(order.client_order_id, 0) + 1
-    missing = ledger.unresolved_intent_ids - counts.keys()
+    absent_entry_lookups = frozenset(
+        lookup.client_order_id
+        for lookup in state.mutation_lookups
+        if isinstance(lookup, PaperEntryOrderMutationLookup) and lookup.order is None
+    )
+    missing = ledger.unresolved_intent_ids - counts.keys() - absent_entry_lookups
     reasons.extend(f"미해결 intent REST 주문 누락: {intent_id}" for intent_id in sorted(missing))
     unexpected_targeted = (
         frozenset(order.client_order_id for order in state.targeted_orders) - ledger.unresolved_intent_ids

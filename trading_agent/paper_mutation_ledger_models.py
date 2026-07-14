@@ -8,11 +8,13 @@ from enum import StrEnum
 from trading_agent.paper_execution_models import (
     AccountFingerprint,
     BrokerOrderId,
+    IntentId,
     PaperOrderSide,
 )
 
 
 class PaperMutationOperation(StrEnum):
+    SUBMIT_ENTRY = "submit_entry"
     SUBMIT_PROTECTIVE_OCO = "submit_protective_oco"
     CANCEL_ORDER = "cancel_order"
     CLOSE_POSITION = "close_position"
@@ -40,6 +42,7 @@ class PaperMutationIntent:
     broker_order_id: BrokerOrderId | None
     side: PaperOrderSide | None
     quantity: Decimal | None
+    entry_intent_id: IntentId | None = None
 
 
 @dataclass(frozen=True, slots=True)

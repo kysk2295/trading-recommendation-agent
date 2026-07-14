@@ -8,6 +8,7 @@ from decimal import Decimal
 from trading_agent.paper_execution_models import (
     AccountFingerprint,
     BrokerOrderId,
+    IntentId,
     PaperOrderSide,
 )
 from trading_agent.paper_mutation_keys import (
@@ -23,6 +24,11 @@ from trading_agent.paper_mutation_ledger_models import (
     PaperMutationOperation,
 )
 from trading_agent.paper_mutation_source_validation import require_mutation_source
+from trading_agent.paper_mutation_store_rows import (
+    MutationEventRow,
+    MutationEventValues,
+    MutationIntentRow,
+)
 from trading_agent.paper_mutation_transitions import (
     InvalidPaperMutationTransitionError,
     require_mutation_transition,
@@ -32,44 +38,6 @@ from trading_agent.paper_mutation_validation import (
     require_mutation_event,
     require_mutation_intent,
 )
-
-type MutationIntentRow = tuple[
-    str,
-    str,
-    str,
-    str,
-    str | None,
-    str | None,
-    int | None,
-    str,
-    str,
-    str | None,
-    str | None,
-    str | None,
-]
-type MutationEventRow = tuple[
-    int,
-    str,
-    str,
-    int,
-    str,
-    str,
-    str | None,
-    int | None,
-    str | None,
-    str,
-]
-type MutationEventValues = tuple[
-    str,
-    str,
-    int,
-    str,
-    str,
-    str | None,
-    int | None,
-    str | None,
-    str,
-]
 
 
 class PaperMutationConflictError(RuntimeError):
@@ -94,6 +62,8 @@ class StoredPaperMutationEvent:
 def save_paper_mutation_intent(
     connection: sqlite3.Connection,
     intent: PaperMutationIntent,
+    *,
+    commit: bool = True,
 ) -> bool:
     require_mutation_intent(intent)
     require_mutation_source(connection, intent)
@@ -112,21 +82,24 @@ def save_paper_mutation_intent(
         WHERE operation = ?
           AND IFNULL(protective_plan_key, '') = IFNULL(?, '')
           AND IFNULL(safety_plan_key, '') = IFNULL(?, '')
-          AND IFNULL(action_sequence, -1) = IFNULL(?, -1)""",
+          AND IFNULL(action_sequence, -1) = IFNULL(?, -1)
+          AND IFNULL(entry_intent_id, '') = IFNULL(?, '')""",
         (
             intent.operation.value,
             intent.protective_plan_key,
             intent.safety_plan_key,
             intent.action_sequence,
+            intent.entry_intent_id,
         ),
     ).fetchone()
     if identity is not None:
         raise PaperMutationConflictError
     _ = connection.execute(
-        "INSERT INTO paper_mutation_intents VALUES (" + ",".join("?" for _ in range(12)) + ")",
+        "INSERT INTO paper_mutation_intents VALUES (" + ",".join("?" for _ in range(13)) + ")",
         values,
     )
-    connection.commit()
+    if commit:
+        connection.commit()
     return True
 
 
@@ -207,6 +180,7 @@ def _intent_values(
         intent.broker_order_id,
         None if intent.side is None else intent.side.value,
         None if intent.quantity is None else str(intent.quantity),
+        intent.entry_intent_id,
     )
 
 
@@ -241,6 +215,7 @@ def _stored_intent(row: MutationIntentRow) -> StoredPaperMutationIntent:
         None if row[9] is None else BrokerOrderId(row[9]),
         None if row[10] is None else PaperOrderSide(row[10]),
         None if row[11] is None else Decimal(row[11]),
+        None if row[12] is None else IntentId(row[12]),
     )
     require_mutation_intent(intent)
     if paper_mutation_key(intent) != row[0]:

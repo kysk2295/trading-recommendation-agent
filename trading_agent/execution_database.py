@@ -12,7 +12,11 @@ from trading_agent.paper_account_activity_schema import (
     CREATE_PAPER_ACCOUNT_ACTIVITY_SCHEMA,
     MIGRATE_PAPER_RECOVERY_V3_TO_V4,
 )
-from trading_agent.paper_mutation_schema import CREATE_PAPER_MUTATION_SCHEMA
+from trading_agent.paper_mutation_schema import (
+    CREATE_PAPER_MUTATION_SCHEMA,
+    CREATE_PAPER_MUTATION_SCHEMA_V7,
+    MIGRATE_PAPER_MUTATION_V7_TO_V8,
+)
 from trading_agent.paper_protective_oco_schema import (
     CREATE_PAPER_PROTECTIVE_OCO_SCHEMA,
 )
@@ -34,7 +38,7 @@ def prepare_execution_writer_connection(
     _ = connection.execute("PRAGMA journal_mode = WAL").fetchone()
     version_row: tuple[int] | None = connection.execute("PRAGMA user_version").fetchone()
     version = 0 if version_row is None else version_row[0]
-    if version not in (0, 1, 2, 3, 4, 5, 6, SCHEMA_VERSION):
+    if version not in (0, 1, 2, 3, 4, 5, 6, 7, SCHEMA_VERSION):
         raise UnsupportedExecutionSchemaError(path, version)
     if version == 0:
         unexpected = _schema_object_names(connection)
@@ -119,6 +123,8 @@ def _schema_through(version: int) -> str:
         return f"{_schema_through(4)}\n{CREATE_PAPER_PROTECTIVE_OCO_SCHEMA}"
     if version == 6:
         return f"{_schema_through(5)}\n{CREATE_PAPER_SAFETY_SCHEMA}"
+    if version == 7:
+        return f"{_schema_through(6)}\n{CREATE_PAPER_MUTATION_SCHEMA_V7}"
     if version == SCHEMA_VERSION:
         return f"{_schema_through(6)}\n{CREATE_PAPER_MUTATION_SCHEMA}"
     raise ValueError(version)
@@ -154,6 +160,8 @@ def _migration_schema(version: int) -> str:
         return f"{CREATE_PAPER_SAFETY_SCHEMA}\n{CREATE_PAPER_MUTATION_SCHEMA}"
     if version == 6:
         return CREATE_PAPER_MUTATION_SCHEMA
+    if version == 7:
+        return MIGRATE_PAPER_MUTATION_V7_TO_V8
     raise ValueError(version)
 
 

@@ -8,6 +8,7 @@ from typing import NewType, override
 from trading_agent.paper_execution_models import (
     AccountFingerprint,
     BrokerOrderId,
+    IntentId,
     PaperBrokerState,
     PaperOrderSnapshot,
     PaperTradeActivity,
@@ -57,7 +58,17 @@ class PaperCancelOrderMutationLookup:
     order: PaperOrderSnapshot | None
 
 
-type PaperMutationRecoveryLookup = PaperProtectiveOcoMutationLookup | PaperCancelOrderMutationLookup
+@dataclass(frozen=True, slots=True)
+class PaperEntryOrderMutationLookup:
+    mutation_key: PaperMutationKey
+    observed_at: dt.datetime
+    client_order_id: IntentId
+    order: PaperOrderSnapshot | None
+
+
+type PaperMutationRecoveryLookup = (
+    PaperProtectiveOcoMutationLookup | PaperCancelOrderMutationLookup | PaperEntryOrderMutationLookup
+)
 
 
 @dataclass(frozen=True, slots=True)
