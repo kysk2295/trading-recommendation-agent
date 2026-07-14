@@ -22,4 +22,13 @@
 - 일일 연구 CLI가 후보 입력 snapshot 1건을 구조화 품질 필드와 한국어 요약에 기록했다.
 - 전체 pytest 438개, Ruff, 변경 파일 format check, basedpyright와 no-excuse 검사가 통과했다.
 
-실제 watcher 적용 결과는 `main` 반영 뒤 별도로 추가한다. 이 결과는 Paper 전진검증 데이터 계보이며 확정 수익 또는 전략 우위의 증거가 아니다.
+## 실제 watcher 적용 결과
+
+- `main` 반영 뒤 기존 watcher의 01:18 KST cycle을 추가 실행하지 않고 그대로 관찰했다.
+- 실제 선택 후보 10종목에 대해 `candidate_input_snapshots` 10행이 생성됐다.
+- 각 행은 12:17 ET 최신 완료 봉, 종목별 전일 종가·20일 평균 거래량과 당시 spread를 보존했다.
+- 같은 cycle 종료코드는 0이었고 KIS 읽기 재시도 6건은 모두 최종 200으로 복구됐다.
+- watcher 부모·Python 프로세스 RSS 합계는 약 38MiB로 10GiB 안전 한도보다 충분히 낮았다.
+- 이 기능 도입 전 cycle에는 입력 snapshot이 없으므로 해당 과거 구간을 현재 값으로 보간하지 않는다.
+
+이 결과는 Paper 전진검증 데이터 계보이며 확정 수익 또는 전략 우위의 증거가 아니다. 다음 단계는 이 snapshot과 최초 관찰 분봉을 사용한 독립 challenger 장마감 replay다.
