@@ -136,6 +136,22 @@ def _paper_metrics_command(output: Path) -> tuple[str, ...]:
     )
 
 
+def _daily_research_command(
+    output: Path,
+    observed_at: dt.datetime,
+    strategy: StrategyMode,
+) -> tuple[str, ...]:
+    session_date = observed_at.astimezone(ZoneInfo("America/New_York")).date()
+    return (
+        str(Path(__file__).with_name("run_daily_research_record.py")),
+        str(output),
+        "--session-date",
+        session_date.isoformat(),
+        "--strategy",
+        strategy.value,
+    )
+
+
 def _run_and_audit(command: tuple[str, ...], audit_path: Path) -> int:
     started_at = dt.datetime.now().astimezone()
     completed = subprocess.run(command, check=False)
@@ -147,13 +163,20 @@ def run_session_metrics(
     output: Path,
     observed_at: dt.datetime,
     runner: Callable[[tuple[str, ...], Path], int] = _run_and_audit,
+    strategy: StrategyMode = StrategyMode.ORB,
 ) -> int | None:
     database = output / "paper_recommendations.sqlite3"
     if regular_session_is_open(observed_at) or not database.is_file():
         return None
-    return runner(
+    metrics_exit_code = runner(
         _paper_metrics_command(output),
         output / "post_session_metrics_cycles.csv",
+    )
+    if metrics_exit_code:
+        return metrics_exit_code
+    return runner(
+        _daily_research_command(output, observed_at, strategy),
+        output / "post_session_research_cycles.csv",
     )
 
 
@@ -238,7 +261,11 @@ def main(
     )
     ended_at = dt.datetime.now(ZoneInfo("America/New_York"))
     finalized = finalize_session_output(output, ended_at)
-    metrics_exit_code = run_session_metrics(output, ended_at)
+    metrics_exit_code = run_session_metrics(
+        output,
+        ended_at,
+        strategy=strategy,
+    )
     failures = sum(code != 0 for code in (*premarket_exit_codes, *exit_codes))
     failures += int(metrics_exit_code not in (None, 0))
     metrics_status = "skipped" if metrics_exit_code is None else str(metrics_exit_code)

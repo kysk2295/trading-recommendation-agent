@@ -243,6 +243,15 @@ CSV replay:
 
 `active` 뒤 손절·2R·당일 종료가 확인된 추천만 거래로 집계한다. 출력은 `paper_metrics.csv`, `paper_yearly_metrics.csv`, `paper_trades.csv`, `paper_metrics_ko.md`이며, 현재 저장된 2건은 기능 검증용 QA 표본이므로 수익성 증거가 아니다. 날짜별 watch가 공식 정규장 종료 뒤 끝나면 같은 CLI를 자동 실행해 세션의 `paper_metrics/`에 저장하고 `post_session_metrics_cycles.csv`에 종료코드를 남긴다. 장중 단발 watch나 DB가 없는 실행은 자동 일일 평가를 만들지 않는다.
 
+장마감 Paper 연구 원장:
+
+```bash
+./run_daily_research_record.py outputs/live_sessions/<거래일> \
+  --session-date YYYY-MM-DD --strategy orb
+```
+
+장마감 metrics가 성공하면 watch가 이 CLI도 순차 실행한다. 세션별 불변 JSON, 상위 `daily_research_ledger.jsonl`, 한국어 요약과 별도 종료코드를 남기며 코드·데이터·평가기·파라미터·비용·품질 계보를 함께 고정한다. 랭킹 6개 요청과 watch cycle이 완전하지 않거나 실패 cycle이 있으면 해당 날짜를 적격 forward day로 세지 않는다. 최소 60거래일·100건 외에도 broker ledger, block bootstrap, DSR/PBO, 인접 파라미터 평탄성, SIP 검증이 모두 없으므로 자동 승격과 자동 주문은 항상 금지한다.
+
 스캐너 forward outcome 진단:
 
 ```bash
@@ -304,6 +313,7 @@ trading-recommendation-agent/
 ├── run_kis_daytime_scan.py
 ├── run_session_continuity.py
 ├── run_paper_metrics.py
+├── run_daily_research_record.py
 ├── run_orb_forward_metrics.py
 ├── run_market_risk_sensitivity.py
 ├── run_scanner_candidate_sensitivity.py

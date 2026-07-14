@@ -168,6 +168,10 @@ watch는 공식 정규장 종료 뒤 `run_paper_metrics.py`를 한 번 실행해
 
 `run_paper_metrics.py`는 여러 날짜별 SQLite를 읽고 추천 ID를 중복 제거한다. 미체결 무효화와 미종료 추천은 제외하며, 누적수익과 MDD는 거래 순차 복리 proxy로만 계산한다. 이는 최대 10포지션 일별 포트폴리오 백테스트가 아니며, 작은 paper 표본의 bootstrap CI도 전략 승격 근거로 단독 사용하지 않는다.
 
+metrics가 성공하면 watch는 `run_daily_research_record.py`를 이어서 실행하고 종료코드를 `post_session_research_cycles.csv`에 별도로 기록한다. 이 CLI는 세션 산출물 SHA-256, 코드·데이터·평가기 버전, 정확한 전략 파라미터·비용·포트폴리오 정책, 편도 20bp 결과, 데이터 품질 incident와 누적 적격 거래일·완료 거래 수를 불변 JSON과 append-only JSONL로 저장한다. 같은 record ID를 재실행해도 중앙 원장에는 중복 추가하지 않는다.
+
+적격 forward day는 watch cycle마다 거래소 3곳×랭킹 2종의 6개 요청이 모두 성공하고, coverage cycle 수와 watch cycle 수가 같으며, 실패 watch cycle이 없을 때만 증가한다. 승격은 최소 60 적격 거래일·100 완료 거래뿐 아니라 broker paper ledger, block bootstrap, DSR/PBO, 인접 파라미터 평탄성, SIP 검증이 모두 충족돼야 한다. 현재 경로는 연구 기록만 만들고 전략 상태를 자동 변경하거나 주문을 제출하지 않는다.
+
 ## 현재 범위의 한계
 
 KIS 랭킹은 거래소 전체 종목의 원시 스트림이 아니라 API가 반환하는 상위 후보 목록이다. 따라서 현재 구현은 미국 전체 시장을 완전히 열거하는 스캐너가 아니라 **상승률·거래량 상위 후보 스캐너**다. 영속 상태 추적, NYSE 공식 2026~2028 휴장·13:00 조기폐장과 마지막 완료 봉 기반 장 마감 결과 판정은 구현됐다. 게시 범위 밖 연도는 fail-closed이며, 임시 휴장 공지와 실제 MOC·15:59 체결 검증은 아직 운영 승격 전 게이트다. 완전한 전체시장 감시와 3년 역사 백테스트에는 PIT 종목 마스터, 전체시장 분봉, 과거 NBBO, halt/LULD 자료가 별도로 필요하다.
