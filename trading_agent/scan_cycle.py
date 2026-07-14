@@ -59,8 +59,10 @@ def append_cycle_audit(
 def scan_exit_code(
     observations: tuple[ScanObservation, ...],
     opening_gap_failure_count: int = 0,
+    ranking_failure_count: int = 0,
 ) -> int:
     return int(
         opening_gap_failure_count > 0
+        or ranking_failure_count > 0
         or any(row.status.startswith("오류:") for row in observations)
     )

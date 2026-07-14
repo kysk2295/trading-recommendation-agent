@@ -34,7 +34,11 @@ from trading_agent.market_risk import (
     write_market_risk_screen,
 )
 from trading_agent.opening_gap import OpeningGapCapture, capture_opening_gaps
-from trading_agent.ranking_journal import RankingSnapshot, append_ranking_snapshot
+from trading_agent.ranking_journal import (
+    RankingSnapshot,
+    append_ranking_coverage,
+    append_ranking_snapshot,
+)
 from trading_agent.replay import write_alert_outbox, write_report
 from trading_agent.risk import RiskConfig
 from trading_agent.scan_cycle import scan_exit_code
@@ -89,10 +93,11 @@ def main(
     observations: list[ScanObservation] = []
     with create_kis_client(mode) as client:
         token = get_access_token(client, credentials, mode)
-        groups, checked_at = timestamp_rankings(
+        discovery, checked_at = timestamp_rankings(
             lambda: _discover_rankings(client, credentials, token),
             lambda: dt.datetime.now().astimezone(),
         )
+        groups = discovery.groups
         halt_snapshot = fetch_active_halts(client)
         checked_at = max(checked_at, halt_snapshot.observed_at).astimezone()
         risk_screen = MarketRiskGate(
@@ -116,6 +121,11 @@ def main(
         append_ranking_snapshot(
             output / "kis_ranking_snapshots.csv",
             RankingSnapshot(checked_at, groups, candidates),
+        )
+        append_ranking_coverage(
+            output / "kis_ranking_request_coverage.csv",
+            checked_at,
+            discovery,
         )
         _ = track_candidates(database, checked_at, candidates)
         followers = unselected_tracked_candidates(
@@ -159,6 +169,7 @@ def main(
             risk_screen,
             tuple(observations),
             len(store.recommendations()),
+            discovery.failures,
         ),
     )
     rprint(
@@ -167,7 +178,11 @@ def main(
         + f"{len(store.recommendations())}개, 인과성 제외 {causality_exclusions}개, "
         + f"신규 카드 {queued}개, {output}"
     )
-    exit_code = scan_exit_code(tuple(observations), gap_cycle.failure_count)
+    exit_code = scan_exit_code(
+        tuple(observations),
+        gap_cycle.failure_count,
+        len(discovery.failures),
+    )
     if exit_code:
         raise typer.Exit(code=exit_code)
 

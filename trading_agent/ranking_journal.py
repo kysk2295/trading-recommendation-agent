@@ -27,6 +27,14 @@ RANKING_FIELDS: Final = (
     "selected",
     "selection_input",
 )
+RANKING_COVERAGE_FIELDS: Final = (
+    "observed_at",
+    "ranking_source",
+    "exchange",
+    "status",
+    "row_count",
+    "reason",
+)
 
 
 class RankingSource(StrEnum):
@@ -42,6 +50,19 @@ class RankingGroup:
 
 
 @dataclass(frozen=True, slots=True)
+class RankingFailure:
+    source: RankingSource
+    exchange: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class RankingDiscovery:
+    groups: tuple[RankingGroup, ...]
+    failures: tuple[RankingFailure, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class RankingSnapshot:
     observed_at: dt.datetime
     groups: tuple[RankingGroup, ...]
@@ -52,9 +73,7 @@ def append_ranking_snapshot(path: Path, snapshot: RankingSnapshot) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     _migrate_legacy_file(path)
     has_header = path.is_file() and path.stat().st_size > 0
-    selected_keys = {
-        (stock.exchange, stock.symbol) for stock in snapshot.selected
-    }
+    selected_keys = {(stock.exchange, stock.symbol) for stock in snapshot.selected}
     with path.open("a", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         if not has_header:
@@ -81,6 +100,41 @@ def append_ranking_snapshot(path: Path, snapshot: RankingSnapshot) -> None:
                 )
                 for stock in group.stocks
             )
+
+
+def append_ranking_coverage(
+    path: Path,
+    observed_at: dt.datetime,
+    discovery: RankingDiscovery,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    has_header = path.is_file() and path.stat().st_size > 0
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        if not has_header:
+            writer.writerow(RANKING_COVERAGE_FIELDS)
+        writer.writerows(
+            (
+                observed_at.isoformat(),
+                group.source.value,
+                group.exchange,
+                "ok",
+                len(group.stocks),
+                "",
+            )
+            for group in discovery.groups
+        )
+        writer.writerows(
+            (
+                observed_at.isoformat(),
+                failure.source.value,
+                failure.exchange,
+                "failed",
+                "",
+                failure.reason,
+            )
+            for failure in discovery.failures
+        )
 
 
 def _migrate_legacy_file(path: Path) -> None:

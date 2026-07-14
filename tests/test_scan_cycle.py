@@ -74,13 +74,25 @@ def test_partial_provider_error_makes_the_scan_cycle_fail() -> None:
 
 
 def test_opening_gap_provider_error_makes_the_scan_cycle_fail() -> None:
-    observations = (
-        ScanObservation("NAS", "AAA", 0.1, 10.0, 20.0, 3, "최신 완료 봉 평가"),
-    )
+    observations = (ScanObservation("NAS", "AAA", 0.1, 10.0, 20.0, 3, "최신 완료 봉 평가"),)
 
     exit_code = scan_exit_code(
         observations,
         opening_gap_failure_count=1,
     )
 
+    assert exit_code == 1
+
+
+def test_partial_ranking_discovery_marks_the_scan_cycle_failed() -> None:
+    # Given: stock-level and opening-gap observations completed successfully.
+    observations = (ScanObservation("NAS", "AAA", 0.1, 10.0, 20.0, 3, "최신 완료 봉 평가"),)
+
+    # When: one ranking source was unavailable during candidate discovery.
+    exit_code = scan_exit_code(
+        observations,
+        ranking_failure_count=1,
+    )
+
+    # Then: downstream evaluation survives, but the cycle cannot claim completeness.
     assert exit_code == 1

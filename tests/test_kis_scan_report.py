@@ -13,6 +13,7 @@ from trading_agent.market_risk import (
     MarketRiskScreen,
     RiskRejectReason,
 )
+from trading_agent.ranking_journal import RankingFailure, RankingSource
 from trading_agent.strategy_factory import StrategyMode
 
 
@@ -61,3 +62,28 @@ def test_scan_report_discloses_risk_gate_and_missing_float(tmp_path: Path) -> No
     assert "공식 현재 거래정지 종목: 31개" in report
     assert "MISSING | 유효 호가 없음" in report
     assert "PIT float: 미제공" in report
+
+
+def test_scan_report_marks_partial_ranking_universe(tmp_path: Path) -> None:
+    # Given: one candidate source was unavailable but downstream evaluation ran.
+    observed_at = dt.datetime(2026, 7, 14, 10, 30, tzinfo=dt.UTC)
+    summary = ScanSummary(
+        observed_at,
+        KisMode.LIVE,
+        StrategyMode.ORB,
+        0,
+        MarketRiskScreen(observed_at, MarketRiskConfig(), (), (), ()),
+        (),
+        0,
+        (RankingFailure(RankingSource.UPDOWN, "AMS", "HTTP 500"),),
+    )
+    path = tmp_path / "summary.md"
+
+    # When: the user-facing scan report is written.
+    write_scan_summary(path, summary)
+
+    # Then: it cannot be mistaken for a complete all-exchange scan.
+    report = path.read_text(encoding="utf-8")
+    assert "랭킹 요청 실패: 1개" in report
+    assert "부분 모집단" in report
+    assert "AMS/updown: HTTP 500" in report

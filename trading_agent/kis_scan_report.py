@@ -8,6 +8,7 @@ from pathlib import Path
 from trading_agent.kis_auth import KisMode
 from trading_agent.kis_scan import ScanObservation
 from trading_agent.market_risk import MarketRiskScreen
+from trading_agent.ranking_journal import RankingFailure
 from trading_agent.strategy_factory import StrategyMode
 
 
@@ -20,6 +21,7 @@ class ScanSummary:
     risk_screen: MarketRiskScreen
     observations: tuple[ScanObservation, ...]
     recommendation_count: int
+    ranking_failures: tuple[RankingFailure, ...] = ()
 
 
 def write_scan_summary(path: Path, summary: ScanSummary) -> None:
@@ -32,6 +34,7 @@ def write_scan_summary(path: Path, summary: ScanSummary) -> None:
         f"- 시세 환경: {summary.mode.value}",
         f"- 전략: {summary.strategy.value}",
         f"- 조건부 추천: {summary.recommendation_count}개",
+        f"- 랭킹 요청 실패: {len(summary.ranking_failures)}개",
         f"- 공식 현재 거래정지 종목: {summary.active_halt_count}개",
         f"- 위험 게이트 제외: {len(summary.risk_screen.rejected)}개",
         f"- 위험 통과 후 포트폴리오 한도 제외: {len(summary.risk_screen.not_selected)}개",
@@ -41,6 +44,14 @@ def write_scan_summary(path: Path, summary: ScanSummary) -> None:
         "| 거래소 | 종목 | 등락률 | 가격 | 스프레드(bp) | 정규장 분봉 | 상태 |",
         "|---|---:|---:|---:|---:|---:|---|",
     ]
+    if summary.ranking_failures:
+        lines.insert(
+            8,
+            "- 후보 모집단 상태: 부분 모집단이며 전체 거래소 스캔으로 해석 금지",
+        )
+        lines[9:9] = (
+            f"  - {failure.exchange}/{failure.source.value}: {failure.reason}" for failure in summary.ranking_failures
+        )
     lines.extend(
         f"| {row.exchange} | {row.symbol} | {row.change_pct:.2%} | "
         + f"{row.price:.4f} | {_spread(row.spread_bps)} | {row.bars} | "

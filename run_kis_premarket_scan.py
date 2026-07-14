@@ -23,7 +23,11 @@ from trading_agent.market_risk import (
     fetch_active_halts,
     write_market_risk_screen,
 )
-from trading_agent.ranking_journal import RankingSnapshot, append_ranking_snapshot
+from trading_agent.ranking_journal import (
+    RankingSnapshot,
+    append_ranking_coverage,
+    append_ranking_snapshot,
+)
 
 
 def main(
@@ -38,17 +42,16 @@ def main(
         rprint("[yellow]미국 장전 세션 밖이므로 랭킹을 조회하지 않습니다.[/yellow]")
         return
     output = (
-        Path(output_dir)
-        if output_dir is not None
-        else Path("outputs/live_sessions") / checked_at.strftime("%Y%m%d")
+        Path(output_dir) if output_dir is not None else Path("outputs/live_sessions") / checked_at.strftime("%Y%m%d")
     )
     credentials = load_kis_credentials(mode)
     with create_kis_client(mode) as client:
         token = get_access_token(client, credentials, mode)
-        groups, ranking_at = timestamp_rankings(
+        discovery, ranking_at = timestamp_rankings(
             lambda: discover_rankings(client, credentials, token),
             lambda: dt.datetime.now().astimezone(),
         )
+        groups = discovery.groups
         halt_snapshot = fetch_active_halts(client)
         observed_at = max(ranking_at, halt_snapshot.observed_at).astimezone()
         risk_screen = MarketRiskGate(
@@ -63,11 +66,19 @@ def main(
         output / "premarket_ranking_snapshots.csv",
         RankingSnapshot(observed_at, groups, risk_screen.selected),
     )
+    append_ranking_coverage(
+        output / "premarket_ranking_request_coverage.csv",
+        observed_at,
+        discovery,
+    )
     rprint(
         f"[green]장전 snapshot 완료[/green] 원시 {sum(len(group.stocks) for group in groups)}행, "
         + f"위험통과 {len(risk_screen.selected) + len(risk_screen.not_selected)}개, "
-        + f"선정 {len(risk_screen.selected)}개, {output}"
+        + f"선정 {len(risk_screen.selected)}개, "
+        + f"랭킹 실패 {len(discovery.failures)}개, {output}"
     )
+    if discovery.failures:
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
