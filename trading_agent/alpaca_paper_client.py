@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-from typing import final
+from typing import final, override
 
 import httpx2
 from pydantic import ValidationError
@@ -37,6 +37,8 @@ class AlpacaPaperClient:
         credentials: AlpacaPaperCredentials,
     ) -> None:
         _ = require_paper_trading_url(str(client.base_url).rstrip("/"))
+        if client.follow_redirects:
+            raise UnsafePaperRedirectPolicyError
         self._client = client
         self._credentials = credentials
 
@@ -115,6 +117,12 @@ class AlpacaPaperClient:
         if response.is_success:
             return
         raise AlpacaApiError(response.status_code, "Alpaca paper 요청 실패")
+
+
+class UnsafePaperRedirectPolicyError(ValueError):
+    @override
+    def __str__(self) -> str:
+        return "Alpaca paper client는 redirect를 따라가면 안 됩니다"
 
 
 def _order_snapshot(payload: AlpacaPaperOrderPayload) -> PaperOrderSnapshot:

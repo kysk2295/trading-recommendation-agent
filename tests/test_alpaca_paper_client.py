@@ -7,7 +7,10 @@ import httpx2
 import pytest
 
 from trading_agent.alpaca_http import AlpacaApiError
-from trading_agent.alpaca_paper_client import AlpacaPaperClient
+from trading_agent.alpaca_paper_client import (
+    AlpacaPaperClient,
+    UnsafePaperRedirectPolicyError,
+)
 from trading_agent.alpaca_paper_config import (
     AlpacaPaperCredentials,
     NonPaperTradingEndpointError,
@@ -46,6 +49,18 @@ def test_client_rejects_live_base_url_before_request() -> None:
     ) as http_client, pytest.raises(
         NonPaperTradingEndpointError,
         match="paper 전용",
+    ):
+        _ = AlpacaPaperClient(http_client, _credentials())
+
+
+def test_client_rejects_redirect_enabled_http_client() -> None:
+    # Given / When / Then
+    with httpx2.Client(
+        base_url="https://paper-api.alpaca.markets",
+        follow_redirects=True,
+    ) as http_client, pytest.raises(
+        UnsafePaperRedirectPolicyError,
+        match="redirect",
     ):
         _ = AlpacaPaperClient(http_client, _credentials())
 

@@ -10,7 +10,12 @@ from trading_agent.paper_execution_models import (
     PaperOrderIntent,
     PaperOrderSide,
 )
-from trading_agent.paper_risk import PaperSizingContext, size_paper_order
+from trading_agent.paper_risk import (
+    PaperRiskConfig,
+    PaperSizingContext,
+    UnsafePaperRiskConfigError,
+    size_paper_order,
+)
 
 NEW_YORK = ZoneInfo("America/New_York")
 
@@ -130,3 +135,32 @@ def test_sizing_rejects_invalid_risk_boundaries(
 
     # Then
     assert sized is None
+
+
+@pytest.mark.parametrize("invalid_value", (float("nan"), float("inf"), -float("inf")))
+def test_sizing_rejects_nonfinite_market_values(invalid_value: float) -> None:
+    # Given
+    context = PaperSizingContext(30_000.0, 10_000, invalid_value)
+
+    # When
+    sized = size_paper_order(_intent(entry=invalid_value), context)
+
+    # Then
+    assert sized is None
+
+
+@pytest.mark.parametrize(
+    "config",
+    (
+        PaperRiskConfig(max_risk_dollars=75.01),
+        PaperRiskConfig(risk_fraction=0.0026),
+        PaperRiskConfig(max_notional_dollars=6_001.0),
+        PaperRiskConfig(max_open_positions=4),
+        PaperRiskConfig(daily_loss_limit_dollars=301.0),
+        PaperRiskConfig(per_side_cost_bps=19.9),
+    ),
+)
+def test_risk_config_rejects_every_looser_hard_limit(config: PaperRiskConfig) -> None:
+    # Given / When / Then
+    with pytest.raises(UnsafePaperRiskConfigError, match="완화"):
+        config.assert_within_hard_limits()
