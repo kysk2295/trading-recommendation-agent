@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import run_alpaca_paper_recovery as recovery_cli
+from trading_agent.alpaca_paper_activities import PaperActivityHistoryIncompleteError
 from trading_agent.alpaca_paper_client import PaperOrderHistoryIncompleteError
 from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
 from trading_agent.execution_store import ExecutionStore
@@ -28,12 +29,14 @@ def test_recovery_cli_writes_only_sanitized_read_only_evidence(
             "2026-07-14T13:36:02+00:00",
             2,
             False,
+            recovery_activity_count=3,
         ),
     )
 
     report = (output / "paper_stream_recovery_ko.md").read_text(encoding="utf-8")
     assert code == 0
     assert "정규화 주문 snapshot: 2건" in report
+    assert "Account Activities FILL: 3건" in report
     assert "개별 execution 상세: 불완전" in report
     assert "WSS + REST GET only" in report
     assert "POST/PATCH/DELETE: 비활성" in report
@@ -65,9 +68,7 @@ def test_recovery_cli_missing_ledger_fails_before_credentials_or_network(
     assert code == 1
     assert loader_called is False
     assert not database.exists()
-    assert "초기화되지 않았습니다" in (
-        tmp_path / "report/paper_stream_recovery_ko.md"
-    ).read_text(encoding="utf-8")
+    assert "초기화되지 않았습니다" in (tmp_path / "report/paper_stream_recovery_ko.md").read_text(encoding="utf-8")
 
 
 def test_recovery_cli_reports_incomplete_order_history_without_traceback(
@@ -119,3 +120,31 @@ def test_recovery_cli_reports_persisted_snapshot_but_blocks_admission(
     assert "immutable execution 충돌" in report
     assert "snapshot 저장: 완료" in report
     assert "신규 주문 admission: 차단" in report
+
+
+def test_recovery_cli_reports_incomplete_activity_history_without_traceback(
+    tmp_path: Path,
+) -> None:
+    # Given: an initialized ledger whose Account Activities pagination is incomplete.
+    database = tmp_path / "execution.sqlite3"
+    output = tmp_path / "report"
+    with ExecutionStore(database).writer():
+        pass
+
+    def fail_probe(
+        _credentials: AlpacaPaperCredentials,
+        _store: ExecutionStore,
+    ) -> PaperTradeUpdateRecoveryProbe:
+        raise PaperActivityHistoryIncompleteError
+
+    # When: the read-only recovery CLI reaches the boundary error.
+    code = recovery_cli.main(
+        ["--database", str(database), "--output-dir", str(output)],
+        credential_loader=_credentials,
+        probe_loader=fail_probe,
+    )
+
+    # Then: it writes a sanitized failure report and returns the boundary exit code.
+    report = (output / "paper_stream_recovery_ko.md").read_text(encoding="utf-8")
+    assert code == 2
+    assert "FILL 활동 이력" in report

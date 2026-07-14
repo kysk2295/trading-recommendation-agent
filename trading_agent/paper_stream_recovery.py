@@ -4,6 +4,10 @@ import datetime as dt
 import hashlib
 import sqlite3
 
+from trading_agent.paper_account_activity_store import (
+    append_paper_account_activities,
+    paper_account_activities_sha256,
+)
 from trading_agent.paper_execution_models import AccountFingerprint
 from trading_agent.paper_stream_recovery_models import (
     InvalidPaperStreamRecoveryError,
@@ -23,12 +27,8 @@ from trading_agent.paper_stream_recovery_orders import (
 )
 from trading_agent.paper_stream_recovery_schema import CREATE_PAPER_STREAM_RECOVERY_SCHEMA
 
-type PaperStreamRecoveryValues = tuple[
-    str, str, str, str, str, str, str, str, int
-]
-type PaperStreamRecoveryRow = tuple[
-    int, str, str, str, str, str, str, str, str, int
-]
+type PaperStreamRecoveryValues = tuple[str, str, str, str, str, str, str, str, int, str]
+type PaperStreamRecoveryRow = tuple[int, str, str, str, str, str, str, str, str, int, str]
 _TRANSACTION_FAILURES = (Exception,)
 
 
@@ -39,7 +39,13 @@ def append_paper_stream_recovery(
     _require_observation(observation)
     snapshot_hash = hashlib.sha256(observation.snapshot_json.encode()).hexdigest()
     orders_hash = recovery_orders_sha256(observation.orders)
-    recovery_key = _recovery_key(observation, snapshot_hash, orders_hash)
+    activities_hash = paper_account_activities_sha256(observation.activities)
+    recovery_key = _recovery_key(
+        observation,
+        snapshot_hash,
+        orders_hash,
+        activities_hash,
+    )
     values = (
         recovery_key,
         observation.account_fingerprint,
@@ -50,6 +56,7 @@ def append_paper_stream_recovery(
         snapshot_hash,
         orders_hash,
         int(observation.execution_detail_complete),
+        activities_hash,
     )
     bracket_row: tuple[str] | None = connection.execute(
         """SELECT recovery_key FROM paper_stream_recoveries
@@ -72,13 +79,25 @@ def append_paper_stream_recovery(
         if existing != values:
             raise PaperStreamRecoveryConflictError
         append_recovery_orders(connection, recovery_key, observation.orders)
+        append_paper_account_activities(
+            connection,
+            recovery_key,
+            observation.account_fingerprint,
+            observation.activities,
+        )
         return False
     try:
         _ = connection.execute(
-            "INSERT INTO paper_stream_recoveries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO paper_stream_recoveries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             values,
         )
         append_recovery_orders(connection, recovery_key, observation.orders)
+        append_paper_account_activities(
+            connection,
+            recovery_key,
+            observation.account_fingerprint,
+            observation.activities,
+        )
         connection.commit()
     except _TRANSACTION_FAILURES:
         connection.rollback()
@@ -127,10 +146,8 @@ def _stored_recovery(row: PaperStreamRecoveryRow) -> StoredPaperStreamRecovery:
         bool(row[9]),
     )
     _require_observation(observation)
-    if (
-        row[7] != snapshot_hash
-        or PaperStreamRecoveryKey(row[1])
-        != _recovery_key(observation, snapshot_hash, row[8])
+    if row[7] != snapshot_hash or PaperStreamRecoveryKey(row[1]) != _recovery_key(
+        observation, snapshot_hash, row[8], row[10]
     ):
         raise InvalidPaperStreamRecoveryError
     return StoredPaperStreamRecovery(
@@ -143,6 +160,7 @@ def _stored_recovery(row: PaperStreamRecoveryRow) -> StoredPaperStreamRecovery:
         snapshot_json=row[6],
         snapshot_sha256=snapshot_hash,
         orders_sha256=row[8],
+        activities_sha256=row[10],
         execution_detail_complete=bool(row[9]),
     )
 
@@ -151,6 +169,7 @@ def _recovery_key(
     observation: PaperStreamRecoveryObservation,
     snapshot_hash: str,
     orders_hash: str,
+    activities_hash: str,
 ) -> PaperStreamRecoveryKey:
     material = "\x00".join(
         (
@@ -160,16 +179,16 @@ def _recovery_key(
             observation.completed_at.isoformat(),
             snapshot_hash,
             orders_hash,
+            activities_hash,
             str(int(observation.execution_detail_complete)),
         )
     )
-    return PaperStreamRecoveryKey(
-        f"alpaca:recovery:{hashlib.sha256(material.encode()).hexdigest()}"
-    )
+    return PaperStreamRecoveryKey(f"alpaca:recovery:{hashlib.sha256(material.encode()).hexdigest()}")
 
 
 def _require_observation(observation: PaperStreamRecoveryObservation) -> None:
     order_ids = tuple(order.order.broker_order_id for order in observation.orders)
+    activity_ids = tuple(activity.activity_id for activity in observation.activities)
     if (
         not observation.account_fingerprint
         or not observation.connection_epoch
@@ -178,6 +197,7 @@ def _require_observation(observation: PaperStreamRecoveryObservation) -> None:
         or not _is_aware(observation.completed_at)
         or observation.started_at >= observation.completed_at
         or len(order_ids) != len(set(order_ids))
+        or len(activity_ids) != len(set(activity_ids))
     ):
         raise InvalidPaperStreamRecoveryError
 

@@ -9,6 +9,7 @@ import httpx2
 from pydantic import ValidationError
 
 from trading_agent.alpaca_http import AlpacaApiError
+from trading_agent.alpaca_paper_activities import read_fill_activities
 from trading_agent.alpaca_paper_config import (
     AlpacaPaperCredentials,
     require_paper_trading_url,
@@ -29,6 +30,7 @@ from trading_agent.paper_execution_models import (
     PaperMarketClockSnapshot,
     PaperOrderSnapshot,
     PaperPositionSnapshot,
+    PaperTradeActivity,
 )
 
 MAX_ORDER_PAGE_SIZE: Final = 500
@@ -66,9 +68,7 @@ class AlpacaPaperClient:
             last_equity=payload.last_equity,
             buying_power=payload.buying_power,
             account_fingerprint=AccountFingerprint(
-                hashlib.sha256(
-                    f"{payload.id}:{payload.account_number}".encode()
-                ).hexdigest()
+                hashlib.sha256(f"{payload.id}:{payload.account_number}".encode()).hexdigest()
             ),
         )
 
@@ -156,10 +156,7 @@ class AlpacaPaperClient:
                 submitted_at = payload.submitted_at
                 if submitted_at is None:
                     raise PaperOrderHistoryIncompleteError
-                if (
-                    latest_submitted_at is not None
-                    and submitted_at > latest_submitted_at
-                ):
+                if latest_submitted_at is not None and submitted_at > latest_submitted_at:
                     raise PaperOrderHistoryIncompleteError
                 latest_submitted_at = submitted_at
                 if payload.id in seen_order_ids:
@@ -168,11 +165,7 @@ class AlpacaPaperClient:
                 if submitted_at > after:
                     orders.append(_order_snapshot(payload))
             oldest = payloads[-1].submitted_at
-            if (
-                len(payloads) < MAX_ORDER_PAGE_SIZE
-                or oldest is None
-                or oldest <= after
-            ):
+            if len(payloads) < MAX_ORDER_PAGE_SIZE or oldest is None or oldest <= after:
                 return tuple(orders)
             before_order_id = payloads[-1].id
         raise PaperOrderHistoryIncompleteError
@@ -191,6 +184,12 @@ class AlpacaPaperClient:
         except ValidationError as error:
             raise AlpacaApiError(response.status_code, "paper 주문 응답 형식 오류") from error
         return _order_snapshot(payload)
+
+    def fill_activities(
+        self,
+        after: dt.datetime,
+    ) -> tuple[PaperTradeActivity, ...]:
+        return read_fill_activities(self._client, self._credentials, after)
 
     def _headers(self) -> httpx2.Headers:
         return httpx2.Headers(
@@ -249,12 +248,6 @@ def _order_snapshot(payload: AlpacaPaperOrderPayload) -> PaperOrderSnapshot:
         canceled_at=payload.canceled_at,
         failed_at=payload.failed_at,
         replaced_at=payload.replaced_at,
-        replaced_by_order_id=(
-            None
-            if payload.replaced_by is None
-            else BrokerOrderId(payload.replaced_by)
-        ),
-        replaces_order_id=(
-            None if payload.replaces is None else BrokerOrderId(payload.replaces)
-        ),
+        replaced_by_order_id=(None if payload.replaced_by is None else BrokerOrderId(payload.replaced_by)),
+        replaces_order_id=(None if payload.replaces is None else BrokerOrderId(payload.replaces)),
     )

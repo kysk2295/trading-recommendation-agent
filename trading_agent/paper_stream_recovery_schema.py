@@ -1,6 +1,6 @@
 from typing import Final
 
-CREATE_PAPER_STREAM_RECOVERY_SCHEMA: Final = """
+CREATE_PAPER_STREAM_RECOVERY_SCHEMA_V3: Final = """
 CREATE TABLE IF NOT EXISTS paper_stream_recoveries (
   recovery_key TEXT PRIMARY KEY,
   account_fingerprint TEXT NOT NULL,
@@ -50,3 +50,10 @@ BEFORE UPDATE ON paper_recovery_orders BEGIN SELECT RAISE(ABORT, 'append-only');
 CREATE TRIGGER IF NOT EXISTS paper_recovery_orders_no_delete
 BEFORE DELETE ON paper_recovery_orders BEGIN SELECT RAISE(ABORT, 'append-only'); END;
 """
+
+CREATE_PAPER_STREAM_RECOVERY_SCHEMA: Final = (
+    CREATE_PAPER_STREAM_RECOVERY_SCHEMA_V3 + "\nALTER TABLE paper_stream_recoveries "
+    "ADD COLUMN activities_sha256 TEXT NOT NULL DEFAULT "
+    "'4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945' "
+    "CHECK(length(activities_sha256) = 64);"
+)

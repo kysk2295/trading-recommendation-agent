@@ -17,12 +17,15 @@ from trading_agent.alpaca_paper_order_stream import (
     PaperStreamEpoch,
 )
 from trading_agent.paper_execution_models import (
+    AccountActivityId,
     BrokerOrderId,
     IntentId,
     PaperAccountSnapshot,
     PaperBrokerState,
     PaperOrderSide,
     PaperOrderSnapshot,
+    PaperTradeActivity,
+    PaperTradeActivityType,
 )
 from trading_agent.paper_stream_recovery_runtime import (
     PaperRecoveryState,
@@ -114,5 +117,43 @@ def test_open_order_unknown_to_the_local_ledger_blocks_recovery(
             before,
             after,
             PaperRecoveryState(PaperBrokerState(_account(), (unknown,), ()), (known,)),
+            store.reconciliation_ledger(),
+        )
+
+
+def test_fill_activity_for_unknown_broker_order_blocks_recovery(
+    tmp_path: Path,
+) -> None:
+    # Given: a broker activity that cannot be joined to any PIT REST order.
+    store = initialized_store(tmp_path)
+    known = _known_order(store.intents()[0].intent_id)
+    unknown_activity = PaperTradeActivity(
+        AccountActivityId("20260714133600123::unknown"),
+        BrokerOrderId("paper-order-unknown"),
+        "BBB",
+        PaperOrderSide.BUY,
+        PaperTradeActivityType.FILL,
+        Decimal(1),
+        Decimal(1),
+        Decimal(0),
+        Decimal(5),
+        OBSERVED_AT,
+        '{"activity_type":"FILL","id":"unknown"}',
+    )
+    before, after = _heartbeats()
+
+    # When / Then: recovery refuses to infer an owner for the execution.
+    with pytest.raises(
+        PaperStreamRecoveryIncompleteError,
+        match="알 수 없는 Account Activity",
+    ):
+        _ = build_paper_stream_recovery_observation(
+            before,
+            after,
+            PaperRecoveryState(
+                PaperBrokerState(_account(), (), ()),
+                (known,),
+                activities=(unknown_activity,),
+            ),
             store.reconciliation_ledger(),
         )

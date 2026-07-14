@@ -5,6 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from trading_agent.broker_order_evidence import BrokerOrderEvidence
 from trading_agent.broker_order_projection import (
     BrokerOrderLedgerState,
     project_broker_order_state,
@@ -17,6 +18,10 @@ from trading_agent.execution_schema import (
     StoredIntent,
     stored_broker_event,
     stored_intent,
+)
+from trading_agent.paper_account_activity_store import (
+    StoredPaperAccountActivity,
+    read_paper_account_activities,
 )
 from trading_agent.paper_execution_models import (
     AccountFingerprint,
@@ -52,12 +57,8 @@ class ReconciliationLedger:
     account_fingerprint: AccountFingerprint | None
     filled_intent_ids: frozenset[IntentId] = frozenset()
     order_states: tuple[BrokerOrderLedgerState, ...] = ()
-    pending_trade_update_receipt_keys: frozenset[
-        TradeUpdateReceiptKey
-    ] = frozenset()
-    unrecovered_trade_update_quarantine_keys: frozenset[
-        TradeUpdateReceiptKey
-    ] = frozenset()
+    pending_trade_update_receipt_keys: frozenset[TradeUpdateReceiptKey] = frozenset()
+    unrecovered_trade_update_quarantine_keys: frozenset[TradeUpdateReceiptKey] = frozenset()
 
 
 def read_reconciliation_ledger(path: Path) -> ReconciliationLedger:
@@ -90,38 +91,37 @@ def read_reconciliation_ledger(path: Path) -> ReconciliationLedger:
         raw_receipts = read_trade_update_receipts(connection)
         recoveries = read_paper_stream_recoveries(connection)
         recovery_orders = read_paper_recovery_orders(connection)
+        account_activities = read_paper_account_activities(connection)
     intents = tuple(stored_intent(row) for row in intent_rows)
     broker_events = tuple(stored_broker_event(row) for row in broker_rows)
     trade_updates = tuple(stored_trade_update(row) for row in trade_rows)
     states = tuple(
         project_broker_order_state(
             intent,
-            _broker_events_for(intent.intent_id, broker_events),
-            _trade_updates_for(intent.intent_id, trade_updates),
-            _recovery_orders_for(intent.intent_id, recovery_orders),
+            BrokerOrderEvidence(
+                _broker_events_for(intent.intent_id, broker_events),
+                _trade_updates_for(intent.intent_id, trade_updates),
+                _recovery_orders_for(intent.intent_id, recovery_orders),
+                _account_activities_for(
+                    intent.intent_id,
+                    recovery_orders,
+                    account_activities,
+                ),
+            ),
         )
         for intent in intents
     )
     return ReconciliationLedger(
         intents=intents,
-        unresolved_intent_ids=frozenset(
-            state.intent_id for state in states if not state.terminal
-        ),
-        account_fingerprint=(
-            None
-            if fingerprint_row is None
-            else AccountFingerprint(fingerprint_row[0])
-        ),
-        filled_intent_ids=frozenset(
-            state.intent_id for state in states if state.has_fill_evidence
-        ),
+        unresolved_intent_ids=frozenset(state.intent_id for state in states if not state.terminal),
+        account_fingerprint=(None if fingerprint_row is None else AccountFingerprint(fingerprint_row[0])),
+        filled_intent_ids=frozenset(state.intent_id for state in states if state.has_fill_evidence),
         order_states=states,
         pending_trade_update_receipt_keys=pending_receipt_keys,
         unrecovered_trade_update_quarantine_keys=frozenset(
             disposition.receipt_key
             for disposition in receipt_dispositions
-            if disposition.disposition
-            is TradeUpdateReceiptDisposition.QUARANTINED
+            if disposition.disposition is TradeUpdateReceiptDisposition.QUARANTINED
             and not _quarantine_recovered(
                 disposition.receipt_key,
                 disposition.reason,
@@ -191,6 +191,17 @@ def _recovery_orders_for(
     orders: tuple[StoredPaperRecoveryOrder, ...],
 ) -> tuple[StoredPaperRecoveryOrder, ...]:
     return tuple(order for order in orders if order.order.client_order_id == intent_id)
+
+
+def _account_activities_for(
+    intent_id: IntentId,
+    orders: tuple[StoredPaperRecoveryOrder, ...],
+    activities: tuple[StoredPaperAccountActivity, ...],
+) -> tuple[StoredPaperAccountActivity, ...]:
+    broker_order_ids = frozenset(
+        order.order.broker_order_id for order in orders if order.order.client_order_id == intent_id
+    )
+    return tuple(activity for activity in activities if activity.activity.broker_order_id in broker_order_ids)
 
 
 def _reader_connection(path: Path) -> sqlite3.Connection:

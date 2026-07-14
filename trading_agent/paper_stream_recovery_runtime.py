@@ -14,6 +14,9 @@ from trading_agent.alpaca_paper_order_stream import PaperOrderStreamHeartbeat
 from trading_agent.execution_errors import AccountBindingConflictError
 from trading_agent.execution_ledger_reader import ReconciliationLedger
 from trading_agent.execution_schema import StoredIntent
+from trading_agent.paper_account_activity_projection import (
+    project_paper_activity_execution,
+)
 from trading_agent.paper_execution_models import (
     IntentId,
     PaperBrokerState,
@@ -75,20 +78,18 @@ def read_paper_recovery_state(
             raise PaperStreamRecoveryIncompleteError(
                 tuple(f"미해결 intent REST 조회 404: {intent_id}" for intent_id in missing)
             )
-        known_order_ids = frozenset(
-            order.broker_order_id for order in (*open_orders, *targeted)
-        )
+        known_order_ids = frozenset(order.broker_order_id for order in (*open_orders, *targeted))
         recent_orders = tuple(
             order
-            for order in client.recent_orders(
-                account.observed_at - RECOVERY_ORDER_LOOKBACK
-            )
+            for order in client.recent_orders(account.observed_at - RECOVERY_ORDER_LOOKBACK)
             if order.broker_order_id not in known_order_ids
         )
+        activities = client.fill_activities(account.observed_at - RECOVERY_ORDER_LOOKBACK)
         return PaperRecoveryState(
             PaperBrokerState(account, open_orders, client.positions()),
             tuple(targeted),
             recent_orders,
+            activities,
         )
 
 
@@ -103,8 +104,7 @@ def build_paper_stream_recovery_observation(
     broker_state = state.broker_state
     if (
         ledger.account_fingerprint is not None
-        and ledger.account_fingerprint
-        != broker_state.account.account_fingerprint
+        and ledger.account_fingerprint != broker_state.account.account_fingerprint
     ):
         raise AccountBindingConflictError
     reasons = _recovery_reasons(before_rest, after_rest, state, ledger)
@@ -118,6 +118,7 @@ def build_paper_stream_recovery_observation(
         snapshot_json=recovery_snapshot_json(state, ledger.unresolved_intent_ids),
         execution_detail_complete=execution_details_are_complete(state, ledger),
         orders=recovery_order_observations(state),
+        activities=state.activities,
     )
 
 
@@ -145,13 +146,10 @@ def _recovery_reasons(
         counts[order.client_order_id] = counts.get(order.client_order_id, 0) + 1
     missing = ledger.unresolved_intent_ids - counts.keys()
     reasons.extend(f"미해결 intent REST 주문 누락: {intent_id}" for intent_id in sorted(missing))
-    unexpected_targeted = frozenset(
-        order.client_order_id for order in state.targeted_orders
-    ) - ledger.unresolved_intent_ids
-    reasons.extend(
-        f"요청하지 않은 targeted REST 주문: {intent_id}"
-        for intent_id in sorted(unexpected_targeted)
+    unexpected_targeted = (
+        frozenset(order.client_order_id for order in state.targeted_orders) - ledger.unresolved_intent_ids
     )
+    reasons.extend(f"요청하지 않은 targeted REST 주문: {intent_id}" for intent_id in sorted(unexpected_targeted))
     reasons.extend(
         f"REST 복구에 중복 client order ID가 있습니다: {intent_id}"
         for intent_id, count in sorted(counts.items())
@@ -172,6 +170,21 @@ def _recovery_reasons(
         intent = intents.get(order.client_order_id)
         if intent is not None:
             reasons.extend(_order_reasons(intent, order))
+    orders_by_broker_id = {order.broker_order_id: order for order in all_recovery_orders}
+    reasons.extend(
+        f"알 수 없는 Account Activity broker order ID: {activity.broker_order_id}"
+        for activity in state.activities
+        if activity.broker_order_id not in orders_by_broker_id
+    )
+    for broker_order_id, order in orders_by_broker_id.items():
+        activities = tuple(activity for activity in state.activities if activity.broker_order_id == broker_order_id)
+        if activities:
+            reasons.extend(project_paper_activity_execution(order, activities).reasons)
+    reasons.extend(
+        "Account Activity 거래시각이 current-epoch 복구 완료 뒤입니다"
+        for activity in state.activities
+        if activity.transaction_time > after.pong_at
+    )
     return tuple(sorted(set(reasons)))
 
 
@@ -192,7 +205,4 @@ def _order_reasons(
         mismatches.append("time_in_force")
     if order.extended_hours:
         mismatches.append("extended_hours")
-    return tuple(
-        f"REST 복구 주문 불일치: {intent.intent_id} ({field})"
-        for field in mismatches
-    )
+    return tuple(f"REST 복구 주문 불일치: {intent.intent_id} ({field})" for field in mismatches)

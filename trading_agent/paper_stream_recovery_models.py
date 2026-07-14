@@ -9,6 +9,7 @@ from trading_agent.paper_execution_models import (
     AccountFingerprint,
     PaperBrokerState,
     PaperOrderSnapshot,
+    PaperTradeActivity,
 )
 
 PaperStreamRecoveryKey = NewType("PaperStreamRecoveryKey", str)
@@ -43,6 +44,7 @@ class PaperRecoveryState:
     broker_state: PaperBrokerState
     targeted_orders: tuple[PaperOrderSnapshot, ...]
     recent_orders: tuple[PaperOrderSnapshot, ...] = ()
+    activities: tuple[PaperTradeActivity, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +56,7 @@ class PaperStreamRecoveryObservation:
     snapshot_json: str
     execution_detail_complete: bool
     orders: tuple[PaperRecoveryOrderObservation, ...] = ()
+    activities: tuple[PaperTradeActivity, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +70,7 @@ class StoredPaperStreamRecovery:
     snapshot_json: str
     snapshot_sha256: str
     orders_sha256: str
+    activities_sha256: str
     execution_detail_complete: bool
 
 

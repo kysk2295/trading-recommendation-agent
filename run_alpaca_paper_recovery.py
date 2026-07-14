@@ -15,6 +15,7 @@ from pathlib import Path
 import httpx2
 
 from trading_agent.alpaca_http import AlpacaApiError
+from trading_agent.alpaca_paper_activities import PaperActivityHistoryIncompleteError
 from trading_agent.alpaca_paper_client import PaperOrderReadIncompleteError
 from trading_agent.alpaca_paper_config import (
     AlpacaPaperCredentials,
@@ -33,6 +34,10 @@ from trading_agent.execution_errors import (
 from trading_agent.execution_store import (
     ExecutionStore,
     WriterLeaseUnavailableError,
+)
+from trading_agent.paper_account_activity_store import (
+    InvalidPaperAccountActivityError,
+    PaperAccountActivityConflictError,
 )
 from trading_agent.paper_runtime import PaperRuntimeEpochChangedError
 from trading_agent.paper_stream_recovery import (
@@ -61,9 +66,7 @@ type RecoveryProbeLoader = Callable[
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Alpaca paper 주문 스트림 재연결과 REST 복구를 GET-only로 검증"
-    )
+    parser = argparse.ArgumentParser(description="Alpaca paper 주문 스트림 재연결과 REST 복구를 GET-only로 검증")
     parser.add_argument(
         "--database",
         type=Path,
@@ -97,9 +100,12 @@ def main(
         AlpacaPaperSecretFileError,
         ExecutionSchemaIntegrityError,
         InvalidPaperStreamRecoveryError,
+        InvalidPaperAccountActivityError,
         InvalidTradeUpdateRawReceiptError,
         MissingAlpacaPaperCredentialsError,
         PaperOrderReadIncompleteError,
+        PaperActivityHistoryIncompleteError,
+        PaperAccountActivityConflictError,
         PaperOrderStreamError,
         PaperRuntimeEpochChangedError,
         PaperStreamRecoveryConflictError,
@@ -119,8 +125,10 @@ def main(
         _write_report(args.output_dir, None, (rendered,))
         return 2
     detail_reasons = (
-        "REST 누적 체결은 복구됐지만 개별 execution 상세는 추가 복구가 필요합니다",
-    ) if not result.execution_detail_complete else ()
+        ("REST 누적 체결은 복구됐지만 개별 execution 상세는 추가 복구가 필요합니다",)
+        if not result.execution_detail_complete
+        else ()
+    )
     reasons = (
         *result.blocking_reasons,
         *detail_reasons,
@@ -138,15 +146,16 @@ def _write_report(
         "# Alpaca Paper 주문 스트림 REST 복구",
         "",
         f"- snapshot 저장: {'완료' if result is not None else '실패'}",
-        (
-            f"- 복구 완료시각: {result.completed_at}"
-            if result is not None
-            else "- 복구 완료시각: 없음"
-        ),
+        (f"- 복구 완료시각: {result.completed_at}" if result is not None else "- 복구 완료시각: 없음"),
         (
             f"- 정규화 주문 snapshot: {result.recovery_order_count}건"
             if result is not None
             else "- 정규화 주문 snapshot: 0건"
+        ),
+        (
+            f"- Account Activities FILL: {result.recovery_activity_count}건"
+            if result is not None
+            else "- Account Activities FILL: 0건"
         ),
         (
             "- 개별 execution 상세: 완전"

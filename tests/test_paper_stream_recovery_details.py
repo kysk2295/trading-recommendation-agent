@@ -14,11 +14,14 @@ from tests.trade_update_ledger_fixtures import (
     trade_update,
 )
 from trading_agent.paper_execution_models import (
+    AccountActivityId,
     BrokerOrderId,
     PaperAccountSnapshot,
     PaperBrokerState,
     PaperOrderSide,
     PaperOrderSnapshot,
+    PaperTradeActivity,
+    PaperTradeActivityType,
 )
 from trading_agent.paper_stream_recovery import (
     PaperRecoveryOrderObservation,
@@ -27,6 +30,61 @@ from trading_agent.paper_stream_recovery import (
 )
 from trading_agent.paper_stream_recovery_runtime import PaperRecoveryState
 from trading_agent.paper_stream_recovery_snapshot import execution_details_are_complete
+
+
+def test_fill_activity_completes_execution_detail_missing_from_wss(
+    tmp_path: Path,
+) -> None:
+    # Given: REST order totals and one Account Activities fill agree exactly.
+    store = initialized_store(tmp_path)
+    recovered_order = PaperOrderSnapshot(
+        BrokerOrderId("paper-order-1"),
+        store.intents()[0].intent_id,
+        "AAA",
+        PaperOrderSide.BUY,
+        "filled",
+        Decimal(100),
+        Decimal(100),
+        Decimal(10),
+        "day",
+        False,
+        filled_average_price=Decimal("10.05"),
+    )
+    activity = PaperTradeActivity(
+        AccountActivityId("20260714133600123::execution-1"),
+        BrokerOrderId("paper-order-1"),
+        "AAA",
+        PaperOrderSide.BUY,
+        PaperTradeActivityType.FILL,
+        Decimal(100),
+        Decimal(100),
+        Decimal(0),
+        Decimal("10.05"),
+        OBSERVED_AT,
+        '{"activity_type":"FILL","id":"execution-1"}',
+    )
+    account = PaperAccountSnapshot(
+        observed_at=OBSERVED_AT,
+        status="ACTIVE",
+        trading_blocked=False,
+        equity=Decimal(30_000),
+        last_equity=Decimal(30_000),
+        buying_power=Decimal(60_000),
+        account_fingerprint=FINGERPRINT,
+    )
+
+    # When: execution completeness is evaluated without a matching WSS fill.
+    detail_complete = execution_details_are_complete(
+        PaperRecoveryState(
+            PaperBrokerState(account, (), ()),
+            (recovered_order,),
+            activities=(activity,),
+        ),
+        store.reconciliation_ledger(),
+    )
+
+    # Then: the immutable broker activity supplies the missing execution detail.
+    assert detail_complete is True
 
 
 def test_rest_aggregate_only_fill_stays_execution_detail_incomplete(
@@ -136,10 +194,13 @@ def test_rest_average_price_must_match_execution_details(
         (recovered_order,),
     )
 
-    assert execution_details_are_complete(
-        recovery_state,
-        store.reconciliation_ledger(),
-    ) is False
+    assert (
+        execution_details_are_complete(
+            recovery_state,
+            store.reconciliation_ledger(),
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize(

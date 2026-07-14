@@ -17,6 +17,17 @@ from trading_agent.paper_execution_models import (
 FINGERPRINT = AccountFingerprint("a" * 64)
 
 
+def test_bootstrap_script_declares_the_stream_runtime_dependency() -> None:
+    # Given: the bootstrap CLI is executed by uv as a standalone PEP 723 script.
+    script = Path(__file__).parents[1] / "run_alpaca_paper_bootstrap.py"
+
+    # When: its isolated dependency metadata is inspected.
+    source = script.read_text(encoding="utf-8")
+
+    # Then: importing the execution store can load the paper order stream.
+    assert '"websockets>=16,<17"' in source.split("# ///", maxsplit=2)[1]
+
+
 def _credentials() -> AlpacaPaperCredentials:
     return AlpacaPaperCredentials("test-key", "test-secret")
 

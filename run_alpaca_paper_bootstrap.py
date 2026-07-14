@@ -1,7 +1,7 @@
-#!/usr/bin/env -S uv run --python 3.12 --with httpx2[http2,brotli,zstd] --with pydantic python
+#!/usr/bin/env -S uv run --python 3.12 --with httpx2[http2,brotli,zstd] --with pydantic --with websockets>=16,<17 python
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["httpx2[http2,brotli,zstd]", "pydantic>=2.11"]
+# dependencies = ["httpx2[http2,brotli,zstd]", "pydantic>=2.11", "websockets>=16,<17"]
 # ///
 # How to run:
 # ./run_alpaca_paper_bootstrap.py --database outputs/paper_execution/paper_execution.sqlite3
@@ -42,9 +42,7 @@ from trading_agent.paper_runtime import (
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Alpaca paper 계좌를 단일 Writer 실행 원장에 GET-only로 결합"
-    )
+    parser = argparse.ArgumentParser(description="Alpaca paper 계좌를 단일 Writer 실행 원장에 GET-only로 결합")
     parser.add_argument(
         "--database",
         type=Path,

@@ -10,11 +10,17 @@ IntentId = NewType("IntentId", str)
 BrokerOrderId = NewType("BrokerOrderId", str)
 BrokerEventKey = NewType("BrokerEventKey", str)
 AccountFingerprint = NewType("AccountFingerprint", str)
+AccountActivityId = NewType("AccountActivityId", str)
 
 
 class PaperOrderSide(StrEnum):
     BUY = "buy"
     SELL = "sell"
+
+
+class PaperTradeActivityType(StrEnum):
+    PARTIAL_FILL = "partial_fill"
+    FILL = "fill"
 
 
 class BrokerOrderEventType(StrEnum):
@@ -110,6 +116,21 @@ class PaperPositionSnapshot:
     symbol: str
     quantity: Decimal
     market_value: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class PaperTradeActivity:
+    activity_id: AccountActivityId
+    broker_order_id: BrokerOrderId
+    symbol: str
+    side: PaperOrderSide
+    event_type: PaperTradeActivityType
+    quantity: Decimal
+    cumulative_quantity: Decimal
+    leaves_quantity: Decimal
+    price: Decimal
+    transaction_time: dt.datetime
+    payload_json: str
 
 
 @dataclass(frozen=True, slots=True)

@@ -16,6 +16,10 @@ from trading_agent.execution_schema import (
     stored_broker_event,
     stored_intent,
 )
+from trading_agent.paper_account_activity_store import (
+    StoredPaperAccountActivity,
+    read_paper_account_activities,
+)
 from trading_agent.paper_execution_models import (
     AccountFingerprint,
     IntentId,
@@ -47,18 +51,14 @@ class ExecutionStoreReader:
         if not self.path.is_file():
             return ()
         with self._reader_connection() as connection:
-            rows = connection.execute(
-                "SELECT * FROM order_intents ORDER BY created_at, intent_id"
-            ).fetchall()
+            rows = connection.execute("SELECT * FROM order_intents ORDER BY created_at, intent_id").fetchall()
         return tuple(stored_intent(row) for row in rows)
 
     def is_initialized(self) -> bool:
         if not self.path.is_file():
             return False
         with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
-            row: tuple[int] | None = connection.execute(
-                "PRAGMA user_version"
-            ).fetchone()
+            row: tuple[int] | None = connection.execute("PRAGMA user_version").fetchone()
         return row == (SCHEMA_VERSION,)
 
     def unresolved_intent_ids(self) -> frozenset[IntentId]:
@@ -124,6 +124,12 @@ class ExecutionStoreReader:
             return ()
         with self._reader_connection() as connection:
             return read_paper_recovery_orders(connection)
+
+    def paper_account_activities(self) -> tuple[StoredPaperAccountActivity, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            return read_paper_account_activities(connection)
 
     def reconciliation_ledger(self) -> ReconciliationLedger:
         return read_reconciliation_ledger(self.path)
