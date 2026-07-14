@@ -6,7 +6,7 @@ from typing import Final, assert_never
 from trading_agent.daily_research_models import SessionQuality
 from trading_agent.strategy_factory import StrategyMode
 
-EVALUATOR_VERSION: Final = "paper_metrics_trade_bootstrap_v1"
+EVALUATOR_VERSION: Final = "paper_metrics_day_block_bootstrap_v2"
 FEED_ENTITLEMENT: Final = "KIS 상승률·거래량 상위 랭킹 읽기 전용; 전체 미국시장 PIT 모집단 아님"
 
 
@@ -34,7 +34,6 @@ def promotion_blockers(
     blockers.extend(
         (
             "broker_paper_ledger_missing",
-            "block_bootstrap_missing",
             "dsr_pbo_missing",
             "parameter_plateau_missing",
             "sip_validation_missing",

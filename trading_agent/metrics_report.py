@@ -90,7 +90,8 @@ def write_metrics_report(
             "",
             "- `active` 뒤 손절·2R·당일 종료가 확인된 추천만 거래로 집계합니다.",
             "- 누적수익과 MDD는 거래 순차 복리 proxy이며 최대 10포지션 일별 포트폴리오가 아닙니다.",
-            "- 평균수익 95% CI는 고정 seed bootstrap이며 표본이 작으면 신뢰할 수 없습니다.",
+            "- 평균수익 95% CI는 거래일을 블록으로 재표본화한 고정 seed bootstrap이며 "
+            + "두 거래일 미만이면 N/A입니다.",
             "- 여러 비용·전략·파라미터를 반복 비교하면 다중검정과 데이터 스누핑 위험이 커집니다.",
             "- 마지막 완료 봉 fallback은 실제 MOC가 아니므로 별도 비율로 표시합니다.",
         )
@@ -138,10 +139,7 @@ def _trade_fields() -> tuple[str, ...]:
 
 
 def _metric_row(row: PerformanceMetrics) -> CsvRow:
-    return {
-        field: getattr(row, field)
-        for field in _metric_fields()
-    }
+    return {field: getattr(row, field) for field in _metric_fields()}
 
 
 def _write_rows(

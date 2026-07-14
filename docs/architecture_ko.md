@@ -166,13 +166,13 @@ NASDAQ·NYSE·AMEX 상승률/거래량 랭킹
 
 watch는 공식 정규장 종료 뒤 `run_paper_metrics.py`를 한 번 실행해 `paper_metrics/`와 `post_session_metrics_cycles.csv`를 만든다. 장중에 cycle 수를 줄여 종료한 실행은 이 단계를 건너뛴다. 이 자동화는 broker 주문 처리와 독립적인 shadow 연구 경로이며 미종료 추천·미체결 무효화는 거래 성과에서 제외한다.
 
-`run_paper_metrics.py`는 여러 날짜별 SQLite를 읽고 추천 ID를 중복 제거한다. 미체결 무효화와 미종료 추천은 제외하며, 누적수익과 MDD는 거래 순차 복리 proxy로만 계산한다. 이는 최대 10포지션 일별 포트폴리오 백테스트가 아니며, 작은 paper 표본의 bootstrap CI도 전략 승격 근거로 단독 사용하지 않는다.
+`run_paper_metrics.py`는 여러 날짜별 SQLite를 읽고 추천 ID를 중복 제거한다. 미체결 무효화와 미종료 추천은 제외하며, 누적수익과 MDD는 거래 순차 복리 proxy로만 계산한다. 평균수익 CI는 개별 거래가 아니라 `exit_at`을 뉴욕 거래일로 정규화한 날짜 블록을 재표본화해 같은 날 거래의 의존성을 보존한다. 거래일 블록이 2개 미만이면 가짜 정밀도를 피하기 위해 CI를 공란으로 둔다. 이는 최대 10포지션 일별 포트폴리오 백테스트가 아니며, 작은 paper 표본의 block-bootstrap CI도 전략 승격 근거로 단독 사용하지 않는다.
 
 metrics가 성공하면 watch는 `run_daily_research_record.py`를 이어서 실행하고 종료코드를 `post_session_research_cycles.csv`에 별도로 기록한다. 이 CLI는 세션 산출물 SHA-256, 코드·데이터·평가기 버전, 정확한 전략 파라미터·비용·포트폴리오 정책, 편도 20bp 결과, 데이터 품질 incident와 누적 적격 거래일·완료 거래 수를 불변 JSON과 append-only JSONL로 저장한다. 같은 record ID를 재실행해도 중앙 원장에는 중복 추가하지 않는다.
 
 누적치는 같은 전략 버전에서 기록 대상 거래일보다 앞선 날짜만 사용한다. 따라서 이후 거래일이 원장에 추가된 뒤 과거 세션을 재생해도 미래 날짜가 과거의 누적치와 record ID에 들어가지 않으며, 동일 입력은 중복 행을 만들지 않는다.
 
-적격 forward day는 watch cycle마다 거래소 3곳×랭킹 2종의 6개 요청이 모두 성공하고, coverage cycle 수와 watch cycle 수가 같으며, 실패 watch cycle이 없을 때만 증가한다. 승격은 최소 60 적격 거래일·100 완료 거래뿐 아니라 broker paper ledger, block bootstrap, DSR/PBO, 인접 파라미터 평탄성, SIP 검증이 모두 충족돼야 한다. 현재 경로는 연구 기록만 만들고 전략 상태를 자동 변경하거나 주문을 제출하지 않는다.
+적격 forward day는 watch cycle마다 거래소 3곳×랭킹 2종의 6개 요청이 모두 성공하고, coverage cycle 수와 watch cycle 수가 같으며, 실패 watch cycle이 없을 때만 증가한다. 승격은 최소 60 적격 거래일·100 완료 거래뿐 아니라 broker paper ledger, DSR/PBO, 인접 파라미터 평탄성, SIP 검증이 모두 충족돼야 한다. 평가기 버전이 다른 원장은 누적 거래일·거래 수에 섞지 않는다. 현재 경로는 연구 기록만 만들고 전략 상태를 자동 변경하거나 주문을 제출하지 않는다.
 
 ## 현재 범위의 한계
 

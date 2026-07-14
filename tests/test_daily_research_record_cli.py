@@ -36,6 +36,7 @@ class PromotionJson(TypedDict):
 class DailyRecordJson(TypedDict):
     session_date: str
     code_version: str
+    evaluator_version: str
     strategy_stage: str
     session_quality: QualityJson
     metrics_20bp: MetricsJson
@@ -82,6 +83,7 @@ def test_daily_research_cli_writes_lineage_and_blocks_early_promotion(
     record = RECORD_ADAPTER.validate_json(lines[0])
     assert record["session_date"] == "2026-07-14"
     assert record["code_version"] == "test-code"
+    assert record["evaluator_version"] == "paper_metrics_day_block_bootstrap_v2"
     assert record["strategy_stage"] == "experimental_shadow"
     assert record["session_quality"]["forward_day_eligible"] is True
     assert record["session_quality"]["completed_trades"] == 1
@@ -90,6 +92,7 @@ def test_daily_research_cli_writes_lineage_and_blocks_early_promotion(
     assert record["promotion"]["allowed"] is False
     assert "minimum_forward_days:1/60" in record["promotion"]["blockers"]
     assert "minimum_completed_trades:1/100" in record["promotion"]["blockers"]
+    assert "block_bootstrap_missing" not in record["promotion"]["blockers"]
     summary = (session / "daily_research_summary_ko.md").read_text(encoding="utf-8")
     assert "승격 금지" in summary
     assert "확정 수익" in summary
@@ -136,6 +139,64 @@ def test_rerunning_older_session_does_not_use_future_ledger_rows(
     records = tuple(RECORD_ADAPTER.validate_json(line) for line in lines)
     first_record = next(row for row in records if row["session_date"] == "2026-07-14")
     assert first_record["promotion"]["cumulative_forward_days"] == 1
+
+
+def test_new_evaluator_does_not_inherit_legacy_evaluator_counts(
+    tmp_path: Path,
+) -> None:
+    sessions = tmp_path / "live_sessions"
+    first = sessions / "20260714"
+    second = sessions / "20260715"
+    _write_complete_session(first, dt.date(2026, 7, 14))
+    _write_complete_session(second, dt.date(2026, 7, 15))
+    project = Path(__file__).parents[1]
+    script = project / "run_daily_research_record.py"
+    first_run = subprocess.run(
+        (
+            sys.executable,
+            str(script),
+            str(first),
+            "--session-date",
+            "2026-07-14",
+            "--strategy",
+            "orb",
+            "--code-version",
+            "test-code",
+        ),
+        cwd=project,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert first_run.returncode == 0, first_run.stderr
+    ledger = sessions / "daily_research_ledger.jsonl"
+    legacy = ledger.read_text(encoding="utf-8").replace(
+        "paper_metrics_day_block_bootstrap_v2",
+        "paper_metrics_trade_bootstrap_v1",
+    )
+    _ = ledger.write_text(legacy, encoding="utf-8")
+
+    second_run = subprocess.run(
+        (
+            sys.executable,
+            str(script),
+            str(second),
+            "--session-date",
+            "2026-07-15",
+            "--strategy",
+            "orb",
+            "--code-version",
+            "test-code",
+        ),
+        cwd=project,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert second_run.returncode == 0, second_run.stderr
+    records = tuple(RECORD_ADAPTER.validate_json(line) for line in ledger.read_text().splitlines())
+    assert records[-1]["promotion"]["cumulative_forward_days"] == 1
 
 
 def _write_complete_session(

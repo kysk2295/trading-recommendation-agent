@@ -250,7 +250,7 @@ CSV replay:
   --session-date YYYY-MM-DD --strategy orb
 ```
 
-장마감 metrics가 성공하면 watch가 이 CLI도 순차 실행한다. 세션별 불변 JSON, 상위 `daily_research_ledger.jsonl`, 한국어 요약과 별도 종료코드를 남기며 코드·데이터·평가기·파라미터·비용·품질 계보를 함께 고정한다. 랭킹 6개 요청과 watch cycle이 완전하지 않거나 실패 cycle이 있으면 해당 날짜를 적격 forward day로 세지 않는다. 최소 60거래일·100건 외에도 broker ledger, block bootstrap, DSR/PBO, 인접 파라미터 평탄성, SIP 검증이 모두 없으므로 자동 승격과 자동 주문은 항상 금지한다.
+장마감 metrics가 성공하면 watch가 이 CLI도 순차 실행한다. 세션별 불변 JSON, 상위 `daily_research_ledger.jsonl`, 한국어 요약과 별도 종료코드를 남기며 코드·데이터·평가기·파라미터·비용·품질 계보를 함께 고정한다. 랭킹 6개 요청과 watch cycle이 완전하지 않거나 실패 cycle이 있으면 해당 날짜를 적격 forward day로 세지 않는다. 평균수익 CI는 뉴욕 거래일 전체를 블록으로 재표본화하며 원장 평가기 버전은 `paper_metrics_day_block_bootstrap_v2`다. 최소 60거래일·100건 외에도 broker ledger, DSR/PBO, 인접 파라미터 평탄성, SIP 검증이 없으므로 자동 승격과 자동 주문은 계속 금지한다.
 
 스캐너 forward outcome 진단:
 

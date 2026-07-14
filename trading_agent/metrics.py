@@ -4,6 +4,7 @@ import datetime as dt
 import random
 from dataclasses import dataclass
 from typing import Final
+from zoneinfo import ZoneInfo
 
 from trading_agent.models import RecommendationState
 from trading_agent.store import PaperStore
@@ -15,6 +16,7 @@ TERMINAL_TRADE_STATES: Final = frozenset(
         RecommendationState.TIME_EXIT,
     }
 )
+NEW_YORK: Final = ZoneInfo("America/New_York")
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,13 +134,7 @@ def summarize_performance(
         peak = max(peak, equity)
         max_drawdown = min(max_drawdown, equity / peak - 1.0)
     mean = sum(returns) / len(returns)
-    means: list[float] = []
-    if config.bootstrap_samples > 0:
-        rng = random.Random(config.random_seed)
-        for _ in range(config.bootstrap_samples):
-            sample = tuple(rng.choice(returns) for _ in returns)
-            means.append(sum(sample) / len(sample))
-        means.sort()
+    means = _day_block_bootstrap_means(trades, returns, config)
     lower = means[int((len(means) - 1) * 0.025)] if means else None
     upper = means[int((len(means) - 1) * 0.975)] if means else None
     fallback_count = sum(trade.uses_close_fallback for trade in trades)
@@ -161,3 +157,26 @@ def summarize_performance(
 def net_return(trade: PaperTrade, side_cost_bps: int) -> float:
     cost_rate = side_cost_bps / 10_000.0
     return trade.exit * (1.0 - cost_rate) / (trade.entry * (1.0 + cost_rate)) - 1.0
+
+
+def _day_block_bootstrap_means(
+    trades: tuple[PaperTrade, ...],
+    returns: tuple[float, ...],
+    config: MetricsConfig,
+) -> list[float]:
+    if config.bootstrap_samples <= 0:
+        return []
+    grouped: dict[dt.date, list[float]] = {}
+    for trade, value in zip(trades, returns, strict=True):
+        session_date = trade.exit_at.astimezone(NEW_YORK).date()
+        grouped.setdefault(session_date, []).append(value)
+    blocks = tuple(tuple(values) for values in grouped.values())
+    if len(blocks) < 2:
+        return []
+    rng = random.Random(config.random_seed)
+    means: list[float] = []
+    for _ in range(config.bootstrap_samples):
+        selected = tuple(rng.choice(blocks) for _ in blocks)
+        sample = tuple(value for block in selected for value in block)
+        means.append(sum(sample) / len(sample))
+    return sorted(means)

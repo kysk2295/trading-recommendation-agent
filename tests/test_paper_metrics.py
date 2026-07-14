@@ -53,9 +53,7 @@ def test_trade_extraction_requires_activation_and_a_terminal_exit(
 
 
 def test_performance_metrics_apply_round_trip_costs_and_track_fallbacks() -> None:
-    timestamp = dt.datetime(
-        2026, 7, 10, 10, 0, tzinfo=ZoneInfo("America/New_York")
-    )
+    timestamp = dt.datetime(2026, 7, 10, 10, 0, tzinfo=ZoneInfo("America/New_York"))
     trades = (
         metrics.PaperTrade(
             "winner",
@@ -100,13 +98,53 @@ def test_performance_metrics_apply_round_trip_costs_and_track_fallbacks() -> Non
     assert result.max_drawdown == loser_net
     assert result.fallback_exit_count == 1
     assert result.fallback_exit_rate == 0.5
-    mean = result.average_return
-    lower = result.mean_ci_low
-    upper = result.mean_ci_high
-    assert mean is not None
-    assert lower is not None
-    assert upper is not None
-    assert lower <= mean <= upper
+    assert result.mean_ci_low is None
+    assert result.mean_ci_high is None
+
+
+def test_bootstrap_resamples_complete_trading_day_blocks() -> None:
+    first_day = dt.datetime(2026, 7, 9, 23, 30, tzinfo=ZoneInfo("Asia/Seoul"))
+    second_day = first_day + dt.timedelta(days=1)
+    winners = tuple(
+        metrics.PaperTrade(
+            f"winner-{index}",
+            f"WIN{index}",
+            "opening_range_breakout",
+            first_day + dt.timedelta(hours=index),
+            first_day + dt.timedelta(hours=index, minutes=1),
+            10.0,
+            11.0,
+            0.1,
+            RecommendationState.TARGET_2R,
+            False,
+        )
+        for index in range(3)
+    )
+    trades = (
+        *winners,
+        metrics.PaperTrade(
+            "loser",
+            "LOSS",
+            "opening_range_breakout",
+            second_day,
+            second_day + dt.timedelta(minutes=1),
+            10.0,
+            9.5,
+            -0.05,
+            RecommendationState.STOPPED,
+            False,
+        ),
+    )
+
+    result = metrics.summarize_performance(
+        trades,
+        metrics.MetricsConfig(10, 2_000, 17),
+    )
+
+    winner_net = metrics.net_return(trades[0], 10)
+    loser_net = metrics.net_return(trades[-1], 10)
+    assert result.mean_ci_low == loser_net
+    assert result.mean_ci_high == winner_net
 
 
 def _recommendation(
@@ -114,9 +152,7 @@ def _recommendation(
     symbol: str,
     entry: float,
 ) -> Recommendation:
-    created_at = dt.datetime(
-        2026, 7, 10, 10, 0, tzinfo=ZoneInfo("America/New_York")
-    )
+    created_at = dt.datetime(2026, 7, 10, 10, 0, tzinfo=ZoneInfo("America/New_York"))
     return Recommendation(
         recommendation_id,
         symbol,
