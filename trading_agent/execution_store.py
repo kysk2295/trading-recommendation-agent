@@ -7,7 +7,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import final, override
+from typing import Final, final, override
 
 from trading_agent.execution_schema import (
     CREATE_SCHEMA,
@@ -27,8 +27,16 @@ from trading_agent.paper_execution_models import (
     AccountFingerprint,
     BrokerEventKey,
     BrokerOrderEvent,
+    BrokerOrderEventType,
     IntentId,
     PaperOrderIntent,
+)
+
+TERMINAL_BROKER_EVENTS: Final = (
+    BrokerOrderEventType.FILL,
+    BrokerOrderEventType.REJECTED,
+    BrokerOrderEventType.CANCELED,
+    BrokerOrderEventType.EXPIRED,
 )
 
 
@@ -193,6 +201,33 @@ class ExecutionStore:
                 "SELECT * FROM order_intents ORDER BY created_at, intent_id"
             ).fetchall()
         return tuple(stored_intent(row) for row in rows)
+
+    def is_initialized(self) -> bool:
+        if not self.path.is_file():
+            return False
+        with self._reader_connection() as connection:
+            row: tuple[int] | None = connection.execute(
+                "PRAGMA user_version"
+            ).fetchone()
+        return row == (SCHEMA_VERSION,)
+
+    def unresolved_intent_ids(self) -> frozenset[IntentId]:
+        if not self.path.is_file():
+            return frozenset()
+        terminal_values = tuple(event.value for event in TERMINAL_BROKER_EVENTS)
+        with self._reader_connection() as connection:
+            rows: list[tuple[str]] = connection.execute(
+                """SELECT intent.intent_id FROM order_intents AS intent
+                LEFT JOIN broker_order_events AS event ON event.event_id = (
+                  SELECT MAX(candidate.event_id) FROM broker_order_events AS candidate
+                  WHERE candidate.intent_id = intent.intent_id
+                )
+                WHERE event.event_type IS NULL
+                   OR event.event_type NOT IN (?, ?, ?, ?)
+                ORDER BY intent.intent_id""",
+                terminal_values,
+            ).fetchall()
+        return frozenset(IntentId(row[0]) for row in rows)
 
     def account_fingerprint(self) -> AccountFingerprint | None:
         if not self.path.is_file():

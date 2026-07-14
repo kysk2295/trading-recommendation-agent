@@ -60,6 +60,7 @@ def test_reader_does_not_create_a_missing_database(tmp_path: Path) -> None:
 
     # Then
     assert intents == ()
+    assert store.is_initialized() is False
     assert not database.exists()
     assert not database.parent.exists()
 
@@ -231,3 +232,28 @@ def test_writer_binds_exactly_one_paper_account_fingerprint(tmp_path: Path) -> N
         with pytest.raises(AccountBindingConflictError, match="다른 Alpaca paper 계좌"):
             _ = writer.bind_account(other, bound_at)
     assert store.account_fingerprint() == first
+    assert store.is_initialized() is True
+
+
+def test_terminal_broker_event_resolves_local_intent(tmp_path: Path) -> None:
+    # Given
+    store = ExecutionStore(tmp_path / "execution.sqlite3")
+    with store.writer() as writer:
+        _ = writer.save_intent(_intent(), quantity=259)
+        unresolved_before = store.unresolved_intent_ids()
+
+        # When
+        _ = writer.append_broker_event(
+            BrokerOrderEvent(
+                BrokerEventKey("paper-order-1:fill:259"),
+                _intent().intent_id,
+                _intent().created_at,
+                BrokerOrderEventType.FILL,
+                BrokerOrderId("paper-order-1"),
+                '{"status":"filled"}',
+            )
+        )
+
+    # Then
+    assert unresolved_before == frozenset({_intent().intent_id})
+    assert store.unresolved_intent_ids() == frozenset()
