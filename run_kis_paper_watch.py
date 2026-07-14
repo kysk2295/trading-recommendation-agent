@@ -99,6 +99,13 @@ def _daily_research_command(
     )
 
 
+def _adaptive_evaluation_command(output: Path) -> tuple[str, ...]:
+    return (
+        str(Path(__file__).with_name("run_adaptive_strategy_evaluation.py")),
+        str(output),
+    )
+
+
 def _run_and_audit(command: tuple[str, ...], audit_path: Path) -> int:
     started_at = dt.datetime.now().astimezone()
     completed = subprocess.run(command, check=False)
@@ -121,9 +128,15 @@ def run_session_metrics(
     )
     if metrics_exit_code:
         return metrics_exit_code
-    return runner(
+    research_exit_code = runner(
         _daily_research_command(output, observed_at, strategy),
         output / "post_session_research_cycles.csv",
+    )
+    if research_exit_code:
+        return research_exit_code
+    return runner(
+        _adaptive_evaluation_command(output),
+        output / "post_session_adaptive_evaluation_cycles.csv",
     )
 
 

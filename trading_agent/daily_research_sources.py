@@ -23,6 +23,7 @@ REQUIRED_ARTIFACTS: Final = (
     "market_risk_screen.csv",
     "paper_recommendations.sqlite3",
     "paper_metrics/paper_metrics.csv",
+    "paper_metrics/paper_trades.csv",
 )
 OPTIONAL_ARTIFACTS: Final = (
     "kis_read_retry_cycles.csv",
@@ -33,6 +34,7 @@ OPTIONAL_ARTIFACTS: Final = (
     "kis_eod_catchup_observations.csv",
     "eod_kis_read_retry_cycles.csv",
     "eod_kis_read_retry_events.csv",
+    "research_regime_snapshot.json",
 )
 
 

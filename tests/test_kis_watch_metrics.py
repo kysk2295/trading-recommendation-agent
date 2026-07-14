@@ -38,7 +38,7 @@ def test_watch_runs_metrics_only_after_the_regular_session_close(
     # Then: only the closed session runs metrics followed by the research ledger.
     assert early_result is None
     assert final_result == 0
-    assert len(calls) == 2
+    assert len(calls) == 3
     metrics_command, metrics_audit = calls[0]
     assert metrics_command[0].endswith("run_paper_metrics.py")
     assert metrics_command[1] == str(tmp_path / "paper_recommendations.sqlite3")
@@ -54,3 +54,7 @@ def test_watch_runs_metrics_only_after_the_regular_session_close(
         "orb",
     )
     assert research_audit == tmp_path / "post_session_research_cycles.csv"
+    adaptive_command, adaptive_audit = calls[2]
+    assert adaptive_command[0].endswith("run_adaptive_strategy_evaluation.py")
+    assert adaptive_command[1] == str(tmp_path)
+    assert adaptive_audit == tmp_path / "post_session_adaptive_evaluation_cycles.csv"

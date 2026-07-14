@@ -45,6 +45,7 @@ Researcher·Developer·Reviewer
 - 알림 outbox: 추천 ID별 최초 카드 JSON·한국어 문구를 한 번만 저장하고 projection 파일을 재생성한다.
 - 성과 집계기: 실제 `active` 이벤트 뒤 terminal exit가 있는 paper 거래만 추출하고 편도 5/10/20bp 비용, PF·승률·평균·누적·MDD·bootstrap CI와 fallback 비율을 기록한다.
 - 연구 게이트: 과거 백테스트와 실시간 paper 결과를 통과한 전략만 활성화한다.
+- 적응형 평가기: checksum된 개별 거래를 최근 5/10/20/60 적격일로 다시 집계하고 장전 시점 시장 국면별 열화를 분리해 조기중단·진단·비교·최종검토 권고만 만든다.
 
 ## 전략 승격 단계
 
@@ -186,9 +187,13 @@ watch는 공식 정규장 종료 뒤 `run_paper_metrics.py`를 한 번 실행해
 
 metrics가 성공하면 watch는 `run_daily_research_record.py`를 이어서 실행하고 종료코드를 `post_session_research_cycles.csv`에 별도로 기록한다. 이 CLI는 세션 산출물 SHA-256, 코드·데이터·평가기 버전, 정확한 전략 파라미터·비용·포트폴리오 정책, 편도 20bp 결과, 후보 입력 snapshot 수, 데이터 품질 incident와 누적 적격 거래일·완료 거래 수를 불변 JSON과 append-only JSONL로 저장한다. 같은 record ID를 재실행해도 중앙 원장에는 중복 추가하지 않는다.
 
+연구 원장이 성공하면 `run_adaptive_strategy_evaluation.py`가 이어서 실행된다. 각 record ID의 세션 폴더를 역추적하고 checksum된 `paper_metrics/paper_trades.csv`를 다시 읽어 최근 5/10/20/60 **적격 거래일**만 계산한다. 5일 조기중단은 최소 10거래와 PF<0.75·평균<0·block-bootstrap CI 상단<0의 교집합에만 발동한다. 10일은 edge 진단, 20일·30거래와 PF≥1.15·평균>0·CI 하한≥0은 동일 위험 비교 준비, 60일·100거래는 최종 검토 준비다. 이미 20일 이상 누적된 후보에서 5일 명확한 열화가 발생하면 `suspend`를 권고한다. 최근 10일 약화는 양호한 20·60일 aggregate보다 우선해 진단한다. 어떤 권고도 전략 상태·주문 권한을 직접 변경하지 않는다.
+
+시장 국면은 해당 세션의 선택적 `research_regime_snapshot.json`이 정규장 개장 전에 관측되고 일일 checksum에 포함된 경우에만 사용한다. 최근 60 적격일의 사전 라벨 coverage 80%와 최소 2개 국면을 최종 검토 문턱으로 두며, 10거래 이상인 개별 국면에서 PF<0.8 또는 평균≤0이면 aggregate 성과가 좋아도 불안정 blocker를 남긴다. 이는 VIX 같은 국면 데이터 생산기를 구현한 것이 아니라 point-in-time 입력 계약과 누락 시 fail-closed 동작을 먼저 고정한 것이다.
+
 누적치는 같은 전략 버전에서 기록 대상 거래일보다 앞선 날짜만 사용한다. 따라서 이후 거래일이 원장에 추가된 뒤 과거 세션을 재생해도 미래 날짜가 과거의 누적치와 record ID에 들어가지 않으며, 동일 입력은 중복 행을 만들지 않는다.
 
-적격 forward day는 watch cycle마다 거래소 3곳×랭킹 2종의 6개 요청이 모두 성공하고, coverage·KIS retry·후보 입력 cycle 수가 watch cycle 수와 같으며, 후보 입력 합계가 SQLite와 일치하고, 실패 또는 미완료 cycle이 없을 때만 증가한다. 승격은 최소 60 적격 거래일·100 완료 거래뿐 아니라 broker paper ledger, DSR/PBO, 인접 파라미터 평탄성, SIP 검증이 모두 충족돼야 한다. 평가기 버전이 다른 원장은 누적 거래일·거래 수에 섞지 않는다. 현재 경로는 연구 기록만 만들고 전략 상태를 자동 변경하거나 주문을 제출하지 않는다.
+적격 forward day는 watch cycle마다 거래소 3곳×랭킹 2종의 6개 요청이 모두 성공하고, coverage·KIS retry·후보 입력 cycle 수가 watch cycle 수와 같으며, 후보 입력 합계가 SQLite와 일치하고, 실패 또는 미완료 cycle이 없을 때만 증가한다. 전략은 그 60일 동안 고정되지 않는다. 모든 challenger는 매일 독립 shadow로 누적되고 5/10/20일 게이트에서 중단·진단·동일 위험 비교 후보가 된다. 60 적격일·100 완료 거래는 수익 확정이 아니라 broker paper ledger, DSR/PBO, 인접 파라미터 평탄성, SIP 검증과 함께 확인할 최종 증명 문턱이다. 평가기 버전이 다른 원장은 누적 거래일·거래 수에 섞지 않는다. 현재 경로는 연구 기록만 만들고 전략 상태를 자동 변경하거나 주문을 제출하지 않는다.
 
 ## 현재 범위의 한계
 

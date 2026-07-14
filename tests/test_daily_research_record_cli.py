@@ -111,6 +111,7 @@ def test_daily_research_cli_writes_lineage_and_blocks_early_promotion(
     assert "kis_read_retry_cycles.csv" in artifact_paths
     assert "kis_read_retry_events.csv" in artifact_paths
     assert "candidate_input_cycles.csv" in artifact_paths
+    assert "paper_metrics/paper_trades.csv" in artifact_paths
     assert record["metrics_20bp"]["side_cost_bps"] == 20
     assert record["metrics_20bp"]["trade_count"] == 1
     assert record["promotion"]["allowed"] is False
