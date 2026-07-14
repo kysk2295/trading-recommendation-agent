@@ -6,6 +6,7 @@ from typing import Protocol, override
 from trading_agent.paper_execution_models import PaperOrderIntent
 from trading_agent.paper_order_gate_models import LatestCompletedBar, PaperOrderGateDecision
 from trading_agent.paper_risk import DEFAULT_PAPER_RISK_CONFIG, PaperRiskConfig
+from trading_agent.paper_safety_models import PaperSafetyPlanDecision
 from trading_agent.paper_trade_update_classification import PaperTradeUpdateIngestionResult
 
 
@@ -25,6 +26,11 @@ class PaperOperatingSession(Protocol):
         self,
         request: PaperOrderAdmissionRequest,
     ) -> PaperOrderGateDecision: ...
+
+    def plan_safety_actions(
+        self,
+        config: PaperRiskConfig = DEFAULT_PAPER_RISK_CONFIG,
+    ) -> PaperSafetyPlanDecision: ...
 
 
 class InactivePaperOperatingSessionError(RuntimeError):

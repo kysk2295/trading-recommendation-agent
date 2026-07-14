@@ -28,6 +28,7 @@ from trading_agent.paper_operating_session_models import (
 from trading_agent.paper_operating_session_models import (
     PaperOrderAdmissionRequest as PaperOrderAdmissionRequest,
 )
+from trading_agent.paper_safety_models import PaperSafetyPlanDecision
 from trading_agent.paper_stream_owner import (
     PaperStreamOwnerDependencies,
     PaperTradeUpdateStreamOpener,
@@ -44,8 +45,17 @@ __all__ = (
     "PaperOrderAdmissionRequest",
     "open_paper_operating_session",
     "open_paper_trade_update_ingestion",
+    "plan_current_paper_safety",
     "probe_paper_trade_update_recovery",
 )
+
+
+def plan_current_paper_safety(
+    credentials: AlpacaPaperCredentials,
+    store: ExecutionStore,
+) -> PaperSafetyPlanDecision:
+    with open_paper_operating_session(credentials, store) as session:
+        return session.plan_safety_actions()
 
 
 class PaperTradeUpdateRecoveryProbeError(RuntimeError):

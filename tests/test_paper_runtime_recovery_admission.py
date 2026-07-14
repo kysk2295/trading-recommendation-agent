@@ -31,6 +31,11 @@ from trading_agent.paper_runtime_session import (
     _open_paper_runtime_session,
     _probe_paper_runtime,
 )
+from trading_agent.paper_safety_models import PaperSafetyPhase, PaperSafetyPlan
+from trading_agent.paper_safety_store import (
+    PaperSafetyPlanKey,
+    StoredPaperSafetyPlan,
+)
 from trading_agent.paper_stream_recovery import (
     PaperRecoveryOrderObservation,
     PaperRecoveryOrderSource,
@@ -135,3 +140,43 @@ def test_runtime_blocks_new_entry_after_rest_fill_until_protective_oco_exists(
     assert "보호 OCO" in " ".join(decision.reasons)
     assert state.execution_detail_complete is False
     assert state.warning_reasons
+
+
+def test_runtime_keeps_new_entries_blocked_after_daily_kill_is_latched() -> None:
+    stream = FakeReadyStream()
+    kill_plan = PaperSafetyPlan(
+        account().account_fingerprint,
+        OBSERVED_AT,
+        dt.date(2026, 7, 14),
+        PaperSafetyPhase.KILL_SWITCH,
+        Decimal("-301"),
+        Decimal("-301"),
+        (),
+    )
+    killed_ledger = replace(
+        ledger(),
+        paper_safety_plans=(
+            StoredPaperSafetyPlan(
+                PaperSafetyPlanKey("k" * 64),
+                "h" * 64,
+                kill_plan,
+            ),
+        ),
+    )
+
+    with _open_paper_runtime_session(
+        credentials(),
+        FakeLedgerReader(stream, killed_ledger),
+        state_loader=lambda _: (PaperBrokerState(account(), (), ()), market_clock()),
+        stream_opener=stream_opener(stream),
+        _clock=lambda: dt.datetime(2026, 7, 14, 13, 36, 3, tzinfo=dt.UTC),
+    ) as session:
+        decision = session.evaluate_order(
+            latest_bar=latest_bar(),
+            candidate_intent=candidate(),
+            liquidity_allowed_quantity=1_000,
+            estimated_spread_bps=0.0,
+        )
+
+    assert decision.state is PaperOrderGateState.RECONCILIATION_BLOCKED
+    assert "kill switch" in " ".join(decision.reasons)

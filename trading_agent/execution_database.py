@@ -15,6 +15,7 @@ from trading_agent.paper_account_activity_schema import (
 from trading_agent.paper_protective_oco_schema import (
     CREATE_PAPER_PROTECTIVE_OCO_SCHEMA,
 )
+from trading_agent.paper_safety_schema import CREATE_PAPER_SAFETY_SCHEMA
 from trading_agent.paper_stream_recovery import CREATE_PAPER_STREAM_RECOVERY_SCHEMA
 from trading_agent.paper_stream_recovery_schema import (
     CREATE_PAPER_STREAM_RECOVERY_SCHEMA_V3,
@@ -32,7 +33,7 @@ def prepare_execution_writer_connection(
     _ = connection.execute("PRAGMA journal_mode = WAL").fetchone()
     version_row: tuple[int] | None = connection.execute("PRAGMA user_version").fetchone()
     version = 0 if version_row is None else version_row[0]
-    if version not in (0, 1, 2, 3, 4, SCHEMA_VERSION):
+    if version not in (0, 1, 2, 3, 4, 5, SCHEMA_VERSION):
         raise UnsupportedExecutionSchemaError(path, version)
     if version == 0:
         unexpected = _schema_object_names(connection)
@@ -113,8 +114,10 @@ def _schema_through(version: int) -> str:
             f"{CREATE_PAPER_STREAM_RECOVERY_SCHEMA}\n"
             f"{CREATE_PAPER_ACCOUNT_ACTIVITY_SCHEMA}"
         )
-    if version == SCHEMA_VERSION:
+    if version == 5:
         return f"{_schema_through(4)}\n{CREATE_PAPER_PROTECTIVE_OCO_SCHEMA}"
+    if version == SCHEMA_VERSION:
+        return f"{_schema_through(5)}\n{CREATE_PAPER_SAFETY_SCHEMA}"
     raise ValueError(version)
 
 
@@ -126,19 +129,21 @@ def _migration_schema(version: int) -> str:
             f"{CREATE_TRADE_UPDATE_SCHEMA}\n{CREATE_TRADE_UPDATE_RECEIPT_SCHEMA}\n"
             f"{CREATE_PAPER_STREAM_RECOVERY_SCHEMA}\n"
             f"{CREATE_PAPER_ACCOUNT_ACTIVITY_SCHEMA}\n"
-            f"{CREATE_PAPER_PROTECTIVE_OCO_SCHEMA}"
+            f"{CREATE_PAPER_PROTECTIVE_OCO_SCHEMA}\n{CREATE_PAPER_SAFETY_SCHEMA}"
         )
     if version == 2:
         return (
             f"{CREATE_TRADE_UPDATE_RECEIPT_SCHEMA}\n"
             f"{CREATE_PAPER_STREAM_RECOVERY_SCHEMA}\n"
             f"{CREATE_PAPER_ACCOUNT_ACTIVITY_SCHEMA}\n"
-            f"{CREATE_PAPER_PROTECTIVE_OCO_SCHEMA}"
+            f"{CREATE_PAPER_PROTECTIVE_OCO_SCHEMA}\n{CREATE_PAPER_SAFETY_SCHEMA}"
         )
     if version == 3:
-        return f"{MIGRATE_PAPER_RECOVERY_V3_TO_V4}\n{CREATE_PAPER_PROTECTIVE_OCO_SCHEMA}"
+        return f"{MIGRATE_PAPER_RECOVERY_V3_TO_V4}\n{CREATE_PAPER_PROTECTIVE_OCO_SCHEMA}\n{CREATE_PAPER_SAFETY_SCHEMA}"
     if version == 4:
-        return CREATE_PAPER_PROTECTIVE_OCO_SCHEMA
+        return f"{CREATE_PAPER_PROTECTIVE_OCO_SCHEMA}\n{CREATE_PAPER_SAFETY_SCHEMA}"
+    if version == 5:
+        return CREATE_PAPER_SAFETY_SCHEMA
     raise ValueError(version)
 
 

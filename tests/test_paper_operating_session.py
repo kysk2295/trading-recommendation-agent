@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,7 @@ from trading_agent.paper_order_gate_models import (
     ApprovedPaperOrderGateDecision,
     BlockedPaperOrderGateDecision,
 )
+from trading_agent.paper_safety_models import PaperSafetyPhase, PaperSafetyPlan
 from trading_agent.paper_stream_owner import PaperStreamOwnerDependencies
 from trading_agent.paper_trade_update_runtime import (
     PaperOperatingSessionDependencies,
@@ -60,7 +62,7 @@ def test_operating_session_surface_serializes_ingestion_and_admission() -> None:
     operations = frozenset() if protocol is None else frozenset(protocol.__dict__)
 
     # Then: one owner exposes both stream ingestion and candidate admission.
-    assert {"ingest_next", "evaluate_order"} <= operations
+    assert {"ingest_next", "evaluate_order", "plan_safety_actions"} <= operations
 
 
 def test_operating_session_has_a_private_provider_injection_seam_for_contract_tests() -> None:
@@ -97,7 +99,7 @@ def test_operating_session_recovers_and_evaluates_with_one_stream_and_writer(
     evaluated_at = OBSERVED_AT + dt.timedelta(seconds=4)
 
     def runtime_state_loader(
-        _: AlpacaPaperCredentials,
+        _credentials: AlpacaPaperCredentials,
     ) -> tuple[PaperBrokerState, PaperMarketClockSnapshot]:
         observed_at = OBSERVED_AT + dt.timedelta(seconds=3, milliseconds=500)
         clock = replace(
@@ -153,7 +155,7 @@ def test_operating_session_blocks_when_ledger_changes_after_current_epoch_recove
     evaluated_at = OBSERVED_AT + dt.timedelta(seconds=4)
 
     def runtime_state_loader(
-        _: AlpacaPaperCredentials,
+        _credentials: AlpacaPaperCredentials,
     ) -> tuple[PaperBrokerState, PaperMarketClockSnapshot]:
         with sqlite3.connect(store.path) as connection:
             _ = connection.execute(
@@ -196,3 +198,55 @@ def test_operating_session_blocks_when_ledger_changes_after_current_epoch_recove
     # Then: the stale approval is replaced by an explicit reconciliation block.
     assert isinstance(decision, BlockedPaperOrderGateDecision)
     assert decision.reasons == (LEDGER_GENERATION_CHANGED,)
+
+
+def test_operating_session_persists_current_epoch_daily_kill_plan(
+    tmp_path: Path,
+) -> None:
+    store = ExecutionStore(tmp_path / "execution.sqlite3")
+    stream = TradeUpdateStream()
+
+    @contextmanager
+    def stream_opener(
+        _: AlpacaPaperCredentials,
+    ) -> Iterator[TradeUpdateStream]:
+        yield stream
+
+    evaluated_at = OBSERVED_AT + dt.timedelta(seconds=4)
+
+    def runtime_state_loader(
+        _: AlpacaPaperCredentials,
+    ) -> tuple[PaperBrokerState, PaperMarketClockSnapshot]:
+        observed_at = OBSERVED_AT + dt.timedelta(seconds=3, milliseconds=500)
+        state = broker_state(observed_at)
+        state = replace(
+            state,
+            account=replace(state.account, equity=Decimal("29699")),
+        )
+        clock = replace(
+            market_clock(),
+            observed_at=observed_at,
+            market_timestamp=evaluated_at.astimezone(dt.timezone(dt.timedelta(hours=-4))),
+        )
+        return state, clock
+
+    dependencies = PaperOperatingSessionDependencies(
+        PaperStreamOwnerDependencies(
+            state_loader(stream),
+            stream_opener,
+            lambda: evaluated_at,
+        ),
+        runtime_state_loader,
+        lambda: evaluated_at,
+    )
+
+    with _open_paper_operating_session(
+        AlpacaPaperCredentials("test-key", "test-secret"),
+        store,
+        dependencies,
+    ) as session:
+        decision = session.plan_safety_actions()
+
+    assert isinstance(decision, PaperSafetyPlan)
+    assert decision.phase is PaperSafetyPhase.KILL_SWITCH
+    assert store.paper_safety_plans()[0].plan == decision

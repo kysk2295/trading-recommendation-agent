@@ -21,8 +21,15 @@ from trading_agent.paper_order_gate_models import (
     PaperOrderGateDecision,
     PaperOrderGateState,
 )
+from trading_agent.paper_risk import DEFAULT_PAPER_RISK_CONFIG, PaperRiskConfig
 from trading_agent.paper_runtime import PaperStateAndClockLoader, read_paper_broker_state_and_clock
 from trading_agent.paper_runtime_session import _LivePaperRuntimeSession
+from trading_agent.paper_safety_models import (
+    BlockedPaperSafetyPlan,
+    PaperSafetyPhase,
+    PaperSafetyPlan,
+    PaperSafetyPlanDecision,
+)
 from trading_agent.paper_stream_owner import (
     PaperRecoveryCheckpoint,
     PaperStreamOwner,
@@ -77,6 +84,23 @@ class _LivePaperOperatingSession:
             )
             barrier_reasons = self._barrier_reasons(checkpoint)
             return decision if not barrier_reasons else _blocked_barrier(barrier_reasons)
+
+    def plan_safety_actions(
+        self,
+        config: PaperRiskConfig = DEFAULT_PAPER_RISK_CONFIG,
+    ) -> PaperSafetyPlanDecision:
+        with self._exclusive_operation():
+            checkpoint = self._owner.recovery()
+            barrier_reasons = self._barrier_reasons(checkpoint)
+            if barrier_reasons:
+                return BlockedPaperSafetyPlan(barrier_reasons)
+            decision = self._runtime.plan_safety_actions(config)
+            barrier_reasons = self._barrier_reasons(checkpoint)
+            if barrier_reasons:
+                return BlockedPaperSafetyPlan(barrier_reasons)
+            if isinstance(decision, PaperSafetyPlan) and decision.phase is not PaperSafetyPhase.MONITORING:
+                _ = self._owner.writer.save_paper_safety_plan(decision)
+            return decision
 
     def _barrier_reasons(
         self,

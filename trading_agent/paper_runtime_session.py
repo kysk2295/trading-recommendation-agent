@@ -16,14 +16,9 @@ from trading_agent.execution_ledger_reader import (
 from trading_agent.paper_execution_models import (
     PaperOrderIntent,
 )
-from trading_agent.paper_order_gate import _evaluate_reconciled_paper_order_gate
 from trading_agent.paper_order_gate_models import (
-    BlockedPaperOrderGateDecision,
-    CompletePaperPortfolio,
     LatestCompletedBar,
     PaperOrderGateDecision,
-    PaperOrderGateSnapshot,
-    PaperOrderGateState,
 )
 from trading_agent.paper_portfolio_builder import build_paper_portfolio
 from trading_agent.paper_protective_exit import missing_protective_oco_reasons
@@ -41,6 +36,12 @@ from trading_agent.paper_runtime import (
     paper_runtime_receipt_reasons,
     read_paper_broker_state_and_clock,
 )
+from trading_agent.paper_runtime_admission import evaluate_runtime_order
+from trading_agent.paper_runtime_safety import (
+    daily_kill_latch_reasons,
+    plan_runtime_safety,
+)
+from trading_agent.paper_safety_models import PaperSafetyPlanDecision
 
 __all__ = (
     "InactivePaperRuntimeSessionError",
@@ -141,6 +142,11 @@ class _LivePaperRuntimeSession:
                             after_rest,
                         ),
                         *trade_update_receipt_reasons(ledger),
+                        *daily_kill_latch_reasons(
+                            ledger,
+                            broker_state,
+                            self._clock(),
+                        ),
                     )
                 )
             )
@@ -169,39 +175,23 @@ class _LivePaperRuntimeSession:
         config: PaperRiskConfig = DEFAULT_PAPER_RISK_CONFIG,
     ) -> PaperOrderGateDecision:
         readiness = self._collect_readiness(config)
-        if readiness.runtime_reasons:
-            return BlockedPaperOrderGateDecision(
-                PaperOrderGateState.RECONCILIATION_BLOCKED,
-                readiness.runtime_reasons,
-            )
-        if not readiness.reconciliation.ready:
-            return BlockedPaperOrderGateDecision(
-                PaperOrderGateState.RECONCILIATION_BLOCKED,
-                readiness.reconciliation.reasons,
-            )
-        if not isinstance(readiness.portfolio, CompletePaperPortfolio):
-            return BlockedPaperOrderGateDecision(
-                PaperOrderGateState.PORTFOLIO_BLOCKED,
-                readiness.portfolio.reasons,
-            )
-        if readiness.protective_exit_reasons:
-            return BlockedPaperOrderGateDecision(
-                PaperOrderGateState.PORTFOLIO_BLOCKED,
-                readiness.protective_exit_reasons,
-            )
-        snapshot = PaperOrderGateSnapshot(
-            market_clock=readiness.market_clock,
-            latest_bar=latest_bar,
-            stream_heartbeat=readiness.stream_heartbeat,
-            portfolio=readiness.portfolio,
-            candidate_intent=candidate_intent,
-            liquidity_allowed_quantity=liquidity_allowed_quantity,
-            estimated_spread_bps=estimated_spread_bps,
+        return evaluate_runtime_order(
+            readiness,
+            latest_bar,
+            candidate_intent,
+            liquidity_allowed_quantity,
+            estimated_spread_bps,
+            config,
+            self._clock(),
         )
-        evaluated_at = self._clock()
-        return _evaluate_reconciled_paper_order_gate(
-            snapshot,
-            evaluated_at,
+
+    def plan_safety_actions(
+        self,
+        config: PaperRiskConfig = DEFAULT_PAPER_RISK_CONFIG,
+    ) -> PaperSafetyPlanDecision:
+        return plan_runtime_safety(
+            self._collect_readiness(config),
+            self._clock(),
             config,
         )
 

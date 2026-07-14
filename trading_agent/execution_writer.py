@@ -32,6 +32,8 @@ from trading_agent.paper_execution_models import (
 )
 from trading_agent.paper_protective_exit import ProtectiveOcoExitPlan
 from trading_agent.paper_protective_oco_store import save_protective_oco_plan
+from trading_agent.paper_safety_models import PaperSafetyPlan
+from trading_agent.paper_safety_store import save_paper_safety_plan
 from trading_agent.paper_stream_recovery import (
     PaperStreamRecoveryObservation,
     append_paper_stream_recovery,
@@ -224,6 +226,11 @@ class ExecutionWriter:
     ) -> bool:
         self._require_active()
         return save_protective_oco_plan(self._connection, plan, planned_at)
+
+    def save_paper_safety_plan(self, plan: PaperSafetyPlan) -> bool:
+        self._require_active()
+        self._require_bound_account(plan.account_fingerprint)
+        return save_paper_safety_plan(self._connection, plan)
 
     def ledger_generation(self) -> ExecutionLedgerGeneration:
         self._require_active()

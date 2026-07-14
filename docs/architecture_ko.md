@@ -97,7 +97,9 @@ research → historical_pass → paper → approved → suspended
 
 현재 외부 API 표면은 시장시계·계좌·주문·포지션 조회 GET과 주문 스트림 인증·구독·Ping뿐이다. 주문 POST/PATCH/DELETE 메서드는 존재하지 않는다. REST aggregate가 누락 체결을 발견하면 주문 상태·누적량은 복원하지만 존재하지 않는 개별 execution을 합성하지 않으며, 상세 체결은 불완전 상태로 남긴다. 일반 protocol quarantine은 이후 일관된 REST 복구로 해소할 수 있지만 immutable 충돌은 account activity나 수동 감사 근거 없이 자동 해소하지 않는다.
 
-단일 운영 세션은 Writer lease를 먼저 잡고 하나의 WSS를 연 뒤 미분류 raw receipt 재처리와 current-epoch REST recovery를 완료한다. 같은 객체의 `ingest_next`와 `evaluate_order`는 비차단 operation lock으로 직렬화되어 서로 겹칠 수 없다. admission 직전 다시 current-epoch recovery를 append하고 `connection_epoch`, Writer 자체 변경 수와 SQLite `PRAGMA data_version`을 묶은 generation checkpoint를 만든다. 이후 활성 세션의 REST·원장·포트폴리오 평가 전후 값이 다르면 이미 계산된 승인도 `RECONCILIATION_BLOCKED`로 바꾼다. 공개 factory는 credentials와 `ExecutionStore`만 받고 provider·clock·stream·writer 주입을 노출하지 않는다. Alpaca WSS의 Pong은 이벤트 high-water나 replay cursor가 아니므로 이 경계만으로 체결 정정이 완성된 것은 아니다. account activity 기반 fill/correction/bust 복구, 보호청산·kill switch·EOD 평탄화가 완성될 때까지 POST/PATCH/DELETE는 계속 닫아 둔다.
+schema v6는 current-epoch 계좌·시장시계·포트폴리오가 5초 경계에서 일치할 때만 cutoff·kill switch·EOD 조치 계획을 저장한다. 계획 단계 우선순위는 `KILL_SWITCH > EOD_FLATTEN > ENTRY_CUTOFF > MONITORING`이다. kill과 EOD는 entry 취소, 보호 OCO 부모 취소, 반대 방향 exact quantity 평탄화 순서를 고정하며 초기 pilot은 정수 주식만 허용한다. MTM 일손익뿐 아니라 열린 포지션의 계획위험을 차감한 보수적 일손익이 -USD 300에 닿아도 kill을 latch한다. 같은 계좌·뉴욕 거래일의 kill plan은 재시작 뒤에도 admission을 차단하고 남은 평탄화 계획을 재생성한다.
+
+단일 운영 세션은 Writer lease를 먼저 잡고 하나의 WSS를 연 뒤 미분류 raw receipt 재처리와 current-epoch REST recovery를 완료한다. 같은 객체의 `ingest_next`, `evaluate_order`, `plan_safety_actions`는 비차단 operation lock으로 직렬화되어 서로 겹칠 수 없다. 각 판단 직전 다시 current-epoch recovery를 append하고 `connection_epoch`, Writer 자체 변경 수와 SQLite `PRAGMA data_version`을 묶은 generation checkpoint를 만든다. 이후 활성 세션의 REST·원장·포트폴리오 평가 전후 값이 다르면 이미 계산된 승인이나 안전계획을 폐기한다. 공개 factory는 credentials와 `ExecutionStore`만 받고 provider·clock·stream·writer 주입을 노출하지 않는다. Alpaca WSS의 Pong은 이벤트 high-water나 replay cursor가 아니므로 이 경계만으로 체결 정정이 완성된 것은 아니다. 실제 보호주문·취소·평탄화 mutation과 모호한 timeout 복구가 검증될 때까지 POST/PATCH/DELETE는 계속 닫아 둔다.
 
 신규 주문 승인 상태기계는 다음 순서를 고정한다.
 

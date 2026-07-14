@@ -28,6 +28,10 @@ from trading_agent.paper_protective_oco_store import (
     StoredProtectiveOcoPlan,
     read_protective_oco_plans,
 )
+from trading_agent.paper_safety_store import (
+    StoredPaperSafetyPlan,
+    read_paper_safety_plans,
+)
 from trading_agent.paper_stream_recovery import (
     StoredPaperRecoveryOrder,
     StoredPaperStreamRecovery,
@@ -150,6 +154,12 @@ class ExecutionStoreReader:
             return ()
         with self._reader_connection() as connection:
             return read_paper_recovery_protective_ocos(connection)
+
+    def paper_safety_plans(self) -> tuple[StoredPaperSafetyPlan, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            return read_paper_safety_plans(connection)
 
     def reconciliation_ledger(self) -> ReconciliationLedger:
         return read_reconciliation_ledger(self.path)
