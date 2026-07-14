@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import httpx2
 
-from scr_backtest.kis_http import get_with_server_retry
+from scr_backtest.kis_http import (
+    begin_retry_capture,
+    captured_retry_events,
+    end_retry_capture,
+    get_with_server_retry,
+)
 
 
 def test_get_retries_one_transient_server_error() -> None:
@@ -17,16 +22,28 @@ def test_get_retries_one_transient_server_error() -> None:
         base_url="https://openapi.koreainvestment.com:9443",
         transport=httpx2.MockTransport(handle),
     ) as client:
-        response = get_with_server_retry(
-            client,
-            "/read-only",
-            params={"symbol": "DEMO"},
-            headers={"authorization": "Bearer redacted"},
-            sleeper=lambda _: None,
-        )
+        capture = begin_retry_capture()
+        try:
+            response = get_with_server_retry(
+                client,
+                "/read-only",
+                params={"EXCD": "NAS", "SYMB": "DEMO"},
+                headers={"authorization": "Bearer redacted"},
+                sleeper=lambda _: None,
+            )
+            events = captured_retry_events()
+        finally:
+            end_retry_capture(capture)
 
     assert response.status_code == 200
     assert attempts == 2
+    assert len(events) == 1
+    assert events[0].endpoint == "/read-only"
+    assert events[0].exchange == "NAS"
+    assert events[0].symbol == "DEMO"
+    assert events[0].first_status == 500
+    assert events[0].final_status == 200
+    assert events[0].outcome == "recovered"
 
 
 def test_get_stops_after_one_retry_and_does_not_retry_rate_limits() -> None:
@@ -72,3 +89,29 @@ def test_get_stops_after_one_retry_and_does_not_retry_rate_limits() -> None:
     assert server_attempts == 2
     assert limited.status_code == 429
     assert rate_attempts == 1
+
+
+def test_retry_is_recovered_only_when_the_final_response_is_successful() -> None:
+    statuses = iter((500, 429))
+
+    with httpx2.Client(
+        base_url="https://openapi.koreainvestment.com:9443",
+        transport=httpx2.MockTransport(
+            lambda _: httpx2.Response(next(statuses)),
+        ),
+    ) as client:
+        capture = begin_retry_capture()
+        try:
+            response = get_with_server_retry(
+                client,
+                "/read-only",
+                params={},
+                headers={},
+                sleeper=lambda _: None,
+            )
+            events = captured_retry_events()
+        finally:
+            end_retry_capture(capture)
+
+    assert response.status_code == 429
+    assert events[0].outcome == "failed"

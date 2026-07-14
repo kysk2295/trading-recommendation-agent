@@ -15,15 +15,21 @@
 - 첫 실패 뒤 두 번째 응답이 실제 성공한 경우에만 정상 입력으로 사용한다.
 - 반복 실패 observation과 cycle 비영 종료코드는 유지한다.
 - 주문 제출·취소·교체 등 mutation 경로에는 적용하지 않는다.
+- 매 scan cycle의 재시도·복구·최종 실패 수를 `kis_read_retry_cycles.csv`에 남긴다.
+- 재시도 event는 인증정보 없이 endpoint path·거래소·종목·HTTP status만 별도 CSV에 남긴다.
+- watch cycle과 retry audit cycle 수가 다르면 해당 날짜는 적격 forward day로 세지 않는다.
 
 ## 검증
 
 - mock 500→200은 요청 2회 뒤 성공 응답을 반환했다.
 - mock 500→500은 요청 2회 뒤 500을 유지했다.
 - mock 429는 요청 1회만 수행했다.
+- mock 500→429는 성공 복구가 아니라 최종 실패로 분류했다.
 - opening-gap의 첫 500→200 성공은 같은 cycle의 정상 snapshot으로 저장되고 다음 cycle에서 캐시 재사용됐다.
 - AMEX 랭킹 500→500은 실패 1건과 정상 그룹 5개를 유지했다.
-- 전체 회귀 434개, Ruff 변경 파일 검사, 포맷 검사와 basedpyright가 통과했다.
+- 수동 QA에서 재시도 2건을 복구 1건·최종 실패 1건으로 분리한 cycle/event CSV를 확인했다.
+- 일일 연구 CLI는 두 감사 CSV를 checksum 계보에 포함하고 복구 건수를 운영 incident로 기록했다.
+- 전체 회귀 436개, Ruff 변경 파일 검사, 포맷 검사와 basedpyright가 통과했다.
 
 ## 실제 watcher 적용 결과
 

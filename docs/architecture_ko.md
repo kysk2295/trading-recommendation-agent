@@ -164,7 +164,9 @@ NASDAQ·NYSE·AMEX 상승률/거래량 랭킹
 
 거래소별 상승률·거래량 랭킹 요청은 독립적으로 수집한다. 특정 요청이 공급자 오류로 실패하면 나머지 성공 그룹을 후보·shadow 전략 평가에 사용하되, `kis_ranking_request_coverage.csv`와 한국어 scan 보고서에 누락 범위를 기록하고 cycle 종료코드는 실패로 유지한다. 따라서 일시적인 한 거래소 장애가 모든 전략 관찰을 끊지는 않지만 부분 표본을 완전한 미국시장 모집단으로 해석할 수도 없다.
 
-KIS 랭킹·분봉·일봉·현재가상세는 모두 읽기 전용 GET이다. 500/502/503/504만 80ms 뒤 정확히 한 번 다시 요청하고, 두 번째 서버 오류와 429는 추가 시도 없이 기존 오류 경로로 전달한다. 첫 요청의 일시적 오류가 두 번째 요청에서 실제 성공한 경우에만 해당 입력을 사용하며, 반복 실패는 observation·coverage·cycle 비영 종료코드에 그대로 남긴다. 이 재시도는 주문 API나 상태 변경 요청에 적용되지 않는다.
+KIS 랭킹·분봉·일봉·현재가상세는 모두 읽기 전용 GET이다. 500/502/503/504만 80ms 뒤 정확히 한 번 다시 요청하고, 두 번째 오류 응답과 429는 추가 시도 없이 기존 오류 경로로 전달한다. 첫 요청의 일시적 오류가 두 번째 요청에서 실제 성공한 경우에만 해당 입력을 사용하며, 반복 실패는 observation·coverage·cycle 비영 종료코드에 그대로 남긴다. 이 재시도는 주문 API나 상태 변경 요청에 적용되지 않는다.
+
+각 scan cycle은 재시도가 없어도 `kis_read_retry_cycles.csv`에 한 행을 남긴다. 재시도가 있으면 `kis_read_retry_events.csv`에 endpoint path, 거래소, 종목, 최초·최종 HTTP status와 결과만 기록하며 인증 header와 token은 기록하지 않는다. 일일 연구 원장은 watch cycle과 retry cycle 수가 일치해야 품질 적격으로 판정하고, 두 감사 CSV가 존재하면 checksum과 데이터 버전에 포함한다. 복구 성공은 입력 누락이 없으면 그 자체로 날짜를 탈락시키지 않지만 운영 incident로 남는다.
 
 watch는 공식 정규장 종료 뒤 `run_paper_metrics.py`를 한 번 실행해 `paper_metrics/`와 `post_session_metrics_cycles.csv`를 만든다. 장중에 cycle 수를 줄여 종료한 실행은 이 단계를 건너뛴다. 이 자동화는 broker 주문 처리와 독립적인 shadow 연구 경로이며 미종료 추천·미체결 무효화는 거래 성과에서 제외한다.
 

@@ -24,6 +24,10 @@ REQUIRED_ARTIFACTS: Final = (
     "paper_recommendations.sqlite3",
     "paper_metrics/paper_metrics.csv",
 )
+OPTIONAL_ARTIFACTS: Final = (
+    "kis_read_retry_cycles.csv",
+    "kis_read_retry_events.csv",
+)
 
 
 class _CoverageRow(BaseModel):
@@ -37,6 +41,14 @@ class _WatchRow(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     exit_code: int
+
+
+class _RetryRow(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    retry_count: int
+    recovered_count: int
+    repeated_failure_count: int
 
 
 class _MetricRow(BaseModel):
@@ -62,7 +74,9 @@ class MissingResearchArtifactError(RuntimeError):
 
 
 def load_artifacts(session: Path) -> tuple[ArtifactChecksum, ...]:
-    return tuple(_checksum(session, relative) for relative in REQUIRED_ARTIFACTS)
+    required = tuple(_checksum(session, relative) for relative in REQUIRED_ARTIFACTS)
+    optional = tuple(_checksum(session, relative) for relative in OPTIONAL_ARTIFACTS if (session / relative).is_file())
+    return (*required, *optional)
 
 
 def data_version(artifacts: tuple[ArtifactChecksum, ...]) -> str:
@@ -93,14 +107,20 @@ def load_session_quality(
 ) -> tuple[SessionQuality, tuple[str, ...]]:
     coverage = _coverage_rows(session / "kis_ranking_request_coverage.csv")
     watch = _watch_rows(session / "watch_cycles.csv")
+    retries = _retry_rows(session / "kis_read_retry_cycles.csv")
     ranking_cycles = len({row.observed_at for row in coverage})
     ranking_failures = sum(row.status == "failed" for row in coverage)
     failed_watch_cycles = sum(row.exit_code != 0 for row in watch)
+    read_retries = sum(row.retry_count for row in retries)
+    read_retry_recoveries = sum(row.recovered_count for row in retries)
+    read_retry_failures = sum(row.repeated_failure_count for row in retries)
     coverage_complete = len(coverage) == ranking_cycles * 6
+    retry_coverage_complete = len(retries) == len(watch)
     eligible = (
         bool(watch)
         and ranking_cycles == len(watch)
         and coverage_complete
+        and retry_coverage_complete
         and ranking_failures == 0
         and failed_watch_cycles == 0
     )
@@ -113,6 +133,14 @@ def load_session_quality(
         incidents.append(f"ranking_request_failures:{ranking_failures}")
     if failed_watch_cycles:
         incidents.append(f"watch_cycle_failures:{failed_watch_cycles}")
+    if not retry_coverage_complete:
+        incidents.append(f"retry_cycle_mismatch:{len(retries)}/{len(watch)}")
+    if read_retries:
+        incidents.append(f"kis_read_retries:{read_retries}")
+    if read_retry_recoveries:
+        incidents.append(f"kis_read_recoveries:{read_retry_recoveries}")
+    if read_retry_failures:
+        incidents.append(f"kis_read_retry_failures:{read_retry_failures}")
     database = session / "paper_recommendations.sqlite3"
     return (
         SessionQuality(
@@ -122,6 +150,10 @@ def load_session_quality(
             ranking_failures=ranking_failures,
             watch_cycles=len(watch),
             failed_watch_cycles=failed_watch_cycles,
+            read_retry_cycles=len(retries),
+            read_retries=read_retries,
+            read_retry_recoveries=read_retry_recoveries,
+            read_retry_failures=read_retry_failures,
             archived_bars=_table_count(database, "candidate_minute_bars"),
             recommendations=_table_count(database, "recommendations"),
             completed_trades=completed_trades,
@@ -139,6 +171,13 @@ def _coverage_rows(path: Path) -> tuple[_CoverageRow, ...]:
 def _watch_rows(path: Path) -> tuple[_WatchRow, ...]:
     with path.open(encoding="utf-8", newline="") as handle:
         return tuple(_WatchRow.model_validate(row) for row in csv.DictReader(handle))
+
+
+def _retry_rows(path: Path) -> tuple[_RetryRow, ...]:
+    if not path.is_file():
+        return ()
+    with path.open(encoding="utf-8", newline="") as handle:
+        return tuple(_RetryRow.model_validate(row) for row in csv.DictReader(handle))
 
 
 def _optional_float(value: str) -> float | None:

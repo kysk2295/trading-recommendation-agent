@@ -8,6 +8,11 @@ from pathlib import Path
 import typer
 from rich import print as rprint
 
+from scr_backtest.kis_http import (
+    begin_retry_capture,
+    captured_retry_events,
+    end_retry_capture,
+)
 from scr_backtest.kis_intraday import KisSession
 from trading_agent.bar_archive import track_candidates, tracked_candidates
 from trading_agent.causality import exclude_backdated_recommendations
@@ -25,6 +30,7 @@ from trading_agent.kis_rankings import (
 from trading_agent.kis_rankings import (
     timestamp_rankings,
 )
+from trading_agent.kis_retry_audit import append_kis_retry_audit
 from trading_agent.kis_scan import KisPaperScanner, ScanObservation
 from trading_agent.kis_scan_report import ScanSummary, write_scan_summary
 from trading_agent.market_risk import (
@@ -91,72 +97,78 @@ def main(
         store,
     )
     observations: list[ScanObservation] = []
-    with create_kis_client(mode) as client:
-        token = get_access_token(client, credentials, mode)
-        discovery, checked_at = timestamp_rankings(
-            lambda: _discover_rankings(client, credentials, token),
-            lambda: dt.datetime.now().astimezone(),
-        )
-        groups = discovery.groups
-        halt_snapshot = fetch_active_halts(client)
-        checked_at = max(checked_at, halt_snapshot.observed_at).astimezone()
-        risk_screen = MarketRiskGate(
-            halt_snapshot,
-            MarketRiskConfig(),
-        ).screen(
-            tuple(group.stocks for group in groups),
-            top,
-        )
-        gap_cycle = capture_opening_gaps(
-            client,
-            OpeningGapCapture(
-                output,
-                KisSession(credentials, token),
-                checked_at,
-                risk_screen,
-            ),
-        )
-        candidates = risk_screen.selected
-        write_market_risk_screen(output / "market_risk_screen.csv", risk_screen)
-        append_ranking_snapshot(
-            output / "kis_ranking_snapshots.csv",
-            RankingSnapshot(checked_at, groups, candidates),
-        )
-        append_ranking_coverage(
-            output / "kis_ranking_request_coverage.csv",
-            checked_at,
-            discovery,
-        )
-        _ = track_candidates(database, checked_at, candidates)
-        followers = unselected_tracked_candidates(
-            candidates,
-            tracked_candidates(database, checked_at),
-        )
-        followers, blocked_followers = partition_halted_candidates(
-            followers,
-            halt_snapshot.symbols,
-        )
-        scanner = KisPaperScanner(
-            client,
-            KisSession(credentials, token),
-            engine,
-        )
-        for stock in candidates:
-            observations.append(scanner.observe(stock, max_pages))
-        for stock in followers:
-            observations.append(scanner.follow(stock, max_pages))
-        observations.extend(
-            ScanObservation(
-                stock.exchange,
-                stock.symbol,
-                stock.change_pct,
-                stock.price,
-                stock.spread_bps,
-                0,
-                "공식 현재 거래정지: 추적 중단",
+    retry_capture = begin_retry_capture()
+    try:
+        with create_kis_client(mode) as client:
+            token = get_access_token(client, credentials, mode)
+            discovery, checked_at = timestamp_rankings(
+                lambda: _discover_rankings(client, credentials, token),
+                lambda: dt.datetime.now().astimezone(),
             )
-            for stock in blocked_followers
-        )
+            groups = discovery.groups
+            halt_snapshot = fetch_active_halts(client)
+            checked_at = max(checked_at, halt_snapshot.observed_at).astimezone()
+            risk_screen = MarketRiskGate(
+                halt_snapshot,
+                MarketRiskConfig(),
+            ).screen(
+                tuple(group.stocks for group in groups),
+                top,
+            )
+            gap_cycle = capture_opening_gaps(
+                client,
+                OpeningGapCapture(
+                    output,
+                    KisSession(credentials, token),
+                    checked_at,
+                    risk_screen,
+                ),
+            )
+            candidates = risk_screen.selected
+            write_market_risk_screen(output / "market_risk_screen.csv", risk_screen)
+            append_ranking_snapshot(
+                output / "kis_ranking_snapshots.csv",
+                RankingSnapshot(checked_at, groups, candidates),
+            )
+            append_ranking_coverage(
+                output / "kis_ranking_request_coverage.csv",
+                checked_at,
+                discovery,
+            )
+            _ = track_candidates(database, checked_at, candidates)
+            followers = unselected_tracked_candidates(
+                candidates,
+                tracked_candidates(database, checked_at),
+            )
+            followers, blocked_followers = partition_halted_candidates(
+                followers,
+                halt_snapshot.symbols,
+            )
+            scanner = KisPaperScanner(
+                client,
+                KisSession(credentials, token),
+                engine,
+            )
+            for stock in candidates:
+                observations.append(scanner.observe(stock, max_pages))
+            for stock in followers:
+                observations.append(scanner.follow(stock, max_pages))
+            observations.extend(
+                ScanObservation(
+                    stock.exchange,
+                    stock.symbol,
+                    stock.change_pct,
+                    stock.price,
+                    stock.spread_bps,
+                    0,
+                    "공식 현재 거래정지: 추적 중단",
+                )
+                for stock in blocked_followers
+            )
+    finally:
+        retry_events = captured_retry_events()
+        end_retry_capture(retry_capture)
+        append_kis_retry_audit(output, started_at, retry_events)
     write_report(output / "recommendations_ko.md", store)
     queued = write_alert_outbox(output, store, dt.datetime.now().astimezone())
     write_scan_summary(

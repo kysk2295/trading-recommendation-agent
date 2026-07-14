@@ -23,6 +23,10 @@ class SessionQuality(BaseModel):
     ranking_failures: int
     watch_cycles: int
     failed_watch_cycles: int
+    read_retry_cycles: int = 0
+    read_retries: int = 0
+    read_retry_recoveries: int = 0
+    read_retry_failures: int = 0
     archived_bars: int
     recommendations: int
     completed_trades: int

@@ -142,6 +142,10 @@ def _write_summary(path: Path, record: DailyResearchRecord) -> None:
         f"- 데이터 버전: {record.data_version}",
         f"- 평가기 버전: {record.evaluator_version}",
         f"- 품질 적격 거래일: {quality.forward_day_eligible}",
+        (
+            "- KIS 읽기 재시도/복구/반복실패: "
+            f"{quality.read_retries}/{quality.read_retry_recoveries}/{quality.read_retry_failures}"
+        ),
         f"- 완료 shadow 거래: {quality.completed_trades}건",
         f"- 편도 20bp PF: {_number(metrics.profit_factor)}",
         f"- 편도 20bp 평균: {_percent(metrics.average_return)}",
