@@ -6,6 +6,7 @@ import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import final
 
@@ -27,6 +28,7 @@ from trading_agent.execution_store_errors import (
     BrokerEventConflictError,
     InactiveExecutionWriterError,
     IntentConflictError,
+    InvalidExecutionLedgerGenerationError,
     WriterLeaseUnavailableError,
 )
 from trading_agent.execution_store_reader import ExecutionStoreReader
@@ -49,6 +51,12 @@ from trading_agent.trade_update_receipts import (
     save_trade_update_receipt,
 )
 from trading_agent.trade_update_store import append_trade_update
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionLedgerGeneration:
+    local_changes: int
+    external_version: int
 
 
 @final
@@ -107,14 +115,12 @@ class ExecutionWriter:
         self._require_active()
         self._require_bound_account(account_fingerprint)
         values = broker_event_values(event)
-        existing: BrokerEventValues | None = (
-            self._connection.execute(
-                """SELECT event_key, intent_id, occurred_at, event_type,
+        existing: BrokerEventValues | None = self._connection.execute(
+            """SELECT event_key, intent_id, occurred_at, event_type,
                 broker_order_id, payload_json FROM broker_order_events
                 WHERE event_key = ?""",
-                (event.event_key,),
-            ).fetchone()
-        )
+            (event.event_key,),
+        ).fetchone()
         if existing is not None:
             if existing != values:
                 raise BrokerEventConflictError(event.event_key)
@@ -216,6 +222,13 @@ class ExecutionWriter:
         self._require_active()
         self._require_bound_account(observation.account_fingerprint)
         return append_paper_stream_recovery(self._connection, observation)
+
+    def ledger_generation(self) -> ExecutionLedgerGeneration:
+        self._require_active()
+        row: tuple[int] | None = self._connection.execute("PRAGMA data_version").fetchone()
+        if row is None:
+            raise InvalidExecutionLedgerGenerationError
+        return ExecutionLedgerGeneration(self._connection.total_changes, row[0])
 
     def _require_active(self) -> None:
         if not self._active:

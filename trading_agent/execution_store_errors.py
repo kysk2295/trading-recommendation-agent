@@ -24,6 +24,12 @@ class InactiveExecutionWriterError(RuntimeError):
         return "Paper execution writer 사용 구간이 종료되었습니다"
 
 
+class InvalidExecutionLedgerGenerationError(RuntimeError):
+    @override
+    def __str__(self) -> str:
+        return "Paper execution 원장 세대를 읽을 수 없습니다"
+
+
 class IntentConflictError(RuntimeError):
     __slots__ = ("intent_id",)
 

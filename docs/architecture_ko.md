@@ -97,7 +97,7 @@ research → historical_pass → paper → approved → suspended
 
 현재 외부 API 표면은 시장시계·계좌·주문·포지션 조회 GET과 주문 스트림 인증·구독·Ping뿐이다. 주문 POST/PATCH/DELETE 메서드는 존재하지 않는다. REST aggregate가 누락 체결을 발견하면 주문 상태·누적량은 복원하지만 존재하지 않는 개별 execution을 합성하지 않으며, 상세 체결은 불완전 상태로 남긴다. 일반 protocol quarantine은 이후 일관된 REST 복구로 해소할 수 있지만 immutable 충돌은 account activity나 수동 감사 근거 없이 자동 해소하지 않는다.
 
-주문 변경 기능을 열기 전 P0 경계는 **하나의 장수명 WSS 소유자**가 ingestion과 admission을 함께 직렬화하는 것이다. 현재 recovery probe와 readiness probe는 각각 안전한 읽기 전용 연결을 열 수 있지만, Pong은 이벤트 처리 high-water나 replay cursor가 아니다. 따라서 실제 주문 admission 시점에는 current epoch recovery가 끝난 뒤 ledger generation이 변하지 않았음을 같은 직렬화 경계 안에서 확인해야 한다. 이 경계와 account activity 기반 fill/correction/bust 복구, 보호청산·kill switch·EOD 평탄화가 완성될 때까지 POST/PATCH/DELETE는 닫아 둔다.
+단일 운영 세션은 Writer lease를 먼저 잡고 하나의 WSS를 연 뒤 미분류 raw receipt 재처리와 current-epoch REST recovery를 완료한다. 같은 객체의 `ingest_next`와 `evaluate_order`는 비차단 operation lock으로 직렬화되어 서로 겹칠 수 없다. admission 직전 다시 current-epoch recovery를 append하고 `connection_epoch`, Writer 자체 변경 수와 SQLite `PRAGMA data_version`을 묶은 generation checkpoint를 만든다. 이후 활성 세션의 REST·원장·포트폴리오 평가 전후 값이 다르면 이미 계산된 승인도 `RECONCILIATION_BLOCKED`로 바꾼다. 공개 factory는 credentials와 `ExecutionStore`만 받고 provider·clock·stream·writer 주입을 노출하지 않는다. Alpaca WSS의 Pong은 이벤트 high-water나 replay cursor가 아니므로 이 경계만으로 체결 정정이 완성된 것은 아니다. account activity 기반 fill/correction/bust 복구, 보호청산·kill switch·EOD 평탄화가 완성될 때까지 POST/PATCH/DELETE는 계속 닫아 둔다.
 
 신규 주문 승인 상태기계는 다음 순서를 고정한다.
 
