@@ -19,12 +19,23 @@ class PaperOrderSide(StrEnum):
 
 class BrokerOrderEventType(StrEnum):
     SUBMITTED = "submitted"
+    NEW = "new"
     ACCEPTED = "accepted"
     REJECTED = "rejected"
+    PENDING_NEW = "pending_new"
+    STOPPED = "stopped"
+    PENDING_CANCEL = "pending_cancel"
     PARTIAL_FILL = "partial_fill"
     FILL = "fill"
     CANCELED = "canceled"
     EXPIRED = "expired"
+    DONE_FOR_DAY = "done_for_day"
+    PENDING_REPLACE = "pending_replace"
+    REPLACED = "replaced"
+    CALCULATED = "calculated"
+    SUSPENDED = "suspended"
+    ORDER_REPLACE_REJECTED = "order_replace_rejected"
+    ORDER_CANCEL_REJECTED = "order_cancel_rejected"
 
 
 @dataclass(frozen=True, slots=True)

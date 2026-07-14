@@ -4,21 +4,26 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from trading_agent.execution_schema import IntentRow, StoredIntent, stored_intent
+from trading_agent.broker_order_projection import (
+    BrokerOrderLedgerState,
+    project_broker_order_state,
+)
+from trading_agent.execution_schema import (
+    BrokerEventRow,
+    IntentRow,
+    StoredBrokerEvent,
+    StoredIntent,
+    stored_broker_event,
+    stored_intent,
+)
 from trading_agent.paper_execution_models import (
     AccountFingerprint,
-    BrokerOrderEventType,
     IntentId,
 )
-
-TERMINAL_EVENT_VALUES = tuple(
-    event.value
-    for event in (
-        BrokerOrderEventType.FILL,
-        BrokerOrderEventType.REJECTED,
-        BrokerOrderEventType.CANCELED,
-        BrokerOrderEventType.EXPIRED,
-    )
+from trading_agent.trade_update_schema import (
+    StoredTradeUpdate,
+    TradeUpdateRow,
+    stored_trade_update,
 )
 
 
@@ -28,6 +33,7 @@ class ReconciliationLedger:
     unresolved_intent_ids: frozenset[IntentId]
     account_fingerprint: AccountFingerprint | None
     filled_intent_ids: frozenset[IntentId] = frozenset()
+    order_states: tuple[BrokerOrderLedgerState, ...] = ()
 
 
 def read_reconciliation_ledger(path: Path) -> ReconciliationLedger:
@@ -38,41 +44,63 @@ def read_reconciliation_ledger(path: Path) -> ReconciliationLedger:
         intent_rows: list[IntentRow] = connection.execute(
             "SELECT * FROM order_intents ORDER BY created_at, intent_id"
         ).fetchall()
-        unresolved_rows: list[tuple[str]] = connection.execute(
-            """SELECT intent.intent_id FROM order_intents AS intent
-            LEFT JOIN broker_order_events AS event ON event.event_id = (
-              SELECT MAX(candidate.event_id) FROM broker_order_events AS candidate
-              WHERE candidate.intent_id = intent.intent_id
-            )
-            WHERE event.event_type IS NULL
-               OR event.event_type NOT IN (?, ?, ?, ?)
-            ORDER BY intent.intent_id""",
-            TERMINAL_EVENT_VALUES,
+        broker_rows: list[BrokerEventRow] = connection.execute(
+            """SELECT event_id, event_key, intent_id, occurred_at, event_type,
+            broker_order_id, payload_json FROM broker_order_events ORDER BY event_id"""
         ).fetchall()
-        filled_rows: list[tuple[str]] = connection.execute(
-            """SELECT intent.intent_id FROM order_intents AS intent
-            JOIN broker_order_events AS event ON event.event_id = (
-              SELECT MAX(candidate.event_id) FROM broker_order_events AS candidate
-              WHERE candidate.intent_id = intent.intent_id
-            )
-            WHERE event.event_type = ? ORDER BY intent.intent_id""",
-            (BrokerOrderEventType.FILL.value,),
+        trade_rows: list[TradeUpdateRow] = connection.execute(
+            """SELECT event_id, event_key, intent_id, occurred_at, event_type,
+            broker_order_id, symbol, side, limit_price, time_in_force,
+            extended_hours, broker_event_id, execution_id, order_status,
+            order_quantity, cumulative_filled_quantity,
+            cumulative_filled_avg_price, execution_quantity, execution_price,
+            position_quantity, replaced_by_order_id, replaces_order_id,
+            payload_json, connection_epoch, received_at
+            FROM trade_update_events ORDER BY event_id"""
         ).fetchall()
         fingerprint_row: tuple[str] | None = connection.execute(
             "SELECT account_fingerprint FROM account_binding WHERE binding_id = 1"
         ).fetchone()
+    intents = tuple(stored_intent(row) for row in intent_rows)
+    broker_events = tuple(stored_broker_event(row) for row in broker_rows)
+    trade_updates = tuple(stored_trade_update(row) for row in trade_rows)
+    states = tuple(
+        project_broker_order_state(
+            intent,
+            _broker_events_for(intent.intent_id, broker_events),
+            _trade_updates_for(intent.intent_id, trade_updates),
+        )
+        for intent in intents
+    )
     return ReconciliationLedger(
-        intents=tuple(stored_intent(row) for row in intent_rows),
+        intents=intents,
         unresolved_intent_ids=frozenset(
-            IntentId(row[0]) for row in unresolved_rows
+            state.intent_id for state in states if not state.terminal
         ),
         account_fingerprint=(
             None
             if fingerprint_row is None
             else AccountFingerprint(fingerprint_row[0])
         ),
-        filled_intent_ids=frozenset(IntentId(row[0]) for row in filled_rows),
+        filled_intent_ids=frozenset(
+            state.intent_id for state in states if state.has_fill_evidence
+        ),
+        order_states=states,
     )
+
+
+def _broker_events_for(
+    intent_id: IntentId,
+    events: tuple[StoredBrokerEvent, ...],
+) -> tuple[StoredBrokerEvent, ...]:
+    return tuple(event for event in events if event.intent_id == intent_id)
+
+
+def _trade_updates_for(
+    intent_id: IntentId,
+    events: tuple[StoredTradeUpdate, ...],
+) -> tuple[StoredTradeUpdate, ...]:
+    return tuple(event for event in events if event.intent_id == intent_id)
 
 
 def _reader_connection(path: Path) -> sqlite3.Connection:

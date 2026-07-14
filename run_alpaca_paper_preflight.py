@@ -82,14 +82,16 @@ def main(
             return 1
         credentials = credential_loader()
         broker_state = state_loader(credentials)
+        ledger = store.reconciliation_ledger()
         result = reconcile_paper_state(
             PaperReconciliationSnapshot(
                 account=broker_state.account,
                 broker_orders=broker_state.open_orders,
                 positions=broker_state.positions,
-                stored_intents=store.intents(),
-                unresolved_intent_ids=store.unresolved_intent_ids(),
-                bound_account_fingerprint=store.account_fingerprint(),
+                stored_intents=ledger.intents,
+                unresolved_intent_ids=ledger.unresolved_intent_ids,
+                bound_account_fingerprint=ledger.account_fingerprint,
+                order_states=ledger.order_states,
             )
         )
     except (

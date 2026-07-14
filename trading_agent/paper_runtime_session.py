@@ -113,6 +113,7 @@ class _LivePaperRuntimeSession:
                 stored_intents=ledger.intents,
                 unresolved_intent_ids=ledger.unresolved_intent_ids,
                 bound_account_fingerprint=ledger.account_fingerprint,
+                order_states=ledger.order_states,
             )
         )
         portfolio = build_paper_portfolio(
@@ -120,6 +121,7 @@ class _LivePaperRuntimeSession:
             ledger.intents,
             ledger.filled_intent_ids,
             config,
+            order_states=ledger.order_states,
         )
         after_rest = self._stream.heartbeat(5.0)
         if before_rest.connection_epoch != after_rest.connection_epoch:

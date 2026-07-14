@@ -6,9 +6,11 @@ from decimal import Decimal
 
 import pytest
 
+from trading_agent.broker_order_projection import BrokerOrderLedgerState
 from trading_agent.execution_schema import StoredIntent
 from trading_agent.paper_execution_models import (
     AccountFingerprint,
+    BrokerOrderEventType,
     BrokerOrderId,
     IntentId,
     PaperAccountSnapshot,
@@ -76,11 +78,13 @@ def _build(
     positions: tuple[PaperPositionSnapshot, ...] = (),
     intents: tuple[StoredIntent, ...] = (),
     filled_intent_ids: frozenset[IntentId] = frozenset(),
+    order_states: tuple[BrokerOrderLedgerState, ...] = (),
 ) -> CompletePaperPortfolio | IncompletePaperPortfolio:
     return build_paper_portfolio(
         PaperBrokerState(_account(), orders, positions),
         intents,
         filled_intent_ids,
+        order_states=order_states,
     )
 
 
@@ -169,6 +173,31 @@ def test_builder_matches_a_filled_position_to_one_current_session_intent() -> No
     assert isinstance(portfolio, CompletePaperPortfolio)
     assert portfolio.exposures[0].kind is PaperExposureKind.OPEN_POSITION
     assert portfolio.exposures[0].gross_exposure == Decimal("5100")
+
+
+def test_builder_recovers_a_partial_fill_position_after_order_cancel() -> None:
+    position = PaperPositionSnapshot("AAPL", Decimal(20), Decimal("2020"))
+    state = BrokerOrderLedgerState(
+        intent_id=INTENT_ID,
+        broker_order_ids=(BrokerOrderId("order-1"),),
+        terminal_event_types=(BrokerOrderEventType.CANCELED,),
+        cumulative_filled_quantity=Decimal(20),
+        complete_fill=False,
+        terminal=True,
+        has_fill_evidence=True,
+        anomaly_reasons=(),
+    )
+
+    portfolio = _build(
+        positions=(position,),
+        intents=(_intent(),),
+        filled_intent_ids=frozenset({INTENT_ID}),
+        order_states=(state,),
+    )
+
+    assert isinstance(portfolio, CompletePaperPortfolio)
+    assert portfolio.exposures[0].kind is PaperExposureKind.OPEN_POSITION
+    assert portfolio.exposures[0].gross_exposure == Decimal("2020")
 
 
 def test_builder_floors_full_position_gross_at_the_intent_entry_value() -> None:

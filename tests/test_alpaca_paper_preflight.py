@@ -5,6 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import run_alpaca_paper_preflight as preflight_cli
+from tests.trade_update_ledger_fixtures import OBSERVED_AT, intent, trade_update
 from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
 from trading_agent.execution_store import ExecutionStore
 from trading_agent.paper_execution_models import (
@@ -131,3 +132,32 @@ def test_preflight_returns_one_for_unknown_order(tmp_path: Path) -> None:
     assert "알 수 없는 paper 주문" in (
         output / "paper_preflight_ko.md"
     ).read_text(encoding="utf-8")
+
+
+def test_preflight_blocks_a_trade_update_projection_anomaly(tmp_path: Path) -> None:
+    database = tmp_path / "execution.sqlite3"
+    output = tmp_path / "report"
+    with ExecutionStore(database).writer() as writer:
+        _ = writer.bind_account(FINGERPRINT, OBSERVED_AT)
+        _ = writer.save_intent(intent(), quantity=100)
+        _ = writer.append_trade_update(
+            trade_update(
+                "canceled",
+                status="canceled",
+                filled_qty="10",
+                execution_id=None,
+            ),
+            account_fingerprint=FINGERPRINT,
+            connection_epoch="epoch-1",
+            received_at=OBSERVED_AT,
+        )
+
+    code = preflight_cli.main(
+        ["--database", str(database), "--output-dir", str(output)],
+        credential_loader=_credentials,
+        state_loader=_empty_state,
+    )
+
+    report = (output / "paper_preflight_ko.md").read_text(encoding="utf-8")
+    assert code == 1
+    assert "projection 이상" in report

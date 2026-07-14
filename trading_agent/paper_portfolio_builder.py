@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import datetime as dt
 from decimal import Decimal
 from typing import assert_never
 
+from trading_agent.broker_order_projection import BrokerOrderLedgerState
 from trading_agent.execution_schema import StoredIntent
 from trading_agent.paper_execution_models import (
     IntentId,
@@ -38,18 +40,24 @@ def build_paper_portfolio(
     stored_intents: tuple[StoredIntent, ...],
     filled_intent_ids: frozenset[IntentId],
     config: PaperRiskConfig = DEFAULT_PAPER_RISK_CONFIG,
+    *,
+    order_states: tuple[BrokerOrderLedgerState, ...] = (),
 ) -> PaperPortfolioSnapshot:
     config.assert_within_hard_limits()
     reasons: list[str] = []
     if not valid_account_snapshot(state):
         return IncompletePaperPortfolio(("Paper 계좌 위험값이 불완전합니다",))
     intents_by_id = {intent.intent_id: intent for intent in stored_intents}
+    states_by_id = {state.intent_id: state for state in order_states}
     if len(intents_by_id) != len(stored_intents):
         reasons.append("원장에 중복 intent ID가 있습니다")
+    if len(states_by_id) != len(order_states):
+        reasons.append("원장에 중복 주문 projection이 있습니다")
     positions_by_symbol_map = positions_by_symbol(state.positions, reasons)
     exposures: list[PaperPortfolioExposure] = []
     consumed_positions: set[str] = set()
     consumed_intents: set[str] = set()
+    consumed_fill_intents: set[IntentId] = set()
     reserved_risk = _reserved_slot_risk(state, config)
 
     for order in state.open_orders:
@@ -72,6 +80,8 @@ def build_paper_portfolio(
             if intent.intent_id in consumed_intents:
                 reasons.append(f"중복된 활성 intent: {intent.intent_id}")
             consumed_intents.add(intent.intent_id)
+            if order.filled_quantity > 0:
+                consumed_fill_intents.add(intent.intent_id)
             exposures.append(exposure)
 
     for symbol, position in positions_by_symbol_map.items():
@@ -81,10 +91,11 @@ def build_paper_portfolio(
             intent
             for intent in stored_intents
             if intent.intent_id in filled_intent_ids
-            and position_matches_current_intent(
+            and _position_matches_ledger_or_intent(
                 position,
                 intent,
                 state.account.observed_at,
+                states_by_id.get(intent.intent_id),
             )
         )
         if len(matches) != 1:
@@ -95,6 +106,7 @@ def build_paper_portfolio(
             reasons.append(f"중복된 활성 intent: {intent.intent_id}")
             continue
         consumed_intents.add(intent.intent_id)
+        consumed_fill_intents.add(intent.intent_id)
         exposures.append(
             PaperPortfolioExposure(
                 intent_id=intent.intent_id,
@@ -111,6 +123,14 @@ def build_paper_portfolio(
                 ),
             )
         )
+
+    expected_fill_intents = filled_intent_ids | frozenset(
+        order_state.intent_id
+        for order_state in order_states
+        if order_state.has_fill_evidence
+    )
+    for intent_id in sorted(expected_fill_intents - consumed_fill_intents):
+        reasons.append(f"체결 원장 intent의 현재 broker 노출이 없습니다: {intent_id}")
 
     symbols = tuple(exposure.symbol for exposure in exposures)
     if len(set(symbols)) != len(symbols):
@@ -205,3 +225,24 @@ def _planned_exposure_risk(
     )
     actual_risk = (stop_distance + minimum_cost) * Decimal(intent.quantity)
     return max(reserved_risk, actual_risk)
+
+
+def _position_matches_ledger_or_intent(
+    position: PaperPositionSnapshot,
+    intent: StoredIntent,
+    observed_at: dt.datetime,
+    state: BrokerOrderLedgerState | None,
+) -> bool:
+    if state is None:
+        return position_matches_current_intent(position, intent, observed_at)
+    if (
+        state.anomaly_reasons
+        or not state.terminal
+        or not state.has_fill_evidence
+        or not valid_stored_intent(intent, observed_at)
+    ):
+        return False
+    expected = state.cumulative_filled_quantity
+    if intent.side is PaperOrderSide.SELL:
+        expected = -expected
+    return position.symbol == intent.symbol and position.quantity == expected

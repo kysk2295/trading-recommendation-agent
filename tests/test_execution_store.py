@@ -27,6 +27,8 @@ from trading_agent.paper_execution_models import (
     PaperOrderSide,
 )
 
+FINGERPRINT = AccountFingerprint("a" * 64)
+
 
 def _intent(entry: float = 10.0) -> PaperOrderIntent:
     return PaperOrderIntent(
@@ -99,6 +101,7 @@ def test_broker_events_are_append_only_and_deduplicated(tmp_path: Path) -> None:
 
     # When
     with store.writer() as writer:
+        _ = writer.bind_account(FINGERPRINT, occurred_at)
         _ = writer.save_intent(_intent(), quantity=259)
         event = BrokerOrderEvent(
             event_key=BrokerEventKey("paper-order-1:accepted:0"),
@@ -108,8 +111,14 @@ def test_broker_events_are_append_only_and_deduplicated(tmp_path: Path) -> None:
             broker_order_id=BrokerOrderId("paper-order-1"),
             payload_json='{"status":"accepted"}',
         )
-        first = writer.append_broker_event(event)
-        repeated = writer.append_broker_event(event)
+        first = writer.append_broker_event(
+            event,
+            account_fingerprint=FINGERPRINT,
+        )
+        repeated = writer.append_broker_event(
+            event,
+            account_fingerprint=FINGERPRINT,
+        )
 
     # Then
     assert first is True
@@ -173,8 +182,12 @@ def test_event_key_with_different_payload_is_rejected(tmp_path: Path) -> None:
 
     # When / Then
     with store.writer() as writer:
+        _ = writer.bind_account(FINGERPRINT, _intent().created_at)
         _ = writer.save_intent(_intent(), quantity=259)
-        assert writer.append_broker_event(event) is True
+        assert writer.append_broker_event(
+            event,
+            account_fingerprint=FINGERPRINT,
+        ) is True
         changed = BrokerOrderEvent(
             event.event_key,
             event.intent_id,
@@ -184,7 +197,10 @@ def test_event_key_with_different_payload_is_rejected(tmp_path: Path) -> None:
             '{"status":"filled"}',
         )
         with pytest.raises(BrokerEventConflictError, match="immutable"):
-            _ = writer.append_broker_event(changed)
+            _ = writer.append_broker_event(
+                changed,
+                account_fingerprint=FINGERPRINT,
+            )
 
 
 def test_database_blocks_direct_update_delete_and_orphan_event(tmp_path: Path) -> None:
@@ -235,10 +251,13 @@ def test_writer_binds_exactly_one_paper_account_fingerprint(tmp_path: Path) -> N
     assert store.is_initialized() is True
 
 
-def test_terminal_broker_event_resolves_local_intent(tmp_path: Path) -> None:
+def test_legacy_terminal_broker_event_requires_rest_reconciliation(
+    tmp_path: Path,
+) -> None:
     # Given
     store = ExecutionStore(tmp_path / "execution.sqlite3")
     with store.writer() as writer:
+        _ = writer.bind_account(FINGERPRINT, _intent().created_at)
         _ = writer.save_intent(_intent(), quantity=259)
         unresolved_before = store.unresolved_intent_ids()
 
@@ -251,14 +270,19 @@ def test_terminal_broker_event_resolves_local_intent(tmp_path: Path) -> None:
                 BrokerOrderEventType.FILL,
                 BrokerOrderId("paper-order-1"),
                 '{"status":"filled"}',
-            )
+            ),
+            account_fingerprint=FINGERPRINT,
         )
 
     # Then
     assert unresolved_before == frozenset({_intent().intent_id})
-    assert store.unresolved_intent_ids() == frozenset()
+    assert store.unresolved_intent_ids() == frozenset({_intent().intent_id})
     assert store.reconciliation_ledger().filled_intent_ids == frozenset(
         {_intent().intent_id}
+    )
+    assert any(
+        "REST 재대사" in reason
+        for reason in store.reconciliation_ledger().order_states[0].anomaly_reasons
     )
 
 

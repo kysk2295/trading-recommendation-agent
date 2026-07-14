@@ -7,6 +7,7 @@ from typing import Final
 
 import pytest
 
+from trading_agent.broker_order_projection import BrokerOrderLedgerState
 from trading_agent.execution_schema import StoredIntent
 from trading_agent.paper_execution_models import (
     AccountFingerprint,
@@ -80,6 +81,7 @@ def _snapshot(
     positions: tuple[PaperPositionSnapshot, ...] = (),
     intents: tuple[StoredIntent, ...] = (),
     unresolved: frozenset[IntentId] = frozenset(),
+    order_states: tuple[BrokerOrderLedgerState, ...] = (),
     bound_fingerprint: AccountFingerprint | None = FINGERPRINT,
     account: PaperAccountSnapshot | None = None,
 ) -> PaperReconciliationSnapshot:
@@ -90,6 +92,7 @@ def _snapshot(
         stored_intents=intents,
         unresolved_intent_ids=unresolved,
         bound_account_fingerprint=bound_fingerprint,
+        order_states=order_states,
     )
 
 
@@ -230,3 +233,45 @@ def test_operational_reconciliation_delegates_position_join_to_portfolio_builder
 
     assert preflight.ready is False
     assert operational.ready is True
+
+
+def test_projected_ledger_anomaly_blocks_reconciliation() -> None:
+    intent = _stored_intent()
+    state = BrokerOrderLedgerState(
+        intent_id=intent.intent_id,
+        broker_order_ids=(BrokerOrderId("paper-order-1"),),
+        terminal_event_types=(),
+        cumulative_filled_quantity=Decimal("10"),
+        complete_fill=False,
+        terminal=False,
+        has_fill_evidence=True,
+        anomaly_reasons=("체결 event 사이에 누락이 있습니다",),
+    )
+    snapshot = _snapshot(
+        orders=(replace(_order(), filled_quantity=Decimal("10")),),
+        intents=(intent,),
+        unresolved=frozenset({intent.intent_id}),
+        order_states=(state,),
+    )
+
+    result = reconcile_operational_paper_state(snapshot)
+
+    assert result.ready is False
+    assert any("누락" in reason for reason in result.reasons)
+
+
+def test_duplicate_broker_orders_for_one_client_id_are_blocked() -> None:
+    intent = _stored_intent()
+    snapshot = _snapshot(
+        orders=(
+            _order(),
+            replace(_order(), broker_order_id=BrokerOrderId("paper-order-2")),
+        ),
+        intents=(intent,),
+        unresolved=frozenset({intent.intent_id}),
+    )
+
+    result = reconcile_operational_paper_state(snapshot)
+
+    assert result.ready is False
+    assert any("둘 이상의 broker 주문" in reason for reason in result.reasons)

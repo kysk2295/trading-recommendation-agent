@@ -16,6 +16,10 @@ from websockets.sync.client import connect
 from websockets.sync.connection import Connection
 
 from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
+from trading_agent.alpaca_trade_updates import (
+    AlpacaTradeUpdate,
+    parse_alpaca_trade_update,
+)
 
 ALPACA_PAPER_ORDER_STREAM_URL: Final = "wss://paper-api.alpaca.markets/stream"
 CONTROL_TIMEOUT_SECONDS: Final = 5.0
@@ -56,6 +60,12 @@ class PaperOrderStreamProtocolError(PaperOrderStreamError):
     @override
     def __str__(self) -> str:
         return "Alpaca paper 주문 스트림 제어 응답 형식이 올바르지 않습니다"
+
+
+class InvalidPaperOrderStreamTimeoutError(PaperOrderStreamError):
+    @override
+    def __str__(self) -> str:
+        return "Alpaca paper 주문 스트림 timeout은 0보다 커야 합니다"
 
 
 class PaperOrderStreamUnavailableError(PaperOrderStreamError):
@@ -172,6 +182,17 @@ class ReadyPaperOrderStream:
         self._authorized_at = authorized_at
         self._subscribed_at = subscribed_at
         self._clock = clock
+
+    @property
+    def connection_epoch(self) -> PaperStreamEpoch:
+        return self._connection_epoch
+
+    def receive_trade_update(self, timeout_seconds: float) -> AlpacaTradeUpdate:
+        if timeout_seconds <= 0:
+            raise InvalidPaperOrderStreamTimeoutError
+        return parse_alpaca_trade_update(
+            self._connection.recv(timeout_seconds)
+        )
 
     def heartbeat(
         self,
