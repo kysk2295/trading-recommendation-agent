@@ -231,6 +231,8 @@ KIS 날짜별 paper 감시:
 
 `candidate_input_snapshots`에는 신규 신호를 평가한 후보의 실제 관찰 시각, 당시 최신 완료 봉, 완료 일봉에서 계산한 전일 종가·20일 평균 거래량과 관측 spread를 append-only로 저장한다. 사후 challenger replay는 이 입력과 `candidate_minute_bars`를 함께 사용해야 하며, 현재 랭킹이나 나중에 수정된 일봉 문맥으로 대체하면 안 된다.
 
+`candidate_input_cycles.csv`는 watch cycle별 선정 후보 수, 실제 입력 snapshot 수와 scan 완료 여부를 남긴다. 일일 연구 원장은 이 행 수가 `watch_cycles.csv`와 같고, 모든 scan이 완료됐으며, 보고된 snapshot 합계가 SQLite 실제 행 수와 일치해야 해당 날짜를 적격으로 판정한다.
+
 정규장에서 한 번 선택된 종목은 `tracked_candidates`에 거래일 단위로 저장한다. 이후 상위 랭킹에서 빠지면 새 추천은 만들지 않고 분봉 보존과 이미 열린 추천의 손절·목표 상태 갱신만 계속한다. 폐장·휴장에는 watchlist를 만들거나 이전 거래일 후보를 불러오지 않는다.
 
 CSV replay:

@@ -90,6 +90,7 @@ def test_observe_stock_archives_the_exact_signal_input_context(
             "FROM candidate_input_snapshots"
         ).fetchone()
     assert observation.status == "최신 완료 봉 평가"
+    assert observation.candidate_input_archived is True
     assert archived == (
         "NAS",
         "INPUT",

@@ -20,6 +20,8 @@ from trading_agent.store import PaperStore
 class QualityJson(TypedDict):
     forward_day_eligible: bool
     completed_trades: int
+    candidate_input_cycles: int
+    candidate_input_selections: int
     candidate_inputs: int
     read_retries: int
     read_retry_recoveries: int
@@ -97,6 +99,8 @@ def test_daily_research_cli_writes_lineage_and_blocks_early_promotion(
     assert record["strategy_stage"] == "experimental_shadow"
     assert record["session_quality"]["forward_day_eligible"] is True
     assert record["session_quality"]["completed_trades"] == 1
+    assert record["session_quality"]["candidate_input_cycles"] == 1
+    assert record["session_quality"]["candidate_input_selections"] == 1
     assert record["session_quality"]["candidate_inputs"] == 1
     assert record["session_quality"]["read_retries"] == 1
     assert record["session_quality"]["read_retry_recoveries"] == 1
@@ -106,6 +110,7 @@ def test_daily_research_cli_writes_lineage_and_blocks_early_promotion(
     artifact_paths = {artifact["path"] for artifact in record["artifact_checksums"]}
     assert "kis_read_retry_cycles.csv" in artifact_paths
     assert "kis_read_retry_events.csv" in artifact_paths
+    assert "candidate_input_cycles.csv" in artifact_paths
     assert record["metrics_20bp"]["side_cost_bps"] == 20
     assert record["metrics_20bp"]["trade_count"] == 1
     assert record["promotion"]["allowed"] is False
@@ -245,6 +250,10 @@ def _write_complete_session(
     (session / "kis_read_retry_events.csv").write_text(
         "started_at,endpoint,exchange,symbol,first_status,final_status,outcome\n"
         + "2026-07-14T10:00:00-04:00,/minute,NAS,DEMO,500,200,recovered\n",
+        encoding="utf-8",
+    )
+    (session / "candidate_input_cycles.csv").write_text(
+        "started_at,selected_count,context_count,scan_completed\n" + "2026-07-14T10:00:00-04:00,1,1,True\n",
         encoding="utf-8",
     )
     (session / "kis_ranking_snapshots.csv").write_text(

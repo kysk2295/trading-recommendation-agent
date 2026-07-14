@@ -13,6 +13,8 @@
 - 기본키는 거래소·종목·관찰시각이며 재실행은 최초 행을 유지한다.
 - 추적 전용 `follow()`와 일봉 문맥 실패는 신규 후보 입력으로 추정하지 않는다.
 - 일일 연구 원장은 snapshot 수를 품질 계보에 포함한다.
+- 각 watch child는 선정 수·snapshot 수·scan 완료 여부를 `candidate_input_cycles.csv`에 남긴다.
+- 일일 적격 게이트는 후보 입력 cycle/watch cycle 일치, 모든 scan 완료, cycle 합계/SQLite 행 수 일치를 요구한다.
 - 이 단계는 challenger 수익성을 계산하지 않는다. 이후 replay가 사용할 시점 고정 입력을 확보하는 단계다.
 
 ## 검증
@@ -20,7 +22,8 @@
 - 동일 관찰 snapshot을 두 번 저장해 첫 실행 1행, 두 번째 실행 0행을 확인했다.
 - HTTP wire fake와 실제 SQLite를 사용한 scanner 통합 테스트에서 전일 종가 10.00, 20일 평균 거래량 200,000, 실제 spread와 09:32 최신 완료 봉이 09:33:30 관찰시각으로 저장됐다.
 - 일일 연구 CLI가 후보 입력 snapshot 1건을 구조화 품질 필드와 한국어 요약에 기록했다.
-- 전체 pytest 438개, Ruff, 변경 파일 format check, basedpyright와 no-excuse 검사가 통과했다.
+- 후보 입력 cycle 감사 writer와 감사 파일 누락 시 일일 적격 거부를 회귀 테스트로 고정했다.
+- 전체 pytest 440개, Ruff, 변경 파일 format check, basedpyright와 no-excuse 검사가 통과했다.
 
 ## 실제 watcher 적용 결과
 
@@ -30,5 +33,6 @@
 - 같은 cycle 종료코드는 0이었고 KIS 읽기 재시도 6건은 모두 최종 200으로 복구됐다.
 - watcher 부모·Python 프로세스 RSS 합계는 약 38MiB로 10GiB 안전 한도보다 충분히 낮았다.
 - 이 기능 도입 전 cycle에는 입력 snapshot이 없으므로 해당 과거 구간을 현재 값으로 보간하지 않는다.
+- cycle 감사 기능도 장중 도입 전 행을 소급 생성하지 않으므로 이 거래일은 계속 비교 불가다.
 
 이 결과는 Paper 전진검증 데이터 계보이며 확정 수익 또는 전략 우위의 증거가 아니다. 다음 단계는 이 snapshot과 최초 관찰 분봉을 사용한 독립 challenger 장마감 replay다.

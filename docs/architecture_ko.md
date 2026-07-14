@@ -148,6 +148,8 @@ NASDAQ·NYSE·AMEX 상승률/거래량 랭킹
 
 분봉 freshness와 완료 일봉 문맥이 모두 통과해 실제 신규 신호 평가로 들어간 후보는 `candidate_input_snapshots`에도 기록한다. 거래소·종목·실제 관찰시각을 기본키로 삼고, 당시 최신 완료 봉 시각, 전일 종가, 20개 완료 일봉 평균 거래량, 관측 spread를 `INSERT OR IGNORE`로 고정한다. 이 표는 분봉만으로 복원할 수 없는 scanner 입력을 보존해 장마감 challenger가 당시와 같은 입력을 사용할 수 있게 하는 계보다. 행이 없는 실패 cycle을 성공 입력으로 추정하거나 현재 값으로 보간하지 않는다.
 
+각 child scan은 성공·실패와 관계없이 `candidate_input_cycles.csv`에 시작시각, 선정 수, 입력 snapshot 수와 scan 완료 여부를 남긴다. 일일 품질 게이트는 이 cycle 수를 watch cycle 수와 대조하고, 미완료 scan이 없어야 하며, cycle별 snapshot 합계가 SQLite의 `candidate_input_snapshots` 실제 행 수와 같아야 통과한다. 장중 도입이나 감사 파일 유실은 수익 0으로 바꾸지 않고 해당 날짜 전체를 비교 불가로 남긴다.
+
 정규장에서 최초 선택된 종목은 `tracked_candidates`에 뉴욕 거래일별로 보존한다. 이후 현재 상위 후보에서 빠진 종목은 `follow()` 경로로 분봉을 계속 저장한다. 열린 추천이 있으면 새 완료 봉으로 상태만 갱신하고, 열린 추천이 없으면 ORB 조건이 보여도 신규 추천을 생성하지 않는다. 따라서 현재 스캐너 선정과 과거 선정 종목 추적이 분리된다.
 
 랭킹 CSV는 종목 키의 선택 여부 `selected`와 실제 필터 입력 행 `selection_input`을 분리한다. 구형 행은 실제 입력 출처를 추정하지 않고 `selection_input`을 빈 값으로 migration한다. 랭킹 응답이 끝난 뒤 관찰 시각을 기록하며 forward 분석은 종목·거래일 최초 `selection_input=True`만 사용한다.
@@ -178,7 +180,7 @@ metrics가 성공하면 watch는 `run_daily_research_record.py`를 이어서 실
 
 누적치는 같은 전략 버전에서 기록 대상 거래일보다 앞선 날짜만 사용한다. 따라서 이후 거래일이 원장에 추가된 뒤 과거 세션을 재생해도 미래 날짜가 과거의 누적치와 record ID에 들어가지 않으며, 동일 입력은 중복 행을 만들지 않는다.
 
-적격 forward day는 watch cycle마다 거래소 3곳×랭킹 2종의 6개 요청이 모두 성공하고, coverage cycle 수와 watch cycle 수가 같으며, 실패 watch cycle이 없을 때만 증가한다. 승격은 최소 60 적격 거래일·100 완료 거래뿐 아니라 broker paper ledger, DSR/PBO, 인접 파라미터 평탄성, SIP 검증이 모두 충족돼야 한다. 평가기 버전이 다른 원장은 누적 거래일·거래 수에 섞지 않는다. 현재 경로는 연구 기록만 만들고 전략 상태를 자동 변경하거나 주문을 제출하지 않는다.
+적격 forward day는 watch cycle마다 거래소 3곳×랭킹 2종의 6개 요청이 모두 성공하고, coverage·KIS retry·후보 입력 cycle 수가 watch cycle 수와 같으며, 후보 입력 합계가 SQLite와 일치하고, 실패 또는 미완료 cycle이 없을 때만 증가한다. 승격은 최소 60 적격 거래일·100 완료 거래뿐 아니라 broker paper ledger, DSR/PBO, 인접 파라미터 평탄성, SIP 검증이 모두 충족돼야 한다. 평가기 버전이 다른 원장은 누적 거래일·거래 수에 섞지 않는다. 현재 경로는 연구 기록만 만들고 전략 상태를 자동 변경하거나 주문을 제출하지 않는다.
 
 ## 현재 범위의 한계
 

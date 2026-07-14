@@ -33,6 +33,7 @@ class ScanObservation:
     spread_bps: float
     bars: int
     status: str
+    candidate_input_archived: bool = False
 
 
 @final
@@ -106,7 +107,12 @@ class KisPaperScanner:
             )
             bars = ranking_to_bar_inputs(stock, completed, daily)
             _ = self.engine.process_forward(bars, observed_at)
-            return _observation(stock, len(bars), "최신 완료 봉 평가")
+            return _observation(
+                stock,
+                len(bars),
+                "최신 완료 봉 평가",
+                candidate_input_archived=True,
+            )
         except (KisApiError, httpx2.HTTPError, ValueError) as error:
             message = " ".join(str(error).splitlines())
             return _observation(stock, 0, f"오류: {message}")
@@ -164,7 +170,12 @@ class KisPaperScanner:
             return _observation(stock, 0, f"오류: {message}")
 
 
-def _observation(stock: KisRankedStock, bars: int, status: str) -> ScanObservation:
+def _observation(
+    stock: KisRankedStock,
+    bars: int,
+    status: str,
+    candidate_input_archived: bool = False,
+) -> ScanObservation:
     return ScanObservation(
         stock.exchange,
         stock.symbol,
@@ -173,4 +184,5 @@ def _observation(stock: KisRankedStock, bars: int, status: str) -> ScanObservati
         stock.spread_bps,
         bars,
         status,
+        candidate_input_archived,
     )

@@ -27,6 +27,7 @@ REQUIRED_ARTIFACTS: Final = (
 OPTIONAL_ARTIFACTS: Final = (
     "kis_read_retry_cycles.csv",
     "kis_read_retry_events.csv",
+    "candidate_input_cycles.csv",
 )
 
 
@@ -49,6 +50,14 @@ class _RetryRow(BaseModel):
     retry_count: int
     recovered_count: int
     repeated_failure_count: int
+
+
+class _CandidateInputCycleRow(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    selected_count: int
+    context_count: int
+    scan_completed: bool
 
 
 class _MetricRow(BaseModel):
@@ -108,19 +117,30 @@ def load_session_quality(
     coverage = _coverage_rows(session / "kis_ranking_request_coverage.csv")
     watch = _watch_rows(session / "watch_cycles.csv")
     retries = _retry_rows(session / "kis_read_retry_cycles.csv")
+    input_cycles = _candidate_input_cycle_rows(session / "candidate_input_cycles.csv")
+    database = session / "paper_recommendations.sqlite3"
     ranking_cycles = len({row.observed_at for row in coverage})
     ranking_failures = sum(row.status == "failed" for row in coverage)
     failed_watch_cycles = sum(row.exit_code != 0 for row in watch)
     read_retries = sum(row.retry_count for row in retries)
     read_retry_recoveries = sum(row.recovered_count for row in retries)
     read_retry_failures = sum(row.repeated_failure_count for row in retries)
+    candidate_input_selections = sum(row.selected_count for row in input_cycles)
+    reported_candidate_inputs = sum(row.context_count for row in input_cycles)
+    candidate_inputs = _table_count(database, "candidate_input_snapshots")
+    incomplete_input_cycles = sum(not row.scan_completed for row in input_cycles)
     coverage_complete = len(coverage) == ranking_cycles * 6
     retry_coverage_complete = len(retries) == len(watch)
+    input_cycle_coverage_complete = len(input_cycles) == len(watch)
+    candidate_input_counts_match = reported_candidate_inputs == candidate_inputs
     eligible = (
         bool(watch)
         and ranking_cycles == len(watch)
         and coverage_complete
         and retry_coverage_complete
+        and input_cycle_coverage_complete
+        and incomplete_input_cycles == 0
+        and candidate_input_counts_match
         and ranking_failures == 0
         and failed_watch_cycles == 0
     )
@@ -141,7 +161,12 @@ def load_session_quality(
         incidents.append(f"kis_read_recoveries:{read_retry_recoveries}")
     if read_retry_failures:
         incidents.append(f"kis_read_retry_failures:{read_retry_failures}")
-    database = session / "paper_recommendations.sqlite3"
+    if not input_cycle_coverage_complete:
+        incidents.append(f"candidate_input_cycle_mismatch:{len(input_cycles)}/{len(watch)}")
+    if incomplete_input_cycles:
+        incidents.append(f"candidate_input_incomplete_cycles:{incomplete_input_cycles}")
+    if not candidate_input_counts_match:
+        incidents.append(f"candidate_input_count_mismatch:{reported_candidate_inputs}/{candidate_inputs}")
     return (
         SessionQuality(
             forward_day_eligible=eligible,
@@ -154,7 +179,9 @@ def load_session_quality(
             read_retries=read_retries,
             read_retry_recoveries=read_retry_recoveries,
             read_retry_failures=read_retry_failures,
-            candidate_inputs=_table_count(database, "candidate_input_snapshots"),
+            candidate_input_cycles=len(input_cycles),
+            candidate_input_selections=candidate_input_selections,
+            candidate_inputs=candidate_inputs,
             archived_bars=_table_count(database, "candidate_minute_bars"),
             recommendations=_table_count(database, "recommendations"),
             completed_trades=completed_trades,
@@ -179,6 +206,15 @@ def _retry_rows(path: Path) -> tuple[_RetryRow, ...]:
         return ()
     with path.open(encoding="utf-8", newline="") as handle:
         return tuple(_RetryRow.model_validate(row) for row in csv.DictReader(handle))
+
+
+def _candidate_input_cycle_rows(
+    path: Path,
+) -> tuple[_CandidateInputCycleRow, ...]:
+    if not path.is_file():
+        return ()
+    with path.open(encoding="utf-8", newline="") as handle:
+        return tuple(_CandidateInputCycleRow.model_validate(row) for row in csv.DictReader(handle))
 
 
 def _optional_float(value: str) -> float | None:

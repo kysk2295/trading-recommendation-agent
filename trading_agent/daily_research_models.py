@@ -27,6 +27,8 @@ class SessionQuality(BaseModel):
     read_retries: int = 0
     read_retry_recoveries: int = 0
     read_retry_failures: int = 0
+    candidate_input_cycles: int = 0
+    candidate_input_selections: int = 0
     candidate_inputs: int = 0
     archived_bars: int
     recommendations: int

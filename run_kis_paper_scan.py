@@ -15,6 +15,10 @@ from scr_backtest.kis_http import (
 )
 from scr_backtest.kis_intraday import KisSession
 from trading_agent.bar_archive import track_candidates, tracked_candidates
+from trading_agent.candidate_input_audit import (
+    CandidateInputCycleAudit,
+    append_candidate_input_cycle,
+)
 from trading_agent.causality import exclude_backdated_recommendations
 from trading_agent.engine import RecommendationEngine
 from trading_agent.kis_auth import (
@@ -97,6 +101,9 @@ def main(
         store,
     )
     observations: list[ScanObservation] = []
+    candidate_observations: list[ScanObservation] = []
+    selected_count = 0
+    scan_completed = False
     retry_capture = begin_retry_capture()
     try:
         with create_kis_client(mode) as client:
@@ -125,6 +132,7 @@ def main(
                 ),
             )
             candidates = risk_screen.selected
+            selected_count = len(candidates)
             write_market_risk_screen(output / "market_risk_screen.csv", risk_screen)
             append_ranking_snapshot(
                 output / "kis_ranking_snapshots.csv",
@@ -150,7 +158,9 @@ def main(
                 engine,
             )
             for stock in candidates:
-                observations.append(scanner.observe(stock, max_pages))
+                observation = scanner.observe(stock, max_pages)
+                candidate_observations.append(observation)
+                observations.append(observation)
             for stock in followers:
                 observations.append(scanner.follow(stock, max_pages))
             observations.extend(
@@ -165,9 +175,19 @@ def main(
                 )
                 for stock in blocked_followers
             )
+            scan_completed = True
     finally:
         retry_events = captured_retry_events()
         end_retry_capture(retry_capture)
+        append_candidate_input_cycle(
+            output / "candidate_input_cycles.csv",
+            CandidateInputCycleAudit(
+                started_at,
+                selected_count,
+                sum(row.candidate_input_archived for row in candidate_observations),
+                scan_completed,
+            ),
+        )
         append_kis_retry_audit(output, started_at, retry_events)
     write_report(output / "recommendations_ko.md", store)
     queued = write_alert_outbox(output, store, dt.datetime.now().astimezone())
