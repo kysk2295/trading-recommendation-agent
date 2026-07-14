@@ -3,11 +3,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, override
 
-from trading_agent.paper_execution_models import PaperOrderIntent
+from trading_agent.paper_execution_models import IntentId, PaperOrderIntent
 from trading_agent.paper_mutation_recovery_models import PaperMutationRecoveryResult
+from trading_agent.paper_operating_mutation_models import (
+    PaperProtectiveMutationExecution,
+    PaperSafetyMutationExecution,
+)
 from trading_agent.paper_order_gate_models import LatestCompletedBar, PaperOrderGateDecision
+from trading_agent.paper_protective_exit import (
+    BlockedProtectiveExitPlan,
+    NoProtectiveExitRequired,
+)
 from trading_agent.paper_risk import DEFAULT_PAPER_RISK_CONFIG, PaperRiskConfig
-from trading_agent.paper_safety_models import PaperSafetyPlanDecision
+from trading_agent.paper_safety_models import BlockedPaperSafetyPlan, PaperSafetyPlanDecision
 from trading_agent.paper_trade_update_classification import PaperTradeUpdateIngestionResult
 
 
@@ -34,6 +42,16 @@ class PaperOperatingSession(Protocol):
     ) -> PaperSafetyPlanDecision: ...
 
     def recover_mutations(self) -> tuple[PaperMutationRecoveryResult, ...]: ...
+
+    def execute_safety_actions(
+        self,
+        config: PaperRiskConfig = DEFAULT_PAPER_RISK_CONFIG,
+    ) -> PaperSafetyMutationExecution | BlockedPaperSafetyPlan: ...
+
+    def execute_protective_oco(
+        self,
+        parent_intent_id: IntentId,
+    ) -> PaperProtectiveMutationExecution | NoProtectiveExitRequired | BlockedProtectiveExitPlan: ...
 
 
 class InactivePaperOperatingSessionError(RuntimeError):

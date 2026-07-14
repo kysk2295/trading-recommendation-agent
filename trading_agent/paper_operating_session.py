@@ -8,17 +8,22 @@ from threading import Lock
 from typing import Final, final
 
 from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
+from trading_agent.alpaca_paper_mutation_runtime import (
+    PaperMutationBrokerOpener,
+    open_alpaca_paper_mutation_broker,
+)
 from trading_agent.alpaca_paper_order_stream import open_alpaca_paper_order_stream
 from trading_agent.execution_store import ExecutionStore
-from trading_agent.paper_mutation_recovery import (
-    PaperMutationRecovery,
-    PaperMutationRecoveryDependencies,
-)
+from trading_agent.paper_execution_models import IntentId
 from trading_agent.paper_mutation_recovery_models import PaperMutationRecoveryResult
+from trading_agent.paper_operating_mutation_execution import PaperOperatingMutationExecution
+from trading_agent.paper_operating_mutation_models import (
+    PaperProtectiveMutationExecution,
+    PaperSafetyMutationExecution,
+)
 from trading_agent.paper_operating_session_models import (
     BusyPaperOperatingSessionError,
     InactivePaperOperatingSessionError,
-    PaperMutationRecoveryBarrierError,
     PaperOperatingSession,
     PaperOrderAdmissionRequest,
 )
@@ -26,6 +31,10 @@ from trading_agent.paper_order_gate_models import (
     BlockedPaperOrderGateDecision,
     PaperOrderGateDecision,
     PaperOrderGateState,
+)
+from trading_agent.paper_protective_exit import (
+    BlockedProtectiveExitPlan,
+    NoProtectiveExitRequired,
 )
 from trading_agent.paper_risk import DEFAULT_PAPER_RISK_CONFIG, PaperRiskConfig
 from trading_agent.paper_runtime import PaperStateAndClockLoader, read_paper_broker_state_and_clock
@@ -54,6 +63,7 @@ class PaperOperatingSessionDependencies:
     owner: PaperStreamOwnerDependencies
     runtime_state_loader: PaperStateAndClockLoader
     clock: Callable[[], dt.datetime]
+    mutation_broker_opener: PaperMutationBrokerOpener = open_alpaca_paper_mutation_broker
 
 
 @final
@@ -62,9 +72,21 @@ class _LivePaperOperatingSession:
         self,
         owner: PaperStreamOwner,
         runtime: _LivePaperRuntimeSession,
+        credentials: AlpacaPaperCredentials,
+        mutation_broker_opener: PaperMutationBrokerOpener,
+        clock: Callable[[], dt.datetime],
     ) -> None:
         self._owner = owner
         self._runtime = runtime
+        self._mutations = PaperOperatingMutationExecution(
+            owner,
+            runtime,
+            credentials,
+            mutation_broker_opener,
+            clock,
+            self._barrier_reasons,
+            STREAM_EPOCH_CHANGED,
+        )
         self._operation_lock = Lock()
         self._active = True
 
@@ -110,18 +132,21 @@ class _LivePaperOperatingSession:
 
     def recover_mutations(self) -> tuple[PaperMutationRecoveryResult, ...]:
         with self._exclusive_operation():
-            checkpoint = self._owner.recovery()
-            barrier_reasons = self._barrier_reasons(checkpoint)
-            if barrier_reasons:
-                raise PaperMutationRecoveryBarrierError(barrier_reasons)
-            return PaperMutationRecovery(
-                PaperMutationRecoveryDependencies(
-                    self._owner.writer,
-                    self._owner.store.paper_mutation_intents,
-                    self._owner.store.paper_mutation_events,
-                    self._owner.store.protective_oco_plans,
-                )
-            ).recover(checkpoint.mutation_recovery)
+            return self._mutations.recover()
+
+    def execute_safety_actions(
+        self,
+        config: PaperRiskConfig = DEFAULT_PAPER_RISK_CONFIG,
+    ) -> PaperSafetyMutationExecution | BlockedPaperSafetyPlan:
+        with self._exclusive_operation():
+            return self._mutations.execute_safety(config)
+
+    def execute_protective_oco(
+        self,
+        parent_intent_id: IntentId,
+    ) -> PaperProtectiveMutationExecution | NoProtectiveExitRequired | BlockedProtectiveExitPlan:
+        with self._exclusive_operation():
+            return self._mutations.execute_protection(parent_intent_id)
 
     def _barrier_reasons(
         self,
@@ -166,7 +191,13 @@ def _open_paper_operating_session(
             owner.stream,
             dependencies.clock,
         )
-        session = _LivePaperOperatingSession(owner, runtime)
+        session = _LivePaperOperatingSession(
+            owner,
+            runtime,
+            credentials,
+            dependencies.mutation_broker_opener,
+            dependencies.clock,
+        )
         try:
             yield session
         finally:
