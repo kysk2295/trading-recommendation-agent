@@ -127,11 +127,34 @@ def _premarket_scan_command(output: Path, top: int) -> tuple[str, ...]:
     )
 
 
+def _paper_metrics_command(output: Path) -> tuple[str, ...]:
+    return (
+        str(Path(__file__).with_name("run_paper_metrics.py")),
+        str(output / "paper_recommendations.sqlite3"),
+        "--output-dir",
+        str(output / "paper_metrics"),
+    )
+
+
 def _run_and_audit(command: tuple[str, ...], audit_path: Path) -> int:
     started_at = dt.datetime.now().astimezone()
     completed = subprocess.run(command, check=False)
     append_cycle_audit(audit_path, started_at, completed.returncode)
     return completed.returncode
+
+
+def run_session_metrics(
+    output: Path,
+    observed_at: dt.datetime,
+    runner: Callable[[tuple[str, ...], Path], int] = _run_and_audit,
+) -> int | None:
+    database = output / "paper_recommendations.sqlite3"
+    if regular_session_is_open(observed_at) or not database.is_file():
+        return None
+    return runner(
+        _paper_metrics_command(output),
+        output / "post_session_metrics_cycles.csv",
+    )
 
 
 def main(
@@ -157,14 +180,10 @@ def main(
     if not 1 <= max_pages <= 10:
         raise typer.BadParameter("max-pages는 1~10이어야 합니다")
     if not 60.0 <= premarket_interval_seconds <= 3600.0:
-        raise typer.BadParameter(
-            "premarket-interval-seconds는 60~3600이어야 합니다"
-        )
+        raise typer.BadParameter("premarket-interval-seconds는 60~3600이어야 합니다")
     checked_at = dt.datetime.now(ZoneInfo("America/New_York"))
     output = (
-        Path(output_dir)
-        if output_dir is not None
-        else Path("outputs/live_sessions") / checked_at.strftime("%Y%m%d")
+        Path(output_dir) if output_dir is not None else Path("outputs/live_sessions") / checked_at.strftime("%Y%m%d")
     )
     premarket_exit_codes: tuple[int, ...] = ()
     if not regular_session_is_open(checked_at):
@@ -214,20 +233,20 @@ def main(
         WatchConfig(cycles, interval_seconds),
         CycleRuntime(
             time.sleep,
-            lambda: regular_session_is_open(
-                dt.datetime.now(ZoneInfo("America/New_York"))
-            ),
+            lambda: regular_session_is_open(dt.datetime.now(ZoneInfo("America/New_York"))),
         ),
     )
-    finalized = finalize_session_output(
-        output,
-        dt.datetime.now(ZoneInfo("America/New_York")),
-    )
+    ended_at = dt.datetime.now(ZoneInfo("America/New_York"))
+    finalized = finalize_session_output(output, ended_at)
+    metrics_exit_code = run_session_metrics(output, ended_at)
     failures = sum(code != 0 for code in (*premarket_exit_codes, *exit_codes))
+    failures += int(metrics_exit_code not in (None, 0))
+    metrics_status = "skipped" if metrics_exit_code is None else str(metrics_exit_code)
     rprint(
         f"[green]감시 종료[/green] premarket_cycles={len(premarket_exit_codes)}, "
         + f"regular_cycles={len(exit_codes)}, "
-        + f"failures={failures}, time_exits={finalized}, {output}"
+        + f"failures={failures}, time_exits={finalized}, "
+        + f"metrics_exit={metrics_status}, {output}"
     )
     if failures:
         raise typer.Exit(code=1)
