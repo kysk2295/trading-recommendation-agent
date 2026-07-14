@@ -150,6 +150,10 @@ NASDAQ·NYSE·AMEX 상승률/거래량 랭킹
 
 각 child scan은 성공·실패와 관계없이 `candidate_input_cycles.csv`에 시작시각, 선정 수, 입력 snapshot 수와 scan 완료 여부를 남긴다. 일일 품질 게이트는 이 cycle 수를 watch cycle 수와 대조하고, 미완료 scan이 없어야 하며, cycle별 snapshot 합계가 SQLite의 `candidate_input_snapshots` 실제 행 수와 같아야 통과한다. 장중 도입이나 감사 파일 유실은 수익 0으로 바꾸지 않고 해당 날짜 전체를 비교 불가로 남긴다.
 
+장마감 challenger replay는 이 원장을 읽는 별도 프로세스다. 먼저 일일 품질 적격성, 동일 뉴욕 거래일, 정규장 종료 뒤 성공한 metrics 감사행, 입력 수치와 완료 봉 시점을 검증한다. 신호 평가에는 `first_observed_at <= observed_at`이면서 snapshot의 `latest_completed_bar_at` 이하인 분봉만 넣는다. 같은 종목의 다음 snapshot마다 라이브 child 재시작과 같은 새 scanner·strategy 인스턴스로 checkpoint 이후만 처리한다. 정규장 전체 분봉이 정확히 이어지는 종목만 이미 생성된 추천의 사후 상태 갱신에 사용하고, 경로가 짧은 종목은 거래 0이 아니라 censored로 남긴다.
+
+각 challenger는 자체 `paper_recommendations.sqlite3`, 추천 보고서, 비용별 metrics와 coverage CSV를 갖는다. ORB는 이 CLI에서 거부한다. 현재 replay는 전략별 raw shadow 결과만 만들며 동일 최대 포지션·위험 예산으로 ORB와 다시 경쟁시키는 포트폴리오 비교기는 후속 게이트다. 따라서 replay 성공도 `comparison_eligible=false`이고 자동 승격이나 주문 권한을 만들지 않는다.
+
 정규장에서 최초 선택된 종목은 `tracked_candidates`에 뉴욕 거래일별로 보존한다. 이후 현재 상위 후보에서 빠진 종목은 `follow()` 경로로 분봉을 계속 저장한다. 열린 추천이 있으면 새 완료 봉으로 상태만 갱신하고, 열린 추천이 없으면 ORB 조건이 보여도 신규 추천을 생성하지 않는다. 따라서 현재 스캐너 선정과 과거 선정 종목 추적이 분리된다.
 
 랭킹 CSV는 종목 키의 선택 여부 `selected`와 실제 필터 입력 행 `selection_input`을 분리한다. 구형 행은 실제 입력 출처를 추정하지 않고 `selection_input`을 빈 값으로 migration한다. 랭킹 응답이 끝난 뒤 관찰 시각을 기록하며 forward 분석은 종목·거래일 최초 `selection_input=True`만 사용한다.

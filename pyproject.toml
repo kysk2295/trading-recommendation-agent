@@ -37,6 +37,7 @@ include = [
   "scr_backtest",
   "run_kis_paper_scan.py",
   "run_kis_paper_watch.py",
+  "run_shadow_challenger_replay.py",
   "run_kis_daytime_scan.py",
   "run_kis_premarket_scan.py",
   "run_session_continuity.py",
