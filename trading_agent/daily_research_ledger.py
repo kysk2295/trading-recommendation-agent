@@ -39,7 +39,7 @@ def build_daily_record(
     prior_for_strategy = {
         row.session_date: row
         for row in prior
-        if row.strategy_version == contract.strategy_version and row.session_date != session_date
+        if row.strategy_version == contract.strategy_version and row.session_date < session_date
     }
     cumulative_days = sum(row.session_quality.forward_day_eligible for row in prior_for_strategy.values()) + int(
         quality.forward_day_eligible

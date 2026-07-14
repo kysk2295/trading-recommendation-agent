@@ -29,6 +29,7 @@ class MetricsJson(TypedDict):
 
 class PromotionJson(TypedDict):
     allowed: bool
+    cumulative_forward_days: int
     blockers: list[str]
 
 
@@ -94,14 +95,60 @@ def test_daily_research_cli_writes_lineage_and_blocks_early_promotion(
     assert "확정 수익" in summary
 
 
-def _write_complete_session(session: Path) -> None:
+def test_rerunning_older_session_does_not_use_future_ledger_rows(
+    tmp_path: Path,
+) -> None:
+    # Given: two eligible sessions were recorded in chronological order.
+    sessions = tmp_path / "live_sessions"
+    first = sessions / "20260714"
+    second = sessions / "20260715"
+    _write_complete_session(first, dt.date(2026, 7, 14))
+    _write_complete_session(second, dt.date(2026, 7, 15))
+    project = Path(__file__).parents[1]
+    script = project / "run_daily_research_record.py"
+    for session, session_date in (
+        (first, "2026-07-14"),
+        (second, "2026-07-15"),
+        (first, "2026-07-14"),
+    ):
+        completed = subprocess.run(
+            (
+                sys.executable,
+                str(script),
+                str(session),
+                "--session-date",
+                session_date,
+                "--strategy",
+                "orb",
+                "--code-version",
+                "test-code",
+            ),
+            cwd=project,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode == 0, completed.stderr
+
+    # Then: the older replay is idempotent and retains its original as-of total.
+    lines = (sessions / "daily_research_ledger.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    records = tuple(RECORD_ADAPTER.validate_json(line) for line in lines)
+    first_record = next(row for row in records if row["session_date"] == "2026-07-14")
+    assert first_record["promotion"]["cumulative_forward_days"] == 1
+
+
+def _write_complete_session(
+    session: Path,
+    session_date: dt.date = dt.date(2026, 7, 14),
+) -> None:
     session.mkdir(parents=True)
     database = session / "paper_recommendations.sqlite3"
     store = PaperStore(database)
     created_at = dt.datetime(
-        2026,
-        7,
-        14,
+        session_date.year,
+        session_date.month,
+        session_date.day,
         10,
         0,
         tzinfo=ZoneInfo("America/New_York"),

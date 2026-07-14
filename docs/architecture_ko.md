@@ -170,6 +170,8 @@ watch는 공식 정규장 종료 뒤 `run_paper_metrics.py`를 한 번 실행해
 
 metrics가 성공하면 watch는 `run_daily_research_record.py`를 이어서 실행하고 종료코드를 `post_session_research_cycles.csv`에 별도로 기록한다. 이 CLI는 세션 산출물 SHA-256, 코드·데이터·평가기 버전, 정확한 전략 파라미터·비용·포트폴리오 정책, 편도 20bp 결과, 데이터 품질 incident와 누적 적격 거래일·완료 거래 수를 불변 JSON과 append-only JSONL로 저장한다. 같은 record ID를 재실행해도 중앙 원장에는 중복 추가하지 않는다.
 
+누적치는 같은 전략 버전에서 기록 대상 거래일보다 앞선 날짜만 사용한다. 따라서 이후 거래일이 원장에 추가된 뒤 과거 세션을 재생해도 미래 날짜가 과거의 누적치와 record ID에 들어가지 않으며, 동일 입력은 중복 행을 만들지 않는다.
+
 적격 forward day는 watch cycle마다 거래소 3곳×랭킹 2종의 6개 요청이 모두 성공하고, coverage cycle 수와 watch cycle 수가 같으며, 실패 watch cycle이 없을 때만 증가한다. 승격은 최소 60 적격 거래일·100 완료 거래뿐 아니라 broker paper ledger, block bootstrap, DSR/PBO, 인접 파라미터 평탄성, SIP 검증이 모두 충족돼야 한다. 현재 경로는 연구 기록만 만들고 전략 상태를 자동 변경하거나 주문을 제출하지 않는다.
 
 ## 현재 범위의 한계
