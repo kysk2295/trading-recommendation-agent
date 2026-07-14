@@ -93,10 +93,12 @@ def read_paper_broker_state(
     with create_alpaca_paper_read_client() as http_client:
         client = AlpacaPaperClient(http_client, credentials)
         account = client.account()
+        inventory = client.open_order_inventory()
         return PaperBrokerState(
             account=account,
-            open_orders=client.open_orders(),
+            open_orders=inventory.entry_orders,
             positions=client.positions(),
+            protective_ocos=inventory.protective_ocos,
         )
 
 
@@ -105,10 +107,12 @@ def read_paper_broker_state_and_clock(
 ) -> tuple[PaperBrokerState, PaperMarketClockSnapshot]:
     with create_alpaca_paper_read_client() as http_client:
         client = AlpacaPaperClient(http_client, credentials)
+        inventory = client.open_order_inventory()
         broker_state = PaperBrokerState(
             account=client.account(),
-            open_orders=client.open_orders(),
+            open_orders=inventory.entry_orders,
             positions=client.positions(),
+            protective_ocos=inventory.protective_ocos,
         )
         return broker_state, client.clock()
 
@@ -123,6 +127,7 @@ def paper_runtime_receipt_reasons(
     receipts = (
         broker_state.account.observed_at,
         market_clock.observed_at,
+        *(snapshot.observed_at for snapshot in broker_state.protective_ocos),
     )
     if not all(_is_aware(value) for value in (*boundaries, *receipts)):
         return ("REST 응답 수신 시각이 timezone-aware 값이 아닙니다",)

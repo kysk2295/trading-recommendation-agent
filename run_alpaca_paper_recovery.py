@@ -39,6 +39,10 @@ from trading_agent.paper_account_activity_store import (
     InvalidPaperAccountActivityError,
     PaperAccountActivityConflictError,
 )
+from trading_agent.paper_protective_oco_recovery_store import (
+    InvalidProtectiveOcoRecoveryError,
+    ProtectiveOcoRecoveryConflictError,
+)
 from trading_agent.paper_runtime import PaperRuntimeEpochChangedError
 from trading_agent.paper_stream_recovery import (
     InvalidPaperStreamRecoveryError,
@@ -101,6 +105,7 @@ def main(
         ExecutionSchemaIntegrityError,
         InvalidPaperStreamRecoveryError,
         InvalidPaperAccountActivityError,
+        InvalidProtectiveOcoRecoveryError,
         InvalidTradeUpdateRawReceiptError,
         MissingAlpacaPaperCredentialsError,
         PaperOrderReadIncompleteError,
@@ -108,6 +113,7 @@ def main(
         PaperAccountActivityConflictError,
         PaperOrderStreamError,
         PaperRuntimeEpochChangedError,
+        ProtectiveOcoRecoveryConflictError,
         PaperStreamRecoveryConflictError,
         PaperStreamRecoveryIncompleteError,
         PaperTradeUpdateRecoveryProbeError,
@@ -156,6 +162,11 @@ def _write_report(
             f"- Account Activities FILL: {result.recovery_activity_count}건"
             if result is not None
             else "- Account Activities FILL: 0건"
+        ),
+        (
+            f"- 보호 OCO snapshot: {result.recovery_protective_oco_count}건"
+            if result is not None
+            else "- 보호 OCO snapshot: 0건"
         ),
         (
             "- 개별 execution 상세: 완전"

@@ -24,10 +24,16 @@ from trading_agent.paper_execution_models import (
     AccountFingerprint,
     IntentId,
 )
+from trading_agent.paper_protective_oco_store import (
+    StoredProtectiveOcoPlan,
+    read_protective_oco_plans,
+)
 from trading_agent.paper_stream_recovery import (
     StoredPaperRecoveryOrder,
     StoredPaperStreamRecovery,
+    StoredProtectiveOcoSnapshot,
     read_paper_recovery_orders,
+    read_paper_recovery_protective_ocos,
     read_paper_stream_recoveries,
 )
 from trading_agent.trade_update_receipts import (
@@ -130,6 +136,20 @@ class ExecutionStoreReader:
             return ()
         with self._reader_connection() as connection:
             return read_paper_account_activities(connection)
+
+    def protective_oco_plans(self) -> tuple[StoredProtectiveOcoPlan, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            return read_protective_oco_plans(connection)
+
+    def paper_recovery_protective_ocos(
+        self,
+    ) -> tuple[StoredProtectiveOcoSnapshot, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            return read_paper_recovery_protective_ocos(connection)
 
     def reconciliation_ledger(self) -> ReconciliationLedger:
         return read_reconciliation_ledger(self.path)

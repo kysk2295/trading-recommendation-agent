@@ -246,7 +246,7 @@ def test_recent_order_history_pages_with_before_order_id_without_time_cursor() -
     assert len(orders) == 501
     assert len(requests) == 2
     assert requests[0].url.params["status"] == "all"
-    assert requests[0].url.params["nested"] == "false"
+    assert requests[0].url.params["nested"] == "true"
     assert "after" not in requests[0].url.params
     assert "until" not in requests[0].url.params
     assert requests[1].url.params["before_order_id"] == "paper-order-499"

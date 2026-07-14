@@ -4,7 +4,10 @@ import datetime as dt
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
-from typing import NewType
+from typing import TYPE_CHECKING, NewType
+
+if TYPE_CHECKING:
+    from trading_agent.paper_protective_oco_models import ProtectiveOcoSnapshot
 
 IntentId = NewType("IntentId", str)
 BrokerOrderId = NewType("BrokerOrderId", str)
@@ -138,6 +141,7 @@ class PaperBrokerState:
     account: PaperAccountSnapshot
     open_orders: tuple[PaperOrderSnapshot, ...]
     positions: tuple[PaperPositionSnapshot, ...]
+    protective_ocos: tuple[ProtectiveOcoSnapshot, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -152,7 +152,11 @@ class _LivePaperRuntimeSession:
             reconciliation=reconciliation,
             portfolio=portfolio,
             runtime_reasons=runtime_reasons,
-            protective_exit_reasons=missing_protective_oco_reasons(portfolio),
+            protective_exit_reasons=missing_protective_oco_reasons(
+                portfolio,
+                broker_state,
+                ledger.protective_oco_plans,
+            ),
         )
 
     def evaluate_order(

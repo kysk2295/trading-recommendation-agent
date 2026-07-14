@@ -44,8 +44,12 @@ class AlpacaPaperOrderPayload(BaseModel):
     filled_qty: Decimal
     filled_avg_price: Decimal | None = None
     limit_price: Decimal | None
+    stop_price: Decimal | None = None
+    type: Literal["market", "limit", "stop", "stop_limit", "trailing_stop"] = "limit"
+    order_class: Literal["", "simple", "oco", "bracket", "oto", "mleg"] = ""
     time_in_force: str
     extended_hours: bool
+    legs: tuple[AlpacaPaperOrderPayload, ...] | None = None
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
     submitted_at: AwareDatetime | None = None
@@ -65,7 +69,7 @@ class AlpacaPaperOrderPayload(BaseModel):
             self.status,
             self.time_in_force,
         )
-        prices = (self.filled_avg_price, self.limit_price)
+        prices = (self.filled_avg_price, self.limit_price, self.stop_price)
         if (
             any(not value or value.strip() != value for value in required_text)
             or not self.qty.is_finite()

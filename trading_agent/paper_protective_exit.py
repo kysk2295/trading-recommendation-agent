@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
-from decimal import Decimal
-from typing import Literal, NewType, assert_never
+from dataclasses import dataclass
+from typing import assert_never
 
 from trading_agent.broker_order_projection import BrokerOrderLedgerState
 from trading_agent.execution_schema import StoredIntent
 from trading_agent.paper_execution_models import (
     IntentId,
+    PaperBrokerState,
     PaperOrderSide,
     PaperPositionSnapshot,
 )
@@ -18,23 +18,14 @@ from trading_agent.paper_order_gate_models import (
     PaperExposureKind,
     PaperPortfolioSnapshot,
 )
+from trading_agent.paper_protective_oco_models import (
+    ProtectiveOcoClientOrderId,
+    ProtectiveOcoExitPlan,
+    ProtectiveOcoSnapshot,
+)
+from trading_agent.paper_protective_oco_store import StoredProtectiveOcoPlan
 
-ProtectiveOcoClientOrderId = NewType("ProtectiveOcoClientOrderId", str)
-
-
-@dataclass(frozen=True, slots=True)
-class ProtectiveOcoExitPlan:
-    client_order_id: ProtectiveOcoClientOrderId
-    parent_intent_id: IntentId
-    symbol: str
-    side: PaperOrderSide
-    quantity: int
-    take_profit_limit: Decimal
-    stop_price: Decimal
-    order_class: Literal["oco"] = field(init=False, default="oco")
-    order_type: Literal["limit"] = field(init=False, default="limit")
-    time_in_force: Literal["day"] = field(init=False, default="day")
-    extended_hours: Literal[False] = field(init=False, default=False)
+_COVERING_ORDER_STATUSES = frozenset({"new", "accepted", "pending_new", "partially_filled"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +43,8 @@ type ProtectiveExitPlanDecision = ProtectiveOcoExitPlan | NoProtectiveExitRequir
 
 def missing_protective_oco_reasons(
     portfolio: PaperPortfolioSnapshot,
+    broker_state: PaperBrokerState,
+    stored_plans: tuple[StoredProtectiveOcoPlan, ...],
 ) -> tuple[str, ...]:
     match portfolio:
         case IncompletePaperPortfolio():
@@ -63,12 +56,83 @@ def missing_protective_oco_reasons(
                     case PaperExposureKind.PENDING_ENTRY:
                         continue
                     case PaperExposureKind.PARTIAL_ENTRY | PaperExposureKind.OPEN_POSITION:
-                        reasons.append(f"체결 노출의 broker 보호 OCO가 아직 확인되지 않았습니다: {exposure.intent_id}")
+                        plans = tuple(
+                            stored for stored in stored_plans if stored.plan.parent_intent_id == exposure.intent_id
+                        )
+                        if not plans:
+                            reasons.append(f"체결 노출의 보호 OCO 계획이 원장에 없습니다: {exposure.intent_id}")
+                            continue
+                        plan = plans[-1].plan
+                        protections = tuple(
+                            snapshot
+                            for snapshot in broker_state.protective_ocos
+                            if snapshot.take_profit.client_order_id == plan.client_order_id
+                        )
+                        positions = tuple(
+                            position for position in broker_state.positions if position.symbol == exposure.symbol
+                        )
+                        if len(protections) != 1 or len(positions) != 1:
+                            reasons.append(
+                                f"체결 노출의 broker 보호 OCO가 유일하게 확인되지 않았습니다: {exposure.intent_id}"
+                            )
+                            continue
+                        if _protective_coverage_reasons(
+                            plan,
+                            protections[0],
+                            positions[0],
+                        ):
+                            reasons.append(
+                                f"체결 노출의 broker 보호 OCO 수량·가격·leg가 계획과 다릅니다: {exposure.intent_id}"
+                            )
                     case unreachable:
                         assert_never(unreachable)
             return tuple(reasons)
         case unreachable:
             assert_never(unreachable)
+
+
+def _protective_coverage_reasons(
+    plan: ProtectiveOcoExitPlan,
+    snapshot: ProtectiveOcoSnapshot,
+    position: PaperPositionSnapshot,
+) -> tuple[str, ...]:
+    take_profit = snapshot.take_profit
+    stop_loss = snapshot.stop_loss
+    remaining_take_profit = take_profit.quantity - take_profit.filled_quantity
+    remaining_stop_loss = stop_loss.quantity - stop_loss.filled_quantity
+    expected_quantity = abs(position.quantity)
+    match plan.side:
+        case PaperOrderSide.SELL:
+            position_side_is_valid = position.quantity > 0
+        case PaperOrderSide.BUY:
+            position_side_is_valid = position.quantity < 0
+        case unreachable:
+            assert_never(unreachable)
+    values_are_valid = (
+        snapshot.observed_at.tzinfo is not None
+        and snapshot.observed_at.utcoffset() is not None
+        and position_side_is_valid
+        and position.symbol == plan.symbol
+        and plan.quantity == expected_quantity
+        and remaining_take_profit == expected_quantity
+        and remaining_stop_loss == expected_quantity
+        and take_profit.broker_order_id != stop_loss.broker_order_id
+        and take_profit.client_order_id == plan.client_order_id
+        and bool(stop_loss.client_order_id)
+        and take_profit.symbol == plan.symbol == stop_loss.symbol
+        and take_profit.side is plan.side is stop_loss.side
+        and take_profit.status in _COVERING_ORDER_STATUSES
+        and stop_loss.status in _COVERING_ORDER_STATUSES
+        and take_profit.limit_price == plan.take_profit_limit
+        and take_profit.stop_price is None
+        and stop_loss.limit_price is None
+        and stop_loss.stop_price == plan.stop_price
+        and take_profit.time_in_force == plan.time_in_force
+        and stop_loss.time_in_force == plan.time_in_force
+        and not take_profit.extended_hours
+        and not stop_loss.extended_hours
+    )
+    return () if values_are_valid else ("보호 OCO coverage 불일치",)
 
 
 def plan_protective_oco_exit(

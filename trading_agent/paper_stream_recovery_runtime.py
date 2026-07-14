@@ -22,6 +22,9 @@ from trading_agent.paper_execution_models import (
     PaperBrokerState,
     PaperOrderSnapshot,
 )
+from trading_agent.paper_protective_oco_store import (
+    protective_oco_snapshot_matches_plan,
+)
 from trading_agent.paper_runtime import (
     MAX_RUNTIME_RECEIPT_AGE,
     PaperRuntimeEpochChangedError,
@@ -64,7 +67,8 @@ def read_paper_recovery_state(
     with create_alpaca_paper_read_client() as http_client:
         client = AlpacaPaperClient(http_client, credentials)
         account = client.account()
-        open_orders = client.open_orders()
+        open_inventory = client.open_order_inventory()
+        open_orders = open_inventory.entry_orders
         open_ids = frozenset(order.client_order_id for order in open_orders)
         targeted: list[PaperOrderSnapshot] = []
         missing: list[str] = []
@@ -79,17 +83,29 @@ def read_paper_recovery_state(
                 tuple(f"미해결 intent REST 조회 404: {intent_id}" for intent_id in missing)
             )
         known_order_ids = frozenset(order.broker_order_id for order in (*open_orders, *targeted))
+        recent_inventory = client.recent_order_inventory(account.observed_at - RECOVERY_ORDER_LOOKBACK)
         recent_orders = tuple(
-            order
-            for order in client.recent_orders(account.observed_at - RECOVERY_ORDER_LOOKBACK)
-            if order.broker_order_id not in known_order_ids
+            order for order in recent_inventory.entry_orders if order.broker_order_id not in known_order_ids
         )
+        protective_ocos_by_parent = {
+            snapshot.take_profit.broker_order_id: snapshot
+            for snapshot in (
+                *open_inventory.protective_ocos,
+                *recent_inventory.protective_ocos,
+            )
+        }
         activities = client.fill_activities(account.observed_at - RECOVERY_ORDER_LOOKBACK)
         return PaperRecoveryState(
-            PaperBrokerState(account, open_orders, client.positions()),
+            PaperBrokerState(
+                account,
+                open_orders,
+                client.positions(),
+                open_inventory.protective_ocos,
+            ),
             tuple(targeted),
             recent_orders,
             activities,
+            tuple(protective_ocos_by_parent.values()),
         )
 
 
@@ -119,6 +135,7 @@ def build_paper_stream_recovery_observation(
         execution_detail_complete=execution_details_are_complete(state, ledger),
         orders=recovery_order_observations(state),
         activities=state.activities,
+        protective_ocos=state.protective_ocos,
     )
 
 
@@ -136,6 +153,18 @@ def _recovery_reasons(
         or after.pong_at - observed_at > MAX_RUNTIME_RECEIPT_AGE
     ):
         reasons.append("REST 계좌 수신시각이 heartbeat 복구 구간 밖입니다")
+    reasons.extend(
+        "REST 보호 OCO 수신시각이 heartbeat 복구 구간 밖입니다"
+        for snapshot in state.protective_ocos
+        if not before.pong_at <= snapshot.observed_at <= after.pong_at
+        or after.pong_at - snapshot.observed_at > MAX_RUNTIME_RECEIPT_AGE
+    )
+    reasons.extend(
+        f"REST 보호 OCO와 일치하는 immutable 계획이 유일하지 않습니다: {snapshot.take_profit.client_order_id}"
+        for snapshot in state.protective_ocos
+        if sum(protective_oco_snapshot_matches_plan(snapshot, stored.plan) for stored in ledger.protective_oco_plans)
+        != 1
+    )
     all_orders = (*state.broker_state.open_orders, *state.targeted_orders)
     all_recovery_orders = (*all_orders, *state.recent_orders)
     broker_order_ids = tuple(order.broker_order_id for order in all_recovery_orders)

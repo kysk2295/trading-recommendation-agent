@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import sqlite3
 from pathlib import Path
 
@@ -146,6 +147,22 @@ def test_v3_recovery_ledger_migrates_to_account_activity_evidence(
 ) -> None:
     # Given: a valid v3 ledger with one pre-Account-Activities recovery row.
     database = tmp_path / "execution.sqlite3"
+    completed_at = OBSERVED_AT + dt.timedelta(seconds=1)
+    snapshot_json = '{"orders":[]}'
+    snapshot_hash = hashlib.sha256(snapshot_json.encode()).hexdigest()
+    orders_hash = hashlib.sha256(b"[]").hexdigest()
+    legacy_material = "\x00".join(
+        (
+            FINGERPRINT,
+            "epoch-v3",
+            OBSERVED_AT.isoformat(),
+            completed_at.isoformat(),
+            snapshot_hash,
+            orders_hash,
+            "0",
+        )
+    )
+    legacy_key = "alpaca:recovery:" + hashlib.sha256(legacy_material.encode()).hexdigest()
     with sqlite3.connect(database) as connection:
         connection.executescript(
             f"{CREATE_SCHEMA}\n{CREATE_TRADE_UPDATE_SCHEMA}\n"
@@ -156,14 +173,14 @@ def test_v3_recovery_ledger_migrates_to_account_activity_evidence(
         _ = connection.execute(
             "INSERT INTO paper_stream_recoveries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                "legacy-recovery",
+                legacy_key,
                 FINGERPRINT,
                 "epoch-v3",
                 OBSERVED_AT.isoformat(),
-                (OBSERVED_AT + dt.timedelta(seconds=1)).isoformat(),
-                '{"orders":[]}',
-                "0" * 64,
-                "1" * 64,
+                completed_at.isoformat(),
+                snapshot_json,
+                snapshot_hash,
+                orders_hash,
                 0,
             ),
         )
@@ -176,6 +193,7 @@ def test_v3_recovery_ledger_migrates_to_account_activity_evidence(
     # Then: the old recovery survives and receives an empty immutable activity set.
     assert store.is_initialized() is True
     assert store.paper_account_activities() == ()
+    assert store.paper_stream_recoveries()[0].recovery_key == legacy_key
     with sqlite3.connect(database) as connection:
         row = connection.execute("SELECT activities_sha256 FROM paper_stream_recoveries").fetchone()
     assert row == ("4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",)

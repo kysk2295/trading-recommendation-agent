@@ -30,12 +30,14 @@ def test_recovery_cli_writes_only_sanitized_read_only_evidence(
             2,
             False,
             recovery_activity_count=3,
+            recovery_protective_oco_count=1,
         ),
     )
 
     report = (output / "paper_stream_recovery_ko.md").read_text(encoding="utf-8")
     assert code == 0
     assert "정규화 주문 snapshot: 2건" in report
+    assert "보호 OCO snapshot: 1건" in report
     assert "Account Activities FILL: 3건" in report
     assert "개별 execution 상세: 불완전" in report
     assert "WSS + REST GET only" in report

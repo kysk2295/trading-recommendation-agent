@@ -61,6 +61,7 @@ class PaperTradeUpdateRecoveryProbe:
     execution_detail_complete: bool
     blocking_reasons: tuple[str, ...] = ()
     recovery_activity_count: int = 0
+    recovery_protective_oco_count: int = 0
 
 
 @contextmanager
@@ -114,12 +115,17 @@ def probe_paper_trade_update_recovery(
     ledger = store.reconciliation_ledger()
     order_count = sum(order.recovery_id == latest.recovery_id for order in store.paper_recovery_orders())
     activity_count = sum(activity.recovery_id == latest.recovery_id for activity in store.paper_account_activities())
+    protective_oco_count = sum(
+        snapshot.recovery_id == latest.recovery_id for snapshot in store.paper_recovery_protective_ocos()
+    )
     return PaperTradeUpdateRecoveryProbe(
-        latest.completed_at,
-        order_count,
-        latest.execution_detail_complete and all(state.execution_detail_complete for state in ledger.order_states),
-        _recovery_blocking_reasons(ledger),
-        activity_count,
+        completed_at=latest.completed_at,
+        recovery_order_count=order_count,
+        execution_detail_complete=latest.execution_detail_complete
+        and all(state.execution_detail_complete for state in ledger.order_states),
+        blocking_reasons=_recovery_blocking_reasons(ledger),
+        recovery_activity_count=activity_count,
+        recovery_protective_oco_count=protective_oco_count,
     )
 
 

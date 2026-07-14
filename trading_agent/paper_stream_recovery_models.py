@@ -11,6 +11,7 @@ from trading_agent.paper_execution_models import (
     PaperOrderSnapshot,
     PaperTradeActivity,
 )
+from trading_agent.paper_protective_oco_models import ProtectiveOcoSnapshot
 
 PaperStreamRecoveryKey = NewType("PaperStreamRecoveryKey", str)
 
@@ -45,6 +46,7 @@ class PaperRecoveryState:
     targeted_orders: tuple[PaperOrderSnapshot, ...]
     recent_orders: tuple[PaperOrderSnapshot, ...] = ()
     activities: tuple[PaperTradeActivity, ...] = ()
+    protective_ocos: tuple[ProtectiveOcoSnapshot, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +59,7 @@ class PaperStreamRecoveryObservation:
     execution_detail_complete: bool
     orders: tuple[PaperRecoveryOrderObservation, ...] = ()
     activities: tuple[PaperTradeActivity, ...] = ()
+    protective_ocos: tuple[ProtectiveOcoSnapshot, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +74,7 @@ class StoredPaperStreamRecovery:
     snapshot_sha256: str
     orders_sha256: str
     activities_sha256: str
+    protective_ocos_sha256: str
     execution_detail_complete: bool
 
 
