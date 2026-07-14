@@ -65,6 +65,9 @@ class PaperOrderSnapshot:
     status: str
     quantity: Decimal
     filled_quantity: Decimal
+    limit_price: Decimal | None
+    time_in_force: str
+    extended_hours: bool
 
 
 @dataclass(frozen=True, slots=True)

@@ -9,8 +9,9 @@ import httpx2
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from trading_agent.alpaca_http import AlpacaApiError, AlpacaCredentials
+from trading_agent.alpaca_paper_config import ALPACA_PAPER_TRADING_URL
 
-ALPACA_TRADING_URL: Final = "https://paper-api.alpaca.markets"
+ALPACA_TRADING_URL: Final = ALPACA_PAPER_TRADING_URL
 LISTED_EXCHANGES: Final = frozenset(
     {
         "AMEX",

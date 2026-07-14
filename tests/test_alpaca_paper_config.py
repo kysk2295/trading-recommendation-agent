@@ -7,7 +7,9 @@ import pytest
 from trading_agent.alpaca_paper_config import (
     ALPACA_PAPER_TRADING_URL,
     DEFAULT_ALPACA_PAPER_SECRET_PATH,
+    AlpacaPaperSecretFileError,
     NonPaperTradingEndpointError,
+    load_alpaca_paper_credentials,
     require_paper_trading_url,
 )
 
@@ -47,3 +49,38 @@ def test_paper_endpoint_rejects_every_noncanonical_url(url: str) -> None:
     # Given / When / Then
     with pytest.raises(NonPaperTradingEndpointError, match="paper 전용"):
         _ = require_paper_trading_url(url)
+
+
+def test_paper_credentials_require_exact_mode_600(tmp_path: Path) -> None:
+    # Given
+    secret = tmp_path / "alpaca-paper.env"
+    secret.write_text(
+        "APCA_API_KEY_ID=test-key\nAPCA_API_SECRET_KEY=test-secret\n",
+        encoding="utf-8",
+    )
+    secret.chmod(0o600)
+
+    # When
+    credentials = load_alpaca_paper_credentials(secret)
+
+    # Then
+    assert "test-key" not in repr(credentials)
+    assert "test-secret" not in repr(credentials)
+
+
+@pytest.mark.parametrize("mode", (0o400, 0o640, 0o644, 0o700))
+def test_paper_credentials_reject_every_mode_except_600(
+    tmp_path: Path,
+    mode: int,
+) -> None:
+    # Given
+    secret = tmp_path / "alpaca-paper.env"
+    secret.write_text(
+        "APCA_API_KEY_ID=test-key\nAPCA_API_SECRET_KEY=test-secret\n",
+        encoding="utf-8",
+    )
+    secret.chmod(mode)
+
+    # When / Then
+    with pytest.raises(AlpacaPaperSecretFileError, match="정확히 600"):
+        _ = load_alpaca_paper_credentials(secret)
