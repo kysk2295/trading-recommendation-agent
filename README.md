@@ -2,7 +2,7 @@
 
 미국 급등주를 장전·장중에 시점 가용 데이터로 탐색하고, 전략 연구부터 실시간 Alpaca paper 주문, 장후 평가와 다음 가설 생성까지 하나의 프로젝트에서 반복하기 위한 연구 시스템이다.
 
-> **현재 상태:** 분봉 수집·급등주 스캐너·ORB/VWAP/HOD/Gap-and-Go 추천·인과성 감사·과거 및 forward 평가에 더해 Alpaca Paper 시장시계·계좌·주문·포지션·Account Activities FILL GET, `trade_updates` 스트림 인증·구독·Ping/Pong, 단일 Writer 원장과 fail-closed 주문 승인 게이트까지 구현되어 있다. 수신 frame은 text/binary 원문 BLOB을 먼저 확정한 뒤 분류하며, 재시작 시 미분류 receipt를 원래 순서로 복구하고 매 연결 세대에서 REST 주문 snapshot·개별 FILL activity·nested 보호 OCO와 대사한다. 모호한 entry/OCO/cancel mutation은 deterministic client order ID 또는 broker order ID로 직접 GET하며, 정확한 targeted 증거가 없으면 재전송하지 않는다. 통합 운영 세션은 한 Writer lease와 한 WSS 안에서 current-epoch 복구·승인·Paper mutation·사후 대사를 직렬 실행한다. 신규 진입은 정확한 arm 문자열이 필요한 최대 100 USD 단발 CLI만 공개됐고 실제 정규장 Paper 주문은 아직 0건이다.
+> **현재 상태:** 분봉 수집·급등주 스캐너·ORB/VWAP/HOD/Gap-and-Go 추천·인과성 감사·과거 및 forward 평가에 더해 Alpaca Paper 시장시계·계좌·주문·포지션·Account Activities FILL GET, `trade_updates` 스트림 인증·구독·Ping/Pong, 단일 Writer 원장과 fail-closed 주문 승인 게이트까지 구현되어 있다. 수신 frame은 text/binary 원문 BLOB을 먼저 확정한 뒤 분류하며, 재시작 시 미분류 receipt를 원래 순서로 복구하고 매 연결 세대에서 REST 주문 snapshot·개별 FILL activity·nested 보호 OCO와 대사한다. 모호한 entry/OCO/cancel mutation은 deterministic client order ID 또는 broker order ID로 직접 GET하며, 정확한 targeted 증거가 없으면 재전송하지 않는다. 통합 운영 세션은 한 Writer lease와 한 WSS 안에서 current-epoch 복구·승인·Paper mutation·사후 대사를 직렬 실행한다. 신규 진입과 체결 노출 보호 OCO는 정확한 arm 문자열이 필요한 축소 smoke CLI로만 공개됐고 실제 정규장 Paper 주문은 아직 0건이다.
 
 실제 자금 거래는 목표가 아니다. 앞으로 추가되는 실행 코드는 `https://paper-api.alpaca.markets`에만 연결하며 Alpaca live endpoint, 실계좌 키와 실제 주문 경로는 프로젝트에서 차단한다.
 
@@ -82,6 +82,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [Account Activities 체결 복구 체크포인트](docs/checkpoints/2026-07-15-paper-account-activities-ko.md)
 - [부분체결 보호 OCO 계획 체크포인트](docs/checkpoints/2026-07-15-paper-protective-oco-plan-ko.md)
 - [보호 OCO 원장·nested 복구 체크포인트](docs/checkpoints/2026-07-15-paper-protective-oco-ledger-ko.md)
+- [보호 OCO armed smoke CLI 체크포인트](docs/checkpoints/2026-07-15-paper-protective-oco-smoke-cli-ko.md)
 - [새 작업 시작 안내](CODEX_START_HERE.md)
 
 ## 현재 가능한 일
@@ -130,6 +131,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - 검증된 부분체결과 현재 포지션이 일치할 때 정확한 수량의 DAY OCO(stop-market + 2R limit)를 결정론적으로 계획하고, broker 보호 OCO 확인 전에는 모든 신규 진입을 차단
 - schema v5 불변 보호 OCO 계획·두 leg recovery 원장, `nested=true` open/recent 주문 분리, 계획·수량·가격·현재 heartbeat 일치 대사
 - 스트림의 두 Pong 사이 REST·원장 재대사와 공개 의존성 주입 없는 활성 세션 전용 정규장·최신 완료 1분봉·전체 포트폴리오 위험 승인 상태기계
+- 체결된 parent intent를 명시해 current-epoch 보호 OCO를 제출하는 arm 필수 smoke CLI. 차단·noop·ack 보고서는 남기지만 정규장 안전조건이 부족하면 실제 POST를 실행하지 않는다
 
 ## 실행
 
@@ -202,6 +204,18 @@ Paper mutation 요청이 timeout 또는 응답 형식 오류로 모호해졌을 
 ```
 
 정규장·현재 봉·빈 포트폴리오·WSS heartbeat·계좌 대사 중 하나라도 틀리면 POST 전에 차단한다. 이 경계는 MockTransport와 fake CLI로 검증됐지만 실제 정규장 최소 주문은 아직 보내지 않았다.
+
+진입 체결 뒤 보호 OCO를 별도 smoke하려면 정확한 parent intent를 지정한다. 이 명령도 같은 arm 값과 단일 Writer/WSS current-epoch 복구를 요구하며, 체결 원장·broker 포지션·보호 OCO 계획이 일치하지 않으면 POST 전에 차단한다.
+
+```bash
+./run_alpaca_paper_protective_oco_smoke.py \
+  --arm-paper-mutation ARM_ALPACA_PAPER_ONLY \
+  --database outputs/paper_execution/paper_execution.sqlite3 \
+  --output-dir outputs/paper_execution/protective_oco_smoke/latest \
+  --intent-id orb-AAPL-YYYYMMDD-HHMMSS
+```
+
+이 CLI는 이미 체결된 축소 Paper entry의 보호 주문 수명주기를 검증하기 위한 것이며, 신규 진입을 만들지 않는다.
 
 재시작 직후에는 다음 명령으로 미분류 raw receipt를 먼저 처리하고, 같은 WSS 연결 세대의 두 heartbeat 사이에서 REST 주문 snapshot을 원장에 저장한다.
 
