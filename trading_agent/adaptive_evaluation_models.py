@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from trading_agent.metrics import PaperTrade
+from trading_agent.trade_cohort_models import TradeFeatureAssignment
 
 
 class AdaptiveAction(StrEnum):
@@ -20,11 +21,19 @@ class AdaptiveAction(StrEnum):
     PROMOTION_REVIEW = "promotion_review"
 
 
+class CohortDimension(StrEnum):
+    PRICE = "price"
+    OPENING_GAP = "opening_gap"
+    VOLUME_TO_ADV = "volume_to_adv"
+    DOLLAR_VOLUME = "dollar_volume"
+
+
 @dataclass(frozen=True, slots=True)
 class EvaluatedSession:
     session_date: dt.date
     trades: tuple[PaperTrade, ...]
     regime: str | None
+    features: tuple[TradeFeatureAssignment, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +72,18 @@ class RegimeEvidence(BaseModel):
     mean_ci_high: float | None
 
 
+class CohortEvidence(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    dimension: CohortDimension
+    bucket: str
+    trade_count: int
+    average_return: float | None
+    profit_factor: float | None
+    mean_ci_low: float | None
+    mean_ci_high: float | None
+
+
 class AdaptiveEvaluation(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -75,5 +96,8 @@ class AdaptiveEvaluation(BaseModel):
     windows: tuple[WindowEvidence, ...]
     regime_coverage: float
     regimes: tuple[RegimeEvidence, ...]
+    feature_coverage: float
+    gap_feature_coverage: float
+    cohorts: tuple[CohortEvidence, ...]
     proof_blockers: tuple[str, ...]
     automatic_state_change_allowed: Literal[False]

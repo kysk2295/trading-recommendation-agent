@@ -34,6 +34,7 @@ OPTIONAL_ARTIFACTS: Final = (
     "kis_eod_catchup_observations.csv",
     "eod_kis_read_retry_cycles.csv",
     "eod_kis_read_retry_events.csv",
+    "kis_opening_gap_snapshots.csv",
     "research_regime_snapshot.json",
 )
 

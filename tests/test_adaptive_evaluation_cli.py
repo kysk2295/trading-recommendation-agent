@@ -5,13 +5,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tests.test_daily_research_record_cli import _write_complete_session
+from tests.daily_research_fixtures import write_complete_session
 
 
 def test_adaptive_cli_writes_daily_card_from_immutable_trade_lineage(tmp_path: Path) -> None:
     # Given: one eligible session in a suffixed production-style directory.
     session = tmp_path / "live_sessions" / "20260714_forward_actual"
-    _write_complete_session(session)
+    write_complete_session(session)
     _record(session)
 
     # When: the adaptive evaluator runs through its CLI.
@@ -24,6 +24,12 @@ def test_adaptive_cli_writes_daily_card_from_immutable_trade_lineage(tmp_path: P
     assert payload["action"] == "collecting"
     assert payload["automatic_state_change_allowed"] is False
     assert payload["windows"][0]["observed_sessions"] == 1
+    assert payload["feature_coverage"] == 1.0
+    assert payload["gap_feature_coverage"] == 1.0
+    assert len(payload["cohorts"]) == 4
+    assignments = (output / "trade_feature_assignments.csv").read_text(encoding="utf-8")
+    assert "price_5_20" in assignments
+    assert "gap_4_10pct" in assignments
     report = (output / "adaptive_evaluation_ko.md").read_text(encoding="utf-8")
     assert "60일은 수익 확정이 아니라 최종 검토 문턱" in report
     assert "자동 상태 변경: 금지" in report
@@ -32,7 +38,7 @@ def test_adaptive_cli_writes_daily_card_from_immutable_trade_lineage(tmp_path: P
 def test_adaptive_cli_rejects_trade_file_changed_after_daily_record(tmp_path: Path) -> None:
     # Given: a recorded eligible session whose trade CSV is changed afterward.
     session = tmp_path / "live_sessions" / "20260714_forward_actual"
-    _write_complete_session(session)
+    write_complete_session(session)
     _record(session)
     trades = session / "paper_metrics" / "paper_trades.csv"
     with trades.open("a", encoding="utf-8") as handle:
@@ -50,7 +56,7 @@ def test_adaptive_cli_rejects_trade_file_changed_after_daily_record(tmp_path: Pa
 def test_adaptive_cli_segments_only_preopen_regime_snapshot(tmp_path: Path) -> None:
     # Given: a point-in-time market regime snapshot observed before the regular open.
     session = tmp_path / "live_sessions" / "20260714_forward_actual"
-    _write_complete_session(session)
+    write_complete_session(session)
     (session / "research_regime_snapshot.json").write_text(
         json.dumps(
             {
@@ -79,7 +85,7 @@ def test_adaptive_cli_segments_only_preopen_regime_snapshot(tmp_path: Path) -> N
 def test_adaptive_cli_rejects_regime_snapshot_observed_after_open(tmp_path: Path) -> None:
     # Given: a regime label created after trading could already have started.
     session = tmp_path / "live_sessions" / "20260714_forward_actual"
-    _write_complete_session(session)
+    write_complete_session(session)
     (session / "research_regime_snapshot.json").write_text(
         json.dumps(
             {
@@ -105,7 +111,7 @@ def test_adaptive_cli_rejects_regime_snapshot_observed_after_open(tmp_path: Path
 def test_adaptive_cli_rejects_current_record_missing_from_parent_ledger(tmp_path: Path) -> None:
     # Given: a session record exists but its append-only parent ledger is missing.
     session = tmp_path / "live_sessions" / "20260714_forward_actual"
-    _write_complete_session(session)
+    write_complete_session(session)
     _record(session)
     (session.parent / "daily_research_ledger.jsonl").unlink()
 

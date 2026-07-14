@@ -31,7 +31,8 @@ def main(
         raise typer.Exit(code=2) from error
     result = evaluate_strategy(source.sessions, source.context)
     output = Path(output_dir) if output_dir is not None else session / "adaptive_evaluation"
-    write_adaptive_evaluation(output, result)
+    assignments = tuple(feature for session_row in source.sessions for feature in session_row.features)
+    write_adaptive_evaluation(output, result, assignments)
     rprint(
         f"[green]적응형 평가 완료[/green] action={result.action.value}, "
         + f"eligible_days={result.windows[-1].observed_sessions}, "

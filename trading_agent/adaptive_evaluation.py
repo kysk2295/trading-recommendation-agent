@@ -6,11 +6,12 @@ from typing import Final, Literal
 from trading_agent.adaptive_evaluation_models import (
     AdaptiveAction,
     AdaptiveEvaluation,
+    CohortEvidence,
     EvaluatedSession,
     EvaluationContext,
-    RegimeEvidence,
     WindowEvidence,
 )
+from trading_agent.adaptive_segmentation import SegmentationEvidence, evaluate_segmentations
 from trading_agent.metrics import MetricsConfig, PerformanceMetrics, summarize_performance
 
 WINDOWS: Final[tuple[Literal[5, 10, 20, 60], ...]] = (5, 10, 20, 60)
@@ -26,9 +27,8 @@ def evaluate_strategy(
     windows = tuple(_window(ordered, required) for required in WINDOWS)
     five, ten, twenty, sixty = windows
     recent = ordered[-60:]
-    regimes = _regime_evidence(recent)
-    regime_coverage = 0.0 if not recent else sum(row.regime is not None for row in recent) / len(recent)
-    research_blockers = _proof_blockers(sixty, regime_coverage, regimes)
+    segmentation = evaluate_segmentations(recent)
+    research_blockers = _proof_blockers(sixty, segmentation)
     proof_blockers = _unique((*research_blockers, *context.external_promotion_blockers))
     action, reasons = _action(ordered, five, ten, twenty, research_blockers)
     return AdaptiveEvaluation(
@@ -39,8 +39,11 @@ def evaluate_strategy(
         action=action,
         reasons=reasons,
         windows=windows,
-        regime_coverage=regime_coverage,
-        regimes=regimes,
+        regime_coverage=segmentation.regime_coverage,
+        regimes=segmentation.regimes,
+        feature_coverage=segmentation.feature_coverage,
+        gap_feature_coverage=segmentation.gap_feature_coverage,
+        cohorts=segmentation.cohorts,
         proof_blockers=proof_blockers,
         automatic_state_change_allowed=False,
     )
@@ -79,33 +82,9 @@ def _window_evidence(
     )
 
 
-def _regime_evidence(sessions: tuple[EvaluatedSession, ...]) -> tuple[RegimeEvidence, ...]:
-    labels = tuple(sorted({row.regime for row in sessions if row.regime is not None}))
-    evidence: list[RegimeEvidence] = []
-    for label in labels:
-        selected = tuple(row for row in sessions if row.regime == label)
-        metrics = summarize_performance(
-            tuple(trade for session in selected for trade in session.trades),
-            MetricsConfig(20, BOOTSTRAP_SAMPLES, BOOTSTRAP_SEED),
-        )
-        evidence.append(
-            RegimeEvidence(
-                regime=label,
-                session_count=len(selected),
-                trade_count=metrics.trade_count,
-                average_return=metrics.average_return,
-                profit_factor=metrics.profit_factor,
-                mean_ci_low=metrics.mean_ci_low,
-                mean_ci_high=metrics.mean_ci_high,
-            )
-        )
-    return tuple(evidence)
-
-
 def _proof_blockers(
     sixty: WindowEvidence,
-    regime_coverage: float,
-    regimes: tuple[RegimeEvidence, ...],
+    segmentation: SegmentationEvidence,
 ) -> tuple[str, ...]:
     blockers: list[str] = []
     if not sixty.complete:
@@ -118,13 +97,17 @@ def _proof_blockers(
         blockers.append("rolling_60_average_nonpositive")
     if sixty.mean_ci_low is None or sixty.mean_ci_low < 0.0:
         blockers.append("rolling_60_ci_lower_below_zero")
-    if regime_coverage < 0.8:
+    if segmentation.regime_coverage < 0.8:
         blockers.append("regime_coverage_below_80pct")
-    if len(regimes) < 2:
+    if len(segmentation.regimes) < 2:
         blockers.append("regime_diversity_below_2")
+    if segmentation.feature_coverage < 0.8:
+        blockers.append("trade_feature_coverage_below_80pct")
+    if segmentation.gap_feature_coverage < 0.8:
+        blockers.append("gap_feature_coverage_below_80pct")
     blockers.extend(
         f"regime_instability:{row.regime}"
-        for row in regimes
+        for row in segmentation.regimes
         if row.trade_count >= 10
         and (
             row.profit_factor is None
@@ -133,7 +116,22 @@ def _proof_blockers(
             or row.average_return <= 0.0
         )
     )
+    blockers.extend(_cohort_blockers(segmentation.cohorts))
     return tuple(blockers)
+
+
+def _cohort_blockers(cohorts: tuple[CohortEvidence, ...]) -> tuple[str, ...]:
+    return tuple(
+        f"cohort_instability:{row.dimension.value}:{row.bucket}"
+        for row in cohorts
+        if row.trade_count >= 10
+        and (
+            row.profit_factor is None
+            or row.profit_factor < 0.8
+            or row.average_return is None
+            or row.average_return <= 0.0
+        )
+    )
 
 
 def _action(

@@ -11,6 +11,7 @@
 - 동일 날짜 record가 갱신된 경우 가장 늦게 기록된 불변 record 하나만 사용한다.
 - 각 record ID에 대응하는 세션 폴더가 정확히 하나가 아니면 실패한다.
 - 시장 국면은 `research_regime_snapshot.json`이 정규장 개장 전에 관측되고 record checksum에 포함된 경우만 사용한다.
+- 개별 거래의 가격·갭·volume/ADV·거래대금은 추천 생성시각 이하의 checksum된 원천만 조인하며 미래 행은 사용하지 않는다.
 - 결과는 권고이며 전략 상태·주문 권한을 자동 변경하지 않는다.
 
 ## 사전 고정 판단
@@ -28,6 +29,8 @@
 
 최근 60일의 장전 국면 라벨 coverage는 80% 이상, 서로 다른 라벨은 최소 2개여야 한다. 10거래 이상인 한 국면에서 PF<0.8 또는 평균≤0이면 aggregate가 양수여도 `regime_instability` blocker를 남긴다. 이 숫자는 현재 표본의 최고점을 보고 고른 값이 아니라 전진검증 전에 고정한 운영 안전 문턱이다.
 
+티커별 60일 표본은 현실적으로 반복되지 않으므로 종목 이질성은 추천 시점 가격 `<$5/$5~20/$20~50/$50+`, gap `<4%/4~10%/10~20%/20%+`, 누적 volume/ADV `<10%/10~25%/25~50%/50%+`, 거래대금 `<$1M/$1~5M/$5~20M/$20M+` cohort로 본다. 핵심 특성과 gap coverage는 각각 80% 이상이어야 하며, 10거래 이상 cohort의 PF<0.8 또는 평균≤0은 `cohort_instability` blocker다.
+
 ## 산출물과 실행
 
 ```bash
@@ -36,6 +39,7 @@
 
 - `adaptive_evaluation/adaptive_evaluation.json`
 - `adaptive_evaluation/adaptive_evaluation_ko.md`
+- `adaptive_evaluation/trade_feature_assignments.csv`
 - 자동 watch 감사행 `post_session_adaptive_evaluation_cycles.csv`
 
 장마감 흐름은 EOD 분봉 보존 → paper metrics → 일일 불변 원장 → 적응형 평가 순서다. 앞 단계가 실패하면 다음 단계를 실행하지 않는다.

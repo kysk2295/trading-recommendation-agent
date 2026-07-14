@@ -4,17 +4,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tests.test_daily_research_record_cli import (
-    RECORD_ADAPTER,
-    _write_complete_session,
-)
+from tests.daily_research_fixtures import write_complete_session
+from tests.test_daily_research_record_cli import RECORD_ADAPTER
 
 
 def test_daily_record_rejects_missing_candidate_input_cycle_coverage(
     tmp_path: Path,
 ) -> None:
     session = tmp_path / "live_sessions" / "20260714"
-    _write_complete_session(session)
+    write_complete_session(session)
     (session / "candidate_input_cycles.csv").unlink()
     project = Path(__file__).parents[1]
 

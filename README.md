@@ -69,7 +69,7 @@ Alpaca paper 체결은 실제 호가 잔량·시장충격·지연 슬리피지·
 
 60거래일은 전략을 그대로 두고 기다리는 기간이 아니다. 모든 전략은 매일 독립 shadow로 동시에 평가한다. 최근 5 적격일·10거래에서 편도 20bp PF<0.75, 평균<0, 거래일 block-bootstrap 95% CI 상단<0이 모두 확인되면 조기중단하고, 10일에는 약한 edge를 진단하며, 20일·30거래부터 동일 위험 champion 비교 후보가 된다. 이미 성숙한 후보도 최근 5일의 같은 명확한 열화가 발생하면 즉시 `SUSPENDED` 권고를 받는다.
 
-Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일 broker/shadow 양쪽 PF 1.15 이상, 편도 20bp 비용 후 평균수익 양수, 거래일 block-bootstrap 95% CI 하한 0 이상, 장전 시점 시장 국면 coverage 80% 이상·최소 2개 국면, DSR/PBO와 인접 파라미터 plateau를 모두 통과해야 한다. 이 단계도 자동 승격하지 않는다. IEX-only 결과는 Challenger까지만 허용하고 SIP 또는 동등 consolidated feed 검증 뒤 시장 전체 Champion으로 승격한다.
+Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일 broker/shadow 양쪽 PF 1.15 이상, 편도 20bp 비용 후 평균수익 양수, 거래일 block-bootstrap 95% CI 하한 0 이상, 장전 시점 시장 국면 coverage 80% 이상·최소 2개 국면, 진입 시점 가격·갭·volume/ADV·거래대금 특성 coverage 80% 이상, DSR/PBO와 인접 파라미터 plateau를 모두 통과해야 한다. 10거래 이상인 시장 국면 또는 종목 특성 cohort의 PF<0.8·평균≤0도 aggregate 성과와 별개로 차단한다. 이 단계도 자동 승격하지 않는다. IEX-only 결과는 Challenger까지만 허용하고 SIP 또는 동등 consolidated feed 검증 뒤 시장 전체 Champion으로 승격한다.
 
 ## 문서
 
@@ -284,7 +284,9 @@ CSV replay:
 ./run_adaptive_strategy_evaluation.py outputs/live_sessions/<거래일>
 ```
 
-일일 연구 원장이 성공하면 watch가 이 CLI를 마지막으로 순차 실행하고 `post_session_adaptive_evaluation_cycles.csv`에 종료코드를 남긴다. `paper_metrics/paper_trades.csv`가 원장 checksum과 다르거나 연구 record를 세션 폴더 하나로 결정할 수 없으면 fail-closed한다. 시장 국면은 선택 artifact인 `research_regime_snapshot.json`이 해당 거래일 정규장 개장 이전에 관측되고 원장 checksum에 포함됐을 때만 분할 평가에 사용한다. 라벨이 없으면 `unclassified`로 추정하지 않고 최종 검토의 coverage·다양성 문턱을 통과시키지 않는다. 출력은 `adaptive_evaluation.json`과 `adaptive_evaluation_ko.md`이며 전략 상태나 주문 권한을 자동 변경하지 않는다.
+일일 연구 원장이 성공하면 watch가 이 CLI를 마지막으로 순차 실행하고 `post_session_adaptive_evaluation_cycles.csv`에 종료코드를 남긴다. `paper_metrics/paper_trades.csv`가 원장 checksum과 다르거나 연구 record를 세션 폴더 하나로 결정할 수 없으면 fail-closed한다. 시장 국면은 선택 artifact인 `research_regime_snapshot.json`이 해당 거래일 정규장 개장 이전에 관측되고 원장 checksum에 포함됐을 때만 분할 평가에 사용한다. 라벨이 없으면 `unclassified`로 추정하지 않고 최종 검토의 coverage·다양성 문턱을 통과시키지 않는다.
+
+종목 차이는 반복 가능성이 낮은 ticker 이름이 아니라 추천 생성시각에 실제로 알려진 가격·opening gap·누적 volume/ADV·거래대금 cohort로 분리한다. `candidate_input_snapshots`의 정확한 추천 생성시각과 거래소를 먼저 고정한 뒤, 그 시각 이하의 최신 checksum된 `market_risk_screen.csv`와 `kis_opening_gap_snapshots.csv`만 조인한다. 미래 행은 무시하며 원천이 없으면 `censored`다. 사전 구간은 가격 `<$5/$5~20/$20~50/$50+`, gap `<4%/4~10%/10~20%/20%+`, volume/ADV `<10%/10~25%/25~50%/50%+`, 거래대금 `<$1M/$1~5M/$5~20M/$20M+`다. 출력은 `adaptive_evaluation.json`, `adaptive_evaluation_ko.md`, 개별 조인 감사용 `trade_feature_assignments.csv`이며 전략 상태나 주문 권한을 자동 변경하지 않는다.
 
 스캐너 forward outcome 진단:
 

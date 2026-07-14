@@ -5,10 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tests.test_daily_research_record_cli import (
-    RECORD_ADAPTER,
-    _write_complete_session,
-)
+from tests.daily_research_fixtures import write_complete_session
+from tests.test_daily_research_record_cli import RECORD_ADAPTER
 
 
 def test_new_evaluator_does_not_inherit_legacy_evaluator_counts(
@@ -17,8 +15,8 @@ def test_new_evaluator_does_not_inherit_legacy_evaluator_counts(
     sessions = tmp_path / "live_sessions"
     first = sessions / "20260714"
     second = sessions / "20260715"
-    _write_complete_session(first, dt.date(2026, 7, 14))
-    _write_complete_session(second, dt.date(2026, 7, 15))
+    write_complete_session(first, dt.date(2026, 7, 14))
+    write_complete_session(second, dt.date(2026, 7, 15))
     project = Path(__file__).parents[1]
     script = project / "run_daily_research_record.py"
     first_run = subprocess.run(

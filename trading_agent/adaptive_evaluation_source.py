@@ -15,9 +15,14 @@ from trading_agent.daily_research_models import DailyResearchRecord
 from trading_agent.kis_live import regular_session_bounds
 from trading_agent.metrics import PaperTrade
 from trading_agent.models import RecommendationState
+from trading_agent.trade_cohort_models import TradeFeatureSource
+from trading_agent.trade_cohort_source import TradeCohortSourceError, load_trade_feature_assignments
 
 TRADE_ARTIFACT = "paper_metrics/paper_trades.csv"
 REGIME_ARTIFACT = "research_regime_snapshot.json"
+DATABASE_ARTIFACT = "paper_recommendations.sqlite3"
+RISK_ARTIFACT = "market_risk_screen.csv"
+GAP_ARTIFACT = "kis_opening_gap_snapshots.csv"
 RegimeLabel = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")]
 
 
@@ -127,7 +132,14 @@ def _load_session(root: Path, record: DailyResearchRecord) -> EvaluatedSession:
     session = matches[0].parents[1]
     trades = _load_trades(session, record)
     regime = _load_regime(session, record)
-    return EvaluatedSession(record.session_date, trades, regime)
+    database = _verified_required_artifact(session, record, DATABASE_ARTIFACT)
+    risk = _verified_required_artifact(session, record, RISK_ARTIFACT)
+    gap = _verified_optional_artifact(session, record, GAP_ARTIFACT)
+    try:
+        features = load_trade_feature_assignments(TradeFeatureSource(database, risk, gap), trades)
+    except TradeCohortSourceError as error:
+        raise AdaptiveSourceError(str(error)) from error
+    return EvaluatedSession(record.session_date, trades, regime, features)
 
 
 def _load_trades(session: Path, record: DailyResearchRecord) -> tuple[PaperTrade, ...]:

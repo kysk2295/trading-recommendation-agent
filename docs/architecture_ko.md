@@ -191,6 +191,8 @@ metrics가 성공하면 watch는 `run_daily_research_record.py`를 이어서 실
 
 시장 국면은 해당 세션의 선택적 `research_regime_snapshot.json`이 정규장 개장 전에 관측되고 일일 checksum에 포함된 경우에만 사용한다. 최근 60 적격일의 사전 라벨 coverage 80%와 최소 2개 국면을 최종 검토 문턱으로 두며, 10거래 이상인 개별 국면에서 PF<0.8 또는 평균≤0이면 aggregate 성과가 좋아도 불안정 blocker를 남긴다. 이는 VIX 같은 국면 데이터 생산기를 구현한 것이 아니라 point-in-time 입력 계약과 누락 시 fail-closed 동작을 먼저 고정한 것이다.
 
+같은 평가기는 거래별 추천 생성시각과 `candidate_input_snapshots`의 실제 관찰시각이 같은 행을 먼저 찾는다. 그 행의 거래소·종목을 기준으로 추천 생성시각 이하의 최신 `market_risk_screen.csv`와 성공한 `kis_opening_gap_snapshots.csv`만 조인한다. 따라서 이후 cycle에서 가격·갭·volume/ADV가 더 커져도 과거 거래 특성에 소급되지 않는다. 가격, gap, 시점 누적 volume/ADV, 시점 거래대금은 전진평가 전에 고정한 네 구간씩으로 분류하고 최근 60일 20bp 성과를 독립 집계한다. 핵심 특성과 gap은 각각 거래 coverage 80%를 요구하며, 10거래 이상 cohort의 PF<0.8 또는 평균≤0은 최종 검토 blocker다. 개별 배정은 `trade_feature_assignments.csv`에 남기며 누락 거래는 0수익이 아닌 `censored`다.
+
 누적치는 같은 전략 버전에서 기록 대상 거래일보다 앞선 날짜만 사용한다. 따라서 이후 거래일이 원장에 추가된 뒤 과거 세션을 재생해도 미래 날짜가 과거의 누적치와 record ID에 들어가지 않으며, 동일 입력은 중복 행을 만들지 않는다.
 
 적격 forward day는 watch cycle마다 거래소 3곳×랭킹 2종의 6개 요청이 모두 성공하고, coverage·KIS retry·후보 입력 cycle 수가 watch cycle 수와 같으며, 후보 입력 합계가 SQLite와 일치하고, 실패 또는 미완료 cycle이 없을 때만 증가한다. 전략은 그 60일 동안 고정되지 않는다. 모든 challenger는 매일 독립 shadow로 누적되고 5/10/20일 게이트에서 중단·진단·동일 위험 비교 후보가 된다. 60 적격일·100 완료 거래는 수익 확정이 아니라 broker paper ledger, DSR/PBO, 인접 파라미터 평탄성, SIP 검증과 함께 확인할 최종 증명 문턱이다. 평가기 버전이 다른 원장은 누적 거래일·거래 수에 섞지 않는다. 현재 경로는 연구 기록만 만들고 전략 상태를 자동 변경하거나 주문을 제출하지 않는다.
