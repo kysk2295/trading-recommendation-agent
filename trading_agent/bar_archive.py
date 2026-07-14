@@ -18,10 +18,15 @@ CREATE_CANDIDATE_BARS: Final = (
     "low REAL NOT NULL, close REAL NOT NULL, volume INTEGER NOT NULL, "
     "amount INTEGER NOT NULL, PRIMARY KEY(exchange, symbol, exchange_timestamp))"
 )
-INSERT_CANDIDATE_BAR: Final = (
-    "INSERT OR IGNORE INTO candidate_minute_bars VALUES "
-    "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+INSERT_CANDIDATE_BAR: Final = "INSERT OR IGNORE INTO candidate_minute_bars VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+CREATE_CANDIDATE_INPUTS: Final = (
+    "CREATE TABLE IF NOT EXISTS candidate_input_snapshots ("
+    "exchange TEXT NOT NULL, symbol TEXT NOT NULL, observed_at TEXT NOT NULL, "
+    "latest_completed_bar_at TEXT NOT NULL, prior_close REAL NOT NULL, "
+    "average_daily_volume INTEGER NOT NULL, spread_bps REAL NOT NULL, "
+    "PRIMARY KEY(exchange, symbol, observed_at))"
 )
+INSERT_CANDIDATE_INPUT: Final = "INSERT OR IGNORE INTO candidate_input_snapshots VALUES (?, ?, ?, ?, ?, ?, ?)"
 CREATE_TRACKED_CANDIDATES: Final = (
     "CREATE TABLE IF NOT EXISTS tracked_candidates ("
     "session_date TEXT NOT NULL, exchange TEXT NOT NULL, symbol TEXT NOT NULL, "
@@ -67,6 +72,17 @@ class CandidateBarBatch:
     bars: tuple[KisMinuteBar, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class CandidateInputSnapshot:
+    exchange: str
+    symbol: str
+    observed_at: dt.datetime
+    latest_completed_bar_at: dt.datetime
+    prior_close: float
+    average_daily_volume: int
+    spread_bps: float
+
+
 def archive_candidate_bars(path: Path, batch: CandidateBarBatch) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as connection:
@@ -88,6 +104,25 @@ def archive_candidate_bars(path: Path, batch: CandidateBarBatch) -> int:
                     bar.amount,
                 )
                 for bar in batch.bars
+            ),
+        )
+    return cursor.rowcount
+
+
+def archive_candidate_input(path: Path, snapshot: CandidateInputSnapshot) -> int:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as connection:
+        _ = connection.execute(CREATE_CANDIDATE_INPUTS)
+        cursor = connection.execute(
+            INSERT_CANDIDATE_INPUT,
+            (
+                snapshot.exchange,
+                snapshot.symbol,
+                snapshot.observed_at.isoformat(),
+                snapshot.latest_completed_bar_at.isoformat(),
+                snapshot.prior_close,
+                snapshot.average_daily_volume,
+                snapshot.spread_bps,
             ),
         )
     return cursor.rowcount
@@ -139,8 +174,7 @@ def tracked_candidates(
     with sqlite3.connect(path) as connection:
         _ = connection.execute(CREATE_TRACKED_CANDIDATES)
         rows: list[TrackedCandidateRow] = connection.execute(
-            "SELECT * FROM tracked_candidates WHERE session_date = ? "
-            "ORDER BY first_observed_at, exchange, symbol",
+            "SELECT * FROM tracked_candidates WHERE session_date = ? ORDER BY first_observed_at, exchange, symbol",
             (session_date,),
         ).fetchall()
     return tuple(

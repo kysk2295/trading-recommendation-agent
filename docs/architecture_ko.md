@@ -146,6 +146,8 @@ NASDAQ·NYSE·AMEX 상승률/거래량 랭킹
 
 선택 후보의 완료 정규장 분봉은 같은 SQLite의 `candidate_minute_bars`에 거래소·종목·시각 기본키로 저장한다. OHLCV·거래대금·한국 및 거래소 시각과 `first_observed_at`을 보존하고 반복 조회는 `INSERT OR IGNORE`로 최초 관찰값을 유지한다. 장이 닫혔거나 관찰 거래일과 다른 과거 분봉은 저장하지 않는다.
 
+분봉 freshness와 완료 일봉 문맥이 모두 통과해 실제 신규 신호 평가로 들어간 후보는 `candidate_input_snapshots`에도 기록한다. 거래소·종목·실제 관찰시각을 기본키로 삼고, 당시 최신 완료 봉 시각, 전일 종가, 20개 완료 일봉 평균 거래량, 관측 spread를 `INSERT OR IGNORE`로 고정한다. 이 표는 분봉만으로 복원할 수 없는 scanner 입력을 보존해 장마감 challenger가 당시와 같은 입력을 사용할 수 있게 하는 계보다. 행이 없는 실패 cycle을 성공 입력으로 추정하거나 현재 값으로 보간하지 않는다.
+
 정규장에서 최초 선택된 종목은 `tracked_candidates`에 뉴욕 거래일별로 보존한다. 이후 현재 상위 후보에서 빠진 종목은 `follow()` 경로로 분봉을 계속 저장한다. 열린 추천이 있으면 새 완료 봉으로 상태만 갱신하고, 열린 추천이 없으면 ORB 조건이 보여도 신규 추천을 생성하지 않는다. 따라서 현재 스캐너 선정과 과거 선정 종목 추적이 분리된다.
 
 랭킹 CSV는 종목 키의 선택 여부 `selected`와 실제 필터 입력 행 `selection_input`을 분리한다. 구형 행은 실제 입력 출처를 추정하지 않고 `selection_input`을 빈 값으로 migration한다. 랭킹 응답이 끝난 뒤 관찰 시각을 기록하며 forward 분석은 종목·거래일 최초 `selection_input=True`만 사용한다.
@@ -172,7 +174,7 @@ watch는 공식 정규장 종료 뒤 `run_paper_metrics.py`를 한 번 실행해
 
 `run_paper_metrics.py`는 여러 날짜별 SQLite를 읽고 추천 ID를 중복 제거한다. 미체결 무효화와 미종료 추천은 제외하며, 누적수익과 MDD는 거래 순차 복리 proxy로만 계산한다. 평균수익 CI는 개별 거래가 아니라 `exit_at`을 뉴욕 거래일로 정규화한 날짜 블록을 재표본화해 같은 날 거래의 의존성을 보존한다. 거래일 블록이 2개 미만이면 가짜 정밀도를 피하기 위해 CI를 공란으로 둔다. 이는 최대 10포지션 일별 포트폴리오 백테스트가 아니며, 작은 paper 표본의 block-bootstrap CI도 전략 승격 근거로 단독 사용하지 않는다.
 
-metrics가 성공하면 watch는 `run_daily_research_record.py`를 이어서 실행하고 종료코드를 `post_session_research_cycles.csv`에 별도로 기록한다. 이 CLI는 세션 산출물 SHA-256, 코드·데이터·평가기 버전, 정확한 전략 파라미터·비용·포트폴리오 정책, 편도 20bp 결과, 데이터 품질 incident와 누적 적격 거래일·완료 거래 수를 불변 JSON과 append-only JSONL로 저장한다. 같은 record ID를 재실행해도 중앙 원장에는 중복 추가하지 않는다.
+metrics가 성공하면 watch는 `run_daily_research_record.py`를 이어서 실행하고 종료코드를 `post_session_research_cycles.csv`에 별도로 기록한다. 이 CLI는 세션 산출물 SHA-256, 코드·데이터·평가기 버전, 정확한 전략 파라미터·비용·포트폴리오 정책, 편도 20bp 결과, 후보 입력 snapshot 수, 데이터 품질 incident와 누적 적격 거래일·완료 거래 수를 불변 JSON과 append-only JSONL로 저장한다. 같은 record ID를 재실행해도 중앙 원장에는 중복 추가하지 않는다.
 
 누적치는 같은 전략 버전에서 기록 대상 거래일보다 앞선 날짜만 사용한다. 따라서 이후 거래일이 원장에 추가된 뒤 과거 세션을 재생해도 미래 날짜가 과거의 누적치와 record ID에 들어가지 않으며, 동일 입력은 중복 행을 만들지 않는다.
 

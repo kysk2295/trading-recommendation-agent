@@ -154,6 +154,7 @@ def load_session_quality(
             read_retries=read_retries,
             read_retry_recoveries=read_retry_recoveries,
             read_retry_failures=read_retry_failures,
+            candidate_inputs=_table_count(database, "candidate_input_snapshots"),
             archived_bars=_table_count(database, "candidate_minute_bars"),
             recommendations=_table_count(database, "recommendations"),
             completed_trades=completed_trades,

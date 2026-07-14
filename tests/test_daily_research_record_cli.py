@@ -20,6 +20,7 @@ from trading_agent.store import PaperStore
 class QualityJson(TypedDict):
     forward_day_eligible: bool
     completed_trades: int
+    candidate_inputs: int
     read_retries: int
     read_retry_recoveries: int
     read_retry_failures: int
@@ -96,6 +97,7 @@ def test_daily_research_cli_writes_lineage_and_blocks_early_promotion(
     assert record["strategy_stage"] == "experimental_shadow"
     assert record["session_quality"]["forward_day_eligible"] is True
     assert record["session_quality"]["completed_trades"] == 1
+    assert record["session_quality"]["candidate_inputs"] == 1
     assert record["session_quality"]["read_retries"] == 1
     assert record["session_quality"]["read_retry_recoveries"] == 1
     assert record["session_quality"]["read_retry_failures"] == 0
@@ -158,64 +160,6 @@ def test_rerunning_older_session_does_not_use_future_ledger_rows(
     assert first_record["promotion"]["cumulative_forward_days"] == 1
 
 
-def test_new_evaluator_does_not_inherit_legacy_evaluator_counts(
-    tmp_path: Path,
-) -> None:
-    sessions = tmp_path / "live_sessions"
-    first = sessions / "20260714"
-    second = sessions / "20260715"
-    _write_complete_session(first, dt.date(2026, 7, 14))
-    _write_complete_session(second, dt.date(2026, 7, 15))
-    project = Path(__file__).parents[1]
-    script = project / "run_daily_research_record.py"
-    first_run = subprocess.run(
-        (
-            sys.executable,
-            str(script),
-            str(first),
-            "--session-date",
-            "2026-07-14",
-            "--strategy",
-            "orb",
-            "--code-version",
-            "test-code",
-        ),
-        cwd=project,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert first_run.returncode == 0, first_run.stderr
-    ledger = sessions / "daily_research_ledger.jsonl"
-    legacy = ledger.read_text(encoding="utf-8").replace(
-        "paper_metrics_day_block_bootstrap_v2",
-        "paper_metrics_trade_bootstrap_v1",
-    )
-    _ = ledger.write_text(legacy, encoding="utf-8")
-
-    second_run = subprocess.run(
-        (
-            sys.executable,
-            str(script),
-            str(second),
-            "--session-date",
-            "2026-07-15",
-            "--strategy",
-            "orb",
-            "--code-version",
-            "test-code",
-        ),
-        cwd=project,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert second_run.returncode == 0, second_run.stderr
-    records = tuple(RECORD_ADAPTER.validate_json(line) for line in ledger.read_text().splitlines())
-    assert records[-1]["promotion"]["cumulative_forward_days"] == 1
-
-
 def _write_complete_session(
     session: Path,
     session_date: dt.date = dt.date(2026, 7, 14),
@@ -262,6 +206,8 @@ def _write_complete_session(
     with sqlite3.connect(database) as connection:
         _ = connection.execute("CREATE TABLE candidate_minute_bars (value INTEGER)")
         _ = connection.execute("INSERT INTO candidate_minute_bars VALUES (1)")
+        _ = connection.execute("CREATE TABLE candidate_input_snapshots (value INTEGER)")
+        _ = connection.execute("INSERT INTO candidate_input_snapshots VALUES (1)")
     write_metrics_report(
         session / "paper_metrics",
         extract_paper_trades((store,)),

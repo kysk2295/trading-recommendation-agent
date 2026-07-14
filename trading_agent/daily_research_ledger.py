@@ -146,6 +146,7 @@ def _write_summary(path: Path, record: DailyResearchRecord) -> None:
             "- KIS 읽기 재시도/복구/반복실패: "
             f"{quality.read_retries}/{quality.read_retry_recoveries}/{quality.read_retry_failures}"
         ),
+        f"- 재현 가능한 후보 입력 snapshot: {quality.candidate_inputs}건",
         f"- 완료 shadow 거래: {quality.completed_trades}건",
         f"- 편도 20bp PF: {_number(metrics.profit_factor)}",
         f"- 편도 20bp 평균: {_percent(metrics.average_return)}",

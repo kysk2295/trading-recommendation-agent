@@ -8,7 +8,12 @@ from typing import final
 import httpx2
 
 from scr_backtest.kis_intraday import KisApiError, KisSession
-from trading_agent.bar_archive import CandidateBarBatch, archive_candidate_bars
+from trading_agent.bar_archive import (
+    CandidateBarBatch,
+    CandidateInputSnapshot,
+    archive_candidate_bars,
+    archive_candidate_input,
+)
 from trading_agent.engine import RecommendationEngine
 from trading_agent.kis_daily import fetch_daily_context
 from trading_agent.kis_live import completed_regular_minutes, session_is_fresh
@@ -86,6 +91,18 @@ class KisPaperScanner:
                 stock.exchange,
                 stock.symbol,
                 session_date,
+            )
+            _ = archive_candidate_input(
+                self.engine.store.path,
+                CandidateInputSnapshot(
+                    stock.exchange,
+                    stock.symbol,
+                    observed_at,
+                    completed[-1].exchange_timestamp,
+                    daily.prior_close,
+                    daily.average_daily_volume,
+                    stock.spread_bps,
+                ),
             )
             bars = ranking_to_bar_inputs(stock, completed, daily)
             _ = self.engine.process_forward(bars, observed_at)
