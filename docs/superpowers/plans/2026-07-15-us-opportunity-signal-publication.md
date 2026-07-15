@@ -40,7 +40,7 @@
 - Create: `tests/test_kis_opportunity_projection.py`
 - Create: `trading_agent/kis_opportunity_projection.py`
 
-- [ ] **Step 1: Write failing projection tests**
+- [x] **Step 1: Write failing projection tests**
 
 Cover these public behaviors:
 
@@ -54,13 +54,13 @@ Cover these public behaviors:
 - the lane is exactly `us_equities/opportunity_manager/ranking_momentum`;
 - repeated projection of identical input creates the same deterministic opportunity ID.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest tests/test_kis_opportunity_projection.py -q`
 
 Expected: collection fails because `trading_agent.kis_opportunity_projection` does not exist.
 
-- [ ] **Step 3: Implement the minimal pure projector**
+- [x] **Step 3: Implement the minimal pure projector**
 
 Add:
 
@@ -80,7 +80,7 @@ Use producer version `kis-risk-screen-v1`, a 60-second validity window, Decimal-
 
 Create sorted `EvidenceRef` records for source ranking rows, the halt snapshot, and selected market-risk rows. Create sorted `SourceCoverage` records for all six ranking requests plus the halt feed.
 
-- [ ] **Step 4: Verify GREEN and lint the slice**
+- [x] **Step 4: Verify GREEN and lint the slice**
 
 Run:
 
@@ -89,7 +89,7 @@ uv run pytest tests/test_kis_opportunity_projection.py -q
 uv run ruff check trading_agent/kis_opportunity_projection.py tests/test_kis_opportunity_projection.py
 ```
 
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 5: Commit Task 1**
 
 ```bash
 git add trading_agent/kis_opportunity_projection.py tests/test_kis_opportunity_projection.py
@@ -102,7 +102,7 @@ git commit -m "feat: project KIS rankings to opportunities"
 - Create: `tests/test_contract_outbox.py`
 - Create: `trading_agent/contract_outbox.py`
 
-- [ ] **Step 1: Write failing outbox tests**
+- [x] **Step 1: Write failing outbox tests**
 
 Test opportunity and signal JSONL independently:
 
@@ -113,15 +113,15 @@ Test opportunity and signal JSONL independently:
 - signal publication writes a Korean Markdown card containing market, strategy, observation time, publication time, expiry, symbol, conditional entry, stop, targets, invalidation, and rationale;
 - card filenames are stable and safe.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest tests/test_contract_outbox.py -q`
 
-- [ ] **Step 3: Implement structured append-only writers**
+- [x] **Step 3: Implement structured append-only writers**
 
 Add domain errors for malformed files and identity conflicts. Serialize Pydantic models with `model_dump(mode="json")` and deterministic key ordering. Do not use substring matching for dedupe. Create parent directories only when a write is required.
 
-- [ ] **Step 4: Verify GREEN and lint the slice**
+- [x] **Step 4: Verify GREEN and lint the slice**
 
 Run:
 
@@ -130,7 +130,7 @@ uv run pytest tests/test_contract_outbox.py -q
 uv run ruff check trading_agent/contract_outbox.py tests/test_contract_outbox.py
 ```
 
-- [ ] **Step 5: Commit Task 2**
+- [x] **Step 5: Commit Task 2**
 
 ```bash
 git add trading_agent/contract_outbox.py tests/test_contract_outbox.py
@@ -144,7 +144,7 @@ git commit -m "feat: add immutable contract outboxes"
 - Create: `trading_agent/trade_signal_publication.py`
 - Modify only if a regression requires it: `trading_agent/recommendation_signal_projection.py`
 
-- [ ] **Step 1: Write failing publication tests**
+- [x] **Step 1: Write failing publication tests**
 
 Specify a frozen `TradeSignalPublication` contract with `schema_version`, `published_at`, and `signal`. Test that:
 
@@ -156,15 +156,15 @@ Specify a frozen `TradeSignalPublication` contract with `schema_version`, `publi
 - evidence contains both the opportunity and recommendation records in canonical order;
 - emitted envelopes are always conditional and have no quote validation.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest tests/test_trade_signal_publication.py -q`
 
-- [ ] **Step 3: Implement pure publication selection**
+- [x] **Step 3: Implement pure publication selection**
 
 Add a deterministic function accepting recommendation records, a canonical US day strategy lane/version, one exact opportunity snapshot, publication time, and lower created-at bound. Reuse `project_intraday_recommendation`; do not duplicate entry/stop/target conversion.
 
-- [ ] **Step 4: Verify GREEN and compatibility**
+- [x] **Step 4: Verify GREEN and compatibility**
 
 Run:
 
@@ -173,7 +173,7 @@ uv run pytest tests/test_trade_signal_publication.py tests/test_recommendation_s
 uv run ruff check trading_agent/trade_signal_publication.py tests/test_trade_signal_publication.py
 ```
 
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 5: Commit Task 3**
 
 ```bash
 git add trading_agent/trade_signal_publication.py tests/test_trade_signal_publication.py
@@ -186,7 +186,7 @@ git commit -m "feat: publish conditional trade signals"
 - Create: `tests/test_run_kis_paper_scan_contracts.py`
 - Modify: `run_kis_paper_scan.py`
 
-- [ ] **Step 1: Write failing network-free helper tests**
+- [x] **Step 1: Write failing network-free helper tests**
 
 Test helper functions directly with fixtures. Verify:
 
@@ -196,17 +196,17 @@ Test helper functions directly with fixtures. Verify:
 - repeated helper execution is idempotent;
 - existing v1 outbox paths and recommendation rows remain untouched.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest tests/test_run_kis_paper_scan_contracts.py -q`
 
-- [ ] **Step 3: Add narrow orchestration helpers and calls**
+- [x] **Step 3: Add narrow orchestration helpers and calls**
 
 Add independently testable helpers, then call them from `main` after ranking/risk journaling and after the existing scanner/outbox respectively. Use `StrategyMode.value` for the canonical strategy ID and `<strategy-id>-v1` for the current producer version. Print only counts and artifact paths, never credentials or account data.
 
 The existing `write_report` and `write_alert_outbox` calls remain in place and retain their current behavior.
 
-- [ ] **Step 4: Verify GREEN and CLI behavior**
+- [x] **Step 4: Verify GREEN and CLI behavior**
 
 Run:
 
@@ -218,7 +218,7 @@ uv run python run_kis_paper_scan.py --help
 
 Also run the repository's existing invalid-input and fixture-backed happy-path commands documented in the current checkpoint. Confirm no network mutation and no broker POST.
 
-- [ ] **Step 5: Commit Task 4**
+- [x] **Step 5: Commit Task 4**
 
 ```bash
 git add run_kis_paper_scan.py tests/test_run_kis_paper_scan_contracts.py
@@ -231,11 +231,11 @@ git commit -m "feat: emit KIS opportunity and signal contracts"
 - Modify: `README.md`
 - Create: `docs/checkpoints/2026-07-15-us-opportunity-signal-publication-ko.md`
 
-- [ ] **Step 1: Update operator-facing documentation**
+- [x] **Step 1: Update operator-facing documentation**
 
 Document artifact names, their additive relationship to the v1 alert outbox, the exact complete-source gate, the five-minute publication limit, and the fact that signals are conditional until a later fresh-quote milestone.
 
-- [ ] **Step 2: Run focused and full verification**
+- [x] **Step 2: Run focused and full verification**
 
 Run:
 
@@ -248,7 +248,7 @@ uv run basedpyright
 
 Run `run_kis_paper_scan.py --help`, one invalid CLI invocation, and the fixture-backed happy path. Record exact outcomes without claiming an actual current-market signal or any broker POST.
 
-- [ ] **Step 3: Check diff and repository state**
+- [x] **Step 3: Check diff and repository state**
 
 Run:
 
@@ -258,7 +258,7 @@ git status --short
 git log --oneline --decorate -8
 ```
 
-- [ ] **Step 4: Commit and push the checkpoint**
+- [x] **Step 4: Commit and push the checkpoint**
 
 ```bash
 git add README.md docs/checkpoints/2026-07-15-us-opportunity-signal-publication-ko.md

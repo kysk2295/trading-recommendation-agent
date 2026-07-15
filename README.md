@@ -6,7 +6,7 @@
 
 실제 자금 거래는 목표가 아니다. 앞으로 추가되는 실행 코드는 `https://paper-api.alpaca.markets`에만 연결하며 Alpaca live endpoint, 실계좌 키와 실제 주문 경로는 프로젝트에서 차단한다.
 
-다중 시장 상위 계약도 점진적으로 추가됐다. `MarketId → AgentFamily → StrategyLaneRef` 연구 좌표, US 기존 execution lane의 명시적 adapter, 사전등록 composite experiment, causal `OpportunitySnapshot`·`TradeSignalEnvelope`, 기존 intraday `Recommendation`의 conditional signal projection을 제공한다. 이는 계약 기반만 완성한 상태이며 KR 촉매 수집, 새 swing·systematic quant 엔진, 외부 실시간 알림 또는 추가 주문 경로가 실행 중이라는 뜻은 아니다.
+다중 시장 상위 계약도 점진적으로 추가됐다. `MarketId → AgentFamily → StrategyLaneRef` 연구 좌표, US 기존 execution lane의 명시적 adapter, 사전등록 composite experiment, causal `OpportunitySnapshot`·`TradeSignalEnvelope`를 제공한다. KIS 미국주식 스캔은 거래소×상승률/거래량 6개 요청과 NYSE halt·시장위험 근거가 모두 완전할 때 선별 후보를 append-only opportunity JSONL로 발행하고, 그 opportunity 이후 생성된 5분 미만의 같은 종목 SETUP만 conditional signal JSONL·한국어 카드로 투영한다. 이 로컬 발행 계층은 현재 호가 재검증, 외부 실시간 메시지 또는 주문을 수행하지 않는다. KR 촉매 수집과 새 swing·systematic quant 엔진도 아직 구현 전이다.
 
 ## 최종 목표
 
@@ -82,6 +82,8 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 
 - [다중 시장 트레이딩 에이전트 Research OS 통합 설계](docs/superpowers/specs/2026-07-15-multi-market-agent-research-os-design.md)
 - [다중 시장 Agent 계약 체크포인트](docs/checkpoints/2026-07-15-multi-market-agent-contracts-ko.md)
+- [US opportunity·conditional signal 발행 체크포인트](docs/checkpoints/2026-07-15-us-opportunity-signal-publication-ko.md)
+- [US opportunity·conditional signal 구현 계획](docs/superpowers/plans/2026-07-15-us-opportunity-signal-publication.md)
 - [승인된 전체 설계](docs/superpowers/specs/2026-07-14-autonomous-paper-trading-research-os-design.md)
 - [Lane control-plane 계약 설계](docs/superpowers/specs/2026-07-15-lane-control-plane-contracts-design.md)
 - [ORB lane 일일 snapshot·Reviewer loop 설계](docs/superpowers/specs/2026-07-15-orb-lane-daily-review-loop-design.md)
@@ -363,6 +365,14 @@ KIS paper 스캔:
 ```
 
 `orb`, `vwap_reclaim`, `hod_breakout`, `gap_and_go`는 별도 전략 이름과 출력 폴더로 실행한다. 성과를 합쳐 유리하게 만들지 않으며, 기본값은 `orb`다.
+
+완전한 정규장 KIS 랭킹 cycle에서는 기존 추천 outbox와 별도로 다음 v2 계약 산출물을 추가한다.
+
+- `opportunities.v1.jsonl`: 6개 랭킹 요청·NYSE halt·시장위험 선별 근거를 결합한 60초 유효 후보 스냅샷
+- `trade-signals.v1.jsonl`: exact opportunity 안에서 이후 생성되고 발행 시점에 신선한 SETUP의 conditional 신호
+- `trade-signal-cards-ko/`: 각 conditional 신호의 관측·발행·만료 시각, 진입·손절·목표·무효화 근거를 담은 한국어 카드
+
+JSONL은 동일 ID·동일 payload 재실행을 추가하지 않고, 동일 ID의 payload가 달라지거나 기존 행이 계약 형식에 맞지 않으면 fail-closed한다. 랭킹 요청 하나라도 실패하면 기존 부분 모집단 shadow scan·coverage 기록·비정상 종료 동작은 유지하지만 v2 opportunity와 그 하위 신호는 발행하지 않는다. 이 신호는 발행 직전 호가를 새로 조회하지 않으므로 `current_quote_validated`가 아니며 Paper 주문 입력으로 사용하지 않는다.
 
 KIS 날짜별 paper 감시:
 
