@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -98,6 +99,8 @@ def classify_kr_keyword_catalyst(
         if (
             catalyst.record.source not in ELIGIBLE_SOURCES
             or catalyst.record.content_type != "application/json"
+            or hashlib.sha256(catalyst.raw_payload).hexdigest()
+            != catalyst.record.payload_sha256
             or not _aware(classified_at)
             or classified_at < catalyst.record.first_observed_at
         ):

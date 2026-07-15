@@ -192,6 +192,23 @@ def test_keyword_classifier_rejects_pre_observation_classification_time() -> Non
         )
 
 
+def test_keyword_classifier_rejects_unverified_raw_checksum() -> None:
+    original = _stored('{"title":"합성 반도체 발표"}'.encode())
+    changed = _stored('{"title":"합성 바이오 발표"}'.encode())
+    tampered = StoredKrCatalyst(
+        record=original.record,
+        raw_payload=changed.raw_payload,
+    )
+
+    with pytest.raises(InvalidKrKeywordClassificationError):
+        _ = classify_kr_keyword_catalyst(
+            tampered,
+            _rules(),
+            classification_run_id="kr-keyword-run-001",
+            classified_at=CLASSIFIED_AT,
+        )
+
+
 def _rules() -> KrKeywordRuleSet:
     return KrKeywordRuleSet(
         classifier_version="kr-keyword-synthetic-v1",
