@@ -16,7 +16,7 @@
 - Create: `trading_agent/kr_source_cycle.py`
 - Create: `tests/test_kr_source_cycle.py`
 
-- [ ] **Step 1: Write failing tests for complete, failed, missing, replay and invalid evidence paths**
+- [x] **Step 1: Write failing tests for complete, failed, missing, replay and invalid evidence paths**
 
 Add tests that seed terminal source runs through `KrThemeStore.writer()` and assert:
 
@@ -30,13 +30,13 @@ assert result.missing_sources == ()
 
 The same test module must also prove a failed run is copied unchanged, a missing source produces no cycle row, an exact restart is a no-op, conflicting pre-existing content fails, and observation time outside the derived cycle is rejected.
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run: `uv run pytest -q tests/test_kr_source_cycle.py`
 
 Expected: collection fails because `trading_agent.kr_source_cycle` does not exist.
 
-- [ ] **Step 3: Implement the minimal deterministic coordinator**
+- [x] **Step 3: Implement the minimal deterministic coordinator**
 
 Create frozen result data and one public function:
 
@@ -80,7 +80,7 @@ def finalize_kr_source_cycle(
 
 Open the Writer lease before calling `store.source_runs()`. Sort by source value, return without mutation when a source is missing, derive min/max times and exact coverage when all four exist, then call `writer.append_cycle()` so the existing store performs count/time/conflict validation.
 
-- [ ] **Step 4: Run focused tests and static checks**
+- [x] **Step 4: Run focused tests and static checks**
 
 Run:
 
@@ -92,7 +92,7 @@ uv run basedpyright trading_agent/kr_source_cycle.py tests/test_kr_source_cycle.
 
 Expected: all pass with zero type errors and warnings.
 
-- [ ] **Step 5: Commit the coordinator**
+- [x] **Step 5: Commit the coordinator**
 
 ```bash
 git add trading_agent/kr_source_cycle.py tests/test_kr_source_cycle.py
@@ -106,7 +106,7 @@ git commit -m "feat: finalize exact KR source cycles"
 - Create: `tests/test_kr_source_cycle_cli.py`
 - Reuse: `trading_agent/private_report.py`
 
-- [ ] **Step 1: Write failing CLI tests**
+- [x] **Step 1: Write failing CLI tests**
 
 Cover `--help`, malformed cycle ID, all-success completion, missing source nonzero/no cycle, terminal-failed nonzero/preserved cycle, exact restart, mode-600 files and report redaction. Patch network and credential loaders to raise if called.
 
@@ -127,13 +127,13 @@ assert result.exit_code == 0
 assert (output / "kr_source_cycle_coverage.csv").stat().st_mode & 0o777 == 0o600
 ```
 
-- [ ] **Step 2: Run the CLI tests and verify RED**
+- [x] **Step 2: Run the CLI tests and verify RED**
 
 Run: `uv run pytest -q tests/test_kr_source_cycle_cli.py`
 
 Expected: collection fails because `run_kr_source_cycle.py` does not exist.
 
-- [ ] **Step 3: Implement strict CLI validation and aggregate reporting**
+- [x] **Step 3: Implement strict CLI validation and aggregate reporting**
 
 Expose only:
 
@@ -145,7 +145,7 @@ Expose only:
 
 Write `kr_source_cycle_coverage.csv` with `source,status,record_count,failure_code` and `kr_source_cycle_summary_ko.md` with aggregate counts only through `write_private_report()`. Do not include cycle ID, paths, receipt IDs, hashes, raw payloads or provider text. Return 0 only for a complete cycle, and nonzero for missing, failed, invalid or conflicting evidence.
 
-- [ ] **Step 4: Run focused tests and static checks**
+- [x] **Step 4: Run focused tests and static checks**
 
 Run:
 
@@ -157,7 +157,7 @@ uv run basedpyright run_kr_source_cycle.py tests/test_kr_source_cycle_cli.py
 
 Expected: all pass with zero type errors and warnings.
 
-- [ ] **Step 5: Commit the CLI**
+- [x] **Step 5: Commit the CLI**
 
 ```bash
 git add run_kr_source_cycle.py tests/test_kr_source_cycle_cli.py
@@ -171,11 +171,11 @@ git commit -m "feat: add KR source cycle CLI"
 - Modify: `docs/superpowers/plans/2026-07-15-kr-source-cycle-coordinator.md`
 - Create: `docs/checkpoints/2026-07-15-kr-source-cycle-coordinator-ko.md`
 
-- [ ] **Step 1: Document the implemented boundary and usage**
+- [x] **Step 1: Document the implemented boundary and usage**
 
 Describe that the coordinator consumes existing terminal source runs, does not call providers, does not synthesize missing evidence, and cannot by itself make an eligible day while production news/KIS/volume adapters are absent. Add a DB-only CLI example and link the focused design, plan and checkpoint.
 
-- [ ] **Step 2: Run the full automated gates**
+- [x] **Step 2: Run the full automated gates**
 
 Run:
 
@@ -187,15 +187,15 @@ uv run basedpyright
 
 Expected: all tests pass; Ruff passes; basedpyright reports zero errors and warnings.
 
-- [ ] **Step 3: Run manual CLI QA**
+- [x] **Step 3: Run manual CLI QA**
 
 Run `./run_kr_source_cycle.py --help`, one malformed ID, one missing-source DB, one all-success four-run DB and the same all-success cycle again. Verify success creates one cycle, restart creates zero new rows, missing creates no cycle, reports are mode 600 and reports contain no cycle ID/path/hash/provider content.
 
-- [ ] **Step 4: Record the exact checkpoint**
+- [x] **Step 4: Record the exact checkpoint**
 
 The Korean checkpoint must list tests and CLI outcomes, state that actual OpenDART/news/KIS/Alpaca/LLM/external calls were zero, and identify production news read-only collection as the next milestone. Mark every completed plan checkbox.
 
-- [ ] **Step 5: Commit documentation**
+- [x] **Step 5: Commit documentation**
 
 ```bash
 git add README.md docs/checkpoints/2026-07-15-kr-source-cycle-coordinator-ko.md docs/superpowers/plans/2026-07-15-kr-source-cycle-coordinator.md
