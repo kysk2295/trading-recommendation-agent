@@ -189,24 +189,16 @@ def assess_us_quote(
     scan_started_at: dt.datetime,
     evaluated_at: dt.datetime,
 ) -> UsQuoteActionabilityDecision:
-    _validate_control_times(scan_started_at, evaluated_at)
-    if not _base_is_current(
+    preflight = preflight_quote_assessment(
         base,
         scan_started_at=scan_started_at,
         evaluated_at=evaluated_at,
-    ):
-        return _decision(
-            base,
-            scan_started_at=scan_started_at,
-            evaluated_at=evaluated_at,
-            status=QuoteAssessmentStatus.SETUP_INVALIDATED,
-        )
-    if not _in_regular_session(evaluated_at):
-        return _decision(
-            base,
-            scan_started_at=scan_started_at,
-            evaluated_at=evaluated_at,
-            status=QuoteAssessmentStatus.MARKET_CLOSED,
+    )
+    if preflight is not None:
+        return UsQuoteActionabilityDecision(
+            snapshot=None,
+            assessment=preflight,
+            derived_publication=None,
         )
     if quote.symbol != base.signal.symbol:
         return _decision(
@@ -296,6 +288,34 @@ def assess_us_quote(
         snapshot=snapshot,
         derived=derived,
     )
+
+
+def preflight_quote_assessment(
+    base: TradeSignalPublication,
+    *,
+    scan_started_at: dt.datetime,
+    evaluated_at: dt.datetime,
+) -> QuoteActionabilityAssessment | None:
+    _validate_control_times(scan_started_at, evaluated_at)
+    if not _base_is_current(
+        base,
+        scan_started_at=scan_started_at,
+        evaluated_at=evaluated_at,
+    ):
+        return _assessment(
+            base,
+            scan_started_at=scan_started_at,
+            evaluated_at=evaluated_at,
+            status=QuoteAssessmentStatus.SETUP_INVALIDATED,
+        )
+    if not _in_regular_session(evaluated_at):
+        return _assessment(
+            base,
+            scan_started_at=scan_started_at,
+            evaluated_at=evaluated_at,
+            status=QuoteAssessmentStatus.MARKET_CLOSED,
+        )
+    return None
 
 
 def provider_failed_assessment(

@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from decimal import Decimal
 from pathlib import Path
 
 from run_kis_paper_scan import (
+    append_quote_actionability_contracts,
+    append_trade_signal_contracts,
+    build_trade_signal_contracts,
     publish_opportunity_contract,
     publish_trade_signal_contracts,
 )
 from trading_agent.kis_provider import KisRankedStock
+from trading_agent.kis_us_quote import KisUsLevelOneQuote
 from trading_agent.market_risk import (
     HaltSnapshot,
     MarketRiskConfig,
@@ -22,6 +27,7 @@ from trading_agent.ranking_journal import (
     RankingSource,
 )
 from trading_agent.strategy_factory import StrategyMode
+from trading_agent.us_quote_publication import evaluate_quote_publications
 
 OBSERVED_AT = dt.datetime(2026, 7, 15, 14, 0, tzinfo=dt.UTC)
 
@@ -119,6 +125,117 @@ def test_signal_helper_is_idempotent_and_does_not_touch_the_v1_outbox(
     assert len(tuple((tmp_path / "trade-signal-cards-ko").glob("*.ko.md"))) == 1
     assert v1_jsonl.read_text(encoding="utf-8") == '{"legacy":true}\n'
     assert v1_markdown.read_text(encoding="utf-8") == "legacy card\n"
+
+
+def test_signal_build_is_pure_and_append_is_separate(tmp_path: Path) -> None:
+    stock = _stock()
+    opportunity = publish_opportunity_contract(
+        tmp_path,
+        _complete_discovery(stock),
+        _halts(),
+        _screen(stock),
+        OBSERVED_AT,
+    )
+    assert opportunity is not None
+    recommendation = _recommendation()
+
+    publications = build_trade_signal_contracts(
+        (recommendation,),
+        opportunity,
+        StrategyMode.ORB,
+        OBSERVED_AT + dt.timedelta(seconds=15),
+        OBSERVED_AT,
+    )
+
+    assert len(publications) == 1
+    assert not (tmp_path / "trade-signals.v1.jsonl").exists()
+    assert append_trade_signal_contracts(tmp_path, publications) == 1
+    assert append_trade_signal_contracts(tmp_path, publications) == 0
+
+
+def test_fake_quote_path_appends_conditional_then_validated_contracts(
+    tmp_path: Path,
+) -> None:
+    stock = _stock()
+    opportunity = publish_opportunity_contract(
+        tmp_path,
+        _complete_discovery(stock),
+        _halts(),
+        _screen(stock),
+        OBSERVED_AT,
+    )
+    assert opportunity is not None
+    published_at = OBSERVED_AT + dt.timedelta(seconds=15)
+    evaluated_at = published_at + dt.timedelta(seconds=2)
+    publications = build_trade_signal_contracts(
+        (_recommendation(),),
+        opportunity,
+        StrategyMode.ORB,
+        published_at,
+        OBSERVED_AT,
+    )
+    calls: list[tuple[str, str]] = []
+    batch = evaluate_quote_publications(
+        publications,
+        exchange_by_symbol={"ACME": "NAS"},
+        fetch_quote=lambda exchange, symbol: calls.append((exchange, symbol))
+        or KisUsLevelOneQuote(
+            exchange=exchange,
+            symbol=symbol,
+            provider_observed_at=evaluated_at - dt.timedelta(seconds=1),
+            received_at=evaluated_at - dt.timedelta(milliseconds=500),
+            bid=Decimal("10.49"),
+            ask=Decimal("10.50"),
+            bid_size=1_000,
+            ask_size=900,
+        ),
+        scan_started_at=OBSERVED_AT,
+        clock=lambda: evaluated_at,
+    )
+
+    assert append_trade_signal_contracts(tmp_path, publications) == 1
+    counts = append_quote_actionability_contracts(tmp_path, batch)
+
+    assert calls == [("NAS", "ACME")]
+    assert counts.snapshot_count == 1
+    assert counts.validated_signal_count == 1
+    assert counts.assessment_count == 1
+    signals = tuple(
+        json.loads(line)
+        for line in (tmp_path / "trade-signals.v1.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+    assert tuple(item["signal"]["actionability"] for item in signals) == (
+        "conditional",
+        "current_quote_validated",
+    )
+    assert len(
+        (tmp_path / "us-quote-snapshots.v1.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ) == 1
+    assert len(
+        (tmp_path / "quote-actionability-assessments.v1.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ) == 1
+    assert len(tuple((tmp_path / "trade-signal-cards-ko").glob("*.ko.md"))) == 2
+
+
+def _recommendation() -> Recommendation:
+    return Recommendation(
+        recommendation_id="rec-1",
+        symbol="ACME",
+        strategy="opening_range_breakout",
+        created_at=OBSERVED_AT + dt.timedelta(seconds=10),
+        entry=10.5,
+        stop=10.0,
+        target_1r=11.0,
+        target_2r=11.5,
+        state=RecommendationState.SETUP,
+        rationale="ORB와 거래량 확대",
+    )
 
 
 def _complete_discovery(stock: KisRankedStock) -> RankingDiscovery:

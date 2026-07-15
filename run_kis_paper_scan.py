@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import dataclass
 from pathlib import Path
 
 import typer
@@ -22,7 +23,9 @@ from trading_agent.candidate_input_audit import (
 from trading_agent.causality import exclude_backdated_recommendations
 from trading_agent.contract_outbox import (
     append_opportunity_snapshot,
+    append_quote_actionability_assessment,
     append_trade_signal_publication,
+    append_us_quote_snapshot,
 )
 from trading_agent.engine import RecommendationEngine
 from trading_agent.kis_auth import (
@@ -42,6 +45,7 @@ from trading_agent.kis_rankings import (
 from trading_agent.kis_retry_audit import append_kis_retry_audit
 from trading_agent.kis_scan import KisPaperScanner, ScanObservation
 from trading_agent.kis_scan_report import ScanSummary, write_scan_summary
+from trading_agent.kis_us_quote import fetch_kis_us_level_one_quote
 from trading_agent.market_risk import (
     HaltSnapshot,
     MarketRiskConfig,
@@ -70,7 +74,22 @@ from trading_agent.scanner import MomentumScanner, ScannerConfig
 from trading_agent.signal_contract_models import OpportunitySnapshot
 from trading_agent.store import PaperStore
 from trading_agent.strategy_factory import StrategyMode, build_strategy
-from trading_agent.trade_signal_publication import project_trade_signal_publications
+from trading_agent.trade_signal_publication import (
+    TradeSignalPublication,
+    project_trade_signal_publications,
+)
+from trading_agent.us_quote_actionability import QuoteAssessmentStatus
+from trading_agent.us_quote_publication import (
+    UsQuotePublicationBatch,
+    evaluate_quote_publications,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class QuoteContractAppendCounts:
+    snapshot_count: int
+    validated_signal_count: int
+    assessment_count: int
 
 
 def unselected_tracked_candidates(
@@ -121,14 +140,33 @@ def publish_trade_signal_contracts(
     published_at: dt.datetime,
     created_after: dt.datetime,
 ) -> int:
+    return append_trade_signal_contracts(
+        output,
+        build_trade_signal_contracts(
+            recommendations,
+            opportunity,
+            strategy,
+            published_at,
+            created_after,
+        ),
+    )
+
+
+def build_trade_signal_contracts(
+    recommendations: tuple[Recommendation, ...],
+    opportunity: OpportunitySnapshot | None,
+    strategy: StrategyMode,
+    published_at: dt.datetime,
+    created_after: dt.datetime,
+) -> tuple[TradeSignalPublication, ...]:
     if opportunity is None:
-        return 0
+        return ()
     strategy_lane = StrategyLaneRef(
         market_id=MarketId.US_EQUITIES,
         agent_family=AgentFamily.DAY_TRADING,
         strategy_id=strategy.value,
     )
-    publications = project_trade_signal_publications(
+    return project_trade_signal_publications(
         recommendations,
         strategy_lane=strategy_lane,
         strategy_version=f"{strategy.value}-v1",
@@ -136,6 +174,12 @@ def publish_trade_signal_contracts(
         published_at=published_at,
         created_after=created_after,
     )
+
+
+def append_trade_signal_contracts(
+    output: Path,
+    publications: tuple[TradeSignalPublication, ...],
+) -> int:
     return sum(
         append_trade_signal_publication(
             output / "trade-signals.v1.jsonl",
@@ -143,6 +187,35 @@ def publish_trade_signal_contracts(
             publication,
         )
         for publication in publications
+    )
+
+
+def append_quote_actionability_contracts(
+    output: Path,
+    batch: UsQuotePublicationBatch,
+) -> QuoteContractAppendCounts:
+    snapshot_count = sum(
+        append_us_quote_snapshot(
+            output / "us-quote-snapshots.v1.jsonl",
+            snapshot,
+        )
+        for snapshot in batch.snapshots
+    )
+    validated_signal_count = append_trade_signal_contracts(
+        output,
+        batch.derived_publications,
+    )
+    assessment_count = sum(
+        append_quote_actionability_assessment(
+            output / "quote-actionability-assessments.v1.jsonl",
+            assessment,
+        )
+        for assessment in batch.assessments
+    )
+    return QuoteContractAppendCounts(
+        snapshot_count=snapshot_count,
+        validated_signal_count=validated_signal_count,
+        assessment_count=assessment_count,
     )
 
 
@@ -177,10 +250,14 @@ def main(
     selected_count = 0
     scan_completed = False
     opportunity: OpportunitySnapshot | None = None
+    conditional_publications: tuple[TradeSignalPublication, ...] = ()
+    quote_batch = UsQuotePublicationBatch((), (), ())
+    published_at = started_at
     retry_capture = begin_retry_capture()
     try:
         with create_kis_client(mode) as client:
             token = get_access_token(client, credentials, mode)
+            session = KisSession(credentials, token)
             discovery, checked_at = timestamp_rankings(
                 lambda: _discover_rankings(client, credentials, token),
                 lambda: dt.datetime.now().astimezone(),
@@ -199,7 +276,7 @@ def main(
                 client,
                 OpeningGapCapture(
                     output,
-                    KisSession(credentials, token),
+                    session,
                     checked_at,
                     risk_screen,
                 ),
@@ -234,7 +311,7 @@ def main(
             )
             scanner = KisPaperScanner(
                 client,
-                KisSession(credentials, token),
+                session,
                 engine,
             )
             for stock in candidates:
@@ -256,6 +333,28 @@ def main(
                 for stock in blocked_followers
             )
             scan_completed = True
+            published_at = dt.datetime.now().astimezone()
+            conditional_publications = build_trade_signal_contracts(
+                store.recommendations(),
+                opportunity,
+                strategy,
+                published_at,
+                started_at,
+            )
+            quote_batch = evaluate_quote_publications(
+                conditional_publications,
+                exchange_by_symbol={
+                    stock.symbol: stock.exchange for stock in candidates
+                },
+                fetch_quote=lambda exchange, symbol: fetch_kis_us_level_one_quote(
+                    client,
+                    session,
+                    exchange=exchange,
+                    symbol=symbol,
+                ),
+                scan_started_at=started_at,
+                clock=lambda: dt.datetime.now().astimezone(),
+            )
     finally:
         retry_events = captured_retry_events()
         end_retry_capture(retry_capture)
@@ -270,15 +369,30 @@ def main(
         )
         append_kis_retry_audit(output, started_at, retry_events)
     write_report(output / "recommendations_ko.md", store)
-    published_at = dt.datetime.now().astimezone()
     queued = write_alert_outbox(output, store, published_at)
-    contract_signals = publish_trade_signal_contracts(
+    contract_signals = append_trade_signal_contracts(
         output,
-        store.recommendations(),
-        opportunity,
-        strategy,
-        published_at,
-        started_at,
+        conditional_publications,
+    )
+    quote_contracts = append_quote_actionability_contracts(output, quote_batch)
+    waiting_validations = sum(
+        assessment.status is QuoteAssessmentStatus.VALIDATED_WAITING
+        for assessment in quote_batch.assessments
+    )
+    trigger_validations = sum(
+        assessment.status is QuoteAssessmentStatus.VALIDATED_TRIGGER_REACHED
+        for assessment in quote_batch.assessments
+    )
+    blocked_assessments = (
+        len(quote_batch.assessments) - waiting_validations - trigger_validations
+    )
+    quote_attempts = sum(
+        assessment.status
+        not in {
+            QuoteAssessmentStatus.MARKET_CLOSED,
+            QuoteAssessmentStatus.SETUP_INVALIDATED,
+        }
+        for assessment in quote_batch.assessments
     )
     write_scan_summary(
         output / "kis_scan_summary_ko.md",
@@ -298,7 +412,10 @@ def main(
         + f"추적 {len(followers) + len(blocked_followers)}개, 추천 "
         + f"{len(store.recommendations())}개, 인과성 제외 {causality_exclusions}개, "
         + f"신규 카드 {queued}개, v2 기회 {int(opportunity is not None)}개, "
-        + f"신규 v2 조건부 신호 {contract_signals}개, {output}"
+        + f"신규 v2 조건부 신호 {contract_signals}개, 호가 평가 {quote_attempts}건, "
+        + f"검증 대기 {waiting_validations}건, 검증 도달 {trigger_validations}건, "
+        + f"차단 {blocked_assessments}건, 신규 현재호가 신호 "
+        + f"{quote_contracts.validated_signal_count}개, {output}"
     )
     exit_code = scan_exit_code(
         tuple(observations),
