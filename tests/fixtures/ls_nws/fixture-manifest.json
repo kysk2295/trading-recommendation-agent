@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "frames": [
+    {
+      "schema_version": 1,
+      "sequence": 1,
+      "received_at": "2026-07-15T09:01:01+09:00",
+      "wire_kind": "text",
+      "payload_path": "frame-000001.json"
+    },
+    {
+      "schema_version": 1,
+      "sequence": 2,
+      "received_at": "2026-07-15T09:01:02+09:00",
+      "wire_kind": "binary",
+      "payload_path": "frame-000002.json"
+    }
+  ]
+}
