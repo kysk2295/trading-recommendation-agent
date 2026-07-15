@@ -47,6 +47,24 @@ Researcher·Developer·Reviewer
 - 연구 게이트: 과거 백테스트와 실시간 paper 결과를 통과한 전략만 활성화한다.
 - 적응형 평가기: checksum된 개별 거래를 최근 5/10/20/60 적격일로 다시 집계하고 장전 시점 시장 국면별 열화를 분리해 조기중단·진단·비교·최종검토 권고만 만든다.
 
+## KR Theme 읽기 전용 source plane
+
+한국장 종목 발굴은 미국 Paper execution과 분리된 `kr_equities/opportunity_manager/theme_momentum` vertical이다. 현재 source plane은 주문권한 없이 다음 계보만 확정한다.
+
+```text
+OpenDART 당일 공시 GET + LS NWS001 뉴스 WebSocket
+→ 응답·frame 원문 receipt 선확정
+→ strict parser와 최초 관측시각
+→ NEWS/DART catalyst + observation lineage
+→ source별 immutable terminal run
+→ news·dart·kis_ranking·volume_surge exact coverage cycle
+→ keyword baseline과 KR Theme Opportunity
+```
+
+LS stream은 exact OAuth와 `tr_type=3 / NWS / NWS001`만 노출한다. 첫 frame의 성공 ACK를 검증하기 전에는 뉴스를 수용하지 않고, ACK 없는 종료·뉴스 선행·중복 ACK를 fail-closed한다. 공식 예제의 7필드 데이터형과 실제 운영에서 관측된 `categoryid`·`codeaccu` 동시 확장형만 허용하며 알 수 없는 extra field는 계속 거부한다. 모든 control/data frame은 parse 전에 mode-600 append-only SQLite에 저장되고 terminal restart는 credential·token·network를 다시 열지 않는다.
+
+2026-07-16 bounded production smoke는 ACK 1건과 뉴스 1건을 receipt 2건, catalyst 1건으로 확정했다. 이 경로에는 LS 계좌·잔고·포지션·주문 API, 국내 실거래, TradeSignal과 수익성 판정이 없다. KIS 국내 랭킹·거래량 급증, 기사 본문, KR quote·VI·가격제한과 shadow signal은 후속 source/risk milestone이다.
+
 ## Lane control-plane과 독립 Reviewer
 
 공유 검증 커널 위에 세 lane을 점진적으로 분리한다.
