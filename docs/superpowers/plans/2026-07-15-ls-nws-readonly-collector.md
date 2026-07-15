@@ -333,11 +333,11 @@ git commit -m "docs: record LS NWS collector milestone"
 **Files:**
 - Review all files listed above
 
-- [ ] **Step 1: Review the complete diff**
+- [x] **Step 1: Review the complete diff**
 
 Check for credential literals, `/stock/accno`, `/stock/order`, `tr_type` 1/2, arbitrary endpoint inputs, raw payload logging, non-atomic reports, hidden network in fixture/restart and scope creep. Fix findings through new RED/GREEN tests.
 
-- [ ] **Step 2: Re-run targeted and full gates after review fixes**
+- [x] **Step 2: Re-run targeted and full gates after review fixes**
 
 Run the focused LS suite, `uv run pytest -q`, `uv run ruff check .`, `uv run basedpyright`, manual CLI fixture QA and `git diff --check` again.
 

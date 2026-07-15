@@ -35,10 +35,13 @@ LS `/stock/accno`, `/stock/order`, WebSocket 계좌등록·해제 `tr_type=1/2`,
 - 기본 secret: `~/.config/trading-agent/ls.env`
 - 설정: `LS_APP_KEY`, `LS_APP_SECRET` 정확히 한 번씩
 - current-user-owned regular file, symlink 금지, exact mode `600`
+- `O_NOFOLLOW` 단일 descriptor를 열어 `fstat` 뒤 최대 1 KiB만 읽으므로 검사/읽기 사이 경로 교체를 허용하지 않음
 - 20..256자 printable non-whitespace ASCII
 - credential와 access token은 repr에서 제외
 - token 요청은 secret을 URL query에 넣지 않고 form body로 전송
-- status/content type/64 KiB response cap/JSON/token 형식을 검증하고 provider body·message를 렌더링하지 않음
+- 환경 proxy를 신뢰하지 않고 redirect를 따르지 않음
+- status/content type/64 KiB streaming response cap/JSON/token 형식을 검증하고 provider body·message를 읽거나 렌더링하지 않음
+- transport 예외의 credential-bearing request object를 sanitized 예외 context에 남기지 않음
 - token cache는 이번 범위에 없으며 collection process당 한 번만 발급
 
 ### NWS-only WebSocket
@@ -51,7 +54,7 @@ final URL을 token 전송 전에 다시 검증하고 canonical NWS subscription 
 
 - duplicate JSON key와 extra/missing field 거부
 - exact `NWS`/`NWS001`, valid `YYYYMMDD`/`HHMMSS`, 24자리 `realkey`
-- title trim/control/length, code/id/bodysize bounds
+- title trim/control/length과 lone surrogate, code/id/bodysize bounds
 - `date + time + Asia/Seoul` publication이 receipt보다 미래면 차단
 - collection date 불일치 차단
 - canonical flat JSON에 공식 필드와 `tr_cd`, `tr_key` 보존
@@ -59,7 +62,7 @@ final URL을 token 전송 전에 다시 검증하고 canonical NWS subscription 
 
 각 frame은 parser 전에 기존 `KrSourceReceipt`에 append한다. `http_status=101`은 개별 application status가 아니라 해당 frame을 전달한 연결이 성공적인 WebSocket upgrade를 통과했다는 inherited transport status다. wire kind는 `ls:nws:frame:<sequence>:<wire_kind>` request key에 보존한다.
 
-malformed/date/future/duplicate/stream/token 실패는 받은 receipt와 앞선 catalyst를 삭제하지 않고 safe failure code의 immutable news source run으로 종결한다. 정상 연결의 zero-news bounded window는 성공 0건이다. terminal success와 failed run 모두 같은 cycle 재실행에서 secret·token·network 없이 저장 결과를 반환한다.
+malformed/date/future/duplicate/stream/token 실패는 받은 receipt와 앞선 catalyst를 삭제하지 않고 safe failure code의 immutable news source run으로 종결한다. receipt append 뒤 비정상 종료된 run은 재시작에서 source를 열지 않고 `interrupted_run` 실패로 확정해 빈 성공으로 바꾸지 않는다. 정상 연결의 zero-news bounded window는 성공 0건이다. source run에는 collection date를 영속하며 terminal success와 failed run 모두 같은 cycle·날짜 재실행에서만 secret·token·network 없이 저장 결과를 반환한다.
 
 ### Fixture와 CLI
 
@@ -68,21 +71,24 @@ malformed/date/future/duplicate/stream/token 실패는 받은 receipt와 앞선 
 - fixture mode: path-contained manifest의 synthetic text/binary frame을 순서대로 재생
 - production mode: lazy opener 안에서만 strict secret, exact OAuth와 exact NWS stream 조합
 - fixture와 secret path 동시 입력 차단
-- terminal restart는 production mode로 호출해도 secret path를 읽지 않음
+- terminal restart는 production mode로 호출해도 secret path를 읽지 않고 fixture mode에서도 manifest를 다시 읽지 않음
 - source run 실패도 mode-600 원장과 aggregate 보고서에 보존한 뒤 nonzero 종료
 - 보고서는 title, code, realkey, id, checksum, frame, credential, token, endpoint와 provider message를 포함하지 않음
-- 보고서는 temporary mode-600 file을 fsync한 뒤 원자적으로 교체
+- DB·Writer lock·SQLite sidecar와 report 최종 경로 충돌을 DB 생성 전에 거부
+- 보고서는 예측 불가능한 mode-600 regular temporary file을 `fstat`하고 file·directory를 fsync한 뒤 원자적으로 교체
 
 ## 검증
 
-- LS focused suite: `140 passed`
-- 전체 pytest: `1310 passed in 20.61s`
+- LS focused suite: `149 passed`
+- 전체 pytest: `1319 passed in 20.90s`
 - Ruff 전체: 통과
 - basedpyright 전체: 오류 0, 경고 0
 - `uv run python run_ls_nws_collect.py --help`: exit 0
+- `./run_ls_nws_collect.py --help`: exit 0
 - invalid date: exit 2, DB·보고서 생성 없음
 - committed fixture 첫 실행: receipt 2, catalyst 2, observation link 2, news source run success
-- 같은 cycle 재실행: 신규 receipt 0, 신규 catalyst 0, source opener no-op
+- 같은 cycle 재실행: 존재하지 않는 fixture manifest를 지정해도 신규 receipt 0, 신규 catalyst 0, source opener no-op
+- DB/report 동일 경로 입력: exit 2, DB·보고서 생성 없음
 - DB, Writer lock, aggregate report mode: 모두 `600`
 - 보고서에서 fixture title·realkey·credential setting marker 비노출
 - 실제 LS/OpenDART/KIS/Alpaca/LLM/외부 메시지 호출: 0
@@ -100,6 +106,7 @@ fixture 결과는 LS 운영 가용성, 기사 coverage, 테마 분류 정확도,
 - `0f69423 test: add deterministic LS NWS fixture`
 - `9caa97b feat: add LS NWS collection CLI`
 - `a25be34 fix: make LS NWS collector executable`
+- `15526b8 fix: harden LS NWS collection boundaries`
 
 ## 다음 단계
 
