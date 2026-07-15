@@ -22,6 +22,7 @@ from trading_agent.paper_mutation_executor_models import (
 )
 from trading_agent.paper_mutation_intents import (
     entry_order_mutation_intent,
+    protective_oco_cancel_mutation_intent,
     protective_oco_mutation_intent,
     safety_action_mutation_intent,
 )
@@ -38,6 +39,7 @@ from trading_agent.paper_mutation_models import (
     PaperProtectiveOcoReceipt,
 )
 from trading_agent.paper_mutation_store import StoredPaperMutationEvent
+from trading_agent.paper_protective_oco_lifecycle import ProtectiveOcoResizeCancelPlan
 from trading_agent.paper_protective_oco_models import ProtectiveOcoExitPlan
 from trading_agent.paper_protective_oco_store import StoredProtectiveOcoPlan
 from trading_agent.paper_safety_models import (
@@ -108,6 +110,27 @@ class PaperMutationExecutor:
             intent,
             lambda: self._dependencies.broker.submit_entry(order),
             persist_intent=False,
+        )
+
+    def execute_protective_oco_cancel(
+        self,
+        account_fingerprint: AccountFingerprint,
+        stored: StoredProtectiveOcoPlan,
+        cancel_plan: ProtectiveOcoResizeCancelPlan,
+    ) -> PaperMutationExecutionResult:
+        intent = protective_oco_cancel_mutation_intent(
+            account_fingerprint,
+            stored,
+            cancel_plan,
+        )
+        action = PaperCancelOrderAction(
+            cancel_plan.broker_order_id,
+            cancel_plan.symbol,
+            True,
+        )
+        return self._run(
+            intent,
+            lambda: self._dependencies.broker.cancel_order(action),
         )
 
     def execute_safety_plan(

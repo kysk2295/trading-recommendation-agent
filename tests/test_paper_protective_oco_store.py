@@ -184,6 +184,41 @@ def test_recovery_rejects_a_broker_oco_without_an_immutable_plan(
         )
 
 
+def test_recovery_rejects_an_oco_with_a_mutated_execution_contract(
+    tmp_path: Path,
+) -> None:
+    store = initialized_store(tmp_path)
+    snapshot = replace(
+        _snapshot(),
+        stop_loss=replace(_snapshot().stop_loss, time_in_force="gtc"),
+    )
+    before = PaperOrderStreamHeartbeat(
+        PaperStreamEpoch("epoch-mutated-oco"),
+        OBSERVED_AT - dt.timedelta(seconds=3),
+        OBSERVED_AT - dt.timedelta(seconds=3),
+        OBSERVED_AT - dt.timedelta(seconds=2),
+    )
+    after = replace(before, pong_at=OBSERVED_AT + dt.timedelta(seconds=2))
+    state = PaperRecoveryState(
+        PaperBrokerState(account(), (), (), (snapshot,)),
+        (),
+        protective_ocos=(snapshot,),
+    )
+    with store.writer() as writer:
+        _ = writer.save_protective_oco_plan(_plan(), OBSERVED_AT)
+
+    with pytest.raises(
+        PaperStreamRecoveryIncompleteError,
+        match="보호 OCO와 일치하는 immutable 계획",
+    ):
+        _ = build_paper_stream_recovery_observation(
+            before,
+            after,
+            state,
+            store.reconciliation_ledger(),
+        )
+
+
 def test_recovery_protective_oco_hash_is_bound_to_the_parent_record(
     tmp_path: Path,
 ) -> None:

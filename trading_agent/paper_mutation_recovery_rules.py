@@ -77,7 +77,7 @@ def decide_paper_mutation_recovery(
             )
         case PaperMutationOperation.SUBMIT_PROTECTIVE_OCO:
             return _oco_decision(case)
-        case PaperMutationOperation.CANCEL_ORDER:
+        case PaperMutationOperation.CANCEL_PROTECTIVE_OCO | PaperMutationOperation.CANCEL_ORDER:
             return _cancel_decision(case)
         case PaperMutationOperation.CLOSE_POSITION:
             return _close_decision(case)

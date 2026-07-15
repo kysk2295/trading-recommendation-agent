@@ -131,4 +131,4 @@ def test_safety_cli_migrates_existing_v5_ledger_to_current_schema_before_network
     with sqlite3.connect(database) as connection:
         version = connection.execute("PRAGMA user_version").fetchone()
     assert code == 0
-    assert version == (8,)
+    assert version == (9,)

@@ -60,7 +60,7 @@ def read_paper_mutation_recovery_lookups(
                         snapshot,
                     )
                 )
-            case PaperMutationOperation.CANCEL_ORDER:
+            case PaperMutationOperation.CANCEL_PROTECTIVE_OCO | PaperMutationOperation.CANCEL_ORDER:
                 broker_order_id = intent.broker_order_id
                 if broker_order_id is None:
                     continue
@@ -106,6 +106,7 @@ def paper_mutation_lookup_reasons(
         in {
             PaperMutationOperation.SUBMIT_ENTRY,
             PaperMutationOperation.SUBMIT_PROTECTIVE_OCO,
+            PaperMutationOperation.CANCEL_PROTECTIVE_OCO,
             PaperMutationOperation.CANCEL_ORDER,
         }
     )

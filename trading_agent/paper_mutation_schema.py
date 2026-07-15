@@ -64,7 +64,7 @@ CREATE TRIGGER IF NOT EXISTS paper_mutation_events_no_delete
 BEFORE DELETE ON paper_mutation_events BEGIN SELECT RAISE(ABORT, 'append-only'); END;
 """
 
-CREATE_PAPER_MUTATION_SCHEMA: Final = (
+CREATE_PAPER_MUTATION_SCHEMA_V8: Final = (
     CREATE_PAPER_MUTATION_SCHEMA_V7.replace(
         "('submit_protective_oco', 'cancel_order', 'close_position')",
         "('submit_entry', 'submit_protective_oco', 'cancel_order', 'close_position')",
@@ -107,6 +107,19 @@ CREATE_PAPER_MUTATION_SCHEMA: Final = (
     )
 )
 
+CREATE_PAPER_MUTATION_SCHEMA: Final = CREATE_PAPER_MUTATION_SCHEMA_V8.replace(
+    "('submit_entry', 'submit_protective_oco', 'cancel_order', 'close_position')",
+    "('submit_entry', 'submit_protective_oco', 'cancel_protective_oco', 'cancel_order', 'close_position')",
+).replace(
+    "    (operation = 'cancel_order' AND protective_plan_key IS NULL",
+    "    (operation = 'cancel_protective_oco' AND protective_plan_key IS NOT NULL\n"
+    "      AND safety_plan_key IS NULL AND action_sequence IS NULL\n"
+    "      AND broker_order_id IS NOT NULL AND side IS NULL AND quantity IS NULL\n"
+    "      AND entry_intent_id IS NULL)\n"
+    "    OR\n"
+    "    (operation = 'cancel_order' AND protective_plan_key IS NULL",
+)
+
 MIGRATE_PAPER_MUTATION_V7_TO_V8: Final = f"""
 DROP TRIGGER paper_mutation_intents_no_update;
 DROP TRIGGER paper_mutation_intents_no_delete;
@@ -115,7 +128,7 @@ DROP TRIGGER paper_mutation_events_no_delete;
 DROP INDEX paper_mutation_intent_identity;
 ALTER TABLE paper_mutation_events RENAME TO paper_mutation_events_v7;
 ALTER TABLE paper_mutation_intents RENAME TO paper_mutation_intents_v7;
-{CREATE_PAPER_MUTATION_SCHEMA}
+{CREATE_PAPER_MUTATION_SCHEMA_V8}
 INSERT INTO paper_mutation_intents (
   mutation_key, account_fingerprint, created_at, operation,
   protective_plan_key, safety_plan_key, action_sequence, request_sha256,
@@ -128,4 +141,19 @@ FROM paper_mutation_intents_v7;
 INSERT INTO paper_mutation_events SELECT * FROM paper_mutation_events_v7;
 DROP TABLE paper_mutation_events_v7;
 DROP TABLE paper_mutation_intents_v7;
+"""
+
+MIGRATE_PAPER_MUTATION_V8_TO_V9: Final = f"""
+DROP TRIGGER paper_mutation_intents_no_update;
+DROP TRIGGER paper_mutation_intents_no_delete;
+DROP TRIGGER paper_mutation_events_no_update;
+DROP TRIGGER paper_mutation_events_no_delete;
+DROP INDEX paper_mutation_intent_identity;
+ALTER TABLE paper_mutation_events RENAME TO paper_mutation_events_v8;
+ALTER TABLE paper_mutation_intents RENAME TO paper_mutation_intents_v8;
+{CREATE_PAPER_MUTATION_SCHEMA}
+INSERT INTO paper_mutation_intents SELECT * FROM paper_mutation_intents_v8;
+INSERT INTO paper_mutation_events SELECT * FROM paper_mutation_events_v8;
+DROP TABLE paper_mutation_events_v8;
+DROP TABLE paper_mutation_intents_v8;
 """

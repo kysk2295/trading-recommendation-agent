@@ -12,6 +12,8 @@ from trading_agent.paper_execution_models import IntentId, PaperOrderSide
 from trading_agent.paper_protective_oco_models import (
     ProtectiveOcoClientOrderId,
     ProtectiveOcoExitPlan,
+    ProtectiveOcoLegKind,
+    ProtectiveOcoOrderType,
     ProtectiveOcoSnapshot,
 )
 
@@ -123,15 +125,33 @@ def protective_oco_snapshot_matches_plan(
 ) -> bool:
     take_profit = snapshot.take_profit
     stop_loss = snapshot.stop_loss
+    quantities = (take_profit.quantity, stop_loss.quantity)
+    filled_quantities = (take_profit.filled_quantity, stop_loss.filled_quantity)
     return (
-        take_profit.client_order_id == plan.client_order_id
+        take_profit.kind is ProtectiveOcoLegKind.TAKE_PROFIT
+        and stop_loss.kind is ProtectiveOcoLegKind.STOP_LOSS
+        and take_profit.order_type is ProtectiveOcoOrderType.LIMIT
+        and stop_loss.order_type is ProtectiveOcoOrderType.STOP
+        and take_profit.broker_order_id != stop_loss.broker_order_id
+        and take_profit.client_order_id == plan.client_order_id
+        and bool(stop_loss.client_order_id)
         and take_profit.symbol == plan.symbol
         and stop_loss.symbol == plan.symbol
         and take_profit.side is plan.side
         and stop_loss.side is plan.side
-        and take_profit.quantity == plan.quantity
+        and all(quantity.is_finite() and 0 < quantity <= plan.quantity for quantity in quantities)
+        and all(quantity.is_finite() for quantity in filled_quantities)
+        and max(quantities) == plan.quantity
+        and 0 <= take_profit.filled_quantity <= take_profit.quantity
+        and 0 <= stop_loss.filled_quantity <= stop_loss.quantity
         and take_profit.limit_price == plan.take_profit_limit
+        and take_profit.stop_price is None
+        and stop_loss.limit_price is None
         and stop_loss.stop_price == plan.stop_price
+        and take_profit.time_in_force == plan.time_in_force
+        and stop_loss.time_in_force == plan.time_in_force
+        and take_profit.extended_hours is plan.extended_hours
+        and stop_loss.extended_hours is plan.extended_hours
     )
 
 

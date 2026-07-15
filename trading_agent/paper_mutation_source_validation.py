@@ -28,6 +28,21 @@ def require_mutation_source(
         if entry_row != entry_expected:
             raise InvalidPaperMutationRecordError
         return
+    if intent.operation is PaperMutationOperation.CANCEL_PROTECTIVE_OCO:
+        protective_cancel_row: tuple[str] | None = connection.execute(
+            """SELECT plans.symbol
+            FROM protective_oco_plans AS plans
+            JOIN paper_recovery_protective_oco_legs AS legs
+              ON legs.plan_key = plans.plan_key
+            WHERE plans.plan_key = ?
+              AND legs.parent_broker_order_id = ?
+              AND legs.leg_kind = 'take_profit'
+            LIMIT 1""",
+            (intent.protective_plan_key, intent.broker_order_id),
+        ).fetchone()
+        if protective_cancel_row != (intent.symbol,):
+            raise InvalidPaperMutationRecordError
+        return
     if intent.protective_plan_key is not None:
         protective_row: tuple[str, str, int] | None = connection.execute(
             "SELECT symbol, side, quantity FROM protective_oco_plans WHERE plan_key = ?",

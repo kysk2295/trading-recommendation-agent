@@ -8,6 +8,7 @@ from trading_agent.paper_mutation_arm import PaperMutationArm
 from trading_agent.paper_mutation_recovery_models import PaperMutationRecoveryResult
 from trading_agent.paper_operating_mutation_models import (
     PaperEntryMutationExecution,
+    PaperProtectiveCancelMutationExecution,
     PaperProtectiveMutationExecution,
     PaperSafetyMutationExecution,
 )
@@ -65,7 +66,12 @@ class PaperOperatingSession(Protocol):
         self,
         parent_intent_id: IntentId,
         arm: PaperMutationArm,
-    ) -> PaperProtectiveMutationExecution | NoProtectiveExitRequired | BlockedProtectiveExitPlan: ...
+    ) -> (
+        PaperProtectiveMutationExecution
+        | PaperProtectiveCancelMutationExecution
+        | NoProtectiveExitRequired
+        | BlockedProtectiveExitPlan
+    ): ...
 
 
 class InactivePaperOperatingSessionError(RuntimeError):

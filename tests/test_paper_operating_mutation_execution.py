@@ -15,10 +15,9 @@ from tests.paper_entry_mutation_fixtures import FakeEntryMutationBroker
 from tests.paper_runtime_fixtures import market_clock
 from tests.paper_trade_update_ingestion_fixtures import (
     TradeUpdateStream,
-    broker_state,
     recovery_state,
 )
-from tests.test_paper_mutation_executor import _oco_snapshot
+from tests.test_paper_mutation_executor import _oco_snapshot, _protective_plan
 from tests.trade_update_ledger_fixtures import (
     FINGERPRINT,
     OBSERVED_AT,
@@ -32,9 +31,11 @@ from trading_agent.alpaca_paper_order_stream import (
 )
 from trading_agent.execution_ledger_reader import ReconciliationLedger
 from trading_agent.paper_execution_models import (
+    BrokerOrderId,
     IntentId,
     PaperBrokerState,
     PaperMarketClockSnapshot,
+    PaperOrderSnapshot,
     PaperPositionSnapshot,
 )
 from trading_agent.paper_mutation_arm import (
@@ -45,6 +46,7 @@ from trading_agent.paper_mutation_arm import (
 from trading_agent.paper_mutation_executor_models import PaperMutationExecutionState
 from trading_agent.paper_mutation_recovery_models import PaperMutationRecoveryState
 from trading_agent.paper_operating_mutation_models import (
+    PaperProtectiveCancelMutationExecution,
     PaperProtectiveMutationExecution,
     PaperSafetyMutationExecution,
 )
@@ -54,18 +56,62 @@ from trading_agent.paper_operating_session_models import (
     PaperOrderAdmissionRequest,
     PaperPostMutationReconciliationError,
 )
-from trading_agent.paper_protective_exit import BlockedProtectiveExitPlan
+from trading_agent.paper_protective_exit import (
+    BlockedProtectiveExitPlan,
+    NoProtectiveExitRequired,
+)
+from trading_agent.paper_protective_oco_models import (
+    ProtectiveOcoExitPlan,
+    ProtectiveOcoSnapshot,
+)
 from trading_agent.paper_risk import PaperRiskConfig
 from trading_agent.paper_safety_models import BlockedPaperSafetyPlan, PaperSafetyPhase
 from trading_agent.paper_stream_owner import PaperStreamOwnerDependencies
 from trading_agent.paper_stream_recovery import PaperRecoveryState
-from trading_agent.paper_stream_recovery_models import PaperProtectiveOcoMutationLookup
+from trading_agent.paper_stream_recovery_models import (
+    PaperCancelOrderMutationLookup,
+    PaperProtectiveOcoMutationLookup,
+)
 from trading_agent.paper_trade_update_runtime import (
     PaperOperatingSessionDependencies,
     _open_paper_operating_session,
 )
 
 ARM = PaperMutationArm(PAPER_MUTATION_ARM_VALUE)
+
+
+def _observed_protection(
+    plan: ProtectiveOcoExitPlan,
+    observed_at: dt.datetime,
+    *,
+    identity: int,
+    status: str = "new",
+) -> ProtectiveOcoSnapshot:
+    raw = _oco_snapshot()
+    return replace(
+        raw,
+        observed_at=observed_at,
+        take_profit=replace(
+            raw.take_profit,
+            broker_order_id=BrokerOrderId(f"oco-parent-{identity}"),
+            client_order_id=plan.client_order_id,
+            symbol=plan.symbol,
+            side=plan.side,
+            status=status,
+            quantity=Decimal(plan.quantity),
+            limit_price=plan.take_profit_limit,
+        ),
+        stop_loss=replace(
+            raw.stop_loss,
+            broker_order_id=BrokerOrderId(f"oco-stop-{identity}"),
+            client_order_id=f"oco-stop-client-{identity}",
+            symbol=plan.symbol,
+            side=plan.side,
+            status=status,
+            quantity=Decimal(plan.quantity),
+            stop_price=plan.stop_price,
+        ),
+    )
 
 
 def test_operating_session_surface_exposes_current_epoch_safety_execution() -> None:
@@ -181,6 +227,7 @@ def test_current_epoch_entry_cutoff_requires_post_mutation_reconciliation(
         broker_opener,
     )
 
+    first: PaperSafetyMutationExecution | BlockedPaperSafetyPlan | None = None
     with _open_paper_operating_session(
         AlpacaPaperCredentials("test-key", "test-secret"),
         store,
@@ -223,7 +270,10 @@ def test_current_epoch_entry_cutoff_requires_post_mutation_reconciliation(
     assert first.reconciled_at > evaluated_at
 
 
-@pytest.mark.parametrize("mode", ("acknowledged", "timeout", "epoch_change"))
+@pytest.mark.parametrize(
+    "mode",
+    ("acknowledged", "timeout", "epoch_change", "closed_session"),
+)
 def test_current_epoch_partial_fill_submits_one_protective_oco_and_recovers_timeout(
     tmp_path: Path,
     mode: str,
@@ -261,6 +311,11 @@ def test_current_epoch_partial_fill_submits_one_protective_oco_and_recovers_time
         _: AlpacaPaperCredentials,
     ) -> Iterator[FakeEntryMutationBroker]:
         yield broker
+
+    def current_time() -> dt.datetime:
+        return OBSERVED_AT + dt.timedelta(
+            seconds=max(0, stream.heartbeat_count - 2),
+        )
 
     def current_state(
         _: AlpacaPaperCredentials,
@@ -324,14 +379,57 @@ def test_current_epoch_partial_fill_submits_one_protective_oco_and_recovers_time
             targeted_orders=targeted,
         )
 
+    def runtime_state(
+        _: AlpacaPaperCredentials,
+    ) -> tuple[PaperBrokerState, PaperMarketClockSnapshot]:
+        observed_at = OBSERVED_AT + dt.timedelta(
+            seconds=stream.heartbeat_count - 1.5,
+        )
+        state = recovery_state(
+            store.reconciliation_ledger().unresolved_intent_ids,
+            observed_at,
+        )
+        open_orders = tuple(
+            replace(
+                order,
+                filled_quantity=Decimal("10"),
+                filled_average_price=Decimal("10.05"),
+            )
+            for order in state.targeted_orders
+        )
+        protections: tuple[ProtectiveOcoSnapshot, ...] = ()
+        if broker.calls:
+            protections = (
+                _observed_protection(
+                    store.protective_oco_plans()[-1].plan,
+                    observed_at,
+                    identity=1,
+                ),
+            )
+        positioned = replace(
+            state.broker_state,
+            open_orders=open_orders,
+            positions=(PaperPositionSnapshot("AAA", Decimal("10"), Decimal("100.5")),),
+            protective_ocos=protections,
+        )
+        clock = replace(
+            market_clock(),
+            observed_at=observed_at,
+            market_timestamp=observed_at.astimezone(
+                dt.timezone(dt.timedelta(hours=-4)),
+            ),
+            is_open=mode != "closed_session",
+        )
+        return positioned, clock
+
     dependencies = PaperOperatingSessionDependencies(
         PaperStreamOwnerDependencies(
             current_state,
             stream_opener,
-            lambda: OBSERVED_AT + dt.timedelta(seconds=4),
+            current_time,
         ),
-        lambda _: (broker_state(OBSERVED_AT), market_clock()),
-        lambda: OBSERVED_AT + dt.timedelta(seconds=4),
+        runtime_state,
+        current_time,
         broker_opener,
     )
 
@@ -341,6 +439,11 @@ def test_current_epoch_partial_fill_submits_one_protective_oco_and_recovers_time
         dependencies,
     ) as session:
         first = session.execute_protective_oco(store.intents()[0].intent_id, ARM)
+        if mode == "closed_session":
+            assert isinstance(first, BlockedProtectiveExitPlan)
+            assert any("정규장" in reason for reason in first.reasons)
+            assert broker.calls == []
+            return
         if mode == "epoch_change":
             assert isinstance(first, BlockedProtectiveExitPlan)
             assert "연결 세대" in first.reasons[0]
@@ -355,6 +458,254 @@ def test_current_epoch_partial_fill_submits_one_protective_oco_and_recovers_time
     assert tuple(recovery.state for recovery in first.recoveries) == (
         (PaperMutationRecoveryState.ACKNOWLEDGED,) if times_out else ()
     )
-    assert isinstance(replay, PaperProtectiveMutationExecution)
-    assert replay.result.state is PaperMutationExecutionState.ALREADY_ACKNOWLEDGED
+    assert isinstance(replay, NoProtectiveExitRequired)
     assert broker.calls == ["oco:AAA"]
+
+
+@pytest.mark.parametrize(
+    "mode",
+    (
+        "acknowledged",
+        "cancel_timeout",
+        "replacement_timeout",
+        "post_epoch_change",
+    ),
+)
+def test_additional_fill_cancels_then_replaces_protection_on_a_later_call(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    store = initialized_store(tmp_path)
+    with store.writer() as writer:
+        _ = writer.append_trade_update(
+            trade_update(filled_qty="15", execution_qty="15"),
+            account_fingerprint=FINGERPRINT,
+            connection_epoch="epoch-from-stream",
+            received_at=OBSERVED_AT,
+        )
+        _ = writer.save_protective_oco_plan(_protective_plan(), OBSERVED_AT)
+    broker = FakeEntryMutationBroker(store.path)
+    if mode == "cancel_timeout":
+        broker.cancel_failure = httpx2.ReadTimeout("timeout")
+
+    class ResizeStream(TradeUpdateStream):
+        @property
+        def connection_epoch(self) -> PaperStreamEpoch:
+            if mode == "post_epoch_change" and broker.calls and self.heartbeat_count >= 8:
+                return PaperStreamEpoch("epoch-after-cancel")
+            return PaperStreamEpoch("epoch-from-stream")
+
+    stream = ResizeStream()
+
+    @contextmanager
+    def stream_opener(
+        _: AlpacaPaperCredentials,
+    ) -> Iterator[TradeUpdateStream]:
+        yield stream
+
+    @contextmanager
+    def broker_opener(
+        _: AlpacaPaperCredentials,
+    ) -> Iterator[FakeEntryMutationBroker]:
+        yield broker
+
+    def current_time() -> dt.datetime:
+        return OBSERVED_AT + dt.timedelta(
+            seconds=max(0, stream.heartbeat_count - 2),
+        )
+
+    def entry_and_position(
+        observed_at: dt.datetime,
+        ledger: ReconciliationLedger,
+    ) -> tuple[PaperBrokerState, tuple]:
+        state = recovery_state(ledger.unresolved_intent_ids, observed_at)
+        targeted = tuple(
+            replace(
+                order,
+                filled_quantity=Decimal("15"),
+                filled_average_price=Decimal("10.05"),
+            )
+            for order in state.targeted_orders
+        )
+        positioned = replace(
+            state.broker_state,
+            positions=(PaperPositionSnapshot("AAA", Decimal("15"), Decimal("150.75")),),
+        )
+        return positioned, targeted
+
+    def current_state(
+        _: AlpacaPaperCredentials,
+        ledger: ReconciliationLedger,
+    ) -> PaperRecoveryState:
+        observed_at = OBSERVED_AT + dt.timedelta(
+            seconds=stream.heartbeat_count - 1.5,
+        )
+        positioned, targeted = entry_and_position(observed_at, ledger)
+        old_plan = store.protective_oco_plans()[0].plan
+        old_open = _observed_protection(old_plan, observed_at, identity=1)
+        if "oco:AAA" in broker.calls:
+            replacement = _observed_protection(
+                store.protective_oco_plans()[-1].plan,
+                observed_at,
+                identity=2,
+            )
+            old_terminal = _observed_protection(
+                old_plan,
+                observed_at,
+                identity=1,
+                status="canceled",
+            )
+            mutation_lookups = ()
+            if mode == "replacement_timeout" and store.paper_mutation_events()[-1].event.event_type.value in (
+                "attempted",
+                "ambiguous",
+            ):
+                mutation_lookups = (
+                    PaperProtectiveOcoMutationLookup(
+                        store.paper_mutation_intents()[-1].mutation_key,
+                        observed_at,
+                        replacement,
+                    ),
+                )
+            return PaperRecoveryState(
+                replace(positioned, protective_ocos=(replacement,)),
+                targeted,
+                protective_ocos=(old_terminal, replacement),
+                mutation_lookups=mutation_lookups,
+            )
+        if broker.calls:
+            old_terminal = _observed_protection(
+                old_plan,
+                observed_at,
+                identity=1,
+                status="canceled",
+            )
+            mutation_lookups = ()
+            if mode == "cancel_timeout" and store.paper_mutation_events()[-1].event.event_type.value in (
+                "attempted",
+                "ambiguous",
+            ):
+                leg = old_terminal.take_profit
+                canceled_parent = PaperOrderSnapshot(
+                    leg.broker_order_id,
+                    IntentId(leg.client_order_id),
+                    leg.symbol,
+                    leg.side,
+                    leg.status,
+                    leg.quantity,
+                    leg.filled_quantity,
+                    leg.limit_price,
+                    leg.time_in_force,
+                    leg.extended_hours,
+                )
+                mutation_lookups = (
+                    PaperCancelOrderMutationLookup(
+                        store.paper_mutation_intents()[-1].mutation_key,
+                        observed_at,
+                        leg.broker_order_id,
+                        canceled_parent,
+                    ),
+                )
+            return PaperRecoveryState(
+                positioned,
+                targeted,
+                protective_ocos=(old_terminal,),
+                mutation_lookups=mutation_lookups,
+            )
+        return PaperRecoveryState(
+            replace(positioned, protective_ocos=(old_open,)),
+            targeted,
+            protective_ocos=(old_open,),
+        )
+
+    def runtime_state(
+        _: AlpacaPaperCredentials,
+    ) -> tuple[PaperBrokerState, PaperMarketClockSnapshot]:
+        observed_at = OBSERVED_AT + dt.timedelta(
+            seconds=stream.heartbeat_count - 1.5,
+        )
+        positioned, targeted = entry_and_position(
+            observed_at,
+            store.reconciliation_ledger(),
+        )
+        old_plan = store.protective_oco_plans()[0].plan
+        protections: tuple[ProtectiveOcoSnapshot, ...]
+        if "oco:AAA" in broker.calls:
+            protections = (
+                _observed_protection(
+                    store.protective_oco_plans()[-1].plan,
+                    observed_at,
+                    identity=2,
+                ),
+            )
+        elif broker.calls:
+            protections = ()
+        else:
+            protections = (_observed_protection(old_plan, observed_at, identity=1),)
+        state = replace(
+            positioned,
+            open_orders=targeted,
+            protective_ocos=protections,
+        )
+        clock = replace(
+            market_clock(),
+            observed_at=observed_at,
+            market_timestamp=observed_at.astimezone(
+                dt.timezone(dt.timedelta(hours=-4)),
+            ),
+        )
+        return state, clock
+
+    dependencies = PaperOperatingSessionDependencies(
+        PaperStreamOwnerDependencies(current_state, stream_opener, current_time),
+        runtime_state,
+        current_time,
+        broker_opener,
+    )
+
+    with _open_paper_operating_session(
+        AlpacaPaperCredentials("test-key", "test-secret"),
+        store,
+        dependencies,
+    ) as session:
+        if mode == "post_epoch_change":
+            with pytest.raises(PaperPostMutationReconciliationError):
+                _ = session.execute_protective_oco(
+                    store.intents()[0].intent_id,
+                    ARM,
+                )
+            assert broker.calls == ["cancel:oco-parent-1"]
+            assert len(store.protective_oco_plans()) == 1
+            return
+        first = session.execute_protective_oco(store.intents()[0].intent_id, ARM)
+        assert isinstance(first, PaperProtectiveCancelMutationExecution)
+        expected_state = (
+            PaperMutationExecutionState.AMBIGUOUS
+            if mode == "cancel_timeout"
+            else PaperMutationExecutionState.ACKNOWLEDGED
+        )
+        assert first.result.state is expected_state
+        assert tuple(recovery.state for recovery in first.recoveries) == (
+            (PaperMutationRecoveryState.ACKNOWLEDGED,) if mode == "cancel_timeout" else ()
+        )
+        assert broker.calls == ["cancel:oco-parent-1"]
+        assert len(store.protective_oco_plans()) == 1
+
+        if mode == "replacement_timeout":
+            broker.oco_failure = httpx2.ReadTimeout("timeout")
+        second = session.execute_protective_oco(store.intents()[0].intent_id, ARM)
+
+    assert isinstance(second, PaperProtectiveMutationExecution)
+    assert second.plan.quantity == 15
+    assert second.plan.client_order_id != _protective_plan().client_order_id
+    expected_replacement_state = (
+        PaperMutationExecutionState.AMBIGUOUS
+        if mode == "replacement_timeout"
+        else PaperMutationExecutionState.ACKNOWLEDGED
+    )
+    assert second.result.state is expected_replacement_state
+    assert tuple(recovery.state for recovery in second.recoveries) == (
+        (PaperMutationRecoveryState.ACKNOWLEDGED,) if mode == "replacement_timeout" else ()
+    )
+    assert broker.calls == ["cancel:oco-parent-1", "oco:AAA"]
+    assert len(store.protective_oco_plans()) == 2

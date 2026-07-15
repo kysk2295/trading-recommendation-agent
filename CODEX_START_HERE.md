@@ -44,13 +44,15 @@
 - entry·보호 OCO·cancel/EOD 평탄화 공개 운영 메서드는 모두 명시적 `PaperMutationArm`이 필수
 - 체결된 parent intent 하나에 대한 보호 OCO와 안전계획의 cancel·exact-position flatten smoke CLI 실행 가능. 실제 Paper POST/DELETE 검증은 아직 0건
 - 안전조치 smoke는 계획과 같은 REST snapshot에서 1 entry order·1 position·1 OCO·1 symbol 및 합산 100 USD를 mutation 전에 강제하고, mutation 뒤 current-epoch 대사 실패를 성공이나 일반 차단으로 축소하지 않음
+- 부분체결 누적 수량이 기존 보호 OCO보다 커지면 schema v9 source-bound DELETE만 먼저 실행하고, terminal 대사가 끝난 다음 호출에서만 새 deterministic client ID와 exact 수량으로 replacement OCO를 제출
+- 보호 OCO cancel·replacement는 현재 5초 REST/WSS·ACTIVE 계좌 대사·브로커/로컬 정규장·15:55 ET 이전 게이트를 요구하며 timeout·재시작·한 leg fill·양 leg 경합을 fail-closed 복구
 
 ## 다음 우선순위
 
-1. 부분체결 수량 증가 시 기존 보호 OCO를 current-epoch에서 cancel한 뒤 늘어난 exact 수량으로 교체하고 timeout·cancel/fill race를 재시작 복구하는 상태기계 구현
-2. 열린 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증
-3. 위 게이트가 모두 통과한 뒤 ORB 한 전략만 Alpaca Paper POST pilot으로 연결
-4. broker fill과 conservative shadow fill을 분리 누적하고 5/10/20/60 적격일 롤링과 최소 60일·100건 최종검토를 운영
+1. 열린 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증
+2. 추가 부분체결이 실제 발생할 때 staged 보호 OCO cancel → terminal 대사 → 다음 호출 replacement를 같은 축소 한도에서 검증하되 체결을 억지로 만들지 않음
+3. 위 intraday A/B 게이트를 체크포인트한 뒤 기존 구조 주위에 `LaneId`부터 lane control-plane 계약을 점진적으로 추가
+4. 이후 ORB 한 전략만 Alpaca Paper forward-validation loop에 연결하고 broker/shadow 5/10/20/60 적격일 롤링을 운영
 
 ## 시작 전 확인
 
@@ -65,5 +67,5 @@
 ```text
 이 프로젝트의 README.md, CODEX_START_HERE.md, AGENTS.md와 docs/runtime_audit.md를 먼저 읽어줘.
 현재 Single Writer Alpaca Paper 기반을 이어서 개발해줘.
-README의 다음 우선순위 1번인 trade_updates 체결 원장·부분체결 보호주문·취소·EOD 평탄화·재시작 대사를 TDD로 구현하되, 모든 청산 안전장치가 완성되기 전에는 주문 POST/DELETE를 공개하지 마.
+README의 다음 우선순위 1번인 축소 정규장 Paper 수명주기를 현재시점 게이트 아래 검증해줘. 장이 닫혀 있거나 안전조건이 부족하면 실제 mutation을 하지 말고, intraday A/B 체크포인트 뒤에만 lane control-plane 계약을 점진적으로 추가해줘.
 ```

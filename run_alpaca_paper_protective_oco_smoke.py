@@ -48,6 +48,9 @@ from trading_agent.paper_mutation_store import (
     PaperMutationConflictError,
 )
 from trading_agent.paper_mutation_validation import InvalidPaperMutationRecordError
+from trading_agent.paper_operating_mutation_models import (
+    PaperProtectiveCancelMutationExecution,
+)
 from trading_agent.paper_operating_session import open_paper_operating_session
 from trading_agent.paper_operating_session_models import (
     PaperMutationRecoveryBarrierError,
@@ -147,9 +150,20 @@ def main(
         _write_report(
             args.output_dir,
             "no_protective_exit_required",
-            (f"parent_intent: {result.parent_intent_id}",),
+            ("현재 broker 포지션은 이미 정확히 보호되었거나 남은 포지션이 없습니다",),
         )
         return 0
+    if isinstance(result, PaperProtectiveCancelMutationExecution):
+        _write_report(
+            args.output_dir,
+            "incomplete",
+            (
+                f"cancel_stage: {result.result.state.value}",
+                "replacement OCO는 다음 current-epoch 실행에서만 제출합니다",
+                f"reconciled_at: {result.reconciled_at.isoformat()}",
+            ),
+        )
+        return 2
     state = result.result.state
     _write_report(
         args.output_dir,

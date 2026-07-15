@@ -16,6 +16,7 @@ from trading_agent.paper_execution_models import (
 class PaperMutationOperation(StrEnum):
     SUBMIT_ENTRY = "submit_entry"
     SUBMIT_PROTECTIVE_OCO = "submit_protective_oco"
+    CANCEL_PROTECTIVE_OCO = "cancel_protective_oco"
     CANCEL_ORDER = "cancel_order"
     CLOSE_POSITION = "close_position"
 

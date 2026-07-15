@@ -16,6 +16,7 @@ from trading_agent.paper_execution_models import (
     BrokerOrderId,
     PaperOrderSide,
     PaperOrderSnapshot,
+    SizedPaperOrder,
 )
 from trading_agent.paper_mutation_executor import (
     PaperMutationExecutor,
@@ -25,6 +26,7 @@ from trading_agent.paper_mutation_executor_models import PaperMutationExecutionS
 from trading_agent.paper_mutation_models import (
     PaperCancelOrderReceipt,
     PaperClosePositionReceipt,
+    PaperEntryOrderReceipt,
     PaperMutationRequestId,
     PaperProtectiveOcoReceipt,
 )
@@ -93,6 +95,27 @@ class FakeMutationBroker:
         self.store_path = store_path
         self.calls: list[str] = []
         self.oco_failure: httpx2.TransportError | PaperMutationRejectedError | None = None
+        self.cancel_failure: httpx2.TransportError | PaperMutationRejectedError | None = None
+
+    def submit_entry(self, order: SizedPaperOrder) -> PaperEntryOrderReceipt:
+        snapshot = PaperOrderSnapshot(
+            BrokerOrderId("entry-1"),
+            order.intent.intent_id,
+            order.intent.symbol,
+            order.intent.side,
+            "accepted",
+            Decimal(order.quantity),
+            Decimal(0),
+            Decimal(str(order.intent.entry_limit)),
+            "day",
+            False,
+        )
+        self.calls.append(f"entry:{order.intent.symbol}")
+        return PaperEntryOrderReceipt(
+            PaperMutationRequestId("request-entry-1"),
+            OBSERVED_AT,
+            snapshot,
+        )
 
     def submit_protective_oco(
         self,
@@ -115,6 +138,8 @@ class FakeMutationBroker:
         action: PaperCancelOrderAction,
     ) -> PaperCancelOrderReceipt:
         self.calls.append(f"cancel:{action.broker_order_id}")
+        if self.cancel_failure is not None:
+            raise self.cancel_failure
         return PaperCancelOrderReceipt(
             PaperMutationRequestId("request-cancel-1"),
             action.broker_order_id,

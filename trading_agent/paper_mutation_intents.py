@@ -15,6 +15,8 @@ from trading_agent.paper_mutation_requests import (
     entry_order_request,
     protective_oco_request,
 )
+from trading_agent.paper_mutation_validation import InvalidPaperMutationRecordError
+from trading_agent.paper_protective_oco_lifecycle import ProtectiveOcoResizeCancelPlan
 from trading_agent.paper_protective_oco_store import StoredProtectiveOcoPlan
 from trading_agent.paper_safety_models import (
     PaperCancelOrderAction,
@@ -62,6 +64,37 @@ def protective_oco_mutation_intent(
         None,
         plan.side,
         Decimal(plan.quantity),
+    )
+
+
+def protective_oco_cancel_mutation_intent(
+    account_fingerprint: AccountFingerprint,
+    stored: StoredProtectiveOcoPlan,
+    cancel_plan: ProtectiveOcoResizeCancelPlan,
+) -> PaperMutationIntent:
+    if (
+        cancel_plan.parent_intent_id != stored.plan.parent_intent_id
+        or cancel_plan.source_plan_key != stored.plan_key
+        or cancel_plan.symbol != stored.plan.symbol
+    ):
+        raise InvalidPaperMutationRecordError
+    action = PaperCancelOrderAction(
+        cancel_plan.broker_order_id,
+        cancel_plan.symbol,
+        True,
+    )
+    return PaperMutationIntent(
+        account_fingerprint,
+        dt.datetime.fromisoformat(stored.planned_at),
+        PaperMutationOperation.CANCEL_PROTECTIVE_OCO,
+        cancel_plan.source_plan_key,
+        None,
+        None,
+        cancel_order_request(action).sha256,
+        cancel_plan.symbol,
+        cancel_plan.broker_order_id,
+        None,
+        None,
     )
 
 

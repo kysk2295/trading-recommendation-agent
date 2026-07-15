@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import assert_never
 
 from trading_agent.broker_order_projection import BrokerOrderLedgerState
@@ -39,6 +40,14 @@ class BlockedProtectiveExitPlan:
 
 
 type ProtectiveExitPlanDecision = ProtectiveOcoExitPlan | NoProtectiveExitRequired | BlockedProtectiveExitPlan
+
+
+def protective_oco_covers_position(
+    plan: ProtectiveOcoExitPlan,
+    snapshot: ProtectiveOcoSnapshot,
+    position: PaperPositionSnapshot,
+) -> bool:
+    return not _protective_coverage_reasons(plan, snapshot, position)
 
 
 def missing_protective_oco_reasons(
@@ -113,7 +122,9 @@ def _protective_coverage_reasons(
         and snapshot.observed_at.utcoffset() is not None
         and position_side_is_valid
         and position.symbol == plan.symbol
-        and plan.quantity == expected_quantity
+        and max(take_profit.quantity, stop_loss.quantity) == plan.quantity
+        and 0 <= take_profit.filled_quantity <= take_profit.quantity
+        and 0 <= stop_loss.filled_quantity <= stop_loss.quantity
         and remaining_take_profit == expected_quantity
         and remaining_stop_loss == expected_quantity
         and take_profit.broker_order_id != stop_loss.broker_order_id
@@ -139,25 +150,36 @@ def plan_protective_oco_exit(
     intent: StoredIntent,
     order_state: BrokerOrderLedgerState,
     position: PaperPositionSnapshot | None,
+    *,
+    confirmed_protective_fill: Decimal = Decimal(0),
+    replacement_source_key: str | None = None,
 ) -> ProtectiveExitPlanDecision:
     reasons = list(order_state.anomaly_reasons)
     filled = order_state.cumulative_filled_quantity
+    remaining = filled - confirmed_protective_fill
     match intent.side:
         case PaperOrderSide.BUY:
             exit_side = PaperOrderSide.SELL
-            expected_position = filled
+            expected_position = remaining
         case PaperOrderSide.SELL:
             exit_side = PaperOrderSide.BUY
-            expected_position = -filled
+            expected_position = -remaining
         case unreachable:
             assert_never(unreachable)
     if order_state.intent_id != intent.intent_id:
         reasons.append("보호 대상 intent와 entry 원장이 다릅니다")
     if filled < 0:
         reasons.append("entry 누적 체결 수량이 음수입니다")
+    if (
+        not confirmed_protective_fill.is_finite()
+        or confirmed_protective_fill < 0
+        or confirmed_protective_fill > filled
+        or confirmed_protective_fill != confirmed_protective_fill.to_integral_value()
+    ):
+        reasons.append("보호 OCO 누적 체결 수량이 entry 체결을 정확히 설명하지 못합니다")
     if filled > 0 and not order_state.execution_detail_complete:
         reasons.append("entry execution 상세가 불완전합니다")
-    if filled == 0 and position is None and not reasons:
+    if remaining == 0 and position is None and not reasons:
         return NoProtectiveExitRequired(intent.intent_id)
     if position is None:
         reasons.append("체결 원장에 대응하는 broker 포지션이 없습니다")
@@ -174,12 +196,19 @@ def plan_protective_oco_exit(
         return BlockedProtectiveExitPlan(tuple(sorted(set(reasons))))
     if position is None:
         return BlockedProtectiveExitPlan(("broker 포지션을 확인하지 못했습니다",))
+    quantity = int(abs(position.quantity))
     return ProtectiveOcoExitPlan(
-        client_order_id=_protective_client_order_id(intent.intent_id),
+        client_order_id=_protective_client_order_id(
+            intent.intent_id,
+            replacement_source_key,
+            quantity,
+            intent.target_2r,
+            intent.stop,
+        ),
         parent_intent_id=intent.intent_id,
         symbol=intent.symbol,
         side=exit_side,
-        quantity=int(abs(position.quantity)),
+        quantity=quantity,
         take_profit_limit=intent.target_2r,
         stop_price=intent.stop,
     )
@@ -197,6 +226,23 @@ def _prices_are_valid(intent: StoredIntent) -> bool:
 
 def _protective_client_order_id(
     parent_intent_id: IntentId,
+    replacement_source_key: str | None,
+    quantity: int,
+    take_profit_limit: Decimal,
+    stop_price: Decimal,
 ) -> ProtectiveOcoClientOrderId:
-    digest = hashlib.sha256(parent_intent_id.encode()).hexdigest()[:40]
+    material = (
+        parent_intent_id
+        if replacement_source_key is None
+        else "|".join(
+            (
+                parent_intent_id,
+                replacement_source_key,
+                str(quantity),
+                str(take_profit_limit),
+                str(stop_price),
+            )
+        )
+    )
+    digest = hashlib.sha256(material.encode()).hexdigest()[:40]
     return ProtectiveOcoClientOrderId(f"protect-{digest}")

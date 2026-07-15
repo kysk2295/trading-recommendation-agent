@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
+from tests.paper_stream_recovery_fixtures import recovery
 from tests.test_paper_mutation_recovery import (
     _account,
     _oco,
@@ -22,6 +24,7 @@ from trading_agent.paper_execution_models import (
     PaperOrderSnapshot,
 )
 from trading_agent.paper_mutation_intents import (
+    protective_oco_cancel_mutation_intent,
     protective_oco_mutation_intent,
     safety_action_mutation_intent,
 )
@@ -30,6 +33,8 @@ from trading_agent.paper_mutation_recovery_models import (
     PaperMutationRecoverySnapshot,
     PaperMutationRecoveryState,
 )
+from trading_agent.paper_protective_oco_lifecycle import ProtectiveOcoResizeCancelPlan
+from trading_agent.paper_protective_oco_store import ProtectiveOcoPlanKey
 from trading_agent.paper_safety_models import (
     PaperCancelOrderAction,
     PaperSafetyPhase,
@@ -198,6 +203,80 @@ def test_targeted_broker_id_lookup_acknowledges_terminal_cancel(
     # Then: the cancel is acknowledged without another DELETE.
     assert results[0].state is PaperMutationRecoveryState.ACKNOWLEDGED
     assert results[0].broker_order_id == "entry-1"
+
+
+def test_targeted_broker_id_lookup_recovers_protective_cancel_after_restart(
+    tmp_path: Path,
+) -> None:
+    store = initialized_store(tmp_path)
+    protection = _oco(OBSERVED_AT)
+    with store.writer() as writer:
+        _ = writer.save_protective_oco_plan(_plan(), OBSERVED_AT)
+        _ = writer.append_paper_stream_recovery(
+            replace(
+                recovery(
+                    epoch="epoch-protective-cancel",
+                    started_at=OBSERVED_AT - dt.timedelta(seconds=1),
+                    completed_at=OBSERVED_AT + dt.timedelta(seconds=1),
+                ),
+                protective_ocos=(protection,),
+            )
+        )
+    stored = store.protective_oco_plans()[0]
+    cancel_plan = ProtectiveOcoResizeCancelPlan(
+        stored.plan.parent_intent_id,
+        ProtectiveOcoPlanKey(stored.plan_key),
+        protection.take_profit.broker_order_id,
+        stored.plan.symbol,
+        protection.observed_at,
+    )
+    mutation = protective_oco_cancel_mutation_intent(
+        FINGERPRINT,
+        stored,
+        cancel_plan,
+    )
+    observed_at = OBSERVED_AT + dt.timedelta(seconds=10)
+    canceled = PaperOrderSnapshot(
+        protection.take_profit.broker_order_id,
+        IntentId(protection.take_profit.client_order_id),
+        protection.take_profit.symbol,
+        protection.take_profit.side,
+        "canceled",
+        protection.take_profit.quantity,
+        protection.take_profit.filled_quantity,
+        protection.take_profit.limit_price,
+        protection.take_profit.time_in_force,
+        protection.take_profit.extended_hours,
+    )
+    with store.writer() as writer:
+        _record_ambiguous(writer, mutation)
+        state = PaperRecoveryState(
+            PaperBrokerState(_account(observed_at), (), ()),
+            (),
+            (canceled,),
+            mutation_lookups=(
+                PaperCancelOrderMutationLookup(
+                    paper_mutation_key(mutation),
+                    observed_at,
+                    cancel_plan.broker_order_id,
+                    canceled,
+                ),
+            ),
+        )
+
+        results = _recover(
+            store,
+            writer,
+            PaperMutationRecoverySnapshot(
+                "epoch-restarted",
+                OBSERVED_AT + dt.timedelta(seconds=2),
+                OBSERVED_AT + dt.timedelta(seconds=12),
+                state,
+            ),
+        )
+
+    assert results[0].state is PaperMutationRecoveryState.ACKNOWLEDGED
+    assert results[0].broker_order_id == protection.take_profit.broker_order_id
 
 
 def test_generic_order_inventory_cannot_acknowledge_ambiguous_oco(

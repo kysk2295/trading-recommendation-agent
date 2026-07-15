@@ -52,6 +52,16 @@ def require_mutation_intent(intent: PaperMutationIntent) -> None:
                 or intent.side is None
                 or not quantity_valid
             )
+        case PaperMutationOperation.CANCEL_PROTECTIVE_OCO:
+            shape_invalid = (
+                intent.entry_intent_id is not None
+                or not _optional_hex64(intent.protective_plan_key)
+                or intent.safety_plan_key is not None
+                or intent.action_sequence is not None
+                or not intent.broker_order_id
+                or intent.side is not None
+                or intent.quantity is not None
+            )
         case PaperMutationOperation.CANCEL_ORDER:
             shape_invalid = (
                 intent.entry_intent_id is not None
