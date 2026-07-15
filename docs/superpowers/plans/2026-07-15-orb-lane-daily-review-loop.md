@@ -140,7 +140,7 @@ uv run pytest -q tests/test_daily_research_record_source.py tests/test_daily_res
 
 Expected: all tests pass and no source file is rewritten.
 
-- [ ] **Step 5: Commit and push the source checkpoint**
+- [x] **Step 5: Commit and push the source checkpoint**
 
 ```bash
 git add trading_agent/daily_research_record_source.py tests/test_daily_research_record_source.py
@@ -154,7 +154,7 @@ git push origin feature/paper-account-activities
 - Modify: `trading_agent/lane_registry_store.py`
 - Modify: `tests/test_lane_registry_store.py`
 
-- [ ] **Step 1: Write a failing reader-only construction test**
+- [x] **Step 1: Write a failing reader-only construction test**
 
 ```python
 reader = LaneRegistryReader(store.path)
@@ -164,17 +164,17 @@ with reader._reader_connection() as connection:
     assert connection.execute("PRAGMA query_only").fetchone() == (1,)
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run: `uv run pytest -q tests/test_lane_registry_store.py -k independently_constructible`
 
 Expected: `LaneRegistryReader` does not accept a path.
 
-- [ ] **Step 3: Move path ownership to the base reader**
+- [x] **Step 3: Move path ownership to the base reader**
 
 Give `LaneRegistryReader` `__slots__ = ("path",)` and a resolving constructor. Let `LaneRegistryStore` inherit it with `__slots__ = ()` and no duplicate constructor. Add a `daily_snapshot(lane_id, session_date)` query that returns zero or one row and raises a typed integrity error if SQLite contains duplicates.
 
-- [ ] **Step 4: Run registry regressions**
+- [x] **Step 4: Run registry regressions**
 
 Run: `uv run pytest -q tests/test_lane_registry_store.py tests/test_lane_control_plane_bootstrap_cli.py`
 

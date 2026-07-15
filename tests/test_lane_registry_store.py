@@ -28,6 +28,7 @@ from trading_agent.lane_registry_schema import LANE_REGISTRY_SCHEMA_VERSION
 from trading_agent.lane_registry_store import (
     InvalidLaneRegistrySourceError,
     LaneRegistryConflictError,
+    LaneRegistryReader,
     LaneRegistryStore,
     LaneRegistryWriterLeaseUnavailableError,
 )
@@ -92,6 +93,27 @@ def test_registry_exact_replay_is_idempotent_and_query_only_readable(
         assert connection.execute("PRAGMA query_only").fetchone() == (1,)
         with pytest.raises(sqlite3.OperationalError):
             connection.execute("DELETE FROM lane_manifests")
+
+
+def test_registry_reader_is_independently_constructible_without_writer(
+    tmp_path: Path,
+) -> None:
+    store = LaneRegistryStore(tmp_path / "lane-registry.sqlite3")
+    snapshot = _snapshot()
+    with store.writer() as writer:
+        for manifest in DEFAULT_LANE_MANIFESTS:
+            _ = writer.register_manifest(manifest)
+        for scope in CURRENT_INTRADAY_EXPERIMENT_SCOPES:
+            _ = writer.register_experiment_scope(scope)
+        _ = writer.append_daily_snapshot(snapshot)
+
+    reader = LaneRegistryReader(store.path)
+
+    assert reader.manifests() == store.manifests()
+    assert reader.daily_snapshot(LaneId.INTRADAY_MOMENTUM, snapshot.session_date) == store.daily_snapshots()[0]
+    assert not hasattr(reader, "writer")
+    with reader._reader_connection() as connection:
+        assert connection.execute("PRAGMA query_only").fetchone() == (1,)
 
 
 def test_registry_rejects_manifest_identity_rewrite(tmp_path: Path) -> None:

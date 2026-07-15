@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import fcntl
 import os
 import sqlite3
@@ -28,6 +29,7 @@ from trading_agent.lane_contract_models import (
     LaneManifest,
 )
 from trading_agent.lane_policy_models import (
+    LaneId,
     LaneOrderAuthority,
     LaneRiskEnforcement,
 )
@@ -92,9 +94,12 @@ class StoredLaneDailySnapshot:
 
 
 class LaneRegistryReader:
-    __slots__ = ()
+    __slots__ = ("path",)
 
     path: Path
+
+    def __init__(self, path: Path) -> None:
+        self.path = path.resolve(strict=False)
 
     def is_initialized(self) -> bool:
         if not self.path.is_file():
@@ -156,6 +161,29 @@ class LaneRegistryReader:
             for key, payload in rows
         )
 
+    def daily_snapshot(
+        self,
+        lane_id: LaneId,
+        session_date: dt.date,
+    ) -> StoredLaneDailySnapshot | None:
+        if not self.path.is_file():
+            return None
+        with self._reader_connection() as connection:
+            rows: list[tuple[str, str]] = connection.execute(
+                """SELECT snapshot_key, payload_json FROM lane_daily_snapshots
+                WHERE lane_id = ? AND session_date = ?""",
+                (lane_id.value, session_date.isoformat()),
+            ).fetchall()
+        if len(rows) > 1:
+            raise InvalidLaneRegistrySourceError
+        if not rows:
+            return None
+        key, payload = rows[0]
+        return StoredLaneDailySnapshot(
+            LaneDailySnapshotKey(key),
+            LaneDailySnapshot.model_validate_json(payload),
+        )
+
     def _reader_connection(self) -> sqlite3.Connection:
         connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
         _ = connection.execute("PRAGMA query_only = ON")
@@ -166,10 +194,7 @@ class LaneRegistryReader:
 
 @final
 class LaneRegistryStore(LaneRegistryReader):
-    __slots__ = ("path",)
-
-    def __init__(self, path: Path) -> None:
-        self.path = path.resolve(strict=False)
+    __slots__ = ()
 
     @contextmanager
     def writer(self) -> Iterator[LaneRegistryWriter]:
