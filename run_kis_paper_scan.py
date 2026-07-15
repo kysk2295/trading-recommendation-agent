@@ -24,9 +24,8 @@ from trading_agent.candidate_input_audit import (
 from trading_agent.causality import exclude_backdated_recommendations
 from trading_agent.contract_outbox import (
     append_opportunity_snapshot,
-    append_quote_actionability_assessment,
+    append_quote_actionability_batch,
     append_trade_signal_publication,
-    append_us_quote_snapshot,
 )
 from trading_agent.engine import RecommendationEngine
 from trading_agent.kis_auth import (
@@ -204,28 +203,16 @@ def append_quote_actionability_contracts(
     output: Path,
     batch: UsQuotePublicationBatch,
 ) -> QuoteContractAppendCounts:
-    snapshot_count = sum(
-        append_us_quote_snapshot(
-            output / "us-quote-snapshots.v1.jsonl",
-            snapshot,
-        )
-        for snapshot in batch.snapshots
-    )
-    validated_signal_count = append_trade_signal_contracts(
+    counts = append_quote_actionability_batch(
         output,
+        batch.snapshots,
         batch.derived_publications,
-    )
-    assessment_count = sum(
-        append_quote_actionability_assessment(
-            output / "quote-actionability-assessments.v1.jsonl",
-            assessment,
-        )
-        for assessment in batch.assessments
+        batch.assessments,
     )
     return QuoteContractAppendCounts(
-        snapshot_count=snapshot_count,
-        validated_signal_count=validated_signal_count,
-        assessment_count=assessment_count,
+        snapshot_count=counts[0],
+        validated_signal_count=counts[1],
+        assessment_count=counts[2],
     )
 
 

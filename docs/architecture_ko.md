@@ -239,14 +239,14 @@ NASDAQ·NYSE·AMEX 상승률/거래량 랭킹
 
 ```text
 conditional TradeSignal
-→ us-quote-snapshots.v1.jsonl
+→ us-quote-snapshots.v2.jsonl
 → 별도 current_quote_validated TradeSignal과 카드 (게이트 통과 때만)
-→ quote-actionability-assessments.v1.jsonl
+→ quote-actionability-assessments.v2.jsonl
 ```
 
 평가기와 provider quote가 같은 현재 NYSE 정규장에 있고 provider 시각이 미래가 아니며 평가시각보다 엄격히 5초 미만으로 오래됐을 때만 계속한다. bid/ask는 양수·유한·비역전, spread는 25bp 이하, long bid는 stop 초과, ask는 entry보다 최대 20bp까지만 허용한다. ask가 entry 아래면 `validated_waiting`, entry 이상이면 `validated_trigger_reached`다. 실패는 allow-list terminal status로 축약하며 synthetic quote나 주문 fallback을 만들지 않는다.
 
-quote·assessment·derived signal ID는 canonical JSON의 SHA-256으로 bounded하게 만든다. quote ID에는 provider 시각과 별도로 로컬 수신시각을 포함해 독립 수신을 구분한다. assessment ID는 base signal과 scan 시작시각만 사용하므로 같은 cycle에는 terminal 결과 하나만 append할 수 있다. 원래 conditional signal과 카드는 그대로 유지하고 exact replay는 no-op, 같은 ID의 다른 payload는 conflict다. 이 계층은 현재 가격 실행 가능성의 read-only 관측이며 external delivery, Alpaca Paper 주문 승인, lifecycle 승격 권한이 없다.
+quote·assessment·derived signal ID는 canonical JSON의 SHA-256으로 bounded하게 만든다. quote ID에는 provider 시각과 별도로 로컬 수신시각을 포함해 독립 수신을 구분한다. assessment ID는 base signal과 scan 시작시각만 사용하므로 같은 cycle에는 terminal 결과 하나만 append할 수 있다. 이 identity 공식은 quote·assessment schema/file v2에만 적용하고 기존 v1 파일은 읽거나 덮어쓰지 않는다. snapshot·derived signal/card·assessment batch 전체를 사전검증해 하나라도 충돌하면 새 파일을 append하지 않는다. 원래 conditional signal과 카드는 그대로 유지하고 exact replay는 no-op, 같은 ID의 다른 payload는 conflict다. 이 계층은 현재 가격 실행 가능성의 read-only 관측이며 external delivery, Alpaca Paper 주문 승인, lifecycle 승격 권한이 없다.
 
 단발 진단 실행 파일은 `run_kis_paper_scan.py`다. 기본 실행은 세 거래소의 상승률·거래량 랭킹을 한 번 조회하고 상위 3개 후보를 분석한다. 날짜별 영속 감시는 `run_kis_paper_watch.py`가 같은 SQLite를 재사용하며 60초 간격으로 최대 390회 순차 실행한다.
 

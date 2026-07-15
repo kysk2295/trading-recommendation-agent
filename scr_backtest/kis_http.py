@@ -18,7 +18,7 @@ class KisReadRetryEvent:
     exchange: str
     symbol: str
     first_status: int
-    final_status: int
+    final_status: int | Literal["transport_error"]
     outcome: Literal["recovered", "failed"]
 
 
@@ -57,12 +57,25 @@ def get_with_server_retry(
     if response.status_code not in RETRIABLE_SERVER_STATUSES:
         return response
     sleeper(SERVER_RETRY_DELAY_SECONDS)
-    retried = client.get(
-        path,
-        params=params,
-        headers=headers,
-        follow_redirects=False,
-    )
+    try:
+        retried = client.get(
+            path,
+            params=params,
+            headers=headers,
+            follow_redirects=False,
+        )
+    except httpx2.HTTPError:
+        _capture_retry(
+            KisReadRetryEvent(
+                endpoint=path,
+                exchange=params.get("EXCD", ""),
+                symbol=params.get("SYMB", ""),
+                first_status=response.status_code,
+                final_status="transport_error",
+                outcome="failed",
+            )
+        )
+        raise
     _capture_retry(
         KisReadRetryEvent(
             endpoint=path,
@@ -70,7 +83,7 @@ def get_with_server_retry(
             symbol=params.get("SYMB", ""),
             first_status=response.status_code,
             final_status=retried.status_code,
-            outcome="failed" if retried.is_error else "recovered",
+            outcome="recovered" if retried.is_success else "failed",
         )
     )
     return retried

@@ -64,7 +64,7 @@ class InvalidUsQuoteActionabilityInputError(ValueError):
 class UsQuoteSnapshot(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     quote_id: str
     provider: Literal["kis"] = "kis"
     market_id: Literal[MarketId.US_EQUITIES] = MarketId.US_EQUITIES
@@ -115,7 +115,7 @@ class UsQuoteSnapshot(BaseModel):
 class QuoteActionabilityAssessment(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     assessment_id: str
     base_signal_id: str
     scan_started_at: dt.datetime

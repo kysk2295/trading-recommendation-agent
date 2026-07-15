@@ -134,7 +134,7 @@ def test_signal_outbox_writes_one_json_record_and_a_safe_korean_card(
 
 
 def test_quote_snapshot_outbox_replays_and_rejects_conflict(tmp_path: Path) -> None:
-    path = tmp_path / "us-quote-snapshots.v1.jsonl"
+    path = tmp_path / "us-quote-snapshots.v2.jsonl"
     decision = _quote_decision()
     assert decision.snapshot is not None
     snapshot = decision.snapshot
@@ -153,12 +153,13 @@ def test_quote_snapshot_outbox_replays_and_rejects_conflict(tmp_path: Path) -> N
     assert len(payloads) == 1
     assert payloads[0]["quote_id"] == snapshot.quote_id
     assert payloads[0]["provider"] == "kis"
+    assert payloads[0]["schema_version"] == 2
 
 
 def test_quote_assessment_outbox_replays_and_rejects_conflict(
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "quote-actionability-assessments.v1.jsonl"
+    path = tmp_path / "quote-actionability-assessments.v2.jsonl"
     assessment = _quote_decision().assessment
 
     assert append_quote_actionability_assessment(path, assessment) is True
@@ -176,12 +177,13 @@ def test_quote_assessment_outbox_replays_and_rejects_conflict(
     )
     assert len(payloads) == 1
     assert payloads[0]["assessment_id"] == assessment.assessment_id
+    assert payloads[0]["schema_version"] == 2
 
 
 def test_independent_quote_receipts_append_without_identity_conflict(
     tmp_path: Path,
 ) -> None:
-    snapshots = tmp_path / "us-quote-snapshots.v1.jsonl"
+    snapshots = tmp_path / "us-quote-snapshots.v2.jsonl"
     signals = tmp_path / "trade-signals.v1.jsonl"
     cards = tmp_path / "trade-signal-cards-ko"
     first = _quote_decision(
@@ -213,7 +215,7 @@ def test_independent_quote_receipts_append_without_identity_conflict(
 def test_same_base_and_scan_cycle_rejects_second_terminal_assessment(
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "quote-actionability-assessments.v1.jsonl"
+    path = tmp_path / "quote-actionability-assessments.v2.jsonl"
     base = _publication(signal_id="base-signal-assessment")
     first = provider_failed_assessment(
         base,

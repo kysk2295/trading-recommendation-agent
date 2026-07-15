@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import httpx2
+import pytest
 
 from scr_backtest.kis_http import (
     begin_retry_capture,
@@ -144,4 +145,66 @@ def test_retry_is_recovered_only_when_the_final_response_is_successful() -> None
             end_retry_capture(capture)
 
     assert response.status_code == 429
+    assert events[0].outcome == "failed"
+
+
+def test_retry_redirect_is_a_failed_recovery() -> None:
+    statuses = iter((500, 302))
+
+    with httpx2.Client(
+        base_url="https://openapi.koreainvestment.com:9443",
+        transport=httpx2.MockTransport(
+            lambda _: httpx2.Response(next(statuses)),
+        ),
+    ) as client:
+        capture = begin_retry_capture()
+        try:
+            response = get_with_server_retry(
+                client,
+                "/read-only",
+                params={},
+                headers={},
+                sleeper=lambda _: None,
+            )
+            events = captured_retry_events()
+        finally:
+            end_retry_capture(capture)
+
+    assert response.status_code == 302
+    assert len(events) == 1
+    assert events[0].final_status == 302
+    assert events[0].outcome == "failed"
+
+
+def test_retry_transport_failure_is_audited_before_propagation() -> None:
+    attempts = 0
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx2.Response(500)
+        raise httpx2.ConnectError("private detail", request=request)
+
+    with httpx2.Client(
+        base_url="https://openapi.koreainvestment.com:9443",
+        transport=httpx2.MockTransport(handle),
+    ) as client:
+        capture = begin_retry_capture()
+        try:
+            with pytest.raises(httpx2.ConnectError):
+                _ = get_with_server_retry(
+                    client,
+                    "/read-only",
+                    params={},
+                    headers={},
+                    sleeper=lambda _: None,
+                )
+            events = captured_retry_events()
+        finally:
+            end_retry_capture(capture)
+
+    assert attempts == 2
+    assert len(events) == 1
+    assert events[0].final_status == "transport_error"
     assert events[0].outcome == "failed"

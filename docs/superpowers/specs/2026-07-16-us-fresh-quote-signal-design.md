@@ -49,7 +49,7 @@ Only symbols with a newly publishable conditional signal are queried, once each 
 
 ### 4.1 `UsQuoteSnapshot`
 
-Persist normalized public market data to `us-quote-snapshots.v1.jsonl`:
+Persist normalized public market data to `us-quote-snapshots.v2.jsonl`:
 
 ```text
 schema_version
@@ -71,7 +71,7 @@ spread_bps
 
 ### 4.2 `QuoteActionabilityAssessment`
 
-Persist one terminal assessment per base signal and scan cycle to `quote-actionability-assessments.v1.jsonl`:
+Persist one terminal assessment per base signal and scan cycle to `quote-actionability-assessments.v2.jsonl`:
 
 ```text
 assessment_id
@@ -99,6 +99,8 @@ Allow-listed statuses are:
 Provider details are reduced to the allow-listed status. A failed assessment does not contain a quote ID unless a structurally valid normalized snapshot was stored first.
 
 `assessment_id` is deterministic only from the complete base signal ID and `scan_started_at`. A scan cycle can therefore append exactly one terminal result for a base signal; a second status or evaluation payload under that cycle is a conflict instead of another terminal assessment.
+
+The receipt-aware quote identity and one-terminal assessment identity are schema version 2 contracts. Version 1 quote and assessment JSONL files are legacy artifacts: the v2 writer neither revalidates nor overwrites them. Before writing any v2 quote batch, the writer validates the snapshot, derived signal/card, and assessment plans against every existing target; any malformed file or conflict aborts the batch before the first append.
 
 ### 4.3 Derived quote-validated signal
 

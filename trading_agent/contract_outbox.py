@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import override
@@ -59,23 +60,14 @@ def append_trade_signal_publication(
     cards_dir: Path,
     publication: TradeSignalPublication,
 ) -> bool:
-    card_path = _signal_card_path(cards_dir, publication.signal.signal_id)
-    card = _signal_card(publication)
-    if card_path.exists() and (
-        not card_path.is_file() or card_path.read_text(encoding="utf-8") != card
-    ):
-        raise ContractOutboxConflictError(publication.signal.signal_id)
-
-    appended = _append_model(
+    model_plan, card_plans = _plan_trade_signal_publications(
         path,
-        publication,
-        model_type=TradeSignalPublication,
-        identity=lambda item: item.signal.signal_id,
+        cards_dir,
+        (publication,),
     )
-    if not card_path.exists():
-        cards_dir.mkdir(parents=True, exist_ok=True)
-        _ = card_path.write_text(card, encoding="utf-8")
-    return appended
+    _commit_model_plan(model_plan)
+    _commit_card_plans(card_plans)
+    return model_plan.append_count == 1
 
 
 def append_us_quote_snapshot(path: Path, snapshot: UsQuoteSnapshot) -> bool:
@@ -97,6 +89,149 @@ def append_quote_actionability_assessment(
         model_type=QuoteActionabilityAssessment,
         identity=lambda item: item.assessment_id,
     )
+
+
+def append_quote_actionability_batch(
+    output: Path,
+    snapshots: tuple[UsQuoteSnapshot, ...],
+    derived_publications: tuple[TradeSignalPublication, ...],
+    assessments: tuple[QuoteActionabilityAssessment, ...],
+) -> tuple[int, int, int]:
+    snapshot_plan = _plan_models(
+        output / "us-quote-snapshots.v2.jsonl",
+        snapshots,
+        model_type=UsQuoteSnapshot,
+        identity=lambda item: item.quote_id,
+    )
+    signal_plan, card_plans = _plan_trade_signal_publications(
+        output / "trade-signals.v1.jsonl",
+        output / "trade-signal-cards-ko",
+        derived_publications,
+    )
+    assessment_plan = _plan_models(
+        output / "quote-actionability-assessments.v2.jsonl",
+        assessments,
+        model_type=QuoteActionabilityAssessment,
+        identity=lambda item: item.assessment_id,
+    )
+
+    _commit_model_plan(snapshot_plan)
+    _commit_model_plan(signal_plan)
+    _commit_card_plans(card_plans)
+    _commit_model_plan(assessment_plan)
+    return (
+        snapshot_plan.append_count,
+        signal_plan.append_count,
+        assessment_plan.append_count,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _ModelAppendPlan:
+    path: Path
+    existing_content: str
+    encoded_records: tuple[str, ...]
+
+    @property
+    def append_count(self) -> int:
+        return len(self.encoded_records)
+
+
+@dataclass(frozen=True, slots=True)
+class _CardWritePlan:
+    path: Path
+    content: str
+
+
+def _plan_models[ModelT: BaseModel](
+    path: Path,
+    values: tuple[ModelT, ...],
+    *,
+    model_type: type[ModelT],
+    identity: Callable[[ModelT], str],
+) -> _ModelAppendPlan:
+    if not values:
+        return _ModelAppendPlan(path, "", ())
+    content, existing = _read_models(
+        path,
+        model_type=model_type,
+        identity=identity,
+    )
+    payload_by_identity = {
+        identity(item): item.model_dump(mode="json") for item in existing
+    }
+    encoded_records: list[str] = []
+    for value in values:
+        value_identity = identity(value)
+        value_payload = value.model_dump(mode="json")
+        existing_payload = payload_by_identity.get(value_identity)
+        if existing_payload is not None:
+            if existing_payload != value_payload:
+                raise ContractOutboxConflictError(value_identity)
+            continue
+        payload_by_identity[value_identity] = value_payload
+        encoded_records.append(
+            json.dumps(
+                value_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+    return _ModelAppendPlan(path, content, tuple(encoded_records))
+
+
+def _plan_trade_signal_publications(
+    path: Path,
+    cards_dir: Path,
+    publications: tuple[TradeSignalPublication, ...],
+) -> tuple[_ModelAppendPlan, tuple[_CardWritePlan, ...]]:
+    model_plan = _plan_models(
+        path,
+        publications,
+        model_type=TradeSignalPublication,
+        identity=lambda item: item.signal.signal_id,
+    )
+    planned_cards: dict[Path, str] = {}
+    for publication in publications:
+        signal_id = publication.signal.signal_id
+        card_path = _signal_card_path(cards_dir, signal_id)
+        card = _signal_card(publication)
+        pending = planned_cards.get(card_path)
+        if pending is not None and pending != card:
+            raise ContractOutboxConflictError(signal_id)
+        if card_path.exists():
+            if (
+                not card_path.is_file()
+                or card_path.read_text(encoding="utf-8") != card
+            ):
+                raise ContractOutboxConflictError(signal_id)
+            continue
+        planned_cards[card_path] = card
+    return model_plan, tuple(
+        _CardWritePlan(path=card_path, content=planned_cards[card_path])
+        for card_path in sorted(planned_cards)
+    )
+
+
+def _commit_model_plan(plan: _ModelAppendPlan) -> None:
+    if not plan.encoded_records:
+        return
+    plan.path.parent.mkdir(parents=True, exist_ok=True)
+    separator = (
+        "\n"
+        if plan.existing_content and not plan.existing_content.endswith("\n")
+        else ""
+    )
+    payload = separator + "\n".join(plan.encoded_records) + "\n"
+    with plan.path.open("a", encoding="utf-8") as handle:
+        _ = handle.write(payload)
+
+
+def _commit_card_plans(plans: tuple[_CardWritePlan, ...]) -> None:
+    for plan in plans:
+        plan.path.parent.mkdir(parents=True, exist_ok=True)
+        _ = plan.path.write_text(plan.content, encoding="utf-8")
 
 
 def _append_model[ModelT: BaseModel](

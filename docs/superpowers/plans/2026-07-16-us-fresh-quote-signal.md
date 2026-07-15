@@ -459,8 +459,8 @@ terminal assessments
 Use these exact output names:
 
 ```text
-us-quote-snapshots.v1.jsonl
-quote-actionability-assessments.v1.jsonl
+us-quote-snapshots.v2.jsonl
+quote-actionability-assessments.v2.jsonl
 trade-signals.v1.jsonl
 trade-signal-cards-ko/
 ```

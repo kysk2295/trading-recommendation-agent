@@ -5,6 +5,8 @@ import json
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 import run_kis_paper_scan
 from run_kis_paper_scan import (
     append_quote_actionability_contracts,
@@ -13,6 +15,7 @@ from run_kis_paper_scan import (
     publish_opportunity_contract,
     publish_trade_signal_contracts,
 )
+from trading_agent.contract_outbox import ContractOutboxConflictError
 from trading_agent.kis_provider import KisRankedStock
 from trading_agent.kis_us_quote import KisUsLevelOneQuote
 from trading_agent.market_risk import (
@@ -243,16 +246,114 @@ def test_fake_quote_path_appends_conditional_then_validated_contracts(
         "current_quote_validated",
     )
     assert len(
-        (tmp_path / "us-quote-snapshots.v1.jsonl")
+        (tmp_path / "us-quote-snapshots.v2.jsonl")
         .read_text(encoding="utf-8")
         .splitlines()
     ) == 1
     assert len(
-        (tmp_path / "quote-actionability-assessments.v1.jsonl")
+        (tmp_path / "quote-actionability-assessments.v2.jsonl")
         .read_text(encoding="utf-8")
         .splitlines()
     ) == 1
     assert len(tuple((tmp_path / "trade-signal-cards-ko").glob("*.ko.md"))) == 2
+
+
+def test_conflicting_terminal_batch_writes_no_partial_quote_artifacts(
+    tmp_path: Path,
+) -> None:
+    stock = _stock()
+    opportunity = publish_opportunity_contract(
+        tmp_path,
+        _complete_discovery(stock),
+        _halts(),
+        _screen(stock),
+        OBSERVED_AT,
+    )
+    assert opportunity is not None
+    published_at = OBSERVED_AT + dt.timedelta(seconds=15)
+    evaluated_at = published_at + dt.timedelta(seconds=2)
+    publications = build_trade_signal_contracts(
+        (_recommendation(),),
+        opportunity,
+        StrategyMode.ORB,
+        published_at,
+        OBSERVED_AT,
+    )
+    first = _quote_batch(
+        publications,
+        evaluated_at=evaluated_at,
+        received_at=evaluated_at - dt.timedelta(milliseconds=500),
+    )
+    second = _quote_batch(
+        publications,
+        evaluated_at=evaluated_at + dt.timedelta(milliseconds=100),
+        received_at=evaluated_at - dt.timedelta(milliseconds=400),
+    )
+
+    assert append_trade_signal_contracts(tmp_path, publications) == 1
+    _ = append_quote_actionability_contracts(tmp_path, first)
+    paths = (
+        tmp_path / "us-quote-snapshots.v2.jsonl",
+        tmp_path / "trade-signals.v1.jsonl",
+        tmp_path / "quote-actionability-assessments.v2.jsonl",
+    )
+    before = {path: path.read_bytes() for path in paths}
+    cards_before = {
+        path.name: path.read_bytes()
+        for path in (tmp_path / "trade-signal-cards-ko").iterdir()
+    }
+
+    with pytest.raises(ContractOutboxConflictError):
+        _ = append_quote_actionability_contracts(tmp_path, second)
+
+    assert {path: path.read_bytes() for path in paths} == before
+    assert {
+        path.name: path.read_bytes()
+        for path in (tmp_path / "trade-signal-cards-ko").iterdir()
+    } == cards_before
+
+
+def test_v2_quote_contracts_leave_legacy_v1_files_untouched(
+    tmp_path: Path,
+) -> None:
+    legacy_snapshot = tmp_path / "us-quote-snapshots.v1.jsonl"
+    legacy_assessment = tmp_path / "quote-actionability-assessments.v1.jsonl"
+    legacy_snapshot.write_text("legacy snapshot bytes\n", encoding="utf-8")
+    legacy_assessment.write_text("legacy assessment bytes\n", encoding="utf-8")
+    stock = _stock()
+    opportunity = publish_opportunity_contract(
+        tmp_path,
+        _complete_discovery(stock),
+        _halts(),
+        _screen(stock),
+        OBSERVED_AT,
+    )
+    assert opportunity is not None
+    published_at = OBSERVED_AT + dt.timedelta(seconds=15)
+    evaluated_at = published_at + dt.timedelta(seconds=2)
+    publications = build_trade_signal_contracts(
+        (_recommendation(),),
+        opportunity,
+        StrategyMode.ORB,
+        published_at,
+        OBSERVED_AT,
+    )
+
+    counts = append_quote_actionability_contracts(
+        tmp_path,
+        _quote_batch(
+            publications,
+            evaluated_at=evaluated_at,
+            received_at=evaluated_at - dt.timedelta(milliseconds=500),
+        ),
+    )
+
+    assert counts.snapshot_count == 1
+    assert counts.assessment_count == 1
+    assert legacy_snapshot.read_text(encoding="utf-8") == "legacy snapshot bytes\n"
+    assert legacy_assessment.read_text(encoding="utf-8") == "legacy assessment bytes\n"
+    assert (tmp_path / "us-quote-snapshots.v2.jsonl").is_file()
+    assert (tmp_path / "quote-actionability-assessments.v2.jsonl").is_file()
 
 
 def _recommendation() -> Recommendation:
@@ -267,6 +368,30 @@ def _recommendation() -> Recommendation:
         target_2r=11.5,
         state=RecommendationState.SETUP,
         rationale="ORB와 거래량 확대",
+    )
+
+
+def _quote_batch(
+    publications,
+    *,
+    evaluated_at: dt.datetime,
+    received_at: dt.datetime,
+):
+    return evaluate_quote_publications(
+        publications,
+        exchange_by_symbol={"ACME": "NAS"},
+        fetch_quote=lambda exchange, symbol: KisUsLevelOneQuote(
+            exchange=exchange,
+            symbol=symbol,
+            provider_observed_at=evaluated_at - dt.timedelta(seconds=1),
+            received_at=received_at,
+            bid=Decimal("10.49"),
+            ask=Decimal("10.50"),
+            bid_size=1_000,
+            ask_size=900,
+        ),
+        scan_started_at=OBSERVED_AT,
+        clock=lambda: evaluated_at,
     )
 
 
