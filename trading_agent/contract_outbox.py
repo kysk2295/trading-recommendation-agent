@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -19,7 +19,7 @@ from trading_agent.trade_signal_publication import TradeSignalPublication
 from trading_agent.us_quote_actionability import (
     QuoteActionabilityAssessment,
     UsQuoteSnapshot,
-    quote_actionability_artifacts_match,
+    quote_actionability_assessment_matches,
 )
 
 
@@ -85,10 +85,23 @@ def append_quote_actionability_batch(
     derived_publications: tuple[TradeSignalPublication, ...],
     assessments: tuple[QuoteActionabilityAssessment, ...],
 ) -> tuple[int, int, int]:
+    signal_path = output / "trade-signals.v1.jsonl"
+    existing_publications: tuple[TradeSignalPublication, ...] = ()
+    if snapshots or derived_publications or assessments:
+        _, existing_publications = _read_models(
+            signal_path,
+            model_type=TradeSignalPublication,
+            identity=lambda item: item.signal.signal_id,
+        )
+    publication_by_id = {
+        publication.signal.signal_id: publication
+        for publication in existing_publications
+    }
     _validate_quote_actionability_batch(
         snapshots,
         derived_publications,
         assessments,
+        publication_by_id,
     )
     snapshot_plan = _plan_models(
         output / "us-quote-snapshots.v2.jsonl",
@@ -97,7 +110,7 @@ def append_quote_actionability_batch(
         identity=lambda item: item.quote_id,
     )
     signal_plan, card_plans = _plan_trade_signal_publications(
-        output / "trade-signals.v1.jsonl",
+        signal_path,
         output / "trade-signal-cards-ko",
         derived_publications,
     )
@@ -123,6 +136,7 @@ def _validate_quote_actionability_batch(
     snapshots: tuple[UsQuoteSnapshot, ...],
     derived_publications: tuple[TradeSignalPublication, ...],
     assessments: tuple[QuoteActionabilityAssessment, ...],
+    publication_by_id: Mapping[str, TradeSignalPublication],
 ) -> None:
     snapshot_ids = tuple(snapshot.quote_id for snapshot in snapshots)
     derived_ids = tuple(
@@ -157,25 +171,39 @@ def _validate_quote_actionability_batch(
     if invalid_geometry:
         raise InvalidQuoteActionabilityBatchError
 
-    snapshot_by_id = {snapshot.quote_id: snapshot for snapshot in snapshots}
-    assessment_by_derived_id = {
-        assessment.derived_signal_id: assessment
-        for assessment in assessments
-        if assessment.derived_signal_id is not None
-    }
-    for publication in derived_publications:
-        signal = publication.signal
-        assessment = assessment_by_derived_id.get(signal.signal_id)
-        if assessment is None or assessment.quote_id is None:
-            raise InvalidQuoteActionabilityBatchError
-        snapshot = snapshot_by_id.get(assessment.quote_id)
+    base_by_id: dict[str, TradeSignalPublication] = {}
+    for assessment in assessments:
+        base = publication_by_id.get(assessment.base_signal_id)
         if (
-            snapshot is None
-            or not quote_actionability_artifacts_match(
-                snapshot,
-                assessment,
-                publication,
-            )
+            base is None
+            or base.signal.actionability is not SignalActionability.CONDITIONAL
+            or base.signal.quote_validation is not None
+        ):
+            raise InvalidQuoteActionabilityBatchError
+        base_by_id[assessment.base_signal_id] = base
+
+    snapshot_by_id = {snapshot.quote_id: snapshot for snapshot in snapshots}
+    derived_by_id = {
+        publication.signal.signal_id: publication
+        for publication in derived_publications
+    }
+    for assessment in assessments:
+        base = base_by_id[assessment.base_signal_id]
+        snapshot = (
+            None
+            if assessment.quote_id is None
+            else snapshot_by_id.get(assessment.quote_id)
+        )
+        derived = (
+            None
+            if assessment.derived_signal_id is None
+            else derived_by_id.get(assessment.derived_signal_id)
+        )
+        if not quote_actionability_assessment_matches(
+            base,
+            snapshot,
+            assessment,
+            derived,
         ):
             raise InvalidQuoteActionabilityBatchError
 

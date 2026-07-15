@@ -133,6 +133,7 @@ def test_signal_outbox_writes_one_json_record_and_a_safe_korean_card(
 
 
 def test_quote_snapshot_outbox_replays_and_rejects_conflict(tmp_path: Path) -> None:
+    _persist_quote_base(tmp_path)
     path = tmp_path / "us-quote-snapshots.v2.jsonl"
     decision = _quote_decision()
     assert decision.snapshot is not None
@@ -173,6 +174,7 @@ def test_quote_snapshot_outbox_replays_and_rejects_conflict(tmp_path: Path) -> N
 def test_quote_assessment_outbox_replays_and_rejects_conflict(
     tmp_path: Path,
 ) -> None:
+    _persist_quote_base(tmp_path)
     path = tmp_path / "quote-actionability-assessments.v2.jsonl"
     decision = _quote_decision()
     assert decision.snapshot is not None
@@ -216,6 +218,7 @@ def test_quote_assessment_outbox_replays_and_rejects_conflict(
 def test_independent_quote_receipts_append_without_identity_conflict(
     tmp_path: Path,
 ) -> None:
+    _persist_quote_base(tmp_path)
     snapshots = tmp_path / "us-quote-snapshots.v2.jsonl"
     first = _quote_decision(
         received_at=OBSERVED_AT + dt.timedelta(seconds=5, milliseconds=500)
@@ -247,7 +250,7 @@ def test_independent_quote_receipts_append_without_identity_conflict(
         (tmp_path / "trade-signals.v1.jsonl")
         .read_text(encoding="utf-8")
         .splitlines()
-    ) == 2
+    ) == 3
     assert len(
         (tmp_path / "quote-actionability-assessments.v2.jsonl")
         .read_text(encoding="utf-8")
@@ -272,6 +275,11 @@ def test_same_base_and_scan_cycle_rejects_second_terminal_assessment(
     )
 
     assert first.assessment_id == second.assessment_id
+    assert append_trade_signal_publication(
+        tmp_path / "trade-signals.v1.jsonl",
+        tmp_path / "trade-signal-cards-ko",
+        base,
+    ) is True
     assert append_quote_actionability_batch(
         tmp_path,
         (),
@@ -291,6 +299,7 @@ def test_same_base_and_scan_cycle_rejects_second_terminal_assessment(
 def test_quote_batch_rejects_artifacts_without_terminal_assessment(
     tmp_path: Path,
 ) -> None:
+    _persist_quote_base(tmp_path)
     decision = _quote_decision()
     assert decision.snapshot is not None
     assert decision.derived_publication is not None
@@ -303,7 +312,13 @@ def test_quote_batch_rejects_artifacts_without_terminal_assessment(
             (),
         )
 
-    assert tuple(tmp_path.iterdir()) == ()
+    assert not (tmp_path / "us-quote-snapshots.v2.jsonl").exists()
+    assert not (tmp_path / "quote-actionability-assessments.v2.jsonl").exists()
+    assert len(
+        (tmp_path / "trade-signals.v1.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ) == 1
 
 
 @pytest.mark.parametrize("mutation", ("signal_id", "quote_bid"))
@@ -311,6 +326,7 @@ def test_quote_batch_rejects_semantically_unlinked_derived_signal(
     tmp_path: Path,
     mutation: str,
 ) -> None:
+    _persist_quote_base(tmp_path)
     decision = _quote_decision()
     assert decision.snapshot is not None
     assert decision.derived_publication is not None
@@ -348,12 +364,14 @@ def test_quote_batch_rejects_semantically_unlinked_derived_signal(
             (assessment,),
         )
 
-    assert tuple(tmp_path.iterdir()) == ()
+    assert not (tmp_path / "us-quote-snapshots.v2.jsonl").exists()
+    assert not (tmp_path / "quote-actionability-assessments.v2.jsonl").exists()
 
 
 def test_quote_batch_rejects_terminal_status_that_disagrees_with_trigger(
     tmp_path: Path,
 ) -> None:
+    _persist_quote_base(tmp_path)
     decision = _quote_decision()
     assert decision.snapshot is not None
     assert decision.derived_publication is not None
@@ -372,7 +390,8 @@ def test_quote_batch_rejects_terminal_status_that_disagrees_with_trigger(
             (changed,),
         )
 
-    assert tuple(tmp_path.iterdir()) == ()
+    assert not (tmp_path / "us-quote-snapshots.v2.jsonl").exists()
+    assert not (tmp_path / "quote-actionability-assessments.v2.jsonl").exists()
 
 
 def test_standalone_signal_writer_rejects_quote_validated_publication(
@@ -391,9 +410,150 @@ def test_standalone_signal_writer_rejects_quote_validated_publication(
     assert tuple(tmp_path.iterdir()) == ()
 
 
+def test_quote_batch_rejects_missing_persisted_base_signal(
+    tmp_path: Path,
+) -> None:
+    decision = _quote_decision()
+    assert decision.snapshot is not None
+    assert decision.derived_publication is not None
+
+    with pytest.raises(ValueError, match="quote actionability batch"):
+        _ = append_quote_actionability_batch(
+            tmp_path,
+            (decision.snapshot,),
+            (decision.derived_publication,),
+            (decision.assessment,),
+        )
+
+    assert tuple(tmp_path.iterdir()) == ()
+
+
+def test_quote_batch_rejects_derived_fields_changed_from_persisted_base(
+    tmp_path: Path,
+) -> None:
+    original = _quote_base_publication()
+    payload = original.model_dump(mode="json")
+    payload["signal"]["side"] = "short"
+    payload["signal"]["stop_price"] = "10.20"
+    payload["signal"]["targets"] = (
+        {"label": "1r", "price": "9.90"},
+        {"label": "2r", "price": "9.80"},
+    )
+    changed_base = TradeSignalPublication.model_validate(payload)
+    _ = append_trade_signal_publication(
+        tmp_path / "trade-signals.v1.jsonl",
+        tmp_path / "trade-signal-cards-ko",
+        changed_base,
+    )
+    before = (tmp_path / "trade-signals.v1.jsonl").read_bytes()
+    decision = _quote_decision()
+    assert decision.snapshot is not None
+    assert decision.derived_publication is not None
+
+    with pytest.raises(ValueError, match="quote actionability batch"):
+        _ = append_quote_actionability_batch(
+            tmp_path,
+            (decision.snapshot,),
+            (decision.derived_publication,),
+            (decision.assessment,),
+        )
+
+    assert (tmp_path / "trade-signals.v1.jsonl").read_bytes() == before
+    assert not (tmp_path / "us-quote-snapshots.v2.jsonl").exists()
+    assert not (tmp_path / "quote-actionability-assessments.v2.jsonl").exists()
+
+
+def test_quote_batch_rejects_quote_evidence_time_mismatch(
+    tmp_path: Path,
+) -> None:
+    _persist_quote_base(tmp_path)
+    decision = _quote_decision()
+    assert decision.snapshot is not None
+    assert decision.derived_publication is not None
+    payload = decision.derived_publication.model_dump(mode="json")
+    for evidence in payload["signal"]["evidence_refs"]:
+        if evidence["namespace"] == "quote/snapshot":
+            evidence["observed_at"] = (
+                decision.snapshot.provider_observed_at - dt.timedelta(seconds=1)
+            ).isoformat()
+    changed = TradeSignalPublication.model_validate(payload)
+
+    with pytest.raises(ValueError, match="quote actionability batch"):
+        _ = append_quote_actionability_batch(
+            tmp_path,
+            (decision.snapshot,),
+            (changed,),
+            (decision.assessment,),
+        )
+
+    assert not (tmp_path / "us-quote-snapshots.v2.jsonl").exists()
+    assert not (tmp_path / "quote-actionability-assessments.v2.jsonl").exists()
+
+
+def test_quote_batch_rejects_provider_failure_for_ineligible_base(
+    tmp_path: Path,
+) -> None:
+    original = _quote_base_publication()
+    payload = original.model_dump(mode="json")
+    payload["signal"]["side"] = "short"
+    payload["signal"]["stop_price"] = "10.20"
+    payload["signal"]["targets"] = (
+        {"label": "1r", "price": "9.90"},
+        {"label": "2r", "price": "9.80"},
+    )
+    changed_base = TradeSignalPublication.model_validate(payload)
+    _ = append_trade_signal_publication(
+        tmp_path / "trade-signals.v1.jsonl",
+        tmp_path / "trade-signal-cards-ko",
+        changed_base,
+    )
+    assessment = provider_failed_assessment(
+        changed_base,
+        scan_started_at=OBSERVED_AT - dt.timedelta(seconds=1),
+        evaluated_at=OBSERVED_AT + dt.timedelta(seconds=6),
+    )
+
+    with pytest.raises(ValueError, match="quote actionability batch"):
+        _ = append_quote_actionability_batch(
+            tmp_path,
+            (),
+            (),
+            (assessment,),
+        )
+
+    assert not (tmp_path / "quote-actionability-assessments.v2.jsonl").exists()
+
+
+def test_quote_batch_rejects_terminal_status_inconsistent_with_fresh_snapshot(
+    tmp_path: Path,
+) -> None:
+    _persist_quote_base(tmp_path)
+    decision = _quote_decision()
+    assert decision.snapshot is not None
+    changed = decision.assessment.model_validate(
+        {
+            **decision.assessment.model_dump(mode="json"),
+            "status": QuoteAssessmentStatus.STALE_QUOTE,
+            "derived_signal_id": None,
+        }
+    )
+
+    with pytest.raises(ValueError, match="quote actionability batch"):
+        _ = append_quote_actionability_batch(
+            tmp_path,
+            (decision.snapshot,),
+            (),
+            (changed,),
+        )
+
+    assert not (tmp_path / "us-quote-snapshots.v2.jsonl").exists()
+    assert not (tmp_path / "quote-actionability-assessments.v2.jsonl").exists()
+
+
 def test_quote_validated_card_contains_current_quote_and_trigger_state(
     tmp_path: Path,
 ) -> None:
+    _persist_quote_base(tmp_path)
     path = tmp_path / "trade-signals.v1.jsonl"
     cards = tmp_path / "trade-signal-cards-ko"
     decision = _quote_decision()
@@ -408,7 +568,11 @@ def test_quote_validated_card_contains_current_quote_and_trigger_state(
     ) == (1, 1, 1)
     assert path.is_file()
 
-    card = next(cards.iterdir()).read_text(encoding="utf-8")
+    card = next(
+        content
+        for card_path in cards.iterdir()
+        if "현재 호가 검증" in (content := card_path.read_text(encoding="utf-8"))
+    )
     assert "미국 주식 현재 호가 검증 트레이딩 신호" in card
     assert "현재 bid/ask: 10.08 / 10.1" in card
     assert "spread:" in card
@@ -503,10 +667,7 @@ def _quote_decision(
     scan_started_at: dt.datetime = OBSERVED_AT - dt.timedelta(seconds=1),
 ) -> UsQuoteActionabilityDecision:
     return assess_us_quote(
-        _publication(
-            signal_id="base-signal-quote",
-            entry_price=Decimal("10.10"),
-        ),
+        _quote_base_publication(),
         KisUsLevelOneQuote(
             exchange="NAS",
             symbol="ACME",
@@ -520,6 +681,21 @@ def _quote_decision(
         scan_started_at=scan_started_at,
         evaluated_at=OBSERVED_AT + dt.timedelta(seconds=6),
     )
+
+
+def _quote_base_publication() -> TradeSignalPublication:
+    return _publication(
+        signal_id="base-signal-quote",
+        entry_price=Decimal("10.10"),
+    )
+
+
+def _persist_quote_base(tmp_path: Path) -> None:
+    assert append_trade_signal_publication(
+        tmp_path / "trade-signals.v1.jsonl",
+        tmp_path / "trade-signal-cards-ko",
+        _quote_base_publication(),
+    ) is True
 
 
 def _expected_conditional_card(publication: TradeSignalPublication) -> str:

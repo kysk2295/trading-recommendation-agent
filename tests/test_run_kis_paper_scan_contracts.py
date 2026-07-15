@@ -338,6 +338,7 @@ def test_v2_quote_contracts_leave_legacy_v1_files_untouched(
         published_at,
         OBSERVED_AT,
     )
+    assert append_trade_signal_contracts(tmp_path, publications) == 1
 
     counts = append_quote_actionability_contracts(
         tmp_path,
