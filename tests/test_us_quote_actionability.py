@@ -275,6 +275,48 @@ def test_quote_assessment_is_deterministic() -> None:
     assert len(first.derived_publication.signal.signal_id) < 128
 
 
+def test_independent_receipts_create_distinct_quote_and_signal_identities() -> None:
+    first = _assess(
+        _quote(received_at=AT - dt.timedelta(milliseconds=100))
+    )
+    second = _assess(
+        _quote(received_at=AT - dt.timedelta(milliseconds=50))
+    )
+
+    assert first.snapshot is not None
+    assert second.snapshot is not None
+    assert first.snapshot.quote_id != second.snapshot.quote_id
+    assert first.derived_publication is not None
+    assert second.derived_publication is not None
+    assert (
+        first.derived_publication.signal.signal_id
+        != second.derived_publication.signal.signal_id
+    )
+
+
+def test_one_base_and_scan_cycle_have_one_assessment_identity() -> None:
+    base = _conditional_publication()
+    provider_failed = provider_failed_assessment(
+        base,
+        scan_started_at=SCAN_STARTED_AT,
+        evaluated_at=AT,
+    )
+    validated = assess_us_quote(
+        base,
+        _quote(),
+        scan_started_at=SCAN_STARTED_AT,
+        evaluated_at=AT + dt.timedelta(milliseconds=100),
+    ).assessment
+    next_cycle = provider_failed_assessment(
+        base,
+        scan_started_at=SCAN_STARTED_AT + dt.timedelta(microseconds=1),
+        evaluated_at=AT,
+    )
+
+    assert validated.assessment_id == provider_failed.assessment_id
+    assert next_cycle.assessment_id != provider_failed.assessment_id
+
+
 def test_snapshot_identity_and_assessment_geometry_are_validated() -> None:
     decision = _assess(_quote())
     assert decision.snapshot is not None

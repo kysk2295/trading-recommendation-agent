@@ -54,6 +54,103 @@ def test_fetch_kis_us_quote_uses_exact_read_only_contract() -> None:
     assert quote.ask_size == 900
 
 
+def test_fetch_kis_us_quote_uses_bounded_server_retry() -> None:
+    attempts = 0
+
+    def handle(_: httpx2.Request) -> httpx2.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx2.Response(503)
+        return httpx2.Response(200, json=_payload())
+
+    quote = _fetch(handle)
+
+    assert attempts == 2
+    assert quote.symbol == "ABCD"
+
+
+def test_fetch_kis_us_quote_rejects_unapproved_base_before_http() -> None:
+    requests: list[httpx2.Request] = []
+
+    with httpx2.Client(
+        base_url="https://example.invalid",
+        transport=httpx2.MockTransport(
+            lambda request: requests.append(request)
+            or httpx2.Response(200, json=_payload())
+        ),
+    ) as client, pytest.raises(KisUsQuoteUnavailableError) as caught:
+        _ = fetch_kis_us_level_one_quote(
+            client,
+            SESSION,
+            exchange="NAS",
+            symbol="ABCD",
+            clock=lambda: RECEIVED_AT,
+        )
+
+    assert caught.value.failure_code == "invalid_base_url"
+    assert requests == []
+
+
+def test_fetch_kis_us_quote_never_follows_cross_origin_redirect() -> None:
+    requests: list[httpx2.Request] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        if request.url.host == "openapi.koreainvestment.com":
+            return httpx2.Response(
+                302,
+                headers={"location": "https://example.invalid/collect"},
+            )
+        return httpx2.Response(200, json=_payload())
+
+    with httpx2.Client(
+        base_url="https://openapi.koreainvestment.com:9443",
+        transport=httpx2.MockTransport(handle),
+        follow_redirects=True,
+    ) as client, pytest.raises(KisUsQuoteUnavailableError) as caught:
+        _ = fetch_kis_us_level_one_quote(
+            client,
+            SESSION,
+            exchange="NAS",
+            symbol="ABCD",
+            clock=lambda: RECEIVED_AT,
+        )
+
+    assert len(requests) == 1
+    assert requests[0].url.host == "openapi.koreainvestment.com"
+    assert caught.value.failure_code == "http_error"
+    _assert_sanitized(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("exchange", "symbol"),
+    (("", "ABCD"), ("../", "ABCD"), ("NAS", ""), ("NAS", "bad symbol")),
+)
+def test_fetch_kis_us_quote_rejects_invalid_request_before_http(
+    exchange: str,
+    symbol: str,
+) -> None:
+    requests: list[httpx2.Request] = []
+    with httpx2.Client(
+        base_url="https://openapi.koreainvestment.com:9443",
+        transport=httpx2.MockTransport(
+            lambda request: requests.append(request)
+            or httpx2.Response(200, json=_payload())
+        ),
+    ) as client, pytest.raises(KisUsQuoteUnavailableError) as caught:
+        _ = fetch_kis_us_level_one_quote(
+            client,
+            SESSION,
+            exchange=exchange,
+            symbol=symbol,
+            clock=lambda: RECEIVED_AT,
+        )
+
+    assert caught.value.failure_code == "invalid_request"
+    assert requests == []
+
+
 def test_fetch_kis_us_quote_ignores_unrelated_documented_fields() -> None:
     payload = _payload()
     payload["output1"]["extra_time_field"] = "ignored"
@@ -130,6 +227,7 @@ def test_fetch_kis_us_quote_rejects_invalid_prices(
         ("vbid1", "-1"),
         ("vask1", "1.5"),
         ("vbid1", "many"),
+        ("vask1", "9" * 21),
     ),
 )
 def test_fetch_kis_us_quote_rejects_invalid_sizes(
@@ -220,6 +318,29 @@ def test_fetch_kis_us_quote_rejects_naive_receipt_clock() -> None:
 
     assert caught.value.failure_code == "invalid_clock"
     _assert_sanitized(caught.value)
+
+
+def test_fetch_kis_us_quote_parses_winter_timestamp_with_new_york_offset() -> None:
+    payload = _payload()
+    payload["output1"] = {"dymd": "20260115", "dhms": "132000"}
+    received_at = dt.datetime(2026, 1, 15, 13, 20, 1, tzinfo=NEW_YORK)
+    with (
+        httpx2.Client(
+            base_url="https://openapi.koreainvestment.com:9443",
+            transport=httpx2.MockTransport(
+                lambda _: httpx2.Response(200, json=payload)
+            ),
+        ) as client,
+    ):
+        quote = fetch_kis_us_level_one_quote(
+            client,
+            SESSION,
+            exchange="NAS",
+            symbol="ABCD",
+            clock=lambda: received_at,
+        )
+
+    assert quote.provider_observed_at.utcoffset() == dt.timedelta(hours=-5)
 
 
 def _fetch(

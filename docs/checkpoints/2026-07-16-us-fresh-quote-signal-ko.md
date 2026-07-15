@@ -35,10 +35,12 @@ quote-actionability-assessments.v1.jsonl
 
 quote, assessment, derived signal은 canonical SHA-256 ID를 사용한다. exact replay는 no-op이며 같은 ID의 다른 payload와 malformed 기존 JSONL은 fail-closed한다. conditional 카드의 기존 내용은 바이트 단위 회귀 테스트로 고정했다.
 
+독립 리뷰 뒤 quote ID에 로컬 `received_at`을 포함해 같은 provider 표시값의 별도 수신을 구분했다. assessment ID는 `(base_signal_id, scan_started_at)`으로 고정해 한 cycle의 두 번째 terminal payload를 conflict로 차단한다. KIS client는 exact live·virtual-trading origin만 허용하고 전역·요청 단위 redirect를 모두 끄며, 모든 read-only GET과 같은 500/502/503/504 단일 bounded retry를 사용한다. 레거시 alert `queued_at`은 quote 평가 전 시각을 재사용하지 않고 실제 outbox append 직전에 캡처한다.
+
 ## 검증
 
-- focused fresh-quote suite: `62 passed`
-- 전체 pytest: `1400 passed in 29.98s`
+- review-focused fresh-quote·KIS HTTP suite: `82 passed`
+- 전체 pytest: `1416 passed in 21.48s`
 - Ruff: 통과
 - basedpyright: `0 errors, 0 warnings, 0 notes`
 - CLI `--help`: exit 0

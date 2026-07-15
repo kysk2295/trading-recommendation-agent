@@ -38,6 +38,7 @@ from trading_agent.us_quote_actionability import (
     QuoteAssessmentStatus,
     UsQuoteActionabilityDecision,
     assess_us_quote,
+    provider_failed_assessment,
 )
 
 OBSERVED_AT = dt.datetime(2026, 7, 15, 14, 0, tzinfo=dt.UTC)
@@ -177,6 +178,61 @@ def test_quote_assessment_outbox_replays_and_rejects_conflict(
     assert payloads[0]["assessment_id"] == assessment.assessment_id
 
 
+def test_independent_quote_receipts_append_without_identity_conflict(
+    tmp_path: Path,
+) -> None:
+    snapshots = tmp_path / "us-quote-snapshots.v1.jsonl"
+    signals = tmp_path / "trade-signals.v1.jsonl"
+    cards = tmp_path / "trade-signal-cards-ko"
+    first = _quote_decision(
+        received_at=OBSERVED_AT + dt.timedelta(seconds=5, milliseconds=500)
+    )
+    second = _quote_decision(
+        received_at=OBSERVED_AT + dt.timedelta(seconds=5, milliseconds=700)
+    )
+    assert first.snapshot is not None
+    assert second.snapshot is not None
+    assert first.derived_publication is not None
+    assert second.derived_publication is not None
+
+    assert append_us_quote_snapshot(snapshots, first.snapshot) is True
+    assert append_us_quote_snapshot(snapshots, second.snapshot) is True
+    assert (
+        append_trade_signal_publication(signals, cards, first.derived_publication)
+        is True
+    )
+    assert (
+        append_trade_signal_publication(signals, cards, second.derived_publication)
+        is True
+    )
+
+    assert len(snapshots.read_text(encoding="utf-8").splitlines()) == 2
+    assert len(signals.read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_same_base_and_scan_cycle_rejects_second_terminal_assessment(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "quote-actionability-assessments.v1.jsonl"
+    base = _publication(signal_id="base-signal-assessment")
+    first = provider_failed_assessment(
+        base,
+        scan_started_at=OBSERVED_AT,
+        evaluated_at=OBSERVED_AT + dt.timedelta(seconds=6),
+    )
+    second = provider_failed_assessment(
+        base,
+        scan_started_at=OBSERVED_AT,
+        evaluated_at=OBSERVED_AT + dt.timedelta(seconds=7),
+    )
+
+    assert first.assessment_id == second.assessment_id
+    assert append_quote_actionability_assessment(path, first) is True
+    with pytest.raises(ContractOutboxConflictError):
+        append_quote_actionability_assessment(path, second)
+    assert len(path.read_text(encoding="utf-8").splitlines()) == 1
+
+
 def test_quote_validated_card_contains_current_quote_and_trigger_state(
     tmp_path: Path,
 ) -> None:
@@ -282,7 +338,11 @@ def _publication(
     )
 
 
-def _quote_decision() -> UsQuoteActionabilityDecision:
+def _quote_decision(
+    *,
+    received_at: dt.datetime = OBSERVED_AT
+    + dt.timedelta(seconds=5, milliseconds=500),
+) -> UsQuoteActionabilityDecision:
     return assess_us_quote(
         _publication(
             signal_id="base-signal-quote",
@@ -292,7 +352,7 @@ def _quote_decision() -> UsQuoteActionabilityDecision:
             exchange="NAS",
             symbol="ACME",
             provider_observed_at=OBSERVED_AT + dt.timedelta(seconds=5),
-            received_at=OBSERVED_AT + dt.timedelta(seconds=5, milliseconds=500),
+            received_at=received_at,
             bid=Decimal("10.08"),
             ask=Decimal("10.10"),
             bid_size=1_200,

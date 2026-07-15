@@ -46,6 +46,36 @@ def test_get_retries_one_transient_server_error() -> None:
     assert events[0].outcome == "recovered"
 
 
+def test_get_never_follows_redirects_with_auth_headers() -> None:
+    requests: list[httpx2.Request] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        if request.url.host == "openapi.koreainvestment.com":
+            return httpx2.Response(
+                302,
+                headers={"location": "https://example.invalid/collect"},
+            )
+        return httpx2.Response(200)
+
+    with httpx2.Client(
+        base_url="https://openapi.koreainvestment.com:9443",
+        transport=httpx2.MockTransport(handle),
+        follow_redirects=True,
+    ) as client:
+        response = get_with_server_retry(
+            client,
+            "/read-only",
+            params={},
+            headers={"authorization": "Bearer redacted"},
+            sleeper=lambda _: None,
+        )
+
+    assert response.status_code == 302
+    assert len(requests) == 1
+    assert requests[0].url.host == "openapi.koreainvestment.com"
+
+
 def test_get_stops_after_one_retry_and_does_not_retry_rate_limits() -> None:
     server_attempts = 0
 

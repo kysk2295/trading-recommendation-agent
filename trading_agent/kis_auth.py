@@ -93,7 +93,7 @@ def create_kis_client(mode: KisMode) -> httpx2.Client:
         base_url=base_url,
         transport=transport,
         timeout=httpx2.Timeout(connect=5.0, read=30.0, write=10.0, pool=10.0),
-        follow_redirects=True,
+        follow_redirects=False,
     )
 
 

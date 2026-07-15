@@ -101,6 +101,7 @@ class UsQuoteSnapshot(BaseModel):
                 exchange=self.exchange,
                 symbol=self.symbol,
                 provider_observed_at=self.provider_observed_at,
+                received_at=self.received_at,
                 bid=self.bid,
                 ask=self.ask,
                 bid_size=self.bid_size,
@@ -165,10 +166,6 @@ class QuoteActionabilityAssessment(BaseModel):
             != _assessment_identity(
                 base_signal_id=self.base_signal_id,
                 scan_started_at=self.scan_started_at,
-                evaluated_at=self.evaluated_at,
-                status=self.status,
-                quote_id=self.quote_id,
-                derived_signal_id=self.derived_signal_id,
             )
         ):
             raise ValueError("invalid quote actionability assessment")
@@ -371,10 +368,6 @@ def _assessment(
         assessment_id=_assessment_identity(
             base_signal_id=base.signal.signal_id,
             scan_started_at=scan_started_at,
-            evaluated_at=evaluated_at,
-            status=status,
-            quote_id=quote_id,
-            derived_signal_id=derived_signal_id,
         ),
         base_signal_id=base.signal.signal_id,
         scan_started_at=scan_started_at,
@@ -392,6 +385,7 @@ def _snapshot(quote: KisUsLevelOneQuote) -> UsQuoteSnapshot:
             exchange=quote.exchange,
             symbol=quote.symbol,
             provider_observed_at=quote.provider_observed_at,
+            received_at=quote.received_at,
             bid=quote.bid,
             ask=quote.ask,
             bid_size=quote.bid_size,
@@ -511,6 +505,7 @@ def _quote_identity(
     exchange: str,
     symbol: str,
     provider_observed_at: dt.datetime,
+    received_at: dt.datetime,
     bid: Decimal,
     ask: Decimal,
     bid_size: int,
@@ -523,6 +518,7 @@ def _quote_identity(
             "exchange": exchange,
             "symbol": symbol,
             "provider_observed_at": _timestamp_text(provider_observed_at),
+            "received_at": _timestamp_text(received_at),
             "bid": _decimal_text(bid),
             "ask": _decimal_text(ask),
             "bid_size": bid_size,
@@ -535,20 +531,12 @@ def _assessment_identity(
     *,
     base_signal_id: str,
     scan_started_at: dt.datetime,
-    evaluated_at: dt.datetime,
-    status: QuoteAssessmentStatus,
-    quote_id: str | None,
-    derived_signal_id: str | None,
 ) -> str:
     return _identity(
         "us-quote-assessment:",
         {
             "base_signal_id": base_signal_id,
             "scan_started_at": _timestamp_text(scan_started_at),
-            "evaluated_at": _timestamp_text(evaluated_at),
-            "status": status.value,
-            "quote_id": quote_id,
-            "derived_signal_id": derived_signal_id,
         },
     )
 

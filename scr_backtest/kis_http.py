@@ -48,11 +48,21 @@ def get_with_server_retry(
     headers: dict[str, str],
     sleeper: Callable[[float], None] = time.sleep,
 ) -> httpx2.Response:
-    response = client.get(path, params=params, headers=headers)
+    response = client.get(
+        path,
+        params=params,
+        headers=headers,
+        follow_redirects=False,
+    )
     if response.status_code not in RETRIABLE_SERVER_STATUSES:
         return response
     sleeper(SERVER_RETRY_DELAY_SECONDS)
-    retried = client.get(path, params=params, headers=headers)
+    retried = client.get(
+        path,
+        params=params,
+        headers=headers,
+        follow_redirects=False,
+    )
     _capture_retry(
         KisReadRetryEvent(
             endpoint=path,

@@ -25,7 +25,7 @@ Use the KIS official overseas-stock current level-one quote sample:
 
 Reference: `koreainvestment/open-trading-api`, `examples_llm/overseas_stock/inquire_asking_price`.
 
-The adapter remains on the existing KIS read-only base URL and authentication path. It never calls a KIS account, balance, position, or order endpoint. Request headers, credentials, access tokens, raw authentication responses, and provider error bodies are never written to reports or exceptions.
+The adapter accepts only the exact KIS live and virtual-trading HTTPS origins with no base path, user info, query, or fragment. The shared client and each authenticated GET disable redirects, and transient 500/502/503/504 responses receive the existing single bounded read retry. It never calls a KIS account, balance, position, or order endpoint. Request headers, credentials, access tokens, raw authentication responses, and provider error bodies are never written to reports or exceptions.
 
 ## 3. Chosen Approach
 
@@ -67,7 +67,7 @@ ask_size
 spread_bps
 ```
 
-`quote_id` is deterministic from provider, exchange, symbol, provider time, prices, and sizes. Exact replay is a no-op; the same ID with different content is a conflict. The snapshot contains no credential, token, request header, account field, or raw provider message.
+`quote_id` is deterministic from provider, exchange, symbol, provider time, local receipt time, prices, and sizes. Two independent receipts of the same displayed provider quote therefore remain distinct observations. Exact replay is a no-op; the same ID with different content is a conflict. The snapshot contains no credential, token, request header, account field, or raw provider message.
 
 ### 4.2 `QuoteActionabilityAssessment`
 
@@ -76,6 +76,7 @@ Persist one terminal assessment per base signal and scan cycle to `quote-actiona
 ```text
 assessment_id
 base_signal_id
+scan_started_at
 evaluated_at
 status
 quote_id (optional)
@@ -96,6 +97,8 @@ Allow-listed statuses are:
 - `entry_slippage_exceeded`
 
 Provider details are reduced to the allow-listed status. A failed assessment does not contain a quote ID unless a structurally valid normalized snapshot was stored first.
+
+`assessment_id` is deterministic only from the complete base signal ID and `scan_started_at`. A scan cycle can therefore append exactly one terminal result for a base signal; a second status or evaluation payload under that cycle is a conflict instead of another terminal assessment.
 
 ### 4.3 Derived quote-validated signal
 
@@ -178,6 +181,8 @@ The card continues to state that the output is a research and Paper forward-vali
 - valid split outputs and New York timestamp parsing across DST
 - missing, malformed, future, stale, crossed, zero, non-finite, and negative-size quote rejection
 - credential and provider payload redaction on HTTP and parse failures
+- exact approved base validation and cross-origin redirect suppression
+- one bounded retry for transient KIS server errors
 
 ### Projection and outbox tests
 
@@ -187,7 +192,7 @@ The card continues to state that the output is a research and Paper forward-vali
 - 20 bp entry-slippage boundary
 - setup invalidated at the stop
 - sorted complete evidence lineage
-- deterministic ID, exact replay no-op, and conflicting replay rejection
+- receipt-aware quote ID, one-terminal-per-cycle assessment ID, exact replay no-op, and conflicting replay rejection
 
 ### Orchestration tests
 

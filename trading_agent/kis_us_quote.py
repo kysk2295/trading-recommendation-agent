@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 import httpx2
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from scr_backtest.kis_http import get_with_server_retry
 from scr_backtest.kis_intraday import KisSession
 from trading_agent.kis_auth import quote_headers
 
@@ -21,6 +22,15 @@ KIS_US_LEVEL_ONE_PATH: Final = (
 KIS_US_LEVEL_ONE_TR_ID: Final = "HHDFS76200100"
 NEW_YORK: Final = ZoneInfo("America/New_York")
 _NON_NEGATIVE_INTEGER: Final = re.compile(r"[0-9]+", flags=re.ASCII)
+_US_SYMBOL: Final = re.compile(r"[A-Z0-9][A-Z0-9./-]{0,19}", flags=re.ASCII)
+_US_EXCHANGES: Final = frozenset({"NAS", "NYS", "AMS"})
+_APPROVED_ORIGINS: Final = frozenset(
+    {
+        ("openapi.koreainvestment.com", 9443),
+        ("openapivts.koreainvestment.com", 29443),
+    }
+)
+_MAX_SIZE_DIGITS: Final = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,13 +100,19 @@ def fetch_kis_us_level_one_quote(
     symbol: str,
     clock: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
 ) -> KisUsLevelOneQuote:
+    if not _approved_base_url(client.base_url):
+        raise KisUsQuoteUnavailableError("invalid_base_url")
+    if exchange not in _US_EXCHANGES or _US_SYMBOL.fullmatch(symbol) is None:
+        raise KisUsQuoteUnavailableError("invalid_request")
+
     response: httpx2.Response | None = None
     request_succeeded = False
     try:
-        response = client.get(
+        response = get_with_server_retry(
+            client,
             KIS_US_LEVEL_ONE_PATH,
-            params={"AUTH": "", "EXCD": exchange, "SYMB": symbol},
-            headers=quote_headers(
+            {"AUTH": "", "EXCD": exchange, "SYMB": symbol},
+            quote_headers(
                 session.credentials,
                 session.access_token,
                 KIS_US_LEVEL_ONE_TR_ID,
@@ -196,10 +212,24 @@ def _positive_decimal(value: str) -> Decimal | None:
 
 
 def _non_negative_integer(value: str) -> int | None:
-    if _NON_NEGATIVE_INTEGER.fullmatch(value) is None:
+    if (
+        len(value) > _MAX_SIZE_DIGITS
+        or _NON_NEGATIVE_INTEGER.fullmatch(value) is None
+    ):
         return None
     return int(value)
 
 
 def _aware(value: dt.datetime) -> bool:
     return value.tzinfo is not None and value.utcoffset() is not None
+
+
+def _approved_base_url(url: httpx2.URL) -> bool:
+    return (
+        url.scheme == "https"
+        and (url.host, url.port) in _APPROVED_ORIGINS
+        and url.path == "/"
+        and url.userinfo == b""
+        and url.query == b""
+        and url.fragment == ""
+    )

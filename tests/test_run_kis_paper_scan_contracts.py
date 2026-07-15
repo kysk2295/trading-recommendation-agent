@@ -5,6 +5,7 @@ import json
 from decimal import Decimal
 from pathlib import Path
 
+import run_kis_paper_scan
 from run_kis_paper_scan import (
     append_quote_actionability_contracts,
     append_trade_signal_contracts,
@@ -26,10 +27,41 @@ from trading_agent.ranking_journal import (
     RankingGroup,
     RankingSource,
 )
+from trading_agent.store import PaperStore
 from trading_agent.strategy_factory import StrategyMode
 from trading_agent.us_quote_publication import evaluate_quote_publications
 
 OBSERVED_AT = dt.datetime(2026, 7, 15, 14, 0, tzinfo=dt.UTC)
+
+
+def test_legacy_alert_timestamp_is_captured_at_outbox_write(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = PaperStore(tmp_path / "paper.sqlite3")
+    queued_at = OBSERVED_AT + dt.timedelta(seconds=30)
+    captured: list[dt.datetime] = []
+
+    def capture(
+        output: Path,
+        current_store: PaperStore,
+        current_queued_at: dt.datetime,
+    ) -> int:
+        assert output == tmp_path
+        assert current_store is store
+        captured.append(current_queued_at)
+        return 7
+
+    monkeypatch.setattr("run_kis_paper_scan.write_alert_outbox", capture)
+
+    count = run_kis_paper_scan.write_current_alert_outbox(
+        tmp_path,
+        store,
+        clock=lambda: queued_at,
+    )
+
+    assert count == 7
+    assert captured == [queued_at]
 
 
 def test_opportunity_helper_writes_the_additive_v2_artifact(tmp_path: Path) -> None:

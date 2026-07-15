@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -90,6 +91,15 @@ class QuoteContractAppendCounts:
     snapshot_count: int
     validated_signal_count: int
     assessment_count: int
+
+
+def write_current_alert_outbox(
+    output: Path,
+    store: PaperStore,
+    *,
+    clock: Callable[[], dt.datetime] = lambda: dt.datetime.now().astimezone(),
+) -> int:
+    return write_alert_outbox(output, store, clock())
 
 
 def unselected_tracked_candidates(
@@ -252,7 +262,7 @@ def main(
     opportunity: OpportunitySnapshot | None = None
     conditional_publications: tuple[TradeSignalPublication, ...] = ()
     quote_batch = UsQuotePublicationBatch((), (), ())
-    published_at = started_at
+    contract_published_at = started_at
     retry_capture = begin_retry_capture()
     try:
         with create_kis_client(mode) as client:
@@ -333,12 +343,12 @@ def main(
                 for stock in blocked_followers
             )
             scan_completed = True
-            published_at = dt.datetime.now().astimezone()
+            contract_published_at = dt.datetime.now().astimezone()
             conditional_publications = build_trade_signal_contracts(
                 store.recommendations(),
                 opportunity,
                 strategy,
-                published_at,
+                contract_published_at,
                 started_at,
             )
             quote_batch = evaluate_quote_publications(
@@ -369,7 +379,7 @@ def main(
         )
         append_kis_retry_audit(output, started_at, retry_events)
     write_report(output / "recommendations_ko.md", store)
-    queued = write_alert_outbox(output, store, published_at)
+    queued = write_current_alert_outbox(output, store)
     contract_signals = append_trade_signal_contracts(
         output,
         conditional_publications,
