@@ -260,7 +260,7 @@ Paper mutation 요청이 timeout 또는 응답 형식 오류로 모호해졌을 
   --liquidity-quantity 100 --spread-bps 20
 ```
 
-정규장·현재 봉·빈 포트폴리오·WSS heartbeat·계좌 대사 중 하나라도 틀리면 POST 전에 차단한다. 이 경계는 MockTransport와 fake CLI로 검증됐고 entry script의 Git 실행 비트와 직접 `--help` 실행도 회귀 테스트로 고정했지만, 실제 정규장 최소 주문은 아직 보내지 않았다.
+정규장·현재 봉·빈 포트폴리오·WSS heartbeat·계좌 대사 중 하나라도 틀리면 POST 전에 차단한다. 실행 예외는 클래스명으로 만든 고정 안전 사유만 stderr와 보고서에 기록하며 원문 메시지는 출력하지 않는다. 이 경계는 MockTransport와 fake CLI로 검증됐고 entry script의 Git 실행 비트와 직접 `--help` 실행도 회귀 테스트로 고정했지만, 실제 정규장 최소 주문은 아직 보내지 않았다.
 
 진입 체결 뒤 보호 OCO를 별도 smoke하려면 정확한 parent intent를 지정한다. 이 명령도 같은 arm 값과 단일 Writer/WSS current-epoch 복구를 요구하며, 체결 원장·broker 포지션·보호 OCO 계획이 일치하지 않으면 POST 전에 차단한다.
 
@@ -272,7 +272,7 @@ Paper mutation 요청이 timeout 또는 응답 형식 오류로 모호해졌을 
   --intent-id orb-AAPL-YYYYMMDD-HHMMSS
 ```
 
-이 CLI는 이미 체결된 축소 Paper entry의 보호 주문 수명주기를 검증하기 위한 것이며, 신규 진입을 만들지 않는다. 현재 5초 REST/WSS·ACTIVE 계좌 대사·브로커/로컬 정규장 일치·15:55 ET 이전 조건이 모두 맞아야 mutation broker를 연다. 기존 OCO가 exact 포지션을 덮으면 noop이다. 추가 체결로 수량이 부족하면 첫 호출은 source-bound OCO cancel만 실행해 `incomplete`/종료코드 2로 끝나며, broker terminal 상태를 다음 current-epoch에서 대사한 뒤 다시 실행할 때만 고유 client ID의 exact-quantity replacement OCO를 POST한다. cancel과 replacement를 한 호출에서 함께 전송하지 않는다.
+이 CLI는 이미 체결된 축소 Paper entry의 보호 주문 수명주기를 검증하기 위한 것이며, 신규 진입을 만들지 않는다. 현재 5초 REST/WSS·ACTIVE 계좌 대사·브로커/로컬 정규장 일치·15:55 ET 이전 조건이 모두 맞아야 mutation broker를 연다. 기존 OCO가 exact 포지션을 덮으면 noop이다. 추가 체결로 수량이 부족하면 첫 호출은 source-bound OCO cancel만 실행해 `incomplete`/종료코드 2로 끝나며, broker terminal 상태를 다음 current-epoch에서 대사한 뒤 다시 실행할 때만 고유 client ID의 exact-quantity replacement OCO를 POST한다. cancel과 replacement를 한 호출에서 함께 전송하지 않는다. 실행 예외도 클래스명으로 만든 고정 안전 사유만 기록하고 원문 broker·계좌·경로 정보는 버린다.
 
 cutoff·kill switch·EOD 계획을 실제 Paper cancel/flatten mutation으로 별도 smoke하려면 다음 명령을 사용한다. 현재 WSS 세대 안에서 미해결 mutation을 먼저 복구하고 broker·원장·계좌 fingerprint가 맞을 때만 계획 순서대로 entry와 보호 OCO를 취소한 뒤 exact 정수 포지션을 평탄화한다.
 

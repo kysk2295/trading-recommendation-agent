@@ -69,6 +69,17 @@ README가 직접 실행을 안내하는 `run_alpaca_paper_entry_smoke.py`가 최
 - basedpyright: 오류 0, 경고 0
 - 외부 Alpaca Paper POST/DELETE: 0건
 
+## 후속 오류 정보 최소화
+
+entry와 보호 OCO smoke가 실행 예외의 원문 메시지를 stderr와 Markdown 보고서에 기록하던 정책 불일치를 수정했다. 두 CLI 모두 안전조치 smoke와 같은 `안전 오류 유형: <예외 클래스>` 형식만 남기며, 예외 메시지에 섞일 수 있는 계좌·broker 식별자와 내부 경로는 출력하지 않는다. 고의로 민감 문자열을 넣은 `OSError` fixture가 stderr와 보고서 어느 쪽에도 남지 않는 회귀 테스트를 추가했다.
+
+- entry·보호 OCO·safety smoke 표적 회귀: `21 passed`
+- 전체 회귀: `779 passed`
+- `uv run ruff check .`: 통과
+- 변경 Python 4개 파일 `ruff format --check`: 통과
+- `uv run basedpyright`: 오류 0, 경고 0
+- 외부 Alpaca Paper POST/DELETE: 0건
+
 ## 다음 안전 게이트
 
 1. 부분체결 수량이 증가할 때 기존 OCO를 cancel하고 늘어난 exact 수량으로 교체하는 current-epoch 상태기계를 구현한다.

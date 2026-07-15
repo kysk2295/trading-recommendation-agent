@@ -5,7 +5,7 @@ import os
 import shutil
 import subprocess
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
 import pytest
@@ -161,3 +161,33 @@ def test_wrong_arm_fails_in_parser_before_credentials(tmp_path: Path) -> None:
 
     assert captured.value.code == 2
     assert called is False
+
+
+def test_entry_smoke_redacts_runtime_error_details(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    database = tmp_path / "execution.sqlite3"
+    output = tmp_path / "report"
+    with ExecutionStore(database).writer() as writer:
+        _ = writer.bind_account(FINGERPRINT, NOW)
+
+    def fail_open(
+        _: AlpacaPaperCredentials,
+        __: ExecutionStore,
+    ) -> AbstractContextManager[PaperOperatingSession]:
+        raise OSError("sensitive-account-and-broker-id")
+
+    code = smoke_cli.main(
+        _arguments(database, output),
+        credential_loader=lambda: AlpacaPaperCredentials("key", "secret"),
+        session_opener=fail_open,
+    )
+
+    report = (output / "paper_entry_smoke_ko.md").read_text(encoding="utf-8")
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "안전 오류 유형: OSError" in report
+    assert "안전 오류 유형: OSError" in captured.err
+    assert "sensitive-account-and-broker-id" not in report
+    assert "sensitive-account-and-broker-id" not in captured.err

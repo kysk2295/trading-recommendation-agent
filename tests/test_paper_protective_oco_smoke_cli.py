@@ -8,6 +8,8 @@ from pathlib import Path
 from types import TracebackType
 from typing import cast
 
+import pytest
+
 import run_alpaca_paper_protective_oco_smoke as cli
 from tests.trade_update_ledger_fixtures import OBSERVED_AT, initialized_store, intent
 from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
@@ -254,6 +256,42 @@ def test_protective_oco_smoke_blocks_on_current_epoch_reasons(tmp_path: Path) ->
     report = (tmp_path / "report" / "paper_protective_oco_smoke_ko.md").read_text(encoding="utf-8")
     assert exit_code == 1
     assert "current-epoch 불일치" in report
+
+
+def test_protective_oco_smoke_redacts_runtime_error_details(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = initialized_store(tmp_path)
+
+    def fail_open(
+        _: AlpacaPaperCredentials,
+        __: ExecutionStore,
+    ) -> AbstractContextManager[PaperOperatingSession]:
+        raise OSError("sensitive-account-and-broker-id")
+
+    exit_code = cli.main(
+        [
+            "--arm-paper-mutation",
+            "ARM_ALPACA_PAPER_ONLY",
+            "--database",
+            str(store.path),
+            "--output-dir",
+            str(tmp_path / "report"),
+            "--intent-id",
+            intent().intent_id,
+        ],
+        credential_loader=lambda: AlpacaPaperCredentials("key", "secret"),
+        session_opener=fail_open,
+    )
+
+    report = (tmp_path / "report" / "paper_protective_oco_smoke_ko.md").read_text(encoding="utf-8")
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "안전 오류 유형: OSError" in report
+    assert "안전 오류 유형: OSError" in captured.err
+    assert "sensitive-account-and-broker-id" not in report
+    assert "sensitive-account-and-broker-id" not in captured.err
 
 
 def _plan() -> ProtectiveOcoExitPlan:

@@ -162,7 +162,7 @@ def main(
         OSError,
         sqlite3.Error,
     ) as error:
-        rendered = str(error)
+        rendered = _safe_error_reason(error)
         print(rendered, file=sys.stderr)
         _write_report(args.output_dir, "오류", (rendered,))
         return 2
@@ -211,6 +211,10 @@ def _request(args: argparse.Namespace) -> PaperOrderAdmissionRequest:
         args.spread_bps,
         SMOKE_RISK_CONFIG,
     )
+
+
+def _safe_error_reason(error: BaseException) -> str:
+    return f"안전 오류 유형: {type(error).__name__}"
 
 
 def _write_report(output_dir: Path, state: str, details: tuple[str, ...]) -> None:
