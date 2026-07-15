@@ -17,7 +17,7 @@
 - Create: `trading_agent/lane_defaults.py`
 - Create: `tests/test_lane_policy_models.py`
 
-- [ ] **Step 1: Write failing tests for the closed lane set and distinct state machines**
+- [x] **Step 1: Write failing tests for the closed lane set and distinct state machines**
 
 ```python
 def test_default_lanes_use_distinct_execution_state_machines() -> None:
@@ -30,7 +30,7 @@ def test_default_lanes_use_distinct_execution_state_machines() -> None:
     assert len({policy.state_machine for policy in policies}) == 3
 ```
 
-- [ ] **Step 2: Write failing tests that pin the current intraday smoke limits**
+- [x] **Step 2: Write failing tests that pin the current intraday smoke limits**
 
 ```python
 def test_intraday_pilot_risk_contract_does_not_expand_smoke_limits() -> None:
@@ -42,19 +42,19 @@ def test_intraday_pilot_risk_contract_does_not_expand_smoke_limits() -> None:
     assert risk.per_side_cost_bps == Decimal("20")
 ```
 
-- [ ] **Step 3: Run the tests and verify RED**
+- [x] **Step 3: Run the tests and verify RED**
 
 Run: `uv run pytest -q tests/test_lane_policy_models.py`
 
 Expected: import failure because the lane modules do not exist.
 
-- [ ] **Step 4: Implement the typed policy union and risk validator**
+- [x] **Step 4: Implement the typed policy union and risk validator**
 
 Define `LaneId` as a `StrEnum`, `LaneOrderAuthority` as `alpaca_paper | shadow_only | none`, three frozen policy models with literal state-machine IDs, and a frozen `LaneRiskContract`. Validate finite non-negative Decimal limits; require all exposure fields to be zero for `none`; require positive bounded limits for `alpaca_paper` and `shadow_only`.
 
 The intraday policy must encode entry cutoff 30 and flatten 5 minutes before close. Swing must carry explicit multi-session states. Regime signal-only must expose no order states.
 
-- [ ] **Step 5: Add immutable defaults and the PaperRiskConfig adapter**
+- [x] **Step 5: Add immutable defaults and the PaperRiskConfig adapter**
 
 ```python
 def intraday_pilot_paper_risk_config() -> PaperRiskConfig:
@@ -69,7 +69,7 @@ def intraday_pilot_paper_risk_config() -> PaperRiskConfig:
     return config
 ```
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run: `uv run pytest -q tests/test_lane_policy_models.py`
 
@@ -83,7 +83,7 @@ Expected: all tests pass.
 - Modify: `trading_agent/lane_defaults.py`
 - Create: `tests/test_lane_contract_models.py`
 
-- [ ] **Step 1: Write failing tests for manifest and account-binding invariants**
+- [x] **Step 1: Write failing tests for manifest and account-binding invariants**
 
 Cover deterministic manifest keys, exact Paper base URL, aware timestamps, 64-character lowercase hex fingerprints, and rejection of account bindings for shadow/signal manifests.
 
@@ -92,7 +92,7 @@ with pytest.raises(InvalidLaneContractError):
     lane_account_binding(MARKET_REGIME_MANIFEST, account_fingerprint, ledger_fingerprint, NOW)
 ```
 
-- [ ] **Step 2: Write failing tests for cross-lane anti-mixing rules**
+- [x] **Step 2: Write failing tests for cross-lane anti-mixing rules**
 
 ```python
 def test_cross_lane_scope_requires_a_new_preregistered_hypothesis() -> None:
@@ -108,25 +108,25 @@ def test_cross_lane_scope_requires_a_new_preregistered_hypothesis() -> None:
         )
 ```
 
-- [ ] **Step 3: Write failing tests for finalized snapshots**
+- [x] **Step 3: Write failing tests for finalized snapshots**
 
 Require intraday zero orders/positions/open risk, signal-only zero broker fields, and allocation eligibility only with complete data, no incidents, and a champion.
 
-- [ ] **Step 4: Run tests and verify RED**
+- [x] **Step 4: Run tests and verify RED**
 
 Run: `uv run pytest -q tests/test_lane_contract_models.py`
 
 Expected: import failure.
 
-- [ ] **Step 5: Implement frozen models and canonical SHA-256 keys**
+- [x] **Step 5: Implement frozen models and canonical SHA-256 keys**
 
 Use `ConfigDict(frozen=True, extra="forbid")`, canonical `model_dump(mode="json")`, sorted-key compact JSON, and lowercase SHA-256. Define `manifest_key`, `binding_key`, `experiment_scope_key`, and `lane_daily_snapshot_key` without accepting caller-provided keys.
 
-- [ ] **Step 6: Implement registration-time checks**
+- [x] **Step 6: Implement registration-time checks**
 
 Add `require_scope_registered_before_session(scope, session_date)` using the local NYSE regular-session open. Reject unsupported calendar dates and registration at or after the open.
 
-- [ ] **Step 7: Run focused tests**
+- [x] **Step 7: Run focused tests**
 
 Run: `uv run pytest -q tests/test_lane_contract_models.py tests/test_lane_policy_models.py`
 
@@ -139,33 +139,33 @@ Expected: all tests pass.
 - Create: `trading_agent/lane_registry_store.py`
 - Create: `tests/test_lane_registry_store.py`
 
-- [ ] **Step 1: Write failing schema and lease tests**
+- [x] **Step 1: Write failing schema and lease tests**
 
 Verify schema version 1, all four tables, update/delete rejection triggers, file mode `0600`, and a second non-blocking Writer lease failure before mutation.
 
-- [ ] **Step 2: Write failing idempotency and conflict tests**
+- [x] **Step 2: Write failing idempotency and conflict tests**
 
 Exact replay returns `False`. A lane/version, hypothesis ID, lane binding, or lane/date snapshot identity with different canonical JSON raises `LaneRegistryConflictError`.
 
-- [ ] **Step 3: Write failing isolation tests**
+- [x] **Step 3: Write failing isolation tests**
 
 Registering the same account fingerprint or execution-ledger fingerprint for two lanes must fail. Binding `swing_momentum` or signal-only `market_regime` under their default manifests must fail before insert.
 
-- [ ] **Step 4: Run tests and verify RED**
+- [x] **Step 4: Run tests and verify RED**
 
 Run: `uv run pytest -q tests/test_lane_registry_store.py`
 
 Expected: import failure.
 
-- [ ] **Step 5: Implement the schema and read-only reader**
+- [x] **Step 5: Implement the schema and read-only reader**
 
 Create `lane_manifests`, `lane_account_bindings`, `experiment_scopes`, and `lane_daily_snapshots` with canonical JSON payloads, identity columns, foreign keys, uniqueness constraints, and append-only triggers. Reader connections must use SQLite URI `mode=ro`, `PRAGMA query_only = ON`, and exact schema-version validation.
 
-- [ ] **Step 6: Implement the Writer and source validation**
+- [x] **Step 6: Implement the Writer and source validation**
 
 The Writer must check that bindings reference a currently registered broker-authorized manifest for that lane, and snapshots reference registered manifest/scope keys whose lane sets contain the snapshot lane. Persist canonical content before returning.
 
-- [ ] **Step 7: Run focused registry tests**
+- [x] **Step 7: Run focused registry tests**
 
 Run: `uv run pytest -q tests/test_lane_registry_store.py tests/test_lane_contract_models.py`
 
