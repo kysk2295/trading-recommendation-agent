@@ -54,6 +54,8 @@ def test_raw_catalyst_is_private_idempotent_and_query_only_readable(tmp_path: Pa
     assert len(stored) == 1
     assert stored[0].record == record
     assert stored[0].raw_payload == PAYLOAD
+    assert "raw_payload" not in repr(stored[0])
+    assert "synthetic semiconductor catalyst" not in repr(stored[0])
     assert store.observations() == (observation,)
     with store.reader_connection() as connection:
         assert connection.execute("PRAGMA query_only").fetchone() == (1,)

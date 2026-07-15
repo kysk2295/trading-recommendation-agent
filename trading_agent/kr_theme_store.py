@@ -8,7 +8,7 @@ import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import final, override
 
@@ -66,7 +66,7 @@ class KrCatalystAppendResult:
 @dataclass(frozen=True, slots=True)
 class StoredKrCatalyst:
     record: KrCatalystRecord
-    raw_payload: bytes
+    raw_payload: bytes = field(repr=False)
 
 
 class KrThemeReader:
