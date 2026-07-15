@@ -25,13 +25,15 @@ from trading_agent.kr_theme_store import KrThemeStore
 from trading_agent.ls_nws import (
     LsNwsParseError,
     LsNwsRawFrame,
+    LsNwsWireKind,
     ParsedLsNwsNews,
-    parse_ls_nws_frame,
+    ParsedLsNwsSubscriptionAck,
+    parse_ls_nws_packet,
 )
 from trading_agent.ls_nws_stream import LsNwsStreamUnavailableError
 from trading_agent.ls_token import LsTokenResponseError, LsTokenTransportError
 
-LS_NWS_ADAPTER_VERSION: Final = "ls-nws-v1"
+LS_NWS_ADAPTER_VERSION: Final = "ls-nws-v2"
 MAX_LS_NWS_COLLECTION_SECONDS: Final = 86_400.0
 MAX_LS_NWS_COLLECTION_FRAMES: Final = 100_000
 _SAFE_CYCLE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,121}$")
@@ -54,7 +56,7 @@ type LsNwsReceiverOpener = Callable[
 ]
 type LsNwsParser = Callable[
     [LsNwsRawFrame, dt.date],
-    ParsedLsNwsNews,
+    ParsedLsNwsNews | ParsedLsNwsSubscriptionAck,
 ]
 
 
@@ -67,6 +69,7 @@ class LsNwsCollectionResult:
     new_catalyst_count: int
     new_observation_count: int
     restarted: bool
+    subscription_acknowledged: bool
 
 
 def collect_ls_nws_news(
@@ -78,7 +81,7 @@ def collect_ls_nws_news(
     duration_seconds: float,
     max_frames: int,
     adapter_version: str = LS_NWS_ADAPTER_VERSION,
-    _parser: LsNwsParser = lambda frame, date: parse_ls_nws_frame(
+    _parser: LsNwsParser = lambda frame, date: parse_ls_nws_packet(
         frame,
         collection_date=date,
     ),
@@ -121,6 +124,11 @@ def collect_ls_nws_news(
             new_catalyst_count=0,
             new_observation_count=0,
             restarted=True,
+            subscription_acknowledged=_stored_subscription_acknowledged(
+                store,
+                source_run_id=source_run_id,
+                collection_date=collection_date,
+            ),
         )
 
     orphan_receipts = store.source_receipts(source_run_id)
@@ -164,6 +172,11 @@ def collect_ls_nws_news(
             new_catalyst_count=0,
             new_observation_count=0,
             restarted=True,
+            subscription_acknowledged=_stored_subscription_acknowledged(
+                store,
+                source_run_id=source_run_id,
+                collection_date=collection_date,
+            ),
         )
 
     operation_started_at = _clock()
@@ -174,6 +187,7 @@ def collect_ls_nws_news(
     seen_realkeys: set[str] = set()
     failure_code: str | None = None
     expected_sequence = 1
+    subscription_acknowledged = False
 
     try:
         with opener() as receiver:
@@ -217,6 +231,16 @@ def collect_ls_nws_news(
                 except LsNwsParseError as error:
                     failure_code = error.failure_code
                     break
+                expected_sequence += 1
+                if isinstance(parsed, ParsedLsNwsSubscriptionAck):
+                    if subscription_acknowledged:
+                        failure_code = "duplicate_subscription_ack"
+                        break
+                    subscription_acknowledged = True
+                    continue
+                if not subscription_acknowledged:
+                    failure_code = "subscription_ack_missing"
+                    break
                 if parsed.realkey in seen_realkeys:
                     failure_code = "duplicate_news"
                     break
@@ -246,11 +270,13 @@ def collect_ls_nws_news(
                 new_catalyst_count += int(result.catalyst_inserted)
                 new_observation_count += int(result.observation_inserted)
                 seen_realkeys.add(parsed.realkey)
-                expected_sequence += 1
     except (LsTokenResponseError, LsTokenTransportError):
         failure_code = "token_error"
     except LsNwsStreamUnavailableError:
         failure_code = "stream_unavailable"
+
+    if failure_code is None and not subscription_acknowledged:
+        failure_code = "subscription_ack_missing"
 
     receipts = store.source_receipts(source_run_id)
     observed_count = _source_observation_count(
@@ -288,6 +314,7 @@ def collect_ls_nws_news(
         new_catalyst_count=new_catalyst_count,
         new_observation_count=new_observation_count,
         restarted=False,
+        subscription_acknowledged=subscription_acknowledged,
     )
 
 
@@ -305,3 +332,31 @@ def _source_observation_count(
         and sources.get(observation.catalyst_id) is KrCatalystSource.NEWS
         for observation in store.observations()
     )
+
+
+def _stored_subscription_acknowledged(
+    store: KrThemeStore,
+    *,
+    source_run_id: str,
+    collection_date: dt.date,
+) -> bool:
+    receipts = store.source_receipts(source_run_id)
+    if not receipts:
+        return False
+    first = receipts[0]
+    wire_kind = (
+        LsNwsWireKind.BINARY
+        if first.receipt.request_key.endswith(":binary")
+        else LsNwsWireKind.TEXT
+    )
+    frame = LsNwsRawFrame(
+        sequence=1,
+        received_at=first.receipt.received_at,
+        wire_kind=wire_kind,
+        raw_payload=first.raw_payload,
+    )
+    try:
+        parsed = parse_ls_nws_packet(frame, collection_date=collection_date)
+    except LsNwsParseError:
+        return False
+    return isinstance(parsed, ParsedLsNwsSubscriptionAck)

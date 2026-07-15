@@ -16,7 +16,8 @@ from trading_agent.ls_nws import (
     LsNwsRawFrame,
     LsNwsWireKind,
     ParsedLsNwsNews,
-    parse_ls_nws_frame,
+    ParsedLsNwsSubscriptionAck,
+    parse_ls_nws_packet,
 )
 from trading_agent.ls_nws_collection import (
     LS_NWS_ADAPTER_VERSION,
@@ -57,7 +58,14 @@ def test_collector_appends_each_raw_frame_before_parse_and_links_news(
     tmp_path: Path,
 ) -> None:
     store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
-    receiver = SequenceReceiver([_frame(1), _frame(2), None])
+    receiver = SequenceReceiver(
+        [
+            _ack_frame(1),
+            _frame(2, realkey=REALKEY_1, published_time="090100"),
+            _frame(3, realkey=REALKEY_2, published_time="090101"),
+            None,
+        ]
+    )
     open_calls = 0
     parser_calls = 0
 
@@ -70,11 +78,11 @@ def test_collector_appends_each_raw_frame_before_parse_and_links_news(
     def assert_raw_first(
         frame: LsNwsRawFrame,
         collection_date: dt.date,
-    ) -> ParsedLsNwsNews:
+    ) -> ParsedLsNwsNews | ParsedLsNwsSubscriptionAck:
         nonlocal parser_calls
         parser_calls += 1
         assert len(store.source_receipts()) == parser_calls
-        return parse_ls_nws_frame(frame, collection_date=collection_date)
+        return parse_ls_nws_packet(frame, collection_date=collection_date)
 
     result = collect_ls_nws_news(
         opener,
@@ -89,7 +97,7 @@ def test_collector_appends_each_raw_frame_before_parse_and_links_news(
     )
 
     assert open_calls == 1
-    assert parser_calls == 2
+    assert parser_calls == 3
     assert result.run.source_run_id == f"{CYCLE_ID}:news"
     assert result.run.adapter_version == LS_NWS_ADAPTER_VERSION
     assert result.run.collection_date == COLLECTION_DATE
@@ -97,23 +105,30 @@ def test_collector_appends_each_raw_frame_before_parse_and_links_news(
     assert result.run.status is KrCoverageStatus.SUCCESS
     assert result.run.failure_code is None
     assert result.run.record_count == 2
-    assert result.receipt_count == 2
-    assert result.new_receipt_count == 2
+    assert result.receipt_count == 3
+    assert result.new_receipt_count == 3
     assert result.catalyst_count == 2
     assert result.new_catalyst_count == 2
     assert result.new_observation_count == 2
     assert result.restarted is False
+    assert result.subscription_acknowledged is True
     receipts = store.source_receipts(result.run.source_run_id)
-    assert [item.receipt.http_status for item in receipts] == [101, 101]
+    assert [item.receipt.http_status for item in receipts] == [101, 101, 101]
     assert [item.receipt.content_type for item in receipts] == [
+        "application/json",
         "application/json",
         "application/json",
     ]
     assert [item.receipt.request_key for item in receipts] == [
         "ls:nws:frame:000001:text",
         "ls:nws:frame:000002:binary",
+        "ls:nws:frame:000003:text",
     ]
-    assert receipts[0].raw_payload == _frame(1).raw_payload
+    assert receipts[1].raw_payload == _frame(
+        2,
+        realkey=REALKEY_1,
+        published_time="090100",
+    ).raw_payload
     catalysts = store.catalysts()
     assert [item.record.source_record_id for item in catalysts] == [
         f"ls-nws://news/{REALKEY_1}",
@@ -125,7 +140,75 @@ def test_collector_appends_each_raw_frame_before_parse_and_links_news(
     assert store.source_runs(CYCLE_ID) == (result.run,)
 
 
-def test_collector_records_connected_zero_news_window_as_success(
+def test_collector_records_ack_only_window_as_zero_news_success(
+    tmp_path: Path,
+) -> None:
+    store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
+
+    result = collect_ls_nws_news(
+        _opener(SequenceReceiver([_ack_frame(1), None])),
+        store,
+        collection_cycle_id=CYCLE_ID,
+        collection_date=COLLECTION_DATE,
+        duration_seconds=1.0,
+        max_frames=1,
+        _clock=lambda: STARTED_AT,
+        _monotonic=lambda: 0.0,
+    )
+
+    assert result.run.status is KrCoverageStatus.SUCCESS
+    assert result.subscription_acknowledged is True
+    assert result.receipt_count == 1
+    assert result.catalyst_count == 0
+
+
+def test_collector_rejects_news_before_subscription_acknowledgement(
+    tmp_path: Path,
+) -> None:
+    store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
+
+    result = collect_ls_nws_news(
+        _opener(SequenceReceiver([_frame(1), None])),
+        store,
+        collection_cycle_id=CYCLE_ID,
+        collection_date=COLLECTION_DATE,
+        duration_seconds=1.0,
+        max_frames=2,
+        _clock=lambda: STARTED_AT,
+        _monotonic=lambda: 0.0,
+    )
+
+    assert result.run.status is KrCoverageStatus.FAILED
+    assert result.run.failure_code == "subscription_ack_missing"
+    assert result.subscription_acknowledged is False
+    assert result.receipt_count == 1
+    assert result.catalyst_count == 0
+
+
+def test_collector_rejects_duplicate_subscription_acknowledgement(
+    tmp_path: Path,
+) -> None:
+    store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
+
+    result = collect_ls_nws_news(
+        _opener(SequenceReceiver([_ack_frame(1), _ack_frame(2), None])),
+        store,
+        collection_cycle_id=CYCLE_ID,
+        collection_date=COLLECTION_DATE,
+        duration_seconds=1.0,
+        max_frames=3,
+        _clock=lambda: STARTED_AT,
+        _monotonic=lambda: 0.0,
+    )
+
+    assert result.run.status is KrCoverageStatus.FAILED
+    assert result.run.failure_code == "duplicate_subscription_ack"
+    assert result.subscription_acknowledged is True
+    assert result.receipt_count == 2
+    assert result.catalyst_count == 0
+
+
+def test_collector_rejects_connected_window_without_subscription_ack(
     tmp_path: Path,
 ) -> None:
     store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
@@ -142,7 +225,9 @@ def test_collector_records_connected_zero_news_window_as_success(
         _monotonic=lambda: 0.0,
     )
 
-    assert result.run.status is KrCoverageStatus.SUCCESS
+    assert result.run.status is KrCoverageStatus.FAILED
+    assert result.run.failure_code == "subscription_ack_missing"
+    assert result.subscription_acknowledged is False
     assert result.run.record_count == 0
     assert result.receipt_count == 0
     assert result.catalyst_count == 0
@@ -151,7 +236,14 @@ def test_collector_records_connected_zero_news_window_as_success(
 
 def test_collector_stops_successfully_at_max_frame_cap(tmp_path: Path) -> None:
     store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
-    receiver = SequenceReceiver([_frame(1), _frame(2), _frame(3)])
+    receiver = SequenceReceiver(
+        [
+            _ack_frame(1),
+            _frame(2, realkey=REALKEY_1, published_time="090100"),
+            _frame(3, realkey=REALKEY_2, published_time="090101"),
+            _frame(4),
+        ]
+    )
 
     result = collect_ls_nws_news(
         _opener(receiver),
@@ -159,14 +251,15 @@ def test_collector_stops_successfully_at_max_frame_cap(tmp_path: Path) -> None:
         collection_cycle_id=CYCLE_ID,
         collection_date=COLLECTION_DATE,
         duration_seconds=60.0,
-        max_frames=2,
+        max_frames=3,
         _clock=lambda: STARTED_AT,
         _monotonic=lambda: 0.0,
     )
 
     assert result.run.status is KrCoverageStatus.SUCCESS
     assert result.run.record_count == 2
-    assert len(receiver.calls) == 2
+    assert result.subscription_acknowledged is True
+    assert len(receiver.calls) == 3
     assert len(receiver.responses) == 1
 
 
@@ -203,10 +296,11 @@ def test_collector_preserves_second_receipt_then_fails_duplicate_realkey(
     tmp_path: Path,
 ) -> None:
     store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
-    duplicate = _frame(2, realkey=REALKEY_1, published_time="090100")
+    first = _frame(2, realkey=REALKEY_1, published_time="090100")
+    duplicate = _frame(3, realkey=REALKEY_1, published_time="090100")
 
     result = collect_ls_nws_news(
-        _opener(SequenceReceiver([_frame(1), duplicate])),
+        _opener(SequenceReceiver([_ack_frame(1), first, duplicate])),
         store,
         collection_cycle_id=CYCLE_ID,
         collection_date=COLLECTION_DATE,
@@ -218,8 +312,9 @@ def test_collector_preserves_second_receipt_then_fails_duplicate_realkey(
 
     assert result.run.status is KrCoverageStatus.FAILED
     assert result.run.failure_code == "duplicate_news"
+    assert result.subscription_acknowledged is True
     assert result.run.record_count == 1
-    assert len(store.source_receipts()) == 2
+    assert len(store.source_receipts()) == 3
     assert len(store.catalysts()) == 1
     assert len(store.observation_receipts()) == 1
 
@@ -227,7 +322,11 @@ def test_collector_preserves_second_receipt_then_fails_duplicate_realkey(
 def test_collector_preserves_partial_news_when_stream_fails(tmp_path: Path) -> None:
     store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
     receiver = SequenceReceiver(
-        [_frame(1), LsNwsStreamUnavailableError("private")]
+        [
+            _ack_frame(1),
+            _frame(2, realkey=REALKEY_1, published_time="090100"),
+            LsNwsStreamUnavailableError("private"),
+        ]
     )
 
     result = collect_ls_nws_news(
@@ -243,8 +342,9 @@ def test_collector_preserves_partial_news_when_stream_fails(tmp_path: Path) -> N
 
     assert result.run.status is KrCoverageStatus.FAILED
     assert result.run.failure_code == "stream_unavailable"
+    assert result.subscription_acknowledged is True
     assert result.run.record_count == 1
-    assert len(store.source_receipts()) == 1
+    assert len(store.source_receipts()) == 2
     assert len(store.catalysts()) == 1
 
 
@@ -287,7 +387,14 @@ def test_terminal_source_run_restart_performs_no_open_or_append(
                 1,
                 STARTED_AT + dt.timedelta(seconds=1),
                 LsNwsWireKind.TEXT,
-                b"{bad" if failed else _frame(1).raw_payload,
+                b"{bad" if failed else _ack_frame(1).raw_payload,
+            ),
+            *(
+                []
+                if failed
+                else [
+                    _frame(2, realkey=REALKEY_1, published_time="090100")
+                ]
             ),
             None,
         ]
@@ -327,6 +434,7 @@ def test_terminal_source_run_restart_performs_no_open_or_append(
     assert second.new_receipt_count == 0
     assert second.new_catalyst_count == 0
     assert second.new_observation_count == 0
+    assert second.subscription_acknowledged is (not failed)
     assert open_calls == 0
     assert len(store.source_runs()) == 1
 
@@ -335,7 +443,7 @@ def test_orphan_receipt_restart_fails_closed_without_opening_source(
     tmp_path: Path,
 ) -> None:
     store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
-    frame = _frame(1)
+    frame = _ack_frame(1)
     receipt = KrSourceReceipt(
         source_run_id=f"{CYCLE_ID}:news",
         source=KrCatalystSource.NEWS,
@@ -374,6 +482,7 @@ def test_orphan_receipt_restart_fails_closed_without_opening_source(
     assert result.new_receipt_count == 0
     assert result.catalyst_count == 0
     assert result.restarted is True
+    assert result.subscription_acknowledged is True
     assert store.source_runs(CYCLE_ID) == (result.run,)
 
 
@@ -526,4 +635,22 @@ def _frame(
         STARTED_AT + dt.timedelta(seconds=sequence + 1),
         LsNwsWireKind.TEXT if sequence % 2 else LsNwsWireKind.BINARY,
         json.dumps(document, ensure_ascii=False).encode(),
+    )
+
+
+def _ack_frame(sequence: int) -> LsNwsRawFrame:
+    document = {
+        "header": {
+            "rsp_cd": "00000",
+            "rsp_msg": "subscription accepted",
+            "tr_cd": "NWS",
+            "tr_type": "3",
+        },
+        "body": None,
+    }
+    return LsNwsRawFrame(
+        sequence,
+        STARTED_AT + dt.timedelta(seconds=sequence + 1),
+        LsNwsWireKind.TEXT,
+        json.dumps(document).encode(),
     )
