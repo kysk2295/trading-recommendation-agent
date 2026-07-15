@@ -375,7 +375,7 @@ git diff --check
 
 Repeat CLI help, invalid input, ingest + projection happy path, and restart from the final merged `main`. Record exact results and confirm external network, LLM and trading mutations were zero.
 
-- [ ] **Step 3: Review privacy and lineage**
+- [x] **Step 3: Review privacy and lineage**
 
 Review `main...HEAD` specifically for raw payload/text repr, exception/report leakage, exact cycle/cohort joins, source coverage, deterministic IDs, append-only conflicts, and theme mixing. Fix every blocking or important finding with a failing regression test first.
 
