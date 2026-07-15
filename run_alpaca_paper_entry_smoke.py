@@ -38,7 +38,10 @@ from trading_agent.paper_account_activity_store import (
     InvalidPaperAccountActivityError,
     PaperAccountActivityConflictError,
 )
-from trading_agent.paper_execution_models import IntentId, PaperOrderIntent, PaperOrderSide
+from trading_agent.paper_entry_source import (
+    InvalidCurrentOrbPaperEntrySourceError,
+    load_current_orb_paper_entry,
+)
 from trading_agent.paper_mutation_arm import PAPER_MUTATION_ARM_VALUE, PaperMutationArm
 from trading_agent.paper_mutation_executor_models import PaperMutationExecutionState
 from trading_agent.paper_mutation_recovery import (
@@ -57,7 +60,7 @@ from trading_agent.paper_operating_session_models import (
     PaperOrderAdmissionRequest,
     PaperPostMutationReconciliationError,
 )
-from trading_agent.paper_order_gate_models import BlockedPaperOrderGateDecision, LatestCompletedBar
+from trading_agent.paper_order_gate_models import BlockedPaperOrderGateDecision
 from trading_agent.paper_protective_oco_recovery_store import (
     InvalidProtectiveOcoRecoveryError,
     ProtectiveOcoRecoveryConflictError,
@@ -81,32 +84,22 @@ type SessionOpener = Callable[
     [AlpacaPaperCredentials, ExecutionStore],
     AbstractContextManager[PaperOperatingSession],
 ]
+type SourceLoader = Callable[[Path, dt.datetime], PaperOrderAdmissionRequest]
+type Clock = Callable[[], dt.datetime]
 
 
-def _aware_datetime(value: str) -> dt.datetime:
-    parsed = dt.datetime.fromisoformat(value)
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise argparse.ArgumentTypeError("timezone offset이 필요합니다")
-    return parsed
+def _now() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="현재 1분봉 후보 하나를 최대 100 USD Alpaca Paper 주문으로 검증")
+    parser = argparse.ArgumentParser(
+        description="watch SQLite의 현재 ORB 후보 하나를 최대 100 USD Alpaca Paper 주문으로 검증"
+    )
     parser.add_argument("--arm-paper-mutation", required=True, choices=(PAPER_MUTATION_ARM_VALUE,))
     parser.add_argument("--database", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--intent-id", required=True)
-    parser.add_argument("--symbol", required=True)
-    parser.add_argument("--side", choices=("buy", "sell"), default="buy")
-    parser.add_argument("--entry-limit", type=float, required=True)
-    parser.add_argument("--stop", type=float, required=True)
-    parser.add_argument("--target-1r", type=float, required=True)
-    parser.add_argument("--target-2r", type=float, required=True)
-    parser.add_argument("--created-at", type=_aware_datetime, required=True)
-    parser.add_argument("--bar-start", type=_aware_datetime, required=True)
-    parser.add_argument("--bar-first-observed", type=_aware_datetime, required=True)
-    parser.add_argument("--liquidity-quantity", type=int, required=True)
-    parser.add_argument("--spread-bps", type=float, required=True)
+    parser.add_argument("--watch-database", type=Path, required=True)
     return parser
 
 
@@ -115,14 +108,16 @@ def main(
     *,
     credential_loader: CredentialLoader = load_alpaca_paper_credentials,
     session_opener: SessionOpener = open_paper_operating_session,
+    source_loader: SourceLoader = load_current_orb_paper_entry,
+    clock: Clock = _now,
 ) -> int:
     args = _parser().parse_args(argv)
     store = ExecutionStore(args.database)
     if not store.is_initialized():
         _write_report(args.output_dir, "차단", ("결합된 실행 원장이 없습니다",))
         return 1
-    request = _request(args)
     try:
+        request = source_loader(args.watch_database, clock())
         with session_opener(credential_loader(), store) as session:
             result = session.execute_entry(
                 request,
@@ -138,6 +133,7 @@ def main(
         InvalidPaperMutationRecordError,
         InvalidPaperMutationRecoverySnapshotError,
         InvalidPaperMutationTransitionError,
+        InvalidCurrentOrbPaperEntrySourceError,
         InvalidPaperStreamRecoveryError,
         InvalidProtectiveOcoRecoveryError,
         InvalidTradeUpdateRawReceiptError,
@@ -188,28 +184,6 @@ def main(
             PaperMutationExecutionState.ALREADY_ACKNOWLEDGED,
         }
         else 2
-    )
-
-
-def _request(args: argparse.Namespace) -> PaperOrderAdmissionRequest:
-    intent = PaperOrderIntent(
-        IntentId(args.intent_id),
-        "orb",
-        "paper-smoke-v1",
-        args.symbol,
-        args.created_at,
-        PaperOrderSide(args.side),
-        args.entry_limit,
-        args.stop,
-        args.target_1r,
-        args.target_2r,
-    )
-    return PaperOrderAdmissionRequest(
-        LatestCompletedBar(args.symbol, args.bar_start, args.bar_first_observed),
-        intent,
-        args.liquidity_quantity,
-        args.spread_bps,
-        SMOKE_RISK_CONFIG,
     )
 
 
