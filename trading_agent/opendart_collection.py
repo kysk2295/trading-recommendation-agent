@@ -64,6 +64,8 @@ def collect_opendart_disclosures(
     _clock: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
 ) -> OpenDartCollectionResult:
     source_run_id = f"{collection_cycle_id}:dart"
+    with store.writer():
+        pass
     existing = tuple(
         run
         for run in store.source_runs(collection_cycle_id)

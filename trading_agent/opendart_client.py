@@ -21,6 +21,7 @@ _STATUS = re.compile(r"^[0-9]{3}$")
 _CORP_CODE = re.compile(r"^[0-9]{8}$")
 _STOCK_CODE = re.compile(r"^[0-9]{6}$")
 _RECEIPT_NUMBER = re.compile(r"^[0-9]{14}$")
+_RECEIPT_DATE = re.compile(r"^[0-9]{8}$")
 
 
 class UnsafeOpenDartEndpointError(ValueError):
@@ -89,6 +90,8 @@ class OpenDartDisclosure(BaseModel):
 
     @model_validator(mode="after")
     def validate_disclosure(self) -> Self:
+        if _RECEIPT_DATE.fullmatch(self.rcept_dt) is None:
+            raise ValueError("invalid OpenDART disclosure")
         try:
             _ = dt.datetime.strptime(self.rcept_dt, "%Y%m%d")
         except ValueError:

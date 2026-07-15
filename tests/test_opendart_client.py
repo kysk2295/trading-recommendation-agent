@@ -23,6 +23,7 @@ RECEIVED_AT = dt.datetime(2026, 7, 15, 0, 1, tzinfo=dt.UTC)
 def _success_payload(
     *,
     stock_code: str = "123456",
+    receipt_date: str = "20260715",
     extra_field: str | None = None,
 ) -> bytes:
     disclosure: dict[str, str] = {
@@ -33,7 +34,7 @@ def _success_payload(
         "report_nm": "Synthetic supply agreement",
         "rcept_no": "20260715000001",
         "flr_nm": "Synthetic Corp",
-        "rcept_dt": "20260715",
+        "rcept_dt": receipt_date,
         "rm": "",
     }
     if extra_field is not None:
@@ -161,6 +162,10 @@ def test_parser_treats_official_no_data_status_as_success_zero() -> None:
             "invalid_response",
         ),
         (
+            _success_payload(receipt_date="2026715"),
+            "invalid_response",
+        ),
+        (
             _success_payload(extra_field="unexpected"),
             "invalid_response",
         ),
@@ -238,4 +243,3 @@ def _raw(
         content_type=content_type,
         raw_payload=payload,
     )
-

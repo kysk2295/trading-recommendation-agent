@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from trading_agent.kr_theme_models import (
     KrCatalystSource,
     KrCoverageStatus,
 )
+from trading_agent.kr_theme_schema import CREATE_KR_THEME_SCHEMA_V1
 from trading_agent.kr_theme_store import KrThemeStore
 from trading_agent.opendart_client import (
     OpenDartDisclosurePage,
@@ -250,6 +252,34 @@ def test_terminal_source_run_restart_performs_no_fetch_or_append(tmp_path: Path)
     assert second.new_observation_count == 0
     assert reject.calls == 0
     assert len(store.source_runs()) == 1
+
+
+def test_collector_migrates_existing_v1_ledger_before_restart_lookup(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "kr-theme-v1.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(CREATE_KR_THEME_SCHEMA_V1)
+        _ = connection.execute("PRAGMA user_version = 1")
+    store = KrThemeStore(path)
+
+    result = collect_opendart_disclosures(
+        StubFetcher(
+            {
+                1: _raw(
+                    1,
+                    json.dumps({"status": "013", "message": "none"}).encode(),
+                )
+            }
+        ),
+        store,
+        collection_cycle_id=CYCLE_ID,
+        collection_date=COLLECTION_DATE,
+    )
+
+    assert result.run.status is KrCoverageStatus.SUCCESS
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (2,)
 
 
 def _raw(
