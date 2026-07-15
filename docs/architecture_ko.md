@@ -47,6 +47,36 @@ Researcher·Developer·Reviewer
 - 연구 게이트: 과거 백테스트와 실시간 paper 결과를 통과한 전략만 활성화한다.
 - 적응형 평가기: checksum된 개별 거래를 최근 5/10/20/60 적격일로 다시 집계하고 장전 시점 시장 국면별 열화를 분리해 조기중단·진단·비교·최종검토 권고만 만든다.
 
+## Lane control-plane과 독립 Reviewer
+
+공유 검증 커널 위에 세 lane을 점진적으로 분리한다.
+
+| lane | 현재 정책 | 계좌·주문 권한 |
+|---|---|---|
+| `intraday_momentum` | 정규장 진입, 같은 날 보호·평탄화 상태기계 | 전용 Alpaca Paper binding 필요 |
+| `swing_momentum` | 독립 다중세션 shadow 상태기계 | 없음 |
+| `market_regime` | 신호 publish-only | 없음 |
+
+execution schema v9는 이동하지 않는다. 별도 lane registry schema v1이 immutable manifest, lane account/ledger binding, 사전등록 experiment scope와 flat daily snapshot을 보존한다. lane별 결과를 사후 혼합하지 않으며 다른 lane을 결합하는 평가는 신규 cross-lane hypothesis로 시장 개장 전에 등록해야 한다.
+
+ORB 일일 확정과 검토 흐름은 다음 두 Writer 경계를 가진다.
+
+```text
+Alpaca Paper GET/WSS readiness + execution DB v9 + exact ORB daily record
+→ intraday lane Writer
+→ append-only LaneDailySnapshot
+
+query-only lane registry + exact ORB daily record + adaptive JSON
+→ 독립 Reviewer
+→ 별도 global append-only lane_review_events
+```
+
+snapshot producer는 local preflight를 credential보다 먼저 실행한다. NYSE official close 이후 같은 New York 날짜, 5초 이내 account/clock/Pong/portfolio 관측, closed market, open order·보호 OCO·nonzero position·portfolio exposure 0, registry/execution/readiness account fingerprint 일치와 exact execution hash가 모두 필요하다. 성공해도 champion은 비어 있고 allocation eligible은 false다.
+
+Reviewer는 Alpaca, credential, HTTP, execution store 또는 mutation 모듈을 import하지 않는다. adaptive action을 중단 권고·진단 필요·비교 준비·promotion 검토 차단·계속 수집 중 하나로 투영하고, event의 `automatic_state_change_allowed`와 `order_authority_change_allowed`는 false만 허용한다. review DB는 lane registry와 분리된 mode 600 SQLite, 비차단 single Writer lease, UPDATE/DELETE 금지 trigger와 query-only reader를 사용한다.
+
+Portfolio Manager는 구현하지 않았다. 최소 두 lane champion이 생기기 전에는 다음 세션 위험예산 배분이나 주문권한 변경을 추가하지 않는다.
+
 ## 전략 승격 단계
 
 ```text
@@ -62,7 +92,7 @@ research → historical_pass → paper → approved → suspended
 ## 강제 안전장치
 
 - Alpaca Paper 외의 브로커 주문 API를 연결하지 않는다.
-- Alpaca Paper POST/DELETE는 정규장·현재 완료 봉·order stream·위험승인·보호청산·EOD 평탄화가 모두 준비되기 전까지 공개하지 않는다.
+- Alpaca Paper POST/DELETE는 명시적 arm 단발 smoke에만 노출하고 정규장·현재 완료 봉·order stream·위험승인·보호청산·EOD 평탄화 조건이 하나라도 부족하면 호출 전에 차단한다.
 - 실행 원장을 변경하는 프로세스는 하나만 허용하며 두 번째 Writer는 공급자 호출 전에 실패한다.
 - 추천 생성 시각 이후의 가격과 거래량을 입력 특성으로 사용하지 않는다.
 - 분봉이 없으면 ORB·VWAP·HOD 전략을 실행하지 않는다.
@@ -95,11 +125,11 @@ research → historical_pass → paper → approved → suspended
 - v3 스키마의 table·trigger·unique index 정의와 저장 payload·receipt·recovery hash를 읽을 때도 다시 검증하는 손상 감지
 - 스트림의 두 Pong 사이에 계좌·미체결·포지션·시장시계를 GET하고 단일 SQLite 원장 snapshot과 대사·포트폴리오 집계를 끝내는 활성 세션 전용 승인 경계. 공개 factory에는 provider·clock 주입 인자가 없다.
 
-현재 production 운영 표면은 시장시계·계좌·주문·포지션 조회 GET과 주문 스트림 인증·구독·Ping뿐이다. 정확한 Paper URL만 받는 별도 mutation adapter에는 OCO POST·개별 주문 DELETE·exact-quantity 포지션 DELETE가 있지만, 운영 세션과 CLI에는 아직 제출 경로를 공개하지 않았다. REST aggregate가 누락 체결을 발견하면 주문 상태·누적량은 복원하지만 존재하지 않는 개별 execution을 합성하지 않으며, 상세 체결은 불완전 상태로 남긴다. 일반 protocol quarantine은 이후 일관된 REST 복구로 해소할 수 있지만 immutable 충돌은 account activity나 수동 감사 근거 없이 자동 해소하지 않는다.
+production 읽기 표면은 시장시계·계좌·주문·포지션 GET과 주문 스트림 인증·구독·Ping이다. 정확한 Paper URL만 받는 별도 mutation adapter의 entry/OCO POST·개별 주문 DELETE·exact-quantity 포지션 DELETE는 단일 Writer/current-epoch 운영 세션과 명시적 arm smoke CLI에서만 열리며 실제 broker mutation 검증은 아직 0건이다. REST aggregate가 누락 체결을 발견하면 주문 상태·누적량은 복원하지만 존재하지 않는 개별 execution을 합성하지 않으며, 상세 체결은 불완전 상태로 남긴다. 일반 protocol quarantine은 이후 일관된 REST 복구로 해소할 수 있지만 immutable 충돌은 account activity나 수동 감사 근거 없이 자동 해소하지 않는다.
 
 schema v7는 v6의 cutoff·kill switch·EOD 조치 계획에 canonical request SHA-256을 가진 mutation intent와 `ATTEMPTED/ACKNOWLEDGED/REJECTED/AMBIGUOUS/RECOVERED_*` event를 추가한다. `ATTEMPTED` commit 뒤에만 broker adapter를 호출하고, ACK·거부·모호 상태에서는 같은 source identity를 재전송하지 않는다. current-epoch targeted REST가 정확한 주문을 찾으면 recovered acknowledged다. OCO는 exact client-ID 404와 open·최근 목록의 일치 주문 부재가 동시에 성립하고 30초 이상 1일 이하일 때만 recovered absent로 다음 시도를 허용한다. 이는 당일매매 mutation만 자동 재시도하고 오래된 모호 상태는 수동 감사 대상으로 남기는 경계다. targeted 404와 generic 목록이 충돌하거나 부분 평탄화처럼 포지션이 달라졌는데 대응 주문 ID가 없으면 계속 ambiguous다.
 
-단일 운영 세션은 Writer lease를 먼저 잡고 하나의 WSS를 연 뒤 미분류 raw receipt 재처리와 current-epoch REST recovery를 완료한다. 같은 객체의 `ingest_next`, `evaluate_order`, `plan_safety_actions`, `recover_mutations`는 비차단 operation lock으로 직렬화되어 서로 겹칠 수 없다. 각 판단 직전 다시 current-epoch recovery를 append하고 `connection_epoch`, Writer 자체 변경 수와 SQLite `PRAGMA data_version`을 묶은 generation checkpoint를 만든다. mutation 복구도 이 checkpoint가 유지될 때만 v7 event를 append한다. Alpaca WSS의 Pong은 이벤트 high-water나 replay cursor가 아니므로 이 경계만으로 체결 정정이 완성된 것은 아니다. 실제 보호주문·취소·평탄화 mutation은 다음 열린 정규장의 최소수량 Paper smoke와 사후 REST 대사 전까지 계속 닫아 둔다.
+단일 운영 세션은 Writer lease를 먼저 잡고 하나의 WSS를 연 뒤 미분류 raw receipt 재처리와 current-epoch REST recovery를 완료한다. 같은 객체의 `ingest_next`, `evaluate_order`, `plan_safety_actions`, `recover_mutations`는 비차단 operation lock으로 직렬화되어 서로 겹칠 수 없다. 각 판단 직전 다시 current-epoch recovery를 append하고 `connection_epoch`, Writer 자체 변경 수와 SQLite `PRAGMA data_version`을 묶은 generation checkpoint를 만든다. mutation 복구도 이 checkpoint가 유지될 때만 v7 event를 append한다. Alpaca WSS의 Pong은 이벤트 high-water나 replay cursor가 아니므로 이 경계만으로 체결 정정이 완성된 것은 아니다. 다음 열린 정규장의 최소수량 Paper smoke와 사후 REST 대사 전까지 armed 단발 검증 외 반복 pilot, 위험 확대와 자동 실행은 계속 닫아 둔다.
 
 신규 주문 승인 상태기계는 다음 순서를 고정한다.
 

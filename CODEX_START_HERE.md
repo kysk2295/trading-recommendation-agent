@@ -50,13 +50,14 @@
 - execution schema v9를 유지한 채 별도 lane registry schema v1의 append-only Writer/query-only Reviewer reader와 무네트워크 bootstrap CLI 구현
 - 일일 연구 원장은 schema v2 exact scope로만 표본을 누적하고 schema v1 row는 파일을 재작성하지 않은 채 역사적 intraday scope로 투영
 - ORB intraday final snapshot producer와 GET/WSS-only CLI 구현. 장 종료·5초 freshness·flat broker·registry/execution/readiness account 결합·exact daily scope·execution hash가 모두 맞아야 append하며 replay는 1행 유지
+- 독립 Reviewer와 별도 review ledger schema v1 구현. Reviewer는 query-only lane registry·exact daily record·adaptive JSON만 읽고 false-only 전략/주문 권한 권고를 append하며 replay는 1행, 근거 변경은 immutable conflict
 - armed entry·safety smoke는 하나의 intraday pilot risk contract를 공유하며 100 USD·10 USD·1포지션·30 USD·편도 20bp·risk fraction 1/3000을 유지
 
 ## 다음 우선순위
 
 1. 열린 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증
 2. 추가 부분체결이 실제 발생할 때 staged 보호 OCO cancel → terminal 대사 → 다음 호출 replacement를 같은 축소 한도에서 검증하되 체결을 억지로 만들지 않음
-3. 독립 Reviewer가 query-only `LaneDailySnapshot`·exact daily record·adaptive artifact만 읽어 별도 append-only review ledger에 승격 차단 근거를 남기는 일일 loop 연결
+3. 적격 ORB 장후 루프에서 snapshot CLI 성공 뒤 Reviewer CLI를 순차 실행해 forward 표본과 blocker를 누적하되 자동 승격은 계속 금지
 4. 최소 두 lane champion 전에는 Portfolio Manager를 구현하지 않고, swing은 shadow-only·regime은 signal-only를 유지
 
 ## 시작 전 확인

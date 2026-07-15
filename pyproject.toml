@@ -46,6 +46,7 @@ include = [
   "run_candidate_persistence.py",
   "run_paper_metrics.py",
   "run_intraday_lane_daily_snapshot.py",
+  "run_lane_reviewer.py",
   "run_orb_forward_metrics.py",
   "run_market_risk_sensitivity.py",
   "run_scanner_forward_metrics.py",

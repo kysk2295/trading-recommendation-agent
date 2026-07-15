@@ -79,13 +79,7 @@ class LaneReviewReader:
             rows: list[tuple[str, str]] = connection.execute(
                 "SELECT event_key, payload_json FROM lane_review_events ORDER BY rowid"
             ).fetchall()
-        return tuple(
-            StoredLaneReviewEvent(
-                LaneReviewEventKey(key),
-                LaneReviewEvent.model_validate_json(payload),
-            )
-            for key, payload in rows
-        )
+        return tuple(_stored_event(key, payload) for key, payload in rows)
 
     def review_event(
         self,
@@ -107,10 +101,15 @@ class LaneReviewReader:
         if not rows:
             return None
         key, payload = rows[0]
-        return StoredLaneReviewEvent(
-            LaneReviewEventKey(key),
-            LaneReviewEvent.model_validate_json(payload),
-        )
+        stored = _stored_event(key, payload)
+        event = stored.event
+        if (
+            event.snapshot_key != snapshot_key
+            or event.experiment_scope_key != experiment_scope_key
+            or event.reviewer_version != reviewer_version
+        ):
+            raise InvalidLaneReviewSourceError
+        return stored
 
     def _reader_connection(self) -> sqlite3.Connection:
         connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
@@ -227,6 +226,14 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
         connection.commit()
         return
     _require_current_schema(connection)
+
+
+def _stored_event(key: str, payload: str) -> StoredLaneReviewEvent:
+    event = LaneReviewEvent.model_validate_json(payload)
+    event_key = LaneReviewEventKey(key)
+    if event_key != lane_review_event_key(event):
+        raise InvalidLaneReviewSourceError
+    return StoredLaneReviewEvent(event_key, event)
 
 
 def _require_current_schema(connection: sqlite3.Connection) -> None:

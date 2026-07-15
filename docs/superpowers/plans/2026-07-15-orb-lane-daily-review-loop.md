@@ -379,7 +379,7 @@ Run: `uv run pytest -q tests/test_lane_review_store.py tests/test_lane_review_mo
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit and push Reviewer contract/store**
+- [x] **Step 5: Commit and push Reviewer contract/store**
 
 ```bash
 git add trading_agent/lane_review_models.py trading_agent/lane_review_keys.py trading_agent/lane_review_schema.py trading_agent/lane_review_store.py tests/test_lane_review_models.py tests/test_lane_review_store.py
@@ -393,7 +393,7 @@ git push origin feature/paper-account-activities
 - Create: `trading_agent/lane_reviewer.py`
 - Create: `tests/test_lane_reviewer.py`
 
-- [ ] **Step 1: Write failing happy-path action mapping tests**
+- [x] **Step 1: Write failing happy-path action mapping tests**
 
 Seed a finalized snapshot plus matching daily/adaptive artifacts and assert mappings for continue, early stop, diagnose, comparison ready, suspend, and promotion review blocked.
 
@@ -409,25 +409,25 @@ assert result.event.reviewer_action is LaneReviewerAction.CONTINUE_COLLECTION
 assert result.event.automatic_state_change_allowed is False
 ```
 
-- [ ] **Step 2: Write failing source-integrity tests**
+- [x] **Step 2: Write failing source-integrity tests**
 
 Reject missing/duplicate snapshot, nonflat snapshot, daily scope/date/version mismatch, parent-ledger absence, malformed adaptive JSON, and adaptive date/strategy/evaluator mismatch. Assert no review event is appended.
 
-- [ ] **Step 3: Run tests and verify RED**
+- [x] **Step 3: Run tests and verify RED**
 
 Run: `uv run pytest -q tests/test_lane_reviewer.py`
 
 Expected: module missing.
 
-- [ ] **Step 4: Implement Reviewer without execution or Alpaca imports**
+- [x] **Step 4: Implement Reviewer without execution or Alpaca imports**
 
 Load the exact daily source and `AdaptiveEvaluation`, hash both raw files, map action, and union sorted blockers from snapshot quality/incidents, daily promotion blockers, adaptive proof blockers, missing champion, and allocation ineligibility. If an event with the same identity exists, reuse its first `reviewed_at` while recomputing every other field.
 
-- [ ] **Step 5: Enforce promotion blocking and replay conflict**
+- [x] **Step 5: Enforce promotion blocking and replay conflict**
 
 Add tests that `PROMOTION_REVIEW` never creates champion/order authority, exact replay adds no row, and changed adaptive bytes/action under the same reviewer version causes typed conflict.
 
-- [ ] **Step 6: Run focused Reviewer verification**
+- [x] **Step 6: Run focused Reviewer verification**
 
 Run:
 
@@ -444,25 +444,25 @@ Expected: all tests pass.
 - Create: `tests/test_lane_reviewer_cli.py`
 - Modify: `pyproject.toml`
 
-- [ ] **Step 1: Write failing CLI tests**
+- [x] **Step 1: Write failing CLI tests**
 
 Cover executable help, malformed date/path, missing snapshot, happy event, exact replay, immutable conflict, and report redaction. Assert the module has no Alpaca credential loader, HTTP client, execution store, or mutation imports.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `uv run pytest -q tests/test_lane_reviewer_cli.py`
 
 Expected: script missing.
 
-- [ ] **Step 3: Implement local Reviewer CLI**
+- [x] **Step 3: Implement local Reviewer CLI**
 
 Use `LaneRegistryReader`, `LaneReviewStore`, and `review_intraday_lane_day`. The report may include lane/date, adaptive action, reviewer action, blockers, created/replayed state, and the two authority-denied flags. It must not include paths, hashes, keys, account data, credentials, or broker IDs.
 
-- [ ] **Step 4: Run executable manual QA**
+- [x] **Step 4: Run executable manual QA**
 
 Run help, missing input, a fully local fixture happy path, replay, and tampered adaptive input. Confirm exit codes `0/1`, append-only event counts, and redaction.
 
-- [ ] **Step 5: Add basedpyright coverage and focused verification**
+- [x] **Step 5: Add basedpyright coverage and focused verification**
 
 Run:
 
@@ -483,11 +483,11 @@ Expected: zero failures, errors, or warnings.
 - Create: `docs/checkpoints/2026-07-15-orb-lane-review-loop-ko.md`
 - Modify: `docs/superpowers/plans/2026-07-15-orb-lane-daily-review-loop.md`
 
-- [ ] **Step 1: Document exact authority boundaries**
+- [x] **Step 1: Document exact authority boundaries**
 
 State that snapshot generation uses GET/WSS only, Reviewer is local/query-only against the lane registry, review events cannot change strategy/order authority, champion remains absent, Portfolio Manager remains absent, and external POST/DELETE is zero.
 
-- [ ] **Step 2: Run focused verification**
+- [x] **Step 2: Run focused verification**
 
 ```bash
 uv run pytest -q tests/test_execution_ledger_identity.py tests/test_daily_research_record_source.py tests/test_intraday_lane_daily_snapshot.py tests/test_intraday_lane_daily_snapshot_cli.py tests/test_lane_review_models.py tests/test_lane_review_store.py tests/test_lane_reviewer.py tests/test_lane_reviewer_cli.py
@@ -495,7 +495,7 @@ uv run pytest -q tests/test_execution_ledger_identity.py tests/test_daily_resear
 
 Expected: all tests pass.
 
-- [ ] **Step 3: Run full verification one heavy command at a time**
+- [x] **Step 3: Run full verification one heavy command at a time**
 
 ```bash
 uv run pytest -q
@@ -507,11 +507,11 @@ git diff --check
 
 Expected: zero failures, zero Ruff findings, zero basedpyright errors/warnings, and no formatting drift.
 
-- [ ] **Step 4: Run final manual CLI QA**
+- [x] **Step 4: Run final manual CLI QA**
 
 Run snapshot help/local-blocked/fake-readiness happy/replay and Reviewer help/missing/happy/replay/tamper. Inspect every report for credential, fingerprint, path, key, hash, broker ID, or raw payload leakage. Do not call POST/DELETE.
 
-- [ ] **Step 5: Commit, push, and verify origin alignment**
+- [x] **Step 5: Commit, push, and verify origin alignment**
 
 ```bash
 git add README.md CODEX_START_HERE.md docs/architecture_ko.md docs/checkpoints/2026-07-15-orb-lane-review-loop-ko.md docs/superpowers/plans/2026-07-15-orb-lane-daily-review-loop.md pyproject.toml run_lane_reviewer.py tests/test_lane_reviewer_cli.py
