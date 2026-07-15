@@ -341,14 +341,14 @@ Check for credential literals, `/stock/accno`, `/stock/order`, `tr_type` 1/2, ar
 
 Run the focused LS suite, `uv run pytest -q`, `uv run ruff check .`, `uv run basedpyright`, manual CLI fixture QA and `git diff --check` again.
 
-- [ ] **Step 3: Push the feature branch and integrate to main**
+- [x] **Step 3: Push the feature branch and integrate to main**
 
 Use the repository's established non-interactive worktree integration process. Preserve any unrelated user changes, fast-forward or merge only the reviewed feature commits, then push `origin/main`.
 
-- [ ] **Step 4: Verify merged main freshly**
+- [x] **Step 4: Verify merged main freshly**
 
 On main run `git status --short --branch`, full pytest, Ruff, basedpyright, CLI help/bad/fixture/restart QA and confirm `origin/main` contains the checkpoint commit.
 
-- [ ] **Step 5: Mark this plan complete**
+- [x] **Step 5: Mark this plan complete**
 
 Change every completed checkbox to `[x]`, commit the plan-only update, push `origin/main`, and report the exact merged HEAD and verification evidence.
