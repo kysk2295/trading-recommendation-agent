@@ -54,6 +54,8 @@
 - ORB 장후 forward-validation runner 구현. snapshot 성공 뒤에만 Reviewer를 실행하고 두 단계 audit·redacted aggregate report를 남기며 주문권한·자동 승격·scheduler 역할은 없음
 - ORB watch의 기존 metrics→daily record→adaptive 체인에 opt-in scheduled lane 단계를 연결. 네 경로 all-or-none·ORB-only이며 upstream 성공 뒤에만 snapshot→Reviewer runner를 호출하고 실패는 watch에 전파
 - armed entry·safety smoke는 하나의 intraday pilot risk contract를 공유하며 100 USD·10 USD·1포지션·30 USD·편도 20bp·risk fraction 1/3000을 유지
+- 모든 Alpaca Paper 운영 CLI는 잡힌 실행 예외의 클래스명만 stderr·보고서에 남기고 원문 계좌·broker·경로 정보를 버림
+- 첫 정규장 smoke의 GET-only 준비, exact current ORB 후보 선택, armed entry, 보호 OCO, timeout 복구, staged EOD 평탄화와 최종 flat 대사를 하나의 운영 런북으로 고정
 
 ## 다음 우선순위
 
@@ -69,6 +71,7 @@
 - 실시간 작업 전 `uv run pytest -q`를 실행한다.
 - API 키·토큰을 프롬프트·로그·코드·리포트에 출력하지 않는다.
 - KIS는 전체시장 백테스트 원천이 아니라 forward paper 시세원으로만 사용한다.
+- `docs/runbooks/alpaca-paper-first-regular-session-smoke-ko.md`를 순서대로 따르고, nonzero 단계나 stale 후보를 우회하지 않는다.
 
 ## 새 작업용 요청문
 

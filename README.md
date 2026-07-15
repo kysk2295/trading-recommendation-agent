@@ -93,6 +93,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [ORB lane 장후 forward-validation runner 체크포인트](docs/checkpoints/2026-07-15-orb-lane-forward-validation-runner-ko.md)
 - [cancel·EOD 평탄화 armed smoke CLI 체크포인트](docs/checkpoints/2026-07-15-paper-safety-mutation-smoke-cli-ko.md)
 - [Alpaca Paper CLI 오류 정보 최소화 체크포인트](docs/checkpoints/2026-07-15-paper-cli-error-redaction-ko.md)
+- [첫 정규장 Alpaca Paper smoke 런북](docs/runbooks/alpaca-paper-first-regular-session-smoke-ko.md)
 - [cancel·EOD 평탄화 smoke 구현 계획](docs/superpowers/plans/2026-07-15-paper-safety-mutation-smoke.md)
 - [새 작업 시작 안내](CODEX_START_HERE.md)
 
