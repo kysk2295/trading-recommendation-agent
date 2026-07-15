@@ -8,7 +8,7 @@
 
 다중 시장 상위 계약도 점진적으로 추가됐다. `MarketId → AgentFamily → StrategyLaneRef` 연구 좌표, US 기존 execution lane의 명시적 adapter, 사전등록 composite experiment, causal `OpportunitySnapshot`·`TradeSignalEnvelope`를 제공한다. KIS 미국주식 스캔은 거래소×상승률/거래량 6개 요청과 NYSE halt·시장위험 근거가 모두 완전할 때 선별 후보를 append-only opportunity JSONL로 발행하고, 그 opportunity 이후 생성된 5분 미만의 같은 종목 SETUP만 conditional signal JSONL·한국어 카드로 투영한다. 이 로컬 발행 계층은 현재 호가 재검증, 외부 실시간 메시지 또는 주문을 수행하지 않는다.
 
-독립 `kr_equities` 도메인에는 뉴스·DART·KIS 국내 랭킹·거래량 급증 촉매의 원문 BLOB, 최초 관측시각, cycle별 coverage와 버전형 분류 결과를 보존하는 mode-600 append-only SQLite 원장이 추가됐다. local synthetic cycle에서는 버전형 deterministic keyword baseline이 뉴스·DART 원문을 분류하고, 저장된 classification과 canonical `volume_surge` BLOB만으로 테마 신선도·전파도·거래대금 대장주를 재생해 `kr_equities/opportunity_manager/theme_momentum` Opportunity JSONL을 발행한다. 공식 OpenDART `list.json`의 당일 공시검색은 exact endpoint·무리다이렉트 GET client로 연결됐고, 응답 bytes receipt를 파싱 전에 schema v2 원장에 확정한 뒤 공시별 catalyst·observation lineage와 terminal DART source run을 append한다. 네 terminal source run이 모두 있을 때만 exact coverage의 immutable collection cycle을 확정하는 DB-only coordinator도 추가됐으며, 누락 source는 cycle로 만들지 않고 terminal 실패는 `complete=false`로 보존한다. 이 Opportunity과 source evidence는 현재 호가 검증이나 TradeSignal·주문권한이 없는 종목 발굴 근거다. production 뉴스·KIS 국내·거래량 급증 수집, LLM 분류·비교, KR quote/VI/가격제한/risk gate와 shadow signal은 아직 구현되지 않았으며 국내 계좌·주문 경로는 없다. 새 swing·systematic quant 엔진도 후속 milestone이다.
+독립 `kr_equities` 도메인에는 뉴스·DART·KIS 국내 랭킹·거래량 급증 촉매의 원문 BLOB, 최초 관측시각, cycle별 coverage와 버전형 분류 결과를 보존하는 mode-600 append-only SQLite 원장이 추가됐다. local synthetic cycle에서는 버전형 deterministic keyword baseline이 뉴스·DART 원문을 분류하고, 저장된 classification과 canonical `volume_surge` BLOB만으로 테마 신선도·전파도·거래대금 대장주를 재생해 `kr_equities/opportunity_manager/theme_momentum` Opportunity JSONL을 발행한다. 공식 OpenDART `list.json`의 당일 공시검색은 exact endpoint·무리다이렉트 GET client로 연결됐고, 응답 bytes receipt를 파싱 전에 schema v2 원장에 확정한 뒤 공시별 catalyst·observation lineage와 terminal DART source run을 append한다. LS증권 `NWS001` 뉴스 제목도 exact OAuth·WebSocket allow-list와 raw-first frame receipt, strict KST causality parser, canonical NEWS catalyst·terminal source run으로 연결됐다. 노출된 키를 폐기·재발급하기 전이므로 실제 LS 연결 QA는 수행하지 않았고 synthetic fixture로만 검증했다. 네 terminal source run이 모두 있을 때만 exact coverage의 immutable collection cycle을 확정하는 DB-only coordinator도 추가됐으며, 누락 source는 cycle로 만들지 않고 terminal 실패는 `complete=false`로 보존한다. 이 Opportunity과 source evidence는 현재 호가 검증이나 TradeSignal·주문권한이 없는 종목 발굴 근거다. production 기사 본문·KIS 국내·거래량 급증 수집, LLM 분류·비교, KR quote/VI/가격제한/risk gate와 shadow signal은 아직 구현되지 않았으며 국내 계좌·주문 경로는 없다. 새 swing·systematic quant 엔진도 후속 milestone이다.
 
 ## 최종 목표
 
@@ -88,6 +88,9 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [OpenDART read-only collector 설계](docs/superpowers/specs/2026-07-15-opendart-readonly-collector-design.md)
 - [OpenDART read-only collector 체크포인트](docs/checkpoints/2026-07-15-opendart-readonly-collector-ko.md)
 - [OpenDART read-only collector 구현 계획](docs/superpowers/plans/2026-07-15-opendart-readonly-collector.md)
+- [LS NWS read-only collector 설계](docs/superpowers/specs/2026-07-15-ls-nws-readonly-collector-design.md)
+- [LS NWS read-only collector 체크포인트](docs/checkpoints/2026-07-15-ls-nws-readonly-collector-ko.md)
+- [LS NWS read-only collector 구현 계획](docs/superpowers/plans/2026-07-15-ls-nws-readonly-collector.md)
 - [KR multi-source cycle coordinator 설계](docs/superpowers/specs/2026-07-15-kr-source-cycle-coordinator-design.md)
 - [KR multi-source cycle coordinator 체크포인트](docs/checkpoints/2026-07-15-kr-source-cycle-coordinator-ko.md)
 - [KR multi-source cycle coordinator 구현 계획](docs/superpowers/plans/2026-07-15-kr-source-cycle-coordinator.md)
@@ -158,6 +161,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - 원문 BLOB·cycle 관측·coverage·버전형 분류 결과를 보존하는 mode-600 KR append-only SQLite 원장과 query-only reader
 - exact OpenDART response receipt·공시 observation lineage·terminal source run을 보존하고 기존 v1 행을 재작성하지 않는 KR ledger schema v2
 - 공식 OpenDART 당일 공시검색의 고정 host/path GET, `000`/`013` strict parser, 안정 pagination과 restart no-network 수집기
+- 공식 LS OAuth와 `NWS001`만 허용하는 WebSocket, frame별 `101` raw receipt·strict 뉴스 parser·restart no-network 수집기
 - 네 terminal source run exact 집합에서만 immutable collection cycle을 확정하고 missing·failed coverage를 숨기지 않는 DB-only coordinator
 - path traversal·symlink escape·중복 source identity를 거부하는 local-only KR raw manifest ingest
 - exact news/DART JSON text field만 읽고 ambiguous theme를 차단하는 버전형 KR keyword baseline
@@ -224,6 +228,23 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 
 production mode에서는 `--fixture-manifest`를 생략한다. 이때 exact mode-600 `~/.config/trading-agent/opendart.env`의 `OPENDART_API_KEY`만 읽고 `https://opendart.fss.or.kr/api/list.json`에 당일 read-only GET만 보낸다. DART source run 하나만으로 네 source 최종 cycle을 확정하지 않으며, fixture 결과는 분류 정확도·추천 품질·수익성 증거가 아니다.
 
+### LS NWS 뉴스 source read-only 수집
+
+아래 fixture 명령은 synthetic `NWS001` frame만 읽고 secret, OAuth 또는 WebSocket을 사용하지 않는다. text/binary frame bytes를 `http_status=101` receipt로 먼저 확정한 뒤 strict KST causality parser가 flat NEWS catalyst와 receipt lineage를 append한다. 같은 terminal cycle을 다시 실행하면 source를 열지 않고 no-op한다.
+
+```bash
+./run_ls_nws_collect.py \
+  --collection-cycle-id kr-ls-nws-fixture-001 \
+  --collection-date 2026-07-15 \
+  --duration-seconds 60 \
+  --max-frames 10 \
+  --fixture-manifest tests/fixtures/ls_nws/fixture-manifest.json \
+  --database outputs/kr_theme/kr_theme.sqlite3 \
+  --output-dir outputs/kr_theme/ls_nws/latest
+```
+
+production mode에서는 `--fixture-manifest`를 생략한다. 폐기·재발급한 자격증명만 `~/.config/trading-agent/ls.env`에 `LS_APP_KEY`, `LS_APP_SECRET` 두 설정으로 두고 파일을 현재 사용자 소유 exact mode `600`으로 만든다. client는 exact OAuth endpoint와 `wss://openapi.ls-sec.co.kr:9443/websocket`의 `tr_type=3`, `NWS`, `NWS001`만 사용한다. 현재 체크포인트는 노출된 기존 키를 사용하지 않아 실제 LS 요청이 0건이며, LS 기사 본문·시세·계좌·주문을 호출하지 않는다.
+
 ### KR multi-source collection cycle 확정
 
 아래 명령은 같은 cycle ID의 `news`, `dart`, `kis_ranking`, `volume_surge` terminal source run을 기존 KR 원장에서만 읽는다. 네 run이 모두 있어야 cycle을 append하며, source 하나가 없으면 원장을 닫지 않고 nonzero로 종료한다. terminal 실패 run이 있으면 failure code와 부분 count를 보존한 `complete=false` cycle을 append하고 nonzero로 종료한다.
@@ -235,7 +256,7 @@ production mode에서는 `--fixture-manifest`를 생략한다. 이때 exact mode
   --output-dir outputs/kr_theme/source_cycle/2026-07-15
 ```
 
-이 CLI는 provider, 자격증명, network, LLM, 현재가와 주문 코드를 호출하지 않는다. 현재 production adapter는 DART만 있으므로 production 뉴스·KIS 국내·거래량 급증 source run이 추가되기 전에는 운영 complete cycle을 만들 수 없다. coverage CSV와 한국어 요약은 aggregate 감사 자료이며 추천 품질이나 수익성 증거가 아니다.
+이 CLI는 provider, 자격증명, network, LLM, 현재가와 주문 코드를 호출하지 않는다. production DART와 LS 뉴스 제목 adapter는 구현됐지만 KIS 국내 랭킹·거래량 급증 source run이 추가되기 전에는 운영 complete cycle을 만들 수 없다. coverage CSV와 한국어 요약은 aggregate 감사 자료이며 추천 품질이나 수익성 증거가 아니다.
 
 ### KR keyword theme Opportunity 로컬 projection
 
@@ -621,6 +642,7 @@ trading-recommendation-agent/
 ├── run_lane_reviewer.py
 ├── run_orb_lane_forward_validation.py
 ├── run_kis_daytime_scan.py
+├── run_ls_nws_collect.py
 ├── run_session_continuity.py
 ├── run_paper_metrics.py
 ├── run_daily_research_record.py
@@ -634,18 +656,19 @@ trading-recommendation-agent/
 
 ## 보안
 
-자격증명은 프로젝트 안에 저장하지 않는다. KIS, OpenDART와 Alpaca market data는 각각 `~/.config/trading-agent/kis.env`, `~/.config/trading-agent/opendart.env`, `~/.config/trading-agent/alpaca.env`를 사용한다. OpenDART 파일은 `OPENDART_API_KEY` 한 설정만 가진 현재 사용자 소유 regular file이며 mode가 정확히 `600`이어야 한다. Paper 계좌 조회와 향후 실행은 별도 `~/.config/trading-agent/alpaca-paper.env`만 사용한다. Paper 파일도 일반 파일·현재 사용자 소유·정확한 mode `600`을 모두 요구한다.
+자격증명은 프로젝트 안에 저장하지 않는다. KIS, OpenDART, LS와 Alpaca market data는 각각 `~/.config/trading-agent/kis.env`, `~/.config/trading-agent/opendart.env`, `~/.config/trading-agent/ls.env`, `~/.config/trading-agent/alpaca.env`를 사용한다. OpenDART 파일은 `OPENDART_API_KEY` 한 설정만 가진 현재 사용자 소유 regular file이며 mode가 정확히 `600`이어야 한다. LS 파일도 같은 소유·regular·mode 계약 아래 `LS_APP_KEY`, `LS_APP_SECRET` 두 설정만 허용한다. Paper 계좌 조회와 향후 실행은 별도 `~/.config/trading-agent/alpaca-paper.env`만 사용한다. Paper 파일도 일반 파일·현재 사용자 소유·정확한 mode `600`을 모두 요구한다.
 
-Alpaca paper 코드는 trading base URL을 설정값으로 자유롭게 받지 않는다. REST는 정확한 `https://paper-api.alpaca.markets`, 주문 스트림은 정확한 `wss://paper-api.alpaca.markets/stream`만 허용하고 다른 URL은 자격증명 전송 전에 거절한다. REST 리다이렉트도 따르지 않는다. KIS는 계속 시세 조회 전용이다.
+Alpaca paper 코드는 trading base URL을 설정값으로 자유롭게 받지 않는다. REST는 정확한 `https://paper-api.alpaca.markets`, 주문 스트림은 정확한 `wss://paper-api.alpaca.markets/stream`만 허용하고 다른 URL은 자격증명 전송 전에 거절한다. REST 리다이렉트도 따르지 않는다. KIS와 LS는 계속 읽기 전용이다. LS는 exact OAuth와 `NWS001` 구독 외 임의 endpoint를 받지 않으며 `/stock/accno`, `/stock/order`, WebSocket 계좌등록 타입 `1/2`를 지원하지 않는다.
 
-원본 Notion 페이지에 평문으로 남아 있는 기존 앱 키·시크릿은 운영 전 재발급하고 삭제해야 한다.
+문서, 채팅 또는 로그에 평문으로 노출된 앱 키·시크릿은 사용하지 않고 운영 전 폐기·재발급하고 삭제해야 한다.
 
 ## 현재 한계
 
 - KIS 랭킹 상위 후보를 감시하며 미국 전체 종목 원시 스트림을 완전히 열거하지 않는다.
 - 영속 감시는 NYSE가 게시한 2026~2028 캘린더를 반영한다. 2029년 이후 일정과 임시 휴장 변경은 표를 갱신하기 전까지 안전하게 닫힌다.
 - 로컬 추천 카드 outbox는 구현했지만 Telegram·Codex 외부 전송 어댑터는 아직 연결하지 않았다.
-- OpenDART 공시검색 source run과 네 terminal run을 확정하는 coordinator는 구현됐지만 production 뉴스·KIS 국내 랭킹·거래량 급증 source run은 아직 없다. 따라서 DART 단독 결과는 final cycle이나 새 KR Opportunity을 확정하지 않는다.
+- OpenDART 공시검색, LS NWS 뉴스 제목 source run과 네 terminal run을 확정하는 coordinator는 구현됐다. LS adapter는 fixture 검증만 끝났고 실제 provider QA는 0건이다. 기사 본문 `t3102`, KIS 국내 랭킹·거래량 급증 source run이 없으므로 아직 final production cycle이나 새 KR Opportunity을 확정하지 않는다.
+- LS 체결·호가·VI·봉과 외인·기관·프로그램 수급 snapshot은 후속 read-only adapter다. VWAP·ATR·RSI·MACD·RVOL은 provider 계산값을 사후 혼합하지 않고 immutable raw bar에서 historical/live 공통 kernel로 계산해야 한다.
 - 장 마감 `time_exit` 가격은 실제 MOC가 아니라 마지막 처리 완료 봉 fallback이므로 성과 집계에서 별도 구분해야 한다.
 - 성과 대시보드는 구현됐지만 실제 정규장 paper 거래가 아직 누적되지 않아 수익성은 검증되지 않았다.
 - 현재 paper 추천 전략은 ORB, 첫 눌림목 VWAP reclaim, 첫 HOD 거래량 돌파, Gap-and-Go 지속이다. 모두 구현·인과성 회귀만 완료됐고 실제 정규장 성과는 아직 0건이다.

@@ -6,6 +6,7 @@
 - Alpaca trading calls must use the exact `https://paper-api.alpaca.markets` base URL. Reject every other trading URL before any network request.
 - Never add or enable Alpaca live-trading endpoints, live credentials, or real-money order paths.
 - KIS and every provider other than Alpaca Paper Trading remain read-only. Do not call their order, balance, account, or position-changing endpoints.
+- LS adapters may use only explicitly reviewed market-data and news contracts. Never call `/stock/accno`, `/stock/order`, WebSocket account registration types `1/2`, or any LS trading mutation.
 - Alpaca paper account/order/position reads and paper order submission, cancellation, and same-day flattening are allowed only when the paper endpoint guard and risk kernel pass.
 - Never claim profitability from synthetic, replay, or backtest output.
 - A recommendation requires a timestamp, entry, stop, targets, rationale, and immutable outcome history.
@@ -22,9 +23,11 @@
 - Never store credentials or tokens in this project.
 - Read KIS credentials only from `~/.config/trading-agent/kis.env` with mode `600`.
 - Read OpenDART credentials only from `~/.config/trading-agent/opendart.env` as one `OPENDART_API_KEY` setting in a current-user-owned regular file with exact mode `600`.
+- Read LS credentials only from `~/.config/trading-agent/ls.env` as exactly one `LS_APP_KEY` and one `LS_APP_SECRET` setting in a current-user-owned regular file with exact mode `600`.
 - Read Alpaca market-data credentials from `~/.config/trading-agent/alpaca.env` and paper-execution credentials from `~/.config/trading-agent/alpaca-paper.env`; both files must have mode `600`.
 - Read cached tokens only from `~/.cache/trading-agent/` with mode `600`.
 - Never print request headers, API keys, secrets, tokens, account identifiers, or raw authentication responses.
+- Treat credentials pasted into chat, issues, documents, or logs as compromised. Never use them; revoke and rotate them before any provider smoke test.
 
 ## Memory And Concurrency
 
