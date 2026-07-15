@@ -43,6 +43,12 @@ class ContractOutboxConflictError(ValueError):
         return f"동일 계약 ID에 서로 다른 내용이 있습니다: {self.identity}"
 
 
+class InvalidQuoteActionabilityBatchError(ValueError):
+    @override
+    def __str__(self) -> str:
+        return "invalid quote actionability batch"
+
+
 def append_opportunity_snapshot(
     path: Path,
     snapshot: OpportunitySnapshot,
@@ -70,33 +76,17 @@ def append_trade_signal_publication(
     return model_plan.append_count == 1
 
 
-def append_us_quote_snapshot(path: Path, snapshot: UsQuoteSnapshot) -> bool:
-    return _append_model(
-        path,
-        snapshot,
-        model_type=UsQuoteSnapshot,
-        identity=lambda item: item.quote_id,
-    )
-
-
-def append_quote_actionability_assessment(
-    path: Path,
-    assessment: QuoteActionabilityAssessment,
-) -> bool:
-    return _append_model(
-        path,
-        assessment,
-        model_type=QuoteActionabilityAssessment,
-        identity=lambda item: item.assessment_id,
-    )
-
-
 def append_quote_actionability_batch(
     output: Path,
     snapshots: tuple[UsQuoteSnapshot, ...],
     derived_publications: tuple[TradeSignalPublication, ...],
     assessments: tuple[QuoteActionabilityAssessment, ...],
 ) -> tuple[int, int, int]:
+    _validate_quote_actionability_batch(
+        snapshots,
+        derived_publications,
+        assessments,
+    )
     snapshot_plan = _plan_models(
         output / "us-quote-snapshots.v2.jsonl",
         snapshots,
@@ -124,6 +114,77 @@ def append_quote_actionability_batch(
         signal_plan.append_count,
         assessment_plan.append_count,
     )
+
+
+def _validate_quote_actionability_batch(
+    snapshots: tuple[UsQuoteSnapshot, ...],
+    derived_publications: tuple[TradeSignalPublication, ...],
+    assessments: tuple[QuoteActionabilityAssessment, ...],
+) -> None:
+    snapshot_ids = tuple(snapshot.quote_id for snapshot in snapshots)
+    derived_ids = tuple(
+        publication.signal.signal_id for publication in derived_publications
+    )
+    assessment_ids = tuple(
+        assessment.assessment_id for assessment in assessments
+    )
+    base_signal_ids = tuple(
+        assessment.base_signal_id for assessment in assessments
+    )
+    assessment_quote_ids = tuple(
+        assessment.quote_id
+        for assessment in assessments
+        if assessment.quote_id is not None
+    )
+    assessment_derived_ids = tuple(
+        assessment.derived_signal_id
+        for assessment in assessments
+        if assessment.derived_signal_id is not None
+    )
+    invalid_geometry = (
+        len(snapshot_ids) != len(set(snapshot_ids))
+        or len(derived_ids) != len(set(derived_ids))
+        or len(assessment_ids) != len(set(assessment_ids))
+        or len(base_signal_ids) != len(set(base_signal_ids))
+        or len({assessment.scan_started_at for assessment in assessments}) > 1
+        or set(snapshot_ids) != set(assessment_quote_ids)
+        or set(derived_ids) != set(assessment_derived_ids)
+        or len(assessment_derived_ids) != len(set(assessment_derived_ids))
+    )
+    if invalid_geometry:
+        raise InvalidQuoteActionabilityBatchError
+
+    snapshot_by_id = {snapshot.quote_id: snapshot for snapshot in snapshots}
+    assessment_by_derived_id = {
+        assessment.derived_signal_id: assessment
+        for assessment in assessments
+        if assessment.derived_signal_id is not None
+    }
+    for publication in derived_publications:
+        signal = publication.signal
+        assessment = assessment_by_derived_id.get(signal.signal_id)
+        if assessment is None or assessment.quote_id is None:
+            raise InvalidQuoteActionabilityBatchError
+        snapshot = snapshot_by_id.get(assessment.quote_id)
+        quote_refs = {
+            evidence.record_id
+            for evidence in signal.evidence_refs
+            if evidence.namespace == "quote/snapshot"
+        }
+        base_refs = {
+            evidence.record_id
+            for evidence in signal.evidence_refs
+            if evidence.namespace == "signal/conditional"
+        }
+        if (
+            snapshot is None
+            or signal.actionability
+            is not SignalActionability.CURRENT_QUOTE_VALIDATED
+            or snapshot.symbol != signal.symbol
+            or quote_refs != {assessment.quote_id}
+            or base_refs != {assessment.base_signal_id}
+        ):
+            raise InvalidQuoteActionabilityBatchError
 
 
 @dataclass(frozen=True, slots=True)

@@ -11,9 +11,8 @@ from trading_agent.contract_outbox import (
     ContractOutboxConflictError,
     ContractOutboxFormatError,
     append_opportunity_snapshot,
-    append_quote_actionability_assessment,
+    append_quote_actionability_batch,
     append_trade_signal_publication,
-    append_us_quote_snapshot,
 )
 from trading_agent.kis_us_quote import KisUsLevelOneQuote
 from trading_agent.research_identity_models import (
@@ -137,14 +136,27 @@ def test_quote_snapshot_outbox_replays_and_rejects_conflict(tmp_path: Path) -> N
     path = tmp_path / "us-quote-snapshots.v2.jsonl"
     decision = _quote_decision()
     assert decision.snapshot is not None
+    assert decision.derived_publication is not None
     snapshot = decision.snapshot
 
-    assert append_us_quote_snapshot(path, snapshot) is True
-    assert append_us_quote_snapshot(path, snapshot) is False
+    assert append_quote_actionability_batch(
+        tmp_path,
+        (snapshot,),
+        (decision.derived_publication,),
+        (decision.assessment,),
+    ) == (1, 1, 1)
+    assert append_quote_actionability_batch(
+        tmp_path,
+        (snapshot,),
+        (decision.derived_publication,),
+        (decision.assessment,),
+    ) == (0, 0, 0)
     with pytest.raises(ContractOutboxConflictError):
-        append_us_quote_snapshot(
-            path,
-            snapshot.model_copy(update={"ask": Decimal("10.11")}),
+        _ = append_quote_actionability_batch(
+            tmp_path,
+            (snapshot.model_copy(update={"ask": Decimal("10.11")}),),
+            (decision.derived_publication,),
+            (decision.assessment,),
         )
 
     payloads = tuple(
@@ -160,15 +172,32 @@ def test_quote_assessment_outbox_replays_and_rejects_conflict(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "quote-actionability-assessments.v2.jsonl"
-    assessment = _quote_decision().assessment
+    decision = _quote_decision()
+    assert decision.snapshot is not None
+    assert decision.derived_publication is not None
+    assessment = decision.assessment
 
-    assert append_quote_actionability_assessment(path, assessment) is True
-    assert append_quote_actionability_assessment(path, assessment) is False
+    assert append_quote_actionability_batch(
+        tmp_path,
+        (decision.snapshot,),
+        (decision.derived_publication,),
+        (assessment,),
+    ) == (1, 1, 1)
+    assert append_quote_actionability_batch(
+        tmp_path,
+        (decision.snapshot,),
+        (decision.derived_publication,),
+        (assessment,),
+    ) == (0, 0, 0)
     with pytest.raises(ContractOutboxConflictError):
-        append_quote_actionability_assessment(
-            path,
-            assessment.model_copy(
-                update={"status": QuoteAssessmentStatus.PROVIDER_FAILED}
+        _ = append_quote_actionability_batch(
+            tmp_path,
+            (decision.snapshot,),
+            (decision.derived_publication,),
+            (
+                assessment.model_copy(
+                    update={"status": QuoteAssessmentStatus.PROVIDER_FAILED}
+                ),
             ),
         )
 
@@ -184,32 +213,42 @@ def test_independent_quote_receipts_append_without_identity_conflict(
     tmp_path: Path,
 ) -> None:
     snapshots = tmp_path / "us-quote-snapshots.v2.jsonl"
-    signals = tmp_path / "trade-signals.v1.jsonl"
-    cards = tmp_path / "trade-signal-cards-ko"
     first = _quote_decision(
         received_at=OBSERVED_AT + dt.timedelta(seconds=5, milliseconds=500)
     )
     second = _quote_decision(
-        received_at=OBSERVED_AT + dt.timedelta(seconds=5, milliseconds=700)
+        received_at=OBSERVED_AT + dt.timedelta(seconds=5, milliseconds=700),
+        scan_started_at=OBSERVED_AT - dt.timedelta(milliseconds=500),
     )
     assert first.snapshot is not None
     assert second.snapshot is not None
     assert first.derived_publication is not None
     assert second.derived_publication is not None
 
-    assert append_us_quote_snapshot(snapshots, first.snapshot) is True
-    assert append_us_quote_snapshot(snapshots, second.snapshot) is True
-    assert (
-        append_trade_signal_publication(signals, cards, first.derived_publication)
-        is True
-    )
-    assert (
-        append_trade_signal_publication(signals, cards, second.derived_publication)
-        is True
-    )
+    assert append_quote_actionability_batch(
+        tmp_path,
+        (first.snapshot,),
+        (first.derived_publication,),
+        (first.assessment,),
+    ) == (1, 1, 1)
+    assert append_quote_actionability_batch(
+        tmp_path,
+        (second.snapshot,),
+        (second.derived_publication,),
+        (second.assessment,),
+    ) == (1, 1, 1)
 
     assert len(snapshots.read_text(encoding="utf-8").splitlines()) == 2
-    assert len(signals.read_text(encoding="utf-8").splitlines()) == 2
+    assert len(
+        (tmp_path / "trade-signals.v1.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ) == 2
+    assert len(
+        (tmp_path / "quote-actionability-assessments.v2.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ) == 2
 
 
 def test_same_base_and_scan_cycle_rejects_second_terminal_assessment(
@@ -229,10 +268,38 @@ def test_same_base_and_scan_cycle_rejects_second_terminal_assessment(
     )
 
     assert first.assessment_id == second.assessment_id
-    assert append_quote_actionability_assessment(path, first) is True
+    assert append_quote_actionability_batch(
+        tmp_path,
+        (),
+        (),
+        (first,),
+    ) == (0, 0, 1)
     with pytest.raises(ContractOutboxConflictError):
-        append_quote_actionability_assessment(path, second)
+        _ = append_quote_actionability_batch(
+            tmp_path,
+            (),
+            (),
+            (second,),
+        )
     assert len(path.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_quote_batch_rejects_artifacts_without_terminal_assessment(
+    tmp_path: Path,
+) -> None:
+    decision = _quote_decision()
+    assert decision.snapshot is not None
+    assert decision.derived_publication is not None
+
+    with pytest.raises(ValueError, match="quote actionability batch"):
+        _ = append_quote_actionability_batch(
+            tmp_path,
+            (decision.snapshot,),
+            (decision.derived_publication,),
+            (),
+        )
+
+    assert tuple(tmp_path.iterdir()) == ()
 
 
 def test_quote_validated_card_contains_current_quote_and_trigger_state(
@@ -344,6 +411,7 @@ def _quote_decision(
     *,
     received_at: dt.datetime = OBSERVED_AT
     + dt.timedelta(seconds=5, milliseconds=500),
+    scan_started_at: dt.datetime = OBSERVED_AT - dt.timedelta(seconds=1),
 ) -> UsQuoteActionabilityDecision:
     return assess_us_quote(
         _publication(
@@ -360,7 +428,7 @@ def _quote_decision(
             bid_size=1_200,
             ask_size=900,
         ),
-        scan_started_at=OBSERVED_AT - dt.timedelta(seconds=1),
+        scan_started_at=scan_started_at,
         evaluated_at=OBSERVED_AT + dt.timedelta(seconds=6),
     )
 

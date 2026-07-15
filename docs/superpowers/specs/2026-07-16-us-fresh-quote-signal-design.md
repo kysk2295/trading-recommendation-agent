@@ -100,7 +100,7 @@ Provider details are reduced to the allow-listed status. A failed assessment doe
 
 `assessment_id` is deterministic only from the complete base signal ID and `scan_started_at`. A scan cycle can therefore append exactly one terminal result for a base signal; a second status or evaluation payload under that cycle is a conflict instead of another terminal assessment.
 
-The receipt-aware quote identity and one-terminal assessment identity are schema version 2 contracts. Version 1 quote and assessment JSONL files are legacy artifacts: the v2 writer neither revalidates nor overwrites them. Before writing any v2 quote batch, the writer validates the snapshot, derived signal/card, and assessment plans against every existing target; any malformed file or conflict aborts the batch before the first append.
+The receipt-aware quote identity and one-terminal assessment identity are schema version 2 contracts. Version 1 quote and assessment JSONL files are legacy artifacts: the v2 writer neither revalidates nor overwrites them. Quote artifacts expose no path-parametrized standalone writer. Before writing any v2 quote batch, the sole batch writer validates artifact ID completeness, one scan cycle, base and quote evidence links, and every snapshot, derived signal/card, and assessment plan against existing targets; any incomplete batch, malformed file, or conflict aborts before the first append.
 
 ### 4.3 Derived quote-validated signal
 

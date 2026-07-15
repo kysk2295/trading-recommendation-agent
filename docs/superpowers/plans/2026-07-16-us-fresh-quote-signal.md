@@ -278,12 +278,13 @@ git commit -m "feat: assess US quote actionability"
 Add exact replay, conflict and card assertions:
 
 ```python
-assert append_us_quote_snapshot(path, quote) is True
-assert append_us_quote_snapshot(path, quote) is False
+assert append_quote_actionability_batch(output, snapshots, signals, assessments) == (1, 1, 1)
+assert append_quote_actionability_batch(output, snapshots, signals, assessments) == (0, 0, 0)
 with pytest.raises(ContractOutboxConflictError):
-    append_us_quote_snapshot(path, quote.model_copy(update={"ask": Decimal("10.11")}))
+    append_quote_actionability_batch(output, changed_snapshots, signals, assessments)
 
-assert append_quote_actionability_assessment(assessment_path, assessment) is True
+with pytest.raises(ValueError, match="quote actionability batch"):
+    append_quote_actionability_batch(output, snapshots, signals, ())
 card = next(cards_dir.iterdir()).read_text(encoding="utf-8")
 assert "현재 bid/ask: 10.08 / 10.10" in card
 assert "트리거 상태: 도달" in card
@@ -298,32 +299,19 @@ Keep the existing conditional card byte-for-byte unchanged.
 uv run pytest tests/test_contract_outbox.py -q
 ```
 
-Expected: quote append functions are missing and validated cards omit quote detail.
+Expected: the complete batch writer is missing and validated cards omit quote detail.
 
-- [ ] **Step 3: Add typed append-only writers**
+- [ ] **Step 3: Add one typed append-only batch writer**
 
-Reuse `_append_model()`:
+Plan snapshot, derived signal/card, and assessment writes before committing any file. The writer owns fixed v2 quote paths and rejects incomplete or cross-linked batches; do not expose path-parametrized standalone quote writers:
 
 ```python
-def append_us_quote_snapshot(path: Path, snapshot: UsQuoteSnapshot) -> bool:
-    return _append_model(
-        path,
-        snapshot,
-        model_type=UsQuoteSnapshot,
-        identity=lambda item: item.quote_id,
-    )
-
-
-def append_quote_actionability_assessment(
-    path: Path,
-    assessment: QuoteActionabilityAssessment,
-) -> bool:
-    return _append_model(
-        path,
-        assessment,
-        model_type=QuoteActionabilityAssessment,
-        identity=lambda item: item.assessment_id,
-    )
+def append_quote_actionability_batch(
+    output: Path,
+    snapshots: tuple[UsQuoteSnapshot, ...],
+    derived_publications: tuple[TradeSignalPublication, ...],
+    assessments: tuple[QuoteActionabilityAssessment, ...],
+) -> tuple[int, int, int]: ...
 ```
 
 - [ ] **Step 4: Render quote-validated card detail**

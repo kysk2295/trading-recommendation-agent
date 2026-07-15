@@ -483,7 +483,7 @@ KIS paper 스캔:
 - `trade-signals.v1.jsonl`: exact opportunity의 conditional 신호와 quote를 통과한 별도 `current_quote_validated` 신호
 - `trade-signal-cards-ko/`: conditional 카드와 현재 호가 시각·bid/ask·spread·트리거 상태를 포함한 validated 카드
 
-JSONL은 동일 ID·동일 payload 재실행을 추가하지 않고, 동일 ID의 payload가 달라지거나 기존 행이 계약 형식에 맞지 않으면 fail-closed한다. quote ID는 provider 시각뿐 아니라 로컬 수신시각도 포함하고, assessment ID는 base signal과 scan 시작시각으로 고정해 cycle당 terminal 결과를 하나로 제한한다. 이 identity 변경은 quote·assessment schema/file v2에만 기록하므로 기존 v1 파일을 재해석하거나 덮어쓰지 않는다. batch는 snapshot·derived signal/card·assessment 전체를 먼저 검증하고 충돌이 없을 때만 append한다. 랭킹 요청 하나라도 실패하면 기존 부분 모집단 shadow scan·coverage 기록·비정상 종료 동작은 유지하지만 v2 opportunity와 그 하위 신호는 발행하지 않는다. 호가 실패·장 마감·만료·미래/과거 시각·wide spread·stop 무효·entry slippage는 validated 신호를 만들지 않고 terminal assessment만 남긴다. 이 actionability 관측은 Paper 주문 승인이나 전략 승격이 아니다.
+JSONL은 동일 ID·동일 payload 재실행을 추가하지 않고, 동일 ID의 payload가 달라지거나 기존 행이 계약 형식에 맞지 않으면 fail-closed한다. quote ID는 provider 시각뿐 아니라 로컬 수신시각도 포함하고, assessment ID는 base signal과 scan 시작시각으로 고정해 cycle당 terminal 결과를 하나로 제한한다. 이 identity 변경은 quote·assessment schema/file v2에만 기록하므로 기존 v1 파일을 재해석하거나 덮어쓰지 않는다. quote artifact에는 임의 path standalone writer가 없고, batch writer가 snapshot·derived signal/card·assessment ID 집합과 base·quote evidence 연결 전체를 먼저 검증한 뒤 충돌이 없을 때만 append한다. 랭킹 요청 하나라도 실패하면 기존 부분 모집단 shadow scan·coverage 기록·비정상 종료 동작은 유지하지만 v2 opportunity와 그 하위 신호는 발행하지 않는다. 호가 실패·장 마감·만료·미래/과거 시각·wide spread·stop 무효·entry slippage는 validated 신호를 만들지 않고 terminal assessment만 남긴다. 이 actionability 관측은 Paper 주문 승인이나 전략 승격이 아니다.
 
 KIS 날짜별 paper 감시:
 
