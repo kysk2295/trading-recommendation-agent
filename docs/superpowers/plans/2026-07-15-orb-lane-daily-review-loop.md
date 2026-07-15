@@ -180,7 +180,7 @@ Run: `uv run pytest -q tests/test_lane_registry_store.py tests/test_lane_control
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit and push the reader checkpoint**
+- [x] **Step 5: Commit and push the reader checkpoint**
 
 ```bash
 git add trading_agent/lane_registry_store.py tests/test_lane_registry_store.py
@@ -194,7 +194,7 @@ git push origin feature/paper-account-activities
 - Create: `trading_agent/intraday_lane_daily_snapshot.py`
 - Create: `tests/test_intraday_lane_daily_snapshot.py`
 
-- [ ] **Step 1: Write failing happy-path and replay tests**
+- [x] **Step 1: Write failing happy-path and replay tests**
 
 Seed current manifests/scopes/binding, an exact ORB daily record, an initialized execution DB, and a fake readiness observed after the 2026-07-14 close.
 
@@ -216,17 +216,17 @@ assert result.snapshot.allocation_eligible is False
 
 Replay with the same evidence and assert `created is False` and one stored snapshot.
 
-- [ ] **Step 2: Write failing finalization-gate tests**
+- [x] **Step 2: Write failing finalization-gate tests**
 
 Parametrize close-before-finalization, market-open, blocked readiness, open order, nonzero position, wrong account fingerprint, missing current manifest/scope/binding, wrong daily scope, and parent-ledger absence. Assert the registry has no snapshot after every failure.
 
-- [ ] **Step 3: Run tests and verify RED**
+- [x] **Step 3: Run tests and verify RED**
 
 Run: `uv run pytest -q tests/test_intraday_lane_daily_snapshot.py`
 
 Expected: module missing.
 
-- [ ] **Step 4: Implement local preflight and producer result**
+- [x] **Step 4: Implement local preflight and producer result**
 
 Define redacted `InvalidIntradayLaneFinalizationError`, `IntradayLaneSnapshotPreflight`, and `IntradayLaneSnapshotResult`. `preflight_intraday_lane_day()` validates all local sources without credentials or network. `finalize_intraday_lane_day()` repeats immutable source checks after readiness and appends with the registry Writer.
 
@@ -240,11 +240,11 @@ incidents = tuple(sorted(set((*record.incidents, *quality_incidents))))
 
 When an existing lane/date snapshot is present, reuse its `finalized_at` in the candidate so timestamp drift does not break exact replay. Every other candidate field is recomputed.
 
-- [ ] **Step 5: Verify conflict and incomplete-quality behavior**
+- [x] **Step 5: Verify conflict and incomplete-quality behavior**
 
 Add tests that a changed execution hash/PnL causes `LaneRegistryConflictError`, while an ineligible daily record can still finalize with `data_quality_complete=False`, an explicit `data_quality_incomplete` incident, no champion, and allocation false.
 
-- [ ] **Step 6: Run focused snapshot regressions**
+- [x] **Step 6: Run focused snapshot regressions**
 
 Run:
 
