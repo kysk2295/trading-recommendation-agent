@@ -353,7 +353,7 @@ Expected: all tests pass, Ruff passes, and basedpyright reports zero errors and 
 ```bash
 uv run python run_ls_nws_collect.py --help
 uv run python run_ls_nws_collect.py --collection-cycle-id ../bad --collection-date 2026-07-16
-uv run python run_ls_nws_collect.py --collection-cycle-id kr-ls-nws-ack-fixture-001 --collection-date 2026-07-16 --duration-seconds 1 --max-frames 3 --database /tmp/ls-nws-ack.sqlite3 --output-dir /tmp/ls-nws-ack-report --fixture-manifest tests/fixtures/ls_nws/fixture-manifest.json
+uv run python run_ls_nws_collect.py --collection-cycle-id kr-ls-nws-ack-fixture-001 --collection-date 2026-07-15 --duration-seconds 1 --max-frames 3 --database /tmp/ls-nws-ack.sqlite3 --output-dir /tmp/ls-nws-ack-report --fixture-manifest tests/fixtures/ls_nws/fixture-manifest.json
 ```
 
 Expected: help exits 0, bad input exits 2 before DB creation, fixture exits 0 with three receipts and two catalysts.

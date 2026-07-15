@@ -38,12 +38,12 @@ connect
 → immutable terminal source run
 ```
 
-adapter version은 `ls-nws-v2`다. terminal run 재실행과 orphan receipt 복구는 첫 저장 receipt를 로컬에서 다시 분류해 ACK 여부만 복원하며 secret, OAuth, WebSocket 또는 fixture manifest를 열지 않는다. 실패 run도 append-only로 유지하고 새 운영 시도는 새 cycle ID를 사용한다.
+adapter version은 `ls-nws-v2`다. terminal run 재실행과 orphan receipt 복구는 정확한 sequence-1 request key를 가진 첫 저장 receipt만 로컬에서 다시 분류해 ACK 여부를 복원하며 secret, OAuth, WebSocket 또는 fixture manifest를 열지 않는다. C0/C1 제어문자와 surrogate는 title, ACK message, 운영 확장 field에서 거부한다. WebSocket이 열린 뒤 ACK 없이 끊기면 `subscription_ack_missing`, 연결 자체가 열리지 않으면 `stream_unavailable`로 구분한다. 실패 run도 append-only로 유지하고 새 운영 시도는 새 cycle ID를 사용한다.
 
 ## 검증
 
-- focused LS suite: `120 passed`
-- 전체 pytest: `1339 passed in 21.11s`
+- focused LS suite: `128 passed`
+- 전체 pytest: `1347 passed in 20.96s`
 - Ruff: 통과
 - basedpyright: `0 errors, 0 warnings, 0 notes`
 - CLI `--help`: exit 0
