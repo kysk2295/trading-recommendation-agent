@@ -93,17 +93,20 @@ exact lane manifest + exact intraday experiment scopes
 
 query-only lane snapshot + daily/adaptive evidence
 → independent Reviewer recommendation
-→ deterministic Lifecycle Controller v1
-→ validated next-session lifecycle transition
+  ├→ exact ORB daily shadow trial terminal
+  └→ deterministic Lifecycle Controller v1
+      → validated next-session lifecycle transition
 ```
 
 현재 bootstrap·ledger projection과 Lifecycle Controller v1까지 구현됐다. Controller는 exact intraday manifest/ORB scope, finalized flat snapshot, 같은 snapshot에 결합된 Reviewer event와 현재 lifecycle chain을 query-only로 다시 검증한다. `suspend` 권고 중 `five_day_clear_degradation` 근거와 완전한 데이터 품질이 모두 확인된 경우에만 다음 NYSE 정규 세션부터 `suspended` event를 append한다. 같은 evidence replay는 기존 event를 반환하며 future-effective pending event, source 불일치와 시간 역행은 fail-closed한다.
+
+ORB daily shadow trial도 구현됐다. 한 NYSE 세션마다 `shadow_forward` trial 하나를 open 전에 사전등록하고 정규장 안에서 started event를 append한다. 장후 finalizer는 exact daily record와 parent JSONL, adaptive bytes, finalized flat snapshot, Reviewer event, code·parameter·data·cost·portfolio 계약과 artifact checksum을 다시 계산해 `completed` 또는 `censored`로 닫는다. 네 장후 phase 중 하나가 nonzero이면 같은 세션의 audit 행이 검증될 때만 `failed` terminal을 허용한다. terminal kind는 재분류할 수 없고 검열은 수익 0으로 바꾸지 않는다.
 
 Controller의 권한은 의도적으로 좁다. `collecting`·`shadow_continue`·`diagnose`는 상태를 바꾸지 않고, `early_stop`·`comparison_ready`·`promotion_review`는 각각 irreversible reject, equal-risk terminal trial, broker/shadow·DSR/PBO·parameter plateau·SIP 증거 계약이 아직 없으므로 차단한다. credential, HTTP, broker, execution DB, mutation adapter와 Portfolio Manager를 import하지 않으며 lifecycle 상태만으로 주문권한이나 risk allocation이 생기지 않는다. Reviewer 자신도 상태·champion·주문권한·위험예산을 변경할 수 없다.
 
 `run_orb_lane_forward_validation.py`는 두 CLI의 장후 순서만 소유한다. snapshot child의 종료코드가 0일 때만 Reviewer child를 시작하고 `post_session_intraday_snapshot_cycles.csv`와 `post_session_lane_reviewer_cycles.csv`를 별도로 append한다. aggregate report는 단계 성공·실패만 노출하며 path, key, hash, fingerprint, broker ID와 raw payload는 기록하지 않는다. runner에는 credential·endpoint·arm·fixture·force 옵션이 없고 스케줄링, 상태변경, champion 선언 또는 주문 기능도 없다.
 
-일일 스케줄은 기존 `run_kis_paper_watch.py`가 opt-in으로 소유한다. 네 lane 경로가 모두 있고 전략이 ORB일 때만 metrics→daily record→adaptive→lane runner를 직렬 실행한다. 설정 누락·비 ORB 조합은 market wait나 provider 접근 전에 차단하고, 어느 child든 nonzero이면 뒤 child를 시작하지 않는다. watch는 lane child를 subprocess로만 호출하므로 execution Writer, fixed Paper credential, snapshot Writer와 Reviewer Writer의 소유권을 합치지 않는다.
+일일 스케줄은 기존 `run_kis_paper_watch.py`가 opt-in으로 소유한다. 네 lane 경로가 모두 있고 전략이 ORB일 때만 metrics→daily record→adaptive→lane runner를 직렬 실행한다. `--experiment-ledger`까지 지정하면 provider 접근 전 trial register, 정규장 scan 전 start, 장후 성공 chain 뒤 finalize를 추가한다. 어느 장후 child든 nonzero이면 뒤 계산을 중단하고 방금 기록한 phase audit로 failed terminal을 시도한다. terminal projection 실패는 다른 terminal로 추정하지 않는다. 설정 누락·비 ORB 조합은 market wait나 provider 접근 전에 차단한다. watch는 child를 subprocess로만 호출하고 global ledger connection을 보유하지 않으므로 execution Writer, fixed Paper credential, snapshot Writer, Reviewer Writer와 trial Writer의 소유권을 합치지 않는다.
 
 Portfolio Manager는 구현하지 않았다. 최소 두 lane champion이 생기기 전에는 다음 세션 위험예산 배분이나 주문권한 변경을 추가하지 않는다.
 

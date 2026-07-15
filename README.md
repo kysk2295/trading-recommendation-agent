@@ -2,7 +2,7 @@
 
 미국 급등주를 장전·장중에 시점 가용 데이터로 탐색하고, 전략 연구부터 실시간 Alpaca paper 주문, 장후 평가와 다음 가설 생성까지 하나의 프로젝트에서 반복하기 위한 연구 시스템이다.
 
-> **현재 상태:** 분봉 수집·급등주 스캐너·ORB/VWAP/HOD/Gap-and-Go 추천·인과성 감사·과거 및 forward 평가에 더해 Alpaca Paper 시장시계·계좌·주문·포지션·Account Activities FILL GET, `trade_updates` 스트림 인증·구독·Ping/Pong, 단일 Writer 원장과 fail-closed 주문 승인 게이트까지 구현되어 있다. 수신 frame은 text/binary 원문 BLOB을 먼저 확정한 뒤 분류하며, 재시작 시 미분류 receipt를 원래 순서로 복구하고 매 연결 세대에서 REST 주문 snapshot·개별 FILL activity·nested 보호 OCO와 대사한다. 모호한 entry/OCO/cancel mutation은 deterministic client order ID 또는 broker order ID로 직접 GET하며, 정확한 targeted 증거가 없으면 재전송하지 않는다. 통합 운영 세션은 한 Writer lease와 한 WSS 안에서 current-epoch 복구·승인·Paper mutation·사후 대사를 직렬 실행한다. 부분체결 수량이 기존 보호 OCO보다 늘어나면 source-bound cancel만 먼저 실행하고 terminal 대사 뒤 다음 호출에서 새 client ID와 exact 수량으로 replacement OCO를 제출한다. 별도 append-only lane registry는 세 manifest·전용 Paper account binding·사전등록 experiment scope·final daily snapshot 계약을 보존하고 Reviewer용 query-only reader를 제공한다. ORB intraday producer는 장 종료 뒤 현재 GET/WSS readiness, flat broker 상태, 세 계층 account binding, exact-scope daily record와 query-only execution hash를 다시 검증해 immutable `LaneDailySnapshot`을 append한다. 독립 Reviewer는 이 snapshot과 exact daily/adaptive artifact만 읽어 별도 global append-only review ledger에 권고를 남기며 전략 상태·champion·allocation·주문권한을 바꾸지 않는다. lane·review·execution DB와 분리된 global experiment ledger schema v1은 가설·전략 버전·trial과 terminal 결과·next-session lifecycle event를 append-only로 보존한다. local-only Lifecycle Controller v1은 exact finalized snapshot·review·현재 lifecycle chain을 다시 검증하고 성숙 구간의 명확한 5일 열화만 다음 NYSE 세션 `suspended` event로 append한다. 조기 reject, 비교·승격·복구·champion·allocation·주문권한은 계속 닫혀 있다. 전용 장후 runner는 snapshot 성공 뒤에만 Reviewer를 실행하고 단계별 audit와 redacted aggregate report를 남긴다. 일일 연구 원장은 schema v2에서 exact lane scope로만 표본을 누적한다. 신규 진입, 보호 OCO 수명주기, cutoff·kill switch·EOD cancel/flatten은 모두 정확한 arm 객체가 필요한 축소 smoke CLI로만 열렸고 실제 정규장 Paper mutation은 아직 0건이다.
+> **현재 상태:** 분봉 수집·급등주 스캐너·ORB/VWAP/HOD/Gap-and-Go 추천·인과성 감사·과거 및 forward 평가에 더해 Alpaca Paper 시장시계·계좌·주문·포지션·Account Activities FILL GET, `trade_updates` 스트림 인증·구독·Ping/Pong, 단일 Writer 원장과 fail-closed 주문 승인 게이트까지 구현되어 있다. 수신 frame은 text/binary 원문 BLOB을 먼저 확정한 뒤 분류하며, 재시작 시 미분류 receipt를 원래 순서로 복구하고 매 연결 세대에서 REST 주문 snapshot·개별 FILL activity·nested 보호 OCO와 대사한다. 모호한 entry/OCO/cancel mutation은 deterministic client order ID 또는 broker order ID로 직접 GET하며, 정확한 targeted 증거가 없으면 재전송하지 않는다. 통합 운영 세션은 한 Writer lease와 한 WSS 안에서 current-epoch 복구·승인·Paper mutation·사후 대사를 직렬 실행한다. 부분체결 수량이 기존 보호 OCO보다 늘어나면 source-bound cancel만 먼저 실행하고 terminal 대사 뒤 다음 호출에서 새 client ID와 exact 수량으로 replacement OCO를 제출한다. 별도 append-only lane registry는 세 manifest·전용 Paper account binding·사전등록 experiment scope·final daily snapshot 계약을 보존하고 Reviewer용 query-only reader를 제공한다. ORB intraday producer는 장 종료 뒤 현재 GET/WSS readiness, flat broker 상태, 세 계층 account binding, exact-scope daily record와 query-only execution hash를 다시 검증해 immutable `LaneDailySnapshot`을 append한다. 독립 Reviewer는 이 snapshot과 exact daily/adaptive artifact만 읽어 별도 global append-only review ledger에 권고를 남기며 전략 상태·champion·allocation·주문권한을 바꾸지 않는다. lane·review·execution DB와 분리된 global experiment ledger schema v1은 가설·전략 버전·trial과 terminal 결과·next-session lifecycle event를 append-only로 보존한다. ORB의 NYSE 거래일마다 pre-open 등록·정규장 시작·장후 terminal을 갖는 독립 `shadow_forward` trial을 만들고, exact daily/adaptive/snapshot/review evidence로 `completed`·`censored`·`failed` 중 하나를 확정하는 opt-in watch 연결도 구현됐다. local-only Lifecycle Controller v1은 exact finalized snapshot·review·현재 lifecycle chain을 다시 검증하고 성숙 구간의 명확한 5일 열화만 다음 NYSE 세션 `suspended` event로 append한다. 조기 reject, 비교·승격·복구·champion·allocation·주문권한은 계속 닫혀 있다. 전용 장후 runner는 snapshot 성공 뒤에만 Reviewer를 실행하고 단계별 audit와 redacted aggregate report를 남긴다. 일일 연구 원장은 schema v2에서 exact lane scope로만 표본을 누적한다. 신규 진입, 보호 OCO 수명주기, cutoff·kill switch·EOD cancel/flatten은 모두 정확한 arm 객체가 필요한 축소 smoke CLI로만 열렸고 실제 정규장 Paper mutation은 아직 0건이다.
 
 실제 자금 거래는 목표가 아니다. 앞으로 추가되는 실행 코드는 `https://paper-api.alpaca.markets`에만 연결하며 Alpaca live endpoint, 실계좌 키와 실제 주문 경로는 프로젝트에서 차단한다.
 
@@ -83,6 +83,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [ORB lane 일일 snapshot·Reviewer loop 설계](docs/superpowers/specs/2026-07-15-orb-lane-daily-review-loop-design.md)
 - [Global experiment ledger·lifecycle 설계](docs/superpowers/specs/2026-07-15-global-experiment-ledger-lifecycle-design.md)
 - [Lifecycle Controller v1 설계](docs/superpowers/specs/2026-07-15-lifecycle-controller-v1-design.md)
+- [ORB 일일 Shadow Trial 설계](docs/superpowers/specs/2026-07-15-orb-daily-shadow-trial-design.md)
 - [Alpaca paper-only 안전 기반 구현 계획](docs/superpowers/plans/2026-07-14-alpaca-paper-foundation.md)
 - [현재 코드 아키텍처](docs/architecture_ko.md)
 - [KIS 실시간 연결 현황](docs/kis_live_integration_ko.md)
@@ -98,6 +99,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [ORB lane 장후 forward-validation runner 체크포인트](docs/checkpoints/2026-07-15-orb-lane-forward-validation-runner-ko.md)
 - [Global experiment ledger foundation 체크포인트](docs/checkpoints/2026-07-15-global-experiment-ledger-ko.md)
 - [Lifecycle Controller v1 체크포인트](docs/checkpoints/2026-07-15-lifecycle-controller-v1-ko.md)
+- [ORB 일일 Shadow Trial 운영 체크포인트](docs/checkpoints/2026-07-15-orb-daily-shadow-trial-ko.md)
 - [cancel·EOD 평탄화 armed smoke CLI 체크포인트](docs/checkpoints/2026-07-15-paper-safety-mutation-smoke-cli-ko.md)
 - [Alpaca Paper CLI 오류 정보 최소화 체크포인트](docs/checkpoints/2026-07-15-paper-cli-error-redaction-ko.md)
 - [첫 정규장 Alpaca Paper smoke 런북](docs/runbooks/alpaca-paper-first-regular-session-smoke-ko.md)
@@ -143,6 +145,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - 세 lane의 immutable manifest·분리 account/ledger binding·사전등록 experiment scope·final daily snapshot을 저장하는 별도 append-only registry와 query-only Reviewer reader
 - 가설·전략 버전·trial 및 실패·검열을 포함한 terminal event, next-session lifecycle event를 보존하고 날짜 기준 상태를 재생하는 별도 global experiment ledger
 - exact ORB snapshot·Reviewer event·현재 lifecycle chain을 다시 검증해 성숙 구간의 명확한 열화만 다음 세션 `suspended`로 append하는 local-only Lifecycle Controller v1
+- ORB 거래일별 pre-open registration·정규장 started·장후 `completed`/`censored`/audited `failed`를 exact evidence로 보존하는 global shadow trial
 - 장 종료 뒤 현재 Paper GET/WSS·flat broker·exact ORB scope·execution hash를 다시 검증해 intraday daily snapshot을 append하는 credential 후순위 CLI
 - query-only lane snapshot과 exact daily/adaptive artifact만 읽고 별도 append-only ledger에 false-only 권한 권고를 남기는 독립 Reviewer
 - ORB watch의 metrics→daily record→adaptive 성공 뒤에만 snapshot→Reviewer runner를 호출하는 opt-in scheduled forward-validation 단계
@@ -223,6 +226,8 @@ Reviewer event가 확정된 뒤 Lifecycle Controller를 별도로 실행할 수 
   --review-ledger outputs/lane_control/lane_review.sqlite3 \
   --output-dir outputs/lane_control/forward_validation
 ```
+
+ORB 일일 trial은 `run_orb_forward_trial.py`의 `register`, `start`, `finalize`, `fail` 네 local-only operation으로 운영한다. 신규 registration은 정규장 open 전만 허용하고, 장중 재시작은 이미 존재하는 exact registration replay만 허용한다. finalizer는 daily record 원문·adaptive 원문·snapshot key·review key와 모든 artifact checksum을 다시 검증하며, phase 실패는 같은 세션의 nonzero audit가 있을 때만 `failed` terminal로 기록한다. CLI에는 credential·endpoint·arm·fixture·force 옵션이 없고 broker mutation도 없다.
 
 Alpaca Paper 안전 기반은 별도 `~/.config/trading-agent/alpaca-paper.env`의 paper 계정 키만 사용한다. 파일 권한은 정확히 `600`이어야 한다.
 
@@ -437,7 +442,7 @@ CSV replay:
 
 일일 연구 원장이 성공하면 watch가 이 CLI를 마지막으로 순차 실행하고 `post_session_adaptive_evaluation_cycles.csv`에 종료코드를 남긴다. `paper_metrics/paper_trades.csv`가 원장 checksum과 다르거나 연구 record를 세션 폴더 하나로 결정할 수 없으면 fail-closed한다. 시장 국면은 선택 artifact인 `research_regime_snapshot.json`이 해당 거래일 정규장 개장 이전에 관측되고 원장 checksum에 포함됐을 때만 분할 평가에 사용한다. 라벨이 없으면 `unclassified`로 추정하지 않고 최종 검토의 coverage·다양성 문턱을 통과시키지 않는다.
 
-ORB watch에 네 lane 경로를 모두 지정하면 adaptive 성공 뒤 `run_orb_lane_forward_validation.py`를 자동으로 한 번 더 실행한다. 설정은 all-or-none·ORB-only이며 watch 시작과 provider 접근 전에 검증된다. metrics, daily record, adaptive 중 하나라도 실패하면 snapshot/Reviewer를 시작하지 않고, lane 단계 실패도 watch 전체 실패로 집계한다.
+ORB watch에 네 lane 경로를 모두 지정하면 adaptive 성공 뒤 `run_orb_lane_forward_validation.py`를 자동으로 한 번 더 실행한다. 여기에 `--experiment-ledger`를 함께 지정하면 watch가 provider 호출 전 해당 거래일 trial을 등록하고 정규장 scan 전에 시작한 뒤, 장후 exact evidence를 terminal로 확정한다. 장중 직접 시작은 이미 preregistered trial이 있을 때만 통과한다. 설정은 all-or-none·ORB-only이며 watch 시작과 provider 접근 전에 검증된다. metrics, daily record, adaptive 또는 lane 단계가 실패하면 이후 계산을 중단하고 해당 nonzero audit로 `failed` terminal을 시도한다. terminal projection 자체가 실패하면 결과를 추정하지 않고 watch 전체를 실패시킨다.
 
 ```bash
 ./run_kis_paper_watch.py \
@@ -445,10 +450,11 @@ ORB watch에 네 lane 경로를 모두 지정하면 adaptive 성공 뒤 `run_orb
   --lane-execution-database outputs/paper_execution/paper_execution.sqlite3 \
   --lane-registry outputs/lane_control/lane_registry.sqlite3 \
   --lane-review-ledger outputs/lane_control/lane_review.sqlite3 \
-  --lane-forward-output-dir outputs/lane_control/forward_validation
+  --lane-forward-output-dir outputs/lane_control/forward_validation \
+  --experiment-ledger outputs/experiment_control/experiment_ledger.sqlite3
 ```
 
-이 scheduled 연결은 subprocess 순서만 소유한다. arm·credential·endpoint 인자를 받거나 전달하지 않으며 snapshot child는 기존 고정 Paper credential·GET/WSS 경계를, Reviewer child는 local query-only 경계를 그대로 유지한다.
+이 scheduled 연결은 subprocess 순서만 소유한다. watch 자체는 global ledger connection을 열지 않고 짧게 실행되는 trial child만 single Writer lease를 잡는다. arm·credential·endpoint 인자를 받거나 전달하지 않으며 snapshot child는 기존 고정 Paper credential·GET/WSS 경계를, Reviewer와 trial child는 local evidence 경계를 그대로 유지한다. `completed`는 수익 확정이나 승격이 아니고 `censored`는 수익 0으로 바뀌지 않는다.
 
 종목 차이는 반복 가능성이 낮은 ticker 이름이 아니라 추천 생성시각에 실제로 알려진 가격·opening gap·누적 volume/ADV·거래대금 cohort로 분리한다. `candidate_input_snapshots`의 정확한 추천 생성시각과 거래소를 먼저 고정한 뒤, 그 시각 이하의 최신 checksum된 `market_risk_screen.csv`와 `kis_opening_gap_snapshots.csv`만 조인한다. 미래 행은 무시하며 원천이 없으면 `censored`다. 사전 구간은 가격 `<$5/$5~20/$20~50/$50+`, gap `<4%/4~10%/10~20%/20%+`, volume/ADV `<10%/10~25%/25~50%/50%+`, 거래대금 `<$1M/$1~5M/$5~20M/$20M+`다. 출력은 `adaptive_evaluation.json`, `adaptive_evaluation_ko.md`, 개별 조인 감사용 `trade_feature_assignments.csv`이며 전략 상태나 주문 권한을 자동 변경하지 않는다.
 
