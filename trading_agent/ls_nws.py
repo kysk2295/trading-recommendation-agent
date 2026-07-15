@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final, Literal, Self, override
@@ -291,12 +292,7 @@ def _valid_title(value: str) -> bool:
     return (
         value == value.strip()
         and 1 <= len(value) <= 2_000
-        and not any(
-            ord(character) < 32
-            or ord(character) == 127
-            or 0xD800 <= ord(character) <= 0xDFFF
-            for character in value
-        )
+        and not any(_forbidden_text_character(character) for character in value)
     )
 
 
@@ -304,22 +300,18 @@ def _valid_control_message(value: str) -> bool:
     return (
         value == value.strip()
         and 1 <= len(value) <= 200
-        and not any(
-            ord(character) < 32
-            or ord(character) == 127
-            or 0xD800 <= ord(character) <= 0xDFFF
-            for character in value
-        )
+        and not any(_forbidden_text_character(character) for character in value)
     )
 
 
 def _valid_opaque_extension(value: str) -> bool:
     return len(value) <= 256 and not any(
-        ord(character) < 32
-        or ord(character) == 127
-        or 0xD800 <= ord(character) <= 0xDFFF
-        for character in value
+        _forbidden_text_character(character) for character in value
     )
+
+
+def _forbidden_text_character(value: str) -> bool:
+    return unicodedata.category(value) in {"Cc", "Cs"}
 
 
 def _aware(value: dt.datetime) -> bool:

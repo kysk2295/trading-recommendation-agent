@@ -188,9 +188,11 @@ def collect_ls_nws_news(
     failure_code: str | None = None
     expected_sequence = 1
     subscription_acknowledged = False
+    stream_opened = False
 
     try:
         with opener() as receiver:
+            stream_opened = True
             while failure_code is None and expected_sequence <= max_frames:
                 elapsed = _monotonic() - started_monotonic
                 remaining = duration_seconds - elapsed
@@ -273,7 +275,11 @@ def collect_ls_nws_news(
     except (LsTokenResponseError, LsTokenTransportError):
         failure_code = "token_error"
     except LsNwsStreamUnavailableError:
-        failure_code = "stream_unavailable"
+        failure_code = (
+            "subscription_ack_missing"
+            if stream_opened and not subscription_acknowledged
+            else "stream_unavailable"
+        )
 
     if failure_code is None and not subscription_acknowledged:
         failure_code = "subscription_ack_missing"
@@ -344,11 +350,12 @@ def _stored_subscription_acknowledged(
     if not receipts:
         return False
     first = receipts[0]
-    wire_kind = (
-        LsNwsWireKind.BINARY
-        if first.receipt.request_key.endswith(":binary")
-        else LsNwsWireKind.TEXT
-    )
+    wire_kind = {
+        "ls:nws:frame:000001:text": LsNwsWireKind.TEXT,
+        "ls:nws:frame:000001:binary": LsNwsWireKind.BINARY,
+    }.get(first.receipt.request_key)
+    if wire_kind is None:
+        return False
     frame = LsNwsRawFrame(
         sequence=1,
         received_at=first.receipt.received_at,

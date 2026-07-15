@@ -292,6 +292,36 @@ def test_collector_preserves_malformed_raw_frame_in_failed_run(
     assert store.source_receipts()[0].raw_payload == b"{not-json"
 
 
+def test_collector_preserves_ack_before_malformed_data_failure(
+    tmp_path: Path,
+) -> None:
+    store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
+    malformed = LsNwsRawFrame(
+        2,
+        STARTED_AT + dt.timedelta(seconds=2),
+        LsNwsWireKind.TEXT,
+        b"{not-json",
+    )
+
+    result = collect_ls_nws_news(
+        _opener(SequenceReceiver([_ack_frame(1), malformed])),
+        store,
+        collection_cycle_id=CYCLE_ID,
+        collection_date=COLLECTION_DATE,
+        duration_seconds=60.0,
+        max_frames=10,
+        _clock=lambda: STARTED_AT,
+        _monotonic=lambda: 0.0,
+    )
+
+    assert result.run.status is KrCoverageStatus.FAILED
+    assert result.run.failure_code == "invalid_json"
+    assert result.run.record_count == 0
+    assert result.subscription_acknowledged is True
+    assert len(store.source_receipts()) == 2
+    assert store.source_receipts()[1].raw_payload == b"{not-json"
+
+
 def test_collector_preserves_second_receipt_then_fails_duplicate_realkey(
     tmp_path: Path,
 ) -> None:
@@ -439,6 +469,38 @@ def test_terminal_source_run_restart_performs_no_open_or_append(
     assert len(store.source_runs()) == 1
 
 
+def test_terminal_restart_does_not_reclassify_out_of_sequence_ack(
+    tmp_path: Path,
+) -> None:
+    store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
+    first = collect_ls_nws_news(
+        _opener(SequenceReceiver([_ack_frame(2)])),
+        store,
+        collection_cycle_id=CYCLE_ID,
+        collection_date=COLLECTION_DATE,
+        duration_seconds=60.0,
+        max_frames=10,
+        _clock=lambda: STARTED_AT,
+        _monotonic=lambda: 0.0,
+    )
+
+    second = collect_ls_nws_news(
+        _reject_opener("terminal restart opened a source"),
+        store,
+        collection_cycle_id=CYCLE_ID,
+        collection_date=COLLECTION_DATE,
+        duration_seconds=60.0,
+        max_frames=10,
+        _clock=lambda: STARTED_AT,
+        _monotonic=lambda: 0.0,
+    )
+
+    assert first.run.failure_code == "frame_sequence"
+    assert first.subscription_acknowledged is False
+    assert second.run == first.run
+    assert second.subscription_acknowledged is False
+
+
 def test_orphan_receipt_restart_fails_closed_without_opening_source(
     tmp_path: Path,
 ) -> None:
@@ -484,6 +546,83 @@ def test_orphan_receipt_restart_fails_closed_without_opening_source(
     assert result.restarted is True
     assert result.subscription_acknowledged is True
     assert store.source_runs(CYCLE_ID) == (result.run,)
+
+
+def test_orphan_out_of_sequence_ack_remains_unacknowledged(
+    tmp_path: Path,
+) -> None:
+    store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
+    frame = _ack_frame(2)
+    receipt = KrSourceReceipt(
+        source_run_id=f"{CYCLE_ID}:news",
+        source=KrCatalystSource.NEWS,
+        request_key="ls:nws:frame:000002:text",
+        received_at=frame.received_at,
+        http_status=101,
+        content_type="application/json",
+        payload_sha256=hashlib.sha256(frame.raw_payload).hexdigest(),
+    )
+    with store.writer() as writer:
+        _ = writer.append_source_receipt(receipt, frame.raw_payload)
+
+    result = collect_ls_nws_news(
+        _reject_opener("orphan restart opened a source"),
+        store,
+        collection_cycle_id=CYCLE_ID,
+        collection_date=COLLECTION_DATE,
+        duration_seconds=60.0,
+        max_frames=10,
+        _clock=lambda: STARTED_AT,
+        _monotonic=lambda: 0.0,
+    )
+
+    assert result.run.failure_code == "interrupted_run"
+    assert result.subscription_acknowledged is False
+
+
+def test_stream_close_before_ack_is_subscription_ack_missing(
+    tmp_path: Path,
+) -> None:
+    store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
+
+    result = collect_ls_nws_news(
+        _opener(SequenceReceiver([LsNwsStreamUnavailableError("private")])),
+        store,
+        collection_cycle_id=CYCLE_ID,
+        collection_date=COLLECTION_DATE,
+        duration_seconds=60.0,
+        max_frames=10,
+        _clock=lambda: STARTED_AT,
+        _monotonic=lambda: 0.0,
+    )
+
+    assert result.run.failure_code == "subscription_ack_missing"
+    assert result.subscription_acknowledged is False
+    assert result.receipt_count == 0
+
+
+def test_stream_open_failure_remains_stream_unavailable(tmp_path: Path) -> None:
+    store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
+
+    @contextmanager
+    def opener() -> Iterator[SequenceReceiver]:
+        raise LsNwsStreamUnavailableError("private")
+        yield SequenceReceiver([])
+
+    result = collect_ls_nws_news(
+        opener,
+        store,
+        collection_cycle_id=CYCLE_ID,
+        collection_date=COLLECTION_DATE,
+        duration_seconds=60.0,
+        max_frames=10,
+        _clock=lambda: STARTED_AT,
+        _monotonic=lambda: 0.0,
+    )
+
+    assert result.run.failure_code == "stream_unavailable"
+    assert result.subscription_acknowledged is False
+    assert result.receipt_count == 0
 
 
 def test_terminal_restart_rejects_different_collection_date_without_opening_source(
@@ -596,6 +735,15 @@ def _opener(receiver: SequenceReceiver):
         yield receiver
 
     return open_receiver
+
+
+def _reject_opener(message: str):
+    @contextmanager
+    def reject() -> Iterator[SequenceReceiver]:
+        raise AssertionError(message)
+        yield SequenceReceiver([])
+
+    return reject
 
 
 def _frame(

@@ -56,6 +56,7 @@ def test_parser_accepts_observed_subscription_acknowledgement() -> None:
         (("header", "extra", "value"), "invalid_control_packet"),
         (("header", "rsp_msg", " padded "), "invalid_control_packet"),
         (("header", "rsp_msg", "private\nmessage"), "invalid_control_packet"),
+        (("header", "rsp_msg", "private\u0080message"), "invalid_control_packet"),
         (("header", "tr_cd", "SC0"), "invalid_control_packet"),
         (("header", "tr_type", "1"), "invalid_control_packet"),
         (("root", "body", {}), "invalid_control_packet"),
@@ -169,6 +170,7 @@ def test_parser_accepts_observed_extended_nws_shape_and_preserves_fields() -> No
         ({"categoryid": "news", "codeaccu": ""}, "invalid_packet"),
         ({"categoryid": "1" * 11, "codeaccu": ""}, "invalid_packet"),
         ({"categoryid": "42", "codeaccu": "bad\nvalue"}, "invalid_packet"),
+        ({"categoryid": "42", "codeaccu": "bad\u0080value"}, "invalid_packet"),
         ({"categoryid": "42", "codeaccu": "x" * 257}, "invalid_packet"),
     ),
 )
@@ -253,6 +255,7 @@ def test_parser_rejects_malformed_packet_safely(
         (("body", "title", ""), "invalid_packet"),
         (("body", "title", " padded "), "invalid_packet"),
         (("body", "title", "private\ncontrol"), "invalid_packet"),
+        (("body", "title", "private\u0080control"), "invalid_packet"),
         (("body", "title", "x" * 2001), "invalid_packet"),
     ),
 )
