@@ -101,7 +101,7 @@ Provider details are reduced to the allow-listed status. A failed assessment doe
 
 The derived signal copies the immutable strategy lane, strategy version, symbol, entry, stop, targets, rationale, invalidation rule, and opportunity ID from the base conditional signal. It changes only the observation lineage needed for a new current-time claim:
 
-- `signal_id`: deterministic base signal ID plus quote evidence digest
+- `signal_id`: bounded `us-quote-signal:<sha256>` identity derived from the complete base signal ID and quote evidence ID
 - `observed_at`: local quote receipt/evaluation time
 - `valid_until`: earlier of the base signal expiry and quote expiry
 - `actionability`: `current_quote_validated`
@@ -117,7 +117,7 @@ The first version uses fixed conservative gates:
 - evaluation and provider quote must be in the current NYSE regular session
 - provider timestamp is interpreted in `America/New_York`
 - provider timestamp must not be in the future
-- receipt age from provider timestamp must be at most 5 seconds
+- receipt age from provider timestamp must be strictly less than 5 seconds
 - bid and ask must be finite, positive, and `bid <= ask`
 - bid and ask sizes must be non-negative integers
 - spread must be at most 25 basis points
@@ -182,7 +182,7 @@ The card continues to state that the output is a research and Paper forward-vali
 ### Projection and outbox tests
 
 - waiting and trigger-reached derived signals
-- 5-second freshness boundary
+- strict 5-second freshness boundary: 4.999 seconds passes and 5 seconds is stale
 - 25 bp spread boundary
 - 20 bp entry-slippage boundary
 - setup invalidated at the stop
