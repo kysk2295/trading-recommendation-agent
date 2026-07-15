@@ -254,7 +254,7 @@ uv run pytest -q tests/test_intraday_lane_daily_snapshot.py tests/test_lane_cont
 
 Expected: all tests pass.
 
-- [ ] **Step 7: Commit and push the producer checkpoint**
+- [x] **Step 7: Commit and push the producer checkpoint**
 
 ```bash
 git add trading_agent/intraday_lane_daily_snapshot.py tests/test_intraday_lane_daily_snapshot.py
@@ -269,7 +269,7 @@ git push origin feature/paper-account-activities
 - Create: `tests/test_intraday_lane_daily_snapshot_cli.py`
 - Modify: `pyproject.toml`
 
-- [ ] **Step 1: Write failing CLI tests**
+- [x] **Step 1: Write failing CLI tests**
 
 Cover executable `--help`, invalid date, missing local registry/execution/session before credential loading, fake flat readiness success, replay, broker-blocked result, and report redaction.
 
@@ -286,17 +286,17 @@ assert "test-secret" not in report
 assert "외부 Alpaca mutation: 0건" in report
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `uv run pytest -q tests/test_intraday_lane_daily_snapshot_cli.py`
 
 Expected: script missing.
 
-- [ ] **Step 3: Implement CLI without a fixture bypass flag**
+- [x] **Step 3: Implement CLI without a fixture bypass flag**
 
 Use argparse, dependency-injected loaders only in `main()`, and the production defaults `load_alpaca_paper_credentials` plus `probe_paper_runtime`. Run `preflight_intraday_lane_day` before calling the credential loader. Catch API/WSS/schema/source errors and write only a generic blocked report.
 
-- [ ] **Step 4: Add basedpyright coverage and run CLI QA**
+- [x] **Step 4: Add basedpyright coverage and run CLI QA**
 
 Run:
 
