@@ -60,7 +60,7 @@ def project_kis_us_opportunity(
     _validate_complete_discovery(discovery)
 
     ranked_rows = {
-        (stock.exchange, stock.symbol)
+        stock
         for group in discovery.groups
         for stock in group.stocks
     }
@@ -69,8 +69,8 @@ def project_kis_us_opportunity(
         selected_keys
     ):
         raise InvalidKisOpportunityProjectionError("선별 후보 식별자가 중복됩니다")
-    if any(key not in ranked_rows for key in selected_keys):
-        raise InvalidKisOpportunityProjectionError("선별 후보가 동일 랭킹 발견 결과에 없습니다")
+    if any(stock not in ranked_rows for stock in risk_screen.selected):
+        raise InvalidKisOpportunityProjectionError("선별 후보가 동일 랭킹 원본 행과 일치하지 않습니다")
     if not risk_screen.selected:
         return None
 

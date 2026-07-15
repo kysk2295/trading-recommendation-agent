@@ -140,6 +140,19 @@ def test_selected_candidate_must_exist_in_the_exact_discovery() -> None:
         )
 
 
+def test_selected_candidate_payload_must_match_an_exact_ranking_row() -> None:
+    ranked = _stock("NAS", "ACME", change_pct=0.08)
+    changed_after_discovery = _stock("NAS", "ACME", change_pct=0.25)
+
+    with pytest.raises(InvalidKisOpportunityProjectionError):
+        project_kis_us_opportunity(
+            _complete_discovery(ranked),
+            halt_snapshot=_halts(),
+            risk_screen=_screen(changed_after_discovery),
+            observed_at=OBSERVED_AT,
+        )
+
+
 def test_projection_rejects_future_or_naive_observations() -> None:
     stock = _stock("NAS", "ACME")
     future_halts = HaltSnapshot(OBSERVED_AT + dt.timedelta(seconds=1), frozenset())
