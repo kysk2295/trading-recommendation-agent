@@ -330,6 +330,66 @@ def provider_failed_assessment(
     )
 
 
+def quote_actionability_artifacts_match(
+    snapshot: UsQuoteSnapshot,
+    assessment: QuoteActionabilityAssessment,
+    publication: TradeSignalPublication,
+) -> bool:
+    signal = publication.signal
+    validation = signal.quote_validation
+    expected_status = (
+        QuoteAssessmentStatus.VALIDATED_TRIGGER_REACHED
+        if snapshot.ask >= signal.entry_price
+        else QuoteAssessmentStatus.VALIDATED_WAITING
+    )
+    quote_valid_until = snapshot.provider_observed_at + QUOTE_FRESHNESS
+    maximum_entry = signal.entry_price * (
+        Decimal(1) + MAX_ENTRY_SLIPPAGE_BPS / BASIS_POINTS
+    )
+    provider_at = snapshot.provider_observed_at.astimezone(NEW_YORK)
+    received_at = snapshot.received_at.astimezone(NEW_YORK)
+    evaluated_at = assessment.evaluated_at.astimezone(NEW_YORK)
+    quote_refs = {
+        evidence.record_id
+        for evidence in signal.evidence_refs
+        if evidence.namespace == "quote/snapshot"
+    }
+    base_refs = {
+        evidence.record_id
+        for evidence in signal.evidence_refs
+        if evidence.namespace == "signal/conditional"
+    }
+    return (
+        validation is not None
+        and assessment.status is expected_status
+        and assessment.quote_id == snapshot.quote_id
+        and assessment.derived_signal_id == signal.signal_id
+        and signal.signal_id
+        == _derived_signal_identity(assessment.base_signal_id, snapshot.quote_id)
+        and signal.actionability is SignalActionability.CURRENT_QUOTE_VALIDATED
+        and signal.symbol == snapshot.symbol
+        and publication.published_at == assessment.evaluated_at
+        and signal.observed_at == assessment.evaluated_at
+        and validation.bid == snapshot.bid
+        and validation.ask == snapshot.ask
+        and validation.observed_at == snapshot.provider_observed_at
+        and validation.valid_until == quote_valid_until
+        and validation.spread_bps == snapshot.spread_bps
+        and validation.max_slippage_bps == MAX_QUOTE_SPREAD_BPS
+        and signal.valid_until <= quote_valid_until
+        and provider_at <= received_at <= evaluated_at
+        and provider_at.date() == evaluated_at.date()
+        and _in_regular_session(provider_at)
+        and _in_regular_session(evaluated_at)
+        and evaluated_at - provider_at < QUOTE_FRESHNESS
+        and snapshot.spread_bps <= MAX_QUOTE_SPREAD_BPS
+        and snapshot.bid > signal.stop_price
+        and snapshot.ask <= maximum_entry
+        and quote_refs == {snapshot.quote_id}
+        and base_refs == {assessment.base_signal_id}
+    )
+
+
 def _decision(
     base: TradeSignalPublication,
     *,

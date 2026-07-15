@@ -151,13 +151,15 @@ def test_quote_snapshot_outbox_replays_and_rejects_conflict(tmp_path: Path) -> N
         (decision.derived_publication,),
         (decision.assessment,),
     ) == (0, 0, 0)
-    with pytest.raises(ContractOutboxConflictError):
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="quote actionability batch"):
         _ = append_quote_actionability_batch(
             tmp_path,
             (snapshot.model_copy(update={"ask": Decimal("10.11")}),),
             (decision.derived_publication,),
             (decision.assessment,),
         )
+    assert path.read_bytes() == before
 
     payloads = tuple(
         json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
@@ -189,7 +191,8 @@ def test_quote_assessment_outbox_replays_and_rejects_conflict(
         (decision.derived_publication,),
         (assessment,),
     ) == (0, 0, 0)
-    with pytest.raises(ContractOutboxConflictError):
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="quote actionability batch"):
         _ = append_quote_actionability_batch(
             tmp_path,
             (decision.snapshot,),
@@ -200,6 +203,7 @@ def test_quote_assessment_outbox_replays_and_rejects_conflict(
                 ),
             ),
         )
+    assert path.read_bytes() == before
 
     payloads = tuple(
         json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
@@ -302,22 +306,107 @@ def test_quote_batch_rejects_artifacts_without_terminal_assessment(
     assert tuple(tmp_path.iterdir()) == ()
 
 
+@pytest.mark.parametrize("mutation", ("signal_id", "quote_bid"))
+def test_quote_batch_rejects_semantically_unlinked_derived_signal(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    decision = _quote_decision()
+    assert decision.snapshot is not None
+    assert decision.derived_publication is not None
+    payload = decision.derived_publication.model_dump(mode="json")
+    assessment = decision.assessment
+    if mutation == "signal_id":
+        changed_id = f"us-quote-signal:{'0' * 64}"
+        payload["signal"]["signal_id"] = changed_id
+        assessment = assessment.model_validate(
+            {
+                **assessment.model_dump(mode="json"),
+                "derived_signal_id": changed_id,
+            }
+        )
+    else:
+        changed_bid = Decimal("10.07")
+        ask = Decimal(payload["signal"]["quote_validation"]["ask"])
+        changed_spread = (
+            (ask - changed_bid)
+            / ((ask + changed_bid) / Decimal(2))
+            * Decimal(10_000)
+        )
+        payload["signal"]["quote_validation"]["bid"] = str(changed_bid)
+        payload["signal"]["quote_validation"]["spread_bps"] = str(
+            changed_spread
+        )
+        payload["signal"]["quote_validation"]["max_slippage_bps"] = "30"
+    changed = TradeSignalPublication.model_validate(payload)
+
+    with pytest.raises(ValueError, match="quote actionability batch"):
+        _ = append_quote_actionability_batch(
+            tmp_path,
+            (decision.snapshot,),
+            (changed,),
+            (assessment,),
+        )
+
+    assert tuple(tmp_path.iterdir()) == ()
+
+
+def test_quote_batch_rejects_terminal_status_that_disagrees_with_trigger(
+    tmp_path: Path,
+) -> None:
+    decision = _quote_decision()
+    assert decision.snapshot is not None
+    assert decision.derived_publication is not None
+    changed = decision.assessment.model_validate(
+        {
+            **decision.assessment.model_dump(mode="json"),
+            "status": QuoteAssessmentStatus.VALIDATED_WAITING,
+        }
+    )
+
+    with pytest.raises(ValueError, match="quote actionability batch"):
+        _ = append_quote_actionability_batch(
+            tmp_path,
+            (decision.snapshot,),
+            (decision.derived_publication,),
+            (changed,),
+        )
+
+    assert tuple(tmp_path.iterdir()) == ()
+
+
+def test_standalone_signal_writer_rejects_quote_validated_publication(
+    tmp_path: Path,
+) -> None:
+    decision = _quote_decision()
+    assert decision.derived_publication is not None
+
+    with pytest.raises(ValueError, match="conditional"):
+        _ = append_trade_signal_publication(
+            tmp_path / "trade-signals.v1.jsonl",
+            tmp_path / "trade-signal-cards-ko",
+            decision.derived_publication,
+        )
+
+    assert tuple(tmp_path.iterdir()) == ()
+
+
 def test_quote_validated_card_contains_current_quote_and_trigger_state(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "trade-signals.v1.jsonl"
     cards = tmp_path / "trade-signal-cards-ko"
     decision = _quote_decision()
+    assert decision.snapshot is not None
     assert decision.derived_publication is not None
 
-    assert (
-        append_trade_signal_publication(
-            path,
-            cards,
-            decision.derived_publication,
-        )
-        is True
-    )
+    assert append_quote_actionability_batch(
+        tmp_path,
+        (decision.snapshot,),
+        (decision.derived_publication,),
+        (decision.assessment,),
+    ) == (1, 1, 1)
+    assert path.is_file()
 
     card = next(cards.iterdir()).read_text(encoding="utf-8")
     assert "미국 주식 현재 호가 검증 트레이딩 신호" in card

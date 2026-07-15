@@ -19,6 +19,7 @@ from trading_agent.trade_signal_publication import TradeSignalPublication
 from trading_agent.us_quote_actionability import (
     QuoteActionabilityAssessment,
     UsQuoteSnapshot,
+    quote_actionability_artifacts_match,
 )
 
 
@@ -66,6 +67,8 @@ def append_trade_signal_publication(
     cards_dir: Path,
     publication: TradeSignalPublication,
 ) -> bool:
+    if publication.signal.actionability is not SignalActionability.CONDITIONAL:
+        raise ValueError("standalone signal writer accepts conditional publications only")
     model_plan, card_plans = _plan_trade_signal_publications(
         path,
         cards_dir,
@@ -166,23 +169,13 @@ def _validate_quote_actionability_batch(
         if assessment is None or assessment.quote_id is None:
             raise InvalidQuoteActionabilityBatchError
         snapshot = snapshot_by_id.get(assessment.quote_id)
-        quote_refs = {
-            evidence.record_id
-            for evidence in signal.evidence_refs
-            if evidence.namespace == "quote/snapshot"
-        }
-        base_refs = {
-            evidence.record_id
-            for evidence in signal.evidence_refs
-            if evidence.namespace == "signal/conditional"
-        }
         if (
             snapshot is None
-            or signal.actionability
-            is not SignalActionability.CURRENT_QUOTE_VALIDATED
-            or snapshot.symbol != signal.symbol
-            or quote_refs != {assessment.quote_id}
-            or base_refs != {assessment.base_signal_id}
+            or not quote_actionability_artifacts_match(
+                snapshot,
+                assessment,
+                publication,
+            )
         ):
             raise InvalidQuoteActionabilityBatchError
 
