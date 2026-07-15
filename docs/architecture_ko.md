@@ -75,23 +75,54 @@ snapshot producer는 local preflight를 credential보다 먼저 실행한다. NY
 
 Reviewer는 Alpaca, credential, HTTP, execution store 또는 mutation 모듈을 import하지 않는다. adaptive action을 중단 권고·진단 필요·비교 준비·promotion 검토 차단·계속 수집 중 하나로 투영하고, event의 `automatic_state_change_allowed`와 `order_authority_change_allowed`는 false만 허용한다. review DB는 lane registry와 분리된 mode 600 SQLite, 비차단 single Writer lease, UPDATE/DELETE 금지 trigger와 query-only reader를 사용한다.
 
+전략의 전역 계보와 상태는 lane registry·review ledger·execution ledger 어느 쪽에도 합치지 않는다. 별도 global experiment ledger schema v1이 다음 다섯 append-only 집합을 소유한다.
+
+- `hypotheses`: exact `ExperimentScope`와 반증 규칙
+- `strategy_versions`: hypothesis·scope·lane·code·parameter·data·cost·portfolio 계약
+- `experiment_trials`: historical/shadow/broker-paper/equal-risk/cross-lane 사전등록
+- `experiment_trial_events`: `started` 뒤 `completed`·`failed`·`censored` 중 하나로 끝나는 previous-key chain
+- `strategy_lifecycle_events`: 등록과 next-session transition의 previous-key/from-state chain
+
+이 원장은 mode 600 SQLite, WAL, 외래키, 비차단 single Writer lease, UPDATE/DELETE 금지 trigger와 query-only Reader를 사용한다. Writer context 하나가 transaction 하나이며 중간 충돌은 해당 묶음 전체를 rollback한다. Reader와 Writer 모두 canonical SHA-256 key, parent lineage, sequence와 previous key, 시간 단조성, terminal 뒤 추가 event 금지, 아직 효력이 오지 않은 lifecycle event 뒤 추가 전이 금지를 다시 검증한다. 날짜 기준 projection은 조회 세션까지 유효해진 마지막 event만 반환한다.
+
+```text
+exact lane manifest + exact intraday experiment scopes
+  + canonical ORB/VWAP/HOD/Gap-and-Go research contracts
+→ local-only global experiment bootstrap Writer
+→ 4 × experimental_shadow registration, next NYSE session effective
+
+query-only lane snapshot + daily/adaptive evidence
+→ independent Reviewer recommendation
+→ future deterministic Lifecycle Controller
+→ validated next-session lifecycle transition
+```
+
+현재 bootstrap과 ledger projection까지만 구현됐다. bootstrap은 credential, HTTP, broker, execution DB, mutation adapter와 Portfolio Manager를 import하지 않는다. Reviewer recommendation을 transition으로 바꾸는 Lifecycle Controller는 아직 없고 Reviewer 자신은 상태·champion·주문권한·위험예산을 변경할 수 없다.
+
 `run_orb_lane_forward_validation.py`는 두 CLI의 장후 순서만 소유한다. snapshot child의 종료코드가 0일 때만 Reviewer child를 시작하고 `post_session_intraday_snapshot_cycles.csv`와 `post_session_lane_reviewer_cycles.csv`를 별도로 append한다. aggregate report는 단계 성공·실패만 노출하며 path, key, hash, fingerprint, broker ID와 raw payload는 기록하지 않는다. runner에는 credential·endpoint·arm·fixture·force 옵션이 없고 스케줄링, 상태변경, champion 선언 또는 주문 기능도 없다.
 
 일일 스케줄은 기존 `run_kis_paper_watch.py`가 opt-in으로 소유한다. 네 lane 경로가 모두 있고 전략이 ORB일 때만 metrics→daily record→adaptive→lane runner를 직렬 실행한다. 설정 누락·비 ORB 조합은 market wait나 provider 접근 전에 차단하고, 어느 child든 nonzero이면 뒤 child를 시작하지 않는다. watch는 lane child를 subprocess로만 호출하므로 execution Writer, fixed Paper credential, snapshot Writer와 Reviewer Writer의 소유권을 합치지 않는다.
 
 Portfolio Manager는 구현하지 않았다. 최소 두 lane champion이 생기기 전에는 다음 세션 위험예산 배분이나 주문권한 변경을 추가하지 않는다.
 
-## 전략 승격 단계
+## 전략 lifecycle 단계
 
 ```text
-research → historical_pass → paper → approved → suspended
+idea
+→ historical
+→ experimental_shadow
+→ experimental_paper
+→ challenger
+→ paper_champion
+↔ suspended
+→ rejected
 ```
 
-- `research`: 개발·백테스트 중이며 추천에 사용하지 않는다.
-- `historical_pass`: 비용·기간분리·과최적화 검사를 통과했다.
-- `paper`: 실시간 데이터에서 가상 추천만 기록한다.
-- `approved`: 사용자에게 실시간 의견을 표시할 수 있다.
-- `suspended`: 최근 PF, 데이터 품질 또는 체결 가능성이 기준 아래로 떨어졌다.
+- 새 전략은 `idea`에서 시작한다. 기존 네 intraday 계약 이관만 source evidence 세 개를 요구해 `experimental_shadow`에서 시작한다.
+- 허용 전이는 닫힌 표로 검증하고 `rejected`는 terminal이다.
+- `suspended` 복구는 중단 직전 non-suspended 단계보다 높아질 수 없지만 `rejected` 전이는 허용한다.
+- 결정은 같은 세션 상태를 소급 변경하지 않고 다음 NYSE 정규 세션부터 유효하다.
+- lifecycle 상태만으로 주문권한이 생기지 않는다. Paper 실행은 별도 lane account binding·risk contract·current-session admission을 모두 다시 통과해야 한다.
 
 ## 강제 안전장치
 
