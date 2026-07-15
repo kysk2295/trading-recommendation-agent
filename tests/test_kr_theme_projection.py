@@ -132,6 +132,33 @@ def test_projection_builds_deterministic_theme_state_and_kr_opportunity() -> Non
     )
 
 
+def test_opportunity_identity_includes_projection_producer_version() -> None:
+    news = _news("001", NEWS_AT)
+    volume = _volume((("005930", "100", "2"),))
+    catalysts = (news, volume)
+    cycle = _cycle(catalysts)
+    observations = _observations(catalysts)
+    classifications = (_classification(news),)
+
+    first = _project(
+        cycle,
+        catalysts,
+        observations,
+        classifications,
+        producer_strategy_version="kr-theme-keyword-projection-v1",
+    )
+    second = _project(
+        cycle,
+        catalysts,
+        observations,
+        classifications,
+        producer_strategy_version="kr-theme-keyword-projection-v2",
+    )
+
+    assert first[0].state.state_id == second[0].state.state_id
+    assert first[0].opportunity.opportunity_id != second[0].opportunity.opportunity_id
+
+
 def test_projection_aggregates_same_theme_and_uses_symbol_tie_break() -> None:
     first_news = _news("001", NEWS_AT, publisher="same_publisher")
     second_news = _news("002", SECOND_NEWS_AT, publisher="same_publisher")
@@ -335,6 +362,8 @@ def _project(
     catalysts: tuple[StoredKrCatalyst, ...],
     observations: tuple[KrCatalystObservation, ...],
     classifications: tuple[KrThemeClassification, ...],
+    *,
+    producer_strategy_version: str = "kr-theme-keyword-projection-v1",
 ):
     return project_kr_theme_opportunities(
         cycle,
@@ -346,7 +375,7 @@ def _project(
         classification_run_id="kr-keyword-run-001",
         projected_at=PROJECTED_AT,
         validity=dt.timedelta(minutes=10),
-        producer_strategy_version="kr-theme-keyword-projection-v1",
+        producer_strategy_version=producer_strategy_version,
     )
 
 

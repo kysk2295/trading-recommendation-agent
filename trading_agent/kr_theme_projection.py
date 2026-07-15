@@ -474,7 +474,7 @@ def _project_theme(
         market_catalyst_ids=market_catalyst_ids,
     )
     opportunity = OpportunitySnapshot(
-        opportunity_id=_opportunity_id(state),
+        opportunity_id=_opportunity_id(state, producer_strategy_version),
         strategy_lane=KR_THEME_OPPORTUNITY_LANE,
         producer_strategy_version=producer_strategy_version,
         observed_at=projected_at,
@@ -594,9 +594,16 @@ def _state_id(
     return f"kr-theme-state-{digest[:20]}"
 
 
-def _opportunity_id(state: KrThemeState) -> str:
+def _opportunity_id(
+    state: KrThemeState,
+    producer_strategy_version: str,
+) -> str:
     stamp = state.projected_at.astimezone(dt.UTC).strftime("%Y%m%dT%H%M%S%fZ")
-    digest = _identity_digest(state.state_id, state.theme_name)
+    digest = _identity_digest(
+        state.state_id,
+        state.theme_name,
+        producer_strategy_version,
+    )
     return f"kr-theme-opportunity-{stamp}-{digest[:12]}"
 
 
