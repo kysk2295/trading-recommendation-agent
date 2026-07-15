@@ -75,6 +75,8 @@ snapshot producer는 local preflight를 credential보다 먼저 실행한다. NY
 
 Reviewer는 Alpaca, credential, HTTP, execution store 또는 mutation 모듈을 import하지 않는다. adaptive action을 중단 권고·진단 필요·비교 준비·promotion 검토 차단·계속 수집 중 하나로 투영하고, event의 `automatic_state_change_allowed`와 `order_authority_change_allowed`는 false만 허용한다. review DB는 lane registry와 분리된 mode 600 SQLite, 비차단 single Writer lease, UPDATE/DELETE 금지 trigger와 query-only reader를 사용한다.
 
+`run_orb_lane_forward_validation.py`는 두 CLI의 장후 순서만 소유한다. snapshot child의 종료코드가 0일 때만 Reviewer child를 시작하고 `post_session_intraday_snapshot_cycles.csv`와 `post_session_lane_reviewer_cycles.csv`를 별도로 append한다. aggregate report는 단계 성공·실패만 노출하며 path, key, hash, fingerprint, broker ID와 raw payload는 기록하지 않는다. runner에는 credential·endpoint·arm·fixture·force 옵션이 없고 스케줄링, 상태변경, champion 선언 또는 주문 기능도 없다.
+
 Portfolio Manager는 구현하지 않았다. 최소 두 lane champion이 생기기 전에는 다음 세션 위험예산 배분이나 주문권한 변경을 추가하지 않는다.
 
 ## 전략 승격 단계
