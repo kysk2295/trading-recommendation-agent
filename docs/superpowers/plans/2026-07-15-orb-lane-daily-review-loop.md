@@ -17,7 +17,7 @@
 - Modify: `trading_agent/execution_store_reader.py`
 - Create: `tests/test_execution_ledger_identity.py`
 
-- [ ] **Step 1: Write failing stability and append-change tests**
+- [x] **Step 1: Write failing stability and append-change tests**
 
 Create an initialized execution store, read its identity twice around a WAL checkpoint, then append one intent and prove both generation and hash change.
 
@@ -42,13 +42,13 @@ def test_execution_identity_changes_after_an_append(tmp_path: Path) -> None:
     assert after.sha256 != before.sha256
 ```
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run: `uv run pytest -q tests/test_execution_ledger_identity.py`
 
 Expected: `ExecutionStore.ledger_snapshot_identity` is missing.
 
-- [ ] **Step 3: Implement canonical streaming identity**
+- [x] **Step 3: Implement canonical streaming identity**
 
 Add a frozen result and encode every current-schema user table inside one read transaction.
 
@@ -80,11 +80,11 @@ def read_execution_ledger_snapshot_identity(
 
 `ExecutionStoreReader.ledger_snapshot_identity()` must use `_reader_connection()`, execute `BEGIN`, call this function, and never expose path or row content.
 
-- [ ] **Step 4: Verify malformed schema and missing DB behavior**
+- [x] **Step 4: Verify malformed schema and missing DB behavior**
 
 Add tests that a missing DB returns no forged identity and a user-version-9 DB with missing objects raises `ExecutionSchemaIntegrityError` through the existing reader gate.
 
-- [ ] **Step 5: Run focused verification**
+- [x] **Step 5: Run focused verification**
 
 Run: `uv run pytest -q tests/test_execution_ledger_identity.py tests/test_execution_store.py`
 

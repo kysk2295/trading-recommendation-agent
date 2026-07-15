@@ -4,6 +4,10 @@ import sqlite3
 from pathlib import Path
 
 from trading_agent.execution_database import require_current_execution_schema
+from trading_agent.execution_ledger_identity import (
+    ExecutionLedgerSnapshotIdentity,
+    read_execution_ledger_snapshot_identity,
+)
 from trading_agent.execution_ledger_reader import (
     ReconciliationLedger,
     read_reconciliation_ledger,
@@ -17,6 +21,7 @@ from trading_agent.execution_schema import (
     stored_broker_event,
     stored_intent,
 )
+from trading_agent.execution_store_errors import InvalidExecutionLedgerGenerationError
 from trading_agent.paper_account_activity_store import (
     StoredPaperAccountActivity,
     read_paper_account_activities,
@@ -93,6 +98,13 @@ class ExecutionStoreReader:
                 "SELECT account_fingerprint, bound_at FROM account_binding WHERE binding_id = 1"
             ).fetchone()
         return None if row is None else StoredAccountBinding(AccountFingerprint(row[0]), row[1])
+
+    def ledger_snapshot_identity(self) -> ExecutionLedgerSnapshotIdentity:
+        if not self.path.is_file():
+            raise InvalidExecutionLedgerGenerationError
+        with self._reader_connection() as connection:
+            _ = connection.execute("BEGIN")
+            return read_execution_ledger_snapshot_identity(connection)
 
     def broker_events(self, intent_id: IntentId) -> tuple[StoredBrokerEvent, ...]:
         if not self.path.is_file():
