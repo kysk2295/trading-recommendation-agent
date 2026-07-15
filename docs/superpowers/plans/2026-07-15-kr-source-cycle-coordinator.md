@@ -215,7 +215,7 @@ Run `git diff main...HEAD --check`, inspect every changed file, and confirm no c
 
 Run full pytest, Ruff and basedpyright once more and preserve exact results.
 
-- [ ] **Step 3: Fast-forward verified commits to `main`**
+- [x] **Step 3: Fast-forward verified commits to `main`**
 
 Update local `main`, merge the feature branch without rewriting unrelated work, and rerun full gates plus CLI QA on merged `main`.
 
