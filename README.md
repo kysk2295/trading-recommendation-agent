@@ -247,22 +247,17 @@ Paper mutation 요청이 timeout 또는 응답 형식 오류로 모호해졌을 
   --output-dir outputs/paper_execution/mutation_recovery/latest
 ```
 
-이 명령 자체는 WSS와 REST GET만 사용한다. 신규 진입 production 경계는 방금 완성된 현재 1분봉 후보와 current-epoch 승인 결과만 받아 DAY limit 주문으로 고정하며, 다음처럼 정확한 arm 값과 모든 시점 입력을 명시해야 한다. 위험 한도는 notional 100 USD·계획위험 10 USD·포지션 1개·일손실 30 USD로 코드에 고정된다.
+이 명령 자체는 WSS와 REST GET만 사용한다. 신규 진입 production 경계는 free-form 종목·가격·시각·수량 인자를 받지 않는다. query-only watch SQLite의 추천·후보 입력·최초 관찰 1분봉을 한 read transaction에서 결합하고, 현재 시각 기준 직전 완료 정규장 1분봉에서 생성된 30초 이내 `setup` ORB 후보가 정확히 하나일 때만 기존 recommendation ID와 가격 계보를 `PaperOrderAdmissionRequest`로 투영한다. liquidity 허용량은 1주로 고정되며 위험 한도는 notional 100 USD·계획위험 10 USD·포지션 1개·일손실 30 USD로 코드에 고정된다.
 
 ```bash
 ./run_alpaca_paper_entry_smoke.py \
   --arm-paper-mutation ARM_ALPACA_PAPER_ONLY \
   --database outputs/paper_execution/paper_execution.sqlite3 \
   --output-dir outputs/paper_execution/entry_smoke/latest \
-  --intent-id orb-AAPL-YYYYMMDD-HHMMSS --symbol AAPL \
-  --entry-limit 10.00 --stop 9.75 --target-1r 10.25 --target-2r 10.50 \
-  --created-at 2026-07-14T09:36:02-04:00 \
-  --bar-start 2026-07-14T09:35:00-04:00 \
-  --bar-first-observed 2026-07-14T09:36:01-04:00 \
-  --liquidity-quantity 100 --spread-bps 20
+  --watch-database outputs/live_sessions/YYYYMMDD/paper_recommendations.sqlite3
 ```
 
-정규장·현재 봉·빈 포트폴리오·WSS heartbeat·계좌 대사 중 하나라도 틀리면 POST 전에 차단한다. 실행 예외는 클래스명으로 만든 고정 안전 사유만 stderr와 보고서에 기록하며 원문 메시지는 출력하지 않는다. 이 경계는 MockTransport와 fake CLI로 검증됐고 entry script의 Git 실행 비트와 직접 `--help` 실행도 회귀 테스트로 고정했지만, 실제 정규장 최소 주문은 아직 보내지 않았다.
+source loader는 자격증명 로드와 운영 세션 개방보다 먼저 실행된다. 그 뒤에도 운영 세션이 정규장·현재 봉·빈 포트폴리오·WSS heartbeat·계좌 대사를 독립적으로 다시 검사하며 하나라도 틀리면 POST 전에 차단한다. 실행 예외는 클래스명으로 만든 고정 안전 사유만 stderr와 보고서에 기록하며 원문 메시지는 출력하지 않는다. 이 경계는 read-only SQLite fixture, MockTransport와 fake CLI로 검증됐고 entry script의 Git 실행 비트와 직접 `--help` 실행도 회귀 테스트로 고정했지만, 실제 정규장 최소 주문은 아직 보내지 않았다.
 
 진입 체결 뒤 보호 OCO를 별도 smoke하려면 정확한 parent intent를 지정한다. 이 명령도 같은 arm 값과 단일 Writer/WSS current-epoch 복구를 요구하며, 체결 원장·broker 포지션·보호 OCO 계획이 일치하지 않으면 POST 전에 차단한다.
 
