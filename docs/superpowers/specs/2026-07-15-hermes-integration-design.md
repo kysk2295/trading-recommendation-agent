@@ -1,160 +1,140 @@
-# Hermes OS 연동 설계 — 스케줄·배달·브리핑·주간 연구
+# Hermes 에이전트 크론 운영 설계 — 저장소를 기억으로 쓰는 역할별 에이전트
 
 - 상태: 제안 (사용자 승인 대기)
-- 작성일: 2026-07-15
-- 연동 대상: [Hermes OS](../../..) — 사용자의 개인 에이전트 OS (Railway UI + Mac mini runtime + Telegram/LLM-Wiki 커넥터)
-- 원칙: Hermes는 이 프로젝트의 **바깥**에서 시동·배달·보고·연구 보조만 담당한다. 원장·주문·검증 경계 안으로는 절대 들어오지 않는다
+- 작성일: 2026-07-15 (개정: Telegram 자동화 제외, 에이전트 크론 구조로 재설계)
+- 연동 대상: Hermes OS (Mac mini runtime + scheduler + Codex agent run)
+- 한 줄 정의: **이 GitHub 저장소를 읽고 이해하는 LLM 에이전트를 Hermes 크론으로 주기 기동시켜, 운영·해석·연구·개발을 무인 반복하게 한다**
 
 ## 1. 결정 요약
 
-trading-recommendation-agent의 남은 4개 운영 갭을 Hermes OS의 기존 능력으로 채운다.
-
-| 트레이딩 시스템의 갭 | Hermes의 기존 능력 | 연동 형태 |
-|---|---|---|
-| 매일 watch 시동 (루프 3의 마지막 조각) | Mac mini 상시 runtime + scheduler + launchd 생존 | Hermes 스케줄이 거래일마다 watch CLI 실행 |
-| 실시간 알림 배달 | Telegram bot 커넥터 + 모바일 웹 | Hermes messenger가 alert outbox를 읽기 전용 폴링해 전송 |
-| 일일 브리핑 | LLM-Wiki write-back + 시각적 result brief | 장후 산출물을 위키 브리프·아침 카드로 변환 |
-| 주간 가설 생성 (루프 4) | Codex 기반 no-approval agent run | 주 1회 Researcher run이 실패 원장을 읽고 가설 초안 작성 |
-
-핵심 결정:
-
-1. Hermes는 이 저장소의 어떤 SQLite·JSONL 원장에도 **직접 쓰지 않는다**. 쓰기는 항상 이 저장소의 기존 CLI가 자기 Writer lease로 수행한다.
-2. Hermes가 실행할 수 있는 명령은 **고정 allowlist**로 제한한다. 임의 인자 조합·임의 셸 실행을 허용하지 않는다.
-3. `PaperMutationArm`을 포함한 주문 권한 표면은 Hermes UI·API·agent run 어디에도 노출하지 않는다.
-4. 자격증명(KIS·Alpaca·LLM)은 지금처럼 runtime 머신 로컬의 mode 600 파일에만 있다. Hermes/Railway 환경변수로 복사하지 않는다.
-5. 운영 본체(이 저장소 + watch)는 Mac mini로 이전해 Hermes runtime과 같은 머신에서 24/7 운영한다. 노트북 사본은 개발 전용이다.
+1. "에이전트가 저장소를 학습한다" = 파인튜닝이 아니라 **깨어날 때마다 저장소 문서·원장으로 맥락을 복원하는 것**이다. `CODEX_START_HERE.md`, `AGENTS.md`, 스펙·체크포인트·원장이 에이전트의 장기기억이며, 이 저장소는 이미 그 용도로 문서화되어 있다.
+2. 크론잡은 하나의 만능 에이전트가 아니라 **역할·프롬프트·쓰기 권한이 다른 4개**로 분리한다.
+3. **기계적 작업에는 LLM을 넣지 않는다.** watch 시동은 순수 스케줄러가 하고, LLM 에이전트는 판단이 필요한 자리(결과 해석·가설 생성·개발)에만 둔다.
+4. 에이전트의 기억 저장 = 커밋과 문서 갱신이다. 세션이 끝날 때 체크포인트·브리핑을 저장소/위키에 남겨 다음 세션이 이어받는다.
+5. Telegram 등 메시지 자동 전송은 이 설계의 범위 밖이다 (별도 결정 전까지 미구현).
+6. 주문 권한(`PaperMutationArm`)·원장 직접 쓰기·안전선 수정은 어떤 에이전트에게도 위임하지 않는다.
 
 ## 2. 배경
 
-- 세션 내부 자동화는 완성됐다: watch 하나가 trial 사전등록 → 정규장 감시 → metrics → 일일 기록 → adaptive → snapshot → Reviewer → trial 확정을 all-or-none으로 연쇄한다.
-- 그러나 저장소에는 OS 수준 스케줄러가 없어 매 거래일 watch 시동이 수동이고, 미국 정규장(KST 22:30~05:00) 동안 기계가 깨어 있어야 한다.
-- 추천 카드 outbox는 "외부 메시지 어댑터는 읽기 전용으로 소비해야 한다"고 설계되어 있으나 실제 어댑터가 미연결이다.
-- Hermes OS는 이미 Mac mini 상시 runtime, launchd 생존, scheduler, Telegram bot, LLM-Wiki write-back, Codex agent run을 갖고 있다.
+- 지금까지의 개발은 사실상 "크론 없는 크론잡"이었다: 사람이 수동으로 Codex 세션을 열고, 세션은 `CODEX_START_HERE.md`로 맥락을 복원해 일하고, 체크포인트 문서와 커밋으로 기억을 남겼다. 이 방식으로 61커밋·946테스트가 만들어졌다.
+- 이 설계는 그 검증된 루프에서 **트리거만 사람 손가락 → Hermes 스케줄러로 바꾼다.**
+- 세션 내부 자동화(watch의 trial 사전등록→감시→장후 연쇄)는 완성되어 있으나, 매일 시동과 장후 해석·주간 연구·개발 지속은 수동이다.
 
 ## 3. 목표와 비목표
 
 ### 3.1 목표
 
-- 사람이 버튼을 누르지 않아도 매 거래일 watch가 돌고, 결과가 아침에 도착한다.
-- 신규 추천이 생기면 수 분 내 Telegram으로 종목·조건부 진입가·손절·목표·**증거 등급**이 배달된다.
-- 장후 산출물(적격 여부·성과·Reviewer 권고·trial 결과)이 LLM-Wiki 브리프와 모바일 카드로 요약된다.
-- 주 1회 Hermes agent run이 실패 원장 기반 가설 초안을 만들어 사람 승인 대기열에 올린다.
+- 사람 개입 없이 매 거래일 watch가 돌고, 다음 날 아침 에이전트가 결과를 해석해 기록한다.
+- 주 1회 에이전트가 실패 원장에서 반증 가능한 가설 초안을 만든다.
+- 개발 우선순위(`CODEX_START_HERE.md`)를 에이전트가 크론으로 이어서 구현하되, 사람 승인 게이트를 통과해야 병합된다.
 
 ### 3.2 비목표
 
-- Hermes를 통한 주문 제출·arm·kill switch 조작 — 영구 금지
-- Hermes UI에서 원장·전략 상태를 수정하는 기능
-- 알림을 근거로 한 자동 매매 — 알림은 사람에게 가는 정보다
-- Telegram 명령으로 전략 파라미터를 바꾸는 원격 제어
+- Telegram·메신저 자동 전송 (범위 제외 — 산출물은 저장소·위키·Hermes Runs에만 남긴다)
+- 에이전트를 통한 주문 제출·arm·kill switch 조작 — 영구 금지
+- 에이전트의 원장 직접 쓰기 (쓰기는 항상 기존 CLI가 자기 Writer lease로)
+- 에이전트의 안전선 파일 수정 (AGENTS.md, 하드 한도, 승인 게이트, append-only trigger)
+- 장중 실시간 LLM 판단 (장중은 결정론적 watch만 돈다)
 
-## 4. 아키텍처
-
-```text
-┌─ Mac mini ──────────────────────────────────────────────────┐
-│                                                              │
-│  [trading-recommendation-agent]   (독립 저장소, 기존 그대로)      │
-│    watch → 원장·outbox·보고서        Single Writer 불변          │
-│        ▲ CLI 실행(allowlist)          │ 파일 읽기 전용            │
-│        │                             ▼                        │
-│  [Hermes Runtime]                                             │
-│    ① Scheduler   거래일 21:30 KST watch 시동, 휴장일은 watch가     │
-│                  스스로 fail-closed 종료                        │
-│    ② Runs        watch PID·종료코드 감시, 비정상 종료 시 즉시 알림   │
-│    ③ Messenger   outbox 폴링(30s) → Telegram 전송               │
-│    ④ Briefer     장후 산출물 → LLM-Wiki 브리프 + 아침 카드         │
-│    ⑤ Researcher  주 1회 agent run: 실패 원장 → 가설 초안 PR       │
-└──────────────────────────────────────────────────────────────┘
-        ▲ HERMES_RUNTIME_URL (기존 터널·토큰)
-[Railway UI / Telegram]  ← 폰에서 알림 수신·브리핑 열람·연구 태스크 승인
-```
-
-### 4.1 경계 계약 (불변)
-
-- **쓰기 방향은 한쪽뿐**: Hermes → trading은 프로세스 시동만, trading → Hermes는 파일 읽기만.
-- **명령 allowlist**: Hermes 스케줄·run이 실행할 수 있는 것은 사전 등록된 정확한 명령 문자열(README의 canonical watch 명령, 브리핑 리포터, 주간 연구 스크립트)뿐이다. 인자 치환은 날짜·출력 경로 같은 화이트리스트 필드만 허용한다.
-- **읽기 전용 소비 지점**: `recommendation_alerts.jsonl`(및 outbox SQLite), `adaptive_evaluation_ko.md`, `daily_research_ledger.jsonl`, review ledger의 query-only reader, `watch_cycles.csv`. Messenger·Briefer는 이 파일들만 연다.
-- **중복 발송 방지**: outbox가 추천 ID 기본키로 최초 1회를 보장하므로, Messenger는 자체 전송 원장(`hermes_delivery_ledger`)에 전송한 추천 ID를 append-only 기록하고 재시작 시 미전송분만 보낸다. 5분 이내 생성분만 신규 발송하는 기존 지연 발송 차단 규칙을 계승한다.
-- **비밀 격리**: Messenger가 만드는 메시지에는 계좌 식별자·키가 들어갈 수 없다(원본 카드가 이미 redact됨). `HERMES_TELEGRAM_BOT_TOKEN`은 Hermes 쪽 비밀이고 trading env 파일과 섞지 않는다.
-
-### 4.2 알림 메시지 계약
-
-Telegram 카드는 outbox의 구조화 JSON에 전역 실험 원장의 현재 lifecycle 상태를 **읽기 전용으로** 결합해 만든다.
+## 4. 기억 모델 — 저장소가 곧 에이전트의 뇌
 
 ```text
-🔔 [DAY · ORB v1 · EXPERIMENTAL_SHADOW]
-ABCD — 12.48 돌파 시 조건부 진입
-손절 12.28 · 목표 12.68 (1R) / 12.88 (2R)
-근거: ORB 5분 상단 돌파, RVOL 2.1, 갭 +6.2%
-증거: 적격 23/60일 · 완료 41거래 · 검증 미완료
-이 카드는 paper 전진검증 기록이며 투자 권유가 아니다.
+깨어날 때 (맥락 복원)                      잠들 때 (기억 저장)
+─────────────────────                    ─────────────────────
+CODEX_START_HERE.md   ← 진입점            커밋 (테스트 통과 시)
+AGENTS.md             ← 불변 규칙          체크포인트 문서 (docs/checkpoints/)
+docs/superpowers/     ← 승인 스펙·계획      브리핑 (위키/Hermes)
+runtime_audit.md      ← 반증 이력          CODEX_START_HERE '다음 우선순위' 갱신
+원장(ledger)·산출물     ← 어제까지의 사실
 ```
 
-등급 표기와 마지막 면책 문구는 생략할 수 없다. lifecycle 상태를 읽지 못하면 등급을 `미확인`으로 표기하고 발송은 유지한다.
+전제 조건: 이 기억 모델이 작동하려면 문서 규율이 유지되어야 한다. 에이전트 세션은 작업 후 반드시 해당 문서를 갱신해야 하며, 갱신 없는 커밋은 리뷰에서 거부한다.
 
-### 4.3 일일 브리핑 계약
+## 5. 크론잡 구성
 
-장후 연쇄가 끝난 뒤(또는 매일 07:30 KST 중 늦은 쪽) Briefer가 다음을 한 장으로 요약한다.
+| # | 크론잡 | 시각 (KST) | 실행자 | 임무 | 쓰기 권한 |
+|---|---|---|---|---|---|
+| ① | watch 시동 | 거래일 21:30 | **순수 스케줄러** (LLM 없음) | canonical watch 명령 실행 (lane 4경로+experiment-ledger 포함). 휴장일은 watch가 fail-closed 종료 | 없음 (CLI가 자기 lease로) |
+| ② | 아침 Operator | 매일 07:30 | LLM agent run | 어젯밤 산출물(watch_cycles, 일일 기록, adaptive, review ledger, trial 결과)을 읽고 해석: 적격일 여부와 사유, 실패 원인 분류, 사람 조치 필요 항목 → 브리핑 작성 | 브리핑·위키·Hermes Runs만 |
+| ③ | 주간 Researcher | 토 10:00 | LLM agent run | 한 주 실패 원장·cohort 분해·Reviewer 권고를 읽고 반증 조건이 붙은 가설 초안 최대 3개 작성 | **문서 PR만** (원장 IDEA 등록은 사람 승인 후 기존 CLI로) |
+| ④ | 개발 에이전트 | 주 2~3회 (또는 수동 트리거) | LLM agent run | `CODEX_START_HERE.md`의 '다음 우선순위'를 TDD로 이어서 구현 | 브랜치 커밋 + **PR-only** (병합은 사람) |
 
-- 어제 세션: 적격 여부와 사유, cycle 성공률, 신규 추천 수
-- 전략별: 누적 적격일·완료 거래·현재 lifecycle 상태·adaptive 판정(collecting/diagnose 등)
-- Reviewer 권고와 trial 확정 결과(completed/censored/failed)
-- 운영 incident (KIS 재시도·실패 cycle)
+### 5.1 프롬프트 계약
 
-출력: LLM-Wiki 페이지 1개(append) + Hermes 아침 카드 + Telegram 요약 1건. 성과 수치에는 항상 "검증 미완료" 단서가 붙는다.
+각 크론잡의 프롬프트는 Hermes에 고정 템플릿으로 등록하며, `CODEX_START_HERE.md`의 "새 작업용 요청문" 관례를 역할별로 특수화한 것이다. 공통 머리말:
 
-### 4.4 주간 Researcher run 계약
+```text
+이 프로젝트의 CODEX_START_HERE.md, AGENTS.md, docs/runtime_audit.md를 먼저 읽어라.
+AGENTS.md의 경계(paper-only, 비밀, 동시성)를 절대 넘지 마라.
+작업을 마치면 해당 체크포인트/브리핑 문서를 갱신하라.
+```
 
-- 주 1회(토요일) Hermes가 Codex agent run을 시작한다. 입력은 이 저장소의 읽기 전용 산출물(실패 원장·cohort 분해·Reviewer 권고)이다.
-- 산출물은 반증 조건이 포함된 가설 초안 최대 3개의 **문서 PR**(또는 위키 초안)이다. 전역 실험 원장 등록은 사람이 초안을 승인한 뒤 기존 CLI로 수행한다.
-- agent run은 원장 등록·전략 활성화·코드 병합 권한이 없다. challenger 활성화 주 1개 상한은 사람 승인 단계에서 집행한다.
+역할별 본문 예시 (② 아침 Operator):
 
-## 5. 비교한 대안
+```text
+outputs/live_sessions/<어제 뉴욕 거래일>의 watch_cycles.csv, 일일 연구 기록,
+adaptive_evaluation_ko.md, review ledger, trial 확정 결과를 읽고 다음을 판정하라.
+1. 어제가 적격 forward day였는가, 아니라면 정확한 이유는 무엇인가
+2. 실패·재시도·censored가 있으면 원인을 공급자/코드/시장으로 분류하라
+3. 사람이 오늘 조치해야 할 항목을 명시하라
+결과를 한국어 브리핑 1장으로 위키에 기록하라.
+원장·코드·전략 상태를 수정하지 마라. 성과 수치에는 '검증 미완료'를 명시하라.
+```
 
-- **launchd 단독 (Hermes 없이)** — 시동 문제만 풀리고 배달·브리핑·연구 run은 별도 구축이 필요하다. Hermes가 이미 그 셋을 갖고 있으므로 중복 투자다. 다만 Hermes runtime 장애 시 fallback으로 Mac mini launchd 직접 등록을 2차 안전망으로 둘 수 있다.
-- **알림을 trading 저장소 안에 내장 (Telegram 코드 추가)** — 배달 실패 재시도·토큰 관리가 연구 저장소에 들어와 경계가 흐려진다. outbox 설계 의도(외부 어댑터의 읽기 전용 소비)와도 어긋난다. 기각.
-- **Hermes에 주문 권한까지 위임** — "폰에서 승인하면 진입" 형태. 편리하지만 승인 게이트의 5초 신선도·current-epoch 계약과 양립 불가능하고, 원격 표면에 mutation 권한을 노출한다. 기각. 주문은 계속 이 저장소의 운영 세션 안에서만.
+③ 주간 Researcher 본문 요지: 가설마다 엣지의 경제적 이유, 반증 조건, 파라미터 격자, 예상 비용을 포함한 초안을 `docs/hypotheses/` PR로 제출. 전역 원장 등록·전략 활성화 금지.
 
-## 6. 단계적 구현 순서
+④ 개발 에이전트 본문 요지: 우선순위 1개만 골라 TDD로 구현. 전체 pytest·ruff·basedpyright 통과 전 커밋 금지. 안전선 파일 수정 금지. PR 본문에 검증 증거 포함.
 
-### Phase H1 — 시동과 감시 (루프 3 완성)
+## 6. 경계 계약 (불변)
 
-- trading 저장소를 Mac mini에 clone하고 자격증명 파일(mode 600) 배치
-- Hermes 스케줄에 canonical watch 명령 등록 (거래일 21:30 KST, README의 lane·experiment-ledger 전체 인자 포함)
-- Runs에서 watch 종료코드 감시, 비정상 종료·적격 실패 시 Telegram 즉시 통보
-- 완료 기준: 사람 개입 없이 2거래일 연속 watch 완주와 종료코드 통보
+- **동시 1세션**: 저장소당 에이전트 세션은 동시에 하나만. Hermes Runs가 잠금을 관리하고, 실행 중이면 다음 크론은 건너뛰고 기록만 남긴다. (Single Writer 원칙의 에이전트 버전)
+- **권한 계단**: ②=읽기+브리핑, ③=문서 PR, ④=브랜치 커밋+PR. 어떤 단계도 원장 쓰기·안전선 수정·주문 권한 없음.
+- **기계 집행 게이트**: ④의 push는 전체 테스트+lint+타입체크 통과를 CI/훅으로 강제한다. 안전선 파일(AGENTS.md, paper_risk 하드 한도, 승인 게이트, append-only trigger, alpaca config) 변경이 diff에 있으면 자동 거부.
+- **데드맨 스위치**: 같은 크론잡이 연속 2회 실패하면 해당 잡 자동 정지 + Hermes Runs에 사람 호출 기록. run당 시간·토큰 예산 상한.
+- **비밀 격리**: 자격증명은 runtime 머신 로컬 mode 600 파일에만. 에이전트 프롬프트·산출물·로그에 키·계좌 식별자 출력 금지 (AGENTS.md 기존 규칙 계승).
+- **Hermes 전면 장애 시**: 검증 무결성은 영향받지 않는다. ①만 launchd 백업으로 이중화하고 ②~④는 밀린 뒤 재개한다.
 
-### Phase H2 — 알림 배달
+## 7. 배치
 
-- Messenger: outbox 폴링 → 증거 등급 결합 → Telegram 전송, 자체 전송 원장으로 멱등
-- 완료 기준: 실거래일 신규 추천이 생성 후 5분 내 폰에 도착, 재시작 후 중복 발송 0건
+- 운영 본체(이 저장소 clone + 자격증명 + watch)는 Hermes runtime과 같은 **Mac mini**에 둔다. 상시 전원·launchd 생존이 이유다.
+- 이전까지는 노트북 launchd로 ①을 임시 운영할 수 있다.
+- 개발용 노트북 사본과 운영용 Mac mini 사본은 GitHub(origin)을 통해서만 동기화한다. 운영 사본에서의 직접 코드 수정 금지.
 
-### Phase H3 — 일일 브리핑
+## 8. 단계적 도입 순서
 
-- Briefer: 장후 산출물 → LLM-Wiki + 아침 카드
-- 완료 기준: 아침 카드에서 어제의 적격 여부·전략별 증거 누적을 30초 안에 파악 가능
+### Phase A1 — watch 시동 (LLM 없음)
 
-### Phase H4 — 주간 Researcher run
+- Hermes 스케줄(또는 임시 launchd)에 canonical watch 명령 등록, 실행 로그·종료코드 보존
+- 완료 기준: 사람 개입 없이 2거래일 연속 완주, 휴장일 안전 종료 1회 확인
 
-- 실패 표본이 최소 2주 쌓인 뒤 시작. 가설 초안 → 사람 승인 → 기존 CLI 등록
-- 완료 기준: 승인된 가설 1개가 전역 원장에 IDEA로 등록되는 전체 경로 1회 완주
+### Phase A2 — 아침 Operator 에이전트
 
-### Phase H5 — KR 테마 수집기 편입
+- ② 프롬프트 템플릿 등록, 위키 브리핑 경로 고정
+- 완료 기준: 5거래일 연속 브리핑 생성, 실제 실패 cycle 1건 이상을 올바르게 원인 분류
 
-- KR 테마 lane T0 수집기(별도 스펙)를 같은 스케줄 체계에 등록 (국내장 시간대, 낮)
+### Phase A3 — 주간 Researcher 에이전트
 
-## 7. 완료 기준 (전체)
+- 실패 표본 최소 2주 축적 후 시작
+- 완료 기준: 초안 → 사람 승인 → 기존 CLI로 전역 원장 IDEA 등록의 전체 경로 1회 완주
 
-1. 매 거래일 watch가 사람 없이 시동·완주하고 실패는 폰으로 즉시 통보된다.
-2. 신규 추천이 증거 등급·면책 문구와 함께 5분 내 Telegram에 도착한다.
-3. Hermes 경로 어디에도 원장 쓰기·주문 권한·자격증명 노출이 없다.
-4. Hermes 전체가 꺼져도 trading 시스템의 검증 무결성은 영향받지 않는다 (배달·브리핑만 멈춤).
-5. 주간 연구 run의 산출물이 사람 승인 없이 원장·코드에 반영되는 경로가 존재하지 않는다.
+### Phase A4 — 개발 에이전트
 
-## 8. 남은 운영 선택
+- PR-only 모드로 시작. 신뢰 축적 후 자동 병합 범위 확대는 별도 결정
+- 완료 기준: 에이전트 PR 1건이 테스트·리뷰를 통과해 병합되고 체크포인트 문서가 갱신됨
 
-- watch 시동 시각(기본 21:30 KST)과 폴링 주기(기본 30초)
-- Telegram 외 추가 채널(Hermes 모바일 push)
-- Mac mini 이전 시점 — H1 전 필수이나, 이전까지는 노트북 launchd로 임시 운영 가능
-- 브리핑 위키 경로와 카드 형식
+## 9. 완료 기준 (전체)
 
-이 선택들은 §4.1 경계 계약과 §3.2 비목표를 약화할 수 없다.
+1. 매 거래일 watch가 무인 시동·완주하고 실패는 Hermes Runs에 남는다.
+2. 매일 아침 어제 세션의 해석 브리핑이 자동 생성된다.
+3. 주간 가설 초안이 사람 승인 대기열에 자동으로 올라온다.
+4. 어떤 에이전트 경로에도 원장 쓰기·주문 권한·안전선 수정·비밀 노출이 없다.
+5. 에이전트 산출물(브리핑·가설·PR)이 전부 저장소/위키에 남아 다음 세션의 기억이 된다.
+
+## 10. 남은 운영 선택
+
+- 각 크론잡의 정확한 시각과 ④의 빈도
+- ④의 모델·예산 (run당 토큰 상한)
+- 위키 브리핑 경로와 형식
+- Mac mini 이전 시점 (A1 전 권장, 임시 launchd 허용)
+
+이 선택들은 §6 경계 계약과 §3.2 비목표를 약화할 수 없다.
