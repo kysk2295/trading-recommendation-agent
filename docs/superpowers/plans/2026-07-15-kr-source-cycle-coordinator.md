@@ -211,7 +211,7 @@ git commit -m "docs: record KR source cycle milestone"
 
 Run `git diff main...HEAD --check`, inspect every changed file, and confirm no credentials, provider payloads, account code or unrelated work entered the branch.
 
-- [ ] **Step 2: Re-run branch gates from a clean status**
+- [x] **Step 2: Re-run branch gates from a clean status**
 
 Run full pytest, Ruff and basedpyright once more and preserve exact results.
 
