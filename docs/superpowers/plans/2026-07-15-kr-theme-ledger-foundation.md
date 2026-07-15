@@ -219,7 +219,7 @@ git diff --check
 
 Repeat CLI help, invalid input, and the synthetic fixture happy path from the final merged tree. Record exact results and confirm external network calls and trading mutations were zero.
 
-- [ ] **Step 3: Commit, integrate, and push**
+- [x] **Step 3: Commit, integrate, and push**
 
 ```bash
 git add README.md docs/superpowers/plans/2026-07-15-kr-theme-ledger-foundation.md docs/checkpoints/2026-07-15-kr-theme-ledger-foundation-ko.md
