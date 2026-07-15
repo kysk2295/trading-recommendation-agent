@@ -25,6 +25,7 @@ umask 077
 export PAPER_DB=outputs/paper_execution/paper_execution.sqlite3
 export LANE_DB=outputs/lane_control/lane_registry.sqlite3
 export REVIEW_DB=outputs/lane_control/lane_review.sqlite3
+export EXPERIMENT_DB=outputs/experiment_control/experiment_ledger.sqlite3
 export NY_DATE="$(TZ=America/New_York date +%F)"
 export NY_STAMP="$(TZ=America/New_York date +%Y%m%dT%H%M%S)"
 export SMOKE_RUN="outputs/paper_execution/smoke/${NY_STAMP}"
@@ -39,10 +40,11 @@ test -f /Users/goyunseo/.config/trading-agent/alpaca-paper.env
 test "$(stat -f '%Lp' /Users/goyunseo/.config/trading-agent/alpaca-paper.env)" = 600
 ```
 
-코드 기준선을 확인한다. 실패하거나 의도하지 않은 tracked 변경이 있으면 mutation을 실행하지 않는다.
+코드 기준선을 확인한다. `git status --porcelain`은 빈 출력이어야 한다. global experiment ledger의 strategy version과 trial registration은 현재 checkout code version을 exact 비교하므로, bootstrap 뒤에도 작업 트리를 바꾸지 않는다. 실패하거나 의도하지 않은 tracked·untracked 변경이 있으면 mutation을 실행하지 않는다.
 
 ```bash
 git status --short --branch
+test -z "$(git status --porcelain)"
 uv run pytest -q
 uv run ruff check .
 uv run basedpyright
@@ -67,9 +69,19 @@ uv run basedpyright
   --intraday-execution-database "$PAPER_DB"
 ```
 
+lane manifest와 scope가 exact current 계약일 때만 global experiment ledger를 bootstrap한다. 이 명령도 로컬 SQLite만 사용하며 주문·자격증명·HTTP·broker 호출이 없다. 현재 clean checkout의 commit을 strategy version code version으로 고정한다.
+
+```bash
+./run_experiment_ledger_bootstrap.py \
+  --database "$EXPERIMENT_DB" \
+  --lane-registry "$LANE_DB" \
+  --output-dir "$SMOKE_RUN/03_experiment_bootstrap" \
+  --code-version "$(git rev-parse HEAD)"
+```
+
 ## 2. ORB watch 시작
 
-별도 터미널에서 ORB watch를 시작한다. 네 lane 경로는 all-or-none이며 watch의 metrics, daily record, adaptive 단계가 모두 성공한 뒤에만 장후 snapshot과 Reviewer가 실행된다. 이 watch는 Alpaca 주문 mutation을 호출하지 않는다.
+별도 터미널에서 ORB watch를 시작한다. 네 lane 경로와 global experiment ledger를 함께 지정하면 watch는 provider 호출 전에 해당 NYSE 세션 `shadow_forward` trial을 register하고, 정규장 scan 전에 started event를 append한다. metrics, daily record, adaptive, snapshot, Reviewer가 모두 성공한 뒤에만 장후 terminal을 확정한다. 이 watch는 Alpaca 주문 mutation을 호출하지 않는다.
 
 ```bash
 ./run_kis_paper_watch.py \
@@ -83,7 +95,8 @@ uv run basedpyright
   --lane-execution-database "$PAPER_DB" \
   --lane-registry "$LANE_DB" \
   --lane-review-ledger "$REVIEW_DB" \
-  --lane-forward-output-dir "$LANE_FORWARD"
+  --lane-forward-output-dir "$LANE_FORWARD" \
+  --experiment-ledger "$EXPERIMENT_DB"
 ```
 
 watch cycle이 실패했거나 `candidate_input_cycles.csv`와 SQLite 후보 입력이 불완전하면 그 cycle의 추천으로 entry를 실행하지 않는다.
@@ -261,9 +274,11 @@ broker cancel이 terminal이고 현재 포지션이 다시 대사된 뒤에만 s
 
 완료 조건은 preflight 종료코드 0, 미체결 주문 0, 열린 포지션 0, unresolved intent 0, broker/shadow/원장 대사 통과다. 하나라도 다르면 smoke는 실패이며 다음 날 새 entry를 금지한다.
 
-## 9. 장후 lane snapshot과 Reviewer
+## 9. 장후 lane snapshot·Reviewer·trial terminal
 
-watch가 정상 종료하면 scheduled 경로가 자동 실행된다. 자동 단계가 flat 대사보다 먼저 실패했거나 일시 차단됐다면 최종 flat과 장후 source 확정 뒤 다음 GET/WSS-only runner를 한 번 실행한다.
+watch가 정상 종료하면 metrics→daily record→adaptive→lane snapshot→Reviewer→trial terminal이 자동으로 한 번 실행된다. `post_session_orb_trial_terminal_cycles.csv`가 0이고 local trial report가 completed 또는 censored인 경우에만 일일 trial이 닫힌다. `completed`는 수익 확정이나 승격 근거가 아니며 `censored`는 수익 0이 아니다.
+
+자동 lane 단계가 실행되지 않았지만, 이 런북의 같은 preregistered trial·최종 flat 대사·장후 source가 이미 준비된 경우에는 다음 GET/WSS-only runner를 한 번 실행할 수 있다.
 
 ```bash
 ./run_orb_lane_forward_validation.py "$WATCH_RUN" \
@@ -274,7 +289,18 @@ watch가 정상 종료하면 scheduled 경로가 자동 실행된다. 자동 단
   --output-dir "$LANE_FORWARD"
 ```
 
-snapshot success 뒤에만 Reviewer가 실행된다. Reviewer는 권고만 append하며 전략 상태, champion, 위험예산 또는 주문권한을 바꾸지 않는다. 첫 smoke 결과는 기능 검증 근거일 뿐 확정수익이나 승격 근거가 아니다.
+snapshot과 Reviewer가 모두 성공한 경우에만 같은 exact trial을 local-only finalizer로 닫는다.
+
+```bash
+./run_orb_forward_trial.py finalize "$WATCH_RUN" \
+  --experiment-ledger "$EXPERIMENT_DB" \
+  --lane-registry "$LANE_DB" \
+  --review-ledger "$REVIEW_DB" \
+  --session-date "$NY_DATE" \
+  --output-dir "$LANE_FORWARD/trials/$NY_DATE/finalize"
+```
+
+manual runner 또는 finalizer가 nonzero이면 다른 terminal kind를 추정하거나 임의 audit로 `failed`를 만들지 않는다. 자동 watch가 phase 종료코드를 먼저 audit한 경우에만 그 audit로 failed terminal을 시도한다. 그렇지 않은 수동 실패는 열린 trial과 source를 보존해 reconciliation 대상으로 남긴다. snapshot success 뒤에만 Reviewer가 실행되며 Reviewer는 권고만 append한다. 첫 smoke 결과는 기능 검증 근거일 뿐 확정수익이나 승격 근거가 아니다.
 
 ## 즉시 중단 조건
 
@@ -288,5 +314,6 @@ snapshot success 뒤에만 Reviewer가 실행된다. Reviewer는 권고만 appen
 - 보호 OCO보다 broker 포지션 수량이 큰 상태
 - 15:55 ET 이후 open order·position이 남거나 최종 preflight가 nonzero
 - watch/daily/adaptive/lane snapshot/Reviewer source 무결성 실패
+- global experiment ledger bootstrap·trial register/start/terminal audit nonzero 또는 현재 checkout code version 불일치
 
 중단 시 실제 mutation을 더 만들지 않고 보고서와 append-only 원장을 보존한다. 자격증명, account fingerprint, broker ID 또는 원시 API payload는 이슈·커밋·채팅에 붙이지 않는다.
