@@ -9,10 +9,9 @@ from typing import Final, override
 
 import httpx2
 
-ALPACA_PAPER_TRADING_URL: Final = "https://paper-api.alpaca.markets"
-DEFAULT_ALPACA_PAPER_SECRET_PATH: Final = (
-    Path.home() / ".config/trading-agent/alpaca-paper.env"
-)
+from trading_agent.alpaca_paper_contract import ALPACA_PAPER_TRADING_URL
+
+DEFAULT_ALPACA_PAPER_SECRET_PATH: Final = Path.home() / ".config/trading-agent/alpaca-paper.env"
 
 
 class NonPaperTradingEndpointError(ValueError):

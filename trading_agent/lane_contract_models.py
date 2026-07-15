@@ -8,7 +8,7 @@ from typing import Literal, Self, override
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from trading_agent.alpaca_paper_config import ALPACA_PAPER_TRADING_URL
+from trading_agent.alpaca_paper_contract import ALPACA_PAPER_TRADING_URL
 from trading_agent.lane_policy_models import (
     LaneExecutionPolicy,
     LaneId,
