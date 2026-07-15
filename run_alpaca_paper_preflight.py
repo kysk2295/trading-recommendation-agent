@@ -39,6 +39,7 @@ from trading_agent.paper_runtime import (
     PaperStateLoader,
     read_paper_broker_state,
 )
+from trading_agent.private_report import write_private_report
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,11 +143,8 @@ def _write_report(
         "- 사유:",
         *(f"  - {reason}" for reason in report.reasons),
     ]
-    output_dir.mkdir(parents=True, exist_ok=True)
     destination = output_dir / "paper_preflight_ko.md"
-    temporary = destination.with_suffix(".tmp")
-    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    temporary.replace(destination)
+    write_private_report(destination, "\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":

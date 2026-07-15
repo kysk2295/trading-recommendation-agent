@@ -35,6 +35,7 @@ from trading_agent.paper_runtime_session import (
     PaperRuntimeProbeLoader,
     probe_paper_runtime,
 )
+from trading_agent.private_report import write_private_report
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,11 +158,8 @@ def _write_report(output_dir: Path, report: RuntimeReadinessReport) -> None:
         "- 사유:",
         *(f"  - {reason}" for reason in reasons),
     ]
-    output_dir.mkdir(parents=True, exist_ok=True)
     destination = output_dir / "paper_runtime_readiness_ko.md"
-    temporary = destination.with_suffix(".tmp")
-    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    temporary.replace(destination)
+    write_private_report(destination, "\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":

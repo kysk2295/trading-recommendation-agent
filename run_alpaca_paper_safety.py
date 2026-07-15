@@ -60,6 +60,7 @@ from trading_agent.paper_stream_recovery_runtime import (
     PaperStreamRecoveryIncompleteError,
 )
 from trading_agent.paper_trade_update_runtime import plan_current_paper_safety
+from trading_agent.private_report import write_private_report
 from trading_agent.trade_update_receipts import (
     InvalidTradeUpdateRawReceiptError,
     TradeUpdateReceiptConflictError,
@@ -165,11 +166,8 @@ def _write_report(
         "- 로컬 동작: current-epoch 복구와 append-only 안전계획 원장 저장",
         "- 주문 POST/PATCH/DELETE: 비활성",
     )
-    output_dir.mkdir(parents=True, exist_ok=True)
     destination = output_dir / "paper_safety_plan_ko.md"
-    temporary = destination.with_suffix(".tmp")
-    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    temporary.replace(destination)
+    write_private_report(destination, "\n".join(lines) + "\n")
 
 
 def _plan_lines(plan: PaperSafetyPlan) -> tuple[str, ...]:

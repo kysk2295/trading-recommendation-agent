@@ -12,6 +12,7 @@
 - 첫 smoke의 source loader는 liquidity 허용량을 1주로 고정한다. CLI에서 늘릴 수 없고 1주가 100 USD 한도를 넘으면 주문은 차단되어야 한다.
 - Alpaca Paper CLI를 둘 이상 동시에 실행하지 않는다. execution ledger Writer는 항상 하나다.
 - 자격증명 파일을 출력하지 않는다. account fingerprint, broker order ID, request ID 또는 원시 payload도 운영 기록에 복사하지 않는다.
+- bootstrap·readiness·recovery·entry·보호 OCO·safety CLI의 report는 shell umask와 무관하게 atomic mode `600`으로 교체된다.
 - mutation 결과가 모호하면 동일 POST/DELETE를 다시 보내지 않고 GET-only recovery만 실행한다.
 - market close, stale bar, 계좌 변경, 알 수 없는 주문·포지션, 원장 충돌 또는 WSS epoch 불일치는 모두 중단 조건이다.
 

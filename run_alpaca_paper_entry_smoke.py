@@ -71,6 +71,7 @@ from trading_agent.paper_stream_recovery import (
     PaperStreamRecoveryConflictError,
 )
 from trading_agent.paper_stream_recovery_runtime import PaperStreamRecoveryIncompleteError
+from trading_agent.private_report import write_private_report
 from trading_agent.trade_update_receipts import (
     InvalidTradeUpdateRawReceiptError,
     TradeUpdateReceiptConflictError,
@@ -203,11 +204,8 @@ def _write_report(output_dir: Path, state: str, details: tuple[str, ...]) -> Non
         "- 상세:",
         *(f"  - {detail}" for detail in details),
     )
-    output_dir.mkdir(parents=True, exist_ok=True)
     destination = output_dir / "paper_entry_smoke_ko.md"
-    temporary = destination.with_suffix(".tmp")
-    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    temporary.replace(destination)
+    write_private_report(destination, "\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":

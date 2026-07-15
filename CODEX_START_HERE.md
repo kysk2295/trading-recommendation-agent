@@ -65,6 +65,7 @@
 - armed entry·safety smoke는 하나의 intraday pilot risk contract를 공유하며 100 USD·10 USD·1포지션·30 USD·편도 20bp·risk fraction 1/3000을 유지
 - armed entry CLI는 free-form 종목·가격·시각·수량을 받지 않고 query-only watch SQLite에서 현재 직전 완료 정규장 1분봉에 결합된 30초 이내 ORB `setup` 후보 정확히 하나만 1주 요청으로 투영한 뒤 credential·운영 세션을 연다
 - 모든 Alpaca Paper 운영 CLI는 잡힌 실행 예외의 클래스명만 stderr·보고서에 남기고 원문 계좌·broker·경로 정보를 버림
+- bootstrap·readiness·recovery·entry·보호 OCO·safety 운영 report는 기존 파일을 포함해 atomic mode `600`으로 강제 교체
 - 첫 정규장 smoke의 GET-only 준비, exact current ORB 후보 선택, armed entry, 보호 OCO, timeout 복구, staged EOD 평탄화와 최종 flat 대사를 하나의 운영 런북으로 고정
 
 ## 다음 우선순위
