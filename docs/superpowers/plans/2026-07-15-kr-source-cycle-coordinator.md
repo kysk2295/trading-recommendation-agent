@@ -219,6 +219,6 @@ Run full pytest, Ruff and basedpyright once more and preserve exact results.
 
 Update local `main`, merge the feature branch without rewriting unrelated work, and rerun full gates plus CLI QA on merged `main`.
 
-- [ ] **Step 4: Push and verify remote `main`**
+- [x] **Step 4: Push and verify remote `main`**
 
 Push `origin/main`, confirm local `HEAD`, `origin/main` and `git ls-remote origin refs/heads/main` are identical, then remove only the owned temporary worktree and branch.
