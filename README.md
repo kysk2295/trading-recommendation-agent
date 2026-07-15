@@ -75,6 +75,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 ## 문서
 
 - [승인된 전체 설계](docs/superpowers/specs/2026-07-14-autonomous-paper-trading-research-os-design.md)
+- [Lane control-plane 계약 설계](docs/superpowers/specs/2026-07-15-lane-control-plane-contracts-design.md)
 - [Alpaca paper-only 안전 기반 구현 계획](docs/superpowers/plans/2026-07-14-alpaca-paper-foundation.md)
 - [현재 코드 아키텍처](docs/architecture_ko.md)
 - [KIS 실시간 연결 현황](docs/kis_live_integration_ko.md)
