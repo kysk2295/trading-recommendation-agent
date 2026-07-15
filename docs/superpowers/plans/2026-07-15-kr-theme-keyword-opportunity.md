@@ -379,7 +379,7 @@ Repeat CLI help, invalid input, ingest + projection happy path, and restart from
 
 Review `main...HEAD` specifically for raw payload/text repr, exception/report leakage, exact cycle/cohort joins, source coverage, deterministic IDs, append-only conflicts, and theme mixing. Fix every blocking or important finding with a failing regression test first.
 
-- [ ] **Step 4: Commit, fast-forward main, and push**
+- [x] **Step 4: Commit, fast-forward main, and push**
 
 ```bash
 git add README.md docs/superpowers/plans/2026-07-15-kr-theme-keyword-opportunity.md docs/checkpoints/2026-07-15-kr-theme-keyword-opportunity-ko.md
