@@ -8,8 +8,10 @@ from pathlib import Path
 import pytest
 
 import run_alpaca_paper_entry_smoke as smoke_cli
+import run_alpaca_paper_safety_mutation_smoke as safety_smoke_cli
 from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
 from trading_agent.execution_store import ExecutionStore
+from trading_agent.lane_defaults import INTRADAY_PILOT_PAPER_RISK_CONFIG
 from trading_agent.paper_execution_models import AccountFingerprint, BrokerOrderId
 from trading_agent.paper_mutation_executor_models import (
     PaperMutationExecutionResult,
@@ -22,6 +24,11 @@ from trading_agent.paper_risk import PaperSizingContext, size_paper_order
 
 FINGERPRINT = AccountFingerprint("a" * 64)
 NOW = dt.datetime(2026, 7, 14, 13, 36, 4, tzinfo=dt.UTC)
+
+
+def test_paper_smoke_clis_share_the_intraday_lane_risk_contract() -> None:
+    assert smoke_cli.SMOKE_RISK_CONFIG is INTRADAY_PILOT_PAPER_RISK_CONFIG
+    assert safety_smoke_cli.SMOKE_RISK_CONFIG is INTRADAY_PILOT_PAPER_RISK_CONFIG
 
 
 class FakeSession:

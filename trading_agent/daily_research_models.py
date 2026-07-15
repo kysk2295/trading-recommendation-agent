@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
+
+from trading_agent.lane_contract_keys import experiment_scope_key
+from trading_agent.lane_contract_models import ExperimentScope
 
 
 class ArtifactChecksum(BaseModel):
@@ -62,7 +65,7 @@ class PromotionAssessment(BaseModel):
 class DailyResearchRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     record_id: str
     recorded_at: dt.datetime
     session_date: dt.date
@@ -72,6 +75,8 @@ class DailyResearchRecord(BaseModel):
     strategy: str
     strategy_version: str
     strategy_stage: Literal["experimental_shadow"]
+    experiment_scope: ExperimentScope
+    experiment_scope_key: str
     code_version: str
     evaluator_version: str
     data_version: str
@@ -84,3 +89,12 @@ class DailyResearchRecord(BaseModel):
     incidents: tuple[str, ...]
     promotion: PromotionAssessment
     artifact_checksums: tuple[ArtifactChecksum, ...]
+
+    @model_validator(mode="after")
+    def validate_experiment_scope(self) -> Self:
+        if (
+            self.experiment_scope.hypothesis_id != self.hypothesis_id
+            or self.experiment_scope_key != experiment_scope_key(self.experiment_scope)
+        ):
+            raise ValueError("daily research record experiment scope does not match its hypothesis")
+        return self

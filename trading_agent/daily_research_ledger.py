@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import json
 from pathlib import Path
+from typing import cast
 
 from trading_agent.daily_research_contract import (
     EVALUATOR_VERSION,
@@ -20,6 +22,13 @@ from trading_agent.daily_research_sources import (
     load_artifacts,
     load_session_quality,
 )
+from trading_agent.lane_contract_keys import experiment_scope_key
+from trading_agent.lane_contract_models import (
+    require_scope_registered_before_session,
+    single_lane_experiment_scope,
+)
+from trading_agent.lane_defaults import LANE_CONTRACT_REGISTERED_AT
+from trading_agent.lane_policy_models import LaneId
 from trading_agent.strategy_factory import StrategyMode
 
 
@@ -30,16 +39,19 @@ def build_daily_record(
     code_version: str,
     recorded_at: dt.datetime,
 ) -> DailyResearchRecord:
+    contract = strategy_contract(strategy)
+    require_scope_registered_before_session(contract.experiment_scope, session_date)
+    scope_key = experiment_scope_key(contract.experiment_scope)
     artifacts = load_artifacts(session)
     current_data_version = data_version(artifacts)
     metrics = load_20bp_metrics(session / "paper_metrics/paper_metrics.csv")
     quality, incidents = load_session_quality(session, metrics.trade_count)
-    contract = strategy_contract(strategy)
     prior = read_daily_ledger(session.parent / "daily_research_ledger.jsonl")
     prior_for_strategy = {
         row.session_date: row
         for row in prior
         if row.strategy_version == contract.strategy_version
+        and row.experiment_scope_key == scope_key
         and row.evaluator_version == EVALUATOR_VERSION
         and row.feed_entitlement == FEED_ENTITLEMENT
         and row.session_date < session_date
@@ -55,12 +67,13 @@ def build_daily_record(
     record_id = hashlib.sha256(
         (
             f"{session_date.isoformat()}|{contract.strategy_version}|"
+            f"{scope_key}|"
             f"{code_version}|{EVALUATOR_VERSION}|{current_data_version}|"
             f"{cumulative_days}|{cumulative_trades}|{'|'.join(blockers)}"
         ).encode()
     ).hexdigest()
     return DailyResearchRecord(
-        schema_version=1,
+        schema_version=2,
         record_id=record_id,
         recorded_at=recorded_at,
         session_date=session_date,
@@ -70,6 +83,8 @@ def build_daily_record(
         strategy=strategy.value,
         strategy_version=contract.strategy_version,
         strategy_stage="experimental_shadow",
+        experiment_scope=contract.experiment_scope,
+        experiment_scope_key=scope_key,
         code_version=code_version,
         evaluator_version=EVALUATOR_VERSION,
         data_version=current_data_version,
@@ -120,11 +135,33 @@ def write_daily_record(session: Path, record: DailyResearchRecord) -> bool:
 def read_daily_ledger(path: Path) -> tuple[DailyResearchRecord, ...]:
     if not path.is_file():
         return ()
-    return tuple(
-        DailyResearchRecord.model_validate_json(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    )
+    return tuple(parse_daily_record(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+
+
+def parse_daily_record(encoded: str) -> DailyResearchRecord:
+    try:
+        decoded_object: object = json.loads(encoded)
+    except json.JSONDecodeError:
+        return DailyResearchRecord.model_validate_json(encoded)
+    if not isinstance(decoded_object, dict):
+        return DailyResearchRecord.model_validate(decoded_object)
+    decoded = cast(dict[str, object], decoded_object)
+    if decoded.get("schema_version") == 1:
+        hypothesis_id = decoded.get("hypothesis_id")
+        if not isinstance(hypothesis_id, str):
+            return DailyResearchRecord.model_validate(decoded)
+        scope = single_lane_experiment_scope(
+            LaneId.INTRADAY_MOMENTUM,
+            hypothesis_id,
+            LANE_CONTRACT_REGISTERED_AT,
+        )
+        decoded = {
+            **decoded,
+            "schema_version": 2,
+            "experiment_scope": scope.model_dump(mode="json"),
+            "experiment_scope_key": experiment_scope_key(scope),
+        }
+    return DailyResearchRecord.model_validate(decoded)
 
 
 def _write_summary(path: Path, record: DailyResearchRecord) -> None:
@@ -138,6 +175,8 @@ def _write_summary(path: Path, record: DailyResearchRecord) -> None:
         f"- 거래일: {record.session_date}",
         f"- 가설: {record.hypothesis_id} / {record.hypothesis}",
         f"- 전략 버전: {record.strategy_version}",
+        f"- 연구 lane: {record.experiment_scope.primary_lane.value}",
+        f"- experiment scope: {record.experiment_scope_key}",
         f"- 코드 버전: {record.code_version}",
         f"- 데이터 버전: {record.data_version}",
         f"- 평가기 버전: {record.evaluator_version}",

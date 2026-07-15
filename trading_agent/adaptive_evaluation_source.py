@@ -10,7 +10,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from trading_agent.adaptive_evaluation_models import EvaluatedSession, EvaluationContext
-from trading_agent.daily_research_ledger import read_daily_ledger
+from trading_agent.daily_research_ledger import parse_daily_record, read_daily_ledger
 from trading_agent.daily_research_models import DailyResearchRecord
 from trading_agent.kis_live import regular_session_bounds
 from trading_agent.metrics import PaperTrade
@@ -82,6 +82,7 @@ def load_evaluation_source(current_session: Path) -> EvaluationSource:
         for row in ledger
         if row.session_date <= current.session_date
         and row.strategy_version == current.strategy_version
+        and row.experiment_scope_key == current.experiment_scope_key
         and row.evaluator_version == current.evaluator_version
         and row.feed_entitlement == current.feed_entitlement
     )
@@ -112,9 +113,7 @@ def load_evaluation_source(current_session: Path) -> EvaluationSource:
 def _current_record(session: Path) -> DailyResearchRecord:
     records = session / "daily_research_records"
     try:
-        parsed = tuple(
-            DailyResearchRecord.model_validate_json(path.read_text(encoding="utf-8")) for path in records.glob("*.json")
-        )
+        parsed = tuple(parse_daily_record(path.read_text(encoding="utf-8")) for path in records.glob("*.json"))
     except (OSError, ValidationError) as error:
         raise AdaptiveSourceError(f"현재 세션 연구 기록을 읽을 수 없습니다: {records}") from error
     if not parsed:

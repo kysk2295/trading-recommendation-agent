@@ -27,7 +27,7 @@ MARKET_REGIME_EXECUTION_POLICY: Final = RegimeSignalExecutionPolicy()
 INTRADAY_PILOT_RISK_CONTRACT: Final = LaneRiskContract(
     enforcement=LaneRiskEnforcement.BROKER_PAPER,
     reference_equity=Decimal("30000"),
-    risk_fraction=Decimal("0.0025"),
+    risk_fraction=Decimal("0.0003333333333333333"),
     max_notional_dollars=Decimal("100"),
     max_planned_risk_dollars=Decimal("10"),
     max_open_positions=1,
@@ -38,7 +38,7 @@ INTRADAY_PILOT_RISK_CONTRACT: Final = LaneRiskContract(
 SWING_SHADOW_RISK_CONTRACT: Final = LaneRiskContract(
     enforcement=LaneRiskEnforcement.SHADOW,
     reference_equity=Decimal("30000"),
-    risk_fraction=Decimal("0.0025"),
+    risk_fraction=Decimal("0.0003333333333333333"),
     max_notional_dollars=Decimal("100"),
     max_planned_risk_dollars=Decimal("10"),
     max_open_positions=1,
@@ -58,11 +58,12 @@ MARKET_REGIME_SIGNAL_RISK_CONTRACT: Final = LaneRiskContract(
 )
 
 LANE_CONTRACT_REGISTERED_AT: Final = dt.datetime(2026, 7, 14, tzinfo=dt.UTC)
+LANE_RISK_CONTRACT_REGISTERED_AT: Final = dt.datetime(2026, 7, 15, 1, 0, 5, tzinfo=dt.UTC)
 
 INTRADAY_MANIFEST: Final = LaneManifest(
     lane_id=LaneId.INTRADAY_MOMENTUM,
-    manifest_version="1.0.0",
-    registered_at=LANE_CONTRACT_REGISTERED_AT,
+    manifest_version="1.0.1",
+    registered_at=LANE_RISK_CONTRACT_REGISTERED_AT,
     ledger_namespace="execution/intraday_momentum",
     strategy_ids=("gap_and_go", "hod_breakout", "orb", "vwap_reclaim"),
     account_binding_mode=LaneAccountBindingMode.DEDICATED_PAPER,
@@ -72,8 +73,8 @@ INTRADAY_MANIFEST: Final = LaneManifest(
 
 SWING_MANIFEST: Final = LaneManifest(
     lane_id=LaneId.SWING_MOMENTUM,
-    manifest_version="1.0.0",
-    registered_at=LANE_CONTRACT_REGISTERED_AT,
+    manifest_version="1.0.1",
+    registered_at=LANE_RISK_CONTRACT_REGISTERED_AT,
     ledger_namespace="execution/swing_momentum",
     strategy_ids=("new_high_momentum", "regend", "rvol"),
     account_binding_mode=LaneAccountBindingMode.FORBIDDEN,
@@ -113,6 +114,10 @@ CURRENT_INTRADAY_EXPERIMENT_SCOPES: Final[tuple[ExperimentScope, ...]] = tuple(
 )
 
 
+def current_intraday_experiment_scope(hypothesis_id: str) -> ExperimentScope:
+    return next(scope for scope in CURRENT_INTRADAY_EXPERIMENT_SCOPES if scope.hypothesis_id == hypothesis_id)
+
+
 def intraday_pilot_paper_risk_config() -> PaperRiskConfig:
     risk = INTRADAY_PILOT_RISK_CONTRACT
     config = PaperRiskConfig(
@@ -126,3 +131,6 @@ def intraday_pilot_paper_risk_config() -> PaperRiskConfig:
     )
     config.assert_within_hard_limits()
     return config
+
+
+INTRADAY_PILOT_PAPER_RISK_CONFIG: Final = intraday_pilot_paper_risk_config()

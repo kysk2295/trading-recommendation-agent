@@ -37,11 +37,20 @@ class ArtifactJson(TypedDict):
     path: str
 
 
+class ExperimentScopeJson(TypedDict):
+    hypothesis_id: str
+    primary_lane: str
+    lanes: list[str]
+
+
 class DailyRecordJson(TypedDict):
+    schema_version: int
     session_date: str
     code_version: str
     evaluator_version: str
     strategy_stage: str
+    experiment_scope: ExperimentScopeJson
+    experiment_scope_key: str
     session_quality: QualityJson
     metrics_20bp: MetricsJson
     incidents: list[str]
@@ -87,10 +96,15 @@ def test_daily_research_cli_writes_lineage_and_blocks_early_promotion(
     lines = ledger.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     record = RECORD_ADAPTER.validate_json(lines[0])
+    assert record["schema_version"] == 2
     assert record["session_date"] == "2026-07-14"
     assert record["code_version"] == "test-code"
     assert record["evaluator_version"] == "paper_metrics_day_block_bootstrap_v2"
     assert record["strategy_stage"] == "experimental_shadow"
+    assert record["experiment_scope"]["hypothesis_id"] == "H-MOM-ORB-001"
+    assert record["experiment_scope"]["primary_lane"] == "intraday_momentum"
+    assert record["experiment_scope"]["lanes"] == ["intraday_momentum"]
+    assert len(record["experiment_scope_key"]) == 64
     assert record["session_quality"]["forward_day_eligible"] is True
     assert record["session_quality"]["completed_trades"] == 1
     assert record["session_quality"]["candidate_input_cycles"] == 1
@@ -116,6 +130,7 @@ def test_daily_research_cli_writes_lineage_and_blocks_early_promotion(
     summary = (session / "daily_research_summary_ko.md").read_text(encoding="utf-8")
     assert "승격 금지" in summary
     assert "확정 수익" in summary
+    assert "연구 lane: intraday_momentum" in summary
 
 
 def test_rerunning_older_session_does_not_use_future_ledger_rows(

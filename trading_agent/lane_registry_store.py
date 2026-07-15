@@ -227,7 +227,7 @@ class LaneRegistryWriter:
                 (binding.lane_id.value,),
             ).fetchall()
         )
-        if len(manifests) != 1 or not _manifest_allows_account_binding(manifests[0]):
+        if not manifests or not all(_manifest_allows_account_binding(manifest) for manifest in manifests):
             raise InvalidLaneRegistrySourceError
         key = lane_account_binding_key(binding)
         payload = canonical_lane_contract_json(binding)

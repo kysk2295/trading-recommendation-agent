@@ -32,6 +32,7 @@ from trading_agent.execution_errors import (
     UnsupportedExecutionSchemaError,
 )
 from trading_agent.execution_store import ExecutionStore, WriterLeaseUnavailableError
+from trading_agent.lane_defaults import INTRADAY_PILOT_PAPER_RISK_CONFIG
 from trading_agent.paper_account_activity_store import (
     InvalidPaperAccountActivityError,
     PaperAccountActivityConflictError,
@@ -58,7 +59,6 @@ from trading_agent.paper_protective_oco_recovery_store import (
     InvalidProtectiveOcoRecoveryError,
     ProtectiveOcoRecoveryConflictError,
 )
-from trading_agent.paper_risk import PaperRiskConfig
 from trading_agent.paper_runtime import PaperRuntimeEpochChangedError
 from trading_agent.paper_safety_models import (
     BlockedPaperSafetyPlan,
@@ -81,14 +81,7 @@ from trading_agent.trade_update_receipts import (
     UnknownTradeUpdateReceiptError,
 )
 
-SMOKE_RISK_CONFIG = PaperRiskConfig(
-    max_risk_dollars=10.0,
-    risk_fraction=0.0003333333333333333,
-    max_notional_dollars=100.0,
-    max_open_positions=1,
-    daily_loss_limit_dollars=30.0,
-    per_side_cost_bps=20.0,
-)
+SMOKE_RISK_CONFIG = INTRADAY_PILOT_PAPER_RISK_CONFIG
 _ACKNOWLEDGED_STATES = frozenset(
     (
         PaperMutationExecutionState.ACKNOWLEDGED,

@@ -171,7 +171,7 @@ Run: `uv run pytest -q tests/test_lane_registry_store.py tests/test_lane_contrac
 
 Expected: all tests pass.
 
-- [ ] **Step 8: Commit and push the durable registry checkpoint**
+- [x] **Step 8: Commit and push the durable registry checkpoint**
 
 ```bash
 git add trading_agent/lane_* tests/test_lane_*
@@ -187,21 +187,21 @@ git push origin feature/paper-account-activities
 - Create: `tests/test_lane_control_plane_bootstrap_cli.py`
 - Modify: `pyproject.toml`
 
-- [ ] **Step 1: Write failing CLI tests**
+- [x] **Step 1: Write failing CLI tests**
 
 Cover `--help`, registry-only bootstrap, idempotent replay, invalid execution database, and optional intraday binding from an initialized existing execution ledger. Assert reports contain lane names and counts but not the account fingerprint, execution path, raw binding/manifest keys, account IDs, or credentials.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `uv run pytest -q tests/test_lane_control_plane_bootstrap_cli.py`
 
 Expected: script missing.
 
-- [ ] **Step 3: Implement bootstrap service and CLI**
+- [x] **Step 3: Implement bootstrap service and CLI**
 
 The service registers the three default manifests and four current intraday single-lane experiment scopes. When `--intraday-execution-database` is supplied, require current schema and an existing local account fingerprint, hash the resolved path locally as the ledger fingerprint, and bind it without any network or credential loading.
 
-- [ ] **Step 4: Add the CLI to basedpyright include and run QA**
+- [x] **Step 4: Add the CLI to basedpyright include and run QA**
 
 Run:
 
@@ -222,29 +222,29 @@ Expected: help exits 0; all tests pass; external Alpaca calls remain zero.
 - Modify: `tests/test_daily_research_evaluator_version.py`
 - Create: `tests/test_daily_research_lane_scope.py`
 
-- [ ] **Step 1: Write failing schema-v2 and scope-isolation tests**
+- [x] **Step 1: Write failing schema-v2 and scope-isolation tests**
 
 Assert new rows contain `schema_version=2`, the intraday single-lane scope, and a deterministic scope key. Seed a prior row with the same strategy/evaluator/data fields but a different scope and prove it does not increase cumulative days/trades.
 
-- [ ] **Step 2: Write a failing schema-v1 projection test**
+- [x] **Step 2: Write a failing schema-v1 projection test**
 
 Read an existing v1 JSONL row with no scope and assert the in-memory record projects to the historical intraday scope without rewriting the file.
 
-- [ ] **Step 3: Run tests and verify RED**
+- [x] **Step 3: Run tests and verify RED**
 
 Run: `uv run pytest -q tests/test_daily_research_lane_scope.py tests/test_daily_research_record_cli.py`
 
 Expected: missing scope assertions fail.
 
-- [ ] **Step 4: Implement v2 records and backward projection**
+- [x] **Step 4: Implement v2 records and backward projection**
 
 Add `experiment_scope` and `experiment_scope_key`, include the key in `record_id`, filter prior rows by exact scope key, and include lane/scope in the Korean summary. Parse v1 dictionaries by injecting the historical intraday scope in memory before Pydantic validation.
 
-- [ ] **Step 5: Enforce pre-registration before the market session**
+- [x] **Step 5: Enforce pre-registration before the market session**
 
 Call `require_scope_registered_before_session` during record construction. A cross-lane scope registered after session open must fail closed before writing JSON or summary files.
 
-- [ ] **Step 6: Run daily-ledger regression tests**
+- [x] **Step 6: Run daily-ledger regression tests**
 
 Run: `uv run pytest -q tests/test_daily_research_lane_scope.py tests/test_daily_research_record_cli.py tests/test_daily_research_evaluator_version.py tests/test_candidate_input_daily_gate.py`
 
@@ -258,15 +258,15 @@ Expected: all tests pass.
 - Modify: `tests/test_alpaca_paper_entry_smoke.py`
 - Modify: `tests/test_alpaca_paper_safety_mutation_smoke.py`
 
-- [ ] **Step 1: Add failing identity tests**
+- [x] **Step 1: Add failing identity tests**
 
 Assert both CLIs use `intraday_pilot_paper_risk_config()` and still pass exact values 100/10/1/30/20 to the operating session.
 
-- [ ] **Step 2: Remove duplicate local risk constants**
+- [x] **Step 2: Remove duplicate local risk constants**
 
 Import one immutable config from `lane_defaults`; do not change public CLI arguments or mutation behavior.
 
-- [ ] **Step 3: Run Paper smoke regressions**
+- [x] **Step 3: Run Paper smoke regressions**
 
 Run: `uv run pytest -q tests/test_alpaca_paper_entry_smoke.py tests/test_alpaca_paper_safety_mutation_smoke.py tests/test_paper_safety_mutation_scope.py`
 
@@ -280,11 +280,11 @@ Expected: all tests pass with no broker adapter opened in blocked/fake cases.
 - Create: `docs/checkpoints/2026-07-15-lane-control-plane-contracts-ko.md`
 - Modify: `docs/superpowers/plans/2026-07-15-lane-control-plane-contracts.md`
 
-- [ ] **Step 1: Document exact implemented boundaries**
+- [x] **Step 1: Document exact implemented boundaries**
 
 State that intraday is the only broker-authorized manifest, swing is shadow-only, regime is signal-only, Portfolio Manager is absent, existing execution schema remains v9, account data is fingerprint-only, and external Alpaca POST/DELETE count is zero.
 
-- [ ] **Step 2: Run focused and full verification**
+- [x] **Step 2: Run focused and full verification**
 
 ```bash
 uv run pytest -q tests/test_lane_policy_models.py tests/test_lane_contract_models.py tests/test_lane_registry_store.py tests/test_lane_control_plane_bootstrap_cli.py tests/test_daily_research_lane_scope.py
@@ -297,7 +297,7 @@ git diff --check
 
 Expected: zero failures, zero Ruff findings, and zero basedpyright errors/warnings.
 
-- [ ] **Step 3: Run manual CLI QA**
+- [x] **Step 3: Run manual CLI QA**
 
 Run help, malformed path, registry-only bootstrap, and a temporary initialized execution-ledger binding. Inspect the report for redaction. Do not load Alpaca credentials and do not call external APIs.
 

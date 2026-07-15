@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Final, assert_never
 
 from trading_agent.daily_research_models import SessionQuality
+from trading_agent.lane_contract_models import ExperimentScope
+from trading_agent.lane_defaults import current_intraday_experiment_scope
 from trading_agent.strategy_factory import StrategyMode
 
 EVALUATOR_VERSION: Final = "paper_metrics_day_block_bootstrap_v2"
@@ -17,6 +19,7 @@ class StrategyResearchContract:
     falsification_rule: str
     strategy_version: str
     parameter_set: tuple[str, ...]
+    experiment_scope: ExperimentScope
 
 
 def promotion_blockers(
@@ -61,6 +64,7 @@ def strategy_contract(strategy: StrategyMode) -> StrategyResearchContract:
                 "60거래일·100건 뒤 편도 20bp PF<1.15, 평균<=0 또는 CI 하한<0이면 기각한다.",
                 "orb_5m_buffer5bp_volume1.5_v1",
                 (*common, "range_minutes=5", "breakout_buffer_bps=5", "volume_multiplier=1.5"),
+                current_intraday_experiment_scope("H-MOM-ORB-001"),
             )
         case StrategyMode.VWAP_RECLAIM:
             return StrategyResearchContract(
@@ -69,6 +73,7 @@ def strategy_contract(strategy: StrategyMode) -> StrategyResearchContract:
                 "ORB와 동일 기간·위험 비교에서 편도 20bp 평균과 PF가 유지되지 않으면 기각한다.",
                 "first_vwap_reclaim_v1",
                 (*common, "min_extension_pct=0.01", "touch_tolerance_bps=20", "volume_multiplier=1.2"),
+                current_intraday_experiment_scope("H-MOM-VWAP-001"),
             )
         case StrategyMode.HOD_BREAKOUT:
             return StrategyResearchContract(
@@ -77,6 +82,7 @@ def strategy_contract(strategy: StrategyMode) -> StrategyResearchContract:
                 "ORB와 동일 기간·위험 비교에서 편도 20bp 평균과 PF가 유지되지 않으면 기각한다.",
                 "first_hod_volume_breakout_v1",
                 (*common, "min_hod_gain_pct=0.03", "base_bars=2..8", "volume_multiplier=1.5"),
+                current_intraday_experiment_scope("H-MOM-HOD-001"),
             )
         case StrategyMode.GAP_AND_GO:
             return StrategyResearchContract(
@@ -85,6 +91,7 @@ def strategy_contract(strategy: StrategyMode) -> StrategyResearchContract:
                 "지속·실패 분류가 편도 20bp 결과를 분리하지 못하면 기각한다.",
                 "five_minute_gap_hold_v1",
                 (*common, "opening_minutes=5", "min_gap_pct=0.04", "min_gap_retention=0.5"),
+                current_intraday_experiment_scope("H-MOM-GAP-001"),
             )
         case unreachable:
             assert_never(unreachable)

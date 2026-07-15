@@ -11,6 +11,7 @@ from trading_agent.execution_ledger_reader import (
 from trading_agent.execution_schema import (
     SCHEMA_VERSION,
     BrokerEventRow,
+    StoredAccountBinding,
     StoredBrokerEvent,
     StoredIntent,
     stored_broker_event,
@@ -81,13 +82,17 @@ class ExecutionStoreReader:
         return self.reconciliation_ledger().unresolved_intent_ids
 
     def account_fingerprint(self) -> AccountFingerprint | None:
+        binding = self.account_binding()
+        return None if binding is None else binding.account_fingerprint
+
+    def account_binding(self) -> StoredAccountBinding | None:
         if not self.path.is_file():
             return None
         with self._reader_connection() as connection:
-            row: tuple[str] | None = connection.execute(
-                "SELECT account_fingerprint FROM account_binding WHERE binding_id = 1"
+            row: tuple[str, str] | None = connection.execute(
+                "SELECT account_fingerprint, bound_at FROM account_binding WHERE binding_id = 1"
             ).fetchone()
-        return None if row is None else AccountFingerprint(row[0])
+        return None if row is None else StoredAccountBinding(AccountFingerprint(row[0]), row[1])
 
     def broker_events(self, intent_id: IntentId) -> tuple[StoredBrokerEvent, ...]:
         if not self.path.is_file():

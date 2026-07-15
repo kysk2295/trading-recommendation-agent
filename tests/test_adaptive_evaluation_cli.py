@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 import subprocess
 import sys
 from pathlib import Path
 
 from tests.daily_research_fixtures import write_complete_session
+from trading_agent.lane_contract_keys import experiment_scope_key
+from trading_agent.lane_contract_models import single_lane_experiment_scope
+from trading_agent.lane_policy_models import LaneId
 
 
 def test_adaptive_cli_writes_daily_card_from_immutable_trade_lineage(tmp_path: Path) -> None:
@@ -123,7 +127,65 @@ def test_adaptive_cli_rejects_current_record_missing_from_parent_ledger(tmp_path
     assert "상위 원장" in completed.stderr
 
 
-def _record(session: Path) -> None:
+def test_adaptive_cli_projects_schema_v1_session_record_without_rewriting(
+    tmp_path: Path,
+) -> None:
+    session = tmp_path / "live_sessions" / "20260714_forward_actual"
+    write_complete_session(session)
+    _record(session)
+    record_path = next((session / "daily_research_records").glob("*.json"))
+    payload = json.loads(record_path.read_text(encoding="utf-8"))
+    payload["schema_version"] = 1
+    del payload["experiment_scope"]
+    del payload["experiment_scope_key"]
+    original = json.dumps(payload, sort_keys=True) + "\n"
+    _ = record_path.write_text(original, encoding="utf-8")
+    ledger = session.parent / "daily_research_ledger.jsonl"
+    _ = ledger.write_text(original, encoding="utf-8")
+
+    completed = _evaluate(session)
+
+    assert completed.returncode == 0, completed.stderr
+    assert record_path.read_text(encoding="utf-8") == original
+    assert ledger.read_text(encoding="utf-8") == original
+
+
+def test_adaptive_cli_excludes_prior_rows_from_a_different_experiment_scope(
+    tmp_path: Path,
+) -> None:
+    sessions = tmp_path / "live_sessions"
+    prior_session = sessions / "20260714_forward_actual"
+    current_session = sessions / "20260715_forward_actual"
+    write_complete_session(prior_session, dt.date(2026, 7, 14))
+    write_complete_session(current_session, dt.date(2026, 7, 15))
+    _record(prior_session)
+    _record(current_session, "2026-07-15")
+    ledger = sessions / "daily_research_ledger.jsonl"
+    prior, current = (json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines())
+    other_scope = single_lane_experiment_scope(
+        LaneId.SWING_MOMENTUM,
+        "H-SWING-TEST-001",
+        dt.datetime(2026, 7, 13, tzinfo=dt.UTC),
+    )
+    prior.update(
+        hypothesis_id=other_scope.hypothesis_id,
+        experiment_scope=other_scope.model_dump(mode="json"),
+        experiment_scope_key=experiment_scope_key(other_scope),
+    )
+    _ = ledger.write_text(
+        json.dumps(prior) + "\n" + json.dumps(current) + "\n",
+        encoding="utf-8",
+    )
+
+    completed = _evaluate(current_session)
+
+    assert completed.returncode == 0, completed.stderr
+    output = current_session / "adaptive_evaluation" / "adaptive_evaluation.json"
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["windows"][0]["observed_sessions"] == 1
+
+
+def _record(session: Path, session_date: str = "2026-07-14") -> None:
     project = Path(__file__).parents[1]
     completed = subprocess.run(
         (
@@ -131,7 +193,7 @@ def _record(session: Path) -> None:
             str(project / "run_daily_research_record.py"),
             str(session),
             "--session-date",
-            "2026-07-14",
+            session_date,
             "--strategy",
             "orb",
             "--code-version",

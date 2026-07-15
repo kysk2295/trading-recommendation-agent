@@ -60,6 +60,7 @@ def test_intraday_pilot_risk_contract_does_not_expand_smoke_limits() -> None:
 
     assert risk.max_notional_dollars == Decimal("100")
     assert risk.max_planned_risk_dollars == Decimal("10")
+    assert risk.risk_fraction == Decimal("0.0003333333333333333")
     assert risk.max_open_positions == 1
     assert risk.daily_loss_limit_dollars == Decimal("30")
     assert risk.per_side_cost_bps == Decimal("20")

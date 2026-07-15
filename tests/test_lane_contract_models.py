@@ -26,6 +26,7 @@ from trading_agent.lane_defaults import (
     CURRENT_INTRADAY_EXPERIMENT_SCOPES,
     DEFAULT_LANE_MANIFESTS,
     INTRADAY_MANIFEST,
+    LANE_CONTRACT_REGISTERED_AT,
     MARKET_REGIME_MANIFEST,
     SWING_MANIFEST,
 )
@@ -45,6 +46,18 @@ def test_default_manifests_have_deterministic_distinct_keys() -> None:
     assert INTRADAY_MANIFEST.ledger_namespace == "execution/intraday_momentum"
     assert SWING_MANIFEST.account_binding_mode == "forbidden"
     assert MARKET_REGIME_MANIFEST.account_binding_mode == "forbidden"
+
+
+def test_revised_risk_manifests_have_a_new_causal_registration_identity() -> None:
+    revised_at = dt.datetime(2026, 7, 15, 1, 0, 5, tzinfo=dt.UTC)
+
+    assert INTRADAY_MANIFEST.manifest_version == "1.0.1"
+    assert SWING_MANIFEST.manifest_version == "1.0.1"
+    assert MARKET_REGIME_MANIFEST.manifest_version == "1.0.0"
+    assert INTRADAY_MANIFEST.registered_at == revised_at
+    assert SWING_MANIFEST.registered_at == revised_at
+    assert MARKET_REGIME_MANIFEST.registered_at == LANE_CONTRACT_REGISTERED_AT
+    assert revised_at > LANE_CONTRACT_REGISTERED_AT
 
 
 def test_only_broker_authorized_manifest_can_create_an_account_binding() -> None:
