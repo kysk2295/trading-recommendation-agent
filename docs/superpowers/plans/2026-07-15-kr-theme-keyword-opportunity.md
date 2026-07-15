@@ -44,7 +44,7 @@
 - Create: `tests/test_kr_theme_keyword.py`
 - Create: `trading_agent/kr_theme_keyword.py`
 
-- [ ] **Step 1: Write failing rule and classifier tests**
+- [x] **Step 1: Write failing rule and classifier tests**
 
 Specify these public contracts:
 
@@ -82,13 +82,13 @@ Tests must prove:
 - raw bytes and full extracted text do not appear in result wrapper repr or any exception string;
 - fixed run ID/time produces an identical classification ID and payload.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest tests/test_kr_theme_keyword.py -q`
 
 Expected: import failure because `trading_agent.kr_theme_keyword` does not exist.
 
-- [ ] **Step 3: Implement the minimal strict keyword engine**
+- [x] **Step 3: Implement the minimal strict keyword engine**
 
 Implementation rules:
 
@@ -105,7 +105,7 @@ ELIGIBLE_SOURCES = frozenset({KrCatalystSource.NEWS, KrCatalystSource.DART})
 - Raise `InvalidKrKeywordClassificationError` whose `__str__` contains no payload, text, symbol, source record ID, or path.
 - Keep any internal extracted-field dataclass fields `repr=False`.
 
-- [ ] **Step 4: Verify GREEN and focused static checks**
+- [x] **Step 4: Verify GREEN and focused static checks**
 
 Run:
 
@@ -115,7 +115,7 @@ uv run ruff check trading_agent/kr_theme_keyword.py tests/test_kr_theme_keyword.
 uv run basedpyright trading_agent/kr_theme_keyword.py tests/test_kr_theme_keyword.py
 ```
 
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 5: Commit Task 1**
 
 ```bash
 git add trading_agent/kr_theme_keyword.py tests/test_kr_theme_keyword.py
@@ -128,7 +128,7 @@ git commit -m "feat: add KR keyword theme baseline"
 - Create: `tests/test_kr_theme_projection.py`
 - Create: `trading_agent/kr_theme_projection.py`
 
-- [ ] **Step 1: Write failing projection contract tests**
+- [x] **Step 1: Write failing projection contract tests**
 
 Specify:
 
@@ -206,13 +206,13 @@ Tests must prove:
 - one separate KR `OpportunitySnapshot` is emitted per theme with complete four-source coverage and only canonical evidence IDs;
 - repeated pure projection returns byte-equivalent model dumps and deterministic IDs.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest tests/test_kr_theme_projection.py -q`
 
 Expected: import failure because `trading_agent.kr_theme_projection` does not exist.
 
-- [ ] **Step 3: Implement strict volume parsing and pure projection**
+- [x] **Step 3: Implement strict volume parsing and pure projection**
 
 Use constants:
 
@@ -236,7 +236,7 @@ Projection requirements:
 - Convert each exact final source coverage entry to common `SourceCoverage` with `observed_at=cycle.completed_at`.
 - Generate safe deterministic SHA-256-based state/opportunity IDs from cycle, theme, cohort, evidence IDs, and projected time.
 
-- [ ] **Step 4: Verify GREEN and focused static checks**
+- [x] **Step 4: Verify GREEN and focused static checks**
 
 Run:
 
@@ -246,7 +246,7 @@ uv run ruff check trading_agent/kr_theme_projection.py tests/test_kr_theme_proje
 uv run basedpyright trading_agent/kr_theme_projection.py tests/test_kr_theme_projection.py
 ```
 
-- [ ] **Step 5: Commit Task 2**
+- [x] **Step 5: Commit Task 2**
 
 ```bash
 git add trading_agent/kr_theme_projection.py tests/test_kr_theme_projection.py
@@ -267,7 +267,7 @@ git commit -m "feat: project stored KR themes to opportunities"
 - Create: `examples/kr_theme_projection/keyword-rules.json`
 - Create: `examples/kr_theme_projection/projection-run.json`
 
-- [ ] **Step 1: Write failing manifest and CLI tests**
+- [x] **Step 1: Write failing manifest and CLI tests**
 
 Run manifest fields:
 
@@ -295,7 +295,7 @@ Test:
 - incomplete cycle, ambiguous rules, missing volume metric and corrupt existing outbox fail closed with safe Typer errors;
 - invalid manifest fails before database or output creation.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -305,7 +305,7 @@ uv run pytest tests/test_kr_theme_projection_manifest.py tests/test_kr_theme_pro
 
 Expected: imports fail because the manifest module and CLI do not exist.
 
-- [ ] **Step 3: Implement path-safe manifest loading and local CLI**
+- [x] **Step 3: Implement path-safe manifest loading and local CLI**
 
 Execution order:
 
@@ -330,7 +330,7 @@ Synthetic fixture:
 - all dates fixed and explicitly synthetic;
 - zero DART rows with successful DART coverage.
 
-- [ ] **Step 4: Verify GREEN and manual CLI QA**
+- [x] **Step 4: Verify GREEN and manual CLI QA**
 
 Run:
 
@@ -344,7 +344,7 @@ uv run basedpyright trading_agent/kr_theme_projection_manifest.py run_kr_theme_p
 
 For happy-path QA, create one explicit temporary directory, run `run_kr_theme_ingest.py` with the new fixture, run projection twice, verify DB mode `600`, classification count `1`, Opportunity JSONL line count `1`, and remove only that temporary directory.
 
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 5: Commit Task 3**
 
 ```bash
 git add trading_agent/kr_theme_projection_manifest.py run_kr_theme_projection.py tests/test_kr_theme_projection_manifest.py tests/test_kr_theme_projection_cli.py examples/kr_theme_projection
@@ -358,11 +358,11 @@ git commit -m "feat: publish local KR theme opportunities"
 - Modify: `docs/superpowers/plans/2026-07-15-kr-theme-keyword-opportunity.md`
 - Create: `docs/checkpoints/2026-07-15-kr-theme-keyword-opportunity-ko.md`
 
-- [ ] **Step 1: Update documentation honestly**
+- [x] **Step 1: Update documentation honestly**
 
 Document implemented local keyword classification, stored-evidence theme/leader projection and immutable KR Opportunity output. Explicitly state that production collectors/extractors, LLM comparison, live market freshness, KR risk gates, TradeSignal, shadow fills, domestic account APIs and orders remain absent.
 
-- [ ] **Step 2: Run complete verification**
+- [x] **Step 2: Run complete verification**
 
 Run from the final feature branch:
 

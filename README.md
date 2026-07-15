@@ -8,7 +8,7 @@
 
 다중 시장 상위 계약도 점진적으로 추가됐다. `MarketId → AgentFamily → StrategyLaneRef` 연구 좌표, US 기존 execution lane의 명시적 adapter, 사전등록 composite experiment, causal `OpportunitySnapshot`·`TradeSignalEnvelope`를 제공한다. KIS 미국주식 스캔은 거래소×상승률/거래량 6개 요청과 NYSE halt·시장위험 근거가 모두 완전할 때 선별 후보를 append-only opportunity JSONL로 발행하고, 그 opportunity 이후 생성된 5분 미만의 같은 종목 SETUP만 conditional signal JSONL·한국어 카드로 투영한다. 이 로컬 발행 계층은 현재 호가 재검증, 외부 실시간 메시지 또는 주문을 수행하지 않는다.
 
-독립 `kr_equities` 도메인에는 뉴스·DART·KIS 국내 랭킹·거래량 급증 촉매의 원문 BLOB, 최초 관측시각, cycle별 coverage와 버전형 분류 결과를 보존하는 mode-600 append-only SQLite 원장이 추가됐다. 현재는 작은 synthetic manifest를 로컬에서 raw-first로 적재하는 단계다. 실제 뉴스/DART/KIS 국내 수집 adapter, keyword/LLM 분류 실행, theme state·Opportunity projection, KR quote/risk gate와 shadow signal은 아직 구현되지 않았으며 국내 계좌·주문 경로는 없다. 새 swing·systematic quant 엔진도 후속 milestone이다.
+독립 `kr_equities` 도메인에는 뉴스·DART·KIS 국내 랭킹·거래량 급증 촉매의 원문 BLOB, 최초 관측시각, cycle별 coverage와 버전형 분류 결과를 보존하는 mode-600 append-only SQLite 원장이 추가됐다. local synthetic cycle에서는 버전형 deterministic keyword baseline이 뉴스·DART 원문을 분류하고, 저장된 classification과 canonical `volume_surge` BLOB만으로 테마 신선도·전파도·거래대금 대장주를 재생해 `kr_equities/opportunity_manager/theme_momentum` Opportunity JSONL을 발행한다. 이 Opportunity은 현재 호가 검증이나 TradeSignal·주문권한이 없는 종목 발굴 결과다. 실제 뉴스/DART/KIS 국내 수집 adapter, production source extractor, LLM 분류·비교, KR quote/VI/가격제한/risk gate와 shadow signal은 아직 구현되지 않았으며 국내 계좌·주문 경로는 없다. 새 swing·systematic quant 엔진도 후속 milestone이다.
 
 ## 최종 목표
 
@@ -84,6 +84,9 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 
 - [다중 시장 트레이딩 에이전트 Research OS 통합 설계](docs/superpowers/specs/2026-07-15-multi-market-agent-research-os-design.md)
 - [한국 테마주 Shadow 연구 Lane 설계](docs/superpowers/specs/2026-07-15-kr-theme-lane-design.md)
+- [KR Theme keyword·Opportunity projection 설계](docs/superpowers/specs/2026-07-15-kr-theme-keyword-opportunity-design.md)
+- [KR Theme keyword·Opportunity 체크포인트](docs/checkpoints/2026-07-15-kr-theme-keyword-opportunity-ko.md)
+- [KR Theme keyword·Opportunity 구현 계획](docs/superpowers/plans/2026-07-15-kr-theme-keyword-opportunity.md)
 - [KR Theme ledger foundation 체크포인트](docs/checkpoints/2026-07-15-kr-theme-ledger-foundation-ko.md)
 - [KR Theme ledger foundation 구현 계획](docs/superpowers/plans/2026-07-15-kr-theme-ledger-foundation.md)
 - [다중 시장 Agent 계약 체크포인트](docs/checkpoints/2026-07-15-multi-market-agent-contracts-ko.md)
@@ -148,6 +151,9 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - 뉴스·DART·KIS 국내 랭킹·거래량 급증 coverage를 exact-count로 확정하는 KR 촉매 수집 계약
 - 원문 BLOB·cycle 관측·coverage·버전형 분류 결과를 보존하는 mode-600 KR append-only SQLite 원장과 query-only reader
 - path traversal·symlink escape·중복 source identity를 거부하는 local-only KR raw manifest ingest
+- exact news/DART JSON text field만 읽고 ambiguous theme를 차단하는 버전형 KR keyword baseline
+- 완전 cycle·exact classifier cohort·checksum 검증 `volume_surge` metric만 결합하는 KR theme state·대장주 pure projection
+- 테마를 사후 혼합하지 않고 각각 발행하는 immutable KR Opportunity JSONL과 aggregate 한국어 보고서
 - KIS 알림은 스캔 직전 5분 이내 생성된 추천만 queue해 과거 추천의 지연 발송 차단
 - 정규장 종료 시 마지막 완료 봉 가격으로 열린 paper 추천을 당일 `time_exit`
 - 정규장 종료 65초 뒤 tracked 후보의 마지막 15:59 봉을 한 페이지씩 순차 보강하고 기존 추천만 갱신한 뒤 metrics 실행
@@ -192,7 +198,25 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
   --output-dir outputs/kr_theme/latest
 ```
 
-실제 공급자 수집과 theme 분류·projection은 아직 이 명령의 범위가 아니다.
+실제 공급자 수집과 theme 분류·projection은 이 ingest 명령 하나의 범위가 아니다.
+
+### KR keyword theme Opportunity 로컬 projection
+
+아래 두 명령은 별도 synthetic cycle을 먼저 원장에 적재한 뒤 committed keyword rules와 저장된 `volume_surge` BLOB으로 theme Opportunity을 만든다. 전체 과정은 local-only이며 현재 호가, LLM, KIS/Alpaca 호출, TradeSignal과 주문을 사용하지 않는다.
+
+```bash
+./run_kr_theme_ingest.py \
+  --manifest examples/kr_theme_projection/ingest-manifest.json \
+  --database outputs/kr_theme/kr_theme.sqlite3 \
+  --output-dir outputs/kr_theme/projection-ingest
+
+./run_kr_theme_projection.py \
+  --run-manifest examples/kr_theme_projection/projection-run.json \
+  --database outputs/kr_theme/kr_theme.sqlite3 \
+  --output-dir outputs/kr_theme/projection/latest
+```
+
+같은 run을 다시 실행하면 classification과 Opportunity은 추가되지 않는다. 이 synthetic 결과는 실제 한국장 추천·분류 정확도·수익성 증거가 아니다.
 
 로컬 lane registry는 네트워크나 자격증명 없이 초기화할 수 있다. 기존 intraday execution 원장을 지정하면 이미 저장된 account fingerprint와 binding 시각만 읽어 전용 lane 결합을 등록하며, 보고서에는 fingerprint·경로·registry key를 쓰지 않는다.
 
