@@ -15,6 +15,10 @@ from trading_agent.signal_contract_models import (
     SignalActionability,
 )
 from trading_agent.trade_signal_publication import TradeSignalPublication
+from trading_agent.us_quote_actionability import (
+    QuoteActionabilityAssessment,
+    UsQuoteSnapshot,
+)
 
 
 class ContractOutboxFormatError(ValueError):
@@ -72,6 +76,27 @@ def append_trade_signal_publication(
         cards_dir.mkdir(parents=True, exist_ok=True)
         _ = card_path.write_text(card, encoding="utf-8")
     return appended
+
+
+def append_us_quote_snapshot(path: Path, snapshot: UsQuoteSnapshot) -> bool:
+    return _append_model(
+        path,
+        snapshot,
+        model_type=UsQuoteSnapshot,
+        identity=lambda item: item.quote_id,
+    )
+
+
+def append_quote_actionability_assessment(
+    path: Path,
+    assessment: QuoteActionabilityAssessment,
+) -> bool:
+    return _append_model(
+        path,
+        assessment,
+        model_type=QuoteActionabilityAssessment,
+        identity=lambda item: item.assessment_id,
+    )
 
 
 def _append_model[ModelT: BaseModel](
@@ -159,6 +184,17 @@ def _signal_card(publication: TradeSignalPublication) -> str:
         f"{target.label} {_decimal_text(target.price)}"
         for target in signal.targets
     )
+    quote = signal.quote_validation
+    quote_lines = (
+        ()
+        if quote is None
+        else (
+            f"- 호가 관측 시각: {quote.observed_at.isoformat()}",
+            f"- 현재 bid/ask: {_decimal_text(quote.bid)} / {_decimal_text(quote.ask)}",
+            f"- spread: {_decimal_text(quote.spread_bps)} bp",
+            f"- 트리거 상태: {'도달' if quote.ask >= signal.entry_price else '대기'}",
+        )
+    )
     lines = (
         f"# {title}",
         "",
@@ -172,6 +208,7 @@ def _signal_card(publication: TradeSignalPublication) -> str:
         f"- 유효 종료: {signal.valid_until.isoformat()}",
         f"- 종목: {signal.symbol}",
         f"- 실행 가능성: {actionability}",
+        *quote_lines,
         f"- 조건부 진입: {signal.entry_type.value} {_decimal_text(signal.entry_price)}",
         f"- 손절: {_decimal_text(signal.stop_price)}",
         f"- 목표: {targets}",

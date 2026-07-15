@@ -11,8 +11,11 @@ from trading_agent.contract_outbox import (
     ContractOutboxConflictError,
     ContractOutboxFormatError,
     append_opportunity_snapshot,
+    append_quote_actionability_assessment,
     append_trade_signal_publication,
+    append_us_quote_snapshot,
 )
+from trading_agent.kis_us_quote import KisUsLevelOneQuote
 from trading_agent.research_identity_models import (
     AgentFamily,
     MarketId,
@@ -31,6 +34,11 @@ from trading_agent.signal_contract_models import (
     TradeTarget,
 )
 from trading_agent.trade_signal_publication import TradeSignalPublication
+from trading_agent.us_quote_actionability import (
+    QuoteAssessmentStatus,
+    UsQuoteActionabilityDecision,
+    assess_us_quote,
+)
 
 OBSERVED_AT = dt.datetime(2026, 7, 15, 14, 0, tzinfo=dt.UTC)
 
@@ -120,6 +128,79 @@ def test_signal_outbox_writes_one_json_record_and_a_safe_korean_card(
     assert "목표: 1r 11 / 2r 11.5" in card
     assert "무효화: 진입 전 10 이하이면 무효" in card
     assert "근거: ORB와 거래량 확대" in card
+    assert "현재 bid/ask" not in card
+    assert card == _expected_conditional_card(publication)
+
+
+def test_quote_snapshot_outbox_replays_and_rejects_conflict(tmp_path: Path) -> None:
+    path = tmp_path / "us-quote-snapshots.v1.jsonl"
+    decision = _quote_decision()
+    assert decision.snapshot is not None
+    snapshot = decision.snapshot
+
+    assert append_us_quote_snapshot(path, snapshot) is True
+    assert append_us_quote_snapshot(path, snapshot) is False
+    with pytest.raises(ContractOutboxConflictError):
+        append_us_quote_snapshot(
+            path,
+            snapshot.model_copy(update={"ask": Decimal("10.11")}),
+        )
+
+    payloads = tuple(
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+    )
+    assert len(payloads) == 1
+    assert payloads[0]["quote_id"] == snapshot.quote_id
+    assert payloads[0]["provider"] == "kis"
+
+
+def test_quote_assessment_outbox_replays_and_rejects_conflict(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "quote-actionability-assessments.v1.jsonl"
+    assessment = _quote_decision().assessment
+
+    assert append_quote_actionability_assessment(path, assessment) is True
+    assert append_quote_actionability_assessment(path, assessment) is False
+    with pytest.raises(ContractOutboxConflictError):
+        append_quote_actionability_assessment(
+            path,
+            assessment.model_copy(
+                update={"status": QuoteAssessmentStatus.PROVIDER_FAILED}
+            ),
+        )
+
+    payloads = tuple(
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+    )
+    assert len(payloads) == 1
+    assert payloads[0]["assessment_id"] == assessment.assessment_id
+
+
+def test_quote_validated_card_contains_current_quote_and_trigger_state(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "trade-signals.v1.jsonl"
+    cards = tmp_path / "trade-signal-cards-ko"
+    decision = _quote_decision()
+    assert decision.derived_publication is not None
+
+    assert (
+        append_trade_signal_publication(
+            path,
+            cards,
+            decision.derived_publication,
+        )
+        is True
+    )
+
+    card = next(cards.iterdir()).read_text(encoding="utf-8")
+    assert "미국 주식 현재 호가 검증 트레이딩 신호" in card
+    assert "현재 bid/ask: 10.08 / 10.1" in card
+    assert "spread:" in card
+    assert "트리거 상태: 도달" in card
+    assert "자동주문" in card
+    assert card.index("현재 bid/ask") < card.index("조건부 진입")
 
 
 def _opportunity() -> OpportunitySnapshot:
@@ -159,7 +240,11 @@ def _opportunity() -> OpportunitySnapshot:
     )
 
 
-def _publication(*, signal_id: str) -> TradeSignalPublication:
+def _publication(
+    *,
+    signal_id: str,
+    entry_price: Decimal = Decimal("10.5"),
+) -> TradeSignalPublication:
     signal = TradeSignalEnvelope(
         signal_id=signal_id,
         strategy_lane=StrategyLaneRef(
@@ -173,7 +258,7 @@ def _publication(*, signal_id: str) -> TradeSignalPublication:
         valid_until=OBSERVED_AT + dt.timedelta(minutes=1),
         side=SignalSide.LONG,
         entry_type=SignalEntryType.STOP_TRIGGER,
-        entry_price=Decimal("10.5"),
+        entry_price=entry_price,
         stop_price=Decimal("10"),
         targets=(
             TradeTarget(label="1r", price=Decimal("11")),
@@ -194,4 +279,51 @@ def _publication(*, signal_id: str) -> TradeSignalPublication:
     return TradeSignalPublication(
         published_at=OBSERVED_AT + dt.timedelta(seconds=5),
         signal=signal,
+    )
+
+
+def _quote_decision() -> UsQuoteActionabilityDecision:
+    return assess_us_quote(
+        _publication(
+            signal_id="base-signal-quote",
+            entry_price=Decimal("10.10"),
+        ),
+        KisUsLevelOneQuote(
+            exchange="NAS",
+            symbol="ACME",
+            provider_observed_at=OBSERVED_AT + dt.timedelta(seconds=5),
+            received_at=OBSERVED_AT + dt.timedelta(seconds=5, milliseconds=500),
+            bid=Decimal("10.08"),
+            ask=Decimal("10.10"),
+            bid_size=1_200,
+            ask_size=900,
+        ),
+        scan_started_at=OBSERVED_AT - dt.timedelta(seconds=1),
+        evaluated_at=OBSERVED_AT + dt.timedelta(seconds=6),
+    )
+
+
+def _expected_conditional_card(publication: TradeSignalPublication) -> str:
+    return "\n".join(
+        (
+            "# 미국 주식 조건부 트레이딩 신호",
+            "",
+            "> 연구 및 Paper forward-validation 후보이며 확정수익이나 자동주문이 아닙니다.",
+            "",
+            "- 시장: us_equities",
+            "- 전략: us_equities/day_trading/orb",
+            "- 전략 버전: orb-v1",
+            f"- 신호 관측 시각: {OBSERVED_AT.isoformat()}",
+            f"- 발행 시각: {publication.published_at.isoformat()}",
+            f"- 유효 종료: {publication.signal.valid_until.isoformat()}",
+            "- 종목: ACME",
+            "- 실행 가능성: 조건부 (현재 호가 미검증)",
+            "- 조건부 진입: stop_trigger 10.5",
+            "- 손절: 10",
+            "- 목표: 1r 11 / 2r 11.5",
+            "- 무효화: 진입 전 10 이하이면 무효",
+            "- 근거: ORB와 거래량 확대",
+            f"- 기회 ID: {_opportunity().opportunity_id}",
+            "",
+        )
     )
