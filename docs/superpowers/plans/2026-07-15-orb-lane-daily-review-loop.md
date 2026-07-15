@@ -309,7 +309,7 @@ uv run basedpyright
 
 Expected: help 0, fake happy path 0, local malformed input nonzero before credential load, and no POST/DELETE method is opened.
 
-- [ ] **Step 5: Document and checkpoint snapshot production**
+- [x] **Step 5: Document and checkpoint snapshot production**
 
 Create `docs/checkpoints/2026-07-15-orb-lane-daily-snapshot-ko.md`, update README/CODEX status, run full tests, then commit and push.
 
@@ -326,7 +326,7 @@ git push origin feature/paper-account-activities
 - Create: `trading_agent/lane_review_keys.py`
 - Create: `tests/test_lane_review_models.py`
 
-- [ ] **Step 1: Write failing contract and key tests**
+- [x] **Step 1: Write failing contract and key tests**
 
 Define `LaneReviewerAction` and require exact 64-char hashes, aware timestamps, sorted unique reasons/blockers, false-only authority flags, and deterministic keys.
 
@@ -336,17 +336,17 @@ assert event.order_authority_change_allowed is False
 assert len(lane_review_event_key(event)) == 64
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `uv run pytest -q tests/test_lane_review_models.py`
 
 Expected: module missing.
 
-- [ ] **Step 3: Implement frozen Pydantic contracts**
+- [x] **Step 3: Implement frozen Pydantic contracts**
 
 `LaneReviewEvent` fields must include lane/date, snapshot/scope keys, daily record ID/hash, adaptive hash, strategy/evaluator/reviewer versions, adaptive and Reviewer actions, reasons, blockers, `reviewed_at`, and the two false literals. Canonical JSON and SHA-256 must follow `lane_contract_keys` conventions without accepting caller keys.
 
-- [ ] **Step 4: Run focused model verification**
+- [x] **Step 4: Run focused model verification**
 
 Run: `uv run pytest -q tests/test_lane_review_models.py tests/test_lane_contract_models.py`
 
@@ -359,21 +359,21 @@ Expected: all tests pass.
 - Create: `trading_agent/lane_review_store.py`
 - Create: `tests/test_lane_review_store.py`
 
-- [ ] **Step 1: Write failing schema, lease, replay, and conflict tests**
+- [x] **Step 1: Write failing schema, lease, replay, and conflict tests**
 
 Verify schema v1, mode 600, UPDATE/DELETE triggers, nonblocking Writer lease, query-only reader, exact replay, and conflict for the same `(snapshot_key, scope_key, reviewer_version)` with changed payload.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `uv run pytest -q tests/test_lane_review_store.py`
 
 Expected: module missing.
 
-- [ ] **Step 3: Implement one-table review ledger**
+- [x] **Step 3: Implement one-table review ledger**
 
 Create `lane_review_events` with canonical payload and indexed identity columns. Reader constructor takes a path and has no writer method. Store owns one nonblocking writer context and commits before returning.
 
-- [ ] **Step 4: Run store verification**
+- [x] **Step 4: Run store verification**
 
 Run: `uv run pytest -q tests/test_lane_review_store.py tests/test_lane_review_models.py`
 
