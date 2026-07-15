@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
+import shutil
+import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -24,6 +27,31 @@ from trading_agent.paper_risk import PaperSizingContext, size_paper_order
 
 FINGERPRINT = AccountFingerprint("a" * 64)
 NOW = dt.datetime(2026, 7, 14, 13, 36, 4, tzinfo=dt.UTC)
+PROJECT = Path(__file__).parents[1]
+ENTRY_SCRIPT = PROJECT / "run_alpaca_paper_entry_smoke.py"
+_UV = shutil.which("uv")
+assert _UV is not None
+UV = Path(_UV)
+
+
+def test_entry_smoke_is_executable_and_help_does_not_load_credentials() -> None:
+    assert os.access(ENTRY_SCRIPT, os.X_OK)
+    environment = os.environ.copy()
+    environment["PATH"] = f"{UV.parent}:/usr/bin:/bin"
+
+    completed = subprocess.run(
+        (str(ENTRY_SCRIPT), "--help"),
+        cwd=PROJECT,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "--arm-paper-mutation" in completed.stdout
+    assert "--database" in completed.stdout
+    assert "--intent-id" in completed.stdout
 
 
 def test_paper_smoke_clis_share_the_intraday_lane_risk_contract() -> None:

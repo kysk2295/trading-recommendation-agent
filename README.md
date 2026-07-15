@@ -259,7 +259,7 @@ Paper mutation 요청이 timeout 또는 응답 형식 오류로 모호해졌을 
   --liquidity-quantity 100 --spread-bps 20
 ```
 
-정규장·현재 봉·빈 포트폴리오·WSS heartbeat·계좌 대사 중 하나라도 틀리면 POST 전에 차단한다. 이 경계는 MockTransport와 fake CLI로 검증됐지만 실제 정규장 최소 주문은 아직 보내지 않았다.
+정규장·현재 봉·빈 포트폴리오·WSS heartbeat·계좌 대사 중 하나라도 틀리면 POST 전에 차단한다. 이 경계는 MockTransport와 fake CLI로 검증됐고 entry script의 Git 실행 비트와 직접 `--help` 실행도 회귀 테스트로 고정했지만, 실제 정규장 최소 주문은 아직 보내지 않았다.
 
 진입 체결 뒤 보호 OCO를 별도 smoke하려면 정확한 parent intent를 지정한다. 이 명령도 같은 arm 값과 단일 Writer/WSS current-epoch 복구를 요구하며, 체결 원장·broker 포지션·보호 OCO 계획이 일치하지 않으면 POST 전에 차단한다.
 
