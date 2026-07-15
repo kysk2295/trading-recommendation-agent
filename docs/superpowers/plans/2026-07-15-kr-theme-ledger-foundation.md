@@ -43,7 +43,7 @@
 - Create: `tests/test_kr_theme_models.py`
 - Create: `trading_agent/kr_theme_models.py`
 
-- [ ] **Step 1: Write failing contract tests**
+- [x] **Step 1: Write failing contract tests**
 
 Specify:
 
@@ -60,15 +60,15 @@ Specify:
 - irrelevant classification has no theme/symbols, while positive/negative classification requires both;
 - classification ID includes the run ID so stability reruns append rather than overwrite.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest tests/test_kr_theme_models.py -q`
 
-- [ ] **Step 3: Implement frozen Pydantic contracts**
+- [x] **Step 3: Implement frozen Pydantic contracts**
 
 Use `extra="forbid"`, timezone-aware times, finite Decimal confidence in `[0, 1]`, bounded control-character-free text, and deterministic identity helpers. Do not include raw payload bytes in Pydantic JSON or repr.
 
-- [ ] **Step 4: Verify GREEN and focused static checks**
+- [x] **Step 4: Verify GREEN and focused static checks**
 
 Run:
 
@@ -78,7 +78,7 @@ uv run ruff check trading_agent/kr_theme_models.py tests/test_kr_theme_models.py
 uv run basedpyright trading_agent/kr_theme_models.py tests/test_kr_theme_models.py
 ```
 
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 5: Commit Task 1**
 
 ```bash
 git add trading_agent/kr_theme_models.py tests/test_kr_theme_models.py
@@ -92,7 +92,7 @@ git commit -m "feat: add KR theme evidence contracts"
 - Create: `trading_agent/kr_theme_schema.py`
 - Create: `trading_agent/kr_theme_store.py`
 
-- [ ] **Step 1: Write failing store tests**
+- [x] **Step 1: Write failing store tests**
 
 Test:
 
@@ -110,11 +110,11 @@ Test:
 - a second writer lease fails immediately;
 - reader connection is query-only and revalidates IDs, model payload, and BLOB checksum.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest tests/test_kr_theme_store.py -q`
 
-- [ ] **Step 3: Implement schema v1 and store**
+- [x] **Step 3: Implement schema v1 and store**
 
 Tables:
 
@@ -125,7 +125,7 @@ Tables:
 
 Use a nonblocking `fcntl` writer lease and WAL. Insert raw catalyst and its observation in one transaction. Finalize a cycle only after querying exact association counts. Reader methods never render BLOB contents.
 
-- [ ] **Step 4: Verify GREEN and focused static checks**
+- [x] **Step 4: Verify GREEN and focused static checks**
 
 Run:
 
@@ -135,7 +135,7 @@ uv run ruff check trading_agent/kr_theme_schema.py trading_agent/kr_theme_store.
 uv run basedpyright trading_agent/kr_theme_schema.py trading_agent/kr_theme_store.py tests/test_kr_theme_store.py
 ```
 
-- [ ] **Step 5: Commit Task 2**
+- [x] **Step 5: Commit Task 2**
 
 ```bash
 git add trading_agent/kr_theme_schema.py trading_agent/kr_theme_store.py tests/test_kr_theme_store.py
@@ -153,7 +153,7 @@ git commit -m "feat: add append-only KR theme ledger"
 - Create: `examples/kr_theme_ingest/news-synthetic.json`
 - Create: `examples/kr_theme_ingest/kis-ranking-synthetic.json`
 
-- [ ] **Step 1: Write failing manifest and CLI tests**
+- [x] **Step 1: Write failing manifest and CLI tests**
 
 Verify:
 
@@ -165,15 +165,15 @@ Verify:
 - a manifest with an explicit source failure finalizes as incomplete and reports it honestly;
 - output contains counts and safe source names only.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest tests/test_kr_theme_ingest_manifest.py tests/test_kr_theme_ingest_cli.py -q`
 
-- [ ] **Step 3: Implement local-only ingestion**
+- [x] **Step 3: Implement local-only ingestion**
 
 The CLI accepts explicit `--manifest`, `--database`, and `--output-dir` paths. It reads payload bytes first, verifies/builds their hashes, appends raw records and observations under one writer lease, then finalizes the cycle and writes an aggregate report. It imports no HTTP or credential modules.
 
-- [ ] **Step 4: Verify GREEN and manual CLI QA**
+- [x] **Step 4: Verify GREEN and manual CLI QA**
 
 Run:
 
@@ -188,7 +188,7 @@ uv run basedpyright trading_agent/kr_theme_ingest_manifest.py run_kr_theme_inges
 
 Remove only the QA files created under the explicit temporary paths.
 
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 5: Commit Task 3**
 
 ```bash
 git add trading_agent/kr_theme_ingest_manifest.py run_kr_theme_ingest.py tests/test_kr_theme_ingest_manifest.py tests/test_kr_theme_ingest_cli.py examples/kr_theme_ingest
@@ -202,11 +202,11 @@ git commit -m "feat: ingest local KR catalyst manifests"
 - Modify: `docs/superpowers/plans/2026-07-15-kr-theme-ledger-foundation.md`
 - Create: `docs/checkpoints/2026-07-15-kr-theme-ledger-foundation-ko.md`
 
-- [ ] **Step 1: Update documentation honestly**
+- [x] **Step 1: Update documentation honestly**
 
 Document that the private ledger and classification storage contract exist, while production news/DART/KIS domestic adapters, an LLM classifier, keyword rules, theme projection, KR quote/risk gates, and shadow signals remain unimplemented.
 
-- [ ] **Step 2: Run complete verification**
+- [x] **Step 2: Run complete verification**
 
 Run:
 

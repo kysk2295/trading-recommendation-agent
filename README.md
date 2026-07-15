@@ -1,12 +1,14 @@
-# 미국 급등주 자율 Paper Trading Research OS
+# 다중 시장 트레이딩 에이전트 Research OS
 
-미국 급등주를 장전·장중에 시점 가용 데이터로 탐색하고, 전략 연구부터 실시간 Alpaca paper 주문, 장후 평가와 다음 가설 생성까지 하나의 프로젝트에서 반복하기 위한 연구 시스템이다.
+미국 급등주 실시간 탐색과 Alpaca Paper 실행을 출발점으로, 미국·한국 시장의 종목 발굴, day/swing/systematic 전략 연구, 장후 평가와 다음 가설 생성을 하나의 공통 검증 커널에서 반복하기 위한 연구 시스템이다.
 
 > **현재 상태:** 분봉 수집·급등주 스캐너·ORB/VWAP/HOD/Gap-and-Go 추천·인과성 감사·과거 및 forward 평가에 더해 Alpaca Paper 시장시계·계좌·주문·포지션·Account Activities FILL GET, `trade_updates` 스트림 인증·구독·Ping/Pong, 단일 Writer 원장과 fail-closed 주문 승인 게이트까지 구현되어 있다. 수신 frame은 text/binary 원문 BLOB을 먼저 확정한 뒤 분류하며, 재시작 시 미분류 receipt를 원래 순서로 복구하고 매 연결 세대에서 REST 주문 snapshot·개별 FILL activity·nested 보호 OCO와 대사한다. 모호한 entry/OCO/cancel mutation은 deterministic client order ID 또는 broker order ID로 직접 GET하며, 정확한 targeted 증거가 없으면 재전송하지 않는다. 통합 운영 세션은 한 Writer lease와 한 WSS 안에서 current-epoch 복구·승인·Paper mutation·사후 대사를 직렬 실행한다. 부분체결 수량이 기존 보호 OCO보다 늘어나면 source-bound cancel만 먼저 실행하고 terminal 대사 뒤 다음 호출에서 새 client ID와 exact 수량으로 replacement OCO를 제출한다. 별도 append-only lane registry는 세 manifest·전용 Paper account binding·사전등록 experiment scope·final daily snapshot 계약을 보존하고 Reviewer용 query-only reader를 제공한다. ORB intraday producer는 장 종료 뒤 현재 GET/WSS readiness, flat broker 상태, 세 계층 account binding, exact-scope daily record와 query-only execution hash를 다시 검증해 immutable `LaneDailySnapshot`을 append한다. 독립 Reviewer는 이 snapshot과 exact daily/adaptive artifact만 읽어 별도 global append-only review ledger에 권고를 남기며 전략 상태·champion·allocation·주문권한을 바꾸지 않는다. lane·review·execution DB와 분리된 global experiment ledger schema v1은 가설·전략 버전·trial과 terminal 결과·next-session lifecycle event를 append-only로 보존한다. ORB의 NYSE 거래일마다 pre-open 등록·정규장 시작·장후 terminal을 갖는 독립 `shadow_forward` trial을 만들고, exact daily/adaptive/snapshot/review evidence로 `completed`·`censored`·`failed` 중 하나를 확정하는 opt-in watch 연결도 구현됐다. local-only Lifecycle Controller v1은 exact finalized snapshot·review·현재 lifecycle chain을 다시 검증하고 성숙 구간의 명확한 5일 열화만 다음 NYSE 세션 `suspended` event로 append한다. 조기 reject, 비교·승격·복구·champion·allocation·주문권한은 계속 닫혀 있다. 전용 장후 runner는 snapshot 성공 뒤에만 Reviewer를 실행하고 단계별 audit와 redacted aggregate report를 남긴다. 일일 연구 원장은 schema v2에서 exact lane scope로만 표본을 누적한다. 신규 진입, 보호 OCO 수명주기, cutoff·kill switch·EOD cancel/flatten은 모두 정확한 arm 객체가 필요한 축소 smoke CLI로만 열렸고 실제 정규장 Paper mutation은 아직 0건이다.
 
 실제 자금 거래는 목표가 아니다. 앞으로 추가되는 실행 코드는 `https://paper-api.alpaca.markets`에만 연결하며 Alpaca live endpoint, 실계좌 키와 실제 주문 경로는 프로젝트에서 차단한다.
 
-다중 시장 상위 계약도 점진적으로 추가됐다. `MarketId → AgentFamily → StrategyLaneRef` 연구 좌표, US 기존 execution lane의 명시적 adapter, 사전등록 composite experiment, causal `OpportunitySnapshot`·`TradeSignalEnvelope`를 제공한다. KIS 미국주식 스캔은 거래소×상승률/거래량 6개 요청과 NYSE halt·시장위험 근거가 모두 완전할 때 선별 후보를 append-only opportunity JSONL로 발행하고, 그 opportunity 이후 생성된 5분 미만의 같은 종목 SETUP만 conditional signal JSONL·한국어 카드로 투영한다. 이 로컬 발행 계층은 현재 호가 재검증, 외부 실시간 메시지 또는 주문을 수행하지 않는다. KR 촉매 수집과 새 swing·systematic quant 엔진도 아직 구현 전이다.
+다중 시장 상위 계약도 점진적으로 추가됐다. `MarketId → AgentFamily → StrategyLaneRef` 연구 좌표, US 기존 execution lane의 명시적 adapter, 사전등록 composite experiment, causal `OpportunitySnapshot`·`TradeSignalEnvelope`를 제공한다. KIS 미국주식 스캔은 거래소×상승률/거래량 6개 요청과 NYSE halt·시장위험 근거가 모두 완전할 때 선별 후보를 append-only opportunity JSONL로 발행하고, 그 opportunity 이후 생성된 5분 미만의 같은 종목 SETUP만 conditional signal JSONL·한국어 카드로 투영한다. 이 로컬 발행 계층은 현재 호가 재검증, 외부 실시간 메시지 또는 주문을 수행하지 않는다.
+
+독립 `kr_equities` 도메인에는 뉴스·DART·KIS 국내 랭킹·거래량 급증 촉매의 원문 BLOB, 최초 관측시각, cycle별 coverage와 버전형 분류 결과를 보존하는 mode-600 append-only SQLite 원장이 추가됐다. 현재는 작은 synthetic manifest를 로컬에서 raw-first로 적재하는 단계다. 실제 뉴스/DART/KIS 국내 수집 adapter, keyword/LLM 분류 실행, theme state·Opportunity projection, KR quote/risk gate와 shadow signal은 아직 구현되지 않았으며 국내 계좌·주문 경로는 없다. 새 swing·systematic quant 엔진도 후속 milestone이다.
 
 ## 최종 목표
 
@@ -81,6 +83,9 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 ## 문서
 
 - [다중 시장 트레이딩 에이전트 Research OS 통합 설계](docs/superpowers/specs/2026-07-15-multi-market-agent-research-os-design.md)
+- [한국 테마주 Shadow 연구 Lane 설계](docs/superpowers/specs/2026-07-15-kr-theme-lane-design.md)
+- [KR Theme ledger foundation 체크포인트](docs/checkpoints/2026-07-15-kr-theme-ledger-foundation-ko.md)
+- [KR Theme ledger foundation 구현 계획](docs/superpowers/plans/2026-07-15-kr-theme-ledger-foundation.md)
 - [다중 시장 Agent 계약 체크포인트](docs/checkpoints/2026-07-15-multi-market-agent-contracts-ko.md)
 - [US opportunity·conditional signal 발행 체크포인트](docs/checkpoints/2026-07-15-us-opportunity-signal-publication-ko.md)
 - [US opportunity·conditional signal 구현 계획](docs/superpowers/plans/2026-07-15-us-opportunity-signal-publication.md)
@@ -140,6 +145,9 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - 날짜별 영속 감시, 부분 실패 cycle 감사, 정규장 종료 시 자동 중단
 - NYSE 공식 2026~2028 휴장일·13:00 조기폐장 반영, 지원범위 밖 fail-closed
 - SQLite immutable outbox와 JSONL·한국어 추천 카드 projection
+- 뉴스·DART·KIS 국내 랭킹·거래량 급증 coverage를 exact-count로 확정하는 KR 촉매 수집 계약
+- 원문 BLOB·cycle 관측·coverage·버전형 분류 결과를 보존하는 mode-600 KR append-only SQLite 원장과 query-only reader
+- path traversal·symlink escape·중복 source identity를 거부하는 local-only KR raw manifest ingest
 - KIS 알림은 스캔 직전 5분 이내 생성된 추천만 queue해 과거 추천의 지연 발송 차단
 - 정규장 종료 시 마지막 완료 봉 가격으로 열린 paper 추천을 당일 `time_exit`
 - 정규장 종료 65초 뒤 tracked 후보의 마지막 15:59 봉을 한 페이지씩 순차 보강하고 기존 추천만 갱신한 뒤 metrics 실행
@@ -172,6 +180,19 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - current-epoch 안전계획의 entry·보호 OCO 취소와 exact 정수 포지션 평탄화를 순서대로 실행하는 arm 필수 smoke CLI. 축소 한도는 notional 100 USD·계획위험 10 USD·1포지션·일손실 30 USD·편도 20bp로 고정되며, mutation broker를 열기 전에 계획을 만든 동일 REST snapshot의 주문·포지션·symbol 수와 합산 notional에 실제 적용된다
 
 ## 실행
+
+### KR 촉매 원장 로컬 적재
+
+아래 명령은 committed synthetic fixture만 읽으며 HTTP, 자격증명, LLM 또는 주문 코드를 호출하지 않는다. 원문은 지정한 mode-600 SQLite BLOB에만 저장되고 보고서에는 source별 성공 여부와 건수만 기록된다. 같은 manifest를 다시 실행하면 동일 원문·관측·cycle은 추가되지 않는다.
+
+```bash
+./run_kr_theme_ingest.py \
+  --manifest examples/kr_theme_ingest/manifest.json \
+  --database outputs/kr_theme/kr_theme.sqlite3 \
+  --output-dir outputs/kr_theme/latest
+```
+
+실제 공급자 수집과 theme 분류·projection은 아직 이 명령의 범위가 아니다.
 
 로컬 lane registry는 네트워크나 자격증명 없이 초기화할 수 있다. 기존 intraday execution 원장을 지정하면 이미 저장된 account fingerprint와 binding 시각만 읽어 전용 lane 결합을 등록하며, 보고서에는 fingerprint·경로·registry key를 쓰지 않는다.
 
