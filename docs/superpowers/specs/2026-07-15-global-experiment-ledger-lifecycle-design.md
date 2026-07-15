@@ -44,6 +44,7 @@
 - SQLite schema version 1
 - database와 `.writer.lock` mode 600
 - 한 개의 비차단 Writer lease
+- 한 Writer context의 append 묶음은 하나의 transaction이며 정상 종료 시 commit, 예외 시 전체 rollback
 - reader는 `mode=ro`, `PRAGMA query_only = ON`
 - WAL, foreign keys, payload JSON과 canonical SHA-256 key
 - 모든 table에 UPDATE/DELETE 금지 trigger
@@ -113,6 +114,7 @@ registration 뒤 first event sequence는 1이다. completed·failed·censored는
 ### 5.5 `StrategyLifecycleEvent`
 
 - `strategy_version`
+- `sequence`
 - `event_kind`: `registration`, `transition`
 - `from_state`
 - `to_state`
@@ -124,9 +126,9 @@ registration 뒤 first event sequence는 1이다. completed·failed·censored는
 - 정렬된 `reason_codes`
 - `previous_event_key`
 
-최초 event는 `event_kind=registration`, `from_state=null`, `previous_event_key=null`이다. 새 전략은 `idea`로 등록한다. 이미 코드·scope·일일 연구 계약이 존재하는 현재 전략을 이관할 때만 `historical`, `experimental_shadow` 또는 `experimental_paper`를 initial state로 허용하고 `existing_contract_import` reason과 canonical source evidence hash를 요구한다. `challenger`, `paper_champion`, `suspended`, `rejected`는 initial state가 될 수 없다. 이관 event의 `decided_at`과 `effective_session_date`는 새 ledger 기록 시점 기준이며 과거 상태 전이를 합성하지 않는다.
+최초 event는 `sequence=1`, `event_kind=registration`, `from_state=null`, `previous_event_key=null`이다. 새 전략은 `idea`로 등록한다. 이미 코드·scope·일일 연구 계약이 존재하는 현재 전략을 이관할 때만 `historical`, `experimental_shadow` 또는 `experimental_paper`를 initial state로 허용하고 `existing_contract_import` reason과 canonical source evidence hash를 요구한다. `challenger`, `paper_champion`, `suspended`, `rejected`는 initial state가 될 수 없다. 이관 event의 `decided_at`과 `effective_session_date`는 새 ledger 기록 시점 기준이며 과거 상태 전이를 합성하지 않는다.
 
-이후 event는 `event_kind=transition`이며 latest recorded event의 exact `to_state`와 previous key를 요구한다. 아직 effective date가 오지 않은 event가 있으면 다음 transition을 append하지 않는다. `effective_session_date`는 결정일보다 뒤의 NYSE regular session이어야 하므로 장후 결과가 당일 주문이나 snapshot을 소급 변경하지 않는다. state reader는 `as_of_session_date`를 받아 그 날짜까지 effective한 마지막 event만 projection한다.
+이후 event는 `event_kind=transition`, `sequence=previous.sequence+1`이며 latest recorded event의 exact `to_state`와 previous key를 요구한다. 아직 effective date가 오지 않은 event가 있으면 다음 transition을 append하지 않는다. `effective_session_date`는 결정일보다 뒤의 NYSE regular session이어야 하므로 장후 결과가 당일 주문이나 snapshot을 소급 변경하지 않는다. state reader는 `as_of_session_date`를 받아 그 날짜까지 effective한 마지막 event만 projection한다.
 
 ## 6. 상태기계
 
