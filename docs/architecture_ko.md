@@ -77,6 +77,8 @@ Reviewer는 Alpaca, credential, HTTP, execution store 또는 mutation 모듈을 
 
 `run_orb_lane_forward_validation.py`는 두 CLI의 장후 순서만 소유한다. snapshot child의 종료코드가 0일 때만 Reviewer child를 시작하고 `post_session_intraday_snapshot_cycles.csv`와 `post_session_lane_reviewer_cycles.csv`를 별도로 append한다. aggregate report는 단계 성공·실패만 노출하며 path, key, hash, fingerprint, broker ID와 raw payload는 기록하지 않는다. runner에는 credential·endpoint·arm·fixture·force 옵션이 없고 스케줄링, 상태변경, champion 선언 또는 주문 기능도 없다.
 
+일일 스케줄은 기존 `run_kis_paper_watch.py`가 opt-in으로 소유한다. 네 lane 경로가 모두 있고 전략이 ORB일 때만 metrics→daily record→adaptive→lane runner를 직렬 실행한다. 설정 누락·비 ORB 조합은 market wait나 provider 접근 전에 차단하고, 어느 child든 nonzero이면 뒤 child를 시작하지 않는다. watch는 lane child를 subprocess로만 호출하므로 execution Writer, fixed Paper credential, snapshot Writer와 Reviewer Writer의 소유권을 합치지 않는다.
+
 Portfolio Manager는 구현하지 않았다. 최소 두 lane champion이 생기기 전에는 다음 세션 위험예산 배분이나 주문권한 변경을 추가하지 않는다.
 
 ## 전략 승격 단계

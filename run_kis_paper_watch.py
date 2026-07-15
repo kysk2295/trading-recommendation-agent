@@ -6,6 +6,7 @@ import datetime as dt
 import subprocess
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -32,6 +33,35 @@ from trading_agent.scan_cycle import (
 )
 from trading_agent.store import PaperStore
 from trading_agent.strategy_factory import StrategyMode
+
+
+@dataclass(frozen=True, slots=True)
+class LaneForwardValidationConfig:
+    execution_database: Path
+    lane_registry: Path
+    review_ledger: Path
+    output_dir: Path
+
+
+def _lane_forward_validation_config(
+    strategy: StrategyMode,
+    execution_database: Path | None,
+    lane_registry: Path | None,
+    review_ledger: Path | None,
+    output_dir: Path | None,
+) -> LaneForwardValidationConfig | None:
+    if execution_database is None and lane_registry is None and review_ledger is None and output_dir is None:
+        return None
+    if execution_database is None or lane_registry is None or review_ledger is None or output_dir is None:
+        raise typer.BadParameter("lane forward 경로 네 개는 모두 함께 지정해야 합니다")
+    if strategy is not StrategyMode.ORB:
+        raise typer.BadParameter("lane forward validation은 ORB 전략에서만 사용할 수 있습니다")
+    return LaneForwardValidationConfig(
+        execution_database,
+        lane_registry,
+        review_ledger,
+        output_dir,
+    )
 
 
 def finalize_session_output(output: Path, observed_at: dt.datetime) -> int:
@@ -106,6 +136,28 @@ def _adaptive_evaluation_command(output: Path) -> tuple[str, ...]:
     )
 
 
+def _lane_forward_validation_command(
+    output: Path,
+    observed_at: dt.datetime,
+    config: LaneForwardValidationConfig,
+) -> tuple[str, ...]:
+    session_date = observed_at.astimezone(ZoneInfo("America/New_York")).date()
+    return (
+        str(Path(__file__).with_name("run_orb_lane_forward_validation.py")),
+        str(output),
+        "--session-date",
+        session_date.isoformat(),
+        "--execution-database",
+        str(config.execution_database),
+        "--lane-registry",
+        str(config.lane_registry),
+        "--review-ledger",
+        str(config.review_ledger),
+        "--output-dir",
+        str(config.output_dir),
+    )
+
+
 def _run_and_audit(command: tuple[str, ...], audit_path: Path) -> int:
     started_at = dt.datetime.now().astimezone()
     completed = subprocess.run(command, check=False)
@@ -118,7 +170,10 @@ def run_session_metrics(
     observed_at: dt.datetime,
     runner: Callable[[tuple[str, ...], Path], int] = _run_and_audit,
     strategy: StrategyMode = StrategyMode.ORB,
+    lane_forward_validation: LaneForwardValidationConfig | None = None,
 ) -> int | None:
+    if lane_forward_validation is not None and strategy is not StrategyMode.ORB:
+        raise ValueError("lane forward validation requires ORB strategy")
     database = output / "paper_recommendations.sqlite3"
     if regular_session_is_open(observed_at) or not database.is_file():
         return None
@@ -134,9 +189,19 @@ def run_session_metrics(
     )
     if research_exit_code:
         return research_exit_code
-    return runner(
+    adaptive_exit_code = runner(
         _adaptive_evaluation_command(output),
         output / "post_session_adaptive_evaluation_cycles.csv",
+    )
+    if adaptive_exit_code or lane_forward_validation is None:
+        return adaptive_exit_code
+    return runner(
+        _lane_forward_validation_command(
+            output,
+            observed_at,
+            lane_forward_validation,
+        ),
+        output / "post_session_lane_forward_validation_cycles.csv",
     )
 
 
@@ -151,6 +216,10 @@ def main(
     max_pages: int = 1,
     collect_premarket: bool = False,
     premarket_interval_seconds: float = 300.0,
+    lane_execution_database: Path | None = None,
+    lane_registry: Path | None = None,
+    lane_review_ledger: Path | None = None,
+    lane_forward_output_dir: Path | None = None,
 ) -> None:
     if not 1 <= cycles <= 390:
         raise typer.BadParameter("cycles는 1~390이어야 합니다")
@@ -164,6 +233,13 @@ def main(
         raise typer.BadParameter("max-pages는 1~10이어야 합니다")
     if not 60.0 <= premarket_interval_seconds <= 3600.0:
         raise typer.BadParameter("premarket-interval-seconds는 60~3600이어야 합니다")
+    lane_forward_validation = _lane_forward_validation_config(
+        strategy,
+        lane_execution_database,
+        lane_registry,
+        lane_review_ledger,
+        lane_forward_output_dir,
+    )
     checked_at = dt.datetime.now(ZoneInfo("America/New_York"))
     output = (
         Path(output_dir) if output_dir is not None else Path("outputs/live_sessions") / checked_at.strftime("%Y%m%d")
@@ -242,6 +318,7 @@ def main(
         output,
         ended_at,
         strategy=strategy,
+        lane_forward_validation=lane_forward_validation,
     )
     failures = sum(code != 0 for code in (*premarket_exit_codes, *exit_codes))
     failures += int(eod_exit_code not in (None, 0))

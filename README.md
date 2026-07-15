@@ -134,6 +134,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - 세 lane의 immutable manifest·분리 account/ledger binding·사전등록 experiment scope·final daily snapshot을 저장하는 별도 append-only registry와 query-only Reviewer reader
 - 장 종료 뒤 현재 Paper GET/WSS·flat broker·exact ORB scope·execution hash를 다시 검증해 intraday daily snapshot을 append하는 credential 후순위 CLI
 - query-only lane snapshot과 exact daily/adaptive artifact만 읽고 별도 append-only ledger에 false-only 권한 권고를 남기는 독립 Reviewer
+- ORB watch의 metrics→daily record→adaptive 성공 뒤에만 snapshot→Reviewer runner를 호출하는 opt-in scheduled forward-validation 단계
 - `DailyResearchRecord` schema v2와 adaptive evaluator의 exact scope key 표본 격리, schema v1 원장·개별 record 무재작성 intraday projection
 - 계좌·주문·포지션과 로컬 intent를 전체 필드로 비교하는 fail-closed preflight
 - Alpaca Paper 시장시계 GET과 고정 WSS endpoint의 `trade_updates` 인증·구독·Ping/Pong
@@ -408,6 +409,19 @@ CSV replay:
 ```
 
 일일 연구 원장이 성공하면 watch가 이 CLI를 마지막으로 순차 실행하고 `post_session_adaptive_evaluation_cycles.csv`에 종료코드를 남긴다. `paper_metrics/paper_trades.csv`가 원장 checksum과 다르거나 연구 record를 세션 폴더 하나로 결정할 수 없으면 fail-closed한다. 시장 국면은 선택 artifact인 `research_regime_snapshot.json`이 해당 거래일 정규장 개장 이전에 관측되고 원장 checksum에 포함됐을 때만 분할 평가에 사용한다. 라벨이 없으면 `unclassified`로 추정하지 않고 최종 검토의 coverage·다양성 문턱을 통과시키지 않는다.
+
+ORB watch에 네 lane 경로를 모두 지정하면 adaptive 성공 뒤 `run_orb_lane_forward_validation.py`를 자동으로 한 번 더 실행한다. 설정은 all-or-none·ORB-only이며 watch 시작과 provider 접근 전에 검증된다. metrics, daily record, adaptive 중 하나라도 실패하면 snapshot/Reviewer를 시작하지 않고, lane 단계 실패도 watch 전체 실패로 집계한다.
+
+```bash
+./run_kis_paper_watch.py \
+  --strategy orb --wait-until-open \
+  --lane-execution-database outputs/paper_execution/paper_execution.sqlite3 \
+  --lane-registry outputs/lane_control/lane_registry.sqlite3 \
+  --lane-review-ledger outputs/lane_control/lane_review.sqlite3 \
+  --lane-forward-output-dir outputs/lane_control/forward_validation
+```
+
+이 scheduled 연결은 subprocess 순서만 소유한다. arm·credential·endpoint 인자를 받거나 전달하지 않으며 snapshot child는 기존 고정 Paper credential·GET/WSS 경계를, Reviewer child는 local query-only 경계를 그대로 유지한다.
 
 종목 차이는 반복 가능성이 낮은 ticker 이름이 아니라 추천 생성시각에 실제로 알려진 가격·opening gap·누적 volume/ADV·거래대금 cohort로 분리한다. `candidate_input_snapshots`의 정확한 추천 생성시각과 거래소를 먼저 고정한 뒤, 그 시각 이하의 최신 checksum된 `market_risk_screen.csv`와 `kis_opening_gap_snapshots.csv`만 조인한다. 미래 행은 무시하며 원천이 없으면 `censored`다. 사전 구간은 가격 `<$5/$5~20/$20~50/$50+`, gap `<4%/4~10%/10~20%/20%+`, volume/ADV `<10%/10~25%/25~50%/50%+`, 거래대금 `<$1M/$1~5M/$5~20M/$20M+`다. 출력은 `adaptive_evaluation.json`, `adaptive_evaluation_ko.md`, 개별 조인 감사용 `trade_feature_assignments.csv`이며 전략 상태나 주문 권한을 자동 변경하지 않는다.
 
