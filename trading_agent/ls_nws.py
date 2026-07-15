@@ -55,6 +55,11 @@ class ParsedLsNwsNews:
     canonical_payload: bytes = field(repr=False)
 
 
+@dataclass(frozen=True, slots=True)
+class ParsedLsNwsSubscriptionAck:
+    received_at: dt.datetime
+
+
 class LsNwsParseError(ValueError):
     __slots__ = ("failure_code",)
 
@@ -109,6 +114,66 @@ class _LsNwsPacket(BaseModel):
 
     header: _LsNwsHeader
     body: _LsNwsBody
+
+
+class _LsNwsAckHeader(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    rsp_cd: StrictStr
+    rsp_msg: StrictStr
+    tr_cd: Literal["NWS"]
+    tr_type: Literal["3"]
+
+    @model_validator(mode="after")
+    def validate_message(self) -> Self:
+        if not _valid_control_message(self.rsp_msg):
+            raise ValueError("invalid LS NWS acknowledgement message")
+        return self
+
+
+class _LsNwsAckPacket(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    header: _LsNwsAckHeader
+    body: None
+
+
+type ParsedLsNwsPacket = ParsedLsNwsSubscriptionAck | ParsedLsNwsNews
+
+
+def parse_ls_nws_packet(
+    frame: LsNwsRawFrame,
+    *,
+    collection_date: dt.date,
+) -> ParsedLsNwsPacket:
+    try:
+        text = frame.raw_payload.decode("utf-8")
+    except UnicodeDecodeError:
+        raise LsNwsParseError("invalid_utf8") from None
+    try:
+        document: object = json.loads(text, object_pairs_hook=_unique_json_object)
+    except _DuplicateJsonKeyError:
+        raise LsNwsParseError("duplicate_json_key") from None
+    except json.JSONDecodeError:
+        raise LsNwsParseError("invalid_json") from None
+    if _looks_like_control(document):
+        try:
+            packet = _LsNwsAckPacket.model_validate(document)
+        except ValidationError:
+            raise LsNwsParseError("invalid_control_packet") from None
+        if packet.header.rsp_cd != "00000":
+            raise LsNwsParseError("subscription_rejected")
+        return ParsedLsNwsSubscriptionAck(received_at=frame.received_at)
+    return parse_ls_nws_frame(frame, collection_date=collection_date)
+
+
+def _looks_like_control(document: object) -> bool:
+    if not isinstance(document, dict):
+        return False
+    header = document.get("header")
+    return isinstance(header, dict) and any(
+        key in header for key in ("rsp_cd", "rsp_msg", "tr_type")
+    )
 
 
 def parse_ls_nws_frame(
@@ -203,6 +268,19 @@ def _valid_title(value: str) -> bool:
     return (
         value == value.strip()
         and 1 <= len(value) <= 2_000
+        and not any(
+            ord(character) < 32
+            or ord(character) == 127
+            or 0xD800 <= ord(character) <= 0xDFFF
+            for character in value
+        )
+    )
+
+
+def _valid_control_message(value: str) -> bool:
+    return (
+        value == value.strip()
+        and 1 <= len(value) <= 200
         and not any(
             ord(character) < 32
             or ord(character) == 127

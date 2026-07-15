@@ -9,7 +9,9 @@ from trading_agent.ls_nws import (
     LsNwsParseError,
     LsNwsRawFrame,
     LsNwsWireKind,
+    ParsedLsNwsSubscriptionAck,
     parse_ls_nws_frame,
+    parse_ls_nws_packet,
 )
 
 COLLECTION_DATE = dt.date(2026, 7, 15)
@@ -24,6 +26,89 @@ RECEIVED_AT = dt.datetime(
 )
 REALKEY = "202607150901000100000001"
 PRIVATE_TITLE = "Synthetic semiconductor contract headline"
+
+
+def test_parser_accepts_observed_subscription_acknowledgement() -> None:
+    private_message = "subscription accepted"
+    frame = _frame(
+        {
+            "header": {
+                "rsp_cd": "00000",
+                "rsp_msg": private_message,
+                "tr_cd": "NWS",
+                "tr_type": "3",
+            },
+            "body": None,
+        }
+    )
+
+    parsed = parse_ls_nws_packet(frame, collection_date=COLLECTION_DATE)
+
+    assert isinstance(parsed, ParsedLsNwsSubscriptionAck)
+    assert parsed.received_at == RECEIVED_AT
+    assert private_message not in repr(parsed)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "failure_code"),
+    (
+        (("header", "rsp_cd", "99999"), "subscription_rejected"),
+        (("header", "extra", "value"), "invalid_control_packet"),
+        (("header", "rsp_msg", " padded "), "invalid_control_packet"),
+        (("header", "rsp_msg", "private\nmessage"), "invalid_control_packet"),
+        (("header", "tr_cd", "SC0"), "invalid_control_packet"),
+        (("header", "tr_type", "1"), "invalid_control_packet"),
+        (("root", "body", {}), "invalid_control_packet"),
+    ),
+)
+def test_parser_rejects_invalid_subscription_acknowledgement(
+    mutation: tuple[str, str, object],
+    failure_code: str,
+) -> None:
+    private_message = "private provider acknowledgement"
+    document: dict[str, object] = {
+        "header": {
+            "rsp_cd": "00000",
+            "rsp_msg": private_message,
+            "tr_cd": "NWS",
+            "tr_type": "3",
+        },
+        "body": None,
+    }
+    section, name, value = mutation
+    if section == "root":
+        document[name] = value
+    else:
+        nested = document[section]
+        assert isinstance(nested, dict)
+        nested[name] = value
+
+    with pytest.raises(LsNwsParseError) as captured:
+        _ = parse_ls_nws_packet(
+            _frame(document),
+            collection_date=COLLECTION_DATE,
+        )
+
+    assert captured.value.failure_code == failure_code
+    assert private_message not in str(captured.value)
+
+
+def test_parser_rejects_duplicate_control_key_without_rendering_message() -> None:
+    private_message = "private duplicate acknowledgement"
+    payload = (
+        '{"header":{"rsp_cd":"00000","rsp_cd":"99999",'
+        f'"rsp_msg":"{private_message}","tr_cd":"NWS","tr_type":"3"}},'
+        '"body":null}'
+    ).encode()
+
+    with pytest.raises(LsNwsParseError) as captured:
+        _ = parse_ls_nws_packet(
+            LsNwsRawFrame(1, RECEIVED_AT, LsNwsWireKind.TEXT, payload),
+            collection_date=COLLECTION_DATE,
+        )
+
+    assert captured.value.failure_code == "duplicate_json_key"
+    assert private_message not in str(captured.value)
 
 
 @pytest.mark.parametrize("wire_kind", tuple(LsNwsWireKind))
