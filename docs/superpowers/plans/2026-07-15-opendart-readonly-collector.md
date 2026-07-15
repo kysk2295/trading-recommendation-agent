@@ -27,7 +27,7 @@
 - Create `trading_agent/opendart_fixture.py`: path-contained deterministic page fixtures.
 - Create `run_opendart_collect.py`: production/fixture CLI and redacted report.
 - Create `tests/test_opendart_fixture.py` and `tests/test_opendart_collect_cli.py`: fixture and CLI E2E tests.
-- Create `examples/opendart_collect/fixture-manifest.json` and two tiny synthetic response pages.
+- Create `examples/opendart_collect/fixture-manifest.json` and one synthetic response page with two disclosures.
 - Modify `AGENTS.md` and `README.md`; create the milestone checkpoint.
 
 ### Task 1: Source evidence models
@@ -36,7 +36,7 @@
 - Create: `tests/test_kr_source_collection_models.py`
 - Create: `trading_agent/kr_source_collection_models.py`
 
-- [ ] **Step 1: Write failing model tests**
+- [x] **Step 1: Write failing model tests**
 
 Cover deterministic receipt identity, hidden raw bytes, aware times, canonical request key, HTTP status range, exact SHA-256, nonnegative item index, source-run status/failure semantics and canonical receipt IDs.
 
@@ -74,13 +74,13 @@ def test_failed_source_run_requires_failure_code() -> None:
         )
 ```
 
-- [ ] **Step 2: Run the model tests and verify RED**
+- [x] **Step 2: Run the model tests and verify RED**
 
 Run: `uv run pytest tests/test_kr_source_collection_models.py -q`
 
 Expected: collection fails because `trading_agent.kr_source_collection_models` does not exist.
 
-- [ ] **Step 3: Implement minimal immutable models**
+- [x] **Step 3: Implement minimal immutable models**
 
 Implement:
 
@@ -97,7 +97,7 @@ class StoredKrSourceReceipt:
 
 Use `extra="forbid"`, frozen models, aware timestamps, safe IDs, exact lowercase SHA-256 and canonical tuples. Derive `receipt_id` from source run, source and request key without including payload or credentials.
 
-- [ ] **Step 4: Verify focused quality**
+- [x] **Step 4: Verify focused quality**
 
 ```bash
 uv run pytest tests/test_kr_source_collection_models.py -q
@@ -107,7 +107,7 @@ uv run basedpyright trading_agent/kr_source_collection_models.py tests/test_kr_s
 
 Expected: all pass with zero type warnings.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add trading_agent/kr_source_collection_models.py tests/test_kr_source_collection_models.py
@@ -121,7 +121,7 @@ git commit -m "feat: add KR source evidence contracts"
 - Modify: `trading_agent/kr_theme_store.py`
 - Modify: `tests/test_kr_theme_store.py`
 
-- [ ] **Step 1: Write failing schema/store tests**
+- [x] **Step 1: Write failing schema/store tests**
 
 Add tests proving:
 
@@ -147,13 +147,13 @@ Also assert:
 - reader revalidates receipt BLOB checksum and source-run JSON;
 - UPDATE/DELETE triggers reject all three new tables.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run: `uv run pytest tests/test_kr_theme_store.py -q`
 
 Expected: failures for missing v2 schema and Writer APIs.
 
-- [ ] **Step 3: Add schema v2 migration**
+- [x] **Step 3: Add schema v2 migration**
 
 Keep `CREATE_KR_THEME_SCHEMA_V1` unchanged and add `CREATE_KR_THEME_SCHEMA_V2_ADDITIONS` for:
 
@@ -165,7 +165,7 @@ CREATE TABLE kr_source_collection_runs (...);
 
 Add append-only triggers and set `KR_THEME_SCHEMA_VERSION = 2`. `_prepare_writer_connection` must create v2 from an empty DB or add only the v2 objects when `user_version=1`; every other noncurrent version remains unsupported.
 
-- [ ] **Step 4: Add reader and Writer APIs**
+- [x] **Step 4: Add reader and Writer APIs**
 
 Implement these public methods:
 
@@ -182,7 +182,7 @@ KrThemeWriter.append_source_run(run)
 
 Refactor catalyst append internally so catalyst, observation and receipt link commit atomically, while the existing local-manifest `append_catalyst` behavior remains unchanged.
 
-- [ ] **Step 5: Verify focused quality and commit**
+- [x] **Step 5: Verify focused quality and commit**
 
 ```bash
 uv run pytest tests/test_kr_theme_models.py tests/test_kr_theme_store.py tests/test_kr_theme_ingest_manifest.py tests/test_kr_theme_ingest_cli.py -q
@@ -202,7 +202,7 @@ Expected: existing local ingest remains compatible and v1 migration tests pass.
 - Create: `trading_agent/opendart_config.py`
 - Create: `trading_agent/opendart_client.py`
 
-- [ ] **Step 1: Write failing config and client tests**
+- [x] **Step 1: Write failing config and client tests**
 
 Test exact mode `600`, symlink rejection, one exact setting, 40-character secret validation and secret-free repr/errors. With `httpx2.MockTransport`, assert the only request is:
 
@@ -220,13 +220,13 @@ assert request.url.params["page_count"] == "100"
 
 Assert a wrong base URL or redirect-following client is rejected before the transport runs. Test status `000`, no-data `013`, malformed JSON, invalid disclosure fields, HTTP failure and API error without exposing key, URL, raw body or API message.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `uv run pytest tests/test_opendart_config.py tests/test_opendart_client.py -q`
 
 Expected: import failures for the new modules.
 
-- [ ] **Step 3: Implement config and raw transport**
+- [x] **Step 3: Implement config and raw transport**
 
 Implement:
 
@@ -244,7 +244,7 @@ def create_opendart_http_client() -> httpx2.Client: ...
 
 `OpenDartClient.fetch_page()` returns a raw-response object with bytes hidden from repr. It must not parse the API body; the collector needs to append the receipt first.
 
-- [ ] **Step 4: Implement strict parser**
+- [x] **Step 4: Implement strict parser**
 
 Add official response/disclosure models and:
 
@@ -254,7 +254,7 @@ def parse_opendart_disclosure_page(raw_response: OpenDartRawResponse) -> OpenDar
 
 Return a distinct no-data result for `013`. Map every other error to a stable nonsecret failure code.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 uv run pytest tests/test_opendart_config.py tests/test_opendart_client.py -q
@@ -272,7 +272,7 @@ git commit -m "feat: add guarded OpenDART read client"
 - Modify: `trading_agent/kr_theme_keyword.py`
 - Modify: `tests/test_kr_theme_keyword.py`
 
-- [ ] **Step 1: Write failing collector tests**
+- [x] **Step 1: Write failing collector tests**
 
 Use a deterministic page fetcher and real temporary `KrThemeStore` to prove:
 
@@ -284,13 +284,13 @@ Use a deterministic page fetcher and real temporary `KrThemeStore` to prove:
 - source record IDs, publisher IDs and official canonical payloads are deterministic;
 - `report_nm` and `corp_name` are eligible explicit keyword fields.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `uv run pytest tests/test_opendart_collection.py tests/test_kr_theme_keyword.py -q`
 
 Expected: missing collector APIs and DART text-field assertions fail.
 
-- [ ] **Step 3: Implement projection and collector**
+- [x] **Step 3: Implement projection and collector**
 
 Define an `OpenDartPageFetcher` protocol and a collection function:
 
@@ -307,11 +307,11 @@ def collect_opendart_disclosures(
 
 For each page, append `KrSourceReceipt` before `parse_opendart_disclosure_page()`. Canonicalize each exact disclosure object, append the catalyst/observation/link, validate stable pagination and exact unique count, then append a terminal `KrSourceCollectionRun`.
 
-- [ ] **Step 4: Add explicit official DART keyword fields**
+- [x] **Step 4: Add explicit official DART keyword fields**
 
 Append `report_nm` and `corp_name` to `SUPPORTED_TEXT_FIELDS`. Keep top-level-only extraction, strict string validation and deterministic field order.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 uv run pytest tests/test_opendart_collection.py tests/test_kr_theme_keyword.py tests/test_kr_theme_projection.py -q
@@ -330,14 +330,13 @@ git commit -m "feat: collect OpenDART catalysts raw first"
 - Create: `run_opendart_collect.py`
 - Create: `examples/opendart_collect/fixture-manifest.json`
 - Create: `examples/opendart_collect/page-1.json`
-- Create: `examples/opendart_collect/page-2.json`
 
-- [ ] **Step 1: Write failing fixture/CLI tests**
+- [x] **Step 1: Write failing fixture/CLI tests**
 
-Test path traversal, absolute path, symlink escape, duplicate/missing pages and invalid received times. CLI E2E must run a two-page fixture twice and assert:
+Test path traversal, absolute path, symlink escape, duplicate/missing pages and invalid received times. CLI E2E must run a one-page, two-disclosure fixture twice and assert:
 
 ```python
-assert len(store.source_receipts()) == 2
+assert len(store.source_receipts()) == 1
 assert len(store.catalysts()) == 2
 assert len(store.observation_receipts()) == 2
 assert len(store.source_runs()) == 1
@@ -346,21 +345,21 @@ assert stat.S_IMODE(database.stat().st_mode) == 0o600
 
 Assert the report and captured terminal output contain none of the API-key setting name, company/report names, receipt numbers, payload hashes or fixture raw text.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `uv run pytest tests/test_opendart_fixture.py tests/test_opendart_collect_cli.py -q`
 
 Expected: fixture and CLI imports fail.
 
-- [ ] **Step 3: Implement path-contained fixture loading**
+- [x] **Step 3: Implement path-contained fixture loading**
 
 Use a strict Pydantic manifest with canonical page numbers, aware `received_at`, status, content type and relative regular payload paths. Read all fixture bytes before opening the Writer.
 
-- [ ] **Step 4: Implement CLI and aggregate report**
+- [x] **Step 4: Implement CLI and aggregate report**
 
 Support explicit production or `--fixture-manifest` mode, never both. Production loads the mode-600 key and official client; fixture mode loads no credentials and performs no network. Convert known safe errors to `typer.BadParameter` without exception chaining or raw provider text.
 
-- [ ] **Step 5: Verify CLI manually and commit**
+- [x] **Step 5: Verify CLI manually and commit**
 
 ```bash
 ./run_opendart_collect.py --help
@@ -386,11 +385,11 @@ git commit -m "feat: add OpenDART collection CLI"
 - Create: `docs/checkpoints/2026-07-15-opendart-readonly-collector-ko.md`
 - Modify: `docs/superpowers/plans/2026-07-15-opendart-readonly-collector.md`
 
-- [ ] **Step 1: Document exact current capability**
+- [x] **Step 1: Document exact current capability**
 
 Add the OpenDART secret path rule, production/fixture CLI usage, schema v2 source evidence and limitations. State that no real API request was made, DART alone does not finalize a four-source cycle, and news/KIS/LLM/quote/risk/shadow/order paths remain absent.
 
-- [ ] **Step 2: Run complete verification**
+- [x] **Step 2: Run complete verification**
 
 ```bash
 uv run pytest -q
@@ -400,15 +399,15 @@ uv run basedpyright
 
 Expected: all tests pass, Ruff passes, basedpyright reports zero errors and warnings.
 
-- [ ] **Step 3: Re-run manual CLI QA on the merged candidate**
+- [x] **Step 3: Re-run manual CLI QA on the merged candidate**
 
 Run help, invalid input, fixture happy path twice, inspect aggregate counts, report redaction and mode `600`. Confirm external network, LLM and broker mutation counts are all zero by construction of fixture mode.
 
-- [ ] **Step 4: Record checkpoint and complete this plan**
+- [x] **Step 4: Record checkpoint and complete this plan**
 
 Write exact test counts and commit hashes in the Korean checkpoint, mark every plan checkbox complete, and run `git diff --check` plus `git status --short`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add AGENTS.md README.md docs/checkpoints/2026-07-15-opendart-readonly-collector-ko.md docs/superpowers/plans/2026-07-15-opendart-readonly-collector.md

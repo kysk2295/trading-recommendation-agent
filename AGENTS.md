@@ -21,6 +21,7 @@
 
 - Never store credentials or tokens in this project.
 - Read KIS credentials only from `~/.config/trading-agent/kis.env` with mode `600`.
+- Read OpenDART credentials only from `~/.config/trading-agent/opendart.env` as one `OPENDART_API_KEY` setting in a current-user-owned regular file with exact mode `600`.
 - Read Alpaca market-data credentials from `~/.config/trading-agent/alpaca.env` and paper-execution credentials from `~/.config/trading-agent/alpaca-paper.env`; both files must have mode `600`.
 - Read cached tokens only from `~/.cache/trading-agent/` with mode `600`.
 - Never print request headers, API keys, secrets, tokens, account identifiers, or raw authentication responses.
