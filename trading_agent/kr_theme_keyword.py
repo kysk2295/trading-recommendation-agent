@@ -25,6 +25,8 @@ SUPPORTED_TEXT_FIELDS: Final = (
     "summary",
     "report_name",
     "company_name",
+    "report_nm",
+    "corp_name",
 )
 ELIGIBLE_SOURCES: Final = frozenset(
     {KrCatalystSource.NEWS, KrCatalystSource.DART}

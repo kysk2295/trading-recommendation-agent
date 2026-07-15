@@ -100,6 +100,24 @@ def test_keyword_classifier_preserves_irrelevant_result_without_theme_or_symbols
     assert classification.confidence == Decimal(1)
 
 
+def test_keyword_classifier_reads_only_explicit_official_dart_text_fields() -> None:
+    payload = (
+        '{"corp_name":"합성 반도체 회사","report_nm":"공급망 계약",'
+        '"nested":{"title":"임의 순회 금지"}}'
+    ).encode()
+
+    classification = classify_kr_keyword_catalyst(
+        _stored(payload, source=KrCatalystSource.DART),
+        _rules(),
+        classification_run_id="kr-keyword-run-001",
+        classified_at=CLASSIFIED_AT,
+    )
+
+    assert classification.direction is KrThemeDirection.POSITIVE
+    assert classification.theme_name == "반도체"
+    assert classification.evidence_quote == "공급망 계약"
+
+
 def test_keyword_classifier_rejects_ambiguous_themes_without_leaking_text() -> None:
     rules = KrKeywordRuleSet(
         classifier_version="kr-keyword-synthetic-v1",
