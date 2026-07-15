@@ -41,7 +41,7 @@
 - execution schema v9와 분리된 lane registry schema v1은 manifest·account fingerprint binding·experiment scope·final snapshot을 append-only 저장하고 `mode=ro`/`query_only` Reviewer reader를 제공한다. registry는 주문 메서드가 없다.
 - global experiment ledger schema v1은 별도 mode 600 SQLite와 single Writer lease를 사용한다. hypothesis/version/trial 등록과 trial/lifecycle event는 UPDATE·DELETE할 수 없고 Reader는 canonical key와 전체 previous-key chain을 다시 검증한다.
 
-## 하나의 프로젝트, 세 연구 Lane
+## 현재 구현된 세 연구 Lane
 
 | Lane | 포함 연구 | 실행 권한 | 상태 |
 |---|---|---|---|
@@ -78,6 +78,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 
 ## 문서
 
+- [다중 시장 트레이딩 에이전트 Research OS 통합 설계](docs/superpowers/specs/2026-07-15-multi-market-agent-research-os-design.md)
 - [승인된 전체 설계](docs/superpowers/specs/2026-07-14-autonomous-paper-trading-research-os-design.md)
 - [Lane control-plane 계약 설계](docs/superpowers/specs/2026-07-15-lane-control-plane-contracts-design.md)
 - [ORB lane 일일 snapshot·Reviewer loop 설계](docs/superpowers/specs/2026-07-15-orb-lane-daily-review-loop-design.md)
