@@ -301,7 +301,7 @@ Expected: zero failures, zero Ruff findings, and zero basedpyright errors/warnin
 
 Run help, malformed path, registry-only bootstrap, and a temporary initialized execution-ledger binding. Inspect the report for redaction. Do not load Alpaca credentials and do not call external APIs.
 
-- [ ] **Step 4: Commit, push, and verify origin alignment**
+- [x] **Step 4: Commit, push, and verify origin alignment**
 
 ```bash
 git add README.md CODEX_START_HERE.md docs/checkpoints/2026-07-15-lane-control-plane-contracts-ko.md docs/superpowers/plans/2026-07-15-lane-control-plane-contracts.md pyproject.toml run_alpaca_paper_entry_smoke.py run_alpaca_paper_safety_mutation_smoke.py run_lane_control_plane_bootstrap.py tests/test_alpaca_paper_entry_smoke.py tests/test_alpaca_paper_safety_mutation_smoke.py tests/test_candidate_input_daily_gate.py tests/test_daily_research_evaluator_version.py tests/test_daily_research_lane_scope.py tests/test_daily_research_record_cli.py tests/test_lane_control_plane_bootstrap_cli.py trading_agent/daily_research_contract.py trading_agent/daily_research_ledger.py trading_agent/daily_research_models.py trading_agent/lane_bootstrap.py
