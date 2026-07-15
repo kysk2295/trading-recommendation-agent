@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from decimal import Decimal
-from typing import override
+from typing import Final, override
 
 from trading_agent.models import Recommendation, RecommendationState
 from trading_agent.research_identity_models import (
@@ -18,6 +18,13 @@ from trading_agent.signal_contract_models import (
     TradeSignalEnvelope,
     TradeTarget,
 )
+
+_LEGACY_STRATEGY_NAME_BY_ID: Final = {
+    "gap_and_go": "five_minute_gap_hold",
+    "hod_breakout": "first_hod_volume_breakout",
+    "orb": "opening_range_breakout",
+    "vwap_reclaim": "first_pullback_vwap_reclaim",
+}
 
 
 class InvalidRecommendationSignalProjectionError(ValueError):
@@ -40,7 +47,7 @@ def project_intraday_recommendation(
         or not _aware(recommendation.created_at)
         or strategy_lane.market_id is not MarketId.US_EQUITIES
         or strategy_lane.agent_family is not AgentFamily.DAY_TRADING
-        or strategy_lane.strategy_id != recommendation.strategy
+        or _LEGACY_STRATEGY_NAME_BY_ID.get(strategy_lane.strategy_id) != recommendation.strategy
     ):
         raise InvalidRecommendationSignalProjectionError
 

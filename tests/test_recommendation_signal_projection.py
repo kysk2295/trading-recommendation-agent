@@ -32,7 +32,7 @@ def test_projects_existing_orb_setup_to_conditional_signal() -> None:
 
     assert signal.signal_id == recommendation.recommendation_id
     assert signal.symbol == recommendation.symbol
-    assert signal.strategy_lane.strategy_id == recommendation.strategy
+    assert signal.strategy_lane.strategy_id == "orb"
     assert signal.observed_at == recommendation.created_at
     assert signal.entry_price == Decimal("10.1")
     assert signal.stop_price == Decimal("9.9")
@@ -40,6 +40,31 @@ def test_projects_existing_orb_setup_to_conditional_signal() -> None:
     assert signal.rationale == recommendation.rationale
     assert signal.actionability is SignalActionability.CONDITIONAL
     assert signal.quote_validation is None
+
+
+@pytest.mark.parametrize(
+    ("strategy_id", "legacy_strategy_name"),
+    (
+        ("orb", "opening_range_breakout"),
+        ("vwap_reclaim", "first_pullback_vwap_reclaim"),
+        ("hod_breakout", "first_hod_volume_breakout"),
+        ("gap_and_go", "five_minute_gap_hold"),
+    ),
+)
+def test_projection_maps_canonical_intraday_ids_to_existing_strategy_names(
+    strategy_id: str,
+    legacy_strategy_name: str,
+) -> None:
+    signal = _project(
+        replace(_recommendation(), strategy=legacy_strategy_name),
+        StrategyLaneRef(
+            market_id=MarketId.US_EQUITIES,
+            agent_family=AgentFamily.DAY_TRADING,
+            strategy_id=strategy_id,
+        ),
+    )
+
+    assert signal.strategy_lane.strategy_id == strategy_id
 
 
 def test_projection_preserves_optional_opportunity_lineage() -> None:
@@ -100,7 +125,7 @@ def _recommendation() -> Recommendation:
     return Recommendation(
         recommendation_id="2026-07-15T14:31:00+00:00:ABCD:orb",
         symbol="ABCD",
-        strategy="orb",
+        strategy="opening_range_breakout",
         created_at=OBSERVED_AT,
         entry=10.10,
         stop=9.90,
