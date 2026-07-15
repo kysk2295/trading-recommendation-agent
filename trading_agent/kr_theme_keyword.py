@@ -139,15 +139,15 @@ def classify_kr_keyword_catalyst(
         )
     except InvalidKrKeywordClassificationError:
         raise
-    except (UnicodeError, json.JSONDecodeError, TypeError, ValidationError, ValueError) as error:
-        raise InvalidKrKeywordClassificationError from error
+    except (UnicodeError, json.JSONDecodeError, TypeError, ValidationError, ValueError):
+        raise InvalidKrKeywordClassificationError from None
 
 
 def _extract_text(raw_payload: bytes) -> _ExtractedText:
     try:
         document: object = json.loads(raw_payload)
-    except (UnicodeError, json.JSONDecodeError) as error:
-        raise InvalidKrKeywordClassificationError from error
+    except (UnicodeError, json.JSONDecodeError):
+        raise InvalidKrKeywordClassificationError from None
     if not isinstance(document, dict):
         raise InvalidKrKeywordClassificationError
 

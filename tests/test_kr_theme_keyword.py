@@ -209,6 +209,18 @@ def test_keyword_classifier_rejects_unverified_raw_checksum() -> None:
         )
 
 
+def test_keyword_classifier_does_not_chain_raw_parse_error() -> None:
+    with pytest.raises(InvalidKrKeywordClassificationError) as captured:
+        _ = classify_kr_keyword_catalyst(
+            _stored(b"private-invalid-json"),
+            _rules(),
+            classification_run_id="kr-keyword-run-001",
+            classified_at=CLASSIFIED_AT,
+        )
+
+    assert captured.value.__cause__ is None
+
+
 def _rules() -> KrKeywordRuleSet:
     return KrKeywordRuleSet(
         classifier_version="kr-keyword-synthetic-v1",
