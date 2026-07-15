@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import fcntl
 import os
 import sqlite3
@@ -10,18 +11,28 @@ from pathlib import Path
 from typing import final, override
 
 from trading_agent.experiment_ledger_keys import (
+    ExperimentTrialEventKey,
     ExperimentTrialRegistrationKey,
     HypothesisRegistrationKey,
+    StrategyLifecycleEventKey,
     StrategyVersionRegistrationKey,
     canonical_experiment_ledger_json,
+    experiment_trial_event_key,
     experiment_trial_registration_key,
     hypothesis_registration_key,
+    strategy_lifecycle_event_key,
     strategy_version_registration_key,
 )
 from trading_agent.experiment_ledger_models import (
+    ExperimentTrialEvent,
     ExperimentTrialRegistration,
     HypothesisRegistration,
+    StrategyLifecycleEvent,
+    StrategyLifecycleEventKind,
+    StrategyLifecycleState,
     StrategyVersionRegistration,
+    TrialEventKind,
+    lifecycle_state_rank,
 )
 from trading_agent.experiment_ledger_schema import (
     CREATE_EXPERIMENT_LEDGER_SCHEMA,
@@ -77,6 +88,18 @@ class StoredExperimentTrialRegistration:
     registration: ExperimentTrialRegistration
 
 
+@dataclass(frozen=True, slots=True)
+class StoredExperimentTrialEvent:
+    event_key: ExperimentTrialEventKey
+    event: ExperimentTrialEvent
+
+
+@dataclass(frozen=True, slots=True)
+class StoredStrategyLifecycleEvent:
+    event_key: StrategyLifecycleEventKey
+    event: StrategyLifecycleEvent
+
+
 class ExperimentLedgerReader:
     __slots__ = ("path",)
 
@@ -88,8 +111,11 @@ class ExperimentLedgerReader:
     def is_initialized(self) -> bool:
         if not self.path.is_file():
             return False
-        with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
+        connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
+        try:
             version: tuple[int] | None = connection.execute("PRAGMA user_version").fetchone()
+        finally:
+            connection.close()
         return version == (EXPERIMENT_LEDGER_SCHEMA_VERSION,)
 
     def hypotheses(self) -> tuple[StoredHypothesisRegistration, ...]:
@@ -124,12 +150,49 @@ class ExperimentLedgerReader:
             ).fetchall()
         return tuple(_stored_trial(row) for row in rows)
 
-    def _reader_connection(self) -> sqlite3.Connection:
+    def trial_events(self, trial_id: str) -> tuple[StoredExperimentTrialEvent, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            parent = _verified_trial_parent(connection, trial_id)
+            events = _trial_events_by_id(connection, trial_id)
+        _require_valid_trial_event_chain(parent, events)
+        return events
+
+    def lifecycle_events(
+        self,
+        strategy_version: str,
+    ) -> tuple[StoredStrategyLifecycleEvent, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            version, hypothesis = _verified_lifecycle_parent(connection, strategy_version)
+            events = _lifecycle_events_by_version(connection, strategy_version)
+        _require_valid_lifecycle_chain(version, hypothesis, events)
+        return events
+
+    def lifecycle_state(
+        self,
+        strategy_version: str,
+        as_of_session_date: dt.date,
+    ) -> StoredStrategyLifecycleEvent | None:
+        effective = tuple(
+            stored
+            for stored in self.lifecycle_events(strategy_version)
+            if stored.event.effective_session_date <= as_of_session_date
+        )
+        return None if not effective else effective[-1]
+
+    @contextmanager
+    def _reader_connection(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
-        _ = connection.execute("PRAGMA query_only = ON")
-        _ = connection.execute("PRAGMA foreign_keys = ON")
-        _require_current_schema(connection)
-        return connection
+        try:
+            _ = connection.execute("PRAGMA query_only = ON")
+            _ = connection.execute("PRAGMA foreign_keys = ON")
+            _require_current_schema(connection)
+            yield connection
+        finally:
+            connection.close()
 
 
 @final
@@ -253,6 +316,66 @@ class ExperimentLedgerWriter:
             ),
         )
 
+    def append_trial_event(self, event: ExperimentTrialEvent) -> bool:
+        self._require_active()
+        event = _validated_trial_event(event)
+        parent = _verified_trial_parent(self._connection, event.trial_id)
+        events = _trial_events_by_id(self._connection, event.trial_id)
+        _require_valid_trial_event_chain(parent, events)
+        key = experiment_trial_event_key(event)
+        existing = _trial_event_at_sequence(events, event.sequence)
+        if existing is not None:
+            if existing.event_key == key and existing.event == event:
+                return False
+            raise ExperimentLedgerConflictError
+        _require_valid_trial_event_candidate(parent, events, event)
+        return self._insert_immutable(
+            table="experiment_trial_events",
+            key_column="event_key",
+            key=key,
+            insert_sql="INSERT INTO experiment_trial_events VALUES (?, ?, ?, ?, ?, ?)",
+            insert_values=(
+                key,
+                event.trial_id,
+                event.sequence,
+                event.event_kind.value,
+                event.previous_event_key,
+                canonical_experiment_ledger_json(event),
+            ),
+        )
+
+    def append_lifecycle_event(self, event: StrategyLifecycleEvent) -> bool:
+        self._require_active()
+        event = _validated_lifecycle_event(event)
+        version, hypothesis = _verified_lifecycle_parent(
+            self._connection,
+            event.strategy_version,
+        )
+        events = _lifecycle_events_by_version(self._connection, event.strategy_version)
+        _require_valid_lifecycle_chain(version, hypothesis, events)
+        key = strategy_lifecycle_event_key(event)
+        existing = _lifecycle_event_at_sequence(events, event.sequence)
+        if existing is not None:
+            if existing.event_key == key and existing.event == event:
+                return False
+            raise ExperimentLedgerConflictError
+        _require_valid_lifecycle_candidate(version, hypothesis, events, event)
+        return self._insert_immutable(
+            table="strategy_lifecycle_events",
+            key_column="event_key",
+            key=key,
+            insert_sql="INSERT INTO strategy_lifecycle_events VALUES (?, ?, ?, ?, ?, ?, ?)",
+            insert_values=(
+                key,
+                event.strategy_version,
+                event.sequence,
+                event.event_kind.value,
+                event.effective_session_date.isoformat(),
+                event.previous_event_key,
+                canonical_experiment_ledger_json(event),
+            ),
+        )
+
     def _insert_immutable(
         self,
         *,
@@ -299,6 +422,20 @@ def _validated_strategy_version(registration: StrategyVersionRegistration) -> St
 def _validated_trial(registration: ExperimentTrialRegistration) -> ExperimentTrialRegistration:
     try:
         return ExperimentTrialRegistration.model_validate(registration.model_dump(mode="python"))
+    except ValueError:
+        raise InvalidExperimentLedgerSourceError from None
+
+
+def _validated_trial_event(event: ExperimentTrialEvent) -> ExperimentTrialEvent:
+    try:
+        return ExperimentTrialEvent.model_validate(event.model_dump(mode="python"))
+    except ValueError:
+        raise InvalidExperimentLedgerSourceError from None
+
+
+def _validated_lifecycle_event(event: StrategyLifecycleEvent) -> StrategyLifecycleEvent:
+    try:
+        return StrategyLifecycleEvent.model_validate(event.model_dump(mode="python"))
     except ValueError:
         raise InvalidExperimentLedgerSourceError from None
 
@@ -367,6 +504,213 @@ def _trial_by_id(
     return None if row is None else _stored_trial(row)
 
 
+def _verified_trial_parent(
+    connection: sqlite3.Connection,
+    trial_id: str,
+) -> StoredExperimentTrialRegistration | None:
+    trial = _trial_by_id(connection, trial_id)
+    if trial is None:
+        return None
+    version = _strategy_version_by_id(connection, trial.registration.strategy_version)
+    if version is None or not _trial_matches_version(trial.registration, version.registration):
+        raise InvalidExperimentLedgerSourceError
+    hypothesis = _hypothesis_by_id(connection, version.registration.hypothesis_id)
+    if hypothesis is None or not _version_matches_hypothesis(
+        version.registration,
+        hypothesis.registration,
+    ):
+        raise InvalidExperimentLedgerSourceError
+    return trial
+
+
+def _verified_lifecycle_parent(
+    connection: sqlite3.Connection,
+    strategy_version: str,
+) -> tuple[StoredStrategyVersionRegistration | None, StoredHypothesisRegistration | None]:
+    version = _strategy_version_by_id(connection, strategy_version)
+    if version is None:
+        return None, None
+    hypothesis = _hypothesis_by_id(connection, version.registration.hypothesis_id)
+    if hypothesis is None or not _version_matches_hypothesis(
+        version.registration,
+        hypothesis.registration,
+    ):
+        raise InvalidExperimentLedgerSourceError
+    return version, hypothesis
+
+
+def _trial_events_by_id(
+    connection: sqlite3.Connection,
+    trial_id: str,
+) -> tuple[StoredExperimentTrialEvent, ...]:
+    rows: list[tuple[str, str, int, str, str | None, str]] = connection.execute(
+        """SELECT event_key, trial_id, sequence, event_kind,
+        previous_event_key, payload_json FROM experiment_trial_events
+        WHERE trial_id = ? ORDER BY sequence""",
+        (trial_id,),
+    ).fetchall()
+    return tuple(_stored_trial_event(row) for row in rows)
+
+
+def _lifecycle_events_by_version(
+    connection: sqlite3.Connection,
+    strategy_version: str,
+) -> tuple[StoredStrategyLifecycleEvent, ...]:
+    rows: list[tuple[str, str, int, str, str, str | None, str]] = connection.execute(
+        """SELECT event_key, strategy_version, sequence, event_kind,
+        effective_session_date, previous_event_key, payload_json
+        FROM strategy_lifecycle_events WHERE strategy_version = ? ORDER BY sequence""",
+        (strategy_version,),
+    ).fetchall()
+    return tuple(_stored_lifecycle_event(row) for row in rows)
+
+
+def _trial_event_at_sequence(
+    events: tuple[StoredExperimentTrialEvent, ...],
+    sequence: int,
+) -> StoredExperimentTrialEvent | None:
+    return next((stored for stored in events if stored.event.sequence == sequence), None)
+
+
+def _lifecycle_event_at_sequence(
+    events: tuple[StoredStrategyLifecycleEvent, ...],
+    sequence: int,
+) -> StoredStrategyLifecycleEvent | None:
+    return next((stored for stored in events if stored.event.sequence == sequence), None)
+
+
+def _require_valid_trial_event_candidate(
+    parent: StoredExperimentTrialRegistration | None,
+    events: tuple[StoredExperimentTrialEvent, ...],
+    event: ExperimentTrialEvent,
+) -> None:
+    if parent is None:
+        raise InvalidExperimentLedgerSourceError
+    _require_valid_trial_event_chain(
+        parent,
+        (*events, StoredExperimentTrialEvent(experiment_trial_event_key(event), event)),
+    )
+
+
+def _require_valid_trial_event_chain(
+    parent: StoredExperimentTrialRegistration | None,
+    events: tuple[StoredExperimentTrialEvent, ...],
+) -> None:
+    if parent is None:
+        if events:
+            raise InvalidExperimentLedgerSourceError
+        return
+    previous: StoredExperimentTrialEvent | None = None
+    for expected_sequence, stored in enumerate(events, start=1):
+        event = stored.event
+        if (
+            event.trial_id != parent.registration.trial_id
+            or event.sequence != expected_sequence
+            or event.occurred_at < parent.registration.registered_at
+        ):
+            raise InvalidExperimentLedgerSourceError
+        if previous is None:
+            if event.event_kind is not TrialEventKind.STARTED or event.previous_event_key is not None:
+                raise InvalidExperimentLedgerSourceError
+        elif (
+            previous.event.event_kind is not TrialEventKind.STARTED
+            or event.previous_event_key != previous.event_key
+            or event.occurred_at < previous.event.occurred_at
+        ):
+            raise InvalidExperimentLedgerSourceError
+        previous = stored
+
+
+def _require_valid_lifecycle_candidate(
+    version: StoredStrategyVersionRegistration | None,
+    hypothesis: StoredHypothesisRegistration | None,
+    events: tuple[StoredStrategyLifecycleEvent, ...],
+    event: StrategyLifecycleEvent,
+) -> None:
+    if version is None or hypothesis is None:
+        raise InvalidExperimentLedgerSourceError
+    _require_valid_lifecycle_chain(
+        version,
+        hypothesis,
+        (*events, StoredStrategyLifecycleEvent(strategy_lifecycle_event_key(event), event)),
+    )
+
+
+def _require_valid_lifecycle_chain(
+    version: StoredStrategyVersionRegistration | None,
+    hypothesis: StoredHypothesisRegistration | None,
+    events: tuple[StoredStrategyLifecycleEvent, ...],
+) -> None:
+    if version is None or hypothesis is None:
+        if events:
+            raise InvalidExperimentLedgerSourceError
+        return
+    previous: StoredStrategyLifecycleEvent | None = None
+    for index, stored in enumerate(events):
+        event = stored.event
+        if (
+            event.strategy_version != version.registration.strategy_version
+            or event.sequence != index + 1
+            or event.decided_at < version.registration.ledger_recorded_at
+        ):
+            raise InvalidExperimentLedgerSourceError
+        if previous is None:
+            if event.event_kind is not StrategyLifecycleEventKind.REGISTRATION:
+                raise InvalidExperimentLedgerSourceError
+            _require_valid_import_evidence(version, hypothesis, event)
+        else:
+            if (
+                previous.event.to_state is StrategyLifecycleState.REJECTED
+                or event.event_kind is not StrategyLifecycleEventKind.TRANSITION
+                or event.previous_event_key != previous.event_key
+                or event.from_state is not previous.event.to_state
+                or event.decided_at < previous.event.decided_at
+                or previous.event.effective_session_date > event.decision_session_date
+            ):
+                raise InvalidExperimentLedgerSourceError
+            if previous.event.to_state is StrategyLifecycleState.SUSPENDED:
+                _require_valid_suspended_recovery(events[:index], event.to_state)
+        previous = stored
+
+
+def _require_valid_import_evidence(
+    version: StoredStrategyVersionRegistration,
+    hypothesis: StoredHypothesisRegistration,
+    event: StrategyLifecycleEvent,
+) -> None:
+    if event.to_state is StrategyLifecycleState.IDEA:
+        return
+    expected = tuple(
+        sorted(
+            (
+                str(hypothesis.registration_key),
+                version.registration.experiment_scope_key,
+                str(version.registration_key),
+            )
+        )
+    )
+    if event.evidence_keys != expected:
+        raise InvalidExperimentLedgerSourceError
+
+
+def _require_valid_suspended_recovery(
+    prior_events: tuple[StoredStrategyLifecycleEvent, ...],
+    target: StrategyLifecycleState,
+) -> None:
+    if target is StrategyLifecycleState.REJECTED:
+        return
+    previous_active = next(
+        (
+            stored.event.to_state
+            for stored in reversed(prior_events)
+            if stored.event.to_state is not StrategyLifecycleState.SUSPENDED
+        ),
+        None,
+    )
+    if previous_active is None or lifecycle_state_rank(target) > lifecycle_state_rank(previous_active):
+        raise InvalidExperimentLedgerSourceError
+
+
 def _stored_hypothesis(row: tuple[str, str, str, str, str]) -> StoredHypothesisRegistration:
     key, hypothesis_id, scope_key, lane_id, payload = row
     try:
@@ -421,6 +765,55 @@ def _stored_trial(row: tuple[str, str, str, str, str, str]) -> StoredExperimentT
     ):
         raise InvalidExperimentLedgerSourceError
     return StoredExperimentTrialRegistration(typed_key, registration)
+
+
+def _stored_trial_event(
+    row: tuple[str, str, int, str, str | None, str],
+) -> StoredExperimentTrialEvent:
+    key, trial_id, sequence, event_kind, previous_event_key, payload = row
+    try:
+        event = ExperimentTrialEvent.model_validate_json(payload)
+    except ValueError:
+        raise InvalidExperimentLedgerSourceError from None
+    typed_key = ExperimentTrialEventKey(key)
+    if (
+        typed_key != experiment_trial_event_key(event)
+        or trial_id != event.trial_id
+        or sequence != event.sequence
+        or event_kind != event.event_kind.value
+        or previous_event_key != event.previous_event_key
+    ):
+        raise InvalidExperimentLedgerSourceError
+    return StoredExperimentTrialEvent(typed_key, event)
+
+
+def _stored_lifecycle_event(
+    row: tuple[str, str, int, str, str, str | None, str],
+) -> StoredStrategyLifecycleEvent:
+    (
+        key,
+        strategy_version,
+        sequence,
+        event_kind,
+        effective_session_date,
+        previous_event_key,
+        payload,
+    ) = row
+    try:
+        event = StrategyLifecycleEvent.model_validate_json(payload)
+    except ValueError:
+        raise InvalidExperimentLedgerSourceError from None
+    typed_key = StrategyLifecycleEventKey(key)
+    if (
+        typed_key != strategy_lifecycle_event_key(event)
+        or strategy_version != event.strategy_version
+        or sequence != event.sequence
+        or event_kind != event.event_kind.value
+        or effective_session_date != event.effective_session_date.isoformat()
+        or previous_event_key != event.previous_event_key
+    ):
+        raise InvalidExperimentLedgerSourceError
+    return StoredStrategyLifecycleEvent(typed_key, event)
 
 
 def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
