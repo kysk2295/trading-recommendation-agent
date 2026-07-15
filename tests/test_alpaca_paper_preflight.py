@@ -4,6 +4,8 @@ import datetime as dt
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 import run_alpaca_paper_preflight as preflight_cli
 from tests.trade_update_ledger_fixtures import OBSERVED_AT, intent, trade_update
 from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
@@ -129,9 +131,7 @@ def test_preflight_returns_one_for_unknown_order(tmp_path: Path) -> None:
 
     # Then
     assert code == 1
-    assert "알 수 없는 paper 주문" in (
-        output / "paper_preflight_ko.md"
-    ).read_text(encoding="utf-8")
+    assert "알 수 없는 paper 주문" in (output / "paper_preflight_ko.md").read_text(encoding="utf-8")
 
 
 def test_preflight_blocks_a_trade_update_projection_anomaly(tmp_path: Path) -> None:
@@ -161,3 +161,30 @@ def test_preflight_blocks_a_trade_update_projection_anomaly(tmp_path: Path) -> N
     report = (output / "paper_preflight_ko.md").read_text(encoding="utf-8")
     assert code == 1
     assert "projection 이상" in report
+
+
+def test_preflight_redacts_runtime_error_details(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    database = tmp_path / "execution.sqlite3"
+    _initialize(database)
+
+    def fail_state(_: AlpacaPaperCredentials) -> PaperBrokerState:
+        raise OSError("sensitive-account-and-broker-id")
+
+    code = preflight_cli.main(
+        [
+            "--database",
+            str(database),
+            "--output-dir",
+            str(tmp_path / "report"),
+        ],
+        credential_loader=_credentials,
+        state_loader=fail_state,
+    )
+
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "안전 오류 유형: OSError" in captured.err
+    assert "sensitive-account-and-broker-id" not in captured.err

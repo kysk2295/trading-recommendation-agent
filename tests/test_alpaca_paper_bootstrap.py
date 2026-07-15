@@ -4,6 +4,8 @@ import datetime as dt
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 import run_alpaca_paper_bootstrap as bootstrap_cli
 from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
 from trading_agent.execution_store import ExecutionStore
@@ -118,3 +120,27 @@ def test_bootstrap_refuses_account_with_open_position(tmp_path: Path) -> None:
     # Then
     assert code == 1
     assert ExecutionStore(database).account_fingerprint() is None
+
+
+def test_bootstrap_redacts_runtime_error_details(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_state(_: AlpacaPaperCredentials) -> PaperBrokerState:
+        raise OSError("sensitive-account-and-broker-id")
+
+    code = bootstrap_cli.main(
+        [
+            "--database",
+            str(tmp_path / "execution.sqlite3"),
+            "--output-dir",
+            str(tmp_path / "report"),
+        ],
+        credential_loader=_credentials,
+        state_loader=fail_state,
+    )
+
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "안전 오류 유형: OSError" in captured.err
+    assert "sensitive-account-and-broker-id" not in captured.err

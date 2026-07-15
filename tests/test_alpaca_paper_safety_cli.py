@@ -5,6 +5,8 @@ import sqlite3
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 import run_alpaca_paper_safety as safety_cli
 from tests.trade_update_ledger_fixtures import FINGERPRINT, OBSERVED_AT
 from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
@@ -132,3 +134,33 @@ def test_safety_cli_migrates_existing_v5_ledger_to_current_schema_before_network
         version = connection.execute("PRAGMA user_version").fetchone()
     assert code == 0
     assert version == (9,)
+
+
+def test_safety_cli_redacts_runtime_error_details(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    database = tmp_path / "execution.sqlite3"
+    output = tmp_path / "report"
+    with ExecutionStore(database).writer():
+        pass
+
+    def fail_plan(
+        _: AlpacaPaperCredentials,
+        __: ExecutionStore,
+    ) -> PaperSafetyPlan:
+        raise OSError("sensitive-account-and-broker-id")
+
+    code = safety_cli.main(
+        ["--database", str(database), "--output-dir", str(output)],
+        credential_loader=_credentials,
+        plan_loader=fail_plan,
+    )
+
+    report = (output / "paper_safety_plan_ko.md").read_text(encoding="utf-8")
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "안전 오류 유형: OSError" in report
+    assert "안전 오류 유형: OSError" in captured.err
+    assert "sensitive-account-and-broker-id" not in report
+    assert "sensitive-account-and-broker-id" not in captured.err

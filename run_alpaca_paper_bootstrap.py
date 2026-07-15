@@ -90,7 +90,7 @@ def main(
         OSError,
         sqlite3.Error,
     ) as error:
-        print(str(error), file=sys.stderr)
+        print(_safe_error_reason(error), file=sys.stderr)
         return 2
     _write_report(
         args.output_dir,
@@ -98,6 +98,10 @@ def main(
         reasons=("새 계좌 결합 완료" if inserted else "기존 계좌 결합 확인 완료",),
     )
     return 0
+
+
+def _safe_error_reason(error: BaseException) -> str:
+    return f"안전 오류 유형: {type(error).__name__}"
 
 
 def _bootstrap_reasons(

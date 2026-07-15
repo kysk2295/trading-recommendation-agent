@@ -50,9 +50,7 @@ class PreflightReport:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Alpaca paper 계좌와 로컬 실행 원장의 GET-only 안전 대사"
-    )
+    parser = argparse.ArgumentParser(description="Alpaca paper 계좌와 로컬 실행 원장의 GET-only 안전 대사")
     parser.add_argument(
         "--database",
         type=Path,
@@ -112,7 +110,7 @@ def main(
         OSError,
         sqlite3.Error,
     ) as error:
-        print(str(error), file=sys.stderr)
+        print(_safe_error_reason(error), file=sys.stderr)
         return 2
     _write_report(
         args.output_dir,
@@ -124,6 +122,10 @@ def main(
         ),
     )
     return 0 if result.ready else 1
+
+
+def _safe_error_reason(error: BaseException) -> str:
+    return f"안전 오류 유형: {type(error).__name__}"
 
 
 def _write_report(

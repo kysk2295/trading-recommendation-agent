@@ -136,12 +136,16 @@ def main(
         OSError,
         sqlite3.Error,
     ) as error:
-        rendered = str(error)
+        rendered = _safe_error_reason(error)
         print(rendered, file=sys.stderr)
         _write_report(args.output_dir, (), (rendered,))
         return 2
     _write_report(args.output_dir, results, ())
     return int(any(result.state is PaperMutationRecoveryState.UNRESOLVED for result in results))
+
+
+def _safe_error_reason(error: BaseException) -> str:
+    return f"안전 오류 유형: {type(error).__name__}"
 
 
 def _write_report(

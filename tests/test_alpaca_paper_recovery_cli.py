@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import run_alpaca_paper_recovery as recovery_cli
 from trading_agent.alpaca_paper_activities import PaperActivityHistoryIncompleteError
 from trading_agent.alpaca_paper_client import PaperOrderHistoryIncompleteError
@@ -95,7 +97,7 @@ def test_recovery_cli_reports_incomplete_order_history_without_traceback(
 
     report = (output / "paper_stream_recovery_ko.md").read_text(encoding="utf-8")
     assert code == 2
-    assert "페이지 순회하지 못했습니다" in report
+    assert "안전 오류 유형: PaperOrderHistoryIncompleteError" in report
 
 
 def test_recovery_cli_reports_persisted_snapshot_but_blocks_admission(
@@ -149,4 +151,34 @@ def test_recovery_cli_reports_incomplete_activity_history_without_traceback(
     # Then: it writes a sanitized failure report and returns the boundary exit code.
     report = (output / "paper_stream_recovery_ko.md").read_text(encoding="utf-8")
     assert code == 2
-    assert "FILL 활동 이력" in report
+    assert "안전 오류 유형: PaperActivityHistoryIncompleteError" in report
+
+
+def test_recovery_cli_redacts_runtime_error_details(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    database = tmp_path / "execution.sqlite3"
+    output = tmp_path / "report"
+    with ExecutionStore(database).writer():
+        pass
+
+    def fail_probe(
+        _: AlpacaPaperCredentials,
+        __: ExecutionStore,
+    ) -> PaperTradeUpdateRecoveryProbe:
+        raise OSError("sensitive-account-and-broker-id")
+
+    code = recovery_cli.main(
+        ["--database", str(database), "--output-dir", str(output)],
+        credential_loader=_credentials,
+        probe_loader=fail_probe,
+    )
+
+    report = (output / "paper_stream_recovery_ko.md").read_text(encoding="utf-8")
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "안전 오류 유형: OSError" in report
+    assert "안전 오류 유형: OSError" in captured.err
+    assert "sensitive-account-and-broker-id" not in report
+    assert "sensitive-account-and-broker-id" not in captured.err

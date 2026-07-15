@@ -92,6 +92,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [ORB lane 독립 Reviewer loop 체크포인트](docs/checkpoints/2026-07-15-orb-lane-review-loop-ko.md)
 - [ORB lane 장후 forward-validation runner 체크포인트](docs/checkpoints/2026-07-15-orb-lane-forward-validation-runner-ko.md)
 - [cancel·EOD 평탄화 armed smoke CLI 체크포인트](docs/checkpoints/2026-07-15-paper-safety-mutation-smoke-cli-ko.md)
+- [Alpaca Paper CLI 오류 정보 최소화 체크포인트](docs/checkpoints/2026-07-15-paper-cli-error-redaction-ko.md)
 - [cancel·EOD 평탄화 smoke 구현 계획](docs/superpowers/plans/2026-07-15-paper-safety-mutation-smoke.md)
 - [새 작업 시작 안내](CODEX_START_HERE.md)
 
@@ -215,7 +216,7 @@ APCA_API_SECRET_KEY=...
   --output-dir outputs/paper_execution/preflight/latest
 ```
 
-`bootstrap`과 `preflight` 모두 실제 주문을 제출하지 않는다.
+`bootstrap`과 `preflight` 모두 실제 주문을 제출하지 않는다. 이 둘을 포함한 Paper 운영 CLI는 잡힌 실행 예외의 클래스명만 stderr와 실패 보고서에 남기며 원문 예외 메시지에 섞일 수 있는 계좌·broker 식별자와 내부 경로는 출력하지 않는다. 정상적인 fail-closed 판단 사유와 집계 수치는 그대로 보존한다.
 
 주문 스트림과 REST를 한 연결 세대 안에서 실제 확인하려면 다음 명령을 실행한다. 스트림 Ping → 계좌·미체결·포지션·시장시계 GET → 단일 SQLite 원장 스냅샷과 대사·포트폴리오 집계 → 스트림 Ping 순서로 검사한다. 장이 닫혀 있어도 이 읽기 전용 probe가 정상이면 성공하지만, 결과는 세션 종료 뒤 주문 승인에 재사용할 수 없고 보고서도 현재 주문 승인을 주장하지 않는다.
 

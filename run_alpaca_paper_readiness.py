@@ -49,9 +49,7 @@ class RuntimeReadinessReport:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Alpaca paper 주문 스트림과 REST 상태를 읽기 전용으로 대사"
-    )
+    parser = argparse.ArgumentParser(description="Alpaca paper 주문 스트림과 REST 상태를 읽기 전용으로 대사")
     parser.add_argument(
         "--database",
         type=Path,
@@ -105,7 +103,7 @@ def main(
         OSError,
         sqlite3.Error,
     ) as error:
-        rendered = str(error)
+        rendered = _safe_error_reason(error)
         print(rendered, file=sys.stderr)
         _write_report(
             args.output_dir,
@@ -134,22 +132,18 @@ def main(
     return 0 if readiness.ready else 1
 
 
+def _safe_error_reason(error: BaseException) -> str:
+    return f"안전 오류 유형: {type(error).__name__}"
+
+
 def _write_report(output_dir: Path, report: RuntimeReadinessReport) -> None:
     reasons = report.reasons or ("없음",)
     lines = [
         "# Alpaca Paper 런타임 준비상태",
         "",
-        (
-            f"- 확인 시각: {report.checked_at.isoformat()}"
-            if report.checked_at is not None
-            else "- 확인 시각: 없음"
-        ),
+        (f"- 확인 시각: {report.checked_at.isoformat()}" if report.checked_at is not None else "- 확인 시각: 없음"),
         "- endpoint: paper-api.alpaca.markets 고정",
-        (
-            "- 주문 스트림: 인증·구독·Pong 확인"
-            if report.stream_ready
-            else "- 주문 스트림: 차단"
-        ),
+        ("- 주문 스트림: 인증·구독·Pong 확인" if report.stream_ready else "- 주문 스트림: 차단"),
         (
             "- 활성 스트림 내부 REST·원장·포트폴리오 대사: 통과"
             if report.reconciliation_ready

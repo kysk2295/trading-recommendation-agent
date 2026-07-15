@@ -133,12 +133,16 @@ def main(
         OSError,
         sqlite3.Error,
     ) as error:
-        rendered = str(error)
+        rendered = _safe_error_reason(error)
         print(rendered, file=sys.stderr)
         _write_report(args.output_dir, BlockedPaperSafetyPlan((rendered,)))
         return 2
     _write_report(args.output_dir, decision)
     return 1 if isinstance(decision, BlockedPaperSafetyPlan) else 0
+
+
+def _safe_error_reason(error: BaseException) -> str:
+    return f"안전 오류 유형: {type(error).__name__}"
 
 
 def _write_report(

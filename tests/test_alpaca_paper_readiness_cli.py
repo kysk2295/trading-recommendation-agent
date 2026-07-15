@@ -5,6 +5,8 @@ from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 import run_alpaca_paper_readiness as readiness_cli
 from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
 from trading_agent.alpaca_paper_order_stream import (
@@ -92,9 +94,7 @@ def test_readiness_confirms_stream_and_rest_without_claiming_order_approval(
         probe_loader=lambda _credentials, _store: _readiness(),
     )
 
-    report = (output / "paper_runtime_readiness_ko.md").read_text(
-        encoding="utf-8"
-    )
+    report = (output / "paper_runtime_readiness_ko.md").read_text(encoding="utf-8")
     assert code == 0
     assert "확인 시각: 2026-07-14T13:36:05+00:00" in report
     assert "주문 스트림: 인증·구독·Pong 확인" in report
@@ -136,9 +136,7 @@ def test_readiness_missing_ledger_fails_before_credentials_or_network(
     assert code == 1
     assert loader_called is False
     assert not database.exists()
-    assert "초기화되지 않았습니다" in (
-        tmp_path / "report/paper_runtime_readiness_ko.md"
-    ).read_text(encoding="utf-8")
+    assert "초기화되지 않았습니다" in (tmp_path / "report/paper_runtime_readiness_ko.md").read_text(encoding="utf-8")
 
 
 def test_readiness_rejects_a_different_paper_account(tmp_path: Path) -> None:
@@ -168,6 +166,35 @@ def test_readiness_rejects_a_different_paper_account(tmp_path: Path) -> None:
     )
 
     assert code == 1
-    assert "활성 스트림 내부 REST·원장·포트폴리오 대사: 차단" in (
-        output / "paper_runtime_readiness_ko.md"
-    ).read_text(encoding="utf-8")
+    assert "활성 스트림 내부 REST·원장·포트폴리오 대사: 차단" in (output / "paper_runtime_readiness_ko.md").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_readiness_redacts_runtime_error_details(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    database = tmp_path / "execution.sqlite3"
+    output = tmp_path / "report"
+    _initialize(database)
+
+    def fail_probe(
+        _: AlpacaPaperCredentials,
+        __: PaperLedgerReader,
+    ) -> PaperRuntimeReadiness:
+        raise OSError("sensitive-account-and-broker-id")
+
+    code = readiness_cli.main(
+        ["--database", str(database), "--output-dir", str(output)],
+        credential_loader=_credentials,
+        probe_loader=fail_probe,
+    )
+
+    report = (output / "paper_runtime_readiness_ko.md").read_text(encoding="utf-8")
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "안전 오류 유형: OSError" in report
+    assert "안전 오류 유형: OSError" in captured.err
+    assert "sensitive-account-and-broker-id" not in report
+    assert "sensitive-account-and-broker-id" not in captured.err
