@@ -231,6 +231,23 @@ NASDAQ·NYSE·AMEX 상승률/거래량 랭킹
 - 장이 닫혀 현재 매수·매도 호가가 없으면 스프레드를 계산하지 않고 추천을 차단한다.
 - 현재 랭킹으로 선택한 종목의 과거 분봉에서 뒤늦게 추천을 만들지 않는다. 랭킹 관찰 전 봉은 상태 계산에만 사용하고 추천 시각은 최신 완료 봉보다 앞설 수 없다.
 
+### 미국 현재 호가 actionability
+
+새로 발행 가능한 conditional day signal이 있을 때만 같은 KIS client와 token 수명 안에서 `GET /uapi/overseas-price/v1/quotations/inquire-asking-price` (`HHDFS76200100`)를 종목당 한 번 호출한다. 요청 파라미터는 `AUTH`, `EXCD`, `SYMB`로 고정하며 계좌·잔고·포지션·주문 API는 import하거나 호출하지 않는다. provider message, 응답 원문, credential과 header는 계약·보고서·예외에 보존하지 않는다.
+
+응답의 `dymd`·`dhms`, `pbid1`·`pask1`, `vbid1`·`vask1`만 strict하게 정규화한다. quote snapshot과 base signal을 직접 수정하지 않고 다음 append 순서를 사용한다.
+
+```text
+conditional TradeSignal
+→ us-quote-snapshots.v1.jsonl
+→ 별도 current_quote_validated TradeSignal과 카드 (게이트 통과 때만)
+→ quote-actionability-assessments.v1.jsonl
+```
+
+평가기와 provider quote가 같은 현재 NYSE 정규장에 있고 provider 시각이 미래가 아니며 평가시각보다 엄격히 5초 미만으로 오래됐을 때만 계속한다. bid/ask는 양수·유한·비역전, spread는 25bp 이하, long bid는 stop 초과, ask는 entry보다 최대 20bp까지만 허용한다. ask가 entry 아래면 `validated_waiting`, entry 이상이면 `validated_trigger_reached`다. 실패는 allow-list terminal status로 축약하며 synthetic quote나 주문 fallback을 만들지 않는다.
+
+quote·assessment·derived signal ID는 canonical JSON의 SHA-256으로 bounded하게 만든다. 원래 conditional signal과 카드는 그대로 유지하고 exact replay는 no-op, 같은 ID의 다른 payload는 conflict다. 이 계층은 현재 가격 실행 가능성의 read-only 관측이며 external delivery, Alpaca Paper 주문 승인, lifecycle 승격 권한이 없다.
+
 단발 진단 실행 파일은 `run_kis_paper_scan.py`다. 기본 실행은 세 거래소의 상승률·거래량 랭킹을 한 번 조회하고 상위 3개 후보를 분석한다. 날짜별 영속 감시는 `run_kis_paper_watch.py`가 같은 SQLite를 재사용하며 60초 간격으로 최대 390회 순차 실행한다.
 
 각 cycle이 조회한 상승률·거래량 랭킹 원시 행은 `kis_ranking_snapshots.csv`에 덮어쓰기 없이 누적한다. 관찰 시각, 랭킹 출처, 거래소, 원천 순위, 가격·등락률·호가·거래량·거래대금·평균 거래량과 실제 선택 여부를 저장하므로 이후 임계값 인접값과 후보 품질을 재현할 수 있다. 단, 이는 KIS 랭킹 API가 노출한 상위 표본이며 미국 전체 종목의 point-in-time 원시 모집단은 아니다.

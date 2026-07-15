@@ -8,7 +8,7 @@
 
 실제 자금 거래는 목표가 아니다. 앞으로 추가되는 실행 코드는 `https://paper-api.alpaca.markets`에만 연결하며 Alpaca live endpoint, 실계좌 키와 실제 주문 경로는 프로젝트에서 차단한다.
 
-다중 시장 상위 계약도 점진적으로 추가됐다. `MarketId → AgentFamily → StrategyLaneRef` 연구 좌표, US 기존 execution lane의 명시적 adapter, 사전등록 composite experiment, causal `OpportunitySnapshot`·`TradeSignalEnvelope`를 제공한다. KIS 미국주식 스캔은 거래소×상승률/거래량 6개 요청과 NYSE halt·시장위험 근거가 모두 완전할 때 선별 후보를 append-only opportunity JSONL로 발행하고, 그 opportunity 이후 생성된 5분 미만의 같은 종목 SETUP만 conditional signal JSONL·한국어 카드로 투영한다. 이 로컬 발행 계층은 현재 호가 재검증, 외부 실시간 메시지 또는 주문을 수행하지 않는다.
+다중 시장 상위 계약도 점진적으로 추가됐다. `MarketId → AgentFamily → StrategyLaneRef` 연구 좌표, US 기존 execution lane의 명시적 adapter, 사전등록 composite experiment, causal `OpportunitySnapshot`·`TradeSignalEnvelope`를 제공한다. KIS 미국주식 스캔은 거래소×상승률/거래량 6개 요청과 NYSE halt·시장위험 근거가 모두 완전할 때 선별 후보를 append-only opportunity JSONL로 발행하고, 그 opportunity 이후 생성된 5분 미만의 같은 종목 SETUP만 conditional signal JSONL·한국어 카드로 투영한다. 새 conditional 신호는 같은 KIS client 수명 안에서 공식 미국주식 1호가 GET으로 종목당 한 번 재검증한다. 현재 정규장, provider 시각 `<5초`, spread `25bp` 이하, stop 위 bid, 진입가 대비 ask `20bp` 이하를 모두 통과할 때만 별도 immutable `current_quote_validated` 신호와 카드를 만든다. 원래 conditional 신호는 수정하지 않으며 외부 메시지와 주문은 수행하지 않는다.
 
 독립 `kr_equities` 도메인에는 뉴스·DART·KIS 국내 랭킹·거래량 급증 촉매의 원문 BLOB, 최초 관측시각, cycle별 coverage와 버전형 분류 결과를 보존하는 mode-600 append-only SQLite 원장이 추가됐다. local synthetic cycle에서는 버전형 deterministic keyword baseline이 뉴스·DART 원문을 분류하고, 저장된 classification과 canonical `volume_surge` BLOB만으로 테마 신선도·전파도·거래대금 대장주를 재생해 `kr_equities/opportunity_manager/theme_momentum` Opportunity JSONL을 발행한다. 공식 OpenDART `list.json`의 당일 공시검색은 exact endpoint·무리다이렉트 GET client로 연결됐고, 응답 bytes receipt를 파싱 전에 schema v2 원장에 확정한 뒤 공시별 catalyst·observation lineage와 terminal DART source run을 append한다. LS증권 `NWS001` 뉴스 제목도 exact OAuth·WebSocket allow-list와 raw-first frame receipt, strict KST causality parser, canonical NEWS catalyst·terminal source run으로 연결됐다. LS secret은 단일 no-follow descriptor에서만 읽고 OAuth 응답은 bounded streaming하며, 비정상 종료 receipt는 빈 성공으로 재개하지 않고 immutable 실패 run으로 확정한다. 폐기·재발급한 mode-600 로컬 자격증명으로 bounded production smoke를 수행해 구독 ACK 뒤 실제 뉴스 1건을 성공 수집했다. ACK 전 뉴스, 중복 ACK와 ACK 없는 종료는 차단하며, 공식 7필드 뉴스와 운영에서 관측된 `categoryid`·`codeaccu` 확장형만 strict하게 허용한다. 네 terminal source run이 모두 있을 때만 exact coverage의 immutable collection cycle을 확정하는 DB-only coordinator도 추가됐으며, 누락 source는 cycle로 만들지 않고 terminal 실패는 `complete=false`로 보존한다. 이 Opportunity과 source evidence는 현재 호가 검증이나 TradeSignal·주문권한이 없는 종목 발굴 근거다. production 기사 본문·KIS 국내·거래량 급증 수집, LLM 분류·비교, KR quote/VI/가격제한/risk gate와 shadow signal은 아직 구현되지 않았으며 국내 계좌·주문 경로는 없다. 새 swing·systematic quant 엔진도 후속 milestone이다.
 
@@ -478,10 +478,12 @@ KIS paper 스캔:
 완전한 정규장 KIS 랭킹 cycle에서는 기존 추천 outbox와 별도로 다음 v2 계약 산출물을 추가한다.
 
 - `opportunities.v1.jsonl`: 6개 랭킹 요청·NYSE halt·시장위험 선별 근거를 결합한 60초 유효 후보 스냅샷
-- `trade-signals.v1.jsonl`: exact opportunity 안에서 이후 생성되고 발행 시점에 신선한 SETUP의 conditional 신호
-- `trade-signal-cards-ko/`: 각 conditional 신호의 관측·발행·만료 시각, 진입·손절·목표·무효화 근거를 담은 한국어 카드
+- `us-quote-snapshots.v1.jsonl`: KIS provider 시각, 수신시각, bid/ask·잔량·spread를 정규화한 현재 호가 근거
+- `quote-actionability-assessments.v1.jsonl`: base 신호별 waiting·trigger reached 또는 fail-closed terminal 판정
+- `trade-signals.v1.jsonl`: exact opportunity의 conditional 신호와 quote를 통과한 별도 `current_quote_validated` 신호
+- `trade-signal-cards-ko/`: conditional 카드와 현재 호가 시각·bid/ask·spread·트리거 상태를 포함한 validated 카드
 
-JSONL은 동일 ID·동일 payload 재실행을 추가하지 않고, 동일 ID의 payload가 달라지거나 기존 행이 계약 형식에 맞지 않으면 fail-closed한다. 랭킹 요청 하나라도 실패하면 기존 부분 모집단 shadow scan·coverage 기록·비정상 종료 동작은 유지하지만 v2 opportunity와 그 하위 신호는 발행하지 않는다. 이 신호는 발행 직전 호가를 새로 조회하지 않으므로 `current_quote_validated`가 아니며 Paper 주문 입력으로 사용하지 않는다.
+JSONL은 동일 ID·동일 payload 재실행을 추가하지 않고, 동일 ID의 payload가 달라지거나 기존 행이 계약 형식에 맞지 않으면 fail-closed한다. 랭킹 요청 하나라도 실패하면 기존 부분 모집단 shadow scan·coverage 기록·비정상 종료 동작은 유지하지만 v2 opportunity와 그 하위 신호는 발행하지 않는다. 호가 실패·장 마감·만료·미래/과거 시각·wide spread·stop 무효·entry slippage는 validated 신호를 만들지 않고 terminal assessment만 남긴다. 이 actionability 관측은 Paper 주문 승인이나 전략 승격이 아니다.
 
 KIS 날짜별 paper 감시:
 
