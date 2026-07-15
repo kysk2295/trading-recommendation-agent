@@ -93,9 +93,14 @@ class _LsNwsBody(BaseModel):
     time: StrictStr
     id: StrictStr
     title: StrictStr
+    categoryid: StrictStr | None = None
+    codeaccu: StrictStr | None = None
 
     @model_validator(mode="after")
     def validate_body(self) -> Self:
+        extension_fields = {"categoryid", "codeaccu"}.intersection(
+            self.model_fields_set
+        )
         if (
             not _valid_date(self.date)
             or not _valid_time(self.time)
@@ -104,6 +109,16 @@ class _LsNwsBody(BaseModel):
             or _UNSIGNED_DECIMAL.fullmatch(self.id) is None
             or not _valid_code(self.code)
             or not _valid_title(self.title)
+            or extension_fields not in (set(), {"categoryid", "codeaccu"})
+            or (
+                extension_fields
+                and (
+                    self.categoryid is None
+                    or self.codeaccu is None
+                    or _UNSIGNED_DECIMAL.fullmatch(self.categoryid) is None
+                    or not _valid_opaque_extension(self.codeaccu)
+                )
+            )
         ):
             raise ValueError("invalid LS NWS body")
         return self
@@ -203,18 +218,26 @@ def parse_ls_nws_frame(
     ).replace(tzinfo=_KST)
     if published_at > frame.received_at:
         raise LsNwsParseError("future_publication")
+    canonical_document = {
+        "tr_cd": packet.header.tr_cd,
+        "tr_key": packet.header.tr_key,
+        "date": packet.body.date,
+        "code": packet.body.code,
+        "realkey": packet.body.realkey,
+        "bodysize": packet.body.bodysize,
+        "time": packet.body.time,
+        "id": packet.body.id,
+        "title": packet.body.title,
+    }
+    if packet.body.categoryid is not None and packet.body.codeaccu is not None:
+        canonical_document.update(
+            {
+                "categoryid": packet.body.categoryid,
+                "codeaccu": packet.body.codeaccu,
+            }
+        )
     canonical_payload = json.dumps(
-        {
-            "tr_cd": packet.header.tr_cd,
-            "tr_key": packet.header.tr_key,
-            "date": packet.body.date,
-            "code": packet.body.code,
-            "realkey": packet.body.realkey,
-            "bodysize": packet.body.bodysize,
-            "time": packet.body.time,
-            "id": packet.body.id,
-            "title": packet.body.title,
-        },
+        canonical_document,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -287,6 +310,15 @@ def _valid_control_message(value: str) -> bool:
             or 0xD800 <= ord(character) <= 0xDFFF
             for character in value
         )
+    )
+
+
+def _valid_opaque_extension(value: str) -> bool:
+    return len(value) <= 256 and not any(
+        ord(character) < 32
+        or ord(character) == 127
+        or 0xD800 <= ord(character) <= 0xDFFF
+        for character in value
     )
 
 

@@ -144,6 +144,52 @@ def test_parser_accepts_official_nws_shape_and_builds_flat_canonical_payload(
     assert PRIVATE_TITLE not in repr(parsed)
 
 
+def test_parser_accepts_observed_extended_nws_shape_and_preserves_fields() -> None:
+    document = _document()
+    body = document["body"]
+    assert isinstance(body, dict)
+    body.update({"categoryid": "42", "codeaccu": ""})
+
+    parsed = parse_ls_nws_frame(
+        _frame(document),
+        collection_date=COLLECTION_DATE,
+    )
+
+    payload = json.loads(parsed.canonical_payload)
+    assert payload["categoryid"] == "42"
+    assert payload["codeaccu"] == ""
+
+
+@pytest.mark.parametrize(
+    ("extensions", "failure_code"),
+    (
+        ({"categoryid": "42"}, "invalid_packet"),
+        ({"codeaccu": ""}, "invalid_packet"),
+        ({"categoryid": "", "codeaccu": ""}, "invalid_packet"),
+        ({"categoryid": "news", "codeaccu": ""}, "invalid_packet"),
+        ({"categoryid": "1" * 11, "codeaccu": ""}, "invalid_packet"),
+        ({"categoryid": "42", "codeaccu": "bad\nvalue"}, "invalid_packet"),
+        ({"categoryid": "42", "codeaccu": "x" * 257}, "invalid_packet"),
+    ),
+)
+def test_parser_rejects_invalid_extended_nws_fields(
+    extensions: dict[str, str],
+    failure_code: str,
+) -> None:
+    document = _document()
+    body = document["body"]
+    assert isinstance(body, dict)
+    body.update(extensions)
+
+    with pytest.raises(LsNwsParseError) as captured:
+        _ = parse_ls_nws_frame(
+            _frame(document),
+            collection_date=COLLECTION_DATE,
+        )
+
+    assert captured.value.failure_code == failure_code
+
+
 def test_parser_rejects_duplicate_json_key_without_rendering_payload() -> None:
     payload = (
         '{"header":{"tr_cd":"NWS","tr_key":"NWS001"},'
