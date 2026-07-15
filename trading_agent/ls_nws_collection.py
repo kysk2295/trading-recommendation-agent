@@ -9,6 +9,7 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Final, Protocol, override
+from zoneinfo import ZoneInfo
 
 from trading_agent.kr_source_collection_models import (
     KrSourceCollectionRun,
@@ -34,6 +35,7 @@ LS_NWS_ADAPTER_VERSION: Final = "ls-nws-v1"
 MAX_LS_NWS_COLLECTION_SECONDS: Final = 86_400.0
 MAX_LS_NWS_COLLECTION_FRAMES: Final = 100_000
 _SAFE_CYCLE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,121}$")
+_KST: Final = ZoneInfo("Asia/Seoul")
 
 
 class LsNwsCollectionInputError(ValueError):
@@ -102,14 +104,63 @@ def collect_ls_nws_news(
         if run.source is KrCatalystSource.NEWS
     )
     if existing:
-        if len(existing) != 1 or existing[0].adapter_version != adapter_version:
+        if (
+            len(existing) != 1
+            or existing[0].source_run_id != source_run_id
+            or existing[0].adapter_version != adapter_version
+        ):
             raise ValueError("incompatible LS NWS source run")
         run = existing[0]
+        if run.collection_date != collection_date:
+            raise LsNwsCollectionInputError
         return LsNwsCollectionResult(
             run=run,
             receipt_count=len(run.receipt_ids),
             new_receipt_count=0,
             catalyst_count=run.record_count,
+            new_catalyst_count=0,
+            new_observation_count=0,
+            restarted=True,
+        )
+
+    orphan_receipts = store.source_receipts(source_run_id)
+    if orphan_receipts:
+        if any(
+            item.receipt.received_at.astimezone(_KST).date() != collection_date
+            for item in orphan_receipts
+        ):
+            raise LsNwsCollectionInputError
+        observed_count = _source_observation_count(
+            store,
+            collection_cycle_id=collection_cycle_id,
+        )
+        receipt_times = tuple(
+            item.receipt.received_at for item in orphan_receipts
+        )
+        started_at = min(receipt_times)
+        completed_at = max((started_at, _clock(), *receipt_times))
+        run = KrSourceCollectionRun(
+            source_run_id=source_run_id,
+            collection_cycle_id=collection_cycle_id,
+            source=KrCatalystSource.NEWS,
+            adapter_version=adapter_version,
+            started_at=started_at,
+            completed_at=completed_at,
+            status=KrCoverageStatus.FAILED,
+            record_count=observed_count,
+            failure_code="interrupted_run",
+            receipt_ids=tuple(
+                sorted(item.receipt.receipt_id for item in orphan_receipts)
+            ),
+            collection_date=collection_date,
+        )
+        with store.writer() as writer:
+            _ = writer.append_source_run(run)
+        return LsNwsCollectionResult(
+            run=run,
+            receipt_count=len(orphan_receipts),
+            new_receipt_count=0,
+            catalyst_count=observed_count,
             new_catalyst_count=0,
             new_observation_count=0,
             restarted=True,
@@ -225,6 +276,7 @@ def collect_ls_nws_news(
         record_count=observed_count,
         failure_code=failure_code,
         receipt_ids=tuple(sorted(item.receipt.receipt_id for item in receipts)),
+        collection_date=collection_date,
     )
     with store.writer() as writer:
         _ = writer.append_source_run(run)

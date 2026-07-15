@@ -203,7 +203,12 @@ def _valid_title(value: str) -> bool:
     return (
         value == value.strip()
         and 1 <= len(value) <= 2_000
-        and not any(ord(character) < 32 or ord(character) == 127 for character in value)
+        and not any(
+            ord(character) < 32
+            or ord(character) == 127
+            or 0xD800 <= ord(character) <= 0xDFFF
+            for character in value
+        )
     )
 
 

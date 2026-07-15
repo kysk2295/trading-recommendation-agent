@@ -11,6 +11,7 @@ import httpx2
 
 LS_REST_BASE_URL: Final = "https://openapi.ls-sec.co.kr:8080"
 DEFAULT_LS_SECRET_PATH: Final = Path.home() / ".config/trading-agent/ls.env"
+MAX_LS_SECRET_FILE_BYTES: Final = 1_024
 _EXPECTED_SETTINGS: Final = frozenset(("LS_APP_KEY", "LS_APP_SECRET"))
 
 
@@ -52,22 +53,41 @@ class InvalidLsCredentialsError(ValueError):
 
 def load_ls_credentials(path: Path = DEFAULT_LS_SECRET_PATH) -> LsCredentials:
     try:
-        file_stat = path.lstat()
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+        )
     except OSError:
         raise LsSecretFileError(path) from None
-    if (
-        stat.S_IMODE(file_stat.st_mode) != 0o600
-        or not stat.S_ISREG(file_stat.st_mode)
-        or path.is_symlink()
-        or file_stat.st_uid != os.getuid()
-    ):
-        raise LsSecretFileError(path)
     try:
-        text = path.read_bytes().decode("utf-8")
+        file_stat = os.fstat(descriptor)
+        if (
+            stat.S_IMODE(file_stat.st_mode) != 0o600
+            or not stat.S_ISREG(file_stat.st_mode)
+            or file_stat.st_uid != os.getuid()
+        ):
+            raise LsSecretFileError(path)
+        payload = bytearray()
+        while len(payload) <= MAX_LS_SECRET_FILE_BYTES:
+            chunk = os.read(
+                descriptor,
+                MAX_LS_SECRET_FILE_BYTES + 1 - len(payload),
+            )
+            if not chunk:
+                break
+            payload.extend(chunk)
+    except LsSecretFileError:
+        raise
+    except OSError:
+        raise LsSecretFileError(path) from None
+    finally:
+        os.close(descriptor)
+    if len(payload) > MAX_LS_SECRET_FILE_BYTES:
+        raise InvalidLsCredentialsError
+    try:
+        text = bytes(payload).decode("utf-8")
     except UnicodeError:
         raise LsSecretEncodingError from None
-    except OSError:
-        raise LsSecretFileError(path) from None
 
     lines = text.splitlines()
     values: dict[str, str] = {}
@@ -108,6 +128,7 @@ def create_ls_http_client() -> httpx2.Client:
         transport=transport,
         timeout=httpx2.Timeout(connect=5.0, read=15.0, write=10.0, pool=5.0),
         follow_redirects=False,
+        trust_env=False,
     )
 
 

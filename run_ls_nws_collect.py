@@ -6,6 +6,8 @@ import datetime as dt
 import math
 import os
 import re
+import stat
+import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -82,12 +84,34 @@ def main(
         raise typer.BadParameter("max frames 범위가 유효하지 않습니다")
     if fixture_manifest is not None and secret_path is not None:
         raise typer.BadParameter("fixture mode에서는 secret path를 사용할 수 없습니다")
+    database_path = Path(database)
+    report_path = Path(output_dir) / "ls_nws_collection_summary_ko.md"
+    report_target = report_path.expanduser().resolve(strict=False)
+    ledger_targets = {
+        candidate.expanduser().resolve(strict=False)
+        for candidate in (
+            database_path,
+            Path(f"{database_path}.writer.lock"),
+            Path(f"{database_path}-journal"),
+            Path(f"{database_path}-shm"),
+            Path(f"{database_path}-wal"),
+        )
+    }
+    if report_target in ledger_targets:
+        raise typer.BadParameter("database와 report 경로는 겹칠 수 없습니다")
 
     try:
-        store = KrThemeStore(Path(database))
+        store = KrThemeStore(database_path)
         if fixture_manifest is not None:
-            fixture_source = load_ls_nws_fixture(Path(fixture_manifest))
-            opener = fixture_source.open
+            selected_fixture_manifest = Path(fixture_manifest)
+
+            @contextmanager
+            def open_fixture_source() -> Iterator[LsNwsFrameReceiver]:
+                fixture_source = load_ls_nws_fixture(selected_fixture_manifest)
+                with fixture_source.open() as receiver:
+                    yield receiver
+
+            opener = open_fixture_source
         else:
             selected_secret_path = (
                 DEFAULT_LS_SECRET_PATH
@@ -135,7 +159,6 @@ def main(
             "LS NWS 입력 또는 source contract가 유효하지 않습니다"
         ) from None
 
-    report_path = Path(output_dir) / "ls_nws_collection_summary_ko.md"
     _write_private_text(
         report_path,
         _report(result, collection_date=parsed_date),
@@ -168,26 +191,32 @@ def _collection_date(value: str | None) -> dt.date:
 
 def _write_private_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    descriptor = os.open(
-        temporary,
-        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-        0o600,
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
     )
+    temporary = Path(temporary_name)
     try:
+        file_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_nlink != 1:
+            raise OSError("unsafe temporary report file")
         os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             descriptor = -1
             _ = handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        temporary.replace(path)
-        path.chmod(0o600)
+        os.replace(temporary, path)
+        directory_descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
     finally:
         if descriptor >= 0:
             os.close(descriptor)
-        if temporary.exists():
-            temporary.unlink()
+        temporary.unlink(missing_ok=True)
 
 
 def _report(

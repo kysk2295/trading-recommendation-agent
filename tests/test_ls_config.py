@@ -71,6 +71,37 @@ def test_ls_secret_rejects_symlink(tmp_path: Path) -> None:
         _ = load_ls_credentials(link)
 
 
+def test_ls_secret_path_swap_cannot_replace_opened_credentials(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = _secret(
+        tmp_path,
+        f"LS_APP_KEY={APP_KEY}\nLS_APP_SECRET={APP_SECRET}\n",
+    )
+    replacement = tmp_path / "replacement.env"
+    replacement.write_text(
+        f"LS_APP_KEY={'a' * 40}\nLS_APP_SECRET={'b' * 40}\n",
+        encoding="utf-8",
+    )
+    replacement.chmod(0o600)
+    original_is_symlink = Path.is_symlink
+
+    def swap_after_symlink_check(path: Path) -> bool:
+        result = original_is_symlink(path)
+        if path == secret:
+            path.unlink()
+            path.symlink_to(replacement)
+        return result
+
+    monkeypatch.setattr(Path, "is_symlink", swap_after_symlink_check)
+
+    credentials = load_ls_credentials(secret)
+
+    assert credentials.app_key == APP_KEY
+    assert credentials.app_secret == APP_SECRET
+
+
 def test_ls_secret_rejects_non_regular_file(tmp_path: Path) -> None:
     fifo = tmp_path / "ls.env"
     os.mkfifo(fifo, 0o600)
@@ -150,6 +181,7 @@ def test_production_ls_http_client_is_exact_and_does_not_follow_redirects() -> N
         assert LS_REST_BASE_URL == "https://openapi.ls-sec.co.kr:8080"
         assert str(client.base_url).rstrip("/") == LS_REST_BASE_URL
         assert client.follow_redirects is False
+        assert client.trust_env is False
 
 
 def _secret(

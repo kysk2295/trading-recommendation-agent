@@ -155,6 +155,22 @@ def test_parser_rejects_missing_official_field() -> None:
         _ = parse_ls_nws_frame(_frame(document), collection_date=COLLECTION_DATE)
 
 
+def test_parser_rejects_escaped_lone_surrogate_as_parse_error() -> None:
+    document = _document()
+    body = document["body"]
+    assert isinstance(body, dict)
+    body["title"] = "\ud800"
+    payload = json.dumps(document, ensure_ascii=True).encode("ascii")
+
+    with pytest.raises(LsNwsParseError) as captured:
+        _ = parse_ls_nws_frame(
+            LsNwsRawFrame(1, RECEIVED_AT, LsNwsWireKind.TEXT, payload),
+            collection_date=COLLECTION_DATE,
+        )
+
+    assert captured.value.failure_code == "invalid_packet"
+
+
 def test_parser_rejects_packet_for_different_collection_date() -> None:
     document = _document()
     body = document["body"]

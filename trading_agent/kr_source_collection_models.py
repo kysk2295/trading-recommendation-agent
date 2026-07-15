@@ -91,6 +91,7 @@ class KrSourceCollectionRun(BaseModel):
     record_count: int
     failure_code: str | None = None
     receipt_ids: tuple[str, ...]
+    collection_date: dt.date | None = None
 
     @model_validator(mode="after")
     def validate_run(self) -> Self:
@@ -111,6 +112,7 @@ class KrSourceCollectionRun(BaseModel):
             or not failure_valid
             or any(_SHA256.fullmatch(item) is None for item in self.receipt_ids)
             or self.receipt_ids != tuple(sorted(set(self.receipt_ids)))
+            or isinstance(self.collection_date, dt.datetime)
         ):
             raise ValueError("invalid KR source collection run")
         return self

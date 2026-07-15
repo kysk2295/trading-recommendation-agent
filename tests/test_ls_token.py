@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from typing import override
 from urllib.parse import parse_qs
 
 import httpx2
@@ -20,6 +21,19 @@ APP_KEY = "k" * 40
 APP_SECRET = "s" * 40
 ACCESS_TOKEN = "t" * 64
 PRIVATE_MESSAGE = "private-provider-message"
+
+
+class CountingByteStream(httpx2.SyncByteStream):
+    def __init__(self, *, chunk_count: int, chunk_size: int) -> None:
+        self.chunk_count = chunk_count
+        self.chunk_size = chunk_size
+        self.yielded = 0
+
+    @override
+    def __iter__(self) -> Iterator[bytes]:
+        for _ in range(self.chunk_count):
+            self.yielded += 1
+            yield b"x" * self.chunk_size
 
 
 def test_ls_oauth_posts_exact_form_without_query_secret() -> None:
@@ -188,6 +202,29 @@ def test_ls_oauth_converts_transport_error_to_sanitized_error() -> None:
         _ = issue_ls_access_token(client, _credentials())
 
     _assert_private_markers_absent(str(captured.value))
+    assert captured.value.__context__ is None
+    assert captured.value.__cause__ is None
+
+
+def test_ls_oauth_stops_streaming_response_at_size_limit() -> None:
+    stream = CountingByteStream(chunk_count=100, chunk_size=8_192)
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            request=request,
+            headers={"content-type": "application/json"},
+            stream=stream,
+        )
+
+    with (
+        _client(handle) as client,
+        pytest.raises(LsTokenResponseError) as captured,
+    ):
+        _ = issue_ls_access_token(client, _credentials())
+
+    assert captured.value.failure_code == "response_too_large"
+    assert stream.yielded < stream.chunk_count
 
 
 @pytest.mark.parametrize(

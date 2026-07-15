@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -8,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from trading_agent.kr_source_collection_models import KrSourceReceipt
 from trading_agent.kr_theme_models import KrCatalystSource, KrCoverageStatus
 from trading_agent.kr_theme_store import KrThemeStore
 from trading_agent.ls_nws import (
@@ -90,6 +92,7 @@ def test_collector_appends_each_raw_frame_before_parse_and_links_news(
     assert parser_calls == 2
     assert result.run.source_run_id == f"{CYCLE_ID}:news"
     assert result.run.adapter_version == LS_NWS_ADAPTER_VERSION
+    assert result.run.collection_date == COLLECTION_DATE
     assert result.run.source is KrCatalystSource.NEWS
     assert result.run.status is KrCoverageStatus.SUCCESS
     assert result.run.failure_code is None
@@ -326,6 +329,122 @@ def test_terminal_source_run_restart_performs_no_open_or_append(
     assert second.new_observation_count == 0
     assert open_calls == 0
     assert len(store.source_runs()) == 1
+
+
+def test_orphan_receipt_restart_fails_closed_without_opening_source(
+    tmp_path: Path,
+) -> None:
+    store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
+    frame = _frame(1)
+    receipt = KrSourceReceipt(
+        source_run_id=f"{CYCLE_ID}:news",
+        source=KrCatalystSource.NEWS,
+        request_key="ls:nws:frame:000001:text",
+        received_at=frame.received_at,
+        http_status=101,
+        content_type="application/json",
+        payload_sha256=hashlib.sha256(frame.raw_payload).hexdigest(),
+    )
+    with store.writer() as writer:
+        _ = writer.append_source_receipt(receipt, frame.raw_payload)
+    open_calls = 0
+
+    @contextmanager
+    def reject_opener() -> Iterator[SequenceReceiver]:
+        nonlocal open_calls
+        open_calls += 1
+        raise AssertionError("orphan restart opened a source")
+        yield SequenceReceiver([])
+
+    result = collect_ls_nws_news(
+        reject_opener,
+        store,
+        collection_cycle_id=CYCLE_ID,
+        collection_date=COLLECTION_DATE,
+        duration_seconds=60.0,
+        max_frames=10,
+        _clock=lambda: STARTED_AT + dt.timedelta(seconds=10),
+        _monotonic=lambda: 0.0,
+    )
+
+    assert open_calls == 0
+    assert result.run.status is KrCoverageStatus.FAILED
+    assert result.run.failure_code == "interrupted_run"
+    assert result.receipt_count == 1
+    assert result.new_receipt_count == 0
+    assert result.catalyst_count == 0
+    assert result.restarted is True
+    assert store.source_runs(CYCLE_ID) == (result.run,)
+
+
+def test_terminal_restart_rejects_different_collection_date_without_opening_source(
+    tmp_path: Path,
+) -> None:
+    store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
+    _ = collect_ls_nws_news(
+        _opener(SequenceReceiver([_frame(1), None])),
+        store,
+        collection_cycle_id=CYCLE_ID,
+        collection_date=COLLECTION_DATE,
+        duration_seconds=60.0,
+        max_frames=10,
+        _clock=lambda: STARTED_AT,
+        _monotonic=lambda: 0.0,
+    )
+    open_calls = 0
+
+    @contextmanager
+    def reject_opener() -> Iterator[SequenceReceiver]:
+        nonlocal open_calls
+        open_calls += 1
+        raise AssertionError("date mismatch restart opened a source")
+        yield SequenceReceiver([])
+
+    with pytest.raises(LsNwsCollectionInputError):
+        _ = collect_ls_nws_news(
+            reject_opener,
+            store,
+            collection_cycle_id=CYCLE_ID,
+            collection_date=COLLECTION_DATE - dt.timedelta(days=1),
+            duration_seconds=60.0,
+            max_frames=10,
+            _clock=lambda: STARTED_AT,
+            _monotonic=lambda: 0.0,
+        )
+
+    assert open_calls == 0
+
+
+def test_orphan_receipt_restart_rejects_different_collection_date(
+    tmp_path: Path,
+) -> None:
+    store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
+    frame = _frame(1)
+    receipt = KrSourceReceipt(
+        source_run_id=f"{CYCLE_ID}:news",
+        source=KrCatalystSource.NEWS,
+        request_key="ls:nws:frame:000001:text",
+        received_at=frame.received_at,
+        http_status=101,
+        content_type="application/json",
+        payload_sha256=hashlib.sha256(frame.raw_payload).hexdigest(),
+    )
+    with store.writer() as writer:
+        _ = writer.append_source_receipt(receipt, frame.raw_payload)
+
+    with pytest.raises(LsNwsCollectionInputError):
+        _ = collect_ls_nws_news(
+            _opener(SequenceReceiver([None])),
+            store,
+            collection_cycle_id=CYCLE_ID,
+            collection_date=COLLECTION_DATE - dt.timedelta(days=1),
+            duration_seconds=60.0,
+            max_frames=10,
+            _clock=lambda: STARTED_AT,
+            _monotonic=lambda: 0.0,
+        )
+
+    assert store.source_runs(CYCLE_ID) == ()
 
 
 @pytest.mark.parametrize(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import stat
 from pathlib import Path
 
@@ -70,6 +71,46 @@ def test_cli_collects_fixture_then_restarts_without_secret_or_network(
     combined = first_report + second_report + terminal
     for private in _private_markers():
         assert private not in combined
+
+
+def test_cli_terminal_fixture_restart_does_not_reload_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "kr-theme.sqlite3"
+    output = tmp_path / "report"
+    run_ls_nws_collect.main(
+        collection_cycle_id="kr-ls-nws-cli-002",
+        collection_date="2026-07-15",
+        duration_seconds=60.0,
+        max_frames=10,
+        database=str(database),
+        output_dir=str(output),
+        fixture_manifest=str(FIXTURE_MANIFEST),
+        secret_path=None,
+    )
+
+    def reject_manifest_load(path: Path) -> None:
+        raise AssertionError(f"terminal restart loaded fixture manifest: {path.name}")
+
+    monkeypatch.setattr(
+        run_ls_nws_collect,
+        "load_ls_nws_fixture",
+        reject_manifest_load,
+    )
+
+    run_ls_nws_collect.main(
+        collection_cycle_id="kr-ls-nws-cli-002",
+        collection_date="2026-07-15",
+        duration_seconds=60.0,
+        max_frames=10,
+        database=str(database),
+        output_dir=str(output),
+        fixture_manifest=str(FIXTURE_MANIFEST),
+        secret_path=None,
+    )
+
+    assert "재시작 no-op: 예" in _report(output)
 
 
 @pytest.mark.parametrize(
@@ -209,6 +250,44 @@ def test_cli_redacts_unexpected_validation_cause(
 
     assert private_cause not in str(captured.value)
     assert captured.value.__cause__ is None
+
+
+def test_private_report_writer_does_not_follow_predictable_temp_symlink(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "summary.md"
+    protected = tmp_path / "protected.txt"
+    protected.write_text("must-stay-unchanged", encoding="utf-8")
+    legacy_temporary = report.with_name(f".{report.name}.{os.getpid()}.tmp")
+    legacy_temporary.symlink_to(protected)
+
+    run_ls_nws_collect._write_private_text(report, "new-report")
+
+    assert protected.read_text(encoding="utf-8") == "must-stay-unchanged"
+    assert report.read_text(encoding="utf-8") == "new-report"
+    assert not report.is_symlink()
+    assert legacy_temporary.is_symlink()
+
+
+def test_cli_rejects_database_report_path_collision_before_creation(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "report"
+    database = _report_path(output)
+
+    with pytest.raises(typer.BadParameter):
+        run_ls_nws_collect.main(
+            collection_cycle_id="kr-ls-nws-cli-001",
+            collection_date="2026-07-15",
+            duration_seconds=60.0,
+            max_frames=10,
+            database=str(database),
+            output_dir=str(output),
+            fixture_manifest=str(FIXTURE_MANIFEST),
+            secret_path=None,
+        )
+
+    assert not database.exists()
 
 
 def _private_markers() -> tuple[str, ...]:

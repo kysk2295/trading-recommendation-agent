@@ -59,28 +59,49 @@ def issue_ls_access_token(
         raise UnsafeLsTokenEndpointError
     if client.follow_redirects:
         raise UnsafeLsTokenRedirectPolicyError
+    status_code = 0
+    content_type = ""
+    payload = b""
+    response_too_large = False
+    transport_failed = False
     try:
-        response = client.post(
+        with client.stream(
+            "POST",
             LS_TOKEN_PATH,
-            headers={"content-type": "application/x-www-form-urlencoded"},
+            headers={
+                "accept": "application/json",
+                "accept-encoding": "identity",
+                "content-type": "application/x-www-form-urlencoded",
+            },
             data={
                 "grant_type": "client_credentials",
                 "appkey": credentials.app_key,
                 "appsecretkey": credentials.app_secret,
                 "scope": "oob",
             },
-        )
+        ) as response:
+            status_code = response.status_code
+            content_type = _response_content_type(response)
+            if status_code == httpx2.codes.OK and content_type == "application/json":
+                content = bytearray()
+                for chunk in response.iter_bytes(chunk_size=8_192):
+                    if len(content) + len(chunk) > MAX_LS_TOKEN_RESPONSE_BYTES:
+                        response_too_large = True
+                        break
+                    content.extend(chunk)
+                payload = bytes(content)
     except httpx2.HTTPError:
-        raise LsTokenTransportError from None
-    if response.status_code != httpx2.codes.OK:
-        raise LsTokenResponseError(f"http_{response.status_code}")
-    if _response_content_type(response) != "application/json":
+        transport_failed = True
+    if transport_failed:
+        raise LsTokenTransportError
+    if status_code != httpx2.codes.OK:
+        raise LsTokenResponseError(f"http_{status_code}")
+    if content_type != "application/json":
         raise LsTokenResponseError("content_type")
-    payload = bytes(response.content)
+    if response_too_large:
+        raise LsTokenResponseError("response_too_large")
     if not payload:
         raise LsTokenResponseError("empty_response")
-    if len(payload) > MAX_LS_TOKEN_RESPONSE_BYTES:
-        raise LsTokenResponseError("response_too_large")
     try:
         document: object = json.loads(payload)
     except (UnicodeError, json.JSONDecodeError):
