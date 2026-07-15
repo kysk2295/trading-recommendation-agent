@@ -15,6 +15,7 @@ from trading_agent.bar_archive import (
     archive_candidate_bars,
     archive_candidate_input,
 )
+from trading_agent.daily_research_contract import strategy_contract
 from trading_agent.lane_defaults import INTRADAY_PILOT_PAPER_RISK_CONFIG
 from trading_agent.models import Recommendation, RecommendationState
 from trading_agent.paper_entry_source import (
@@ -24,6 +25,7 @@ from trading_agent.paper_entry_source import (
 )
 from trading_agent.paper_execution_models import PaperOrderSide
 from trading_agent.store import PaperStore
+from trading_agent.strategy_factory import StrategyMode
 
 NEW_YORK = ZoneInfo("America/New_York")
 SEOUL = ZoneInfo("Asia/Seoul")
@@ -96,8 +98,8 @@ def test_loads_one_exact_current_orb_candidate_across_timezone_offsets(
 
     intent = request.candidate_intent
     assert intent.intent_id == RECOMMENDATION_ID
-    assert intent.strategy_id == "orb"
-    assert intent.strategy_version == "paper-smoke-v1"
+    assert intent.strategy_id == StrategyMode.ORB.value
+    assert intent.strategy_version == strategy_contract(StrategyMode.ORB).strategy_version
     assert intent.symbol == "AAPL"
     assert intent.created_at == OBSERVED_AT
     assert intent.side is PaperOrderSide.BUY

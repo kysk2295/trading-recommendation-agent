@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, override
 
+from trading_agent.daily_research_contract import strategy_contract
 from trading_agent.lane_defaults import INTRADAY_PILOT_PAPER_RISK_CONFIG
 from trading_agent.paper_execution_models import (
     IntentId,
@@ -16,9 +17,11 @@ from trading_agent.paper_execution_models import (
 )
 from trading_agent.paper_operating_session_models import PaperOrderAdmissionRequest
 from trading_agent.paper_order_gate_models import LatestCompletedBar
+from trading_agent.strategy_factory import StrategyMode
 from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
 
 ORB_STRATEGY: Final = "opening_range_breakout"
+ORB_RESEARCH_CONTRACT: Final = strategy_contract(StrategyMode.ORB)
 SOURCE_MAX_AGE: Final = dt.timedelta(seconds=30)
 BAR_DURATION: Final = dt.timedelta(minutes=1)
 MAX_CLIENT_ORDER_ID_LENGTH: Final = 128
@@ -254,8 +257,8 @@ def _request(
         ),
         PaperOrderIntent(
             IntentId(recommendation.recommendation_id),
-            "orb",
-            "paper-smoke-v1",
+            StrategyMode.ORB.value,
+            ORB_RESEARCH_CONTRACT.strategy_version,
             recommendation.symbol,
             recommendation.created_at,
             PaperOrderSide.BUY,
