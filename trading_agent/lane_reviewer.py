@@ -21,11 +21,15 @@ from trading_agent.lane_defaults import (
 )
 from trading_agent.lane_policy_models import LaneId
 from trading_agent.lane_registry_store import LaneRegistryReader
-from trading_agent.lane_review_models import LaneReviewerAction, LaneReviewEvent
+from trading_agent.lane_review_models import (
+    CURRENT_LANE_REVIEWER_VERSION,
+    LaneReviewerAction,
+    LaneReviewEvent,
+)
 from trading_agent.lane_review_store import LaneReviewStore
 from trading_agent.strategy_factory import StrategyMode
 
-LANE_REVIEWER_VERSION: Final = "lane_reviewer_v1"
+LANE_REVIEWER_VERSION: Final = CURRENT_LANE_REVIEWER_VERSION
 ORB_SCOPE: Final = current_intraday_experiment_scope("H-MOM-ORB-001")
 ORB_SCOPE_KEY: Final = experiment_scope_key(ORB_SCOPE)
 

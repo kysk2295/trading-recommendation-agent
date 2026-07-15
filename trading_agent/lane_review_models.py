@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 from enum import StrEnum
-from typing import Literal, Self
+from typing import Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -12,6 +12,7 @@ from trading_agent.lane_policy_models import LaneId
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+CURRENT_LANE_REVIEWER_VERSION: Final = "lane_reviewer_v1"
 
 
 class LaneReviewerAction(StrEnum):
