@@ -20,6 +20,10 @@ from trading_agent.candidate_input_audit import (
     append_candidate_input_cycle,
 )
 from trading_agent.causality import exclude_backdated_recommendations
+from trading_agent.contract_outbox import (
+    append_opportunity_snapshot,
+    append_trade_signal_publication,
+)
 from trading_agent.engine import RecommendationEngine
 from trading_agent.kis_auth import (
     KisMode,
@@ -27,6 +31,7 @@ from trading_agent.kis_auth import (
     get_access_token,
     load_kis_credentials,
 )
+from trading_agent.kis_opportunity_projection import project_kis_us_opportunity
 from trading_agent.kis_provider import KisRankedStock
 from trading_agent.kis_rankings import (
     discover_rankings as _discover_rankings,
@@ -38,23 +43,34 @@ from trading_agent.kis_retry_audit import append_kis_retry_audit
 from trading_agent.kis_scan import KisPaperScanner, ScanObservation
 from trading_agent.kis_scan_report import ScanSummary, write_scan_summary
 from trading_agent.market_risk import (
+    HaltSnapshot,
     MarketRiskConfig,
     MarketRiskGate,
+    MarketRiskScreen,
     fetch_active_halts,
     write_market_risk_screen,
 )
+from trading_agent.models import Recommendation
 from trading_agent.opening_gap import OpeningGapCapture, capture_opening_gaps
 from trading_agent.ranking_journal import (
+    RankingDiscovery,
     RankingSnapshot,
     append_ranking_coverage,
     append_ranking_snapshot,
 )
 from trading_agent.replay import write_alert_outbox, write_report
+from trading_agent.research_identity_models import (
+    AgentFamily,
+    MarketId,
+    StrategyLaneRef,
+)
 from trading_agent.risk import RiskConfig
 from trading_agent.scan_cycle import scan_exit_code
 from trading_agent.scanner import MomentumScanner, ScannerConfig
+from trading_agent.signal_contract_models import OpportunitySnapshot
 from trading_agent.store import PaperStore
 from trading_agent.strategy_factory import StrategyMode, build_strategy
+from trading_agent.trade_signal_publication import project_trade_signal_publications
 
 
 def unselected_tracked_candidates(
@@ -72,6 +88,62 @@ def partition_halted_candidates(
     allowed = tuple(stock for stock in candidates if stock.symbol.upper() not in halted_symbols)
     blocked = tuple(stock for stock in candidates if stock.symbol.upper() in halted_symbols)
     return allowed, blocked
+
+
+def publish_opportunity_contract(
+    output: Path,
+    discovery: RankingDiscovery,
+    halt_snapshot: HaltSnapshot,
+    risk_screen: MarketRiskScreen,
+    observed_at: dt.datetime,
+) -> OpportunitySnapshot | None:
+    if discovery.failures:
+        return None
+    snapshot = project_kis_us_opportunity(
+        discovery,
+        halt_snapshot=halt_snapshot,
+        risk_screen=risk_screen,
+        observed_at=observed_at,
+    )
+    if snapshot is not None:
+        _ = append_opportunity_snapshot(
+            output / "opportunities.v1.jsonl",
+            snapshot,
+        )
+    return snapshot
+
+
+def publish_trade_signal_contracts(
+    output: Path,
+    recommendations: tuple[Recommendation, ...],
+    opportunity: OpportunitySnapshot | None,
+    strategy: StrategyMode,
+    published_at: dt.datetime,
+    created_after: dt.datetime,
+) -> int:
+    if opportunity is None:
+        return 0
+    strategy_lane = StrategyLaneRef(
+        market_id=MarketId.US_EQUITIES,
+        agent_family=AgentFamily.DAY_TRADING,
+        strategy_id=strategy.value,
+    )
+    publications = project_trade_signal_publications(
+        recommendations,
+        strategy_lane=strategy_lane,
+        strategy_version=f"{strategy.value}-v1",
+        opportunity=opportunity,
+        published_at=published_at,
+        created_after=created_after,
+    )
+    return sum(
+        append_trade_signal_publication(
+            output / "trade-signals.v1.jsonl",
+            output / "trade-signal-cards-ko",
+            publication,
+        )
+        for publication in publications
+    )
 
 
 def main(
@@ -104,6 +176,7 @@ def main(
     candidate_observations: list[ScanObservation] = []
     selected_count = 0
     scan_completed = False
+    opportunity: OpportunitySnapshot | None = None
     retry_capture = begin_retry_capture()
     try:
         with create_kis_client(mode) as client:
@@ -142,6 +215,13 @@ def main(
                 output / "kis_ranking_request_coverage.csv",
                 checked_at,
                 discovery,
+            )
+            opportunity = publish_opportunity_contract(
+                output,
+                discovery,
+                halt_snapshot,
+                risk_screen,
+                checked_at,
             )
             _ = track_candidates(database, checked_at, candidates)
             followers = unselected_tracked_candidates(
@@ -190,7 +270,16 @@ def main(
         )
         append_kis_retry_audit(output, started_at, retry_events)
     write_report(output / "recommendations_ko.md", store)
-    queued = write_alert_outbox(output, store, dt.datetime.now().astimezone())
+    published_at = dt.datetime.now().astimezone()
+    queued = write_alert_outbox(output, store, published_at)
+    contract_signals = publish_trade_signal_contracts(
+        output,
+        store.recommendations(),
+        opportunity,
+        strategy,
+        published_at,
+        started_at,
+    )
     write_scan_summary(
         output / "kis_scan_summary_ko.md",
         ScanSummary(
@@ -208,7 +297,8 @@ def main(
         f"[green]완료[/green] 현재 후보 {len(candidates)}개, "
         + f"추적 {len(followers) + len(blocked_followers)}개, 추천 "
         + f"{len(store.recommendations())}개, 인과성 제외 {causality_exclusions}개, "
-        + f"신규 카드 {queued}개, {output}"
+        + f"신규 카드 {queued}개, v2 기회 {int(opportunity is not None)}개, "
+        + f"신규 v2 조건부 신호 {contract_signals}개, {output}"
     )
     exit_code = scan_exit_code(
         tuple(observations),
