@@ -101,6 +101,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [Lifecycle Controller v1 체크포인트](docs/checkpoints/2026-07-15-lifecycle-controller-v1-ko.md)
 - [ORB 일일 Shadow Trial 운영 체크포인트](docs/checkpoints/2026-07-15-orb-daily-shadow-trial-ko.md)
 - [cancel·EOD 평탄화 armed smoke CLI 체크포인트](docs/checkpoints/2026-07-15-paper-safety-mutation-smoke-cli-ko.md)
+- [intraday Paper 전 수명주기 fake broker E2E 체크포인트](docs/checkpoints/2026-07-15-paper-smoke-e2e-ko.md)
 - [Alpaca Paper CLI 오류 정보 최소화 체크포인트](docs/checkpoints/2026-07-15-paper-cli-error-redaction-ko.md)
 - [첫 정규장 Alpaca Paper smoke 런북](docs/runbooks/alpaca-paper-first-regular-session-smoke-ko.md)
 - [cancel·EOD 평탄화 smoke 구현 계획](docs/superpowers/plans/2026-07-15-paper-safety-mutation-smoke.md)

@@ -67,6 +67,7 @@
 - 모든 Alpaca Paper 운영 CLI는 잡힌 실행 예외의 클래스명만 stderr·보고서에 남기고 원문 계좌·broker·경로 정보를 버림
 - bootstrap·readiness·recovery·entry·보호 OCO·safety 운영 report는 기존 파일을 포함해 atomic mode `600`으로 강제 교체
 - 첫 정규장 smoke의 GET-only 준비, exact current ORB 후보 선택, armed entry, 보호 OCO, timeout 복구, staged EOD 평탄화와 최종 flat 대사를 하나의 운영 런북으로 고정
+- 동일 공개 운영 세션 API의 fake broker E2E가 entry→체결 trade update→보호 OCO→staged EOD cancel/close→최종 flat broker/shadow 대사를 검증하며, 실제 Paper POST/DELETE는 계속 0건
 
 ## 다음 우선순위
 
