@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import csv
 import datetime as dt
 import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
-from typing import Final, override
+from typing import Final, Literal, Self, override
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from trading_agent.adaptive_evaluation_models import AdaptiveEvaluation
 from trading_agent.daily_research_contract import (
@@ -82,6 +84,28 @@ class InvalidOrbForwardTrialSourceError(RuntimeError):
     @override
     def __str__(self) -> str:
         return "ORB 일일 forward trial의 exact immutable source를 확인하지 못했습니다"
+
+
+class OrbTrialFailurePhase(StrEnum):
+    PAPER_METRICS = "paper_metrics"
+    DAILY_RESEARCH_RECORD = "daily_research_record"
+    ADAPTIVE_EVALUATION = "adaptive_evaluation"
+    LANE_FORWARD_VALIDATION = "lane_forward_validation"
+
+
+class _PhaseAuditRow(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    started_at: dt.datetime
+    exit_code: int
+    status: Literal["ok", "failed"]
+
+    @model_validator(mode="after")
+    def validate_result(self) -> Self:
+        expected = "ok" if self.exit_code == 0 else "failed"
+        if not _aware(self.started_at) or self.status != expected:
+            raise ValueError("invalid phase audit row")
+        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,6 +296,61 @@ def finalize_orb_shadow_trial(
             occurred_at=event_occurred_at,
             artifact_sha256s=artifacts,
             reason_codes=reasons,
+            previous_event_key=started.event_key,
+        )
+        if existing_terminal is not None:
+            if existing_terminal.event != event:
+                raise InvalidOrbForwardTrialSourceError
+            return OrbTrialEventResult(False, existing_terminal.event)
+    except InvalidOrbForwardTrialSourceError:
+        raise
+    except _SOURCE_ERRORS:
+        raise InvalidOrbForwardTrialSourceError from None
+
+    with experiment_ledger.writer() as writer:
+        created = writer.append_trial_event(event)
+    return OrbTrialEventResult(created, event)
+
+
+def fail_orb_shadow_trial(
+    *,
+    experiment_ledger: ExperimentLedgerStore,
+    session_date: dt.date,
+    phase: OrbTrialFailurePhase,
+    audit: Path,
+    occurred_at: dt.datetime,
+) -> OrbTrialEventResult:
+    try:
+        bounds = _event_bounds(session_date, occurred_at)
+        if occurred_at < bounds[1] or not isinstance(phase, OrbTrialFailurePhase):
+            raise InvalidOrbForwardTrialSourceError
+        _, registration, events = _verified_daily_trial(
+            experiment_ledger,
+            session_date,
+        )
+        if not events or len(events) > 2:
+            raise InvalidOrbForwardTrialSourceError
+        started = next(iter(events))
+        existing_terminal = next(iter(events[1:]), None)
+        if (
+            started.event.event_kind is not TrialEventKind.STARTED
+            or not bounds[0] <= started.event.occurred_at < bounds[1]
+        ):
+            raise InvalidOrbForwardTrialSourceError
+        audit_sha256 = _verified_failed_audit(
+            audit,
+            session_date=session_date,
+            occurred_at=occurred_at,
+            close_at=bounds[1],
+        )
+        event_occurred_at = occurred_at if existing_terminal is None else existing_terminal.event.occurred_at
+        event = ExperimentTrialEvent(
+            trial_id=registration.trial_id,
+            sequence=2,
+            event_kind=TrialEventKind.FAILED,
+            occurred_at=event_occurred_at,
+            artifact_sha256s=(audit_sha256,),
+            reason_codes=(f"{phase.value}_phase_failed",),
             previous_event_key=started.event_key,
         )
         if existing_terminal is not None:
@@ -533,6 +612,32 @@ def _verified_terminal_evidence(
     return event_kind, artifacts, canonical_reasons
 
 
+def _verified_failed_audit(
+    audit: Path,
+    *,
+    session_date: dt.date,
+    occurred_at: dt.datetime,
+    close_at: dt.datetime,
+) -> str:
+    raw = audit.read_bytes()
+    reader = csv.DictReader(raw.decode("utf-8").splitlines())
+    if tuple(reader.fieldnames or ()) != ("started_at", "exit_code", "status"):
+        raise InvalidOrbForwardTrialSourceError
+    rows = tuple(_PhaseAuditRow.model_validate(row) for row in reader)
+    if not rows:
+        raise InvalidOrbForwardTrialSourceError
+    latest = rows[-1]
+    if (
+        latest.started_at.astimezone(NEW_YORK).date() != session_date
+        or latest.started_at < close_at
+        or latest.started_at > occurred_at
+        or latest.exit_code == 0
+        or latest.status != "failed"
+    ):
+        raise InvalidOrbForwardTrialSourceError
+    return hashlib.sha256(raw).hexdigest()
+
+
 def _trial_registration(
     version: StrategyVersionRegistration,
     *,
@@ -570,6 +675,7 @@ def _event_bounds(
 
 
 _SOURCE_ERRORS = (
+    csv.Error,
     InvalidExperimentLedgerSourceError,
     UnsupportedExperimentLedgerSchemaError,
     InvalidLaneRegistrySourceError,

@@ -38,12 +38,15 @@ from trading_agent.lane_review_store import LaneReviewReader, LaneReviewStore
 from trading_agent.lane_reviewer import review_intraday_lane_day
 from trading_agent.orb_forward_trial import (
     InvalidOrbForwardTrialSourceError,
+    OrbTrialFailurePhase,
+    fail_orb_shadow_trial,
     finalize_orb_shadow_trial,
     orb_shadow_trial_data_version,
     orb_shadow_trial_id,
     register_orb_shadow_trial,
     start_orb_shadow_trial,
 )
+from trading_agent.scan_cycle import append_cycle_audit
 from trading_agent.strategy_factory import StrategyMode
 
 SESSION_DATE = dt.date(2026, 7, 16)
@@ -432,6 +435,78 @@ def test_terminal_rejects_changed_evidence_bytes_without_event(
     assert len(sources.experiments.trial_events(trial_id)) == 1
 
 
+@pytest.mark.parametrize("phase", tuple(OrbTrialFailurePhase))
+def test_audited_nonzero_phase_appends_failed_terminal_and_replays(
+    tmp_path: Path,
+    phase: OrbTrialFailurePhase,
+) -> None:
+    registry, experiments = _seed_started_trial(tmp_path)
+    audit = tmp_path / f"{phase.value}.csv"
+    append_cycle_audit(
+        audit,
+        AFTER_CLOSE - dt.timedelta(minutes=10),
+        1,
+    )
+
+    first = fail_orb_shadow_trial(
+        experiment_ledger=experiments,
+        session_date=SESSION_DATE,
+        phase=phase,
+        audit=audit,
+        occurred_at=AFTER_CLOSE,
+    )
+    replay = fail_orb_shadow_trial(
+        experiment_ledger=experiments,
+        session_date=SESSION_DATE,
+        phase=phase,
+        audit=audit,
+        occurred_at=AFTER_CLOSE + dt.timedelta(minutes=5),
+    )
+
+    assert first.created is True
+    assert first.event.event_kind is TrialEventKind.FAILED
+    assert first.event.artifact_sha256s == (hashlib.sha256(audit.read_bytes()).hexdigest(),)
+    assert first.event.reason_codes == (f"{phase.value}_phase_failed",)
+    assert replay.created is False
+    assert replay.event == first.event
+    trial_id = orb_shadow_trial_id(SESSION_DATE, ORB_CONTRACT.strategy_version)
+    assert len(experiments.trial_events(trial_id)) == 2
+    assert registry.is_initialized()
+
+
+@pytest.mark.parametrize(
+    "case",
+    ("missing", "malformed", "success", "wrong_date", "before_close"),
+)
+def test_failed_terminal_requires_exact_same_session_phase_audit(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    _, experiments = _seed_started_trial(tmp_path)
+    audit = tmp_path / "phase.csv"
+    if case == "malformed":
+        audit.write_text("not,a,cycle,audit\n", encoding="utf-8")
+    elif case != "missing":
+        started_at = AFTER_CLOSE - dt.timedelta(minutes=10)
+        if case == "wrong_date":
+            started_at -= dt.timedelta(days=1)
+        elif case == "before_close":
+            started_at = OPEN + dt.timedelta(hours=1)
+        append_cycle_audit(audit, started_at, 0 if case == "success" else 1)
+
+    with pytest.raises(InvalidOrbForwardTrialSourceError):
+        _ = fail_orb_shadow_trial(
+            experiment_ledger=experiments,
+            session_date=SESSION_DATE,
+            phase=OrbTrialFailurePhase.PAPER_METRICS,
+            audit=audit,
+            occurred_at=AFTER_CLOSE,
+        )
+
+    trial_id = orb_shadow_trial_id(SESSION_DATE, ORB_CONTRACT.strategy_version)
+    assert len(experiments.trial_events(trial_id)) == 1
+
+
 def _seed_terminal_sources(
     tmp_path: Path,
     *,
@@ -527,6 +602,23 @@ def _seed_terminal_sources(
         reviewed_at=REVIEWED_AT,
     )
     return _TerminalSources(registry, reviews, experiments, session, record, snapshot)
+
+
+def _seed_started_trial(tmp_path: Path) -> tuple[LaneRegistryStore, ExperimentLedgerStore]:
+    registry, experiments = _seed_lineage(tmp_path)
+    _ = register_orb_shadow_trial(
+        lane_registry=registry,
+        experiment_ledger=experiments,
+        session_date=SESSION_DATE,
+        runtime_code_version=CODE_VERSION,
+        registered_at=PREOPEN,
+    )
+    _ = start_orb_shadow_trial(
+        experiment_ledger=experiments,
+        session_date=SESSION_DATE,
+        started_at=OPEN + dt.timedelta(minutes=1),
+    )
+    return registry, experiments
 
 
 def _daily_record_sha256(session: Path) -> str:
