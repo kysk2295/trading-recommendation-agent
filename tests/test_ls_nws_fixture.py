@@ -36,19 +36,25 @@ def test_committed_fixture_replays_exact_ordered_raw_frames() -> None:
     with source.open() as receiver:
         first = receiver.receive_frame(1.0)
         second = receiver.receive_frame(1.0)
+        third = receiver.receive_frame(1.0)
         completed = receiver.receive_frame(1.0)
         completed_again = receiver.receive_frame(1.0)
 
     assert first is not None
     assert first.sequence == 1
-    assert first.received_at.isoformat() == "2026-07-15T09:01:01+09:00"
+    assert first.received_at.isoformat() == "2026-07-15T09:00:59+09:00"
     assert first.wire_kind is LsNwsWireKind.TEXT
-    assert first.raw_payload == (FIXTURE_ROOT / "frame-000001.json").read_bytes()
+    assert first.raw_payload == (FIXTURE_ROOT / "frame-000000.json").read_bytes()
     assert second is not None
     assert second.sequence == 2
-    assert second.received_at.isoformat() == "2026-07-15T09:01:02+09:00"
-    assert second.wire_kind is LsNwsWireKind.BINARY
-    assert second.raw_payload == (FIXTURE_ROOT / "frame-000002.json").read_bytes()
+    assert second.received_at.isoformat() == "2026-07-15T09:01:01+09:00"
+    assert second.wire_kind is LsNwsWireKind.TEXT
+    assert second.raw_payload == (FIXTURE_ROOT / "frame-000001.json").read_bytes()
+    assert third is not None
+    assert third.sequence == 3
+    assert third.received_at.isoformat() == "2026-07-15T09:01:02+09:00"
+    assert third.wire_kind is LsNwsWireKind.BINARY
+    assert third.raw_payload == (FIXTURE_ROOT / "frame-000002.json").read_bytes()
     assert completed is None
     assert completed_again is None
 

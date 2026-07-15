@@ -235,6 +235,7 @@ def _report(
             f"- 수집 날짜: {collection_date.isoformat()}",
             f"- source 상태: {run.status.value}",
             f"- failure code: {run.failure_code or '없음'}",
+            f"- 구독 확인: {'예' if result.subscription_acknowledged else '아니오'}",
             f"- receipt: {result.receipt_count}",
             f"- 신규 receipt: {result.new_receipt_count}",
             f"- catalyst: {result.catalyst_count}",

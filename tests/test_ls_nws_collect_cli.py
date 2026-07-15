@@ -19,6 +19,7 @@ PRIVATE_TITLE_1 = "Synthetic 반도체 신규 공급 계약"
 PRIVATE_TITLE_2 = "Synthetic 로봇 수주 확대"
 PRIVATE_REALKEY_1 = "202607150901000100000001"
 PRIVATE_REALKEY_2 = "202607150901010100000002"
+PRIVATE_ACK_MESSAGE = "subscription accepted"
 
 
 def test_cli_collects_fixture_then_restarts_without_secret_or_network(
@@ -54,7 +55,7 @@ def test_cli_collects_fixture_then_restarts_without_secret_or_network(
     terminal = capsys.readouterr().out
 
     store = KrThemeStore(database)
-    assert len(store.source_receipts()) == 2
+    assert len(store.source_receipts()) == 3
     assert len(store.catalysts()) == 2
     assert len(store.observation_receipts()) == 2
     assert len(store.source_runs()) == 1
@@ -62,11 +63,13 @@ def test_cli_collects_fixture_then_restarts_without_secret_or_network(
     assert stat.S_IMODE(database.stat().st_mode) == 0o600
     assert stat.S_IMODE(Path(f"{database}.writer.lock").stat().st_mode) == 0o600
     assert stat.S_IMODE(_report_path(output).stat().st_mode) == 0o600
-    assert "신규 receipt: 2" in first_report
+    assert "신규 receipt: 3" in first_report
     assert "신규 catalyst: 2" in first_report
+    assert "구독 확인: 예" in first_report
     assert "재시작 no-op: 아니오" in first_report
     assert "신규 receipt: 0" in second_report
     assert "신규 catalyst: 0" in second_report
+    assert "구독 확인: 예" in second_report
     assert "재시작 no-op: 예" in second_report
     combined = first_report + second_report + terminal
     for private in _private_markers():
@@ -110,7 +113,9 @@ def test_cli_terminal_fixture_restart_does_not_reload_manifest(
         secret_path=None,
     )
 
-    assert "재시작 no-op: 예" in _report(output)
+    report = _report(output)
+    assert "재시작 no-op: 예" in report
+    assert "구독 확인: 예" in report
 
 
 @pytest.mark.parametrize(
@@ -294,6 +299,7 @@ def _private_markers() -> tuple[str, ...]:
     raw_hashes = tuple(
         hashlib.sha256(path.read_bytes()).hexdigest()
         for path in (
+            FIXTURE_ROOT / "frame-000000.json",
             FIXTURE_ROOT / "frame-000001.json",
             FIXTURE_ROOT / "frame-000002.json",
         )
@@ -303,6 +309,7 @@ def _private_markers() -> tuple[str, ...]:
         PRIVATE_TITLE_2,
         PRIVATE_REALKEY_1,
         PRIVATE_REALKEY_2,
+        PRIVATE_ACK_MESSAGE,
         *raw_hashes,
         "LS_APP_KEY",
         "LS_APP_SECRET",
