@@ -93,11 +93,13 @@ exact lane manifest + exact intraday experiment scopes
 
 query-only lane snapshot + daily/adaptive evidence
 → independent Reviewer recommendation
-→ future deterministic Lifecycle Controller
+→ deterministic Lifecycle Controller v1
 → validated next-session lifecycle transition
 ```
 
-현재 bootstrap과 ledger projection까지만 구현됐다. bootstrap은 credential, HTTP, broker, execution DB, mutation adapter와 Portfolio Manager를 import하지 않는다. Reviewer recommendation을 transition으로 바꾸는 Lifecycle Controller는 아직 없고 Reviewer 자신은 상태·champion·주문권한·위험예산을 변경할 수 없다.
+현재 bootstrap·ledger projection과 Lifecycle Controller v1까지 구현됐다. Controller는 exact intraday manifest/ORB scope, finalized flat snapshot, 같은 snapshot에 결합된 Reviewer event와 현재 lifecycle chain을 query-only로 다시 검증한다. `suspend` 권고 중 `five_day_clear_degradation` 근거와 완전한 데이터 품질이 모두 확인된 경우에만 다음 NYSE 정규 세션부터 `suspended` event를 append한다. 같은 evidence replay는 기존 event를 반환하며 future-effective pending event, source 불일치와 시간 역행은 fail-closed한다.
+
+Controller의 권한은 의도적으로 좁다. `collecting`·`shadow_continue`·`diagnose`는 상태를 바꾸지 않고, `early_stop`·`comparison_ready`·`promotion_review`는 각각 irreversible reject, equal-risk terminal trial, broker/shadow·DSR/PBO·parameter plateau·SIP 증거 계약이 아직 없으므로 차단한다. credential, HTTP, broker, execution DB, mutation adapter와 Portfolio Manager를 import하지 않으며 lifecycle 상태만으로 주문권한이나 risk allocation이 생기지 않는다. Reviewer 자신도 상태·champion·주문권한·위험예산을 변경할 수 없다.
 
 `run_orb_lane_forward_validation.py`는 두 CLI의 장후 순서만 소유한다. snapshot child의 종료코드가 0일 때만 Reviewer child를 시작하고 `post_session_intraday_snapshot_cycles.csv`와 `post_session_lane_reviewer_cycles.csv`를 별도로 append한다. aggregate report는 단계 성공·실패만 노출하며 path, key, hash, fingerprint, broker ID와 raw payload는 기록하지 않는다. runner에는 credential·endpoint·arm·fixture·force 옵션이 없고 스케줄링, 상태변경, champion 선언 또는 주문 기능도 없다.
 

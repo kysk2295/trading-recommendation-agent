@@ -56,7 +56,9 @@
 - lane registry·review ledger·execution ledger와 분리된 global experiment ledger schema v1 구현. hypothesis/version/trial 등록과 trial/lifecycle event는 append-only이며 single Writer·query-only Reader·canonical key·전체 chain 검증을 사용
 - trial의 completed·failed·censored terminal 결과를 모두 보존하고, lifecycle은 `idea→historical→experimental_shadow→experimental_paper→challenger→paper_champion` 및 suspended/rejected 닫힌 전이표와 next-session as-of projection을 구현
 - local-only `run_experiment_ledger_bootstrap.py`가 exact intraday manifest·네 scope를 먼저 검증한 뒤 현재 네 전략을 `experimental_shadow`로 이관. 최초 4/4/4 생성과 0/0/0 replay, mode 600 DB를 fixture QA했으며 broker mutation은 없음
-- Reviewer evidence를 상태 전이로 바꾸는 deterministic Lifecycle Controller는 아직 구현하지 않았고 Reviewer 자체의 자동 상태·주문권한 변경은 계속 금지
+- deterministic Lifecycle Controller v1 구현. exact ORB manifest/scope·finalized flat snapshot·Reviewer event·현재 global lifecycle chain을 다시 검증하고 성숙 구간의 명확한 5일 열화만 다음 NYSE 세션 `suspended`로 append하며 exact replay는 새 event를 만들지 않음
+- Controller의 `collecting`·`shadow_continue`·`diagnose`는 상태 유지, `early_stop`·`comparison_ready`·`promotion_review`는 증거 계약 미완성으로 차단. 복구·reject·challenger·champion·주문권한·위험예산 변경은 없음
+- local-only `run_lifecycle_controller.py` 구현. credential·HTTP·broker·execution·Portfolio Manager를 import하지 않고 report에서 path·key·hash·strategy·raw reason을 제외하며 broker mutation은 0건
 - armed entry·safety smoke는 하나의 intraday pilot risk contract를 공유하며 100 USD·10 USD·1포지션·30 USD·편도 20bp·risk fraction 1/3000을 유지
 - armed entry CLI는 free-form 종목·가격·시각·수량을 받지 않고 query-only watch SQLite에서 현재 직전 완료 정규장 1분봉에 결합된 30초 이내 ORB `setup` 후보 정확히 하나만 1주 요청으로 투영한 뒤 credential·운영 세션을 연다
 - 모든 Alpaca Paper 운영 CLI는 잡힌 실행 예외의 클래스명만 stderr·보고서에 남기고 원문 계좌·broker·경로 정보를 버림
@@ -64,10 +66,10 @@
 
 ## 다음 우선순위
 
-1. 독립 Reviewer의 exact evidence와 global experiment ledger projection만 읽는 deterministic Lifecycle Controller를 설계·구현하되 Reviewer 단독 권고로는 transition하지 않음
+1. ORB daily forward-validation 결과를 사전등록 trial과 terminal `completed`·`failed`·`censored` evidence로 연결하되 scope·비용·데이터·코드 버전이 다르면 혼합하지 않음
 2. 열린 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증
 3. 추가 부분체결이 실제 발생할 때 staged 보호 OCO cancel → terminal 대사 → 다음 호출 replacement를 같은 축소 한도에서 검증하되 체결을 억지로 만들지 않음
-4. ORB daily forward-validation 결과를 사전등록 trial의 terminal evidence와 Controller 입력으로 연결하고, swing은 shadow-only·regime은 signal-only를 유지
+4. equal-risk terminal trial·broker/shadow·DSR/PBO·parameter plateau·SIP 증거 계약이 모두 생긴 뒤에만 comparison·promotion Controller 단계를 별도 구현
 5. 최소 두 executable lane champion 전에는 Portfolio Manager를 구현하지 않음
 
 ## 시작 전 확인
@@ -84,5 +86,5 @@
 ```text
 이 프로젝트의 README.md, CODEX_START_HERE.md, AGENTS.md와 docs/runtime_audit.md를 먼저 읽어줘.
 현재 Single Writer Alpaca Paper 기반을 이어서 개발해줘.
-global experiment ledger의 다음 단계인 Reviewer evidence→Lifecycle Controller를 query-only source와 next-session transition으로 구현해줘. 열린 정규장과 credential·current ORB 후보가 모두 갖춰진 경우에만 축소 Paper 수명주기 smoke를 실행하고, 하나라도 부족하면 broker mutation을 하지 마.
+global experiment ledger의 다음 단계인 ORB 일일 forward 결과→사전등록 trial terminal evidence 연결을 구현해줘. 열린 정규장과 credential·current ORB 후보가 모두 갖춰진 경우에만 축소 Paper 수명주기 smoke를 실행하고, 하나라도 부족하면 broker mutation을 하지 마.
 ```
