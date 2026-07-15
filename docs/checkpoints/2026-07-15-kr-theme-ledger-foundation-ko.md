@@ -24,7 +24,7 @@
 - `kr_collection_cycles`: exact source coverage와 완전성
 - `kr_theme_classifications`: 원문 catalyst를 참조하는 버전형 분류 결과
 
-모든 표의 UPDATE/DELETE는 SQLite trigger가 거부한다. DB와 writer lock은 mode `600`, writer는 nonblocking 단일 lease, reader는 `mode=ro`와 `query_only`다. reader는 model identity와 raw BLOB checksum을 다시 검증한다.
+모든 표의 UPDATE/DELETE는 SQLite trigger가 거부한다. DB와 writer lock은 mode `600`, writer는 nonblocking 단일 lease, reader는 `mode=ro`와 `query_only`다. reader는 model identity와 raw BLOB checksum을 다시 검증하며 반환 객체의 repr에도 raw byte를 포함하지 않는다.
 
 동일 source identity와 동일 원문은 idempotent하다. 다른 cycle에서 다시 관측하면 원문을 복제하지 않고 observation만 추가한다. 동일 identity의 원문·metadata 변경, 관측 수와 coverage count 불일치, 존재하지 않거나 아직 관측되지 않은 촉매의 분류는 fail-closed한다.
 
@@ -56,6 +56,7 @@ synthetic fixture와 저장 계약 검증은 테마 분류 정확도, 시장 예
 - `e50dfda feat: add KR theme evidence contracts`
 - `fdb87b8 feat: add append-only KR theme ledger`
 - `141d767 feat: ingest local KR catalyst manifests`
+- `53ba0ad fix: keep KR catalyst payloads out of repr`
 
 ## 남은 Milestone 3
 
