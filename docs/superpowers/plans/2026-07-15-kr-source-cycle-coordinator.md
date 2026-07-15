@@ -207,7 +207,7 @@ git commit -m "docs: record KR source cycle milestone"
 **Files:**
 - Verify all files changed by Tasks 1-3
 
-- [ ] **Step 1: Review the complete diff and repository status**
+- [x] **Step 1: Review the complete diff and repository status**
 
 Run `git diff main...HEAD --check`, inspect every changed file, and confirm no credentials, provider payloads, account code or unrelated work entered the branch.
 
