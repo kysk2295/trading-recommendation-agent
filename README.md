@@ -6,6 +6,8 @@
 
 실제 자금 거래는 목표가 아니다. 앞으로 추가되는 실행 코드는 `https://paper-api.alpaca.markets`에만 연결하며 Alpaca live endpoint, 실계좌 키와 실제 주문 경로는 프로젝트에서 차단한다.
 
+다중 시장 상위 계약도 점진적으로 추가됐다. `MarketId → AgentFamily → StrategyLaneRef` 연구 좌표, US 기존 execution lane의 명시적 adapter, 사전등록 composite experiment, causal `OpportunitySnapshot`·`TradeSignalEnvelope`, 기존 intraday `Recommendation`의 conditional signal projection을 제공한다. 이는 계약 기반만 완성한 상태이며 KR 촉매 수집, 새 swing·systematic quant 엔진, 외부 실시간 알림 또는 추가 주문 경로가 실행 중이라는 뜻은 아니다.
+
 ## 최종 목표
 
 ```text
@@ -79,6 +81,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 ## 문서
 
 - [다중 시장 트레이딩 에이전트 Research OS 통합 설계](docs/superpowers/specs/2026-07-15-multi-market-agent-research-os-design.md)
+- [다중 시장 Agent 계약 체크포인트](docs/checkpoints/2026-07-15-multi-market-agent-contracts-ko.md)
 - [승인된 전체 설계](docs/superpowers/specs/2026-07-14-autonomous-paper-trading-research-os-design.md)
 - [Lane control-plane 계약 설계](docs/superpowers/specs/2026-07-15-lane-control-plane-contracts-design.md)
 - [ORB lane 일일 snapshot·Reviewer loop 설계](docs/superpowers/specs/2026-07-15-orb-lane-daily-review-loop-design.md)

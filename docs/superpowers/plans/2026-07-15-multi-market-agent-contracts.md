@@ -880,7 +880,7 @@ Run `uv run python run_trading_agent_replay.py --help`; expect exit 0 and the in
 
 Run `uv run python run_trading_agent_replay.py /tmp/does-not-exist.csv`; expect nonzero exit and a redacted missing-input error.
 
-Create a fresh temporary directory with `mktemp -d`, then run `uv run python run_trading_agent_replay.py examples/example_intraday.csv <temp-dir>/replay`; expect exit 0 and generated recommendation report, outbox, and SQLite files.
+Create a fresh temporary directory with `mktemp -d`, then run `uv run python run_trading_agent_replay.py examples/example_intraday.csv --output-dir <temp-dir>/replay`; expect exit 0 and generated recommendation report, outbox, and SQLite files.
 
 - [ ] **Step 5: Commit documentation**
 
