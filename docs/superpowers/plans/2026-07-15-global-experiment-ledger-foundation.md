@@ -41,14 +41,14 @@ def test_current_intraday_contracts_have_canonical_global_lineage() -> None:
         "source=KIS_read_only_rankings",
     )
     assert CURRENT_COST_MODEL == (
-        "same_bar_stop_target=stop_first",
         "side_cost_bps=5,10,20",
+        "same_bar_stop_target=stop_first",
         "time_exit=last_completed_bar_fallback",
     )
     assert SHADOW_PORTFOLIO_POLICY == (
-        "broker_orders=false",
-        "max_one_symbol_strategy_recommendation_per_day",
         "max_ranked_candidates=10",
+        "max_one_symbol_strategy_recommendation_per_day",
+        "broker_orders=false",
     )
 ```
 
@@ -174,7 +174,7 @@ class StrategyLifecycleEventKind(StrEnum):
     TRANSITION = "transition"
 ```
 
-Implement `HypothesisRegistration`, `StrategyVersionRegistration`, `ExperimentTrialRegistration`, `ExperimentTrialEvent`, and `StrategyLifecycleEvent` with every field and invariant in the design. Add `lifecycle_transition_allowed(from_state, to_state)` using the closed transition table. Require canonical tuples to equal `tuple(sorted(set(values)))`.
+Implement `HypothesisRegistration`, `StrategyVersionRegistration`, `ExperimentTrialRegistration`, `ExperimentTrialEvent`, and `StrategyLifecycleEvent` with every field and invariant in the design. Add `lifecycle_transition_allowed(from_state, to_state)` using the closed transition table. Require set-like evidence/reason/hash tuples to equal `tuple(sorted(set(values)))`; require ordered parameter/data/cost/portfolio contract tuples to contain unique, non-empty, stripped values while preserving their registered order for legacy daily-ledger compatibility.
 
 In `experiment_ledger_keys.py`, mirror `lane_contract_keys.py` with five `NewType` keys, canonical ASCII JSON (`sort_keys=True`, compact separators), and SHA-256 over the canonical bytes.
 

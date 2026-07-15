@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import cast
 
 from trading_agent.daily_research_contract import (
+    CURRENT_COST_MODEL,
     EVALUATOR_VERSION,
     FEED_ENTITLEMENT,
+    SHADOW_PORTFOLIO_POLICY,
     promotion_blockers,
     strategy_contract,
 )
@@ -90,16 +92,8 @@ def build_daily_record(
         data_version=current_data_version,
         feed_entitlement=FEED_ENTITLEMENT,
         parameter_set=contract.parameter_set,
-        cost_model=(
-            "side_cost_bps=5,10,20",
-            "same_bar_stop_target=stop_first",
-            "time_exit=last_completed_bar_fallback",
-        ),
-        portfolio_policy=(
-            "max_ranked_candidates=10",
-            "max_one_symbol_strategy_recommendation_per_day",
-            "broker_orders=false",
-        ),
+        cost_model=CURRENT_COST_MODEL,
+        portfolio_policy=SHADOW_PORTFOLIO_POLICY,
         session_quality=quality,
         metrics_20bp=metrics,
         incidents=incidents,

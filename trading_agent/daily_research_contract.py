@@ -10,6 +10,21 @@ from trading_agent.strategy_factory import StrategyMode
 
 EVALUATOR_VERSION: Final = "paper_metrics_day_block_bootstrap_v2"
 FEED_ENTITLEMENT: Final = "KIS 상승률·거래량 상위 랭킹 읽기 전용; 전체 미국시장 PIT 모집단 아님"
+CURRENT_DATA_CONTRACT: Final = (
+    "completed_bars_only=true",
+    "point_in_time_candidate_inputs=true",
+    "source=KIS_read_only_rankings",
+)
+CURRENT_COST_MODEL: Final = (
+    "side_cost_bps=5,10,20",
+    "same_bar_stop_target=stop_first",
+    "time_exit=last_completed_bar_fallback",
+)
+SHADOW_PORTFOLIO_POLICY: Final = (
+    "max_ranked_candidates=10",
+    "max_one_symbol_strategy_recommendation_per_day",
+    "broker_orders=false",
+)
 
 
 @dataclass(frozen=True, slots=True)
