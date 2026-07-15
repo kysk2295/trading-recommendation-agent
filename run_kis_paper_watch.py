@@ -24,6 +24,7 @@ from trading_agent.kis_watch_wait import (
     collect_premarket_until_regular_open,
     wait_for_session_open,
 )
+from trading_agent.orb_forward_trial import OrbTrialFailurePhase
 from trading_agent.replay import write_report
 from trading_agent.scan_cycle import (
     CycleRuntime,
@@ -41,6 +42,12 @@ class LaneForwardValidationConfig:
     lane_registry: Path
     review_ledger: Path
     output_dir: Path
+
+
+@dataclass(frozen=True, slots=True)
+class OrbTrialConfig:
+    experiment_ledger: Path
+    lane_forward: LaneForwardValidationConfig
 
 
 def _lane_forward_validation_config(
@@ -62,6 +69,20 @@ def _lane_forward_validation_config(
         review_ledger,
         output_dir,
     )
+
+
+def _orb_trial_config(
+    strategy: StrategyMode,
+    experiment_ledger: Path | None,
+    lane_forward: LaneForwardValidationConfig | None,
+) -> OrbTrialConfig | None:
+    if experiment_ledger is None:
+        return None
+    if lane_forward is None:
+        raise typer.BadParameter("ORB trial에는 lane forward 경로가 필요합니다")
+    if strategy is not StrategyMode.ORB:
+        raise typer.BadParameter("ORB trial은 ORB 전략에서만 사용할 수 있습니다")
+    return OrbTrialConfig(experiment_ledger, lane_forward)
 
 
 def finalize_session_output(output: Path, observed_at: dt.datetime) -> int:
@@ -158,6 +179,97 @@ def _lane_forward_validation_command(
     )
 
 
+def _orb_trial_output_dir(
+    observed_at: dt.datetime,
+    config: OrbTrialConfig,
+    operation: str,
+) -> Path:
+    session_date = observed_at.astimezone(ZoneInfo("America/New_York")).date()
+    return config.lane_forward.output_dir / "trials" / session_date.isoformat() / operation
+
+
+def _orb_trial_register_command(
+    observed_at: dt.datetime,
+    config: OrbTrialConfig,
+) -> tuple[str, ...]:
+    session_date = observed_at.astimezone(ZoneInfo("America/New_York")).date()
+    return (
+        str(Path(__file__).with_name("run_orb_forward_trial.py")),
+        "register",
+        "--experiment-ledger",
+        str(config.experiment_ledger),
+        "--lane-registry",
+        str(config.lane_forward.lane_registry),
+        "--session-date",
+        session_date.isoformat(),
+        "--output-dir",
+        str(_orb_trial_output_dir(observed_at, config, "register")),
+    )
+
+
+def _orb_trial_start_command(
+    observed_at: dt.datetime,
+    config: OrbTrialConfig,
+) -> tuple[str, ...]:
+    session_date = observed_at.astimezone(ZoneInfo("America/New_York")).date()
+    return (
+        str(Path(__file__).with_name("run_orb_forward_trial.py")),
+        "start",
+        "--experiment-ledger",
+        str(config.experiment_ledger),
+        "--session-date",
+        session_date.isoformat(),
+        "--output-dir",
+        str(_orb_trial_output_dir(observed_at, config, "start")),
+    )
+
+
+def _orb_trial_finalize_command(
+    output: Path,
+    observed_at: dt.datetime,
+    config: OrbTrialConfig,
+) -> tuple[str, ...]:
+    session_date = observed_at.astimezone(ZoneInfo("America/New_York")).date()
+    return (
+        str(Path(__file__).with_name("run_orb_forward_trial.py")),
+        "finalize",
+        str(output),
+        "--experiment-ledger",
+        str(config.experiment_ledger),
+        "--lane-registry",
+        str(config.lane_forward.lane_registry),
+        "--review-ledger",
+        str(config.lane_forward.review_ledger),
+        "--session-date",
+        session_date.isoformat(),
+        "--output-dir",
+        str(_orb_trial_output_dir(observed_at, config, "finalize")),
+    )
+
+
+def _orb_trial_fail_command(
+    observed_at: dt.datetime,
+    config: OrbTrialConfig,
+    phase: OrbTrialFailurePhase,
+    audit: Path,
+) -> tuple[str, ...]:
+    session_date = observed_at.astimezone(ZoneInfo("America/New_York")).date()
+    return (
+        str(Path(__file__).with_name("run_orb_forward_trial.py")),
+        "fail",
+        "--experiment-ledger",
+        str(config.experiment_ledger),
+        "--session-date",
+        session_date.isoformat(),
+        "--phase",
+        phase.value,
+        "--audit",
+        str(audit),
+        "--output-dir",
+        str(_orb_trial_output_dir(observed_at, config, "fail")),
+    )
+
+
 def _run_and_audit(command: tuple[str, ...], audit_path: Path) -> int:
     started_at = dt.datetime.now().astimezone()
     completed = subprocess.run(command, check=False)
@@ -171,37 +283,69 @@ def run_session_metrics(
     runner: Callable[[tuple[str, ...], Path], int] = _run_and_audit,
     strategy: StrategyMode = StrategyMode.ORB,
     lane_forward_validation: LaneForwardValidationConfig | None = None,
+    orb_trial: OrbTrialConfig | None = None,
 ) -> int | None:
     if lane_forward_validation is not None and strategy is not StrategyMode.ORB:
         raise ValueError("lane forward validation requires ORB strategy")
+    if orb_trial is not None and (
+        strategy is not StrategyMode.ORB or orb_trial.lane_forward != lane_forward_validation
+    ):
+        raise ValueError("ORB trial requires its exact ORB lane forward configuration")
     database = output / "paper_recommendations.sqlite3"
     if regular_session_is_open(observed_at) or not database.is_file():
         return None
+    terminal_audit = output / "post_session_orb_trial_terminal_cycles.csv"
+
+    def record_trial_failure(phase: OrbTrialFailurePhase, audit: Path) -> None:
+        if orb_trial is not None:
+            _ = runner(
+                _orb_trial_fail_command(observed_at, orb_trial, phase, audit),
+                terminal_audit,
+            )
+
+    metrics_audit = output / "post_session_metrics_cycles.csv"
     metrics_exit_code = runner(
         _paper_metrics_command(output),
-        output / "post_session_metrics_cycles.csv",
+        metrics_audit,
     )
     if metrics_exit_code:
+        record_trial_failure(OrbTrialFailurePhase.PAPER_METRICS, metrics_audit)
         return metrics_exit_code
+    research_audit = output / "post_session_research_cycles.csv"
     research_exit_code = runner(
         _daily_research_command(output, observed_at, strategy),
-        output / "post_session_research_cycles.csv",
+        research_audit,
     )
     if research_exit_code:
+        record_trial_failure(OrbTrialFailurePhase.DAILY_RESEARCH_RECORD, research_audit)
         return research_exit_code
+    adaptive_audit = output / "post_session_adaptive_evaluation_cycles.csv"
     adaptive_exit_code = runner(
         _adaptive_evaluation_command(output),
-        output / "post_session_adaptive_evaluation_cycles.csv",
+        adaptive_audit,
     )
-    if adaptive_exit_code or lane_forward_validation is None:
+    if adaptive_exit_code:
+        record_trial_failure(OrbTrialFailurePhase.ADAPTIVE_EVALUATION, adaptive_audit)
         return adaptive_exit_code
-    return runner(
+    if lane_forward_validation is None:
+        return 0
+    lane_audit = output / "post_session_lane_forward_validation_cycles.csv"
+    lane_exit_code = runner(
         _lane_forward_validation_command(
             output,
             observed_at,
             lane_forward_validation,
         ),
-        output / "post_session_lane_forward_validation_cycles.csv",
+        lane_audit,
+    )
+    if lane_exit_code:
+        record_trial_failure(OrbTrialFailurePhase.LANE_FORWARD_VALIDATION, lane_audit)
+        return lane_exit_code
+    if orb_trial is None:
+        return 0
+    return runner(
+        _orb_trial_finalize_command(output, observed_at, orb_trial),
+        terminal_audit,
     )
 
 
@@ -220,6 +364,7 @@ def main(
     lane_registry: Path | None = None,
     lane_review_ledger: Path | None = None,
     lane_forward_output_dir: Path | None = None,
+    experiment_ledger: Path | None = None,
 ) -> None:
     if not 1 <= cycles <= 390:
         raise typer.BadParameter("cycles는 1~390이어야 합니다")
@@ -240,15 +385,27 @@ def main(
         lane_review_ledger,
         lane_forward_output_dir,
     )
+    orb_trial = _orb_trial_config(
+        strategy,
+        experiment_ledger,
+        lane_forward_validation,
+    )
     checked_at = dt.datetime.now(ZoneInfo("America/New_York"))
     output = (
         Path(output_dir) if output_dir is not None else Path("outputs/live_sessions") / checked_at.strftime("%Y%m%d")
     )
     premarket_exit_codes: tuple[int, ...] = ()
+    if not regular_session_is_open(checked_at) and not wait_until_open and not collect_premarket:
+        rprint("[yellow]미국 정규장 밖이므로 감시를 시작하지 않습니다.[/yellow]")
+        return
+    if orb_trial is not None:
+        registration_exit_code = _run_and_audit(
+            _orb_trial_register_command(checked_at, orb_trial),
+            output / "pre_session_orb_trial_registration_cycles.csv",
+        )
+        if registration_exit_code:
+            raise typer.Exit(code=1)
     if not regular_session_is_open(checked_at):
-        if not wait_until_open and not collect_premarket:
-            rprint("[yellow]미국 정규장 밖이므로 감시를 시작하지 않습니다.[/yellow]")
-            return
         if collect_premarket:
             rprint("[yellow]미국 장전 랭킹 수집과 정규장 개장을 기다립니다.[/yellow]")
             premarket_result = collect_premarket_until_regular_open(
@@ -280,6 +437,14 @@ def main(
             rprint("[red]대기 제한 안에 미국 정규장이 열리지 않았습니다.[/red]")
             raise typer.Exit(code=2)
         checked_at = opened_at
+
+    if orb_trial is not None:
+        start_exit_code = _run_and_audit(
+            _orb_trial_start_command(checked_at, orb_trial),
+            output / "regular_session_orb_trial_start_cycles.csv",
+        )
+        if start_exit_code:
+            raise typer.Exit(code=1)
 
     def scan_once() -> int:
         return _run_and_audit(
@@ -319,6 +484,7 @@ def main(
         ended_at,
         strategy=strategy,
         lane_forward_validation=lane_forward_validation,
+        orb_trial=orb_trial,
     )
     failures = sum(code != 0 for code in (*premarket_exit_codes, *exit_codes))
     failures += int(eod_exit_code not in (None, 0))
