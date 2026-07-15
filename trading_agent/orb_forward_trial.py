@@ -5,10 +5,12 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final, override
 
 from pydantic import ValidationError
 
+from trading_agent.adaptive_evaluation_models import AdaptiveEvaluation
 from trading_agent.daily_research_contract import (
     CURRENT_COST_MODEL,
     CURRENT_DATA_CONTRACT,
@@ -17,19 +19,36 @@ from trading_agent.daily_research_contract import (
     SHADOW_PORTFOLIO_POLICY,
     strategy_contract,
 )
-from trading_agent.daily_research_sources import OPTIONAL_ARTIFACTS, REQUIRED_ARTIFACTS
+from trading_agent.daily_research_record_source import (
+    InvalidDailyResearchRecordSourceError,
+    load_daily_research_record_source,
+)
+from trading_agent.daily_research_sources import (
+    OPTIONAL_ARTIFACTS,
+    REQUIRED_ARTIFACTS,
+    MissingResearchArtifactError,
+    data_version,
+    load_artifacts,
+)
 from trading_agent.experiment_ledger_models import (
+    ExperimentTrialEvent,
     ExperimentTrialRegistration,
     StrategyLifecycleState,
     StrategyVersionRegistration,
+    TrialEventKind,
     TrialKind,
 )
 from trading_agent.experiment_ledger_store import (
     ExperimentLedgerStore,
     InvalidExperimentLedgerSourceError,
+    StoredExperimentTrialEvent,
     UnsupportedExperimentLedgerSchemaError,
 )
-from trading_agent.lane_contract_keys import experiment_scope_key, lane_manifest_key
+from trading_agent.lane_contract_keys import (
+    experiment_scope_key,
+    lane_daily_snapshot_key,
+    lane_manifest_key,
+)
 from trading_agent.lane_defaults import INTRADAY_MANIFEST, current_intraday_experiment_scope
 from trading_agent.lane_policy_models import LaneId
 from trading_agent.lane_registry_store import (
@@ -37,8 +56,15 @@ from trading_agent.lane_registry_store import (
     LaneRegistryReader,
     UnsupportedLaneRegistrySchemaError,
 )
+from trading_agent.lane_review_keys import lane_review_event_key
+from trading_agent.lane_review_models import CURRENT_LANE_REVIEWER_VERSION
+from trading_agent.lane_review_store import (
+    InvalidLaneReviewSourceError,
+    LaneReviewReader,
+    UnsupportedLaneReviewSchemaError,
+)
 from trading_agent.strategy_factory import StrategyMode
-from trading_agent.us_equity_calendar import regular_session_bounds
+from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
 
 ORB_DAILY_TRIAL_EVIDENCE_BUDGET: Final = (
     "adaptive_evaluation:1",
@@ -62,6 +88,12 @@ class InvalidOrbForwardTrialSourceError(RuntimeError):
 class OrbTrialRegistrationResult:
     created: bool
     registration: ExperimentTrialRegistration
+
+
+@dataclass(frozen=True, slots=True)
+class OrbTrialEventResult:
+    created: bool
+    event: ExperimentTrialEvent
 
 
 def orb_shadow_trial_id(session_date: dt.date, strategy_version: str) -> str:
@@ -152,13 +184,126 @@ def register_orb_shadow_trial(
     return OrbTrialRegistrationResult(created, registration)
 
 
+def start_orb_shadow_trial(
+    *,
+    experiment_ledger: ExperimentLedgerStore,
+    session_date: dt.date,
+    started_at: dt.datetime,
+) -> OrbTrialEventResult:
+    try:
+        bounds = _event_bounds(session_date, started_at)
+        _, registration, events = _verified_daily_trial(
+            experiment_ledger,
+            session_date,
+        )
+        if events:
+            if len(events) != 1:
+                raise InvalidOrbForwardTrialSourceError
+            first = events[0]
+            if (
+                first.event.event_kind is not TrialEventKind.STARTED
+                or first.event.sequence != 1
+                or first.event.previous_event_key is not None
+                or not bounds[0] <= first.event.occurred_at < bounds[1]
+            ):
+                raise InvalidOrbForwardTrialSourceError
+            return OrbTrialEventResult(False, first.event)
+        if not bounds[0] <= started_at < bounds[1]:
+            raise InvalidOrbForwardTrialSourceError
+        event = ExperimentTrialEvent(
+            trial_id=registration.trial_id,
+            sequence=1,
+            event_kind=TrialEventKind.STARTED,
+            occurred_at=started_at,
+            artifact_sha256s=(),
+            reason_codes=(),
+            previous_event_key=None,
+        )
+    except InvalidOrbForwardTrialSourceError:
+        raise
+    except _SOURCE_ERRORS:
+        raise InvalidOrbForwardTrialSourceError from None
+
+    with experiment_ledger.writer() as writer:
+        created = writer.append_trial_event(event)
+    return OrbTrialEventResult(created, event)
+
+
+def finalize_orb_shadow_trial(
+    *,
+    experiment_ledger: ExperimentLedgerStore,
+    lane_registry: LaneRegistryReader,
+    review_ledger: LaneReviewReader,
+    session: Path,
+    session_date: dt.date,
+    occurred_at: dt.datetime,
+) -> OrbTrialEventResult:
+    try:
+        bounds = _event_bounds(session_date, occurred_at)
+        if occurred_at < bounds[1]:
+            raise InvalidOrbForwardTrialSourceError
+        version, registration, events = _verified_daily_trial(
+            experiment_ledger,
+            session_date,
+        )
+        if not events or len(events) > 2:
+            raise InvalidOrbForwardTrialSourceError
+        started = next(iter(events))
+        existing_terminal = next(iter(events[1:]), None)
+        if (
+            started.event.event_kind is not TrialEventKind.STARTED
+            or not bounds[0] <= started.event.occurred_at < bounds[1]
+        ):
+            raise InvalidOrbForwardTrialSourceError
+        event_kind, artifacts, reasons = _verified_terminal_evidence(
+            lane_registry,
+            review_ledger,
+            session,
+            session_date,
+            occurred_at,
+            version,
+            registration,
+        )
+        event_occurred_at = occurred_at if existing_terminal is None else existing_terminal.event.occurred_at
+        event = ExperimentTrialEvent(
+            trial_id=registration.trial_id,
+            sequence=2,
+            event_kind=event_kind,
+            occurred_at=event_occurred_at,
+            artifact_sha256s=artifacts,
+            reason_codes=reasons,
+            previous_event_key=started.event_key,
+        )
+        if existing_terminal is not None:
+            if existing_terminal.event != event:
+                raise InvalidOrbForwardTrialSourceError
+            return OrbTrialEventResult(False, existing_terminal.event)
+    except InvalidOrbForwardTrialSourceError:
+        raise
+    except _SOURCE_ERRORS:
+        raise InvalidOrbForwardTrialSourceError from None
+
+    with experiment_ledger.writer() as writer:
+        created = writer.append_trial_event(event)
+    return OrbTrialEventResult(created, event)
+
+
 def _verified_orb_sources(
     lane_registry: LaneRegistryReader,
     experiment_ledger: ExperimentLedgerStore,
     session_date: dt.date,
     runtime_code_version: str,
 ) -> StrategyVersionRegistration:
-    if not lane_registry.is_initialized() or not experiment_ledger.is_initialized():
+    _require_exact_lane_contracts(lane_registry)
+    return _verified_orb_experiment_source(
+        experiment_ledger,
+        session_date,
+        runtime_code_version=runtime_code_version,
+    )
+
+
+def _require_exact_lane_contracts(lane_registry: LaneRegistryReader) -> None:
+    if not lane_registry.is_initialized():
         raise InvalidOrbForwardTrialSourceError
     manifests = tuple(
         stored
@@ -179,6 +324,15 @@ def _verified_orb_sources(
     ):
         raise InvalidOrbForwardTrialSourceError
 
+
+def _verified_orb_experiment_source(
+    experiment_ledger: ExperimentLedgerStore,
+    session_date: dt.date,
+    *,
+    runtime_code_version: str | None,
+) -> StrategyVersionRegistration:
+    if not experiment_ledger.is_initialized():
+        raise InvalidOrbForwardTrialSourceError
     hypotheses = tuple(
         stored
         for stored in experiment_ledger.hypotheses()
@@ -203,7 +357,7 @@ def _verified_orb_sources(
         or version.hypothesis_id != _ORB_CONTRACT.hypothesis_id
         or version.experiment_scope_key != _ORB_SCOPE_KEY
         or version.lane_id is not LaneId.INTRADAY_MOMENTUM
-        or version.code_version != runtime_code_version
+        or (runtime_code_version is not None and version.code_version != runtime_code_version)
         or version.parameter_set != _ORB_CONTRACT.parameter_set
         or version.data_contract != CURRENT_DATA_CONTRACT
         or version.cost_model != CURRENT_COST_MODEL
@@ -215,6 +369,168 @@ def _verified_orb_sources(
     if state is None or state.event.to_state is StrategyLifecycleState.REJECTED:
         raise InvalidOrbForwardTrialSourceError
     return version
+
+
+def _verified_daily_trial(
+    experiment_ledger: ExperimentLedgerStore,
+    session_date: dt.date,
+) -> tuple[
+    StrategyVersionRegistration,
+    ExperimentTrialRegistration,
+    tuple[StoredExperimentTrialEvent, ...],
+]:
+    version = _verified_orb_experiment_source(
+        experiment_ledger,
+        session_date,
+        runtime_code_version=None,
+    )
+    expected_id = orb_shadow_trial_id(session_date, version.strategy_version)
+    matches = tuple(
+        stored.registration
+        for stored in experiment_ledger.trials()
+        if stored.registration.strategy_version == version.strategy_version
+        and stored.registration.planned_start == session_date
+        and stored.registration.planned_end == session_date
+    )
+    if len(matches) != 1 or matches[0].trial_id != expected_id:
+        raise InvalidOrbForwardTrialSourceError
+    registration = matches[0]
+    expected = _trial_registration(
+        version,
+        session_date=session_date,
+        registered_at=registration.registered_at,
+    )
+    bounds = regular_session_bounds(session_date)
+    if bounds is None or registration != expected or registration.registered_at >= bounds[0]:
+        raise InvalidOrbForwardTrialSourceError
+    return version, registration, experiment_ledger.trial_events(registration.trial_id)
+
+
+def _verified_terminal_evidence(
+    lane_registry: LaneRegistryReader,
+    review_ledger: LaneReviewReader,
+    session: Path,
+    session_date: dt.date,
+    occurred_at: dt.datetime,
+    version: StrategyVersionRegistration,
+    registration: ExperimentTrialRegistration,
+) -> tuple[TrialEventKind, tuple[str, ...], tuple[str, ...]]:
+    _require_exact_lane_contracts(lane_registry)
+    bounds = regular_session_bounds(session_date)
+    if bounds is None:
+        raise InvalidOrbForwardTrialSourceError
+    stored_snapshot = lane_registry.daily_snapshot(LaneId.INTRADAY_MOMENTUM, session_date)
+    if stored_snapshot is None:
+        raise InvalidOrbForwardTrialSourceError
+    snapshot = stored_snapshot.snapshot
+    snapshot_key = str(lane_daily_snapshot_key(snapshot))
+    if (
+        str(stored_snapshot.snapshot_key) != snapshot_key
+        or snapshot.lane_id is not LaneId.INTRADAY_MOMENTUM
+        or snapshot.session_date != session_date
+        or snapshot.manifest_key != lane_manifest_key(INTRADAY_MANIFEST)
+        or snapshot.experiment_scope_keys != (_ORB_SCOPE_KEY,)
+        or snapshot.finalized_at < bounds[1]
+        or snapshot.finalized_at > occurred_at
+        or snapshot.open_order_count != 0
+        or snapshot.open_position_count != 0
+        or snapshot.planned_open_risk != 0
+        or snapshot.unrealized_pnl != 0
+    ):
+        raise InvalidOrbForwardTrialSourceError
+
+    if not review_ledger.is_initialized():
+        raise InvalidOrbForwardTrialSourceError
+    stored_review = review_ledger.review_event(
+        snapshot_key,
+        _ORB_SCOPE_KEY,
+        CURRENT_LANE_REVIEWER_VERSION,
+    )
+    if stored_review is None:
+        raise InvalidOrbForwardTrialSourceError
+    review = stored_review.event
+    review_key = str(lane_review_event_key(review))
+    if (
+        str(stored_review.event_key) != review_key
+        or review.lane_id is not LaneId.INTRADAY_MOMENTUM
+        or review.session_date != session_date
+        or review.snapshot_key != snapshot_key
+        or review.experiment_scope_key != _ORB_SCOPE_KEY
+        or review.strategy_version != version.strategy_version
+        or review.evaluator_version != registration.evaluator_version
+        or review.reviewer_version != CURRENT_LANE_REVIEWER_VERSION
+        or review.automatic_state_change_allowed
+        or review.order_authority_change_allowed
+        or snapshot.finalized_at > review.reviewed_at
+        or review.reviewed_at > occurred_at
+    ):
+        raise InvalidOrbForwardTrialSourceError
+
+    source = load_daily_research_record_source(
+        session,
+        session_date,
+        StrategyMode.ORB,
+        _ORB_SCOPE_KEY,
+    )
+    record = source.record
+    current_artifacts = load_artifacts(session)
+    if (
+        record.session_date != session_date
+        or record.strategy != StrategyMode.ORB.value
+        or record.strategy_version != version.strategy_version
+        or record.experiment_scope != _ORB_SCOPE
+        or record.experiment_scope_key != _ORB_SCOPE_KEY
+        or record.code_version != version.code_version
+        or record.evaluator_version != registration.evaluator_version
+        or record.feed_entitlement != registration.feed_entitlement
+        or registration.data_version != orb_shadow_trial_data_version()
+        or record.parameter_set != version.parameter_set
+        or record.cost_model != version.cost_model
+        or record.portfolio_policy != version.portfolio_policy
+        or not _aware(record.recorded_at)
+        or record.recorded_at > snapshot.finalized_at
+        or source.raw_sha256 != review.daily_record_sha256
+        or record.record_id != review.daily_record_id
+        or record.artifact_checksums != current_artifacts
+        or record.data_version != data_version(current_artifacts)
+    ):
+        raise InvalidOrbForwardTrialSourceError
+
+    adaptive_raw = (session / "adaptive_evaluation" / "adaptive_evaluation.json").read_bytes()
+    adaptive_sha256 = hashlib.sha256(adaptive_raw).hexdigest()
+    adaptive = AdaptiveEvaluation.model_validate_json(adaptive_raw)
+    if (
+        adaptive.as_of != session_date
+        or adaptive.strategy_version != version.strategy_version
+        or adaptive.evaluator_version != registration.evaluator_version
+        or adaptive_sha256 != review.adaptive_evaluation_sha256
+    ):
+        raise InvalidOrbForwardTrialSourceError
+
+    artifacts = tuple(
+        sorted(
+            {
+                source.raw_sha256,
+                adaptive_sha256,
+                snapshot_key,
+                review_key,
+            }
+        )
+    )
+    if len(artifacts) != 4:
+        raise InvalidOrbForwardTrialSourceError
+    reasons: list[str] = []
+    if not record.session_quality.forward_day_eligible:
+        reasons.append("forward_day_ineligible")
+    if record.incidents:
+        reasons.append("daily_incidents_present")
+    if not snapshot.data_quality_complete:
+        reasons.append("snapshot_data_quality_incomplete")
+    if snapshot.incidents:
+        reasons.append("snapshot_incidents_present")
+    canonical_reasons = tuple(sorted(reasons))
+    event_kind = TrialEventKind.COMPLETED if not canonical_reasons else TrialEventKind.CENSORED
+    return event_kind, artifacts, canonical_reasons
 
 
 def _trial_registration(
@@ -241,3 +557,30 @@ def _trial_registration(
 
 def _aware(value: dt.datetime) -> bool:
     return value.tzinfo is not None and value.utcoffset() is not None
+
+
+def _event_bounds(
+    session_date: dt.date,
+    occurred_at: dt.datetime,
+) -> tuple[dt.datetime, dt.datetime]:
+    bounds = regular_session_bounds(session_date)
+    if bounds is None or not _aware(occurred_at) or occurred_at.astimezone(NEW_YORK).date() != session_date:
+        raise InvalidOrbForwardTrialSourceError
+    return bounds
+
+
+_SOURCE_ERRORS = (
+    InvalidExperimentLedgerSourceError,
+    UnsupportedExperimentLedgerSchemaError,
+    InvalidLaneRegistrySourceError,
+    UnsupportedLaneRegistrySchemaError,
+    InvalidLaneReviewSourceError,
+    UnsupportedLaneReviewSchemaError,
+    InvalidDailyResearchRecordSourceError,
+    MissingResearchArtifactError,
+    ValidationError,
+    sqlite3.Error,
+    OSError,
+    UnicodeError,
+    ValueError,
+)
