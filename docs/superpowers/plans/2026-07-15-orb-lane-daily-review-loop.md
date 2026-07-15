@@ -90,7 +90,7 @@ Run: `uv run pytest -q tests/test_execution_ledger_identity.py tests/test_execut
 
 Expected: all tests pass.
 
-- [ ] **Step 6: Commit and push the identity checkpoint**
+- [x] **Step 6: Commit and push the identity checkpoint**
 
 ```bash
 git add trading_agent/execution_ledger_identity.py trading_agent/execution_store_reader.py tests/test_execution_ledger_identity.py
@@ -104,7 +104,7 @@ git push origin feature/paper-account-activities
 - Create: `trading_agent/daily_research_record_source.py`
 - Create: `tests/test_daily_research_record_source.py`
 
-- [ ] **Step 1: Write failing exact-source tests**
+- [x] **Step 1: Write failing exact-source tests**
 
 Cover latest ORB record selection, schema-v1 projection without rewrite, parent-ledger membership, and rejection of a different scope/date/strategy.
 
@@ -120,17 +120,17 @@ assert source.record_path.is_file()
 assert source.raw_sha256 == hashlib.sha256(source.record_path.read_bytes()).hexdigest()
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `uv run pytest -q tests/test_daily_research_record_source.py`
 
 Expected: module missing.
 
-- [ ] **Step 3: Implement the source loader**
+- [x] **Step 3: Implement the source loader**
 
 Define a frozen `DailyResearchRecordSource(record, record_path, raw_sha256)`. Parse each JSON with `parse_daily_record`, filter exact date/strategy/scope, choose the greatest `(recorded_at, record_id)`, and require its ID in `read_daily_ledger(session.parent / "daily_research_ledger.jsonl")`.
 
-- [ ] **Step 4: Run daily-ledger regressions**
+- [x] **Step 4: Run daily-ledger regressions**
 
 Run:
 
