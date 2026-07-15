@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "cycle": {
+    "schema_version": 1,
+    "collection_cycle_id": "kr-theme-synthetic-20260715-001",
+    "started_at": "2026-07-15T09:00:00+09:00",
+    "completed_at": "2026-07-15T09:02:00+09:00",
+    "coverage": [
+      {
+        "schema_version": 1,
+        "source": "dart",
+        "status": "success",
+        "record_count": 0,
+        "failure_code": null
+      },
+      {
+        "schema_version": 1,
+        "source": "kis_ranking",
+        "status": "success",
+        "record_count": 1,
+        "failure_code": null
+      },
+      {
+        "schema_version": 1,
+        "source": "news",
+        "status": "success",
+        "record_count": 1,
+        "failure_code": null
+      },
+      {
+        "schema_version": 1,
+        "source": "volume_surge",
+        "status": "success",
+        "record_count": 0,
+        "failure_code": null
+      }
+    ]
+  },
+  "catalysts": [
+    {
+      "schema_version": 1,
+      "source": "kis_ranking",
+      "source_record_id": "kis-ranking://synthetic/20260715/001",
+      "publisher_id": "kis_synthetic",
+      "published_at": null,
+      "observed_at": "2026-07-15T09:01:00+09:00",
+      "content_type": "application/json",
+      "payload_path": "kis-ranking-synthetic.json"
+    },
+    {
+      "schema_version": 1,
+      "source": "news",
+      "source_record_id": "news://synthetic/20260715/001",
+      "publisher_id": "synthetic_news",
+      "published_at": "2026-07-15T09:00:00+09:00",
+      "observed_at": "2026-07-15T09:00:30+09:00",
+      "content_type": "application/json",
+      "payload_path": "news-synthetic.json"
+    }
+  ]
+}
