@@ -11,9 +11,6 @@ from typing import Final, override
 from pydantic import ValidationError
 
 from trading_agent.kis_kr_ranking import KisKrRankingItem, KisKrRankingKind
-from trading_agent.kis_kr_ranking_collection import (
-    KIS_KR_RANKING_ADAPTER_VERSION,
-)
 from trading_agent.kr_source_collection_models import KrSourceCollectionRun
 from trading_agent.kr_theme_models import (
     KrCatalystObservation,
@@ -31,6 +28,7 @@ from trading_agent.kr_volume_surge_models import (
 )
 
 KR_VOLUME_SURGE_ADAPTER_VERSION: Final = "kis-ranking-volume-surge-v2"
+KIS_RANKING_INPUT_ADAPTER_VERSION: Final = "kis-kr-ranking-v1"
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,115}$")
 _RATIO_CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
@@ -103,7 +101,7 @@ def derive_kr_volume_surge(
         collection_date=collection_date,
     )
     if upstream.status is KrCoverageStatus.FAILED:
-        derived_at = _aware_clock(_clock)
+        derived_at = max(_aware_clock(_clock), upstream.completed_at)
         return _append_failed_run(
             store,
             collection_cycle_id=collection_cycle_id,
@@ -125,6 +123,8 @@ def derive_kr_volume_surge(
             collection_cycle_id=collection_cycle_id,
         )
         if orphan is not None:
+            if orphan.record.first_observed_at < upstream.completed_at:
+                raise InvalidKrVolumeSurgeSourceError
             payload = _payload(
                 evidence,
                 source_run_id=f"{collection_cycle_id}:kis_ranking",
@@ -166,6 +166,7 @@ def derive_kr_volume_surge(
     except _DerivationFailure as error:
         if derived_at is None:
             derived_at = _aware_clock(_clock)
+        derived_at = max(derived_at, upstream.completed_at)
         return _append_failed_run(
             store,
             collection_cycle_id=collection_cycle_id,
@@ -242,7 +243,17 @@ def _terminal_result(
         raise InvalidKrVolumeSurgeSourceError
     run = existing[0]
     if run.status is KrCoverageStatus.FAILED:
-        if run.record_count != 0:
+        if (
+            run.record_count != 0
+            or run.receipt_ids
+            or run.started_at != run.completed_at
+            or _orphan_catalyst(
+                store,
+                collection_cycle_id=collection_cycle_id,
+                source_run_id=f"{collection_cycle_id}:kis_ranking",
+            )
+            is not None
+        ):
             raise InvalidKrVolumeSurgeSourceError
         symbol_count = 0
     else:
@@ -258,6 +269,19 @@ def _terminal_result(
         except InvalidKrVolumeSurgePayloadError:
             raise InvalidKrVolumeSurgeSourceError from None
         if not isinstance(payload, KrVolumeSurgePayloadV2):
+            raise InvalidKrVolumeSurgeSourceError
+        raw_payload = canonical_kr_volume_surge_payload(payload)
+        _validate_orphan(
+            orphan,
+            raw_payload,
+            payload,
+            collection_cycle_id=collection_cycle_id,
+        )
+        if (
+            run.receipt_ids
+            or run.started_at != payload.observed_at
+            or run.completed_at != payload.observed_at
+        ):
             raise InvalidKrVolumeSurgeSourceError
         symbol_count = len(payload.symbols)
     return KrVolumeSurgeDerivationResult(
@@ -281,13 +305,15 @@ def _upstream_run(
         if run.source is KrCatalystSource.KIS_RANKING
     )
     expected_id = f"{collection_cycle_id}:kis_ranking"
+    if not existing:
+        raise KrVolumeSurgeSourceNotReadyError
     if (
         len(existing) != 1
         or existing[0].source_run_id != expected_id
-        or existing[0].adapter_version != KIS_KR_RANKING_ADAPTER_VERSION
+        or existing[0].adapter_version != KIS_RANKING_INPUT_ADAPTER_VERSION
         or existing[0].collection_date != collection_date
     ):
-        raise KrVolumeSurgeSourceNotReadyError
+        raise InvalidKrVolumeSurgeSourceError
     return existing[0]
 
 
@@ -345,6 +371,10 @@ def _upstream_evidence(
             item = KisKrRankingItem.model_validate_json(stored.raw_payload)
         except ValidationError:
             raise _DerivationFailure("invalid_upstream_evidence") from None
+        if not receipt.receipt.request_key.startswith(
+            f"kis-kr:{item.ranking_kind.value}:"
+        ):
+            raise _DerivationFailure("invalid_upstream_evidence")
         expected_source_record_id = (
             f"kis-ranking://{collection_cycle_id}/"
             f"{item.ranking_kind.value}/{item.symbol}"

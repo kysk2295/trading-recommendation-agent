@@ -191,6 +191,37 @@ def test_failed_derivation_writes_aggregate_report_then_returns_nonzero(
         assert marker not in report + terminal + str(captured.value)
 
 
+def test_report_write_failure_is_redacted_after_terminal_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cycle_id = "kr-volume-cli-report-failure-001"
+    database = tmp_path / "kr.sqlite3"
+    private_marker = "private-output-path-marker"
+    _seed_kis(tmp_path, database, cycle_id=cycle_id)
+
+    def fail_report(*args: object, **kwargs: object) -> None:
+        raise OSError(f"{private_marker}/report.md")
+
+    monkeypatch.setattr(run_kr_volume_surge_derive, "write_private_report", fail_report)
+
+    with pytest.raises(typer.BadParameter) as captured:
+        run_kr_volume_surge_derive.main(
+            collection_cycle_id=cycle_id,
+            collection_date=COLLECTION_DATE.isoformat(),
+            database=str(database),
+            output_dir=str(tmp_path / private_marker),
+        )
+
+    assert private_marker not in str(captured.value)
+    volume_run = next(
+        run
+        for run in KrThemeStore(database).source_runs(cycle_id)
+        if run.source is KrCatalystSource.VOLUME_SURGE
+    )
+    assert volume_run.status is KrCoverageStatus.SUCCESS
+
+
 def test_help_exposes_only_local_bounded_options() -> None:
     result = subprocess.run(
         [sys.executable, "run_kr_volume_surge_derive.py", "--help"],

@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
+import sqlite3
 import stat
 from decimal import Decimal, localcontext
 from pathlib import Path
@@ -13,10 +14,13 @@ import pytest
 from trading_agent.kis_kr_ranking import KisKrRankingItem, KisKrRankingKind
 from trading_agent.kis_kr_ranking_collection import collect_kis_kr_rankings
 from trading_agent.kis_kr_ranking_fixture import load_kis_kr_ranking_fixture
+from trading_agent.kr_source_collection_models import KrSourceCollectionRun
 from trading_agent.kr_theme_models import KrCatalystSource, KrCoverageStatus
 from trading_agent.kr_theme_store import KrThemeStore
 from trading_agent.kr_volume_surge import (
+    KIS_RANKING_INPUT_ADAPTER_VERSION,
     KR_VOLUME_SURGE_ADAPTER_VERSION,
+    InvalidKrVolumeSurgeSourceError,
     KrVolumeSurgeSourceNotReadyError,
     derive_kr_volume_surge,
 )
@@ -31,6 +35,10 @@ FLUCTUATION_AT = dt.datetime(2026, 7, 16, 10, 1, tzinfo=KST)
 VOLUME_AT = dt.datetime(2026, 7, 16, 10, 2, tzinfo=KST)
 DERIVED_AT = dt.datetime(2026, 7, 16, 10, 5, tzinfo=KST)
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "kis_kr_ranking"
+
+
+def test_derivation_input_adapter_contract_is_local_and_explicit() -> None:
+    assert KIS_RANKING_INPUT_ADAPTER_VERSION == "kis-kr-ranking-v1"
 
 
 def test_derivation_preserves_all_kis_volume_rows_and_alphanumeric_lineage(
@@ -121,6 +129,65 @@ def test_terminal_replay_skips_clock_and_append_hook(tmp_path: Path) -> None:
     assert second.restarted is True
 
 
+def test_terminal_success_replay_rejects_run_timestamp_mismatch(tmp_path: Path) -> None:
+    cycle_id = "kr-volume-replay-time-mismatch-001"
+    store = KrThemeStore(tmp_path / "kr.sqlite3")
+    _seed_kis_run(tmp_path, store, cycle_id=cycle_id, rows=(_volume_row("005930"),))
+    first = derive_kr_volume_surge(
+        store,
+        collection_cycle_id=cycle_id,
+        collection_date=COLLECTION_DATE,
+        _clock=lambda: DERIVED_AT,
+    )
+    tampered = KrSourceCollectionRun.model_validate(
+        first.run.model_dump(mode="python")
+        | {
+            "started_at": DERIVED_AT + dt.timedelta(minutes=1),
+            "completed_at": DERIVED_AT + dt.timedelta(minutes=1),
+        }
+    )
+    _replace_source_run(store, tampered)
+
+    with pytest.raises(InvalidKrVolumeSurgeSourceError):
+        _ = derive_kr_volume_surge(
+            store,
+            collection_cycle_id=cycle_id,
+            collection_date=COLLECTION_DATE,
+            _clock=_reject_dependency,
+        )
+
+
+def test_terminal_failed_replay_rejects_residual_derived_catalyst(
+    tmp_path: Path,
+) -> None:
+    cycle_id = "kr-volume-replay-failed-residual-001"
+    store = KrThemeStore(tmp_path / "kr.sqlite3")
+    _seed_kis_run(tmp_path, store, cycle_id=cycle_id, rows=(_volume_row("005930"),))
+    first = derive_kr_volume_surge(
+        store,
+        collection_cycle_id=cycle_id,
+        collection_date=COLLECTION_DATE,
+        _clock=lambda: DERIVED_AT,
+    )
+    tampered = KrSourceCollectionRun.model_validate(
+        first.run.model_dump(mode="python")
+        | {
+            "status": KrCoverageStatus.FAILED,
+            "record_count": 0,
+            "failure_code": "synthetic_failure",
+        }
+    )
+    _replace_source_run(store, tampered)
+
+    with pytest.raises(InvalidKrVolumeSurgeSourceError):
+        _ = derive_kr_volume_surge(
+            store,
+            collection_cycle_id=cycle_id,
+            collection_date=COLLECTION_DATE,
+            _clock=_reject_dependency,
+        )
+
+
 def test_missing_upstream_writes_nothing(tmp_path: Path) -> None:
     store = KrThemeStore(tmp_path / "missing.sqlite3")
 
@@ -161,6 +228,31 @@ def test_failed_upstream_closes_failed_volume_source_without_payload(tmp_path: P
     assert not any(
         item.record.source is KrCatalystSource.VOLUME_SURGE for item in store.catalysts()
     )
+
+
+def test_failed_upstream_clock_skew_uses_trusted_upstream_completion(
+    tmp_path: Path,
+) -> None:
+    cycle_id = "kr-volume-upstream-failed-clock-001"
+    store = KrThemeStore(tmp_path / "kr.sqlite3")
+    kis_run = _seed_kis_run(
+        tmp_path,
+        store,
+        cycle_id=cycle_id,
+        rows=(),
+        volume_status=429,
+    )
+
+    result = derive_kr_volume_surge(
+        store,
+        collection_cycle_id=cycle_id,
+        collection_date=COLLECTION_DATE,
+        _clock=lambda: FLUCTUATION_AT,
+    )
+
+    assert result.run.failure_code == "upstream_kis_failed"
+    assert result.run.started_at == kis_run.completed_at
+    assert result.run.completed_at == kis_run.completed_at
 
 
 def test_zero_average_fails_whole_source_without_dropping_row(tmp_path: Path) -> None:
@@ -221,7 +313,12 @@ def test_zero_volume_rows_create_explicit_empty_snapshot(tmp_path: Path) -> None
 def test_derivation_clock_before_upstream_is_terminal_failure(tmp_path: Path) -> None:
     cycle_id = "kr-volume-clock-skew-001"
     store = KrThemeStore(tmp_path / "kr.sqlite3")
-    _seed_kis_run(tmp_path, store, cycle_id=cycle_id, rows=(_volume_row("005930"),))
+    kis_run = _seed_kis_run(
+        tmp_path,
+        store,
+        cycle_id=cycle_id,
+        rows=(_volume_row("005930"),),
+    )
 
     result = derive_kr_volume_surge(
         store,
@@ -233,6 +330,46 @@ def test_derivation_clock_before_upstream_is_terminal_failure(tmp_path: Path) ->
     assert result.run.status is KrCoverageStatus.FAILED
     assert result.run.failure_code == "invalid_derivation_time"
     assert result.run.record_count == 0
+    assert result.run.started_at == kis_run.completed_at
+    assert result.run.completed_at == kis_run.completed_at
+
+
+def test_volume_row_must_link_to_matching_volume_receipt(tmp_path: Path) -> None:
+    cycle_id = "kr-volume-receipt-kind-001"
+    store = KrThemeStore(tmp_path / "kr.sqlite3")
+    kis_run = _seed_kis_run(
+        tmp_path,
+        store,
+        cycle_id=cycle_id,
+        rows=(_volume_row("005930"),),
+    )
+    volume_catalyst_id = _stored_volume_catalyst_ids(store, cycle_id=cycle_id)[0]
+    fluctuation_receipt = next(
+        item.receipt
+        for item in store.source_receipts(kis_run.source_run_id)
+        if item.receipt.request_key.startswith("kis-kr:fluctuation:")
+    )
+    with sqlite3.connect(store.path) as connection:
+        _ = connection.execute(
+            "DROP TRIGGER kr_catalyst_observation_receipts_no_update"
+        )
+        _ = connection.execute(
+            """UPDATE kr_catalyst_observation_receipts
+            SET receipt_id = ?, item_index = 999
+            WHERE collection_cycle_id = ? AND catalyst_id = ?""",
+            (fluctuation_receipt.receipt_id, cycle_id, volume_catalyst_id),
+        )
+
+    result = derive_kr_volume_surge(
+        store,
+        collection_cycle_id=cycle_id,
+        collection_date=COLLECTION_DATE,
+        _clock=lambda: FLUCTUATION_AT,
+    )
+
+    assert result.run.status is KrCoverageStatus.FAILED
+    assert result.run.failure_code == "invalid_upstream_evidence"
+    assert result.run.started_at == kis_run.completed_at
 
 
 def test_orphan_catalyst_restart_reuses_stored_derivation_time(tmp_path: Path) -> None:
@@ -266,6 +403,40 @@ def test_orphan_catalyst_restart_reuses_stored_derivation_time(tmp_path: Path) -
     assert result.restarted is True
 
 
+def test_orphan_restart_rejects_timestamp_before_upstream_completion(
+    tmp_path: Path,
+) -> None:
+    cycle_id = "kr-volume-orphan-causality-001"
+    store = KrThemeStore(tmp_path / "kr.sqlite3")
+    kis_run = _seed_kis_run(
+        tmp_path,
+        store,
+        cycle_id=cycle_id,
+        rows=(_volume_row("005930"),),
+    )
+    with pytest.raises(RuntimeError, match="synthetic crash"):
+        _ = derive_kr_volume_surge(
+            store,
+            collection_cycle_id=cycle_id,
+            collection_date=COLLECTION_DATE,
+            _clock=lambda: DERIVED_AT,
+            _after_catalyst=lambda: _raise_crash(),
+        )
+    future_upstream = KrSourceCollectionRun.model_validate(
+        kis_run.model_dump(mode="python")
+        | {"completed_at": DERIVED_AT + dt.timedelta(minutes=1)}
+    )
+    _replace_source_run(store, future_upstream)
+
+    with pytest.raises(InvalidKrVolumeSurgeSourceError):
+        _ = derive_kr_volume_surge(
+            store,
+            collection_cycle_id=cycle_id,
+            collection_date=COLLECTION_DATE,
+            _clock=_reject_dependency,
+        )
+
+
 def test_ratio_uses_fixed_decimal_context(tmp_path: Path) -> None:
     cycle_id = "kr-volume-decimal-001"
     store = KrThemeStore(tmp_path / "kr.sqlite3")
@@ -295,14 +466,14 @@ def test_ratio_uses_fixed_decimal_context(tmp_path: Path) -> None:
     assert payload.symbols[0].volume_ratio == Decimal("0.3333333333333333333333333333")
 
 
-def test_collection_date_mismatch_is_not_ready_and_writes_no_volume_run(
+def test_collection_date_mismatch_is_invalid_and_writes_no_volume_run(
     tmp_path: Path,
 ) -> None:
     cycle_id = "kr-volume-date-mismatch-001"
     store = KrThemeStore(tmp_path / "kr.sqlite3")
     _seed_kis_run(tmp_path, store, cycle_id=cycle_id, rows=(_volume_row("005930"),))
 
-    with pytest.raises(KrVolumeSurgeSourceNotReadyError):
+    with pytest.raises(InvalidKrVolumeSurgeSourceError):
         _ = derive_kr_volume_surge(
             store,
             collection_cycle_id=cycle_id,
@@ -431,6 +602,26 @@ def _stored_volume_catalyst_ids(
         if item.ranking_kind is KisKrRankingKind.VOLUME:
             rows.append((item.symbol, stored.record.catalyst_id))
     return tuple(catalyst_id for _, catalyst_id in sorted(rows))
+
+
+def _replace_source_run(store: KrThemeStore, run: KrSourceCollectionRun) -> None:
+    with sqlite3.connect(store.path) as connection:
+        _ = connection.execute("DROP TRIGGER kr_source_collection_runs_no_update")
+        _ = connection.execute(
+            """UPDATE kr_source_collection_runs
+            SET started_at = ?, completed_at = ?, status = ?, record_count = ?,
+                failure_code = ?, payload_json = ?
+            WHERE source_run_id = ?""",
+            (
+                run.started_at.isoformat(),
+                run.completed_at.isoformat(),
+                run.status.value,
+                run.record_count,
+                run.failure_code,
+                run.model_dump_json(),
+                run.source_run_id,
+            ),
+        )
 
 
 def _raise_crash() -> NoReturn:

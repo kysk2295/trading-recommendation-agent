@@ -45,6 +45,27 @@ def test_volume_surge_v1_replay_stays_numeric_only() -> None:
         )
 
 
+def test_volume_surge_v1_replay_accepts_historical_missing_schema_version() -> None:
+    raw = json.dumps(
+        {
+            "observed_at": DERIVED_AT.isoformat(),
+            "symbols": [
+                {
+                    "symbol": "005930",
+                    "trading_value_krw": "100",
+                    "volume_ratio": "2.5",
+                }
+            ],
+        }
+    ).encode()
+
+    parsed = parse_kr_volume_surge_payload(raw)
+
+    assert isinstance(parsed, KrVolumeSurgePayload)
+    assert parsed.schema_version == 1
+    assert parsed.symbols[0].symbol == "005930"
+
+
 def test_volume_surge_v2_preserves_alphanumeric_lineage() -> None:
     payload = _v2_payload()
 

@@ -425,7 +425,11 @@ def test_receipt_free_derived_volume_source_run_is_allowed(tmp_path: Path) -> No
     store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
     payload = b'{"schema_version":2,"symbols":[]}'
     record = _direct_source_record(KrCatalystSource.VOLUME_SURGE, payload)
-    run = _receipt_free_source_run(KrCatalystSource.VOLUME_SURGE, record_count=1)
+    run = _receipt_free_source_run(
+        KrCatalystSource.VOLUME_SURGE,
+        record_count=1,
+        adapter_version="kis-ranking-volume-surge-v2",
+    )
 
     with store.writer() as writer:
         _ = writer.append_catalyst(record, _observation(record), payload)
@@ -434,6 +438,64 @@ def test_receipt_free_derived_volume_source_run_is_allowed(tmp_path: Path) -> No
 
     assert store.source_runs() == (run,)
     assert store.observation_receipts() == ()
+
+
+def test_receipt_linked_legacy_volume_source_run_remains_allowed(tmp_path: Path) -> None:
+    store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
+    payload = b'{"schema_version":1,"symbols":[]}'
+    receipt = KrSourceReceipt(
+        source_run_id="kr-cycle-001:volume_surge",
+        source=KrCatalystSource.VOLUME_SURGE,
+        request_key="legacy-volume:page:1",
+        received_at=OBSERVED_AT,
+        http_status=200,
+        content_type="application/json",
+        payload_sha256=hashlib.sha256(payload).hexdigest(),
+    )
+    record = _direct_source_record(KrCatalystSource.VOLUME_SURGE, payload)
+    run = KrSourceCollectionRun(
+        source_run_id=receipt.source_run_id,
+        collection_cycle_id="kr-cycle-001",
+        source=KrCatalystSource.VOLUME_SURGE,
+        adapter_version="legacy-volume-v1",
+        started_at=OBSERVED_AT,
+        completed_at=OBSERVED_AT,
+        status=KrCoverageStatus.SUCCESS,
+        record_count=1,
+        failure_code=None,
+        receipt_ids=(receipt.receipt_id,),
+        collection_date=OBSERVED_AT.date(),
+    )
+
+    with store.writer() as writer:
+        _ = writer.append_source_receipt(receipt, payload)
+        _ = writer.append_catalyst_from_receipt(
+            record,
+            _observation(record),
+            payload,
+            receipt_id=receipt.receipt_id,
+            item_index=0,
+        )
+        assert writer.append_source_run(run) is True
+
+
+def test_receipt_free_volume_direct_snapshot_requires_v2_adapter(
+    tmp_path: Path,
+) -> None:
+    store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
+    payload = b'{"schema_version":2,"symbols":[]}'
+    record = _direct_source_record(KrCatalystSource.VOLUME_SURGE, payload)
+
+    with store.writer() as writer:
+        _ = writer.append_catalyst(record, _observation(record), payload)
+        with pytest.raises(InvalidKrThemeSourceError):
+            _ = writer.append_source_run(
+                _receipt_free_source_run(
+                    KrCatalystSource.VOLUME_SURGE,
+                    record_count=1,
+                    adapter_version="synthetic-volume-surge-v1",
+                )
+            )
 
 
 @pytest.mark.parametrize(
@@ -558,12 +620,13 @@ def _receipt_free_source_run(
     source: KrCatalystSource,
     *,
     record_count: int,
+    adapter_version: str | None = None,
 ) -> KrSourceCollectionRun:
     return KrSourceCollectionRun(
         source_run_id=f"kr-cycle-001:{source.value}",
         collection_cycle_id="kr-cycle-001",
         source=source,
-        adapter_version=f"synthetic-{source.value}-v1",
+        adapter_version=adapter_version or f"synthetic-{source.value}-v1",
         started_at=OBSERVED_AT,
         completed_at=OBSERVED_AT,
         status=KrCoverageStatus.SUCCESS,

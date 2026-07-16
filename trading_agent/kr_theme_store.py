@@ -25,6 +25,7 @@ from trading_agent.kr_theme_models import (
     KrCatalystObservation,
     KrCatalystRecord,
     KrCatalystSource,
+    KrCoverageStatus,
     KrThemeClassification,
 )
 from trading_agent.kr_theme_schema import (
@@ -604,9 +605,23 @@ class KrThemeWriter:
             ORDER BY observation.catalyst_id""",
             (run.collection_cycle_id, run.source.value),
         ).fetchall()
-        if run.source is KrCatalystSource.VOLUME_SURGE:
-            lineage_valid = not run.receipt_ids and all(
+        if run.receipt_ids:
+            lineage_valid = all(
+                receipt_id is not None and receipt_id in run.receipt_ids
+                for _, receipt_id in observation_rows
+            )
+        elif run.source is KrCatalystSource.VOLUME_SURGE:
+            direct_observations = all(
                 receipt_id is None for _, receipt_id in observation_rows
+            )
+            derived_volume_success = (
+                run.adapter_version == "kis-ranking-volume-surge-v2"
+                and run.status is KrCoverageStatus.SUCCESS
+                and run.record_count == 1
+                and len(observation_rows) == 1
+            )
+            lineage_valid = direct_observations and (
+                not observation_rows or derived_volume_success
             )
         else:
             lineage_valid = all(

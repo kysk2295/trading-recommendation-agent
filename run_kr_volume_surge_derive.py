@@ -83,15 +83,18 @@ def main(
         ) from None
 
     report_path = Path(output_dir) / "kr_volume_surge_derivation_summary_ko.md"
-    write_private_report(
-        report_path,
-        _report(
-            result,
-            collection_date=parsed_date,
-            upstream_receipt_count=len(upstream_run.receipt_ids),
-            upstream_record_count=upstream_run.record_count,
-        ),
-    )
+    try:
+        write_private_report(
+            report_path,
+            _report(
+                result,
+                collection_date=parsed_date,
+                upstream_receipt_count=len(upstream_run.receipt_ids),
+                upstream_record_count=upstream_run.record_count,
+            ),
+        )
+    except OSError:
+        raise typer.BadParameter("KR volume surge 보고서를 저장하지 못했습니다") from None
     if result.run.status is KrCoverageStatus.FAILED:
         raise typer.BadParameter(
             f"KR volume surge source run 실패: {result.run.failure_code}"

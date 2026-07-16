@@ -127,7 +127,7 @@ def parse_kr_volume_surge_payload(raw_payload: bytes) -> KrVolumeSurgePayloadAny
         document: object = json.loads(raw_payload)
         if not isinstance(document, dict):
             raise ValueError
-        version = document.get("schema_version")
+        version = document.get("schema_version", 1)
         if type(version) is not int:
             raise ValueError
         if version == 1:
