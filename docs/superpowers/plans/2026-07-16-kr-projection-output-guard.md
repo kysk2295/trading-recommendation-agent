@@ -178,7 +178,7 @@ Resolve `--database` before both target validation and `KrThemeStore` constructi
 
 - [x] **Step 3: Reverify implementation and CLI**
 
-Run focused tests (`46 passed`), targeted Ruff/type/diff gates, full tests (`1596 passed`), and synthetic CLI help, missing-manifest, first-run, replay, and artifact-mode QA without any external route.
+Run focused tests (`47 passed`), targeted Ruff/type/diff gates, full tests (`1597 passed`), and synthetic CLI help, missing-manifest, first-run, replay, and artifact-mode QA without any external route. The final review P2 also verifies both new and existing zero-projection outbox branches.
 
 - [x] **Step 4: Record review closure**
 

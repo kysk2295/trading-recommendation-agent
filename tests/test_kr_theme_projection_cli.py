@@ -246,9 +246,11 @@ def test_projection_cli_prepares_new_outbox_private_before_append(
     assert stat.S_IMODE(outbox.stat().st_mode) == 0o600
 
 
-def test_projection_cli_restores_existing_outbox_privacy_with_zero_projections(
+@pytest.mark.parametrize("seed_outbox", (False, True))
+def test_projection_cli_handles_outbox_privacy_with_zero_projections(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    seed_outbox: bool,
 ) -> None:
     database = tmp_path / "kr-theme.sqlite3"
     run_kr_theme_ingest.main(
@@ -259,8 +261,9 @@ def test_projection_cli_restores_existing_outbox_privacy_with_zero_projections(
     output = tmp_path / "projection"
     output.mkdir()
     outbox = output / "opportunities.v1.jsonl"
-    outbox.write_text("", encoding="utf-8")
-    outbox.chmod(0o644)
+    if seed_outbox:
+        outbox.write_text("", encoding="utf-8")
+        outbox.chmod(0o644)
     monkeypatch.setattr(
         run_kr_theme_projection,
         "project_kr_theme_opportunities",
@@ -273,7 +276,10 @@ def test_projection_cli_restores_existing_outbox_privacy_with_zero_projections(
         str(output),
     )
 
-    assert stat.S_IMODE(outbox.stat().st_mode) == 0o600
+    if seed_outbox:
+        assert stat.S_IMODE(outbox.stat().st_mode) == 0o600
+    else:
+        assert not outbox.exists()
 
 
 @pytest.mark.parametrize("fault", ["incomplete", "ambiguous", "missing_metric"])
