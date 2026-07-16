@@ -16,11 +16,13 @@
 - Create `trading_agent/kr_volume_surge_models.py`: replay-compatible v1 models, strict v2 lineage models, canonical serializer and version-dispatched parser.
 - Modify `trading_agent/kr_theme_projection.py`: import/re-export volume models and accept verified v2 metrics without changing v1 related-symbol semantics.
 - Create `trading_agent/kr_volume_surge.py`: upstream ledger validation, deterministic derivation, append-only restart and terminal state machine.
+- Modify `trading_agent/kr_theme_store.py`: permit receipt-free terminal source observations only for internally derived `volume_surge` runs.
 - Create `run_kr_volume_surge_derive.py`: DB-only CLI and aggregate mode-600 report.
 - Create `tests/test_kr_instrument.py`: instrument-version contract tests.
 - Create `tests/test_kr_volume_surge_models.py`: v1/v2 model, serialization and parser tests.
 - Modify `tests/test_kr_theme_projection.py`: v1 replay and v2 upstream-lineage projection tests.
 - Create `tests/test_kr_volume_surge.py`: derivation, failure and restart tests.
+- Modify `tests/test_kr_theme_store.py`: derived-run receipt exception and provider raw-first regression tests.
 - Create `tests/test_kr_volume_surge_cli.py`: CLI contract, E2E, redaction and mode tests.
 - Modify `pyproject.toml`: include the new CLI in basedpyright.
 - Modify `README.md`, `CODEX_START_HERE.md`: record the source capability and orchestrator next milestone.
@@ -206,8 +208,24 @@ git commit -m "feat: verify volume surge v2 lineage"
 **Files:**
 - Create: `trading_agent/kr_volume_surge.py`
 - Create: `tests/test_kr_volume_surge.py`
+- Modify: `trading_agent/kr_theme_store.py:579-614`
+- Modify: `tests/test_kr_theme_store.py`
 
-- [ ] **Step 1: Write failing happy-path derivation tests**
+- [ ] **Step 1: Write failing derived source-run store tests**
+
+Append one direct `VOLUME_SURGE` catalyst/observation and prove a matching terminal run with `receipt_ids=()` is accepted. Parametrize `NEWS`, `DART`, and `KIS_RANKING` direct observations without receipts and prove each source run remains rejected with `InvalidKrThemeSourceError`.
+
+- [ ] **Step 2: Run the store tests and confirm RED**
+
+Run: `uv run pytest -q tests/test_kr_theme_store.py -k receipt_free`
+
+Expected: the derived volume run is rejected by the existing all-sources receipt requirement.
+
+- [ ] **Step 3: Implement the narrow store validator exception**
+
+In `_validate_source_run`, retain exact receipt identity/time checks. For `VOLUME_SURGE`, require `run.receipt_ids == ()`, exact `record_count`, and every matching observation link to be `None`. For every other source, preserve the current requirement that every observation has a receipt ID belonging to the run.
+
+- [ ] **Step 4: Write failing happy-path derivation tests**
 
 Seed `KrThemeStore` through `collect_kis_kr_rankings` using deterministic fluctuation and volume responses. Assert one v2 catalyst, same-cycle observation, source run, sorted metrics, exact row catalyst IDs, `trading_value_krw`, `volume_ratio`, derivation/source times, adapter version and mode 600. Include an alphanumeric KIS symbol and assert it remains in the stored payload.
 
@@ -222,13 +240,13 @@ assert result.run.status is KrCoverageStatus.SUCCESS
 assert result.symbol_count == 2
 ```
 
-- [ ] **Step 2: Run and confirm RED**
+- [ ] **Step 5: Run and confirm RED**
 
 Run: `uv run pytest -q tests/test_kr_volume_surge.py -k happy`
 
 Expected: import failure because `trading_agent.kr_volume_surge` does not exist.
 
-- [ ] **Step 3: Define public result and stable errors**
+- [ ] **Step 6: Define public result and stable errors**
 
 ```python
 KR_VOLUME_SURGE_ADAPTER_VERSION: Final = "kis-ranking-volume-surge-v2"
@@ -250,7 +268,7 @@ class KrVolumeSurgeSourceNotReadyError(ValueError):
 
 Expose `derive_kr_volume_surge(store, *, collection_cycle_id, collection_date, _clock, _after_catalyst)`. Stable failed-run codes are `upstream_kis_failed`, `invalid_upstream_evidence`, `zero_average_volume`, and `invalid_derivation_time`.
 
-- [ ] **Step 4: Implement exact upstream selection and lineage validation**
+- [ ] **Step 7: Implement exact upstream selection and lineage validation**
 
 Before clock or writer use, replay one exact existing volume terminal run. Otherwise require one exact KIS run and select same-cycle KIS observations. Cross-check run record/receipt counts, one observation receipt link per catalyst, payload/checksum/source identities and strict `KisKrRankingItem` parsing. Select only `VOLUME` rows but require at least one volume receipt even when rows are empty.
 
@@ -263,30 +281,30 @@ with localcontext(Context(prec=28, rounding=ROUND_HALF_EVEN)):
 
 Reject `average_volume is None or <= 0` and missing trading value without dropping rows.
 
-- [ ] **Step 5: Implement append and terminal restart**
+- [ ] **Step 8: Implement append and terminal restart**
 
-Create canonical v2 payload, deterministic catalyst record and observation, append them in one writer call, invoke `_after_catalyst`, then append terminal run in a second writer call. This deliberately exposes the crash window for the orphan restart test. Exact existing catalyst append is no-op; content conflict bubbles as `KrThemeConflictError`.
+Create canonical v2 payload, deterministic catalyst record and observation, append them directly in one writer call without a fake source receipt, invoke `_after_catalyst`, then append terminal run with `receipt_ids=()` in a second writer call. This deliberately exposes the crash window for the orphan restart test. Exact existing catalyst append is no-op; content conflict bubbles as `KrThemeConflictError`.
 
 For terminal failed KIS input, append only a failed volume run. For missing KIS run, raise `KrVolumeSurgeSourceNotReadyError` and write nothing.
 
-- [ ] **Step 6: Add failure and replay tests**
+- [ ] **Step 9: Add failure and replay tests**
 
 Cover terminal replay with rejecting clock/read hooks, missing upstream no write, failed upstream terminal volume failure, wrong adapter/date, malformed KIS payload/checksum/lineage, duplicate link/symbol/source ID, zero average, missing trading value, zero rows, derivation clock before upstream, crash after catalyst and deterministic restart, incompatible existing volume run, writer conflict and process-global Decimal context independence.
 
-- [ ] **Step 7: Verify and commit Task 3**
+- [ ] **Step 10: Verify and commit Task 3**
 
 Run:
 
 ```bash
-uv run pytest -q tests/test_kr_volume_surge.py tests/test_kis_kr_ranking_collection.py tests/test_kr_volume_surge_models.py
-uv run ruff check trading_agent/kr_volume_surge.py tests/test_kr_volume_surge.py
-uv run basedpyright trading_agent/kr_volume_surge.py
+uv run pytest -q tests/test_kr_theme_store.py tests/test_kr_volume_surge.py tests/test_kis_kr_ranking_collection.py tests/test_kr_volume_surge_models.py
+uv run ruff check trading_agent/kr_theme_store.py trading_agent/kr_volume_surge.py tests/test_kr_theme_store.py tests/test_kr_volume_surge.py
+uv run basedpyright trading_agent/kr_theme_store.py trading_agent/kr_volume_surge.py
 ```
 
 Expected: all exit 0.
 
 ```bash
-git add trading_agent/kr_volume_surge.py tests/test_kr_volume_surge.py
+git add trading_agent/kr_theme_store.py trading_agent/kr_volume_surge.py tests/test_kr_theme_store.py tests/test_kr_volume_surge.py
 git commit -m "feat: derive KR volume surge evidence"
 ```
 
