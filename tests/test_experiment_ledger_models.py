@@ -189,6 +189,7 @@ def test_research_source_and_hypothesis_card_have_canonical_immutable_keys() -> 
         ("source_url", "http://doi.org/10.1111/j.1540-6261.1993.tb04702.x"),
         ("source_url", "https://user:password@doi.org/paper"),
         ("source_url", "https://doi.org/paper#fragment"),
+        ("source_url", "https://doi.org/paper?access_token=secret"),
         ("retrieved_at", dt.datetime(2026, 7, 15, 12)),
     ),
 )

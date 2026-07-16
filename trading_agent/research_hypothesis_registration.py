@@ -58,7 +58,10 @@ class ResearchHypothesisManifest(BaseModel):
             or not _canonical_text(self.counterfactual_baseline)
             or not _aware(self.ledger_recorded_at)
             or self.ledger_recorded_at < self.experiment_scope.registered_at
-            or any(source.ledger_recorded_at > self.ledger_recorded_at for source in self.research_sources)
+            or any(
+                source.ledger_recorded_at > self.experiment_scope.registered_at
+                for source in self.research_sources
+            )
         ):
             raise ValueError("invalid research hypothesis manifest")
         return self
@@ -68,6 +71,8 @@ class ResearchHypothesisManifest(BaseModel):
 class ResearchHypothesisRegistrationResult:
     sources_created: int
     cards_created: int
+    sources_total: int
+    cards_total: int
 
 
 def register_research_hypothesis_manifest(
@@ -100,7 +105,12 @@ def register_research_hypothesis_manifest(
             cards_created = int(writer.register_research_hypothesis(card))
     except (ExperimentLedgerConflictError, InvalidExperimentLedgerSourceError, ValueError) as error:
         raise InvalidResearchHypothesisManifestError from error
-    return ResearchHypothesisRegistrationResult(sources_created, cards_created)
+    return ResearchHypothesisRegistrationResult(
+        sources_created=sources_created,
+        cards_created=cards_created,
+        sources_total=len(manifest.research_sources),
+        cards_total=1,
+    )
 
 
 def load_research_hypothesis_manifest(path: Path) -> ResearchHypothesisManifest:

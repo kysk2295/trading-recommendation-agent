@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import stat
@@ -87,6 +88,34 @@ def test_research_hypothesis_register_fixture_replays_with_private_artifacts(
     assert stat.S_IMODE(database.stat().st_mode) == 0o600
     assert stat.S_IMODE(Path(f"{database}.writer.lock").stat().st_mode) == 0o600
     assert stat.S_IMODE((output / REPORT_NAME).stat().st_mode) == 0o600
+
+
+def test_research_hypothesis_register_reports_variable_source_totals(tmp_path: Path) -> None:
+    payload = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    payload["research_sources"] = payload["research_sources"][:1]
+    payload["research_source_ids"] = ["academic-momentum-1993"]
+    manifest = tmp_path / "one-source.json"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    database = tmp_path / "research.sqlite3"
+    output = tmp_path / "report"
+    arguments = (
+        "--manifest",
+        str(manifest),
+        "--database",
+        str(database),
+        "--output-dir",
+        str(output),
+    )
+
+    assert registration_cli.main(arguments) == 0
+    first_report = (output / REPORT_NAME).read_text(encoding="utf-8")
+    assert registration_cli.main(arguments) == 0
+    replay_report = (output / REPORT_NAME).read_text(encoding="utf-8")
+
+    assert "research source 신규/재사용: 1/0" in first_report
+    assert "hypothesis card 신규/재사용: 1/0" in first_report
+    assert "research source 신규/재사용: 0/1" in replay_report
+    assert "hypothesis card 신규/재사용: 0/1" in replay_report
 
 
 def test_registration_path_has_no_provider_or_paper_imports() -> None:

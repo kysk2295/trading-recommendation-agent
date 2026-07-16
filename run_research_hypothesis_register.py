@@ -66,8 +66,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.output_dir,
         result="ready",
         details=(
-            _created_reused("research source", result.sources_created, 2),
-            _created_reused("hypothesis card", result.cards_created, 1),
+            _created_reused("research source", result.sources_created, result.sources_total),
+            _created_reused("hypothesis card", result.cards_created, result.cards_total),
             "external mutation: 0",
         ),
     )

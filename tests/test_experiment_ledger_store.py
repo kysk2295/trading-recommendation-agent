@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import trading_agent.experiment_ledger_store as experiment_ledger_store
 from trading_agent.daily_research_contract import (
     CURRENT_COST_MODEL,
     CURRENT_DATA_CONTRACT,
@@ -54,6 +55,7 @@ ORB_CONTRACT = strategy_contract(StrategyMode.ORB)
 ORB_SCOPE = current_intraday_experiment_scope("H-MOM-ORB-001")
 SOURCE_REGISTERED_AT = ORB_SCOPE.registered_at
 LEDGER_RECORDED_AT = dt.datetime(2026, 7, 15, 12, tzinfo=dt.UTC)
+RESEARCH_SOURCE_RECORDED_AT = SOURCE_REGISTERED_AT - dt.timedelta(seconds=1)
 STARTED_AT = dt.datetime(2026, 7, 16, 13, 20, tzinfo=dt.UTC)
 DECIDED_AT = dt.datetime(2026, 7, 15, 20, tzinfo=dt.UTC)
 DECISION_DATE = dt.date(2026, 7, 15)
@@ -82,8 +84,8 @@ def _research_source() -> ResearchSource:
         published_on=dt.date(1993, 2, 1),
         claim="Intermediate-horizon relative strength motivates a momentum trial.",
         limitations="It is not current-market or net-cost evidence for this project.",
-        retrieved_at=LEDGER_RECORDED_AT,
-        ledger_recorded_at=LEDGER_RECORDED_AT,
+        retrieved_at=RESEARCH_SOURCE_RECORDED_AT,
+        ledger_recorded_at=RESEARCH_SOURCE_RECORDED_AT,
     )
 
 
@@ -250,6 +252,31 @@ def test_research_hypothesis_rejects_unknown_source(tmp_path: Path) -> None:
         _ = writer.register_research_hypothesis(_research_card())
 
 
+def test_research_hypothesis_rejects_source_recorded_after_scope_preregistration(tmp_path: Path) -> None:
+    database = tmp_path / "experiment.sqlite3"
+    store = ExperimentLedgerStore(database)
+    late_recorded_at = _hypothesis().source_registered_at + dt.timedelta(seconds=1)
+    late_source = ResearchSource.model_validate(
+        _research_source().model_dump(mode="python")
+        | {
+            "retrieved_at": late_recorded_at,
+            "ledger_recorded_at": late_recorded_at,
+        }
+    )
+    card = ResearchHypothesisCard(
+        hypothesis=_hypothesis(),
+        research_source_keys=(str(research_source_key(late_source)),),
+        economic_mechanism="Underreaction may leave return continuation.",
+        counterfactual_baseline="Matched eligible-universe forward return after the same cost model.",
+    )
+
+    with store.writer() as writer:
+        assert writer.register_research_source(late_source) is True
+
+    with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
+        _ = writer.register_research_hypothesis(card)
+
+
 def test_writer_migrates_v1_without_rewriting_existing_rows(tmp_path: Path) -> None:
     database = tmp_path / "experiment.sqlite3"
     hypothesis = _hypothesis()
@@ -277,6 +304,51 @@ def test_writer_migrates_v1_without_rewriting_existing_rows(tmp_path: Path) -> N
 
     assert migrated_row == original_row
     assert version == (2,)
+
+
+def test_writer_rolls_back_v1_migration_when_v2_ddl_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "experiment.sqlite3"
+    hypothesis = _hypothesis()
+    original_row = (
+        str(hypothesis_registration_key(hypothesis)),
+        hypothesis.hypothesis_id,
+        hypothesis.experiment_scope_key,
+        hypothesis.primary_lane.value,
+        hypothesis.model_dump_json(),
+    )
+    with sqlite3.connect(database) as connection:
+        connection.executescript(CREATE_EXPERIMENT_LEDGER_SCHEMA_V1)
+        _ = connection.execute("PRAGMA user_version = 1")
+        _ = connection.execute("INSERT INTO hypotheses VALUES (?, ?, ?, ?, ?)", original_row)
+        connection.commit()
+
+    monkeypatch.setattr(
+        experiment_ledger_store,
+        "CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2",
+        "CREATE TABLE migration_test_marker (value INTEGER); CREATE TABLE hypotheses (value INTEGER);",
+    )
+
+    with pytest.raises(sqlite3.OperationalError, match="already exists"), ExperimentLedgerStore(database).writer():
+        pass
+
+    with sqlite3.connect(database) as connection:
+        objects = frozenset(
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        )
+        migrated_row = connection.execute(
+            "SELECT registration_key, hypothesis_id, experiment_scope_key, lane_id, payload_json FROM hypotheses"
+        ).fetchone()
+        version = connection.execute("PRAGMA user_version").fetchone()
+
+    assert objects == experiment_ledger_store._V1_SCHEMA_OBJECTS
+    assert migrated_row == original_row
+    assert version == (1,)
 
 
 def test_registers_exact_lineage_and_replays_without_duplicate_rows(tmp_path: Path) -> None:
@@ -364,18 +436,23 @@ def test_reader_connection_closes_after_context(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("operation", ("UPDATE", "DELETE"))
-def test_registration_tables_are_append_only(tmp_path: Path, operation: str) -> None:
+@pytest.mark.parametrize("table", ("hypotheses", "research_sources", "research_hypothesis_cards"))
+def test_registration_tables_are_append_only(tmp_path: Path, operation: str, table: str) -> None:
     database = tmp_path / "experiment.sqlite3"
-    _register_lineage(ExperimentLedgerStore(database))
+    store = ExperimentLedgerStore(database)
+    _register_lineage(store)
+    with store.writer() as writer:
+        assert writer.register_research_source(_research_source()) is True
+        assert writer.register_research_hypothesis(_research_card()) is True
 
     with (
         sqlite3.connect(database) as connection,
         pytest.raises(sqlite3.IntegrityError, match="append-only"),
     ):
         if operation == "UPDATE":
-            _ = connection.execute("UPDATE hypotheses SET hypothesis_id = 'changed'")
+            _ = connection.execute(f"UPDATE {table} SET payload_json = 'changed'")
         else:
-            _ = connection.execute("DELETE FROM hypotheses")
+            _ = connection.execute(f"DELETE FROM {table}")
 
 
 def test_identity_conflict_does_not_change_existing_registration(tmp_path: Path) -> None:

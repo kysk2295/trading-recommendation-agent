@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,20 @@ def test_invalid_manifest_does_not_open_or_create_ledger(tmp_path: Path) -> None
     manifest = tmp_path / "invalid.json"
     manifest.write_text("{not json", encoding="utf-8")
     database = tmp_path / "research.sqlite3"
+
+    with pytest.raises(InvalidResearchHypothesisManifestError):
+        _ = register_research_hypothesis_manifest(manifest, ExperimentLedgerStore(database))
+
+    assert not database.exists()
+
+
+def test_manifest_rejects_source_recorded_after_scope_preregistration(tmp_path: Path) -> None:
+    payload = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    payload["research_sources"][0]["retrieved_at"] = "2026-07-16T20:16:00Z"
+    payload["research_sources"][0]["ledger_recorded_at"] = "2026-07-16T20:16:00Z"
+    manifest = tmp_path / "late-source.json"
+    database = tmp_path / "research.sqlite3"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(InvalidResearchHypothesisManifestError):
         _ = register_research_hypothesis_manifest(manifest, ExperimentLedgerStore(database))

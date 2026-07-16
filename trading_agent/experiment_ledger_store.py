@@ -692,7 +692,7 @@ def _require_research_hypothesis_sources(
 ) -> None:
     for source_key in card.research_source_keys:
         source = _research_source_by_key(connection, source_key)
-        if source is None or source.source.ledger_recorded_at > card.hypothesis.ledger_recorded_at:
+        if source is None or source.source.ledger_recorded_at > card.hypothesis.source_registered_at:
             raise InvalidExperimentLedgerSourceError
 
 
@@ -1042,17 +1042,34 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
         )
         if objects:
             raise UnsupportedExperimentLedgerSchemaError
-        connection.executescript(CREATE_EXPERIMENT_LEDGER_SCHEMA)
-        _ = connection.execute(f"PRAGMA user_version = {EXPERIMENT_LEDGER_SCHEMA_VERSION}")
-        connection.commit()
+        _apply_schema_transaction(
+            connection,
+            ddl=CREATE_EXPERIMENT_LEDGER_SCHEMA,
+            version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
+        )
         return
     if current == EXPERIMENT_LEDGER_SCHEMA_VERSION_V1:
         _require_v1_schema(connection)
-        connection.executescript(CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2)
-        _ = connection.execute(f"PRAGMA user_version = {EXPERIMENT_LEDGER_SCHEMA_VERSION}")
-        connection.commit()
+        _apply_schema_transaction(
+            connection,
+            ddl=CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2,
+            version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
+        )
         return
     _require_current_schema(connection)
+
+
+def _apply_schema_transaction(connection: sqlite3.Connection, *, ddl: str, version: int) -> None:
+    try:
+        connection.executescript(
+            "BEGIN IMMEDIATE;\n"
+            f"{ddl}\n"
+            f"PRAGMA user_version = {version};\n"
+            "COMMIT;"
+        )
+    except sqlite3.Error:
+        connection.rollback()
+        raise
 
 
 def _require_current_schema(connection: sqlite3.Connection) -> None:
