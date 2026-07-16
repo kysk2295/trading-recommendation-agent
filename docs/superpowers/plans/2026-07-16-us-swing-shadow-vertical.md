@@ -17,7 +17,7 @@
 - Create: `trading_agent/swing_shadow_source.py`
 - Create: `tests/test_swing_shadow_source.py`
 
-- [ ] **Step 1: Write failing source-contract tests**
+- [x] **Step 1: Write failing source-contract tests**
 
 Add 21-session two-symbol fixture data. Assert exact symbol/date uniqueness, valid OHLC geometry, SHA-256 source identity, and fail-closed rejection of duplicate dates, missing requested symbols, future bars, naive observations, and production historical dates before credential/client construction.
 
@@ -27,13 +27,13 @@ assert source.source_key == swing_daily_source_key(source)
 assert source.bars_for("ACME")[-1].session_date == SESSION
 ```
 
-- [ ] **Step 2: Verify the tests fail**
+- [x] **Step 2: Verify the tests fail**
 
 Run `uv run pytest -q tests/test_swing_shadow_source.py`.
 
 Expected: import failure because no swing daily source exists.
 
-- [ ] **Step 3: Implement models and source adapters**
+- [x] **Step 3: Implement models and source adapters**
 
 Define frozen models:
 
@@ -57,11 +57,11 @@ class SwingDailySource(BaseModel):
 
 Require `low <= min(open, close) <= max(open, close) <= high`, finite positive prices, non-negative volume, one bar per symbol/date, and sorted symbols. Add a fixture loader and `swing_daily_source_key()` over canonical JSON.
 
-- [ ] **Step 4: Add bounded production collection**
+- [x] **Step 4: Add bounded production collection**
 
 Implement `collect_current_swing_daily_source()` with the existing `AlpacaBarsClient`. Require a sorted unique universe of 1..50 symbols, `session_date == now(New_York).date()`, and `observed_at >= regular_session_bounds(session_date)[1]`. Fetch no more than 45 calendar days through the current session with the existing SIP request; require a current-session bar for every symbol. Do not import a Paper execution module or submit any mutation.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run:
 
@@ -223,4 +223,3 @@ Do not run production HTTP, Paper, broker, Telegram, or any order route in this 
 - [ ] **Step 5: Document and commit**
 
 Record exact verification outcomes, shadow-only boundaries, and the next experiment-ledger integration. Commit with `git commit -m "feat: add US swing shadow vertical"`.
-
