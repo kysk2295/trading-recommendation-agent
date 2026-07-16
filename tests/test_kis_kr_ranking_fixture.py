@@ -120,7 +120,7 @@ def test_fixture_rejects_duplicate_request_identity(tmp_path: Path) -> None:
         _ = load_kis_kr_ranking_fixture(manifest, collection_date=COLLECTION_DATE)
 
 
-def test_fixture_rejects_page_gap_and_missing_kind(tmp_path: Path) -> None:
+def test_fixture_rejects_page_gap_and_unknown_kind(tmp_path: Path) -> None:
     document = _happy_document()
     pages = cast(list[dict[str, object]], document["pages"])
     pages[0]["page_no"] = 2
@@ -136,6 +136,20 @@ def test_fixture_rejects_page_gap_and_missing_kind(tmp_path: Path) -> None:
     pages[0]["page_no"] = 1
     pages[0]["kind"] = "unknown"
     manifest.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(KisKrRankingFixtureError):
+        _ = load_kis_kr_ranking_fixture(manifest, collection_date=COLLECTION_DATE)
+
+
+def test_fixture_rejects_missing_ranking_kind(tmp_path: Path) -> None:
+    document = _happy_document()
+    pages = cast(list[dict[str, object]], document["pages"])
+    del pages[1]
+    fixture_dir = tmp_path / "fixture"
+    fixture_dir.mkdir()
+    (fixture_dir / "fluctuation-page-1.json").write_text("{}", encoding="utf-8")
+    manifest = fixture_dir / "fixture-manifest.json"
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+
     with pytest.raises(KisKrRankingFixtureError):
         _ = load_kis_kr_ranking_fixture(manifest, collection_date=COLLECTION_DATE)
 

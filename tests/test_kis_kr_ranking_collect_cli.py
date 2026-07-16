@@ -12,7 +12,8 @@ import pytest
 import typer
 
 import run_kis_kr_ranking_collect
-from trading_agent.kr_theme_models import KrCoverageStatus
+from trading_agent.kr_source_collection_models import KrSourceReceipt
+from trading_agent.kr_theme_models import KrCatalystSource, KrCoverageStatus
 from trading_agent.kr_theme_store import KrThemeStore
 
 COLLECTION_DATE = dt.date(2026, 7, 16)
@@ -104,7 +105,7 @@ def test_production_terminal_replay_skips_credentials_and_http(
     monkeypatch.setattr(
         run_kis_kr_ranking_collect,
         "_current_kst_date",
-        lambda: COLLECTION_DATE,
+        _reject_dependency,
     )
     _reject_production_functions(monkeypatch)
 
@@ -116,6 +117,50 @@ def test_production_terminal_replay_skips_credentials_and_http(
         fixture_manifest=None,
     )
 
+    assert "재시작 no-op: 예" in _report(output)
+
+
+def test_production_orphan_restart_skips_date_credentials_and_http(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cycle_id = "kr-kis-ranking-orphan-001"
+    database = tmp_path / "kr.sqlite3"
+    output = tmp_path / "report"
+    payload = b"{}"
+    store = KrThemeStore(database)
+    with store.writer() as writer:
+        _ = writer.append_source_receipt(
+            KrSourceReceipt(
+                source_run_id=f"{cycle_id}:kis_ranking",
+                source=KrCatalystSource.KIS_RANKING,
+                request_key="kis-kr:fluctuation:p1:a1:rq-:rs-",
+                received_at=dt.datetime(2026, 7, 16, tzinfo=dt.UTC),
+                http_status=200,
+                content_type="application/json",
+                payload_sha256=hashlib.sha256(payload).hexdigest(),
+            ),
+            payload,
+        )
+    monkeypatch.setattr(
+        run_kis_kr_ranking_collect,
+        "_current_kst_date",
+        _reject_dependency,
+    )
+    _reject_production_functions(monkeypatch)
+
+    with pytest.raises(typer.BadParameter, match="incomplete_restart"):
+        run_kis_kr_ranking_collect.main(
+            collection_cycle_id=cycle_id,
+            collection_date=COLLECTION_DATE.isoformat(),
+            database=str(database),
+            output_dir=str(output),
+            fixture_manifest=None,
+        )
+
+    run = KrThemeStore(database).source_runs(cycle_id)[0]
+    assert run.status is KrCoverageStatus.FAILED
+    assert run.failure_code == "incomplete_restart"
     assert "재시작 no-op: 예" in _report(output)
 
 
@@ -192,6 +237,7 @@ def test_failed_fixture_run_writes_redacted_report_then_returns_nonzero(
     fixture.mkdir()
     payload = b'{"private provider message":"secret symbol 005930"}'
     (fixture / "failed.json").write_bytes(payload)
+    (fixture / "unused-volume.json").write_text("{}", encoding="utf-8")
     manifest = fixture / "fixture-manifest.json"
     manifest.write_text(
         json.dumps(
@@ -210,7 +256,19 @@ def test_failed_fixture_run_writes_redacted_report_then_returns_nonzero(
                         "http_status": 429,
                         "content_type": "application/json",
                         "payload_path": "failed.json",
-                    }
+                    },
+                    {
+                        "schema_version": 1,
+                        "kind": "volume",
+                        "page_no": 1,
+                        "attempt": 1,
+                        "request_tr_cont": "",
+                        "response_tr_cont": "",
+                        "received_at": "2026-07-16T10:01:00+09:00",
+                        "http_status": 200,
+                        "content_type": "application/json",
+                        "payload_path": "unused-volume.json",
+                    },
                 ],
             }
         ),
@@ -302,15 +360,16 @@ def test_help_exposes_only_bounded_options() -> None:
 
 
 def _reject_production_functions(monkeypatch: pytest.MonkeyPatch) -> None:
-    def reject(*args: object, **kwargs: object) -> None:
-        raise AssertionError("fixture mode must not open production dependencies")
-
     for name in (
         "load_kis_credentials",
         "create_kis_client",
         "get_access_token",
     ):
-        monkeypatch.setattr(run_kis_kr_ranking_collect, name, reject)
+        monkeypatch.setattr(run_kis_kr_ranking_collect, name, _reject_dependency)
+
+
+def _reject_dependency(*args: object, **kwargs: object) -> None:
+    raise AssertionError("local replay must not open deferred dependencies")
 
 
 def _report(output: Path) -> str:

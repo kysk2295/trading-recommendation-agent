@@ -87,6 +87,8 @@ class KisKrRankingFixtureManifest(BaseModel):
         by_kind: dict[KisKrRankingKind, list[int]] = {}
         for item in self.pages:
             by_kind.setdefault(item.kind, []).append(item.page_no)
+        if set(by_kind) != set(KisKrRankingKind):
+            raise ValueError("invalid KIS KR ranking fixture manifest")
         for page_numbers in by_kind.values():
             unique_pages = sorted(set(page_numbers))
             if unique_pages != list(range(1, len(unique_pages) + 1)):
