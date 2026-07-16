@@ -50,6 +50,19 @@ def test_projects_deterministic_conditional_signal_for_new_high_and_rvol() -> No
     assert signal.evidence_refs[0].record_id == source.source_key
 
 
+def test_uses_one_logical_signal_id_when_source_observation_is_revised() -> None:
+    source = _source()
+    revised_source = source.model_copy(
+        update={"observed_at": OBSERVED_AT + dt.timedelta(minutes=1)}
+    )
+
+    first = project_new_high_rvol_signals(source)[0]
+    revised = project_new_high_rvol_signals(revised_source)[0]
+
+    assert first.signal_id == revised.signal_id
+    assert first.evidence_refs[0].record_id != revised.evidence_refs[0].record_id
+
+
 @pytest.mark.parametrize(
     ("final_close", "final_volume"),
     ((Decimal("10"), 200_000), (Decimal("15"), 149_999)),

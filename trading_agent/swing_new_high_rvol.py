@@ -168,7 +168,6 @@ def _signal_id(source: SwingDailySource, symbol: str) -> str:
     material = "|".join(
         (
             _STRATEGY_VERSION,
-            source.source_key,
             symbol,
             source.session_date.isoformat(),
         )

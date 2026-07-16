@@ -182,17 +182,17 @@ Commit with `git commit -m "feat: add multi-session swing shadow ledger"`.
 - Modify: `CODEX_START_HERE.md`
 - Create: `docs/checkpoints/2026-07-16-us-swing-shadow-vertical-ko.md`
 
-- [ ] **Step 1: Write failing CLI E2E tests**
+- [x] **Step 1: Write failing CLI E2E tests**
 
 Cover fixture first run, replay, missing manifest, and production historical-date refusal before credential/client construction. Assert JSONL/report mode `600`, redacted source output, idempotence, and zero Alpaca Paper mutation.
 
-- [ ] **Step 2: Verify the tests fail**
+- [x] **Step 2: Verify the tests fail**
 
 Run `uv run pytest -q tests/test_us_swing_shadow_cli.py`.
 
 Expected: executable CLI does not exist.
 
-- [ ] **Step 3: Implement the CLI**
+- [x] **Step 3: Implement the CLI**
 
 Expose exactly:
 
@@ -207,7 +207,7 @@ Expose exactly:
 
 Fixture mode loads committed daily source. Production first applies current-date/post-close guards, then reads mode-`600` `alpaca.env` and calls only `https://data.alpaca.markets`. Append signals to the existing contract outbox, use `write_private_report()` for an aggregate Korean report, and never invoke Alpaca Paper modules.
 
-- [ ] **Step 4: Verify the full vertical**
+- [x] **Step 4: Verify the full vertical**
 
 Run `--help`, missing-fixture input, fixture happy path, exact replay, and permission checks. Then run:
 
@@ -220,6 +220,6 @@ git diff --check
 
 Do not run production HTTP, Paper, broker, Telegram, or any order route in this checkpoint.
 
-- [ ] **Step 5: Document and commit**
+- [x] **Step 5: Document and commit**
 
 Record exact verification outcomes, shadow-only boundaries, and the next experiment-ledger integration. Commit with `git commit -m "feat: add US swing shadow vertical"`.

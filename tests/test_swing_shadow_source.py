@@ -36,7 +36,10 @@ def test_fixture_source_loads_exact_completed_symbol_histories(tmp_path: Path) -
     assert source.source_key == swing_daily_source_key(source)
 
 
-@pytest.mark.parametrize("fault", ("duplicate", "missing", "future", "naive"))
+@pytest.mark.parametrize(
+    "fault",
+    ("duplicate", "missing", "future", "naive", "next_session_observation"),
+)
 def test_fixture_source_fails_closed_for_invalid_evidence(
     tmp_path: Path,
     fault: str,
@@ -52,8 +55,17 @@ def test_fixture_source_fails_closed_for_invalid_evidence(
         manifest["symbols"] = ["ACME", "BETA", "MISSING"]
     elif fault == "future":
         bars[-1]["session_date"] = (SESSION + dt.timedelta(days=1)).isoformat()
-    else:
+    elif fault == "naive":
         manifest["observed_at"] = OBSERVED_AT.replace(tzinfo=None).isoformat()
+    else:
+        manifest["observed_at"] = dt.datetime(
+            2026,
+            7,
+            16,
+            0,
+            1,
+            tzinfo=NEW_YORK,
+        ).isoformat()
     _write_json(fixture_root / "manifest.json", manifest)
     _write_json(fixture_root / "daily-bars.json", bars)
 

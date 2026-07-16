@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sqlite3
+import stat
 from collections.abc import Iterator
 from contextlib import contextmanager
 from decimal import Decimal
@@ -142,7 +143,14 @@ class SwingShadowStore(SwingShadowReader):
             raise InvalidSwingShadowLedgerError
         self.path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = Path(f"{self.path}.writer.lock")
-        descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        _validate_lock_path(lock_path)
+        no_follow = getattr(os, "O_NOFOLLOW", None)
+        if no_follow is None:
+            raise InvalidSwingShadowLedgerError
+        try:
+            descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | no_follow, 0o600)
+        except OSError as error:
+            raise InvalidSwingShadowLedgerError from error
         os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "a+", encoding="utf-8") as lock_handle:
             try:
@@ -310,6 +318,19 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
         )
     else:
         _require_current_schema(connection)
+
+
+def _validate_lock_path(path: Path) -> None:
+    if not path.exists():
+        return
+    metadata = path.lstat()
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or metadata.st_nlink != 1
+    ):
+        raise InvalidSwingShadowLedgerError
 
 
 def _require_current_schema(connection: sqlite3.Connection) -> None:

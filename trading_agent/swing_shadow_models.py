@@ -69,6 +69,7 @@ class SwingDailySource(BaseModel):
             or bounds is None
             or not _aware(self.observed_at)
             or self.observed_at.astimezone(NEW_YORK) < bounds[1]
+            or self.observed_at.astimezone(NEW_YORK).date() != self.session_date
             or _IDENTIFIER.fullmatch(self.universe_id) is None
             or not self.symbols
             or self.symbols != tuple(sorted(set(self.symbols)))

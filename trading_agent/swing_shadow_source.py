@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 from decimal import Decimal
 from pathlib import Path
 from typing import Final, Protocol, override
@@ -20,6 +21,7 @@ from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
 
 _MAX_PRODUCTION_SYMBOLS: Final = 50
 _LOOKBACK_CALENDAR_DAYS: Final = 45
+_US_SYMBOL = re.compile(r"^[A-Z][A-Z0-9.-]{0,15}$")
 
 
 class _DailyBarsReader(Protocol):
@@ -94,20 +96,12 @@ def collect_current_swing_daily_source(
     now: dt.datetime,
 ) -> SwingDailySource:
     try:
-        normalized = tuple(sorted(set(symbols)))
-        bounds = regular_session_bounds(session_date)
-        if (
-            not _aware(now)
-            or not _aware(observed_at)
-            or bounds is None
-            or session_date != now.astimezone(NEW_YORK).date()
-            or observed_at < bounds[1]
-            or now < bounds[1]
-            or observed_at > now
-            or not 0 < len(normalized) <= _MAX_PRODUCTION_SYMBOLS
-            or normalized != symbols
-        ):
-            raise InvalidSwingDailySourceError
+        normalized = validate_current_swing_daily_collection(
+            symbols=symbols,
+            session_date=session_date,
+            observed_at=observed_at,
+            now=now,
+        )
         raw_bars = _collect_bars(
             bars_client,
             symbols=normalized,
@@ -125,6 +119,31 @@ def collect_current_swing_daily_source(
         raise
     except (AlpacaApiError, OSError, TypeError, ValueError, ValidationError):
         raise InvalidSwingDailySourceError from None
+
+
+def validate_current_swing_daily_collection(
+    *,
+    symbols: tuple[str, ...],
+    session_date: dt.date,
+    observed_at: dt.datetime,
+    now: dt.datetime,
+) -> tuple[str, ...]:
+    normalized = tuple(sorted(set(symbols)))
+    bounds = regular_session_bounds(session_date)
+    if (
+        not _aware(now)
+        or not _aware(observed_at)
+        or bounds is None
+        or session_date != now.astimezone(NEW_YORK).date()
+        or observed_at < bounds[1]
+        or now < bounds[1]
+        or observed_at > now
+        or not 0 < len(normalized) <= _MAX_PRODUCTION_SYMBOLS
+        or normalized != symbols
+        or not all(_US_SYMBOL.fullmatch(symbol) for symbol in symbols)
+    ):
+        raise InvalidSwingDailySourceError
+    return normalized
 
 
 def _collect_bars(
@@ -184,4 +203,5 @@ __all__ = (
     "collect_current_swing_daily_source",
     "load_swing_daily_source",
     "swing_daily_source_key",
+    "validate_current_swing_daily_collection",
 )

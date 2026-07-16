@@ -12,6 +12,7 @@ from trading_agent.swing_new_high_rvol import project_new_high_rvol_signals
 from trading_agent.swing_shadow_engine import advance_swing_shadow_session
 from trading_agent.swing_shadow_models import SwingDailyBar, SwingDailySource
 from trading_agent.swing_shadow_store import (
+    InvalidSwingShadowLedgerError,
     ShadowEventKind,
     SwingShadowConflictError,
     SwingShadowEvent,
@@ -164,6 +165,42 @@ def test_replay_is_idempotent_and_changed_signal_payload_conflicts(tmp_path: Pat
 
     assert tuple(event.kind for event in first) == (ShadowEventKind.ENTRY_FILLED,)
     assert replay == ()
+
+
+def test_rejects_revised_source_evidence_under_the_same_logical_signal_id(
+    tmp_path: Path,
+) -> None:
+    source = _signal_source()
+    revised_source = source.model_copy(
+        update={"observed_at": source.observed_at + dt.timedelta(minutes=1)}
+    )
+    first = project_new_high_rvol_signals(source)[0]
+    revised = project_new_high_rvol_signals(revised_source)[0]
+    store = SwingShadowStore(tmp_path / "swing-shadow.sqlite3")
+
+    with store.writer() as writer:
+        _ = advance_swing_shadow_session(writer, source=source, signals=(first,))
+        with pytest.raises(SwingShadowConflictError):
+            _ = advance_swing_shadow_session(
+                writer,
+                source=revised_source,
+                signals=(revised,),
+            )
+
+    assert len(store.signals()) == 1
+
+
+def test_writer_rejects_a_symlink_lock_without_touching_its_target(tmp_path: Path) -> None:
+    store = SwingShadowStore(tmp_path / "swing-shadow.sqlite3")
+    victim = tmp_path / "victim"
+    victim.write_text("unchanged", encoding="utf-8")
+    victim.chmod(0o644)
+    Path(f"{store.path}.writer.lock").symlink_to(victim)
+
+    with pytest.raises(InvalidSwingShadowLedgerError), store.writer():
+        pass
+
+    assert stat.S_IMODE(victim.stat().st_mode) == 0o644
 
 
 def test_ledger_is_private_and_append_only(tmp_path: Path) -> None:
