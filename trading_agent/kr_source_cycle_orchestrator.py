@@ -86,8 +86,8 @@ def orchestrate_kr_source_cycle(
         if run is None:
             try:
                 stage_runners[source]()
-            except Exception as error:
-                raise KrSourceCycleOrchestrationError from error
+            except Exception:
+                raise KrSourceCycleOrchestrationError from None
             run = _exact_terminal_run(
                 store,
                 source=source,

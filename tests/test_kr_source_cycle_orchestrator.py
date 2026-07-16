@@ -119,6 +119,36 @@ def test_stage_that_does_not_leave_terminal_run_aborts_before_next_source(
     assert store.cycles() == ()
 
 
+def test_stage_exception_is_redacted_before_orchestration_boundary(
+    tmp_path: Path,
+) -> None:
+    store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
+    calls: list[KrCatalystSource] = []
+
+    def private_failure() -> None:
+        calls.append(KrCatalystSource.DART)
+        raise RuntimeError("private provider payload")
+
+    runners = {
+        source: _append_terminal_runner(store, source=source, calls=calls)
+        for source in ORDER
+    }
+    runners[KrCatalystSource.DART] = private_failure
+
+    with pytest.raises(KrSourceCycleOrchestrationError) as captured:
+        _ = orchestrate_kr_source_cycle(
+            store,
+            collection_cycle_id=CYCLE_ID,
+            collection_date=COLLECTION_DATE,
+            stage_runners=runners,
+        )
+
+    assert "private provider payload" not in str(captured.value)
+    assert captured.value.__cause__ is None
+    assert calls == [KrCatalystSource.DART]
+    assert store.cycles() == ()
+
+
 def test_all_terminal_historical_replay_does_not_call_any_stage(
     tmp_path: Path,
 ) -> None:
