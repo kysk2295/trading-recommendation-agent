@@ -30,8 +30,8 @@ parser의 숫자 전용 가정을 `[0-9A-Z]{6}` 계약으로 보정하고 별도
 
 ## 검증
 
-- focused KIS ranking suite: `60 passed in 0.80s`
-- 전체 pytest: `1496 passed in 21.91s`
+- focused KIS ranking suite: `62 passed in 0.81s`
+- 전체 pytest: `1498 passed in 22.36s`
 - Ruff: 통과
 - basedpyright: `0 errors, 0 warnings, 0 notes`
 - CLI `--help`: exit 0, 승인된 다섯 입력과 help만 노출
@@ -49,6 +49,7 @@ parser의 숫자 전용 가정을 `[0-9A-Z]{6}` 계약으로 보정하고 별도
 - `b08af30 feat: collect raw-first KIS KR rankings`
 - `5c970fd feat: add KIS KR ranking collector CLI`
 - `9f6337f fix: honor live KIS ranking contracts`
+- `254e32e fix: validate complete KIS ranking fixtures`
 
 ## 다음 KR milestone
 
