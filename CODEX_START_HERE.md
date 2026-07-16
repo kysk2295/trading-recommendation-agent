@@ -12,7 +12,7 @@
 - 숫자 전용 `volume_surge` v1 replay를 유지하면서 실제 KIS 단축코드 `[0-9A-Z]{6}`와 행별 upstream catalyst ID를 보존하는 v2 계약 구현
 - 저장된 같은-cycle KIS 거래량 evidence만 읽어 canonical `volume_surge` v2 catalyst·observation·receipt-free derived terminal run을 append하는 DB-only 상태기계와 CLI 구현
 - `run_kr_same_cycle_collect.py`가 DART → LS NEWS → KIS ranking → volume surge를 같은 날짜·cycle ID로 직렬 처리한 뒤 DB-only coordinator를 호출. complete cycle은 0, terminal source 실패 cycle은 `complete=false`와 nonzero로 보존하며 full terminal replay는 어떤 stage도 호출하지 않음
-- `run_kr_theme_projection.py`는 input ledger·SQLite sidecar와 KR JSONL/report output의 경로·hard-link 충돌을 ledger open 전 차단하고, committed keyword projection outbox와 한국어 요약을 mode `600`으로 유지. provider·LLM·broker·TradeSignal·국내 주문 호출 없음
+- `run_kr_theme_projection.py`는 resolved input ledger·SQLite sidecar와 KR JSONL/report output의 경로·hard-link 충돌을 ledger open 전 차단하고, zero-projection replay를 포함해 committed keyword projection outbox와 한국어 요약을 mode `600`으로 유지. provider·LLM·broker·TradeSignal·국내 주문 호출 없음
 - bounded production KIS 원장 local-only 파생에서 랭킹 60행 중 거래량 30행과 영문 포함 코드 7개를 보존하고 terminal replay 신규 0행 확인. provider·credential·network·broker 호출 없음
 - KIS 주간거래 `BAQ/BAY/BAA`를 프리마켓·정규장과 분리한 원시 랭킹 forward 수집 완료
 - 매 cycle KIS 원시 랭킹 행·출처·선택 여부 CSV 누적

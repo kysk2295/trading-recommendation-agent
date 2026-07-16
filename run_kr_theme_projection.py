@@ -64,7 +64,7 @@ def main(
         raise typer.BadParameter("run manifest 경로가 필요합니다")
     try:
         loaded = load_kr_theme_projection_run(Path(run_manifest))
-        database_path = Path(database)
+        database_path = Path(database).expanduser().resolve(strict=False)
         output = Path(output_dir)
         _validate_projection_targets(database_path, output)
         store = KrThemeStore(database_path)
@@ -117,8 +117,9 @@ def main(
 
         outbox = output / "opportunities.v1.jsonl"
         new_opportunities = 0
-        if projections:
+        if projections or outbox.exists():
             _prepare_private_outbox(outbox)
+        if projections:
             new_opportunities = sum(
                 append_opportunity_snapshot(outbox, item.opportunity)
                 for item in projections
@@ -158,12 +159,13 @@ def main(
 
 
 def _validate_projection_targets(database: Path, output_dir: Path) -> None:
+    resolved_database = database.expanduser().resolve(strict=False)
     ledger_candidates = (
-        database,
-        Path(f"{database}.writer.lock"),
-        Path(f"{database}-journal"),
-        Path(f"{database}-shm"),
-        Path(f"{database}-wal"),
+        resolved_database,
+        Path(f"{resolved_database}.writer.lock"),
+        Path(f"{resolved_database}-journal"),
+        Path(f"{resolved_database}-shm"),
+        Path(f"{resolved_database}-wal"),
     )
     ledger_targets = {
         candidate.expanduser().resolve(strict=False) for candidate in ledger_candidates

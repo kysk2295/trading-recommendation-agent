@@ -164,6 +164,53 @@ def test_projection_cli_rejects_artifact_filesystem_alias_before_store_open(
     assert KrThemeStore(database).classifications() == ()
 
 
+@pytest.mark.parametrize(
+    "artifact_relative",
+    ("opportunities.v1.jsonl", "kr_theme_projection_summary_ko.md"),
+)
+@pytest.mark.parametrize(
+    "sidecar_suffix",
+    (".writer.lock", "-journal", "-shm", "-wal"),
+)
+def test_projection_cli_rejects_resolved_database_sidecar_hardlink_before_store_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    artifact_relative: str,
+    sidecar_suffix: str,
+) -> None:
+    real_database = tmp_path / "real.sqlite3"
+    run_kr_theme_ingest.main(
+        str(EXAMPLE / "ingest-manifest.json"),
+        str(real_database),
+        str(tmp_path / "ingest"),
+    )
+    database_alias = tmp_path / "database-alias.sqlite3"
+    database_alias.symlink_to(real_database)
+    real_sidecar = Path(f"{real_database}{sidecar_suffix}")
+    real_sidecar.write_text("synthetic sidecar", encoding="utf-8")
+    output = tmp_path / "projection"
+    output.mkdir()
+    os.link(real_sidecar, output / artifact_relative)
+
+    store_opened = False
+
+    def unexpected_store_open(_: Path) -> object:
+        nonlocal store_opened
+        store_opened = True
+        raise AssertionError("collision guard must run before KrThemeStore")
+
+    monkeypatch.setattr(run_kr_theme_projection, "KrThemeStore", unexpected_store_open)
+
+    with pytest.raises(typer.BadParameter):
+        run_kr_theme_projection.main(
+            str(EXAMPLE / "projection-run.json"),
+            str(database_alias),
+            str(output),
+        )
+
+    assert store_opened is False
+
+
 def test_projection_cli_prepares_new_outbox_private_before_append(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -196,6 +243,36 @@ def test_projection_cli_prepares_new_outbox_private_before_append(
         )
 
     assert observed_modes == [0o600]
+    assert stat.S_IMODE(outbox.stat().st_mode) == 0o600
+
+
+def test_projection_cli_restores_existing_outbox_privacy_with_zero_projections(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "kr-theme.sqlite3"
+    run_kr_theme_ingest.main(
+        str(EXAMPLE / "ingest-manifest.json"),
+        str(database),
+        str(tmp_path / "ingest"),
+    )
+    output = tmp_path / "projection"
+    output.mkdir()
+    outbox = output / "opportunities.v1.jsonl"
+    outbox.write_text("", encoding="utf-8")
+    outbox.chmod(0o644)
+    monkeypatch.setattr(
+        run_kr_theme_projection,
+        "project_kr_theme_opportunities",
+        lambda *_args, **_kwargs: (),
+    )
+
+    run_kr_theme_projection.main(
+        str(EXAMPLE / "projection-run.json"),
+        str(database),
+        str(output),
+    )
+
     assert stat.S_IMODE(outbox.stat().st_mode) == 0o600
 
 

@@ -157,3 +157,36 @@ Record the corrected hard-link, pre-append permission, and symlink coverage in t
 git add run_kr_theme_projection.py tests/test_kr_theme_projection_cli.py README.md CODEX_START_HERE.md docs/checkpoints/2026-07-16-kr-projection-output-guard-ko.md docs/superpowers/plans/2026-07-16-kr-projection-output-guard.md
 git commit -m "fix: harden KR projection artifact aliases"
 ```
+
+### Task 5: Follow-up Review Remediation
+
+**Files:**
+- Modify: `run_kr_theme_projection.py`
+- Modify: `tests/test_kr_theme_projection_cli.py`
+- Modify: `README.md`
+- Modify: `CODEX_START_HERE.md`
+- Modify: `docs/checkpoints/2026-07-16-kr-projection-output-guard-ko.md`
+- Modify: `docs/superpowers/plans/2026-07-16-kr-projection-output-guard.md`
+
+- [x] **Step 1: Reproduce resolved-sidecar and zero-projection cases**
+
+Add all eight combinations of four resolved SQLite sidecars and two hard-linked output artifacts through a database symlink, and add a valid zero-projection run with an existing mode `644` outbox. Both defects reproduce before the fix.
+
+- [x] **Step 2: Align guard with the store and restore existing artifacts**
+
+Resolve `--database` before both target validation and `KrThemeStore` construction, so its sidecar candidates exactly match the reader. Prepare the outbox when projections exist or an existing outbox needs its mode restored; retain the no-empty-artifact behavior for a new zero-projection output.
+
+- [x] **Step 3: Reverify implementation and CLI**
+
+Run focused tests (`46 passed`), targeted Ruff/type/diff gates, full tests (`1596 passed`), and synthetic CLI help, missing-manifest, first-run, replay, and artifact-mode QA without any external route.
+
+- [x] **Step 4: Record review closure**
+
+Record resolved-sidecar hard-link and zero-projection replay protection in the README, status document, checkpoint, and this plan.
+
+- [x] **Step 5: Commit follow-up remediation**
+
+```bash
+git add run_kr_theme_projection.py tests/test_kr_theme_projection_cli.py README.md CODEX_START_HERE.md docs/checkpoints/2026-07-16-kr-projection-output-guard-ko.md docs/superpowers/plans/2026-07-16-kr-projection-output-guard.md
+git commit -m "fix: resolve KR projection ledger aliases"
+```
