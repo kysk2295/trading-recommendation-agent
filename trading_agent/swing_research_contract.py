@@ -4,8 +4,8 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import Final
 
-from trading_agent.lane_contract_models import ExperimentScope, ExperimentScopeKind
-from trading_agent.lane_policy_models import LaneId
+from trading_agent.experiment_scope_models import ExperimentScope, ExperimentScopeKind
+from trading_agent.lane_identity_models import LaneId
 
 
 @dataclass(frozen=True, slots=True)

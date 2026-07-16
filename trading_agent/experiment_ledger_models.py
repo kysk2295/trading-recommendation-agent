@@ -8,9 +8,9 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from trading_agent.experiment_scope_models import ExperimentScope, ExperimentScopeKind
 from trading_agent.lane_contract_keys import experiment_scope_key
-from trading_agent.lane_contract_models import ExperimentScope, ExperimentScopeKind
-from trading_agent.lane_policy_models import LaneId
+from trading_agent.lane_identity_models import LaneId
 from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")

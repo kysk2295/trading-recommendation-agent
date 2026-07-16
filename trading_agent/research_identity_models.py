@@ -7,7 +7,7 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from trading_agent.lane_policy_models import LaneId
+from trading_agent.lane_identity_models import LaneId
 
 _STRATEGY_ID = re.compile(r"^[a-z0-9][a-z0-9_]{0,63}$")
 _VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")

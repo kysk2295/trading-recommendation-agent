@@ -6,6 +6,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from trading_agent.lane_identity_models import LaneId
 from trading_agent.paper_risk import (
     HARD_DAILY_LOSS_LIMIT_DOLLARS,
     HARD_MAX_NOTIONAL_DOLLARS,
@@ -15,12 +16,6 @@ from trading_agent.paper_risk import (
     HARD_REFERENCE_EQUITY,
     HARD_RISK_FRACTION,
 )
-
-
-class LaneId(StrEnum):
-    INTRADAY_MOMENTUM = "intraday_momentum"
-    SWING_MOMENTUM = "swing_momentum"
-    MARKET_REGIME = "market_regime"
 
 
 class LaneOrderAuthority(StrEnum):

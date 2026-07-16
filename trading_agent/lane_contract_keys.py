@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import NewType
+from typing import TYPE_CHECKING, NewType
 
 from pydantic import BaseModel
 
-from trading_agent.lane_contract_models import (
-    ExperimentScope,
-    LaneAccountBinding,
-    LaneDailySnapshot,
-    LaneManifest,
-)
+if TYPE_CHECKING:
+    from trading_agent.lane_contract_models import (
+        ExperimentScope,
+        LaneAccountBinding,
+        LaneDailySnapshot,
+        LaneManifest,
+    )
 
 LaneManifestKey = NewType("LaneManifestKey", str)
 LaneAccountBindingKey = NewType("LaneAccountBindingKey", str)
