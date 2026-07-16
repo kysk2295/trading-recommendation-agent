@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from trading_agent.experiment_ledger_keys import experiment_trial_event_key
+from trading_agent.experiment_ledger_models import ExperimentTrialEvent, TrialEventKind
 from trading_agent.experiment_ledger_store import ExperimentLedgerReader, ExperimentLedgerStore
 from trading_agent.research_hypothesis_registration import register_research_hypothesis_manifest
 from trading_agent.signal_contract_models import TradeSignalEnvelope
@@ -97,6 +99,53 @@ def test_reviewer_rejects_an_open_trial_without_creating_a_review_ledger(tmp_pat
             reviews=reviews,
             signal_id=signal.signal_id,
             reviewed_at=signal.valid_until,
+        )
+
+    assert not reviews.path.exists()
+
+
+def test_reviewer_rejects_a_completed_event_with_different_terminal_artifacts(tmp_path: Path) -> None:
+    experiments, shadow, signal = _registered_trial(tmp_path)
+    planned_start = signal.valid_until.astimezone(NEW_YORK).date()
+    open_at, _ = _bounds(planned_start)
+    started = start_swing_shadow_trial(
+        experiment_ledger=experiments,
+        shadow_ledger=SwingShadowReader(shadow.path),
+        signal_id=signal.signal_id,
+        started_at=open_at + dt.timedelta(minutes=1),
+    )
+    terminal_source = _session_source(
+        planned_start,
+        open_price=Decimal("14.80"),
+        high=Decimal("15"),
+        low=Decimal("14.50"),
+        close=Decimal("14.90"),
+    )
+    with shadow.writer() as writer:
+        _ = advance_swing_shadow_session(writer, source=terminal_source)
+    terminal = shadow.events(signal.signal_id)[-1]
+    registration = experiments.trials()[0].registration
+    with experiments.writer() as writer:
+        assert writer.append_trial_event(
+            ExperimentTrialEvent(
+                trial_id=registration.trial_id,
+                sequence=2,
+                event_kind=TrialEventKind.COMPLETED,
+                occurred_at=terminal.observed_at + dt.timedelta(minutes=1),
+                artifact_sha256s=("a" * 64,),
+                reason_codes=(),
+                previous_event_key=experiment_trial_event_key(started.event),
+            )
+        )
+
+    reviews = SwingShadowReviewStore(tmp_path / "reviews.sqlite3")
+    with pytest.raises(InvalidSwingShadowReviewError):
+        _ = review_swing_shadow_trial(
+            experiment_ledger=ExperimentLedgerReader(experiments.path),
+            shadow_ledger=SwingShadowReader(shadow.path),
+            reviews=reviews,
+            signal_id=signal.signal_id,
+            reviewed_at=terminal.observed_at + dt.timedelta(minutes=2),
         )
 
     assert not reviews.path.exists()

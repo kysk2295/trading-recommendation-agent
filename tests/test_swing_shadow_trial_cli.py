@@ -8,6 +8,7 @@ import stat
 import subprocess
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 import run_swing_shadow_trial as trial_cli
 from tests.test_swing_shadow_trial import _bounds, _seed_signal, _session_source
@@ -164,6 +165,18 @@ print(json.dumps(sorted(name for name in sys.modules if name.startswith('trading
     assert not {
         module for module in loaded_modules if any(marker in module for marker in forbidden)
     }
+
+
+def test_current_code_version_uses_an_identifier_safe_dirty_suffix(monkeypatch) -> None:
+    responses = iter(
+        (
+            SimpleNamespace(stdout=f"{'a' * 40}\n"),
+            SimpleNamespace(stdout=" M run_swing_shadow_trial.py\n"),
+        )
+    )
+    monkeypatch.setattr(trial_cli.subprocess, "run", lambda *args, **kwargs: next(responses))
+
+    assert trial_cli._current_code_version() == f"{'a' * 40}.dirty"
 
 
 def _base_arguments(tmp_path: Path, *, signal_id: str = "missing") -> tuple[str, ...]:

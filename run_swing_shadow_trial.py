@@ -175,7 +175,7 @@ def _current_code_version() -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
-    return revision + ("+dirty" if dirty else "")
+    return revision + (".dirty" if dirty else "")
 
 
 def _outcome_label(operation: str) -> str:
