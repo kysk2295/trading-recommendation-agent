@@ -119,16 +119,43 @@ def orchestrate_kr_source_cycle(
     )
 
 
+def has_terminal_kr_source_runs(
+    store: KrThemeStore,
+    *,
+    collection_cycle_id: str,
+    collection_date: dt.date,
+) -> bool:
+    _validate_identity(collection_cycle_id, collection_date)
+    return all(
+        _exact_terminal_run(
+            store,
+            source=source,
+            collection_cycle_id=collection_cycle_id,
+            collection_date=collection_date,
+        )
+        is not None
+        for source in _SOURCE_ORDER
+    )
+
+
 def _validate_request(
     collection_cycle_id: str,
     collection_date: dt.date,
     stage_runners: Mapping[KrCatalystSource, KrSourceStageRunner],
 ) -> None:
+    _validate_identity(collection_cycle_id, collection_date)
+    if set(stage_runners) != set(_SOURCE_ORDER):
+        raise KrSourceCycleOrchestrationError
+
+
+def _validate_identity(
+    collection_cycle_id: str,
+    collection_date: dt.date,
+) -> None:
     if (
         _SAFE_ID.fullmatch(collection_cycle_id) is None
         or isinstance(collection_date, dt.datetime)
         or not isinstance(collection_date, dt.date)
-        or set(stage_runners) != set(_SOURCE_ORDER)
     ):
         raise KrSourceCycleOrchestrationError
 
