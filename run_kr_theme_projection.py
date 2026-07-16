@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import sqlite3
 from pathlib import Path
-from typing import override
+from typing import Final, override
 
 import typer
 from rich import print as rprint
@@ -39,12 +39,19 @@ from trading_agent.kr_theme_store import (
     StoredKrCatalyst,
     UnsupportedKrThemeSchemaError,
 )
+from trading_agent.private_report import write_private_report
 
 
 class KrThemeProjectionRunError(ValueError):
     @override
     def __str__(self) -> str:
         return "KR theme keyword projection을 안전하게 실행할 수 없습니다"
+
+
+_PROJECTION_ARTIFACTS: Final = (
+    Path("opportunities.v1.jsonl"),
+    Path("kr_theme_projection_summary_ko.md"),
+)
 
 
 def main(
@@ -56,7 +63,10 @@ def main(
         raise typer.BadParameter("run manifest 경로가 필요합니다")
     try:
         loaded = load_kr_theme_projection_run(Path(run_manifest))
-        store = KrThemeStore(Path(database))
+        database_path = Path(database)
+        output = Path(output_dir)
+        _validate_projection_targets(database_path, output)
+        store = KrThemeStore(database_path)
         if not store.is_initialized():
             raise KrThemeProjectionRunError
         cycles = tuple(
@@ -104,22 +114,22 @@ def main(
                     writer.append_classification(classification)
                 )
 
-        output = Path(output_dir)
         outbox = output / "opportunities.v1.jsonl"
         new_opportunities = sum(
             append_opportunity_snapshot(outbox, item.opportunity)
             for item in projections
         )
-        output.mkdir(parents=True, exist_ok=True)
+        if outbox.exists():
+            outbox.chmod(0o600)
         report = _report(
             loaded,
             projections,
             new_classifications=new_classifications,
             new_opportunities=new_opportunities,
         )
-        _ = (output / "kr_theme_projection_summary_ko.md").write_text(
+        write_private_report(
+            output / "kr_theme_projection_summary_ko.md",
             report,
-            encoding="utf-8",
         )
     except (
         ContractOutboxConflictError,
@@ -143,6 +153,25 @@ def main(
         + f"신규 classification {new_classifications}건, "
         + f"theme Opportunity {len(projections)}건, 신규 {new_opportunities}건"
     )
+
+
+def _validate_projection_targets(database: Path, output_dir: Path) -> None:
+    ledger_targets = {
+        candidate.expanduser().resolve(strict=False)
+        for candidate in (
+            database,
+            Path(f"{database}.writer.lock"),
+            Path(f"{database}-journal"),
+            Path(f"{database}-shm"),
+            Path(f"{database}-wal"),
+        )
+    }
+    for relative in _PROJECTION_ARTIFACTS:
+        target = output_dir / relative
+        if target.is_symlink() or (
+            target.expanduser().resolve(strict=False) in ledger_targets
+        ):
+            raise KrThemeProjectionRunError
 
 
 def _classify_cycle(

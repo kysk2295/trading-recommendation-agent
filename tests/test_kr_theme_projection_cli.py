@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import stat
 from pathlib import Path
 from typing import cast
 
@@ -38,6 +39,12 @@ def test_projection_cli_publishes_one_kr_opportunity_and_restart_is_idempotent(
     first_report = (projection_output / "kr_theme_projection_summary_ko.md").read_text(
         encoding="utf-8"
     )
+    outbox = projection_output / "opportunities.v1.jsonl"
+    summary = projection_output / "kr_theme_projection_summary_ko.md"
+    assert stat.S_IMODE(outbox.stat().st_mode) == 0o600
+    assert stat.S_IMODE(summary.stat().st_mode) == 0o600
+    outbox.chmod(0o644)
+    summary.chmod(0o644)
     run_kr_theme_projection.main(
         str(EXAMPLE / "projection-run.json"),
         str(database),
@@ -68,6 +75,42 @@ def test_projection_cli_publishes_one_kr_opportunity_and_restart_is_idempotent(
     assert "news://synthetic/projection/001" not in first_report
     assert str(database) not in first_report
     assert re.search(r"\b[0-9a-f]{64}\b", first_report) is None
+    assert stat.S_IMODE(outbox.stat().st_mode) == 0o600
+    assert stat.S_IMODE(summary.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize(
+    "database_relative",
+    ("opportunities.v1.jsonl", "kr_theme_projection_summary_ko.md"),
+)
+def test_projection_cli_rejects_database_collision_before_classification_append(
+    tmp_path: Path,
+    database_relative: str,
+) -> None:
+    output = tmp_path / "projection"
+    database = output / database_relative
+    run_kr_theme_ingest.main(
+        str(EXAMPLE / "ingest-manifest.json"),
+        str(database),
+        str(tmp_path / "ingest"),
+    )
+
+    with pytest.raises(typer.BadParameter):
+        run_kr_theme_projection.main(
+            str(EXAMPLE / "projection-run.json"),
+            str(database),
+            str(output),
+        )
+
+    store = KrThemeStore(database)
+    assert store.is_initialized() is True
+    assert store.classifications() == ()
+    other_artifact = output / (
+        "kr_theme_projection_summary_ko.md"
+        if database_relative == "opportunities.v1.jsonl"
+        else "opportunities.v1.jsonl"
+    )
+    assert not other_artifact.exists()
 
 
 @pytest.mark.parametrize("fault", ["incomplete", "ambiguous", "missing_metric"])
