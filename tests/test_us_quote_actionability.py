@@ -235,19 +235,19 @@ def test_expired_base_signal_is_blocked_before_quote_normalization() -> None:
     assert decision.derived_publication is None
 
 
-def test_invalid_quote_is_blocked_without_snapshot_identity() -> None:
+def test_invalid_quote_is_reduced_to_provider_failure_without_snapshot() -> None:
     decision = _assess(_quote(bid="NaN", ask="10.09"))
 
-    assert decision.assessment.status is QuoteAssessmentStatus.INVALID_QUOTE
+    assert decision.assessment.status is QuoteAssessmentStatus.PROVIDER_FAILED
     assert decision.assessment.quote_id is None
     assert decision.snapshot is None
     assert decision.derived_publication is None
 
 
-def test_quote_symbol_mismatch_is_invalid_quote() -> None:
+def test_quote_symbol_mismatch_is_reduced_to_provider_failure() -> None:
     decision = _assess(_quote(symbol="OTHER"))
 
-    assert decision.assessment.status is QuoteAssessmentStatus.INVALID_QUOTE
+    assert decision.assessment.status is QuoteAssessmentStatus.PROVIDER_FAILED
     assert decision.snapshot is None
 
 
@@ -334,6 +334,22 @@ def test_snapshot_identity_and_assessment_geometry_are_validated() -> None:
             {
                 **decision.assessment.model_dump(),
                 "derived_signal_id": None,
+            }
+        )
+
+
+def test_invalid_quote_is_not_a_terminal_assessment_status() -> None:
+    assessment = provider_failed_assessment(
+        _conditional_publication(),
+        scan_started_at=SCAN_STARTED_AT,
+        evaluated_at=AT,
+    )
+
+    with pytest.raises(ValidationError):
+        _ = QuoteActionabilityAssessment.model_validate(
+            {
+                **assessment.model_dump(mode="json"),
+                "status": "invalid_quote",
             }
         )
 

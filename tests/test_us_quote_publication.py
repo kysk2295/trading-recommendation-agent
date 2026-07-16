@@ -140,6 +140,60 @@ def test_provider_failure_is_isolated_per_symbol() -> None:
     assert tuple(item.symbol for item in batch.snapshots) == ("BETA",)
 
 
+def test_provider_failure_rechecks_base_expiry_at_completion() -> None:
+    completed_at = AT + dt.timedelta(seconds=1)
+    times = iter((AT, completed_at))
+
+    batch = evaluate_quote_publications(
+        (
+            _publication(
+                "ACME",
+                "signal-1",
+                valid_until=AT + dt.timedelta(milliseconds=500),
+            ),
+        ),
+        exchange_by_symbol={"ACME": "NAS"},
+        fetch_quote=lambda *_: (_ for _ in ()).throw(
+            KisUsQuoteUnavailableError("http_error")
+        ),
+        scan_started_at=STARTED_AT,
+        clock=lambda: next(times),
+    )
+
+    assert batch.snapshots == ()
+    assert batch.derived_publications == ()
+    assert batch.assessments[0].status is QuoteAssessmentStatus.SETUP_INVALIDATED
+    assert batch.assessments[0].evaluated_at == completed_at
+
+
+def test_provider_failure_rechecks_market_close_at_completion() -> None:
+    before_close = dt.datetime(2026, 7, 15, 15, 59, 59, 900_000, tzinfo=NEW_YORK)
+    after_close = dt.datetime(2026, 7, 15, 16, 0, 0, 100_000, tzinfo=NEW_YORK)
+    times = iter((before_close, after_close))
+
+    batch = evaluate_quote_publications(
+        (
+            _publication(
+                "ACME",
+                "signal-1",
+                anchor=before_close,
+                valid_until=after_close + dt.timedelta(seconds=30),
+            ),
+        ),
+        exchange_by_symbol={"ACME": "NAS"},
+        fetch_quote=lambda *_: (_ for _ in ()).throw(
+            KisUsQuoteUnavailableError("http_error")
+        ),
+        scan_started_at=before_close - dt.timedelta(seconds=20),
+        clock=lambda: next(times),
+    )
+
+    assert batch.snapshots == ()
+    assert batch.derived_publications == ()
+    assert batch.assessments[0].status is QuoteAssessmentStatus.MARKET_CLOSED
+    assert batch.assessments[0].evaluated_at == after_close
+
+
 def test_unexpected_provider_programming_error_propagates() -> None:
     def fail(_: str, __: str) -> KisUsLevelOneQuote:
         raise RuntimeError("programming error")

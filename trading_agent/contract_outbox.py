@@ -268,6 +268,11 @@ def _plan_trade_signal_publications(
     cards_dir: Path,
     publications: tuple[TradeSignalPublication, ...],
 ) -> tuple[_ModelAppendPlan, tuple[_CardWritePlan, ...]]:
+    if publications:
+        _validate_directory_target(
+            cards_dir,
+            identity=publications[0].signal.signal_id,
+        )
     model_plan = _plan_models(
         path,
         publications,
@@ -294,6 +299,19 @@ def _plan_trade_signal_publications(
         _CardWritePlan(path=card_path, content=planned_cards[card_path])
         for card_path in sorted(planned_cards)
     )
+
+
+def _validate_directory_target(path: Path, *, identity: str) -> None:
+    current = path
+    while not current.exists():
+        if current.is_symlink():
+            raise ContractOutboxConflictError(identity)
+        parent = current.parent
+        if parent == current:
+            return
+        current = parent
+    if not current.is_dir():
+        raise ContractOutboxConflictError(identity)
 
 
 def _commit_model_plan(plan: _ModelAppendPlan) -> None:

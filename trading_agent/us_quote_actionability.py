@@ -47,7 +47,6 @@ class QuoteAssessmentStatus(StrEnum):
     VALIDATED_TRIGGER_REACHED = "validated_trigger_reached"
     MARKET_CLOSED = "market_closed"
     PROVIDER_FAILED = "provider_failed"
-    INVALID_QUOTE = "invalid_quote"
     FUTURE_QUOTE = "future_quote"
     STALE_QUOTE = "stale_quote"
     SPREAD_TOO_WIDE = "spread_too_wide"
@@ -139,7 +138,6 @@ class QuoteActionabilityAssessment(BaseModel):
         quote_forbidden = {
             QuoteAssessmentStatus.MARKET_CLOSED,
             QuoteAssessmentStatus.PROVIDER_FAILED,
-            QuoteAssessmentStatus.INVALID_QUOTE,
         }
         geometry_valid = (
             self.quote_id is not None and self.derived_signal_id is not None
@@ -202,7 +200,7 @@ def assess_us_quote(
             base,
             scan_started_at=scan_started_at,
             evaluated_at=evaluated_at,
-            status=QuoteAssessmentStatus.INVALID_QUOTE,
+            status=QuoteAssessmentStatus.PROVIDER_FAILED,
         )
 
     snapshot: UsQuoteSnapshot | None = None
@@ -213,7 +211,7 @@ def assess_us_quote(
             base,
             scan_started_at=scan_started_at,
             evaluated_at=evaluated_at,
-            status=QuoteAssessmentStatus.INVALID_QUOTE,
+            status=QuoteAssessmentStatus.PROVIDER_FAILED,
         )
 
     provider_at = snapshot.provider_observed_at.astimezone(NEW_YORK)
@@ -321,7 +319,13 @@ def provider_failed_assessment(
     scan_started_at: dt.datetime,
     evaluated_at: dt.datetime,
 ) -> QuoteActionabilityAssessment:
-    _validate_control_times(scan_started_at, evaluated_at)
+    preflight = preflight_quote_assessment(
+        base,
+        scan_started_at=scan_started_at,
+        evaluated_at=evaluated_at,
+    )
+    if preflight is not None:
+        return preflight
     return _assessment(
         base,
         scan_started_at=scan_started_at,
@@ -447,11 +451,7 @@ def quote_actionability_assessment_matches(
         )
     if snapshot is None:
         return (
-            assessment.status
-            in {
-                QuoteAssessmentStatus.PROVIDER_FAILED,
-                QuoteAssessmentStatus.INVALID_QUOTE,
-            }
+            assessment.status is QuoteAssessmentStatus.PROVIDER_FAILED
             and derived is None
             and assessment.quote_id is None
             and assessment.derived_signal_id is None

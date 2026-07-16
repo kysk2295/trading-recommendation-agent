@@ -34,6 +34,7 @@ from trading_agent.signal_contract_models import (
 )
 from trading_agent.trade_signal_publication import TradeSignalPublication
 from trading_agent.us_quote_actionability import (
+    QuoteActionabilityAssessment,
     QuoteAssessmentStatus,
     UsQuoteActionabilityDecision,
     assess_us_quote,
@@ -507,10 +508,17 @@ def test_quote_batch_rejects_provider_failure_for_ineligible_base(
         tmp_path / "trade-signal-cards-ko",
         changed_base,
     )
-    assessment = provider_failed_assessment(
+    correct = provider_failed_assessment(
         changed_base,
         scan_started_at=OBSERVED_AT - dt.timedelta(seconds=1),
         evaluated_at=OBSERVED_AT + dt.timedelta(seconds=6),
+    )
+    assert correct.status is QuoteAssessmentStatus.SETUP_INVALIDATED
+    assessment = QuoteActionabilityAssessment.model_validate(
+        {
+            **correct.model_dump(mode="json"),
+            "status": QuoteAssessmentStatus.PROVIDER_FAILED,
+        }
     )
 
     with pytest.raises(ValueError, match="quote actionability batch"):
@@ -546,6 +554,35 @@ def test_quote_batch_rejects_terminal_status_inconsistent_with_fresh_snapshot(
             (changed,),
         )
 
+    assert not (tmp_path / "us-quote-snapshots.v2.jsonl").exists()
+    assert not (tmp_path / "quote-actionability-assessments.v2.jsonl").exists()
+
+
+def test_quote_batch_rejects_card_directory_file_before_any_append(
+    tmp_path: Path,
+) -> None:
+    _persist_quote_base(tmp_path)
+    signal_path = tmp_path / "trade-signals.v1.jsonl"
+    before = signal_path.read_bytes()
+    cards_path = tmp_path / "trade-signal-cards-ko"
+    for card_path in cards_path.iterdir():
+        card_path.unlink()
+    cards_path.rmdir()
+    cards_path.write_text("not a directory", encoding="utf-8")
+    decision = _quote_decision()
+    assert decision.snapshot is not None
+    assert decision.derived_publication is not None
+
+    with pytest.raises(ContractOutboxConflictError):
+        _ = append_quote_actionability_batch(
+            tmp_path,
+            (decision.snapshot,),
+            (decision.derived_publication,),
+            (decision.assessment,),
+        )
+
+    assert signal_path.read_bytes() == before
+    assert cards_path.read_text(encoding="utf-8") == "not a directory"
     assert not (tmp_path / "us-quote-snapshots.v2.jsonl").exists()
     assert not (tmp_path / "quote-actionability-assessments.v2.jsonl").exists()
 

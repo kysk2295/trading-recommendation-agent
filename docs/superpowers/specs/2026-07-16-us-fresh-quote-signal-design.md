@@ -88,8 +88,7 @@ Allow-listed statuses are:
 - `validated_waiting`: quote is fresh and feasible but ask is below the stop trigger
 - `validated_trigger_reached`: ask reached the trigger without exceeding allowed slippage
 - `market_closed`
-- `provider_failed`
-- `invalid_quote`
+- `provider_failed`: provider request failures and malformed or mismatched quotes, with no snapshot claim
 - `future_quote`
 - `stale_quote`
 - `spread_too_wide`
@@ -100,7 +99,7 @@ Provider details are reduced to the allow-listed status. A failed assessment doe
 
 `assessment_id` is deterministic only from the complete base signal ID and `scan_started_at`. A scan cycle can therefore append exactly one terminal result for a base signal; a second status or evaluation payload under that cycle is a conflict instead of another terminal assessment.
 
-The receipt-aware quote identity and one-terminal assessment identity are schema version 2 contracts. Version 1 quote and assessment JSONL files are legacy artifacts: the v2 writer neither revalidates nor overwrites them. Quote artifacts expose no path-parametrized standalone writer, and the standalone signal writer accepts conditional publications only. Before writing any v2 quote batch, the sole batch writer structurally reads the actual base conditional from the existing signal outbox. It validates artifact ID completeness, one scan cycle, the recomputed derived ID, every copied base field, exact evidence records including observation times, and snapshot-to-quote-validation values. Every terminal assessment is independently recomputed in the kernel's base-current, regular-session, quote-presence, future/stale, spread, stop, slippage, and waiting/reached order. A missing or changed base, incomplete or semantically inconsistent batch, malformed file, or conflict aborts before the first append.
+The receipt-aware quote identity and one-terminal assessment identity are schema version 2 contracts. Version 1 quote and assessment JSONL files are legacy artifacts: the v2 writer neither revalidates nor overwrites them. Quote artifacts expose no path-parametrized standalone writer, and the standalone signal writer accepts conditional publications only. Before writing any v2 quote batch, the sole batch writer structurally reads the actual base conditional from the existing signal outbox. It validates artifact ID completeness, one scan cycle, the recomputed derived ID, every copied base field, exact evidence records including observation times, snapshot-to-quote-validation values, and the existing card-directory path type. Every terminal assessment is independently recomputed in the kernel's base-current, regular-session, quote-presence, future/stale, spread, stop, slippage, and waiting/reached order. A provider failure is preflighted again at completion so expiry or market close wins at the correct causal time. A missing or changed base, incomplete or semantically inconsistent batch, malformed file, path conflict, or payload conflict aborts before the first append.
 
 ### 4.3 Derived quote-validated signal
 
