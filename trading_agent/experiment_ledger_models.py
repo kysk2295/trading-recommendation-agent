@@ -4,6 +4,7 @@ import datetime as dt
 import re
 from enum import StrEnum
 from typing import Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -47,6 +48,44 @@ class StrategyLifecycleEventKind(StrEnum):
     TRANSITION = "transition"
 
 
+class ResearchSourceKind(StrEnum):
+    ACADEMIC_PAPER = "academic_paper"
+    OFFICIAL_MARKET_RULE = "official_market_rule"
+    OFFICIAL_PROVIDER_DOCUMENT = "official_provider_document"
+    INTERNAL_OBSERVATION = "internal_observation"
+
+
+class ResearchSource(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: Literal[1] = 1
+    source_id: str
+    source_kind: ResearchSourceKind
+    title: str
+    source_url: str
+    published_on: dt.date
+    claim: str
+    limitations: str
+    retrieved_at: dt.datetime
+    ledger_recorded_at: dt.datetime
+
+    @model_validator(mode="after")
+    def validate_source(self) -> Self:
+        if (
+            not _identifier(self.source_id)
+            or not _canonical_text(self.title)
+            or not _https_url(self.source_url)
+            or not _canonical_text(self.claim)
+            or not _canonical_text(self.limitations)
+            or not _aware(self.retrieved_at)
+            or not _aware(self.ledger_recorded_at)
+            or self.published_on > self.retrieved_at.date()
+            or self.ledger_recorded_at < self.retrieved_at
+        ):
+            raise ValueError("invalid research source")
+        return self
+
+
 class HypothesisRegistration(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -75,6 +114,26 @@ class HypothesisRegistration(BaseModel):
             or self.ledger_recorded_at < self.source_registered_at
         ):
             raise ValueError("invalid hypothesis registration")
+        return self
+
+
+class ResearchHypothesisCard(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: Literal[1] = 1
+    hypothesis: HypothesisRegistration
+    research_source_keys: tuple[str, ...]
+    economic_mechanism: str
+    counterfactual_baseline: str
+
+    @model_validator(mode="after")
+    def validate_card(self) -> Self:
+        if (
+            not _canonical_hashes(self.research_source_keys, required=True)
+            or not _canonical_text(self.economic_mechanism)
+            or not _canonical_text(self.counterfactual_baseline)
+        ):
+            raise ValueError("invalid research hypothesis card")
         return self
 
 
@@ -329,6 +388,18 @@ def _identifier(value: str) -> bool:
 
 def _aware(value: dt.datetime) -> bool:
     return value.tzinfo is not None and value.utcoffset() is not None
+
+
+def _https_url(value: str) -> bool:
+    parsed = urlsplit(value)
+    return (
+        value == value.strip()
+        and parsed.scheme == "https"
+        and parsed.hostname is not None
+        and parsed.username is None
+        and parsed.password is None
+        and not parsed.fragment
+    )
 
 
 def _canonical_text(value: str) -> bool:

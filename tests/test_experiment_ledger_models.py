@@ -16,6 +16,8 @@ from trading_agent.experiment_ledger_keys import (
     experiment_trial_event_key,
     experiment_trial_registration_key,
     hypothesis_registration_key,
+    research_hypothesis_card_key,
+    research_source_key,
     strategy_lifecycle_event_key,
     strategy_version_registration_key,
 )
@@ -23,6 +25,9 @@ from trading_agent.experiment_ledger_models import (
     ExperimentTrialEvent,
     ExperimentTrialRegistration,
     HypothesisRegistration,
+    ResearchHypothesisCard,
+    ResearchSource,
+    ResearchSourceKind,
     StrategyLifecycleEvent,
     StrategyLifecycleEventKind,
     StrategyLifecycleState,
@@ -148,6 +153,48 @@ def _lifecycle_registration() -> StrategyLifecycleEvent:
         reason_codes=("existing_contract_import",),
         previous_event_key=None,
     )
+
+
+def _research_source() -> ResearchSource:
+    return ResearchSource(
+        source_id="academic-momentum-1993",
+        source_kind=ResearchSourceKind.ACADEMIC_PAPER,
+        title="Returns to Buying Winners and Selling Losers",
+        source_url="https://doi.org/10.1111/j.1540-6261.1993.tb04702.x",
+        published_on=dt.date(1993, 2, 1),
+        claim="Intermediate-horizon relative strength motivates a momentum trial.",
+        limitations="It is not current-market or net-cost evidence for this project.",
+        retrieved_at=LEDGER_RECORDED_AT,
+        ledger_recorded_at=LEDGER_RECORDED_AT,
+    )
+
+
+def test_research_source_and_hypothesis_card_have_canonical_immutable_keys() -> None:
+    source = _research_source()
+    card = ResearchHypothesisCard(
+        hypothesis=_hypothesis(),
+        research_source_keys=(str(research_source_key(source)),),
+        economic_mechanism="Underreaction may leave return continuation.",
+        counterfactual_baseline="Matched eligible-universe forward return after the same cost model.",
+    )
+
+    assert len(research_source_key(source)) == 64
+    assert len(research_hypothesis_card_key(card)) == 64
+    assert card.research_source_keys == (str(research_source_key(source)),)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("source_url", "http://doi.org/10.1111/j.1540-6261.1993.tb04702.x"),
+        ("source_url", "https://user:password@doi.org/paper"),
+        ("source_url", "https://doi.org/paper#fragment"),
+        ("retrieved_at", dt.datetime(2026, 7, 15, 12)),
+    ),
+)
+def test_research_source_rejects_noncanonical_locator_or_time(field: str, value: object) -> None:
+    with pytest.raises(ValidationError):
+        _ = ResearchSource.model_validate(_research_source().model_dump(mode="python") | {field: value})
 
 
 def test_canonical_models_and_keys_are_stable() -> None:
