@@ -336,7 +336,7 @@ Expected: all tests pass and static checks report zero findings.
 
 Review source-lineage binding, prospective registration time, terminal artifact hashes, review authority booleans, append-only schema, and imports. Add a failing regression test before each substantive fix, then rerun the focused and full quality gates.
 
-- [ ] **Step 4: Commit, merge, and push**
+- [x] **Step 4: Commit, merge, and push**
 
 ```bash
 git add README.md CODEX_START_HERE.md docs/architecture_ko.md docs/checkpoints/2026-07-16-us-swing-shadow-trial-review-ko.md docs/superpowers/specs/2026-07-16-us-swing-shadow-trial-review-design.md docs/superpowers/plans/2026-07-16-us-swing-shadow-trial-review.md
