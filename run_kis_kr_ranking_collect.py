@@ -28,6 +28,7 @@ from trading_agent.kis_kr_ranking import (
 from trading_agent.kis_kr_ranking_collection import (
     KisKrRankingCollectionResult,
     collect_kis_kr_rankings,
+    resume_kis_kr_ranking_collection,
 )
 from trading_agent.kis_kr_ranking_fixture import (
     KisKrRankingFixtureError,
@@ -47,6 +48,10 @@ _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,115}$")
 _KST = ZoneInfo("Asia/Seoul")
 
 
+class _ProductionDateMismatchError(ValueError):
+    pass
+
+
 def main(
     collection_cycle_id: str | None = None,
     collection_date: str | None = None,
@@ -57,14 +62,17 @@ def main(
     if collection_cycle_id is None or _SAFE_ID.fullmatch(collection_cycle_id) is None:
         raise typer.BadParameter("유효한 collection cycle ID가 필요합니다")
     parsed_date = _collection_date(collection_date)
-    if fixture_manifest is None and parsed_date != _current_kst_date():
-        raise typer.BadParameter(
-            "production collection date는 현재 KST 날짜여야 합니다"
-        )
 
     try:
         store = KrThemeStore(Path(database))
-        if fixture_manifest is not None:
+        result = resume_kis_kr_ranking_collection(
+            store,
+            collection_cycle_id=collection_cycle_id,
+            collection_date=parsed_date,
+        )
+        if result is not None:
+            pass
+        elif fixture_manifest is not None:
             fetcher = load_kis_kr_ranking_fixture(
                 Path(fixture_manifest),
                 collection_date=parsed_date,
@@ -76,6 +84,8 @@ def main(
                 collection_date=parsed_date,
             )
         else:
+            if parsed_date != _current_kst_date():
+                raise _ProductionDateMismatchError
             credentials = load_kis_credentials(KisMode.LIVE)
             with create_kis_client(KisMode.LIVE) as http_client:
                 token = get_access_token(
@@ -89,6 +99,10 @@ def main(
                     collection_cycle_id=collection_cycle_id,
                     collection_date=parsed_date,
                 )
+    except _ProductionDateMismatchError:
+        raise typer.BadParameter(
+            "production collection date는 현재 KST 날짜여야 합니다"
+        ) from None
     except (
         InvalidKrThemeSourceError,
         KisKrRankingFixtureError,

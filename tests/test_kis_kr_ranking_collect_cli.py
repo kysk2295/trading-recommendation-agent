@@ -45,6 +45,15 @@ def test_fixture_cli_collects_and_replays_with_redacted_mode_600_report(
         fixture_manifest=str(FIXTURE_MANIFEST),
     )
     first_report = _report(output)
+
+    def reject_fixture(*args: object, **kwargs: object) -> None:
+        raise AssertionError("terminal replay must not reopen fixture")
+
+    monkeypatch.setattr(
+        run_kis_kr_ranking_collect,
+        "load_kis_kr_ranking_fixture",
+        reject_fixture,
+    )
     run_kis_kr_ranking_collect.main(
         collection_cycle_id="kr-kis-ranking-cli-001",
         collection_date=COLLECTION_DATE.isoformat(),
@@ -77,6 +86,37 @@ def test_fixture_cli_collects_and_replays_with_redacted_mode_600_report(
         assert hashlib.sha256(payload).hexdigest() not in combined
     assert str(database) not in combined
     assert str(output) not in combined
+
+
+def test_production_terminal_replay_skips_credentials_and_http(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "kr.sqlite3"
+    output = tmp_path / "report"
+    run_kis_kr_ranking_collect.main(
+        collection_cycle_id="kr-kis-ranking-replay-001",
+        collection_date=COLLECTION_DATE.isoformat(),
+        database=str(database),
+        output_dir=str(output),
+        fixture_manifest=str(FIXTURE_MANIFEST),
+    )
+    monkeypatch.setattr(
+        run_kis_kr_ranking_collect,
+        "_current_kst_date",
+        lambda: COLLECTION_DATE,
+    )
+    _reject_production_functions(monkeypatch)
+
+    run_kis_kr_ranking_collect.main(
+        collection_cycle_id="kr-kis-ranking-replay-001",
+        collection_date=COLLECTION_DATE.isoformat(),
+        database=str(database),
+        output_dir=str(output),
+        fixture_manifest=None,
+    )
+
+    assert "재시작 no-op: 예" in _report(output)
 
 
 @pytest.mark.parametrize(

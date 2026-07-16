@@ -21,7 +21,7 @@ MAX_ATTEMPTS: Final = 2
 
 _CONTENT_TYPE = re.compile(r"^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$")
 _SAFE_REQUEST_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
-_SYMBOL = re.compile(r"^[0-9]{6}$")
+_SYMBOL = re.compile(r"^[0-9A-Z]{6}$")
 _REQUEST_TR_CONT: Final = frozenset({"", "N"})
 _RESPONSE_TR_CONT: Final = frozenset({"", "M", "F"})
 _RAW_RESPONSE_TR_CONT: Final = _RESPONSE_TR_CONT | {"INVALID"}

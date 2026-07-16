@@ -58,23 +58,17 @@ class KisKrRankingCollectionResult:
     restarted: bool
 
 
-def collect_kis_kr_rankings(
-    fetcher: KisKrRankingPageFetcher,
+def resume_kis_kr_ranking_collection(
     store: KrThemeStore,
     *,
     collection_cycle_id: str,
     collection_date: dt.date,
     adapter_version: str = KIS_KR_RANKING_ADAPTER_VERSION,
-    _parser: Callable[[KisKrRankingRawResponse], KisKrRankingPage] = (
-        parse_kis_kr_ranking_page
-    ),
     _clock: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
-    _sleeper: Callable[[float], None] = time.sleep,
-) -> KisKrRankingCollectionResult:
+) -> KisKrRankingCollectionResult | None:
+    if not store.path.is_file():
+        return None
     source_run_id = f"{collection_cycle_id}:kis_ranking"
-    with store.writer():
-        pass
-
     existing = tuple(
         run
         for run in store.source_runs(collection_cycle_id)
@@ -100,27 +94,55 @@ def collect_kis_kr_rankings(
         )
 
     orphan_receipts = store.source_receipts(source_run_id)
-    if orphan_receipts:
-        run = _terminal_run(
-            store,
-            source_run_id=source_run_id,
-            collection_cycle_id=collection_cycle_id,
-            collection_date=collection_date,
-            adapter_version=adapter_version,
-            failure_code="incomplete_restart",
-            clock=_clock,
-        )
-        with store.writer() as writer:
-            _ = writer.append_source_run(run)
-        return KisKrRankingCollectionResult(
-            run=run,
-            receipt_count=len(orphan_receipts),
-            new_receipt_count=0,
-            catalyst_count=run.record_count,
-            new_catalyst_count=0,
-            new_observation_count=0,
-            restarted=True,
-        )
+    if not orphan_receipts:
+        return None
+    run = _terminal_run(
+        store,
+        source_run_id=source_run_id,
+        collection_cycle_id=collection_cycle_id,
+        collection_date=collection_date,
+        adapter_version=adapter_version,
+        failure_code="incomplete_restart",
+        clock=_clock,
+    )
+    with store.writer() as writer:
+        _ = writer.append_source_run(run)
+    return KisKrRankingCollectionResult(
+        run=run,
+        receipt_count=len(orphan_receipts),
+        new_receipt_count=0,
+        catalyst_count=run.record_count,
+        new_catalyst_count=0,
+        new_observation_count=0,
+        restarted=True,
+    )
+
+
+def collect_kis_kr_rankings(
+    fetcher: KisKrRankingPageFetcher,
+    store: KrThemeStore,
+    *,
+    collection_cycle_id: str,
+    collection_date: dt.date,
+    adapter_version: str = KIS_KR_RANKING_ADAPTER_VERSION,
+    _parser: Callable[[KisKrRankingRawResponse], KisKrRankingPage] = (
+        parse_kis_kr_ranking_page
+    ),
+    _clock: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
+    _sleeper: Callable[[float], None] = time.sleep,
+) -> KisKrRankingCollectionResult:
+    source_run_id = f"{collection_cycle_id}:kis_ranking"
+    with store.writer():
+        pass
+    resumed = resume_kis_kr_ranking_collection(
+        store,
+        collection_cycle_id=collection_cycle_id,
+        collection_date=collection_date,
+        adapter_version=adapter_version,
+        _clock=_clock,
+    )
+    if resumed is not None:
+        return resumed
 
     new_receipt_count = 0
     new_catalyst_count = 0

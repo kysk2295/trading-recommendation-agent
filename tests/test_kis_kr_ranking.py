@@ -427,6 +427,20 @@ def test_parse_volume_page_projects_reviewed_fields() -> None:
     )
 
 
+def test_parse_accepts_official_six_character_alphanumeric_short_code() -> None:
+    document = json.loads(_volume_body())
+    document["output"][0]["mksc_shrn_iscd"] = "0012A0"
+
+    page = parse_kis_kr_ranking_page(
+        _raw(
+            KisKrRankingKind.VOLUME,
+            json.dumps(document, ensure_ascii=False).encode(),
+        )
+    )
+
+    assert page.items[0].symbol == "0012A0"
+
+
 def test_parse_zero_row_success() -> None:
     page = parse_kis_kr_ranking_page(
         _raw(
