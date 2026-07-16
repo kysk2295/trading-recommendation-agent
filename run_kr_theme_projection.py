@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import sqlite3
 from pathlib import Path
 from typing import Final, override
@@ -115,12 +116,13 @@ def main(
                 )
 
         outbox = output / "opportunities.v1.jsonl"
-        new_opportunities = sum(
-            append_opportunity_snapshot(outbox, item.opportunity)
-            for item in projections
-        )
-        if outbox.exists():
-            outbox.chmod(0o600)
+        new_opportunities = 0
+        if projections:
+            _prepare_private_outbox(outbox)
+            new_opportunities = sum(
+                append_opportunity_snapshot(outbox, item.opportunity)
+                for item in projections
+            )
         report = _report(
             loaded,
             projections,
@@ -156,15 +158,20 @@ def main(
 
 
 def _validate_projection_targets(database: Path, output_dir: Path) -> None:
+    ledger_candidates = (
+        database,
+        Path(f"{database}.writer.lock"),
+        Path(f"{database}-journal"),
+        Path(f"{database}-shm"),
+        Path(f"{database}-wal"),
+    )
     ledger_targets = {
-        candidate.expanduser().resolve(strict=False)
-        for candidate in (
-            database,
-            Path(f"{database}.writer.lock"),
-            Path(f"{database}-journal"),
-            Path(f"{database}-shm"),
-            Path(f"{database}-wal"),
-        )
+        candidate.expanduser().resolve(strict=False) for candidate in ledger_candidates
+    }
+    ledger_identities = {
+        _file_identity(candidate)
+        for candidate in ledger_candidates
+        if candidate.exists()
     }
     for relative in _PROJECTION_ARTIFACTS:
         target = output_dir / relative
@@ -172,6 +179,30 @@ def _validate_projection_targets(database: Path, output_dir: Path) -> None:
             target.expanduser().resolve(strict=False) in ledger_targets
         ):
             raise KrThemeProjectionRunError
+        if target.exists() and _file_identity(target) in ledger_identities:
+            raise KrThemeProjectionRunError
+
+
+def _file_identity(path: Path) -> tuple[int, int]:
+    metadata = path.stat()
+    return metadata.st_dev, metadata.st_ino
+
+
+def _prepare_private_outbox(outbox: Path) -> None:
+    outbox.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(
+            outbox,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+    except FileExistsError:
+        pass
+    else:
+        os.close(descriptor)
+    if outbox.is_symlink():
+        raise KrThemeProjectionRunError
+    outbox.chmod(0o600)
 
 
 def _classify_cycle(

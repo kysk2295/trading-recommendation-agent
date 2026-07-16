@@ -124,3 +124,36 @@ Record exact focused/full test, lint, type, help, invalid-input, happy/replay, a
 git add README.md CODEX_START_HERE.md docs/superpowers/plans/2026-07-16-kr-projection-output-guard.md docs/checkpoints/2026-07-16-kr-projection-output-guard-ko.md
 git commit -m "docs: record KR projection output guard"
 ```
+
+### Task 4: Independent Review Remediation
+
+**Files:**
+- Modify: `run_kr_theme_projection.py`
+- Modify: `tests/test_kr_theme_projection_cli.py`
+- Modify: `README.md`
+- Modify: `CODEX_START_HERE.md`
+- Modify: `docs/checkpoints/2026-07-16-kr-projection-output-guard-ko.md`
+- Modify: `docs/superpowers/plans/2026-07-16-kr-projection-output-guard.md`
+
+- [x] **Step 1: Reproduce reviewer findings**
+
+Add regression coverage proving that direct output symlinks and hard-link aliases to the SQLite ledger are rejected before `KrThemeStore` opens, and that a new JSONL is private before the generic append helper can fail. The former guard accepted hard links; the latter had no file to protect until after append.
+
+- [x] **Step 2: Harden KR-only preparation and collision checks**
+
+Compare existing artifact and ledger device/inode pairs in addition to normalized paths. Create a new KR outbox through exclusive `os.open(..., 0o600)` and chmod an existing non-symlink outbox before append. Keep `contract_outbox.py` unchanged.
+
+- [x] **Step 3: Verify remediation**
+
+Run focused tests (`37 passed`), targeted Ruff/type gates, `git diff --check`, and full tests (`1587 passed`).
+
+- [x] **Step 4: Record independent review outcome**
+
+Record the corrected hard-link, pre-append permission, and symlink coverage in this plan and the checkpoint.
+
+- [x] **Step 5: Commit review remediation**
+
+```bash
+git add run_kr_theme_projection.py tests/test_kr_theme_projection_cli.py README.md CODEX_START_HERE.md docs/checkpoints/2026-07-16-kr-projection-output-guard-ko.md docs/superpowers/plans/2026-07-16-kr-projection-output-guard.md
+git commit -m "fix: harden KR projection artifact aliases"
+```

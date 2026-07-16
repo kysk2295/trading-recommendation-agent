@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import stat
@@ -12,6 +13,7 @@ import typer
 
 import run_kr_theme_ingest
 import run_kr_theme_projection
+from trading_agent.contract_outbox import ContractOutboxFormatError
 from trading_agent.kr_theme_store import KrThemeStore
 from trading_agent.signal_contract_models import OpportunitySnapshot
 
@@ -113,6 +115,90 @@ def test_projection_cli_rejects_database_collision_before_classification_append(
     assert not other_artifact.exists()
 
 
+@pytest.mark.parametrize(
+    ("artifact_relative", "link_kind"),
+    (
+        ("opportunities.v1.jsonl", "symlink"),
+        ("kr_theme_projection_summary_ko.md", "symlink"),
+        ("opportunities.v1.jsonl", "hardlink"),
+        ("kr_theme_projection_summary_ko.md", "hardlink"),
+    ),
+)
+def test_projection_cli_rejects_artifact_filesystem_alias_before_store_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    artifact_relative: str,
+    link_kind: str,
+) -> None:
+    database = tmp_path / "kr-theme.sqlite3"
+    run_kr_theme_ingest.main(
+        str(EXAMPLE / "ingest-manifest.json"),
+        str(database),
+        str(tmp_path / "ingest"),
+    )
+    output = tmp_path / "projection"
+    output.mkdir()
+    artifact = output / artifact_relative
+    if link_kind == "symlink":
+        artifact.symlink_to(database)
+    else:
+        os.link(database, artifact)
+
+    store_opened = False
+
+    def unexpected_store_open(_: Path) -> object:
+        nonlocal store_opened
+        store_opened = True
+        raise AssertionError("collision guard must run before KrThemeStore")
+
+    monkeypatch.setattr(run_kr_theme_projection, "KrThemeStore", unexpected_store_open)
+
+    with pytest.raises(typer.BadParameter):
+        run_kr_theme_projection.main(
+            str(EXAMPLE / "projection-run.json"),
+            str(database),
+            str(output),
+        )
+
+    assert store_opened is False
+    assert KrThemeStore(database).classifications() == ()
+
+
+def test_projection_cli_prepares_new_outbox_private_before_append(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "kr-theme.sqlite3"
+    run_kr_theme_ingest.main(
+        str(EXAMPLE / "ingest-manifest.json"),
+        str(database),
+        str(tmp_path / "ingest"),
+    )
+    output = tmp_path / "projection"
+    outbox = output / "opportunities.v1.jsonl"
+    observed_modes: list[int] = []
+
+    def failing_append(path: Path, _: OpportunitySnapshot) -> bool:
+        observed_modes.append(stat.S_IMODE(path.stat().st_mode))
+        raise ContractOutboxFormatError(path, 1)
+
+    monkeypatch.setattr(
+        run_kr_theme_projection,
+        "append_opportunity_snapshot",
+        failing_append,
+    )
+
+    with pytest.raises(typer.BadParameter):
+        run_kr_theme_projection.main(
+            str(EXAMPLE / "projection-run.json"),
+            str(database),
+            str(output),
+        )
+
+    assert observed_modes == [0o600]
+    assert stat.S_IMODE(outbox.stat().st_mode) == 0o600
+
+
 @pytest.mark.parametrize("fault", ["incomplete", "ambiguous", "missing_metric"])
 def test_projection_cli_fails_closed_before_classification_append(
     tmp_path: Path,
@@ -201,6 +287,7 @@ def test_projection_cli_corrupt_outbox_is_safe_and_restart_recoverable(
         )
 
     assert "private-corrupt-outbox" not in str(captured.value)
+    assert stat.S_IMODE(outbox.stat().st_mode) == 0o600
     assert len(KrThemeStore(database).classifications()) == 1
     outbox.unlink()
     run_kr_theme_projection.main(
