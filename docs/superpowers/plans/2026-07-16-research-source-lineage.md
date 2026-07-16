@@ -202,11 +202,11 @@ git commit -m "feat: add research hypothesis registration cli"
 - Modify: `CODEX_START_HERE.md`
 - Create: `docs/checkpoints/2026-07-16-research-source-lineage-ko.md`
 
-- [ ] **Step 1: Document authority boundary and fixture command**
+- [x] **Step 1: Document authority boundary and fixture command**
 
 State that this registration creates neither strategy version, trial, Paper order, nor automatic promotion.
 
-- [ ] **Step 2: Run quality gates**
+- [x] **Step 2: Run quality gates**
 
 Run: `uv run pytest -q`
 
@@ -216,7 +216,7 @@ Run: `uv run basedpyright`
 
 Expected: all tests pass and static checks report zero findings.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add README.md CODEX_START_HERE.md docs/checkpoints/2026-07-16-research-source-lineage-ko.md docs/superpowers/specs/2026-07-16-research-source-lineage-design.md docs/superpowers/plans/2026-07-16-research-source-lineage.md

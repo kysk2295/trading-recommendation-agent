@@ -62,6 +62,7 @@
 - ORB 장후 forward-validation runner 구현. snapshot 성공 뒤에만 Reviewer를 실행하고 두 단계 audit·redacted aggregate report를 남기며 주문권한·자동 승격·scheduler 역할은 없음
 - ORB watch의 기존 metrics→daily record→adaptive 체인에 opt-in scheduled lane 단계를 연결. 네 경로 all-or-none·ORB-only이며 upstream 성공 뒤에만 snapshot→Reviewer runner를 호출하고 실패는 watch에 전파
 - lane registry·review ledger·execution ledger와 분리된 global experiment ledger schema v1 구현. hypothesis/version/trial 등록과 trial/lifecycle event는 append-only이며 single Writer·query-only Reader·canonical key·전체 chain 검증을 사용
+- global experiment ledger schema v2에 immutable `ResearchSource` catalog와 기존 hypothesis에 연결되는 `ResearchHypothesisCard`를 추가. local-only JSON preregistration CLI는 공개 근거의 주장·한계·반증 기준을 보존하고 exact v1 ledger에는 table 추가 외 기존 행 재작성이 없으며, strategy version·trial·Reviewer·lifecycle·Paper 권한은 변경하지 않음
 - trial의 completed·failed·censored terminal 결과를 모두 보존하고, lifecycle은 `idea→historical→experimental_shadow→experimental_paper→challenger→paper_champion` 및 suspended/rejected 닫힌 전이표와 next-session as-of projection을 구현
 - local-only `run_experiment_ledger_bootstrap.py`가 exact intraday manifest·네 scope를 먼저 검증한 뒤 현재 네 전략을 `experimental_shadow`로 이관. 최초 4/4/4 생성과 0/0/0 replay, mode 600 DB를 fixture QA했으며 broker mutation은 없음
 - deterministic Lifecycle Controller v1 구현. exact ORB manifest/scope·finalized flat snapshot·Reviewer event·현재 global lifecycle chain을 다시 검증하고 성숙 구간의 명확한 5일 열화만 다음 NYSE 세션 `suspended`로 append하며 exact replay는 새 event를 만들지 않음
@@ -80,7 +81,7 @@
 ## 다음 우선순위
 
 1. 현재 NYSE post-close와 mode-600 data credential·정렬된 bounded universe가 동시에 맞을 때만 US swing 일봉 source를 read-only로 한 번 수집한다. 그 뒤에만 동일 CLI로 signal/shadow forward evidence를 누적하며, Paper 계좌·주문은 열지 않는다.
-2. US swing shadow event를 global experiment ledger의 preregistered trial·Reviewer 계약에 연결하는 별도 설계와 수직 구현을 한다. 표본·동일 위험 비교·승격 근거가 쌓이기 전에는 lane 권한을 바꾸지 않는다.
+2. source-bound US swing hypothesis card를 출발점으로 US swing shadow event를 global experiment ledger의 preregistered trial·Reviewer 계약에 연결하는 별도 설계와 수직 구현을 한다. 표본·동일 위험 비교·승격 근거가 쌓이기 전에는 lane 권한을 바꾸지 않는다.
 3. fixture E2E가 끝난 KR same-cycle orchestrator를 전체 품질 게이트와 수동 CLI QA로 확정한다. 현재 KST·자격증명·정상 endpoint 조건이 모두 맞을 때만 별도 bounded production same-cycle을 read-only로 실행하고, 아니면 provider를 억지로 열지 않는다.
 4. 동일-cycle production coverage가 immutable evidence로 확정된 뒤에만 별도 manifest로 KR keyword Opportunity projection을 실행한다. source 실패를 성공이나 부분 complete로 축소하지 않으며, projection도 TradeSignal·국내 주문을 열지 않는다.
 5. 열린 뉴욕 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증
