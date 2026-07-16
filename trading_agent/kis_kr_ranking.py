@@ -24,6 +24,7 @@ _SAFE_REQUEST_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _SYMBOL = re.compile(r"^[0-9]{6}$")
 _REQUEST_TR_CONT: Final = frozenset({"", "N"})
 _RESPONSE_TR_CONT: Final = frozenset({"", "M", "F"})
+_RAW_RESPONSE_TR_CONT: Final = _RESPONSE_TR_CONT | {"INVALID"}
 
 
 class UnsafeKisKrRankingEndpointError(ValueError):
@@ -127,8 +128,16 @@ class KisKrRankingRawResponse:
             not 1 <= self.page_no <= MAX_PAGES_PER_KIND
             or not 1 <= self.attempt <= MAX_ATTEMPTS
             or self.request_tr_cont not in _REQUEST_TR_CONT
-            or self.response_tr_cont not in _RESPONSE_TR_CONT
+            or self.response_tr_cont not in _RAW_RESPONSE_TR_CONT
             or _SAFE_REQUEST_KEY.fullmatch(self.request_key) is None
+            or self.request_key
+            != _request_key(
+                self.kind,
+                page_no=self.page_no,
+                attempt=self.attempt,
+                request_tr_cont=self.request_tr_cont,
+                response_tr_cont=self.response_tr_cont,
+            )
             or not _aware(self.received_at)
             or not 100 <= self.status_code <= 599
             or _CONTENT_TYPE.fullmatch(self.content_type) is None
@@ -268,6 +277,14 @@ class _KisEnvelope(BaseModel):
     output: tuple[dict[str, object], ...]
 
 
+class _KisStatusEnvelope(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="allow")
+
+    rt_cd: StrictStr
+    msg_cd: StrictStr
+    msg1: StrictStr
+
+
 @final
 class KisKrRankingClient:
     """Exact-origin read-only adapter for the two reviewed ranking contracts."""
@@ -324,7 +341,7 @@ class KisKrRankingClient:
         if (
             not payload
             or not _aware(received_at)
-            or response_tr_cont not in _RESPONSE_TR_CONT
+            or response_tr_cont not in _RAW_RESPONSE_TR_CONT
         ):
             raise KisKrRankingTransportError
         request_key = _request_key(
@@ -362,11 +379,15 @@ def parse_kis_kr_ranking_page(
     if not isinstance(document, dict):
         raise KisKrRankingResponseError("invalid_response")
     try:
+        status = _KisStatusEnvelope.model_validate(document)
+    except ValidationError:
+        raise KisKrRankingResponseError("invalid_response") from None
+    if status.rt_cd != "0":
+        raise KisKrRankingResponseError("kis_api_error")
+    try:
         envelope = _KisEnvelope.model_validate(document)
     except ValidationError:
         raise KisKrRankingResponseError("invalid_response") from None
-    if envelope.rt_cd != "0":
-        raise KisKrRankingResponseError("kis_api_error")
     items: list[KisKrRankingItem] = []
     seen_symbols: set[str] = set()
     seen_ranks: set[int] = set()
@@ -454,7 +475,7 @@ def _normalize_response_tr_cont(value: str) -> str:
     upper = stripped.upper()
     if upper in {"M", "F"}:
         return upper
-    return stripped
+    return "INVALID"
 
 
 def _response_content_type(response: httpx2.Response) -> str:

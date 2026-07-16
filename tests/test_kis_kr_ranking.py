@@ -43,14 +43,17 @@ def _raw(
     *,
     status_code: int = 200,
     content_type: str = "application/json",
+    response_tr_cont: str = "",
 ) -> KisKrRankingRawResponse:
     return KisKrRankingRawResponse(
         kind=kind,
         page_no=1,
         attempt=1,
         request_tr_cont="",
-        response_tr_cont="",
-        request_key=f"kis-kr:{kind.value}:p1:a1:rq-:rs-",
+        response_tr_cont=response_tr_cont,
+        request_key=(
+            f"kis-kr:{kind.value}:p1:a1:rq-:rs-{response_tr_cont.lower()}"
+        ),
         received_at=RECEIVED_AT,
         status_code=status_code,
         content_type=content_type,
@@ -306,6 +309,51 @@ def test_client_bounds_page_attempt_and_request_continuation() -> None:
     assert called is False
 
 
+def test_client_preserves_raw_body_when_response_continuation_is_unknown() -> None:
+    payload = b'{"rt_cd":"0","msg_cd":"0","msg1":"ok","output":[]}'
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            headers={"content-type": "application/json", "tr_cont": "X"},
+            content=payload,
+        )
+
+    client = httpx2.Client(
+        base_url=LIVE_ORIGIN,
+        transport=httpx2.MockTransport(handler),
+        follow_redirects=False,
+    )
+    fetcher = KisKrRankingClient(client, _credentials(), TOKEN, _clock=_clock)
+
+    raw = fetcher.fetch_page(
+        KisKrRankingKind.FLUCTUATION,
+        page_no=1,
+        attempt=1,
+        tr_cont="",
+    )
+
+    assert raw.response_tr_cont == "INVALID"
+    assert raw.request_key == "kis-kr:fluctuation:p1:a1:rq-:rs-invalid"
+    assert raw.raw_payload == payload
+
+
+def test_raw_response_rejects_request_key_that_does_not_match_metadata() -> None:
+    with pytest.raises(ValueError, match="invalid KIS KR ranking raw response"):
+        _ = KisKrRankingRawResponse(
+            kind=KisKrRankingKind.FLUCTUATION,
+            page_no=1,
+            attempt=1,
+            request_tr_cont="",
+            response_tr_cont="",
+            request_key="kis-kr:volume:p1:a1:rq-:rs-",
+            received_at=RECEIVED_AT,
+            status_code=200,
+            content_type="application/json",
+            raw_payload=b"{}",
+        )
+
+
 def test_client_transport_error_does_not_render_provider_text() -> None:
     def handler(request: httpx2.Request) -> httpx2.Response:
         raise httpx2.ConnectError("secret-token connect failure", request=request)
@@ -431,6 +479,18 @@ def test_canonical_item_is_sorted_compact_json() -> None:
                     "msg_cd": "EGW00001",
                     "msg1": PRIVATE_MSG,
                     "output": [],
+                }
+            ).encode(),
+            "kis_api_error",
+        ),
+        (
+            200,
+            "application/json",
+            json.dumps(
+                {
+                    "rt_cd": "1",
+                    "msg_cd": "EGW00001",
+                    "msg1": PRIVATE_MSG,
                 }
             ).encode(),
             "kis_api_error",
