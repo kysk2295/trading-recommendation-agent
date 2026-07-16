@@ -16,6 +16,8 @@ from trading_agent.daily_research_contract import (
 from trading_agent.experiment_ledger_keys import (
     experiment_trial_event_key,
     hypothesis_registration_key,
+    research_hypothesis_card_key,
+    research_source_key,
     strategy_lifecycle_event_key,
     strategy_version_registration_key,
 )
@@ -23,6 +25,9 @@ from trading_agent.experiment_ledger_models import (
     ExperimentTrialEvent,
     ExperimentTrialRegistration,
     HypothesisRegistration,
+    ResearchHypothesisCard,
+    ResearchSource,
+    ResearchSourceKind,
     StrategyLifecycleEvent,
     StrategyLifecycleEventKind,
     StrategyLifecycleState,
@@ -30,6 +35,7 @@ from trading_agent.experiment_ledger_models import (
     TrialEventKind,
     TrialKind,
 )
+from trading_agent.experiment_ledger_schema import CREATE_EXPERIMENT_LEDGER_SCHEMA_V1
 from trading_agent.experiment_ledger_store import (
     ExperimentLedgerConflictError,
     ExperimentLedgerReader,
@@ -64,6 +70,29 @@ def _hypothesis() -> HypothesisRegistration:
         falsification_rule=ORB_CONTRACT.falsification_rule,
         source_registered_at=SOURCE_REGISTERED_AT,
         ledger_recorded_at=LEDGER_RECORDED_AT,
+    )
+
+
+def _research_source() -> ResearchSource:
+    return ResearchSource(
+        source_id="academic-momentum-1993",
+        source_kind=ResearchSourceKind.ACADEMIC_PAPER,
+        title="Returns to Buying Winners and Selling Losers",
+        source_url="https://doi.org/10.1111/j.1540-6261.1993.tb04702.x",
+        published_on=dt.date(1993, 2, 1),
+        claim="Intermediate-horizon relative strength motivates a momentum trial.",
+        limitations="It is not current-market or net-cost evidence for this project.",
+        retrieved_at=LEDGER_RECORDED_AT,
+        ledger_recorded_at=LEDGER_RECORDED_AT,
+    )
+
+
+def _research_card() -> ResearchHypothesisCard:
+    return ResearchHypothesisCard(
+        hypothesis=_hypothesis(),
+        research_source_keys=(str(research_source_key(_research_source())),),
+        economic_mechanism="Underreaction may leave return continuation.",
+        counterfactual_baseline="Matched eligible-universe forward return after the same cost model.",
     )
 
 
@@ -191,6 +220,63 @@ def _register_lineage(store: ExperimentLedgerStore) -> None:
         assert writer.register_hypothesis(_hypothesis()) is True
         assert writer.register_strategy_version(_version()) is True
         assert writer.register_trial(_trial()) is True
+
+
+def test_registers_research_source_and_card_with_exact_replay(tmp_path: Path) -> None:
+    database = tmp_path / "experiment.sqlite3"
+    source = _research_source()
+    card = _research_card()
+    store = ExperimentLedgerStore(database)
+
+    with store.writer() as writer:
+        assert writer.register_research_source(source) is True
+        assert writer.register_research_source(source) is False
+        assert writer.register_research_hypothesis(card) is True
+        assert writer.register_research_hypothesis(card) is False
+
+    reader = ExperimentLedgerReader(database)
+
+    assert reader.research_sources()[0].source_key == research_source_key(source)
+    assert reader.research_sources()[0].source == source
+    assert reader.research_hypothesis_cards()[0].card_key == research_hypothesis_card_key(card)
+    assert reader.research_hypothesis_cards()[0].card == card
+    assert reader.hypotheses()[0].registration == card.hypothesis
+
+
+def test_research_hypothesis_rejects_unknown_source(tmp_path: Path) -> None:
+    store = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+
+    with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
+        _ = writer.register_research_hypothesis(_research_card())
+
+
+def test_writer_migrates_v1_without_rewriting_existing_rows(tmp_path: Path) -> None:
+    database = tmp_path / "experiment.sqlite3"
+    hypothesis = _hypothesis()
+    original_row = (
+        str(hypothesis_registration_key(hypothesis)),
+        hypothesis.hypothesis_id,
+        hypothesis.experiment_scope_key,
+        hypothesis.primary_lane.value,
+        hypothesis.model_dump_json(),
+    )
+    with sqlite3.connect(database) as connection:
+        connection.executescript(CREATE_EXPERIMENT_LEDGER_SCHEMA_V1)
+        _ = connection.execute("PRAGMA user_version = 1")
+        _ = connection.execute("INSERT INTO hypotheses VALUES (?, ?, ?, ?, ?)", original_row)
+        connection.commit()
+
+    with ExperimentLedgerStore(database).writer():
+        pass
+
+    with sqlite3.connect(database) as connection:
+        migrated_row = connection.execute(
+            "SELECT registration_key, hypothesis_id, experiment_scope_key, lane_id, payload_json FROM hypotheses"
+        ).fetchone()
+        version = connection.execute("PRAGMA user_version").fetchone()
+
+    assert migrated_row == original_row
+    assert version == (2,)
 
 
 def test_registers_exact_lineage_and_replays_without_duplicate_rows(tmp_path: Path) -> None:

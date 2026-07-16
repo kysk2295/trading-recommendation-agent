@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import Final
 
-EXPERIMENT_LEDGER_SCHEMA_VERSION: Final = 1
+EXPERIMENT_LEDGER_SCHEMA_VERSION: Final = 2
+EXPERIMENT_LEDGER_SCHEMA_VERSION_V1: Final = 1
 
-CREATE_EXPERIMENT_LEDGER_SCHEMA: Final = """
+CREATE_EXPERIMENT_LEDGER_SCHEMA_V1: Final = """
 CREATE TABLE hypotheses (
   registration_key TEXT PRIMARY KEY
     CHECK(length(registration_key) = 64 AND registration_key NOT GLOB '*[^0-9a-f]*'),
@@ -103,3 +104,36 @@ BEFORE UPDATE ON strategy_lifecycle_events BEGIN SELECT RAISE(ABORT, 'append-onl
 CREATE TRIGGER strategy_lifecycle_events_no_delete
 BEFORE DELETE ON strategy_lifecycle_events BEGIN SELECT RAISE(ABORT, 'append-only'); END;
 """
+
+CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2: Final = """
+CREATE TABLE research_sources (
+  source_key TEXT PRIMARY KEY
+    CHECK(length(source_key) = 64 AND source_key NOT GLOB '*[^0-9a-f]*'),
+  source_id TEXT NOT NULL UNIQUE,
+  source_kind TEXT NOT NULL
+    CHECK(source_kind IN (
+      'academic_paper', 'official_market_rule', 'official_provider_document', 'internal_observation'
+    )),
+  source_url TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
+CREATE TABLE research_hypothesis_cards (
+  card_key TEXT PRIMARY KEY
+    CHECK(length(card_key) = 64 AND card_key NOT GLOB '*[^0-9a-f]*'),
+  hypothesis_id TEXT NOT NULL UNIQUE,
+  payload_json TEXT NOT NULL,
+  FOREIGN KEY(hypothesis_id) REFERENCES hypotheses(hypothesis_id)
+);
+CREATE TRIGGER research_sources_no_update
+BEFORE UPDATE ON research_sources BEGIN SELECT RAISE(ABORT, 'append-only'); END;
+CREATE TRIGGER research_sources_no_delete
+BEFORE DELETE ON research_sources BEGIN SELECT RAISE(ABORT, 'append-only'); END;
+CREATE TRIGGER research_hypothesis_cards_no_update
+BEFORE UPDATE ON research_hypothesis_cards BEGIN SELECT RAISE(ABORT, 'append-only'); END;
+CREATE TRIGGER research_hypothesis_cards_no_delete
+BEFORE DELETE ON research_hypothesis_cards BEGIN SELECT RAISE(ABORT, 'append-only'); END;
+"""
+
+CREATE_EXPERIMENT_LEDGER_SCHEMA: Final = (
+    CREATE_EXPERIMENT_LEDGER_SCHEMA_V1 + CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2
+)

@@ -91,7 +91,7 @@ git commit -m "feat: add research source contracts"
 - Modify: `trading_agent/experiment_ledger_store.py`
 - Modify: `tests/test_experiment_ledger_store.py`
 
-- [ ] **Step 1: Write failing store/migration tests**
+- [x] **Step 1: Write failing store/migration tests**
 
 ```python
 with store.writer() as writer:
@@ -105,13 +105,13 @@ assert reader.research_hypothesis_cards()[0].card == _research_card()
 
 Also initialize a v1 database, retain a copy of its existing hypothesis row, open it through the v2 Writer, and assert the copied row is byte-for-byte unchanged after migration.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest -q tests/test_experiment_ledger_store.py -k 'research or migration'`
 
 Expected: FAIL because the new Reader/Writer APIs do not exist.
 
-- [ ] **Step 3: Implement schema and migration**
+- [x] **Step 3: Implement schema and migration**
 
 ```sql
 CREATE TABLE research_sources (
@@ -131,13 +131,13 @@ CREATE TABLE research_hypothesis_cards (
 
 Create update/delete triggers for both tables. On v1, verify the v1 schema, execute only v2 DDL, then update `user_version` inside the writer transaction. The Writer verifies every referenced source is exact and recorded no later than the embedded hypothesis before inserting the card.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `uv run pytest -q tests/test_experiment_ledger_store.py -k 'research or migration or append_only or reader_connection'`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add trading_agent/experiment_ledger_schema.py trading_agent/experiment_ledger_store.py tests/test_experiment_ledger_store.py

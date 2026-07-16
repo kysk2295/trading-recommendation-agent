@@ -14,12 +14,16 @@ from trading_agent.experiment_ledger_keys import (
     ExperimentTrialEventKey,
     ExperimentTrialRegistrationKey,
     HypothesisRegistrationKey,
+    ResearchHypothesisCardKey,
+    ResearchSourceKey,
     StrategyLifecycleEventKey,
     StrategyVersionRegistrationKey,
     canonical_experiment_ledger_json,
     experiment_trial_event_key,
     experiment_trial_registration_key,
     hypothesis_registration_key,
+    research_hypothesis_card_key,
+    research_source_key,
     strategy_lifecycle_event_key,
     strategy_version_registration_key,
 )
@@ -27,6 +31,8 @@ from trading_agent.experiment_ledger_models import (
     ExperimentTrialEvent,
     ExperimentTrialRegistration,
     HypothesisRegistration,
+    ResearchHypothesisCard,
+    ResearchSource,
     StrategyLifecycleEvent,
     StrategyLifecycleEventKind,
     StrategyLifecycleState,
@@ -36,7 +42,32 @@ from trading_agent.experiment_ledger_models import (
 )
 from trading_agent.experiment_ledger_schema import (
     CREATE_EXPERIMENT_LEDGER_SCHEMA,
+    CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2,
     EXPERIMENT_LEDGER_SCHEMA_VERSION,
+    EXPERIMENT_LEDGER_SCHEMA_VERSION_V1,
+)
+
+_V1_SCHEMA_OBJECTS = frozenset(
+    {
+        "hypotheses",
+        "strategy_versions",
+        "strategy_versions_by_lane",
+        "experiment_trials",
+        "experiment_trial_events",
+        "experiment_trial_events_by_trial",
+        "strategy_lifecycle_events",
+        "strategy_lifecycle_events_by_version_date",
+        "hypotheses_no_update",
+        "hypotheses_no_delete",
+        "strategy_versions_no_update",
+        "strategy_versions_no_delete",
+        "experiment_trials_no_update",
+        "experiment_trials_no_delete",
+        "experiment_trial_events_no_update",
+        "experiment_trial_events_no_delete",
+        "strategy_lifecycle_events_no_update",
+        "strategy_lifecycle_events_no_delete",
+    }
 )
 
 
@@ -74,6 +105,18 @@ class InactiveExperimentLedgerWriterError(RuntimeError):
 class StoredHypothesisRegistration:
     registration_key: HypothesisRegistrationKey
     registration: HypothesisRegistration
+
+
+@dataclass(frozen=True, slots=True)
+class StoredResearchSource:
+    source_key: ResearchSourceKey
+    source: ResearchSource
+
+
+@dataclass(frozen=True, slots=True)
+class StoredResearchHypothesisCard:
+    card_key: ResearchHypothesisCardKey
+    card: ResearchHypothesisCard
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +170,28 @@ class ExperimentLedgerReader:
                 lane_id, payload_json FROM hypotheses ORDER BY rowid"""
             ).fetchall()
         return tuple(_stored_hypothesis(row) for row in rows)
+
+    def research_sources(self) -> tuple[StoredResearchSource, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            rows: list[tuple[str, str, str, str, str]] = connection.execute(
+                """SELECT source_key, source_id, source_kind, source_url, payload_json
+                FROM research_sources ORDER BY rowid"""
+            ).fetchall()
+        return tuple(_stored_research_source(row) for row in rows)
+
+    def research_hypothesis_cards(self) -> tuple[StoredResearchHypothesisCard, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            rows: list[tuple[str, str, str]] = connection.execute(
+                "SELECT card_key, hypothesis_id, payload_json FROM research_hypothesis_cards ORDER BY rowid"
+            ).fetchall()
+            cards = tuple(_stored_research_hypothesis_card(row) for row in rows)
+            for card in cards:
+                _require_valid_research_hypothesis_card_parent(connection, card)
+        return cards
 
     def strategy_versions(self) -> tuple[StoredStrategyVersionRegistration, ...]:
         if not self.path.is_file():
@@ -258,6 +323,55 @@ class ExperimentLedgerWriter:
                 registration.experiment_scope_key,
                 registration.primary_lane.value,
                 canonical_experiment_ledger_json(registration),
+            ),
+        )
+
+    def register_research_source(self, source: ResearchSource) -> bool:
+        self._require_active()
+        source = _validated_research_source(source)
+        key = research_source_key(source)
+        existing = _research_source_by_id(self._connection, source.source_id)
+        if existing is not None:
+            if existing.source_key == key and existing.source == source:
+                return False
+            raise ExperimentLedgerConflictError
+        return self._insert_immutable(
+            table="research_sources",
+            key_column="source_key",
+            key=key,
+            insert_sql="INSERT INTO research_sources VALUES (?, ?, ?, ?, ?)",
+            insert_values=(
+                key,
+                source.source_id,
+                source.source_kind.value,
+                source.source_url,
+                canonical_experiment_ledger_json(source),
+            ),
+        )
+
+    def register_research_hypothesis(self, card: ResearchHypothesisCard) -> bool:
+        self._require_active()
+        card = _validated_research_hypothesis_card(card)
+        _require_research_hypothesis_sources(self._connection, card)
+        key = research_hypothesis_card_key(card)
+        existing = _research_hypothesis_card_by_hypothesis_id(
+            self._connection,
+            card.hypothesis.hypothesis_id,
+        )
+        if existing is not None:
+            if existing.card_key == key and existing.card == card:
+                return False
+            raise ExperimentLedgerConflictError
+        _ = self.register_hypothesis(card.hypothesis)
+        return self._insert_immutable(
+            table="research_hypothesis_cards",
+            key_column="card_key",
+            key=key,
+            insert_sql="INSERT INTO research_hypothesis_cards VALUES (?, ?, ?)",
+            insert_values=(
+                key,
+                card.hypothesis.hypothesis_id,
+                canonical_experiment_ledger_json(card),
             ),
         )
 
@@ -412,6 +526,20 @@ def _validated_hypothesis(registration: HypothesisRegistration) -> HypothesisReg
         raise InvalidExperimentLedgerSourceError from None
 
 
+def _validated_research_source(source: ResearchSource) -> ResearchSource:
+    try:
+        return ResearchSource.model_validate(source.model_dump(mode="python"))
+    except ValueError:
+        raise InvalidExperimentLedgerSourceError from None
+
+
+def _validated_research_hypothesis_card(card: ResearchHypothesisCard) -> ResearchHypothesisCard:
+    try:
+        return ResearchHypothesisCard.model_validate(card.model_dump(mode="python"))
+    except ValueError:
+        raise InvalidExperimentLedgerSourceError from None
+
+
 def _validated_strategy_version(registration: StrategyVersionRegistration) -> StrategyVersionRegistration:
     try:
         return StrategyVersionRegistration.model_validate(registration.model_dump(mode="python"))
@@ -478,6 +606,41 @@ def _hypothesis_by_id(
     return None if row is None else _stored_hypothesis(row)
 
 
+def _research_source_by_id(
+    connection: sqlite3.Connection,
+    source_id: str,
+) -> StoredResearchSource | None:
+    row: tuple[str, str, str, str, str] | None = connection.execute(
+        """SELECT source_key, source_id, source_kind, source_url, payload_json
+        FROM research_sources WHERE source_id = ?""",
+        (source_id,),
+    ).fetchone()
+    return None if row is None else _stored_research_source(row)
+
+
+def _research_source_by_key(
+    connection: sqlite3.Connection,
+    source_key: str,
+) -> StoredResearchSource | None:
+    row: tuple[str, str, str, str, str] | None = connection.execute(
+        """SELECT source_key, source_id, source_kind, source_url, payload_json
+        FROM research_sources WHERE source_key = ?""",
+        (source_key,),
+    ).fetchone()
+    return None if row is None else _stored_research_source(row)
+
+
+def _research_hypothesis_card_by_hypothesis_id(
+    connection: sqlite3.Connection,
+    hypothesis_id: str,
+) -> StoredResearchHypothesisCard | None:
+    row: tuple[str, str, str] | None = connection.execute(
+        "SELECT card_key, hypothesis_id, payload_json FROM research_hypothesis_cards WHERE hypothesis_id = ?",
+        (hypothesis_id,),
+    ).fetchone()
+    return None if row is None else _stored_research_hypothesis_card(row)
+
+
 def _strategy_version_by_id(
     connection: sqlite3.Connection,
     strategy_version: str,
@@ -521,6 +684,26 @@ def _verified_trial_parent(
     ):
         raise InvalidExperimentLedgerSourceError
     return trial
+
+
+def _require_research_hypothesis_sources(
+    connection: sqlite3.Connection,
+    card: ResearchHypothesisCard,
+) -> None:
+    for source_key in card.research_source_keys:
+        source = _research_source_by_key(connection, source_key)
+        if source is None or source.source.ledger_recorded_at > card.hypothesis.ledger_recorded_at:
+            raise InvalidExperimentLedgerSourceError
+
+
+def _require_valid_research_hypothesis_card_parent(
+    connection: sqlite3.Connection,
+    stored: StoredResearchHypothesisCard,
+) -> None:
+    hypothesis = _hypothesis_by_id(connection, stored.card.hypothesis.hypothesis_id)
+    if hypothesis is None or hypothesis.registration != stored.card.hypothesis:
+        raise InvalidExperimentLedgerSourceError
+    _require_research_hypothesis_sources(connection, stored.card)
 
 
 def _verified_lifecycle_parent(
@@ -728,6 +911,37 @@ def _stored_hypothesis(row: tuple[str, str, str, str, str]) -> StoredHypothesisR
     return StoredHypothesisRegistration(typed_key, registration)
 
 
+def _stored_research_source(row: tuple[str, str, str, str, str]) -> StoredResearchSource:
+    key, source_id, source_kind, source_url, payload = row
+    try:
+        source = ResearchSource.model_validate_json(payload)
+    except ValueError:
+        raise InvalidExperimentLedgerSourceError from None
+    typed_key = ResearchSourceKey(key)
+    if (
+        typed_key != research_source_key(source)
+        or source_id != source.source_id
+        or source_kind != source.source_kind.value
+        or source_url != source.source_url
+    ):
+        raise InvalidExperimentLedgerSourceError
+    return StoredResearchSource(typed_key, source)
+
+
+def _stored_research_hypothesis_card(
+    row: tuple[str, str, str],
+) -> StoredResearchHypothesisCard:
+    key, hypothesis_id, payload = row
+    try:
+        card = ResearchHypothesisCard.model_validate_json(payload)
+    except ValueError:
+        raise InvalidExperimentLedgerSourceError from None
+    typed_key = ResearchHypothesisCardKey(key)
+    if typed_key != research_hypothesis_card_key(card) or hypothesis_id != card.hypothesis.hypothesis_id:
+        raise InvalidExperimentLedgerSourceError
+    return StoredResearchHypothesisCard(typed_key, card)
+
+
 def _stored_strategy_version(
     row: tuple[str, str, str, str, str, str, str],
 ) -> StoredStrategyVersionRegistration:
@@ -832,10 +1046,30 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
         _ = connection.execute(f"PRAGMA user_version = {EXPERIMENT_LEDGER_SCHEMA_VERSION}")
         connection.commit()
         return
+    if current == EXPERIMENT_LEDGER_SCHEMA_VERSION_V1:
+        _require_v1_schema(connection)
+        connection.executescript(CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2)
+        _ = connection.execute(f"PRAGMA user_version = {EXPERIMENT_LEDGER_SCHEMA_VERSION}")
+        connection.commit()
+        return
     _require_current_schema(connection)
 
 
 def _require_current_schema(connection: sqlite3.Connection) -> None:
     version: tuple[int] | None = connection.execute("PRAGMA user_version").fetchone()
     if version != (EXPERIMENT_LEDGER_SCHEMA_VERSION,):
+        raise UnsupportedExperimentLedgerSchemaError
+
+
+def _require_v1_schema(connection: sqlite3.Connection) -> None:
+    version: tuple[int] | None = connection.execute("PRAGMA user_version").fetchone()
+    if version != (EXPERIMENT_LEDGER_SCHEMA_VERSION_V1,):
+        raise UnsupportedExperimentLedgerSchemaError
+    actual_objects = frozenset(
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    )
+    if actual_objects != _V1_SCHEMA_OBJECTS:
         raise UnsupportedExperimentLedgerSchemaError
