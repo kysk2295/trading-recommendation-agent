@@ -8,8 +8,10 @@
 
 - KIS 읽기 전용 인증·랭킹·분봉 연결 완료
 - KIS 국내 KRX 등락률·거래량 순위의 current-date raw-first `kis_ranking` source run과 restart no-network CLI 구현
+- OpenDART `opendart-list-v2` date-bound terminal replay preflight 구현. 정확한 terminal source run이면 fixture·자격증명·HTTP를 열지 않고, 날짜나 adapter 계약이 다르면 fetch 전에 차단
 - 숫자 전용 `volume_surge` v1 replay를 유지하면서 실제 KIS 단축코드 `[0-9A-Z]{6}`와 행별 upstream catalyst ID를 보존하는 v2 계약 구현
 - 저장된 같은-cycle KIS 거래량 evidence만 읽어 canonical `volume_surge` v2 catalyst·observation·receipt-free derived terminal run을 append하는 DB-only 상태기계와 CLI 구현
+- `run_kr_same_cycle_collect.py`가 DART → LS NEWS → KIS ranking → volume surge를 같은 날짜·cycle ID로 직렬 처리한 뒤 DB-only coordinator를 호출. complete cycle은 0, terminal source 실패 cycle은 `complete=false`와 nonzero로 보존하며 full terminal replay는 어떤 stage도 호출하지 않음
 - bounded production KIS 원장 local-only 파생에서 랭킹 60행 중 거래량 30행과 영문 포함 코드 7개를 보존하고 terminal replay 신규 0행 확인. provider·credential·network·broker 호출 없음
 - KIS 주간거래 `BAQ/BAY/BAA`를 프리마켓·정규장과 분리한 원시 랭킹 forward 수집 완료
 - 매 cycle KIS 원시 랭킹 행·출처·선택 여부 CSV 누적
@@ -75,8 +77,8 @@
 
 ## 다음 우선순위
 
-1. DART → LS NEWS → KIS ranking → volume surge → 기존 DB-only coordinator를 하나의 새 cycle ID와 날짜로 순서 실행하는 local control-plane 오케스트레이터 구현. provider 단계나 SQLite Writer를 병렬 실행하지 않고, terminal replay는 불필요한 credential·network를 열지 않음
-2. 오케스트레이터 fixture E2E와 bounded production 동일-cycle을 순서대로 검증하고, 네 source coverage와 새 KR Opportunity projection을 immutable evidence로 확정함. source 실패를 성공이나 부분 complete로 축소하지 않음
+1. fixture E2E가 끝난 KR same-cycle orchestrator를 전체 품질 게이트와 수동 CLI QA로 확정한다. 현재 KST·자격증명·정상 endpoint 조건이 모두 맞을 때만 별도 bounded production same-cycle을 read-only로 실행하고, 아니면 provider를 억지로 열지 않는다.
+2. 동일-cycle production coverage가 immutable evidence로 확정된 뒤에만 별도 manifest로 KR keyword Opportunity projection을 실행한다. source 실패를 성공이나 부분 complete로 축소하지 않으며, projection도 TradeSignal·국내 주문을 열지 않는다.
 3. 열린 뉴욕 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증
 4. 실제 적격 ORB 세션마다 preregistered daily trial을 누적하고 terminal replay·실패·검열 운영 결과를 대사하되 열린 trial을 임의 terminal로 추정하지 않음
 5. 추가 부분체결이 실제 발생할 때 staged 보호 OCO cancel → terminal 대사 → 다음 호출 replacement를 같은 축소 한도에서 검증하되 체결을 억지로 만들지 않음
@@ -97,6 +99,6 @@
 ```text
 이 프로젝트의 README.md, CODEX_START_HERE.md, AGENTS.md와 docs/runtime_audit.md를 먼저 읽어줘.
 현재 KR raw-first source cycle과 Single Writer Alpaca Paper·ORB 일일 shadow trial 운영 경계를 이어서 개발해줘.
-KR 다음 단계는 DART·LS NEWS·KIS ranking·volume surge 네 단계를 같은 새 cycle ID로 직렬 실행하고 마지막에만 DB-only coordinator를 호출하는 날짜별 오케스트레이터를 구현해줘. terminal replay에서 불필요한 자격증명이나 network를 열지 말고 provider·Writer를 병렬 실행하지 마.
+KR same-cycle orchestrator와 fixture E2E는 구현됐다. 다음에는 전체 품질 게이트와 수동 CLI QA를 마무리하고, 현재 KST·자격증명·정상 endpoint 조건이 모두 갖춰질 때만 bounded production same-cycle을 read-only로 수집해줘. 그 coverage가 확정된 뒤에는 별도 manifest로 KR keyword Opportunity projection을 실행하되 TradeSignal·국내 주문은 열지 마.
 열린 정규장과 credential·current ORB 후보가 모두 갖춰진 경우에만 축소 Paper 수명주기 smoke를 실행하고, 하나라도 부족하면 broker mutation을 하지 마. 일일 trial은 exact preregistration과 terminal evidence를 유지하고 열린 trial을 추정으로 닫지 마.
 ```
