@@ -21,6 +21,10 @@ from trading_agent.kr_theme_models import (
     KrThemeDirection,
 )
 from trading_agent.kr_theme_store import StoredKrCatalyst
+from trading_agent.kr_volume_surge_models import (
+    KrVolumeSurgePayload,
+    KrVolumeSurgeSymbol,
+)
 from trading_agent.research_identity_models import (
     AgentFamily,
     MarketId,
@@ -48,44 +52,6 @@ class InvalidKrThemeProjectionError(ValueError):
     @override
     def __str__(self) -> str:
         return "KR theme opportunity projection 계보가 유효하지 않습니다"
-
-
-class KrVolumeSurgeSymbol(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    schema_version: Literal[1] = 1
-    symbol: str
-    trading_value_krw: Decimal
-    volume_ratio: Decimal
-
-    @model_validator(mode="after")
-    def validate_symbol(self) -> Self:
-        if (
-            _KR_SYMBOL.fullmatch(self.symbol) is None
-            or not _nonnegative_finite(self.trading_value_krw)
-            or not _nonnegative_finite(self.volume_ratio)
-        ):
-            raise ValueError("invalid KR volume-surge symbol")
-        return self
-
-
-class KrVolumeSurgePayload(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    schema_version: Literal[1] = 1
-    observed_at: dt.datetime
-    symbols: tuple[KrVolumeSurgeSymbol, ...]
-
-    @model_validator(mode="after")
-    def validate_payload(self) -> Self:
-        symbols = tuple(item.symbol for item in self.symbols)
-        if (
-            not _aware(self.observed_at)
-            or not self.symbols
-            or symbols != tuple(sorted(set(symbols)))
-        ):
-            raise ValueError("invalid KR volume-surge payload")
-        return self
 
 
 class KrProjectedThemeSymbol(BaseModel):
