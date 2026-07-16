@@ -10,6 +10,7 @@ from typing import Final, Literal, Self, override
 
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
+from trading_agent.kis_kr_ranking import KisKrRankingItem, KisKrRankingKind
 from trading_agent.kr_theme_models import (
     KrCatalystCollectionCycle,
     KrCatalystObservation,
@@ -22,8 +23,16 @@ from trading_agent.kr_theme_models import (
 )
 from trading_agent.kr_theme_store import StoredKrCatalyst
 from trading_agent.kr_volume_surge_models import (
-    KrVolumeSurgePayload,
-    KrVolumeSurgeSymbol,
+    InvalidKrVolumeSurgePayloadError,
+    KrVolumeSurgePayloadV2,
+    KrVolumeSurgeSymbolV2,
+    parse_kr_volume_surge_payload,
+)
+from trading_agent.kr_volume_surge_models import (
+    KrVolumeSurgePayload as KrVolumeSurgePayload,
+)
+from trading_agent.kr_volume_surge_models import (
+    KrVolumeSurgeSymbol as KrVolumeSurgeSymbol,
 )
 from trading_agent.research_identity_models import (
     AgentFamily,
@@ -148,8 +157,15 @@ class KrThemeOpportunityProjection:
 
 
 @dataclass(frozen=True, slots=True)
+class _VolumeMetric:
+    symbol: str
+    trading_value_krw: Decimal
+    volume_ratio: Decimal
+
+
+@dataclass(frozen=True, slots=True)
 class _MetricEvidence:
-    metric: KrVolumeSurgeSymbol
+    metric: _VolumeMetric
     catalyst_id: str
     observed_at: dt.datetime
 
@@ -339,8 +355,8 @@ def _volume_metrics(
             continue
         observation = observation_by_id[catalyst_id]
         try:
-            payload = KrVolumeSurgePayload.model_validate_json(catalyst.raw_payload)
-        except ValidationError:
+            payload = parse_kr_volume_surge_payload(catalyst.raw_payload)
+        except InvalidKrVolumeSurgePayloadError:
             raise InvalidKrThemeProjectionError from None
         if (
             catalyst.record.content_type != "application/json"
@@ -349,15 +365,69 @@ def _volume_metrics(
             or payload.observed_at > projected_at
         ):
             raise InvalidKrThemeProjectionError
+        if isinstance(payload, KrVolumeSurgePayloadV2):
+            _validate_volume_v2_lineage(
+                payload,
+                catalyst_by_id,
+                observation_by_id,
+                collection_cycle_id=observation.collection_cycle_id,
+            )
         for metric in payload.symbols:
             if metric.symbol in metrics:
                 raise InvalidKrThemeProjectionError
             metrics[metric.symbol] = _MetricEvidence(
-                metric=metric,
+                metric=_VolumeMetric(
+                    symbol=metric.symbol,
+                    trading_value_krw=metric.trading_value_krw,
+                    volume_ratio=metric.volume_ratio,
+                ),
                 catalyst_id=catalyst_id,
                 observed_at=observation.observed_at,
             )
     return metrics
+
+
+def _validate_volume_v2_lineage(
+    payload: KrVolumeSurgePayloadV2,
+    catalyst_by_id: dict[str, StoredKrCatalyst],
+    observation_by_id: dict[str, KrCatalystObservation],
+    *,
+    collection_cycle_id: str,
+) -> None:
+    if payload.source_run_id != f"{collection_cycle_id}:kis_ranking":
+        raise InvalidKrThemeProjectionError
+    for metric in payload.symbols:
+        _validate_volume_v2_metric(
+            metric,
+            payload,
+            catalyst_by_id,
+            observation_by_id,
+        )
+
+
+def _validate_volume_v2_metric(
+    metric: KrVolumeSurgeSymbolV2,
+    payload: KrVolumeSurgePayloadV2,
+    catalyst_by_id: dict[str, StoredKrCatalyst],
+    observation_by_id: dict[str, KrCatalystObservation],
+) -> None:
+    source = catalyst_by_id.get(metric.source_catalyst_id)
+    source_observation = observation_by_id.get(metric.source_catalyst_id)
+    if source is None or source_observation is None:
+        raise InvalidKrThemeProjectionError
+    try:
+        item = KisKrRankingItem.model_validate_json(source.raw_payload)
+    except ValidationError:
+        raise InvalidKrThemeProjectionError from None
+    if (
+        source.record.source is not KrCatalystSource.KIS_RANKING
+        or source.record.content_type != "application/json"
+        or source.record.first_observed_at != source_observation.observed_at
+        or source_observation.observed_at > payload.source_observed_at
+        or item.ranking_kind is not KisKrRankingKind.VOLUME
+        or item.symbol != metric.symbol
+    ):
+        raise InvalidKrThemeProjectionError
 
 
 def _project_theme(

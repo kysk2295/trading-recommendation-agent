@@ -8,6 +8,11 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
+from trading_agent.kis_kr_ranking import (
+    KisKrRankingItem,
+    KisKrRankingKind,
+    canonical_kis_kr_ranking_item,
+)
 from trading_agent.kr_theme_models import (
     KrCatalystCollectionCycle,
     KrCatalystObservation,
@@ -28,6 +33,11 @@ from trading_agent.kr_theme_projection import (
     project_kr_theme_opportunities,
 )
 from trading_agent.kr_theme_store import StoredKrCatalyst
+from trading_agent.kr_volume_surge_models import (
+    KrVolumeSurgePayloadV2,
+    KrVolumeSurgeSymbolV2,
+    canonical_kr_volume_surge_payload,
+)
 from trading_agent.research_identity_models import AgentFamily, MarketId
 
 KST = dt.timezone(dt.timedelta(hours=9))
@@ -130,6 +140,98 @@ def test_projection_builds_deterministic_theme_state_and_kr_opportunity() -> Non
     assert first[0].opportunity.model_dump(mode="json") == second[0].opportunity.model_dump(
         mode="json"
     )
+
+
+def test_projection_accepts_v2_metric_with_exact_kis_lineage() -> None:
+    news = _news("001", NEWS_AT)
+    kis_volume = _kis_ranking("005930", VOLUME_AT - dt.timedelta(seconds=10))
+    volume = _volume_v2(kis_volume)
+    catalysts = (news, kis_volume, volume)
+
+    projections = _project(
+        _cycle(catalysts),
+        catalysts,
+        _observations(catalysts),
+        (_classification(news),),
+    )
+
+    assert projections[0].state.leader_symbol == "005930"
+    assert projections[0].state.related_symbols[0].volume_ratio == Decimal("2.5")
+
+
+def test_projection_rejects_v2_metric_with_missing_kis_lineage() -> None:
+    news = _news("001", NEWS_AT)
+    missing_kis = _kis_ranking("005930", VOLUME_AT - dt.timedelta(seconds=10))
+    volume = _volume_v2(missing_kis)
+    catalysts = (news, volume)
+
+    with pytest.raises(InvalidKrThemeProjectionError):
+        _ = _project(
+            _cycle(catalysts),
+            catalysts,
+            _observations(catalysts),
+            (_classification(news),),
+        )
+
+
+@pytest.mark.parametrize(
+    ("kis_kind", "metric_symbol"),
+    (
+        (KisKrRankingKind.FLUCTUATION, "005930"),
+        (KisKrRankingKind.VOLUME, "012345"),
+    ),
+)
+def test_projection_rejects_v2_nonvolume_or_symbol_mismatch(
+    kis_kind: KisKrRankingKind,
+    metric_symbol: str,
+) -> None:
+    news = _news("001", NEWS_AT)
+    kis_catalyst = _kis_ranking(
+        "005930",
+        VOLUME_AT - dt.timedelta(seconds=10),
+        kind=kis_kind,
+    )
+    volume = _volume_v2(kis_catalyst, symbol=metric_symbol)
+    catalysts = (news, kis_catalyst, volume)
+
+    with pytest.raises(InvalidKrThemeProjectionError):
+        _ = _project(
+            _cycle(catalysts),
+            catalysts,
+            _observations(catalysts),
+            (_classification(news),),
+        )
+
+
+def test_projection_rejects_v2_future_source_observation() -> None:
+    news = _news("001", NEWS_AT)
+    source_at = VOLUME_AT - dt.timedelta(seconds=10)
+    kis_volume = _kis_ranking("005930", source_at + dt.timedelta(seconds=1))
+    volume = _volume_v2(kis_volume, source_observed_at=source_at)
+    catalysts = (news, kis_volume, volume)
+
+    with pytest.raises(InvalidKrThemeProjectionError):
+        _ = _project(
+            _cycle(catalysts),
+            catalysts,
+            _observations(catalysts),
+            (_classification(news),),
+        )
+
+
+def test_projection_rejects_v2_source_run_from_another_cycle() -> None:
+    news = _news("001", NEWS_AT)
+    kis_volume = _kis_ranking("005930", VOLUME_AT - dt.timedelta(seconds=10))
+    volume = _volume_v2(kis_volume, source_run_id="other-cycle:kis_ranking")
+    catalysts = (news, kis_volume, volume)
+
+    with pytest.raises(InvalidKrThemeProjectionError):
+        _ = _project(
+            _cycle(catalysts),
+            catalysts,
+            _observations(catalysts),
+            (_classification(news),),
+        )
 
 
 def test_opportunity_identity_includes_projection_producer_version() -> None:
@@ -456,6 +558,65 @@ def _volume(
         observed_at=observed_at,
         payload=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(),
         publisher="derived_volume_surge",
+    )
+
+
+def _kis_ranking(
+    symbol: str,
+    observed_at: dt.datetime,
+    *,
+    kind: KisKrRankingKind = KisKrRankingKind.VOLUME,
+) -> StoredKrCatalyst:
+    is_volume = kind is KisKrRankingKind.VOLUME
+    item = KisKrRankingItem(
+        market="KRX",
+        ranking_kind=kind,
+        symbol=symbol,
+        name="Synthetic Electronics",
+        rank=1,
+        price_krw=Decimal("100"),
+        change_pct=Decimal("1"),
+        accumulated_volume=1_500,
+        prior_day_volume=500 if is_volume else None,
+        average_volume=600 if is_volume else None,
+        volume_increase_pct=Decimal("200") if is_volume else None,
+        accumulated_trading_value_krw=Decimal("100000") if is_volume else None,
+    )
+    return _raw_stored(
+        source=KrCatalystSource.KIS_RANKING,
+        suffix=f"{kind.value}-{symbol}",
+        observed_at=observed_at,
+        payload=canonical_kis_kr_ranking_item(item),
+        publisher="kis_domestic_market_data",
+    )
+
+
+def _volume_v2(
+    source: StoredKrCatalyst,
+    *,
+    symbol: str = "005930",
+    source_observed_at: dt.datetime | None = None,
+    source_run_id: str = "kr-theme-projection-001:kis_ranking",
+) -> StoredKrCatalyst:
+    payload = KrVolumeSurgePayloadV2(
+        observed_at=VOLUME_AT,
+        source_observed_at=source_observed_at or source.record.first_observed_at,
+        source_run_id=source_run_id,
+        symbols=(
+            KrVolumeSurgeSymbolV2(
+                symbol=symbol,
+                trading_value_krw=Decimal("100000"),
+                volume_ratio=Decimal("2.5"),
+                source_catalyst_id=source.record.catalyst_id,
+            ),
+        ),
+    )
+    return _raw_stored(
+        source=KrCatalystSource.VOLUME_SURGE,
+        suffix="v2-001",
+        observed_at=VOLUME_AT,
+        payload=canonical_kr_volume_surge_payload(payload),
+        publisher="derived_kis_ranking",
     )
 
 
