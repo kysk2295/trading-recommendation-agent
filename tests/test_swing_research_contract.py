@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import ast
 import datetime as dt
 from dataclasses import FrozenInstanceError
+from pathlib import Path
 
 import pytest
 
 from trading_agent.lane_contract_models import ExperimentScope, ExperimentScopeKind
 from trading_agent.lane_policy_models import LaneId
 from trading_agent.swing_research_contract import SWING_RESEARCH_CONTRACT
+
+CONTRACT_MODULE = Path(__file__).parents[1] / "trading_agent" / "swing_research_contract.py"
 
 
 def test_swing_contract_matches_the_source_bound_hypothesis_card() -> None:
@@ -52,3 +56,40 @@ def test_swing_contract_is_immutable_and_explicit_about_shadow_only_research() -
 
     with pytest.raises(FrozenInstanceError):
         contract.strategy_version = "changed"  # type: ignore[misc]
+
+
+def test_swing_contract_module_has_no_operational_imports() -> None:
+    tree = ast.parse(CONTRACT_MODULE.read_text(encoding="utf-8"))
+    imported_modules = {
+        name
+        for node in ast.walk(tree)
+        for name in (
+            *((alias.name for alias in node.names) if isinstance(node, ast.Import) else ()),
+            *(
+                (
+                    f"{node.module}.{alias.name}" if node.module else alias.name
+                    for alias in node.names
+                )
+                if isinstance(node, ast.ImportFrom)
+                else ()
+            ),
+        )
+    }
+    forbidden_markers = (
+        "provider",
+        "credential",
+        "paper",
+        "broker",
+        "execution",
+        "lifecyclecontroller",
+        "portfoliomanager",
+    )
+
+    assert not {
+        module
+        for module in imported_modules
+        if any(
+            marker in "".join(character for character in module.lower() if character.isalnum())
+            for marker in forbidden_markers
+        )
+    }
