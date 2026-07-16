@@ -587,6 +587,73 @@ def test_quote_batch_rejects_card_directory_file_before_any_append(
     assert not (tmp_path / "quote-actionability-assessments.v2.jsonl").exists()
 
 
+def test_quote_batch_rejects_new_legacy_invalid_quote_terminal(
+    tmp_path: Path,
+) -> None:
+    base = _quote_base_publication()
+    _persist_quote_base(tmp_path)
+    correct = provider_failed_assessment(
+        base,
+        scan_started_at=OBSERVED_AT - dt.timedelta(seconds=1),
+        evaluated_at=OBSERVED_AT + dt.timedelta(seconds=6),
+    )
+    legacy = QuoteActionabilityAssessment.model_validate(
+        {
+            **correct.model_dump(mode="json"),
+            "status": "invalid_quote",
+        }
+    )
+
+    with pytest.raises(ValueError, match="quote actionability batch"):
+        _ = append_quote_actionability_batch(tmp_path, (), (), (legacy,))
+
+    assert not (tmp_path / "quote-actionability-assessments.v2.jsonl").exists()
+
+
+def test_legacy_invalid_quote_row_does_not_block_new_terminal_append(
+    tmp_path: Path,
+) -> None:
+    legacy_base = _publication(signal_id="legacy-invalid-quote-base")
+    current_base = _publication(signal_id="current-provider-failed-base")
+    for base in (legacy_base, current_base):
+        assert append_trade_signal_publication(
+            tmp_path / "trade-signals.v1.jsonl",
+            tmp_path / "trade-signal-cards-ko",
+            base,
+        ) is True
+    legacy_template = provider_failed_assessment(
+        legacy_base,
+        scan_started_at=OBSERVED_AT - dt.timedelta(seconds=1),
+        evaluated_at=OBSERVED_AT + dt.timedelta(seconds=6),
+    )
+    legacy_payload = {
+        **legacy_template.model_dump(mode="json"),
+        "status": "invalid_quote",
+    }
+    assessment_path = tmp_path / "quote-actionability-assessments.v2.jsonl"
+    assessment_path.write_text(
+        json.dumps(legacy_payload, separators=(",", ":"), sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    before = assessment_path.read_bytes()
+    current = provider_failed_assessment(
+        current_base,
+        scan_started_at=OBSERVED_AT - dt.timedelta(milliseconds=500),
+        evaluated_at=OBSERVED_AT + dt.timedelta(seconds=6),
+    )
+
+    assert append_quote_actionability_batch(
+        tmp_path,
+        (),
+        (),
+        (current,),
+    ) == (0, 0, 1)
+
+    content = assessment_path.read_bytes()
+    assert content.startswith(before)
+    assert len(content.splitlines()) == 2
+
+
 def test_quote_validated_card_contains_current_quote_and_trigger_state(
     tmp_path: Path,
 ) -> None:

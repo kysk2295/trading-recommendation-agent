@@ -338,20 +338,21 @@ def test_snapshot_identity_and_assessment_geometry_are_validated() -> None:
         )
 
 
-def test_invalid_quote_is_not_a_terminal_assessment_status() -> None:
+def test_legacy_invalid_quote_terminal_status_remains_parseable() -> None:
     assessment = provider_failed_assessment(
         _conditional_publication(),
         scan_started_at=SCAN_STARTED_AT,
         evaluated_at=AT,
     )
 
-    with pytest.raises(ValidationError):
-        _ = QuoteActionabilityAssessment.model_validate(
-            {
-                **assessment.model_dump(mode="json"),
-                "status": "invalid_quote",
-            }
-        )
+    legacy = QuoteActionabilityAssessment.model_validate(
+        {
+            **assessment.model_dump(mode="json"),
+            "status": "invalid_quote",
+        }
+    )
+
+    assert legacy.status is QuoteAssessmentStatus.INVALID_QUOTE
 
 
 def test_provider_failure_assessment_contains_no_quote_claim() -> None:

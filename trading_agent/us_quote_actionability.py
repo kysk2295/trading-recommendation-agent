@@ -47,6 +47,7 @@ class QuoteAssessmentStatus(StrEnum):
     VALIDATED_TRIGGER_REACHED = "validated_trigger_reached"
     MARKET_CLOSED = "market_closed"
     PROVIDER_FAILED = "provider_failed"
+    INVALID_QUOTE = "invalid_quote"
     FUTURE_QUOTE = "future_quote"
     STALE_QUOTE = "stale_quote"
     SPREAD_TOO_WIDE = "spread_too_wide"
@@ -138,6 +139,7 @@ class QuoteActionabilityAssessment(BaseModel):
         quote_forbidden = {
             QuoteAssessmentStatus.MARKET_CLOSED,
             QuoteAssessmentStatus.PROVIDER_FAILED,
+            QuoteAssessmentStatus.INVALID_QUOTE,
         }
         geometry_valid = (
             self.quote_id is not None and self.derived_signal_id is not None
