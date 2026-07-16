@@ -79,7 +79,7 @@ Commit with `git commit -m "feat: add bounded US swing daily source"`.
 - Create: `trading_agent/swing_new_high_rvol.py`
 - Create: `tests/test_swing_new_high_rvol.py`
 
-- [ ] **Step 1: Write failing projection tests**
+- [x] **Step 1: Write failing projection tests**
 
 From a complete source, assert one `TradeSignalEnvelope` for `ACME` when its final close exceeds every prior 20 close and final volume is at least 1.5 times the 20-session average. Assert deterministic ID, `us_equities/swing_trading/new_high_momentum`, conditional next-session trigger, stop, target, and source-only evidence. Add insufficient-history, no-breakout, low-RVOL, early-observation, and invalid-next-session rejections.
 
@@ -89,13 +89,13 @@ assert signals[0].entry_type is SignalEntryType.STOP_TRIGGER
 assert signals[0].actionability is SignalActionability.CONDITIONAL
 ```
 
-- [ ] **Step 2: Verify the tests fail**
+- [x] **Step 2: Verify the tests fail**
 
 Run `uv run pytest -q tests/test_swing_new_high_rvol.py`.
 
 Expected: import failure because the swing signal engine does not exist.
 
-- [ ] **Step 3: Implement deterministic projection**
+- [x] **Step 3: Implement deterministic projection**
 
 Implement the fixed v1 contract:
 
@@ -111,7 +111,7 @@ strategy_version = "new_high_rvol_20d_1p5_v1"
 
 For each valid symbol: set trigger to `close * 1.005`, stop to `entry * 0.92`, target to `entry + 2 * (entry - stop)`, and validity through the next regular close. Build a stable ID from strategy version, source key, symbol, and session date. The result is a recommendation, never a current quote or an order.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
