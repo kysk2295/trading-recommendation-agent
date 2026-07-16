@@ -4,7 +4,7 @@
 
 **Goal:** Add a bounded, raw-first, KIS read-only collector that persists current-date KRX fluctuation and volume rankings as the KR ledger's terminal `kis_ranking` source run.
 
-**Architecture:** A fixed-origin client exposes only two allow-listed GET contracts and returns raw response metadata without parsing. A collector commits every response BLOB before validating it, appends canonical item-level catalyst lineage, and closes exactly one immutable source run; fixtures implement the same fetch protocol without credentials or network. A thin CLI performs current-KST-date preflight before credentials and writes only aggregate mode-600 reports.
+**Architecture:** A fixed-origin client exposes only two allow-listed GET contracts and returns raw response metadata without parsing. A collector commits every response BLOB before validating it, appends canonical item-level catalyst lineage, and closes exactly one immutable source run; fixtures implement the same fetch protocol without credentials or network. A thin CLI resolves an existing terminal run or orphan receipt from the local ledger before fixture, date, credential or network dependencies; only a genuinely new production run performs current-KST-date preflight before credentials. Reports contain only aggregate data and use mode 600.
 
 **Tech Stack:** Python 3.12, `httpx2`, Pydantic v2, SQLite through `KrThemeStore`, Typer, pytest, Ruff, basedpyright.
 
@@ -111,7 +111,7 @@ The request key format is `kis-kr:<kind>:p<page>:a<attempt>:rq-<empty|n>:rs-<emp
 
 - [ ] **Step 4: Write failing parser tests**
 
-Cover valid fluctuation and volume payloads, zero-row success, non-200 status, wrong content type, invalid JSON, nonzero `rt_cd`, unknown/missing required fields, six-digit symbol, canonical name, integer rank/volumes, finite Decimal values, duplicate symbol and duplicate rank within a page. Confirm provider `msg1` never appears in raised error text.
+Cover valid fluctuation and volume payloads, zero-row success, non-200 status, wrong content type, invalid JSON, nonzero `rt_cd`, unknown/missing required fields, six-character uppercase alphanumeric symbol (`[0-9A-Z]{6}`), canonical name, integer rank/volumes, finite Decimal values, duplicate symbol and duplicate rank within a page. Confirm provider `msg1` never appears in raised error text. Include a regression case with letters so official KIS short codes are not silently dropped.
 
 ```python
 def test_parse_volume_page_projects_reviewed_fields() -> None:
@@ -347,6 +347,8 @@ Test direct `main()` calls and subprocess help. Required cases:
 - invalid cycle ID/date before DB creation.
 - historical date accepted only with fixture.
 - production historical date rejected before credential loader, token call, DB or report.
+- existing terminal production replay returns before current-date, fixture, credential, token and HTTP dependencies.
+- orphan receipt restart closes `incomplete_restart` before current-date, fixture, credential, token and HTTP dependencies.
 - fixture mode never calls credential/token/client functions.
 - failed source run writes report then raises nonzero `typer.BadParameter`.
 - report and terminal omit synthetic company, payload SHA-256, raw provider message, token/header markers, DB/output paths and receipt IDs.
@@ -360,12 +362,14 @@ Expected: import failure for `run_kis_kr_ranking_collect`.
 
 - [ ] **Step 3: Implement preflight, production wiring and report**
 
-Production path order must be:
+New production path order must be:
 
 ```text
 parse safe cycle/date
--> compare collection_date with Asia/Seoul current date
 -> create KrThemeStore value (no file yet)
+-> resolve exact terminal run or orphan receipt locally
+-> if resolved, report without fixture/date/credential/network dependencies
+-> otherwise compare collection_date with Asia/Seoul current date
 -> load fixed KIS live credentials
 -> create fixed live client
 -> get/reuse access token

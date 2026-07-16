@@ -7,6 +7,7 @@
 ## 현재 상태
 
 - KIS 읽기 전용 인증·랭킹·분봉 연결 완료
+- KIS 국내 KRX 등락률·거래량 순위의 current-date raw-first `kis_ranking` source run과 restart no-network CLI 구현
 - KIS 주간거래 `BAQ/BAY/BAA`를 프리마켓·정규장과 분리한 원시 랭킹 forward 수집 완료
 - 매 cycle KIS 원시 랭킹 행·출처·선택 여부 CSV 누적
 - 선택 후보 완료 정규장 1분봉과 최초 관찰 시각 SQLite 영속화
@@ -71,11 +72,13 @@
 
 ## 다음 우선순위
 
-1. 열린 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증
-2. 실제 적격 ORB 세션마다 preregistered daily trial을 누적하고 terminal replay·실패·검열 운영 결과를 대사하되 열린 trial을 임의 terminal로 추정하지 않음
-3. 추가 부분체결이 실제 발생할 때 staged 보호 OCO cancel → terminal 대사 → 다음 호출 replacement를 같은 축소 한도에서 검증하되 체결을 억지로 만들지 않음
-4. equal-risk terminal trial·broker/shadow·DSR/PBO·parameter plateau·SIP 증거 계약이 모두 생긴 뒤에만 comparison·promotion Controller 단계를 별도 구현
-5. 최소 두 executable lane champion 전에는 Portfolio Manager를 구현하지 않음
+1. KR instrument와 `KrVolumeSurgePayload`의 숫자 전용 symbol 계약을 실제 KIS 단축코드 `[0-9A-Z]{6}`로 명시적으로 버전 확장한 뒤, 저장된 current-cycle `kis_ranking` 거래량 행만 읽어 canonical `volume_surge` payload와 독립 terminal source run을 확정함. 영숫자 코드를 조용히 폐기하거나 KIS를 사후 재조회하지 않음
+2. DART·LS NEWS·KIS ranking·volume surge 네 adapter를 같은 cycle ID로 순서 실행하고 기존 DB-only coordinator를 마지막에만 호출하는 날짜별 orchestrator 구현
+3. 열린 뉴욕 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증
+4. 실제 적격 ORB 세션마다 preregistered daily trial을 누적하고 terminal replay·실패·검열 운영 결과를 대사하되 열린 trial을 임의 terminal로 추정하지 않음
+5. 추가 부분체결이 실제 발생할 때 staged 보호 OCO cancel → terminal 대사 → 다음 호출 replacement를 같은 축소 한도에서 검증하되 체결을 억지로 만들지 않음
+6. equal-risk terminal trial·broker/shadow·DSR/PBO·parameter plateau·SIP 증거 계약이 모두 생긴 뒤에만 comparison·promotion Controller 단계를 별도 구현
+7. 최소 두 executable lane champion 전에는 Portfolio Manager를 구현하지 않음
 
 ## 시작 전 확인
 
@@ -90,6 +93,7 @@
 
 ```text
 이 프로젝트의 README.md, CODEX_START_HERE.md, AGENTS.md와 docs/runtime_audit.md를 먼저 읽어줘.
-현재 Single Writer Alpaca Paper 기반과 ORB 일일 shadow trial 운영 경계를 이어서 개발해줘.
+현재 KR raw-first source cycle과 Single Writer Alpaca Paper·ORB 일일 shadow trial 운영 경계를 이어서 개발해줘.
+KR 다음 단계는 저장된 `kis_ranking` evidence에서 canonical `volume_surge` source run을 만들고 현재 KIS를 사후 재조회하지 마.
 열린 정규장과 credential·current ORB 후보가 모두 갖춰진 경우에만 축소 Paper 수명주기 smoke를 실행하고, 하나라도 부족하면 broker mutation을 하지 마. 일일 trial은 exact preregistration과 terminal evidence를 유지하고 열린 trial을 추정으로 닫지 마.
 ```
