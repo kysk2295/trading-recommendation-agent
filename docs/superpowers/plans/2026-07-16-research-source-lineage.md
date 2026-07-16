@@ -153,7 +153,7 @@ git commit -m "feat: store research source lineage"
 - Create: `tests/test_research_hypothesis_registration.py`
 - Create: `tests/test_research_hypothesis_register_cli.py`
 
-- [ ] **Step 1: Write failing service and CLI tests**
+- [x] **Step 1: Write failing service and CLI tests**
 
 ```python
 result = register_research_hypothesis_manifest(
@@ -166,17 +166,17 @@ assert register_research_hypothesis_manifest(...).sources_created == 0
 
 The CLI test must prove `--help`, malformed input without database creation, fixture creation/replay, mode-600 output, and no provider/credentials/broker/Paper imports.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest -q tests/test_research_hypothesis_registration.py tests/test_research_hypothesis_register_cli.py`
 
 Expected: FAIL because the service and script are absent.
 
-- [ ] **Step 3: Implement bounded manifest registration**
+- [x] **Step 3: Implement bounded manifest registration**
 
 Manifest fields are `research_sources`, `hypothesis`, `research_source_ids`, `economic_mechanism`, and `counterfactual_baseline`. Resolve IDs to source keys, construct a card, register all sources/card in one Writer transaction, and write a report containing only created/reused counts and `external mutation: 0`.
 
-- [ ] **Step 4: Verify GREEN and manual CLI QA**
+- [x] **Step 4: Verify GREEN and manual CLI QA**
 
 Run: `uv run pytest -q tests/test_research_hypothesis_registration.py tests/test_research_hypothesis_register_cli.py`
 
@@ -188,7 +188,7 @@ Run: `uv run python run_research_hypothesis_register.py --manifest examples/rese
 
 Expected: help and fixture succeed; missing manifest fails without a database.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add trading_agent/research_hypothesis_registration.py run_research_hypothesis_register.py examples/research/us-swing-new-high-rvol-v1.json tests/test_research_hypothesis_registration.py tests/test_research_hypothesis_register_cli.py
