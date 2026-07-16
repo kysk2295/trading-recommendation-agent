@@ -13,6 +13,7 @@ from trading_agent.daily_research_contract import (
     SHADOW_PORTFOLIO_POLICY,
     StrategyResearchContract,
     strategy_contract,
+    strategy_version_identity,
 )
 from trading_agent.experiment_ledger_keys import (
     hypothesis_registration_key,
@@ -64,6 +65,14 @@ class _BootstrapRegistration:
     lifecycle_event: StrategyLifecycleEvent
 
 
+@dataclass(frozen=True, slots=True)
+class _BootstrapTimeline:
+    hypothesis_recorded_at: dt.datetime
+    version_recorded_at: dt.datetime
+    effective_session_date: dt.date
+    code_version_rollover: bool
+
+
 def bootstrap_current_intraday_experiments(
     *,
     lane_registry: LaneRegistryReader,
@@ -73,17 +82,16 @@ def bootstrap_current_intraday_experiments(
 ) -> ExperimentLedgerBootstrapResult:
     _require_aware(recorded_at)
     contracts = _verified_current_contracts(lane_registry)
-    bootstrap_recorded_at = _replay_recorded_at(
+    timeline = _bootstrap_timeline(
         experiment_ledger,
         contracts,
+        code_version,
         recorded_at,
     )
-    effective_session_date = _next_regular_session(bootstrap_recorded_at)
     registrations = _build_registrations(
         contracts,
         code_version=code_version,
-        recorded_at=bootstrap_recorded_at,
-        effective_session_date=effective_session_date,
+        timeline=timeline,
     )
 
     with experiment_ledger.writer() as writer:
@@ -96,7 +104,7 @@ def bootstrap_current_intraday_experiments(
         hypotheses_created=hypotheses_created,
         versions_created=versions_created,
         lifecycle_events_created=lifecycle_events_created,
-        effective_session_date=effective_session_date,
+        effective_session_date=timeline.effective_session_date,
     )
 
 
@@ -154,43 +162,89 @@ def _verified_current_contracts(
     return contracts
 
 
-def _replay_recorded_at(
+def _bootstrap_timeline(
     experiment_ledger: ExperimentLedgerStore,
     contracts: tuple[tuple[StrategyMode, StrategyResearchContract], ...],
+    code_version: str,
     requested_at: dt.datetime,
-) -> dt.datetime:
+) -> _BootstrapTimeline:
     hypothesis_ids = {contract.hypothesis_id for _, contract in contracts}
-    strategy_versions = {contract.strategy_version for _, contract in contracts}
-    existing_times = {
+    expected_versions = {
+        strategy_version_identity(mode, code_version)
+        for mode, _ in contracts
+    }
+    hypothesis_times = {
         stored.registration.ledger_recorded_at
         for stored in experiment_ledger.hypotheses()
         if stored.registration.hypothesis_id in hypothesis_ids
     }
-    existing_times.update(
+    if len(hypothesis_times) > 1:
+        raise InvalidExperimentLedgerBootstrapSourceError
+    if hypothesis_times:
+        hypothesis_recorded_at = next(iter(hypothesis_times))
+        if requested_at < hypothesis_recorded_at:
+            raise InvalidExperimentLedgerBootstrapSourceError
+    else:
+        hypothesis_recorded_at = requested_at
+
+    versions = tuple(
         stored.registration.ledger_recorded_at
         for stored in experiment_ledger.strategy_versions()
-        if stored.registration.strategy_version in strategy_versions
+        if stored.registration.strategy_version in expected_versions
     )
-    for strategy_version in strategy_versions:
-        lifecycle_events = experiment_ledger.lifecycle_events(strategy_version)
-        if lifecycle_events:
-            existing_times.add(lifecycle_events[0].event.decided_at)
-    if not existing_times:
-        return requested_at
-    if len(existing_times) != 1:
+    if len(versions) not in (0, len(expected_versions)):
         raise InvalidExperimentLedgerBootstrapSourceError
-    existing = next(iter(existing_times))
-    if requested_at < existing:
+    if not versions:
+        return _BootstrapTimeline(
+            hypothesis_recorded_at=hypothesis_recorded_at,
+            version_recorded_at=requested_at,
+            effective_session_date=_next_regular_session(requested_at),
+            code_version_rollover=bool(hypothesis_times),
+        )
+
+    version_times = set(versions)
+    if len(version_times) != 1:
         raise InvalidExperimentLedgerBootstrapSourceError
-    return existing
+    version_recorded_at = next(iter(version_times))
+    if requested_at < version_recorded_at:
+        raise InvalidExperimentLedgerBootstrapSourceError
+    lifecycle_events = tuple(
+        experiment_ledger.lifecycle_events(strategy_version)
+        for strategy_version in expected_versions
+    )
+    if not all(len(events) == 1 for events in lifecycle_events):
+        raise InvalidExperimentLedgerBootstrapSourceError
+    events = tuple(events[0].event for events in lifecycle_events)
+    effective_dates = {event.effective_session_date for event in events}
+    reason_sets = {event.reason_codes for event in events}
+    supported_reason_sets = {
+        ("existing_contract_import",),
+        ("code_version_rollover", "existing_contract_import"),
+    }
+    if (
+        len(effective_dates) != 1
+        or len(reason_sets) != 1
+        or not reason_sets <= supported_reason_sets
+        or any(
+            event.event_kind is not StrategyLifecycleEventKind.REGISTRATION
+            or event.decided_at != version_recorded_at
+            for event in events
+        )
+    ):
+        raise InvalidExperimentLedgerBootstrapSourceError
+    return _BootstrapTimeline(
+        hypothesis_recorded_at=hypothesis_recorded_at,
+        version_recorded_at=version_recorded_at,
+        effective_session_date=next(iter(effective_dates)),
+        code_version_rollover=("code_version_rollover", "existing_contract_import") in reason_sets,
+    )
 
 
 def _build_registrations(
     contracts: tuple[tuple[StrategyMode, StrategyResearchContract], ...],
     *,
     code_version: str,
-    recorded_at: dt.datetime,
-    effective_session_date: dt.date,
+    timeline: _BootstrapTimeline,
 ) -> tuple[_BootstrapRegistration, ...]:
     registrations: list[_BootstrapRegistration] = []
     try:
@@ -204,11 +258,11 @@ def _build_registrations(
                 hypothesis=contract.hypothesis,
                 falsification_rule=contract.falsification_rule,
                 source_registered_at=scope.registered_at,
-                ledger_recorded_at=recorded_at,
+                ledger_recorded_at=timeline.hypothesis_recorded_at,
             )
             version = StrategyVersionRegistration(
                 strategy_id=mode.value,
-                strategy_version=contract.strategy_version,
+                strategy_version=strategy_version_identity(mode, code_version),
                 hypothesis_id=contract.hypothesis_id,
                 experiment_scope_key=experiment_scope_key(scope),
                 lane_id=scope.primary_lane,
@@ -218,7 +272,7 @@ def _build_registrations(
                 cost_model=CURRENT_COST_MODEL,
                 portfolio_policy=SHADOW_PORTFOLIO_POLICY,
                 source_registered_at=scope.registered_at,
-                ledger_recorded_at=recorded_at,
+                ledger_recorded_at=timeline.version_recorded_at,
             )
             evidence_keys = tuple(
                 sorted(
@@ -236,11 +290,15 @@ def _build_registrations(
                 from_state=None,
                 to_state=StrategyLifecycleState.EXPERIMENTAL_SHADOW,
                 policy_version="strategy_lifecycle_v1",
-                decision_session_date=recorded_at.astimezone(NEW_YORK).date(),
-                effective_session_date=effective_session_date,
-                decided_at=recorded_at,
+                decision_session_date=timeline.version_recorded_at.astimezone(NEW_YORK).date(),
+                effective_session_date=timeline.effective_session_date,
+                decided_at=timeline.version_recorded_at,
                 evidence_keys=evidence_keys,
-                reason_codes=("existing_contract_import",),
+                reason_codes=(
+                    ("code_version_rollover", "existing_contract_import")
+                    if timeline.code_version_rollover
+                    else ("existing_contract_import",)
+                ),
                 previous_event_key=None,
             )
             registrations.append(_BootstrapRegistration(hypothesis, version, lifecycle_event))

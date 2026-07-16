@@ -8,7 +8,11 @@ from decimal import Decimal
 from pathlib import Path
 from typing import override
 
-from trading_agent.daily_research_contract import EVALUATOR_VERSION, strategy_contract
+from trading_agent.daily_research_contract import (
+    EVALUATOR_VERSION,
+    strategy_contract,
+    strategy_version_identity,
+)
 from trading_agent.daily_research_models import DailyResearchRecord
 from trading_agent.daily_research_record_source import load_daily_research_record_source
 from trading_agent.execution_store_reader import ExecutionStoreReader
@@ -208,7 +212,10 @@ def _preflight_intraday_lane_day(
         or record.experiment_scope_key != ORB_SCOPE_KEY
         or record.hypothesis_id != contract.hypothesis_id
         or record.strategy != StrategyMode.ORB.value
-        or record.strategy_version != contract.strategy_version
+        or record.strategy_version != strategy_version_identity(
+            StrategyMode.ORB,
+            record.code_version,
+        )
         or record.evaluator_version != EVALUATOR_VERSION
         or not _aware(record.recorded_at)
         or record.recorded_at > evaluated_at

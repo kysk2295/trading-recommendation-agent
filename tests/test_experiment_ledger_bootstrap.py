@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from trading_agent.daily_research_contract import strategy_contract
+from trading_agent.daily_research_contract import strategy_contract, strategy_version_identity
 from trading_agent.experiment_ledger_bootstrap import (
     InvalidExperimentLedgerBootstrapSourceError,
     bootstrap_current_intraday_experiments,
@@ -32,6 +32,7 @@ from trading_agent.strategy_factory import StrategyMode
 RECORDED_AT = dt.datetime(2026, 7, 15, 20, tzinfo=dt.UTC)
 EFFECTIVE_DATE = dt.date(2026, 7, 16)
 CODE_VERSION = "test-code"
+ROLLOVER_CODE_VERSION = "next-test-code"
 
 
 def _seed_lane_registry(
@@ -73,17 +74,18 @@ def test_bootstrap_registers_four_current_intraday_contracts(tmp_path: Path) -> 
         contract.hypothesis_id for contract in expected_contracts
     }
     assert {stored.registration.strategy_version for stored in versions} == {
-        contract.strategy_version for contract in expected_contracts
+        strategy_version_identity(mode, CODE_VERSION) for mode in StrategyMode
     }
     assert {stored.registration.code_version for stored in versions} == {CODE_VERSION}
     assert reader.trials() == ()
-    for contract in expected_contracts:
-        events = reader.lifecycle_events(contract.strategy_version)
+    for mode, _contract in zip(StrategyMode, expected_contracts, strict=True):
+        strategy_version = strategy_version_identity(mode, CODE_VERSION)
+        events = reader.lifecycle_events(strategy_version)
         assert len(events) == 1
         assert events[0].event.to_state is StrategyLifecycleState.EXPERIMENTAL_SHADOW
         assert events[0].event.decided_at == RECORDED_AT
-        assert reader.lifecycle_state(contract.strategy_version, RECORDED_AT.date()) is None
-        assert reader.lifecycle_state(contract.strategy_version, EFFECTIVE_DATE) == events[0]
+        assert reader.lifecycle_state(strategy_version, RECORDED_AT.date()) is None
+        assert reader.lifecycle_state(strategy_version, EFFECTIVE_DATE) == events[0]
 
 
 def test_bootstrap_replay_reuses_original_recording_time(tmp_path: Path) -> None:
@@ -111,8 +113,55 @@ def test_bootstrap_replay_reuses_original_recording_time(tmp_path: Path) -> None
     reader = ExperimentLedgerReader(experiment_ledger.path)
     assert {stored.registration.ledger_recorded_at for stored in reader.hypotheses()} == {RECORDED_AT}
     assert {
-        reader.lifecycle_events(strategy_contract(mode).strategy_version)[0].event.decided_at for mode in StrategyMode
+        reader.lifecycle_events(strategy_version_identity(mode, CODE_VERSION))[0].event.decided_at
+        for mode in StrategyMode
     } == {RECORDED_AT}
+
+
+def test_bootstrap_appends_a_new_complete_version_batch_for_new_code(
+    tmp_path: Path,
+) -> None:
+    lane_registry = _seed_lane_registry(tmp_path / "lane.sqlite3")
+    experiment_ledger = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    first = bootstrap_current_intraday_experiments(
+        lane_registry=lane_registry,
+        experiment_ledger=experiment_ledger,
+        code_version=CODE_VERSION,
+        recorded_at=RECORDED_AT,
+    )
+    rollover_at = RECORDED_AT + dt.timedelta(days=1)
+    rollover = bootstrap_current_intraday_experiments(
+        lane_registry=lane_registry,
+        experiment_ledger=experiment_ledger,
+        code_version=ROLLOVER_CODE_VERSION,
+        recorded_at=rollover_at,
+    )
+    replay = bootstrap_current_intraday_experiments(
+        lane_registry=lane_registry,
+        experiment_ledger=experiment_ledger,
+        code_version=ROLLOVER_CODE_VERSION,
+        recorded_at=rollover_at + dt.timedelta(days=1),
+    )
+
+    assert (first.hypotheses_created, first.versions_created, first.lifecycle_events_created) == (4, 4, 4)
+    assert (rollover.hypotheses_created, rollover.versions_created, rollover.lifecycle_events_created) == (0, 4, 4)
+    assert (replay.hypotheses_created, replay.versions_created, replay.lifecycle_events_created) == (0, 0, 0)
+    assert rollover.effective_session_date == dt.date(2026, 7, 17)
+    assert replay.effective_session_date == rollover.effective_session_date
+
+    reader = ExperimentLedgerReader(experiment_ledger.path)
+    assert len(reader.hypotheses()) == 4
+    assert {stored.registration.strategy_version for stored in reader.strategy_versions()} == {
+        strategy_version_identity(mode, version)
+        for mode in StrategyMode
+        for version in (CODE_VERSION, ROLLOVER_CODE_VERSION)
+    }
+    for mode in StrategyMode:
+        original = reader.lifecycle_events(strategy_version_identity(mode, CODE_VERSION))
+        rolled = reader.lifecycle_events(strategy_version_identity(mode, ROLLOVER_CODE_VERSION))
+        assert original[0].event.decided_at == RECORDED_AT
+        assert rolled[0].event.decided_at == rollover_at
+        assert rolled[0].event.effective_session_date == rollover.effective_session_date
 
 
 @pytest.mark.parametrize(

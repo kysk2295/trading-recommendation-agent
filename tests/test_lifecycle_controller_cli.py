@@ -10,6 +10,7 @@ import run_lifecycle_controller as controller_cli
 from tests.test_lifecycle_controller import (
     DECIDED_AT,
     ORB_CONTRACT,
+    ORB_VERSION,
     SESSION_DATE,
     _append_day_sources,
     _seed_base_sources,
@@ -119,7 +120,7 @@ def test_lifecycle_controller_collecting_is_a_successful_no_change(tmp_path: Pat
     assert "created: false" in report
     assert "to_state: none" in report
     assert "policy_blockers: none" in report
-    assert len(experiments.lifecycle_events(ORB_CONTRACT.strategy_version)) == 1
+    assert len(experiments.lifecycle_events(ORB_VERSION)) == 1
     _assert_redacted(report, tmp_path)
 
 
@@ -142,7 +143,7 @@ def test_lifecycle_controller_suspend_and_replay_are_redacted(tmp_path: Path) ->
     assert "to_state: suspended" in first_report
     assert "outcome: transitioned" in replay_report
     assert "created: false" in replay_report
-    assert len(experiments.lifecycle_events(ORB_CONTRACT.strategy_version)) == 2
+    assert len(experiments.lifecycle_events(ORB_VERSION)) == 2
     for report in (first_report, replay_report):
         _assert_redacted(
             report,
@@ -164,7 +165,7 @@ def test_lifecycle_controller_promotion_is_blocked_without_transition(
     assert "outcome: blocked" in report
     assert "created: false" in report
     assert f"policy_blockers: {','.join(PROMOTION_BLOCKERS)}" in report
-    assert len(experiments.lifecycle_events(ORB_CONTRACT.strategy_version)) == 1
+    assert len(experiments.lifecycle_events(ORB_VERSION)) == 1
     _assert_redacted(report, tmp_path)
 
 

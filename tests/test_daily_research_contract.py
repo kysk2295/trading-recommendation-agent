@@ -5,6 +5,7 @@ from trading_agent.daily_research_contract import (
     CURRENT_DATA_CONTRACT,
     SHADOW_PORTFOLIO_POLICY,
     strategy_contract,
+    strategy_version_identity,
 )
 from trading_agent.strategy_factory import StrategyMode
 
@@ -28,3 +29,11 @@ def test_current_intraday_contracts_have_canonical_global_lineage() -> None:
         "max_one_symbol_strategy_recommendation_per_day",
         "broker_orders=false",
     )
+
+
+def test_strategy_version_identity_is_deterministic_and_code_coupled() -> None:
+    first = strategy_version_identity(StrategyMode.ORB, "a" * 40)
+
+    assert first == strategy_version_identity(StrategyMode.ORB, "a" * 40)
+    assert first != strategy_version_identity(StrategyMode.ORB, "b" * 40)
+    assert first.startswith("orb_5m_buffer5bp_volume1.5_v1-code-")

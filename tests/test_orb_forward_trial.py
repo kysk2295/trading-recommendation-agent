@@ -11,7 +11,12 @@ import pytest
 
 from tests.daily_research_fixtures import write_complete_session
 from trading_agent.adaptive_evaluation_models import AdaptiveAction, AdaptiveEvaluation
-from trading_agent.daily_research_contract import EVALUATOR_VERSION, FEED_ENTITLEMENT, strategy_contract
+from trading_agent.daily_research_contract import (
+    EVALUATOR_VERSION,
+    FEED_ENTITLEMENT,
+    strategy_contract,
+    strategy_version_identity,
+)
 from trading_agent.daily_research_ledger import build_daily_record, write_daily_record
 from trading_agent.daily_research_models import DailyResearchRecord
 from trading_agent.experiment_ledger_bootstrap import bootstrap_current_intraday_experiments
@@ -60,6 +65,7 @@ REVIEWED_AT = dt.datetime(2026, 7, 16, 20, 15, tzinfo=dt.UTC)
 NEXT_PREOPEN = dt.datetime(2026, 7, 17, 12, 0, tzinfo=dt.UTC)
 CODE_VERSION = "test-code"
 ORB_CONTRACT = strategy_contract(StrategyMode.ORB)
+ORB_VERSION = strategy_version_identity(StrategyMode.ORB, CODE_VERSION)
 EXPECTED_EVIDENCE_BUDGET = (
     "adaptive_evaluation:1",
     "daily_research_record:1",
@@ -79,12 +85,12 @@ class _TerminalSources:
 
 
 def test_daily_trial_identity_and_prospective_data_version_are_deterministic() -> None:
-    trial_id = orb_shadow_trial_id(SESSION_DATE, ORB_CONTRACT.strategy_version)
+    trial_id = orb_shadow_trial_id(SESSION_DATE, ORB_VERSION)
     data_version = orb_shadow_trial_data_version()
 
     assert trial_id.startswith("orb-shadow-20260716-")
     assert re.fullmatch(r"orb-shadow-20260716-[0-9a-f]{12}", trial_id)
-    assert trial_id == orb_shadow_trial_id(SESSION_DATE, ORB_CONTRACT.strategy_version)
+    assert trial_id == orb_shadow_trial_id(SESSION_DATE, ORB_VERSION)
     assert re.fullmatch(r"[0-9a-f]{64}", data_version)
     assert data_version == orb_shadow_trial_data_version()
 
@@ -102,8 +108,8 @@ def test_preregistration_creates_one_exact_daily_shadow_trial(tmp_path: Path) ->
 
     registration = result.registration
     assert result.created is True
-    assert registration.trial_id == orb_shadow_trial_id(SESSION_DATE, ORB_CONTRACT.strategy_version)
-    assert registration.strategy_version == ORB_CONTRACT.strategy_version
+    assert registration.trial_id == orb_shadow_trial_id(SESSION_DATE, ORB_VERSION)
+    assert registration.strategy_version == ORB_VERSION
     assert registration.trial_kind is TrialKind.SHADOW_FORWARD
     assert registration.experiment_scope == ORB_CONTRACT.experiment_scope
     assert registration.evaluator_version == EVALUATOR_VERSION
@@ -183,9 +189,9 @@ def test_preregistration_rejects_noncanonical_source_without_trial(
 
 def test_rejected_strategy_version_cannot_register_another_daily_trial(tmp_path: Path) -> None:
     registry, experiments = _seed_lineage(tmp_path)
-    previous = experiments.lifecycle_events(ORB_CONTRACT.strategy_version)[-1]
+    previous = experiments.lifecycle_events(ORB_VERSION)[-1]
     rejection = StrategyLifecycleEvent(
-        strategy_version=ORB_CONTRACT.strategy_version,
+        strategy_version=ORB_VERSION,
         sequence=2,
         event_kind=StrategyLifecycleEventKind.TRANSITION,
         from_state=StrategyLifecycleState.EXPERIMENTAL_SHADOW,
@@ -279,7 +285,7 @@ def test_started_event_rejects_time_outside_regular_session(
 
 def test_completed_terminal_binds_four_exact_artifacts_and_replays(tmp_path: Path) -> None:
     sources = _seed_terminal_sources(tmp_path)
-    started = sources.experiments.trial_events(orb_shadow_trial_id(SESSION_DATE, ORB_CONTRACT.strategy_version))[0]
+    started = sources.experiments.trial_events(orb_shadow_trial_id(SESSION_DATE, ORB_VERSION))[0]
 
     first = finalize_orb_shadow_trial(
         experiment_ledger=sources.experiments,
@@ -401,7 +407,7 @@ def test_terminal_rejects_daily_contract_mismatch_without_event(
             occurred_at=AFTER_CLOSE,
         )
 
-    trial_id = orb_shadow_trial_id(SESSION_DATE, ORB_CONTRACT.strategy_version)
+    trial_id = orb_shadow_trial_id(SESSION_DATE, ORB_VERSION)
     assert len(sources.experiments.trial_events(trial_id)) == 1
 
 
@@ -431,7 +437,7 @@ def test_terminal_rejects_changed_evidence_bytes_without_event(
             occurred_at=AFTER_CLOSE,
         )
 
-    trial_id = orb_shadow_trial_id(SESSION_DATE, ORB_CONTRACT.strategy_version)
+    trial_id = orb_shadow_trial_id(SESSION_DATE, ORB_VERSION)
     assert len(sources.experiments.trial_events(trial_id)) == 1
 
 
@@ -469,7 +475,7 @@ def test_audited_nonzero_phase_appends_failed_terminal_and_replays(
     assert first.event.reason_codes == (f"{phase.value}_phase_failed",)
     assert replay.created is False
     assert replay.event == first.event
-    trial_id = orb_shadow_trial_id(SESSION_DATE, ORB_CONTRACT.strategy_version)
+    trial_id = orb_shadow_trial_id(SESSION_DATE, ORB_VERSION)
     assert len(experiments.trial_events(trial_id)) == 2
     assert registry.is_initialized()
 
@@ -503,7 +509,7 @@ def test_failed_terminal_requires_exact_same_session_phase_audit(
             occurred_at=AFTER_CLOSE,
         )
 
-    trial_id = orb_shadow_trial_id(SESSION_DATE, ORB_CONTRACT.strategy_version)
+    trial_id = orb_shadow_trial_id(SESSION_DATE, ORB_VERSION)
     assert len(experiments.trial_events(trial_id)) == 1
 
 
@@ -541,8 +547,6 @@ def _seed_terminal_sources(
         CODE_VERSION,
         FINALIZED_AT - dt.timedelta(minutes=3),
     )
-    if record_change is not None:
-        record = _changed_record(record, record_change)
     if censored:
         record = record.model_copy(
             update={
@@ -601,6 +605,12 @@ def _seed_terminal_sources(
         SESSION_DATE,
         reviewed_at=REVIEWED_AT,
     )
+    if record_change is not None:
+        record = _changed_record(record, record_change)
+        encoded = record.model_dump_json() + "\n"
+        record_path = session / "daily_research_records" / f"{SESSION_DATE}_{record.record_id[:12]}.json"
+        record_path.write_text(encoded, encoding="utf-8")
+        (session.parent / "daily_research_ledger.jsonl").write_text(encoded, encoding="utf-8")
     return _TerminalSources(registry, reviews, experiments, session, record, snapshot)
 
 

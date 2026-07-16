@@ -15,11 +15,13 @@ from trading_agent.daily_research_contract import (
     EVALUATOR_VERSION,
     SHADOW_PORTFOLIO_POLICY,
     strategy_contract,
+    strategy_version_identity,
 )
 from trading_agent.experiment_ledger_models import (
     StrategyLifecycleEvent,
     StrategyLifecycleEventKind,
     StrategyLifecycleState,
+    StrategyVersionRegistration,
 )
 from trading_agent.experiment_ledger_store import (
     ExperimentLedgerStore,
@@ -221,7 +223,6 @@ def _verified_source(
         or review.session_date != session_date
         or review.snapshot_key != snapshot_key
         or review.experiment_scope_key != _ORB_SCOPE_KEY
-        or review.strategy_version != _ORB_CONTRACT.strategy_version
         or review.evaluator_version != EVALUATOR_VERSION
         or review.reviewer_version != CURRENT_LANE_REVIEWER_VERSION
         or review.reviewer_action is not _expected_reviewer_action(review.adaptive_action)
@@ -230,9 +231,12 @@ def _verified_source(
     ):
         raise InvalidLifecycleControllerSourceError
 
-    _require_exact_experiment_lineage(experiment_ledger)
-    lifecycle_events = experiment_ledger.lifecycle_events(_ORB_CONTRACT.strategy_version)
-    current = experiment_ledger.lifecycle_state(_ORB_CONTRACT.strategy_version, session_date)
+    version = _require_exact_experiment_lineage(
+        experiment_ledger,
+        review.strategy_version,
+    )
+    lifecycle_events = experiment_ledger.lifecycle_events(version.strategy_version)
+    current = experiment_ledger.lifecycle_state(version.strategy_version, session_date)
     if not lifecycle_events or current is None:
         raise InvalidLifecycleControllerSourceError
     return _VerifiedControllerSource(
@@ -268,7 +272,10 @@ def _require_exact_lane_contracts(lane_registry: LaneRegistryReader) -> None:
         raise InvalidLifecycleControllerSourceError
 
 
-def _require_exact_experiment_lineage(experiment_ledger: ExperimentLedgerStore) -> None:
+def _require_exact_experiment_lineage(
+    experiment_ledger: ExperimentLedgerStore,
+    expected_strategy_version: str,
+) -> StrategyVersionRegistration:
     if not experiment_ledger.is_initialized():
         raise InvalidLifecycleControllerSourceError
     hypotheses = tuple(
@@ -279,7 +286,7 @@ def _require_exact_experiment_lineage(experiment_ledger: ExperimentLedgerStore) 
     versions = tuple(
         stored
         for stored in experiment_ledger.strategy_versions()
-        if stored.registration.strategy_version == _ORB_CONTRACT.strategy_version
+        if stored.registration.strategy_version == expected_strategy_version
     )
     if len(hypotheses) != 1 or len(versions) != 1:
         raise InvalidLifecycleControllerSourceError
@@ -292,6 +299,12 @@ def _require_exact_experiment_lineage(experiment_ledger: ExperimentLedgerStore) 
         or hypothesis.hypothesis != _ORB_CONTRACT.hypothesis
         or hypothesis.falsification_rule != _ORB_CONTRACT.falsification_rule
         or version.strategy_id != StrategyMode.ORB.value
+        or version.strategy_version != expected_strategy_version
+        or (
+            version.strategy_version != _ORB_CONTRACT.strategy_version
+            and version.strategy_version
+            != strategy_version_identity(StrategyMode.ORB, version.code_version)
+        )
         or version.hypothesis_id != _ORB_CONTRACT.hypothesis_id
         or version.experiment_scope_key != _ORB_SCOPE_KEY
         or version.lane_id is not LaneId.INTRADAY_MOMENTUM
@@ -302,6 +315,7 @@ def _require_exact_experiment_lineage(experiment_ledger: ExperimentLedgerStore) 
         or version.source_registered_at != _ORB_SCOPE.registered_at
     ):
         raise InvalidLifecycleControllerSourceError
+    return version
 
 
 def _existing_controller_replay(
@@ -432,7 +446,7 @@ def _suspend_event(
 ) -> StrategyLifecycleEvent:
     latest = source.lifecycle_events[-1]
     return StrategyLifecycleEvent(
-        strategy_version=_ORB_CONTRACT.strategy_version,
+        strategy_version=latest.event.strategy_version,
         sequence=latest.event.sequence + 1,
         event_kind=StrategyLifecycleEventKind.TRANSITION,
         from_state=latest.event.to_state,

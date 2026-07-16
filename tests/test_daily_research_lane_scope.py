@@ -10,8 +10,8 @@ from pydantic import ValidationError
 
 from tests.daily_research_fixtures import write_complete_session
 from trading_agent import daily_research_ledger
-from trading_agent.daily_research_contract import strategy_contract
-from trading_agent.daily_research_ledger import build_daily_record, read_daily_ledger
+from trading_agent.daily_research_contract import strategy_contract, strategy_version_identity
+from trading_agent.daily_research_ledger import build_daily_record, read_daily_ledger, write_daily_record
 from trading_agent.lane_contract_keys import experiment_scope_key
 from trading_agent.lane_contract_models import (
     InvalidLaneContractError,
@@ -60,6 +60,25 @@ def test_prior_rows_from_a_different_scope_do_not_increase_forward_counts(
 
     current = _build(second, dt.date(2026, 7, 15))
 
+    assert current.promotion.cumulative_forward_days == 1
+    assert current.promotion.cumulative_completed_trades == 1
+
+
+def test_prior_rows_from_a_different_code_version_do_not_increase_forward_counts(
+    tmp_path: Path,
+) -> None:
+    sessions = tmp_path / "live_sessions"
+    first = sessions / "20260714"
+    second = sessions / "20260715"
+    write_complete_session(first, dt.date(2026, 7, 14))
+    write_complete_session(second, dt.date(2026, 7, 15))
+    prior = _build(first, dt.date(2026, 7, 14), code_version="first-code")
+    assert write_daily_record(first, prior) is True
+
+    current = _build(second, dt.date(2026, 7, 15), code_version="second-code")
+
+    assert current.strategy_version == strategy_version_identity(StrategyMode.ORB, "second-code")
+    assert current.strategy_version != prior.strategy_version
     assert current.promotion.cumulative_forward_days == 1
     assert current.promotion.cumulative_completed_trades == 1
 
@@ -124,11 +143,11 @@ def test_daily_record_rejects_scope_registered_after_market_open(
     assert not (session / "daily_research_summary_ko.md").exists()
 
 
-def _build(session: Path, session_date: dt.date):
+def _build(session: Path, session_date: dt.date, *, code_version: str = "test-code"):
     return build_daily_record(
         session,
         session_date,
         StrategyMode.ORB,
-        "test-code",
+        code_version,
         dt.datetime(2026, 7, 15, 21, tzinfo=dt.UTC),
     )

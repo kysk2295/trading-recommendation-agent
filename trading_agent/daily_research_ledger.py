@@ -13,6 +13,7 @@ from trading_agent.daily_research_contract import (
     SHADOW_PORTFOLIO_POLICY,
     promotion_blockers,
     strategy_contract,
+    strategy_version_identity,
 )
 from trading_agent.daily_research_models import (
     DailyResearchRecord,
@@ -42,6 +43,7 @@ def build_daily_record(
     recorded_at: dt.datetime,
 ) -> DailyResearchRecord:
     contract = strategy_contract(strategy)
+    strategy_version = strategy_version_identity(strategy, code_version)
     require_scope_registered_before_session(contract.experiment_scope, session_date)
     scope_key = experiment_scope_key(contract.experiment_scope)
     artifacts = load_artifacts(session)
@@ -52,7 +54,7 @@ def build_daily_record(
     prior_for_strategy = {
         row.session_date: row
         for row in prior
-        if row.strategy_version == contract.strategy_version
+        if row.strategy_version == strategy_version
         and row.experiment_scope_key == scope_key
         and row.evaluator_version == EVALUATOR_VERSION
         and row.feed_entitlement == FEED_ENTITLEMENT
@@ -68,7 +70,7 @@ def build_daily_record(
     blockers = promotion_blockers(quality, cumulative_days, cumulative_trades)
     record_id = hashlib.sha256(
         (
-            f"{session_date.isoformat()}|{contract.strategy_version}|"
+            f"{session_date.isoformat()}|{strategy_version}|"
             f"{scope_key}|"
             f"{code_version}|{EVALUATOR_VERSION}|{current_data_version}|"
             f"{cumulative_days}|{cumulative_trades}|{'|'.join(blockers)}"
@@ -83,7 +85,7 @@ def build_daily_record(
         hypothesis=contract.hypothesis,
         falsification_rule=contract.falsification_rule,
         strategy=strategy.value,
-        strategy_version=contract.strategy_version,
+        strategy_version=strategy_version,
         strategy_stage="experimental_shadow",
         experiment_scope=contract.experiment_scope,
         experiment_scope_key=scope_key,

@@ -20,6 +20,7 @@ from trading_agent.daily_research_contract import (
     FEED_ENTITLEMENT,
     SHADOW_PORTFOLIO_POLICY,
     strategy_contract,
+    strategy_version_identity,
 )
 from trading_agent.daily_research_record_source import (
     InvalidDailyResearchRecordSourceError,
@@ -164,12 +165,17 @@ def register_orb_shadow_trial(
         same_session = tuple(
             stored
             for stored in trials
-            if stored.registration.strategy_version == version.strategy_version
-            and stored.registration.planned_start == session_date
+            if stored.registration.planned_start == session_date
             and stored.registration.planned_end == session_date
+            and stored.registration.experiment_scope == _ORB_SCOPE
+            and stored.registration.experiment_scope_key == _ORB_SCOPE_KEY
         )
         if same_session:
-            if len(same_session) != 1 or same_session[0].registration.trial_id != trial_id:
+            if (
+                len(same_session) != 1
+                or same_session[0].registration.strategy_version != version.strategy_version
+                or same_session[0].registration.trial_id != trial_id
+            ):
                 raise InvalidOrbForwardTrialSourceError
             existing = same_session[0].registration
             if registered_at < existing.registered_at:
@@ -378,6 +384,7 @@ def _verified_orb_sources(
         experiment_ledger,
         session_date,
         runtime_code_version=runtime_code_version,
+        expected_strategy_version=None,
     )
 
 
@@ -409,6 +416,7 @@ def _verified_orb_experiment_source(
     session_date: dt.date,
     *,
     runtime_code_version: str | None,
+    expected_strategy_version: str | None,
 ) -> StrategyVersionRegistration:
     if not experiment_ledger.is_initialized():
         raise InvalidOrbForwardTrialSourceError
@@ -417,10 +425,17 @@ def _verified_orb_experiment_source(
         for stored in experiment_ledger.hypotheses()
         if stored.registration.hypothesis_id == _ORB_CONTRACT.hypothesis_id
     )
+    if runtime_code_version is not None:
+        expected_strategy_version = strategy_version_identity(
+            StrategyMode.ORB,
+            runtime_code_version,
+        )
+    if expected_strategy_version is None:
+        raise InvalidOrbForwardTrialSourceError
     versions = tuple(
         stored
         for stored in experiment_ledger.strategy_versions()
-        if stored.registration.strategy_version == _ORB_CONTRACT.strategy_version
+        if stored.registration.strategy_version == expected_strategy_version
     )
     if len(hypotheses) != 1 or len(versions) != 1:
         raise InvalidOrbForwardTrialSourceError
@@ -433,6 +448,12 @@ def _verified_orb_experiment_source(
         or hypothesis.hypothesis != _ORB_CONTRACT.hypothesis
         or hypothesis.falsification_rule != _ORB_CONTRACT.falsification_rule
         or version.strategy_id != StrategyMode.ORB.value
+        or version.strategy_version != expected_strategy_version
+        or (
+            version.strategy_version != _ORB_CONTRACT.strategy_version
+            and version.strategy_version
+            != strategy_version_identity(StrategyMode.ORB, version.code_version)
+        )
         or version.hypothesis_id != _ORB_CONTRACT.hypothesis_id
         or version.experiment_scope_key != _ORB_SCOPE_KEY
         or version.lane_id is not LaneId.INTRADAY_MOMENTUM
@@ -458,22 +479,26 @@ def _verified_daily_trial(
     ExperimentTrialRegistration,
     tuple[StoredExperimentTrialEvent, ...],
 ]:
+    matches = tuple(
+        stored.registration
+        for stored in experiment_ledger.trials()
+        if stored.registration.planned_start == session_date
+        and stored.registration.planned_end == session_date
+        and stored.registration.experiment_scope == _ORB_SCOPE
+        and stored.registration.experiment_scope_key == _ORB_SCOPE_KEY
+    )
+    if len(matches) != 1:
+        raise InvalidOrbForwardTrialSourceError
+    registration = matches[0]
     version = _verified_orb_experiment_source(
         experiment_ledger,
         session_date,
         runtime_code_version=None,
+        expected_strategy_version=registration.strategy_version,
     )
     expected_id = orb_shadow_trial_id(session_date, version.strategy_version)
-    matches = tuple(
-        stored.registration
-        for stored in experiment_ledger.trials()
-        if stored.registration.strategy_version == version.strategy_version
-        and stored.registration.planned_start == session_date
-        and stored.registration.planned_end == session_date
-    )
-    if len(matches) != 1 or matches[0].trial_id != expected_id:
+    if registration.trial_id != expected_id:
         raise InvalidOrbForwardTrialSourceError
-    registration = matches[0]
     expected = _trial_registration(
         version,
         session_date=session_date,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Final, assert_never
 
@@ -110,3 +111,10 @@ def strategy_contract(strategy: StrategyMode) -> StrategyResearchContract:
             )
         case unreachable:
             assert_never(unreachable)
+
+
+def strategy_version_identity(strategy: StrategyMode, code_version: str) -> str:
+    if not code_version or code_version != code_version.strip():
+        raise ValueError("code version must be canonical")
+    digest = hashlib.sha256(code_version.encode("utf-8")).hexdigest()[:12]
+    return f"{strategy_contract(strategy).strategy_version}-code-{digest}"

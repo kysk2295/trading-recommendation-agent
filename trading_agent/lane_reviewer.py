@@ -8,7 +8,10 @@ from pathlib import Path
 from typing import Final, assert_never, override
 
 from trading_agent.adaptive_evaluation_models import AdaptiveAction, AdaptiveEvaluation
-from trading_agent.daily_research_contract import EVALUATOR_VERSION, strategy_contract
+from trading_agent.daily_research_contract import (
+    EVALUATOR_VERSION,
+    strategy_version_identity,
+)
 from trading_agent.daily_research_record_source import load_daily_research_record_source
 from trading_agent.lane_contract_keys import (
     experiment_scope_key,
@@ -108,10 +111,12 @@ def _build_intraday_review_event(
         ORB_SCOPE_KEY,
     )
     record = source.record
-    contract = strategy_contract(StrategyMode.ORB)
     if (
         record.experiment_scope != ORB_SCOPE
-        or record.strategy_version != contract.strategy_version
+        or record.strategy_version != strategy_version_identity(
+            StrategyMode.ORB,
+            record.code_version,
+        )
         or record.evaluator_version != EVALUATOR_VERSION
         or not _aware(record.recorded_at)
         or record.recorded_at > reviewed_at

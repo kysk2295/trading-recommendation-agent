@@ -41,7 +41,7 @@ test -f /Users/goyunseo/.config/trading-agent/alpaca-paper.env
 test "$(stat -f '%Lp' /Users/goyunseo/.config/trading-agent/alpaca-paper.env)" = 600
 ```
 
-코드 기준선을 확인한다. `git status --porcelain`은 빈 출력이어야 한다. global experiment ledger의 strategy version과 trial registration은 현재 checkout code version을 exact 비교하므로, bootstrap 뒤에도 작업 트리를 바꾸지 않는다. 실패하거나 의도하지 않은 tracked·untracked 변경이 있으면 mutation을 실행하지 않는다.
+코드 기준선을 확인한다. `git status --porcelain`은 빈 출력이어야 한다. global experiment ledger는 parameter-set base와 exact checkout code version으로 결정되는 append-only strategy version을 사용한다. 새 commit이면 아래 local-only bootstrap이 기존 hypothesis를 수정하지 않고 새 code-coupled version을 append한다. 그 bootstrap은 해당 NYSE session open **전**에 끝나야 한다. 정규장 뒤 누락된 preregistration을 새 DB·새 version·시간 변경으로 우회하지 않으며, 그날은 read-only observation만 보존한다. 실패하거나 의도하지 않은 tracked·untracked 변경이 있으면 mutation을 실행하지 않는다.
 
 ```bash
 git status --short --branch
@@ -70,7 +70,7 @@ uv run basedpyright
   --intraday-execution-database "$PAPER_DB"
 ```
 
-lane manifest와 scope가 exact current 계약일 때만 global experiment ledger를 bootstrap한다. 이 명령도 로컬 SQLite만 사용하며 주문·자격증명·HTTP·broker 호출이 없다. 현재 clean checkout의 commit을 strategy version code version으로 고정한다.
+lane manifest와 scope가 exact current 계약일 때만 global experiment ledger를 bootstrap한다. 이 명령도 로컬 SQLite만 사용하며 주문·자격증명·HTTP·broker 호출이 없다. 현재 clean checkout의 commit으로 code-coupled strategy version을 고정하며, exact replay는 새 행 0건이고 새 commit은 strategy version·lifecycle registration만 append한다.
 
 ```bash
 ./run_experiment_ledger_bootstrap.py \

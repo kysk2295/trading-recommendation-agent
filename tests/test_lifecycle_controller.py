@@ -8,7 +8,11 @@ from pathlib import Path
 import pytest
 
 from trading_agent.adaptive_evaluation_models import AdaptiveAction
-from trading_agent.daily_research_contract import EVALUATOR_VERSION, strategy_contract
+from trading_agent.daily_research_contract import (
+    EVALUATOR_VERSION,
+    strategy_contract,
+    strategy_version_identity,
+)
 from trading_agent.experiment_ledger_bootstrap import bootstrap_current_intraday_experiments
 from trading_agent.experiment_ledger_keys import strategy_lifecycle_event_key
 from trading_agent.experiment_ledger_models import (
@@ -54,6 +58,8 @@ FINALIZED_AT = dt.datetime(2026, 7, 15, 20, 10, tzinfo=dt.UTC)
 REVIEWED_AT = dt.datetime(2026, 7, 15, 20, 20, tzinfo=dt.UTC)
 DECIDED_AT = dt.datetime(2026, 7, 15, 20, 30, tzinfo=dt.UTC)
 ORB_CONTRACT = strategy_contract(StrategyMode.ORB)
+CODE_VERSION = "test-code"
+ORB_VERSION = strategy_version_identity(StrategyMode.ORB, CODE_VERSION)
 ORB_SCOPE = current_intraday_experiment_scope(ORB_CONTRACT.hypothesis_id)
 ORB_SCOPE_KEY = experiment_scope_key(ORB_SCOPE)
 
@@ -102,7 +108,7 @@ def _seed_base_sources(tmp_path: Path) -> tuple[LaneRegistryStore, LaneReviewSto
     _ = bootstrap_current_intraday_experiments(
         lane_registry=lanes,
         experiment_ledger=experiments,
-        code_version="test-code",
+        code_version=CODE_VERSION,
         recorded_at=BOOTSTRAP_AT,
     )
     return lanes, LaneReviewStore(tmp_path / "review.sqlite3"), experiments
@@ -149,7 +155,7 @@ def _append_day_sources(
         "daily_record_id": "b" * 64,
         "daily_record_sha256": "c" * 64,
         "adaptive_evaluation_sha256": "d" * 64,
-        "strategy_version": ORB_CONTRACT.strategy_version,
+        "strategy_version": ORB_VERSION,
         "evaluator_version": EVALUATOR_VERSION,
         "reviewer_version": CURRENT_LANE_REVIEWER_VERSION,
         "adaptive_action": action,
@@ -208,7 +214,7 @@ def _control(
 
 def test_controller_appends_next_session_suspend_and_exact_replay(tmp_path: Path) -> None:
     sources = _sources(tmp_path)
-    before = sources.experiments.lifecycle_events(ORB_CONTRACT.strategy_version)[0]
+    before = sources.experiments.lifecycle_events(ORB_VERSION)[0]
 
     first = _control(sources)
     replay = _control(sources, decided_at=DECIDED_AT + dt.timedelta(minutes=5))
@@ -234,10 +240,10 @@ def test_controller_appends_next_session_suspend_and_exact_replay(tmp_path: Path
     assert replay.outcome is LifecycleControllerOutcome.TRANSITIONED
     assert replay.created is False
     assert replay.event == first.event
-    assert len(sources.experiments.lifecycle_events(ORB_CONTRACT.strategy_version)) == 2
-    current = sources.experiments.lifecycle_state(ORB_CONTRACT.strategy_version, SESSION_DATE)
+    assert len(sources.experiments.lifecycle_events(ORB_VERSION)) == 2
+    current = sources.experiments.lifecycle_state(ORB_VERSION, SESSION_DATE)
     effective = sources.experiments.lifecycle_state(
-        ORB_CONTRACT.strategy_version,
+        ORB_VERSION,
         NEXT_SESSION_DATE,
     )
     assert current is not None
@@ -288,7 +294,7 @@ def test_controller_closed_decision_table_does_not_append(
     assert result.to_state is None
     assert result.blockers == blockers
     assert result.event is None
-    assert len(sources.experiments.lifecycle_events(ORB_CONTRACT.strategy_version)) == 1
+    assert len(sources.experiments.lifecycle_events(ORB_VERSION)) == 1
 
 
 def test_controller_does_not_suspend_an_incomplete_or_incident_session(tmp_path: Path) -> None:
@@ -303,7 +309,7 @@ def test_controller_does_not_suspend_an_incomplete_or_incident_session(tmp_path:
     assert result.outcome is LifecycleControllerOutcome.BLOCKED
     assert result.blockers == ("clean_finalized_snapshot_required",)
     assert result.event is None
-    assert len(sources.experiments.lifecycle_events(ORB_CONTRACT.strategy_version)) == 1
+    assert len(sources.experiments.lifecycle_events(ORB_VERSION)) == 1
 
 
 @pytest.mark.parametrize(
@@ -322,7 +328,7 @@ def test_controller_rejects_inconsistent_suspend_review(
     with pytest.raises(InvalidLifecycleControllerSourceError):
         _ = _control(sources)
 
-    assert len(sources.experiments.lifecycle_events(ORB_CONTRACT.strategy_version)) == 1
+    assert len(sources.experiments.lifecycle_events(ORB_VERSION)) == 1
 
 
 @pytest.mark.parametrize(
@@ -360,9 +366,9 @@ def test_controller_rejects_invalid_decision_time_or_review_order(tmp_path: Path
 
 def test_controller_rejects_a_future_effective_pending_event(tmp_path: Path) -> None:
     sources = _sources(tmp_path)
-    previous = sources.experiments.lifecycle_events(ORB_CONTRACT.strategy_version)[-1]
+    previous = sources.experiments.lifecycle_events(ORB_VERSION)[-1]
     pending = StrategyLifecycleEvent(
-        strategy_version=ORB_CONTRACT.strategy_version,
+        strategy_version=ORB_VERSION,
         sequence=previous.event.sequence + 1,
         event_kind=StrategyLifecycleEventKind.TRANSITION,
         from_state=previous.event.to_state,
@@ -381,7 +387,7 @@ def test_controller_rejects_a_future_effective_pending_event(tmp_path: Path) -> 
     with pytest.raises(InvalidLifecycleControllerSourceError):
         _ = _control(sources)
 
-    assert len(sources.experiments.lifecycle_events(ORB_CONTRACT.strategy_version)) == 2
+    assert len(sources.experiments.lifecycle_events(ORB_VERSION)) == 2
 
 
 @pytest.mark.parametrize(
@@ -397,9 +403,9 @@ def test_controller_does_not_repeat_suspended_or_rejected_state(
     expected_blocker: str,
 ) -> None:
     lanes, reviews, experiments = _seed_base_sources(tmp_path)
-    previous = experiments.lifecycle_events(ORB_CONTRACT.strategy_version)[-1]
+    previous = experiments.lifecycle_events(ORB_VERSION)[-1]
     terminal = StrategyLifecycleEvent(
-        strategy_version=ORB_CONTRACT.strategy_version,
+        strategy_version=ORB_VERSION,
         sequence=previous.event.sequence + 1,
         event_kind=StrategyLifecycleEventKind.TRANSITION,
         from_state=previous.event.to_state,
@@ -435,4 +441,4 @@ def test_controller_does_not_repeat_suspended_or_rejected_state(
     assert result.outcome is LifecycleControllerOutcome.NO_CHANGE
     assert result.blockers == (expected_blocker,)
     assert result.event is None
-    assert len(experiments.lifecycle_events(ORB_CONTRACT.strategy_version)) == 2
+    assert len(experiments.lifecycle_events(ORB_VERSION)) == 2
