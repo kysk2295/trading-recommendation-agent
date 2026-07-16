@@ -27,7 +27,7 @@ from trading_agent.opendart_client import (
     parse_opendart_disclosure_page,
 )
 
-OPENDART_ADAPTER_VERSION: Final = "opendart-list-v1"
+OPENDART_ADAPTER_VERSION: Final = "opendart-list-v2"
 MAX_OPENDART_PAGES: Final = 100
 
 
@@ -51,6 +51,79 @@ class OpenDartCollectionResult:
     restarted: bool
 
 
+def resume_opendart_collection(
+    store: KrThemeStore,
+    *,
+    collection_cycle_id: str,
+    collection_date: dt.date,
+    adapter_version: str = OPENDART_ADAPTER_VERSION,
+    _clock: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
+) -> OpenDartCollectionResult | None:
+    if not store.path.is_file():
+        return None
+    source_run_id = f"{collection_cycle_id}:dart"
+    existing = tuple(
+        run
+        for run in store.source_runs(collection_cycle_id)
+        if run.source is KrCatalystSource.DART
+    )
+    if existing:
+        if (
+            len(existing) != 1
+            or existing[0].source_run_id != source_run_id
+            or existing[0].adapter_version != adapter_version
+            or existing[0].collection_date != collection_date
+        ):
+            raise ValueError("incompatible OpenDART source run")
+        run = existing[0]
+        return OpenDartCollectionResult(
+            run=run,
+            receipt_count=len(run.receipt_ids),
+            new_receipt_count=0,
+            catalyst_count=run.record_count,
+            new_catalyst_count=0,
+            new_observation_count=0,
+            restarted=True,
+        )
+
+    orphan_receipts = store.source_receipts(source_run_id)
+    if not orphan_receipts:
+        return None
+    receipt_times = tuple(item.receipt.received_at for item in orphan_receipts)
+    started_at = min(receipt_times)
+    completed_at = max((started_at, _clock(), *receipt_times))
+    run = KrSourceCollectionRun(
+        source_run_id=source_run_id,
+        collection_cycle_id=collection_cycle_id,
+        source=KrCatalystSource.DART,
+        adapter_version=adapter_version,
+        started_at=started_at,
+        completed_at=completed_at,
+        status=KrCoverageStatus.FAILED,
+        record_count=_source_observation_count(
+            store,
+            collection_cycle_id=collection_cycle_id,
+            source=KrCatalystSource.DART,
+        ),
+        failure_code="incomplete_restart",
+        receipt_ids=tuple(
+            sorted(item.receipt.receipt_id for item in orphan_receipts)
+        ),
+        collection_date=collection_date,
+    )
+    with store.writer() as writer:
+        _ = writer.append_source_run(run)
+    return OpenDartCollectionResult(
+        run=run,
+        receipt_count=len(orphan_receipts),
+        new_receipt_count=0,
+        catalyst_count=run.record_count,
+        new_catalyst_count=0,
+        new_observation_count=0,
+        restarted=True,
+    )
+
+
 def collect_opendart_disclosures(
     fetcher: OpenDartPageFetcher,
     store: KrThemeStore,
@@ -66,24 +139,15 @@ def collect_opendart_disclosures(
     source_run_id = f"{collection_cycle_id}:dart"
     with store.writer():
         pass
-    existing = tuple(
-        run
-        for run in store.source_runs(collection_cycle_id)
-        if run.source is KrCatalystSource.DART
+    resumed = resume_opendart_collection(
+        store,
+        collection_cycle_id=collection_cycle_id,
+        collection_date=collection_date,
+        adapter_version=adapter_version,
+        _clock=_clock,
     )
-    if existing:
-        if len(existing) != 1 or existing[0].adapter_version != adapter_version:
-            raise ValueError("incompatible OpenDART source run")
-        run = existing[0]
-        return OpenDartCollectionResult(
-            run=run,
-            receipt_count=len(run.receipt_ids),
-            new_receipt_count=0,
-            catalyst_count=run.record_count,
-            new_catalyst_count=0,
-            new_observation_count=0,
-            restarted=True,
-        )
+    if resumed is not None:
+        return resumed
 
     new_receipt_count = 0
     new_catalyst_count = 0
@@ -223,6 +287,7 @@ def collect_opendart_disclosures(
         record_count=observed_count,
         failure_code=failure_code,
         receipt_ids=tuple(sorted(item.receipt.receipt_id for item in receipts)),
+        collection_date=collection_date,
     )
     with store.writer() as writer:
         _ = writer.append_source_run(run)

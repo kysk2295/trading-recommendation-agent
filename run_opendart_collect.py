@@ -25,6 +25,7 @@ from trading_agent.opendart_client import (
 from trading_agent.opendart_collection import (
     OpenDartCollectionResult,
     collect_opendart_disclosures,
+    resume_opendart_collection,
 )
 from trading_agent.opendart_config import (
     DEFAULT_OPENDART_SECRET_PATH,
@@ -60,7 +61,14 @@ def main(
         raise typer.BadParameter("fixture mode에서는 secret path를 사용할 수 없습니다")
     try:
         store = KrThemeStore(Path(database))
-        if fixture_manifest is not None:
+        result = resume_opendart_collection(
+            store,
+            collection_cycle_id=collection_cycle_id,
+            collection_date=parsed_date,
+        )
+        if result is not None:
+            pass
+        elif fixture_manifest is not None:
             fetcher = load_opendart_fixture(
                 Path(fixture_manifest),
                 collection_date=parsed_date,

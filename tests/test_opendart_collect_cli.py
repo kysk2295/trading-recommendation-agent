@@ -69,6 +69,44 @@ def test_cli_collects_fixture_and_restart_is_idempotent_and_redacted(
         assert private not in combined
 
 
+def test_cli_terminal_replay_skips_fixture_credentials_and_http(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest, _ = _write_fixture(tmp_path / "input")
+    database = tmp_path / "ledger" / "kr-theme.sqlite3"
+    output = tmp_path / "report"
+    run_opendart_collect.main(
+        collection_cycle_id="kr-dart-replay-001",
+        collection_date="2026-07-15",
+        database=str(database),
+        output_dir=str(output),
+        fixture_manifest=str(manifest),
+        secret_path=None,
+    )
+
+    def reject_dependency(*args: object, **kwargs: object) -> None:
+        raise AssertionError("terminal replay opened a provider dependency")
+
+    for name in (
+        "load_opendart_fixture",
+        "load_opendart_credentials",
+        "create_opendart_http_client",
+    ):
+        monkeypatch.setattr(run_opendart_collect, name, reject_dependency)
+
+    run_opendart_collect.main(
+        collection_cycle_id="kr-dart-replay-001",
+        collection_date="2026-07-15",
+        database=str(database),
+        output_dir=str(output),
+        fixture_manifest=None,
+        secret_path=None,
+    )
+
+    assert "재시작 no-op: 예" in _report(output)
+
+
 def test_cli_invalid_input_fails_before_database_creation(tmp_path: Path) -> None:
     database = tmp_path / "kr-theme.sqlite3"
 

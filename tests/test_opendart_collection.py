@@ -6,6 +6,8 @@ import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pytest
+
 from trading_agent.kr_theme_models import (
     KrCatalystSource,
     KrCoverageStatus,
@@ -91,6 +93,7 @@ def test_collector_paginates_raw_first_and_appends_exact_source_run(
     assert result.new_catalyst_count == 101
     assert result.new_observation_count == 101
     assert result.restarted is False
+    assert result.run.collection_date == COLLECTION_DATE
     assert len(store.source_receipts()) == 2
     assert len(store.observation_receipts()) == 101
     assert store.source_runs() == (result.run,)
@@ -252,6 +255,31 @@ def test_terminal_source_run_restart_performs_no_fetch_or_append(tmp_path: Path)
     assert second.new_observation_count == 0
     assert reject.calls == 0
     assert len(store.source_runs()) == 1
+
+
+def test_terminal_source_run_rejects_different_date_without_fetch(
+    tmp_path: Path,
+) -> None:
+    store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
+    _ = collect_opendart_disclosures(
+        StubFetcher(
+            {1: _raw(1, _success_page(1, 1, 1, (_disclosure(1),)))}
+        ),
+        store,
+        collection_cycle_id=CYCLE_ID,
+        collection_date=COLLECTION_DATE,
+    )
+    reject = RejectFetcher()
+
+    with pytest.raises(ValueError, match="incompatible OpenDART source run"):
+        _ = collect_opendart_disclosures(
+            reject,
+            store,
+            collection_cycle_id=CYCLE_ID,
+            collection_date=COLLECTION_DATE - dt.timedelta(days=1),
+        )
+
+    assert reject.calls == 0
 
 
 def test_collector_migrates_existing_v1_ledger_before_restart_lookup(
