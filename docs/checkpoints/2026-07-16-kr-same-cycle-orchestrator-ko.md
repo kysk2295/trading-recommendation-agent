@@ -8,20 +8,24 @@
 - 네 source run이 모두 terminal이면 provider stage를 전혀 호출하지 않고 coordinator만 replay한다. terminal source 실패는 뒤의 source를 계속 순서대로 검사한 뒤 immutable `complete=false` cycle과 nonzero 종료로 보존한다.
 - production에서 새 source stage가 필요할 때는 collection date가 실행 시점 KST 날짜와 정확히 같아야 한다. historical production replay는 네 terminal contract가 이미 있을 때만 provider 없이 허용된다.
 - 새 CLI는 executable mode로 배포된다. aggregate coverage CSV와 한국어 요약은 atomic mode `600`으로 기록하며 cycle ID, fixture path, raw payload, hash, credential을 담지 않는다.
+- CLI는 aggregate report와 네 delegated stage report 전체를 ledger database, writer lock, SQLite journal, shared-memory, WAL 경로와 비교한다. 하나라도 겹치면 SQLite 또는 sidecar를 만들기 전에 닫힌다.
+- OpenDART orphan receipt recovery는 각 receipt의 source와 `opendart:list:<YYYYMMDD>:page:<n>` request key를 검증한다. caller가 다른 날짜를 주면 immutable failed run으로 relabel하지 않고 실패한다.
 
 ## 검증
 
 - focused OpenDART replay tests: `15 passed`
 - focused orchestration/coordinator tests: `13 passed`
 - CLI 및 기존 source CLI 회귀 묶음: `55 passed`
-- 전체 자동 게이트: `uv run pytest -q` -> `1570 passed`
+- P1 보강 focused tests: `28 passed`
+- 전체 자동 게이트: `uv run pytest -q` -> `1580 passed`
 - 정적 분석: `uv run ruff check .` -> `All checks passed!`
 - 타입 검사: `uv run basedpyright` -> `0 errors, 0 warnings, 0 notes`
-- 수동 CLI QA: `--help`는 cycle ID, date, database, output directory, fixture root, help만 노출하고 성공했다.
+- 수동 CLI QA: executable shebang의 `--help`는 cycle ID, date, database, output directory, fixture root, help만 노출하고 성공했다.
 - 수동 CLI QA: malformed cycle ID는 exit 2로 provider/DB 생성 전에 차단됐고 새 임시 디렉터리에 파일을 남기지 않았다.
 - 수동 CLI QA: committed synthetic fixture의 첫 실행은 네 source와 complete cycle을 순서대로 완료했고 aggregate report 두 파일의 mode가 `600`이었다.
 - 수동 CLI QA: 같은 DB에 `--fixture-root` 없이 재실행하면 `재시작 4건`으로 성공했다. source stage output이 다시 생성되지 않았다.
-- 자동 CLI 회귀: 네 provider stage entrypoint를 모두 실패시키도록 patch한 terminal replay가 성공했고, failed DART fixture는 immutable incomplete cycle과 exit 1을 남겼다.
+- 자동 CLI 회귀: 네 provider stage entrypoint를 모두 실패시키도록 patch한 terminal replay가 성공했고, failed DART fixture는 immutable incomplete cycle과 exit 1을 남겼다. database/report 충돌 6개 위치와 OpenDART orphan receipt의 날짜 불일치도 DB 생성 또는 relabel 없이 차단했다.
+- orchestration 회귀는 terminal source run의 source run ID, adapter version, collection date 셋 중 하나라도 달라지면 다음 stage를 호출하지 않는 것을 확인한다.
 
 ## 이번 단계에서 하지 않은 일
 
