@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -162,6 +163,46 @@ def test_bootstrap_appends_a_new_complete_version_batch_for_new_code(
         assert original[0].event.decided_at == RECORDED_AT
         assert rolled[0].event.decided_at == rollover_at
         assert rolled[0].event.effective_session_date == rollover.effective_session_date
+
+
+def test_bootstrap_migrates_v1_ledger_before_appending_code_rollover(
+    tmp_path: Path,
+) -> None:
+    lane_registry = _seed_lane_registry(tmp_path / "lane.sqlite3")
+    experiment_ledger = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    first = bootstrap_current_intraday_experiments(
+        lane_registry=lane_registry,
+        experiment_ledger=experiment_ledger,
+        code_version=CODE_VERSION,
+        recorded_at=RECORDED_AT,
+    )
+    assert (first.hypotheses_created, first.versions_created, first.lifecycle_events_created) == (4, 4, 4)
+
+    with sqlite3.connect(experiment_ledger.path) as connection:
+        connection.executescript(
+            """
+            DROP TRIGGER research_hypothesis_cards_no_delete;
+            DROP TRIGGER research_hypothesis_cards_no_update;
+            DROP TRIGGER research_sources_no_delete;
+            DROP TRIGGER research_sources_no_update;
+            DROP TABLE research_hypothesis_cards;
+            DROP TABLE research_sources;
+            PRAGMA user_version = 1;
+            """
+        )
+        connection.commit()
+
+    rollover = bootstrap_current_intraday_experiments(
+        lane_registry=lane_registry,
+        experiment_ledger=experiment_ledger,
+        code_version=ROLLOVER_CODE_VERSION,
+        recorded_at=RECORDED_AT + dt.timedelta(days=1),
+    )
+
+    assert (rollover.hypotheses_created, rollover.versions_created, rollover.lifecycle_events_created) == (0, 4, 4)
+    reader = ExperimentLedgerReader(experiment_ledger.path)
+    assert reader.is_initialized()
+    assert len(reader.strategy_versions()) == 8
 
 
 @pytest.mark.parametrize(

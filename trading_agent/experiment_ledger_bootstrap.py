@@ -82,6 +82,10 @@ def bootstrap_current_intraday_experiments(
 ) -> ExperimentLedgerBootstrapResult:
     _require_aware(recorded_at)
     contracts = _verified_current_contracts(lane_registry)
+    _verify_bootstrap_input(contracts, code_version, recorded_at)
+    # Reader validation requires the current schema; the empty lease only applies v1->v2 DDL.
+    with experiment_ledger.writer():
+        pass
     timeline = _bootstrap_timeline(
         experiment_ledger,
         contracts,
@@ -160,6 +164,23 @@ def _verified_current_contracts(
     ):
         raise InvalidExperimentLedgerBootstrapSourceError
     return contracts
+
+
+def _verify_bootstrap_input(
+    contracts: tuple[tuple[StrategyMode, StrategyResearchContract], ...],
+    code_version: str,
+    recorded_at: dt.datetime,
+) -> None:
+    _ = _build_registrations(
+        contracts,
+        code_version=code_version,
+        timeline=_BootstrapTimeline(
+            hypothesis_recorded_at=recorded_at,
+            version_recorded_at=recorded_at,
+            effective_session_date=_next_regular_session(recorded_at),
+            code_version_rollover=False,
+        ),
+    )
 
 
 def _bootstrap_timeline(
