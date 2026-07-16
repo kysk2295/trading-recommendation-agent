@@ -43,6 +43,14 @@ _STAGE_OUTPUT_NAMES: Final = {
     KrCatalystSource.KIS_RANKING: "kis_kr_ranking",
     KrCatalystSource.VOLUME_SURGE: "volume_surge",
 }
+_REPORT_RELATIVE_PATHS: Final = (
+    Path("kr_same_cycle_coverage.csv"),
+    Path("kr_same_cycle_summary_ko.md"),
+    Path("opendart/opendart_collection_summary_ko.md"),
+    Path("ls_nws/ls_nws_collection_summary_ko.md"),
+    Path("kis_kr_ranking/kis_kr_ranking_collection_summary_ko.md"),
+    Path("volume_surge/kr_volume_surge_derivation_summary_ko.md"),
+)
 
 
 class KrSameCycleCollectError(ValueError):
@@ -68,8 +76,14 @@ def main(
     if collection_cycle_id is None or _SAFE_ID.fullmatch(collection_cycle_id) is None:
         raise typer.BadParameter("유효한 collection cycle ID가 필요합니다")
     parsed_date = _collection_date(collection_date)
+    database_path = Path(database)
+    output_path = Path(output_dir)
+    try:
+        _validate_report_targets(database_path, output_path)
+    except KrSameCycleCollectError:
+        raise typer.BadParameter(str(KrSameCycleCollectError())) from None
     fixtures = _fixture_manifests(fixture_root)
-    store = KrThemeStore(Path(database))
+    store = KrThemeStore(database_path)
     try:
         terminal_replay = has_terminal_kr_source_runs(
             store,
@@ -90,11 +104,11 @@ def main(
                 collection_cycle_id=collection_cycle_id,
                 collection_date=parsed_date,
                 database=database,
-                output_dir=Path(output_dir),
+                output_dir=output_path,
                 fixtures=fixtures,
             ),
         )
-        _write_reports(Path(output_dir), result)
+        _write_reports(output_path, result)
     except (
         InvalidKrThemeSourceError,
         KrSameCycleCollectError,
@@ -151,6 +165,25 @@ def _fixture_manifests(value: str | None) -> _FixtureManifests | None:
 
 def _current_kst_date() -> dt.date:
     return dt.datetime.now(_KST).date()
+
+
+def _validate_report_targets(database: Path, output_dir: Path) -> None:
+    ledger_targets = {
+        candidate.expanduser().resolve(strict=False)
+        for candidate in (
+            database,
+            Path(f"{database}.writer.lock"),
+            Path(f"{database}-journal"),
+            Path(f"{database}-shm"),
+            Path(f"{database}-wal"),
+        )
+    }
+    report_targets = {
+        (output_dir / relative).expanduser().resolve(strict=False)
+        for relative in _REPORT_RELATIVE_PATHS
+    }
+    if ledger_targets & report_targets:
+        raise KrSameCycleCollectError
 
 
 def _stage_runners(

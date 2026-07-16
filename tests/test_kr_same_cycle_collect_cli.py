@@ -6,7 +6,6 @@ import json
 import shutil
 import stat
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -153,10 +152,41 @@ def test_invalid_or_historical_production_request_opens_no_source(
     assert not (tmp_path / "historical.sqlite3").exists()
 
 
+@pytest.mark.parametrize(
+    "database_relative",
+    (
+        "kr_same_cycle_coverage.csv",
+        "kr_same_cycle_summary_ko.md",
+        "opendart/opendart_collection_summary_ko.md",
+        "ls_nws/ls_nws_collection_summary_ko.md",
+        "kis_kr_ranking/kis_kr_ranking_collection_summary_ko.md",
+        "volume_surge/kr_volume_surge_derivation_summary_ko.md",
+    ),
+)
+def test_cli_rejects_database_collision_with_any_report_target(
+    tmp_path: Path,
+    database_relative: str,
+) -> None:
+    fixture_root, _ = _fixture_root(tmp_path)
+    output = tmp_path / "report"
+    database = output / database_relative
+
+    with pytest.raises(typer.BadParameter):
+        run_kr_same_cycle_collect.main(
+            collection_cycle_id=CYCLE_ID,
+            collection_date=COLLECTION_DATE,
+            database=str(database),
+            output_dir=str(output),
+            fixture_root=str(fixture_root),
+        )
+
+    assert not database.exists()
+
+
 def test_help_exposes_only_bounded_options() -> None:
     root = Path(__file__).parents[1]
     completed = subprocess.run(
-        [sys.executable, "run_kr_same_cycle_collect.py", "--help"],
+        [str(root / "run_kr_same_cycle_collect.py"), "--help"],
         cwd=root,
         check=False,
         capture_output=True,

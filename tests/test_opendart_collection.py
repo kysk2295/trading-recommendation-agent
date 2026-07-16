@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass, field
@@ -8,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from trading_agent.kr_source_collection_models import KrSourceReceipt
 from trading_agent.kr_theme_models import (
     KrCatalystSource,
     KrCoverageStatus,
@@ -19,7 +21,10 @@ from trading_agent.opendart_client import (
     OpenDartRawResponse,
     parse_opendart_disclosure_page,
 )
-from trading_agent.opendart_collection import collect_opendart_disclosures
+from trading_agent.opendart_collection import (
+    collect_opendart_disclosures,
+    resume_opendart_collection,
+)
 
 RECEIVED_AT = dt.datetime(2026, 7, 15, 0, 1, tzinfo=dt.UTC)
 COLLECTION_DATE = dt.date(2026, 7, 15)
@@ -280,6 +285,34 @@ def test_terminal_source_run_rejects_different_date_without_fetch(
         )
 
     assert reject.calls == 0
+
+
+def test_orphan_receipt_rejects_different_date_without_relabeling_run(
+    tmp_path: Path,
+) -> None:
+    store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
+    raw = _raw(1, _success_page(1, 1, 1, (_disclosure(1),)))
+    receipt = KrSourceReceipt(
+        source_run_id=f"{CYCLE_ID}:dart",
+        source=KrCatalystSource.DART,
+        request_key=raw.request_key,
+        received_at=raw.received_at,
+        http_status=raw.status_code,
+        content_type=raw.content_type,
+        payload_sha256=hashlib.sha256(raw.raw_payload).hexdigest(),
+    )
+    with store.writer() as writer:
+        _ = writer.append_source_receipt(receipt, raw.raw_payload)
+
+    with pytest.raises(ValueError, match="incompatible OpenDART source receipt"):
+        _ = resume_opendart_collection(
+            store,
+            collection_cycle_id=CYCLE_ID,
+            collection_date=COLLECTION_DATE - dt.timedelta(days=1),
+        )
+
+    assert store.source_runs(CYCLE_ID) == ()
+    assert len(store.source_receipts(f"{CYCLE_ID}:dart")) == 1
 
 
 def test_collector_migrates_existing_v1_ledger_before_restart_lookup(

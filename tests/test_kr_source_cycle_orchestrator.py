@@ -188,13 +188,32 @@ def test_all_terminal_historical_replay_does_not_call_any_stage(
     assert all(item.replayed for item in second.stages)
 
 
-def test_conflicting_terminal_run_fails_before_stage_invocation(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("source_run_id", "adapter_version", "collection_date"),
+    (
+        (f"{CYCLE_ID}:wrong", OPENDART_ADAPTER_VERSION, COLLECTION_DATE),
+        (f"{CYCLE_ID}:dart", "wrong-adapter-v9", COLLECTION_DATE),
+        (
+            f"{CYCLE_ID}:dart",
+            OPENDART_ADAPTER_VERSION,
+            COLLECTION_DATE - dt.timedelta(days=1),
+        ),
+    ),
+)
+def test_conflicting_terminal_run_fails_before_stage_invocation(
+    tmp_path: Path,
+    source_run_id: str,
+    adapter_version: str,
+    collection_date: dt.date,
+) -> None:
     store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
     with store.writer() as writer:
         _ = writer.append_source_run(
             _terminal_run(
                 KrCatalystSource.DART,
-                collection_date=COLLECTION_DATE - dt.timedelta(days=1),
+                source_run_id=source_run_id,
+                adapter_version=adapter_version,
+                collection_date=collection_date,
             )
         )
 
@@ -235,14 +254,24 @@ def _reject_runner(source: KrCatalystSource) -> Callable[[], None]:
 def _terminal_run(
     source: KrCatalystSource,
     *,
+    source_run_id: str | None = None,
+    adapter_version: str | None = None,
     collection_date: dt.date = COLLECTION_DATE,
     status: KrCoverageStatus = KrCoverageStatus.SUCCESS,
 ) -> KrSourceCollectionRun:
     return KrSourceCollectionRun(
-        source_run_id=f"{CYCLE_ID}:{source.value}",
+        source_run_id=(
+            f"{CYCLE_ID}:{source.value}"
+            if source_run_id is None
+            else source_run_id
+        ),
         collection_cycle_id=CYCLE_ID,
         source=source,
-        adapter_version=_adapter_version(source),
+        adapter_version=(
+            _adapter_version(source)
+            if adapter_version is None
+            else adapter_version
+        ),
         started_at=STARTED_AT,
         completed_at=STARTED_AT,
         status=status,

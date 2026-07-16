@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final, Protocol
@@ -10,6 +11,7 @@ from typing import Final, Protocol
 from trading_agent.kr_source_collection_models import (
     KrSourceCollectionRun,
     KrSourceReceipt,
+    StoredKrSourceReceipt,
 )
 from trading_agent.kr_theme_models import (
     KrCatalystObservation,
@@ -29,6 +31,9 @@ from trading_agent.opendart_client import (
 
 OPENDART_ADAPTER_VERSION: Final = "opendart-list-v2"
 MAX_OPENDART_PAGES: Final = 100
+_OPENDART_REQUEST_KEY: Final = re.compile(
+    r"^opendart:list:(?P<date>[0-9]{8}):page:(?P<page>[0-9]{1,3})$"
+)
 
 
 class OpenDartPageFetcher(Protocol):
@@ -89,6 +94,10 @@ def resume_opendart_collection(
     orphan_receipts = store.source_receipts(source_run_id)
     if not orphan_receipts:
         return None
+    _validate_orphan_receipts(
+        orphan_receipts,
+        collection_date=collection_date,
+    )
     receipt_times = tuple(item.receipt.received_at for item in orphan_receipts)
     started_at = min(receipt_times)
     completed_at = max((started_at, _clock(), *receipt_times))
@@ -122,6 +131,23 @@ def resume_opendart_collection(
         new_observation_count=0,
         restarted=True,
     )
+
+
+def _validate_orphan_receipts(
+    orphan_receipts: tuple[StoredKrSourceReceipt, ...],
+    *,
+    collection_date: dt.date,
+) -> None:
+    expected_date = collection_date.strftime("%Y%m%d")
+    for stored in orphan_receipts:
+        match = _OPENDART_REQUEST_KEY.fullmatch(stored.receipt.request_key)
+        if (
+            stored.receipt.source is not KrCatalystSource.DART
+            or match is None
+            or match.group("date") != expected_date
+            or not 1 <= int(match.group("page")) <= MAX_OPENDART_PAGES
+        ):
+            raise ValueError("incompatible OpenDART source receipt")
 
 
 def collect_opendart_disclosures(
