@@ -172,7 +172,7 @@ uv run python run_orb_forward_trial.py --help
 
 Run one malformed local-only bootstrap command and a fixture-backed rollover/replay happy path. Do not run Paper mutation commands and do not print credentials.
 
-- [ ] **Step 3: Commit and push the completed milestone**
+- [x] **Step 3: Commit and push the completed milestone**
 
 ```bash
 git add trading_agent/daily_research_contract.py trading_agent/daily_research_ledger.py \
