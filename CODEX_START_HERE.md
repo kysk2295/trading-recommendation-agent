@@ -8,6 +8,9 @@
 
 - KIS 읽기 전용 인증·랭킹·분봉 연결 완료
 - KIS 국내 KRX 등락률·거래량 순위의 current-date raw-first `kis_ranking` source run과 restart no-network CLI 구현
+- 숫자 전용 `volume_surge` v1 replay를 유지하면서 실제 KIS 단축코드 `[0-9A-Z]{6}`와 행별 upstream catalyst ID를 보존하는 v2 계약 구현
+- 저장된 같은-cycle KIS 거래량 evidence만 읽어 canonical `volume_surge` v2 catalyst·observation·receipt-free derived terminal run을 append하는 DB-only 상태기계와 CLI 구현
+- bounded production KIS 원장 local-only 파생에서 랭킹 60행 중 거래량 30행과 영문 포함 코드 7개를 보존하고 terminal replay 신규 0행 확인. provider·credential·network·broker 호출 없음
 - KIS 주간거래 `BAQ/BAY/BAA`를 프리마켓·정규장과 분리한 원시 랭킹 forward 수집 완료
 - 매 cycle KIS 원시 랭킹 행·출처·선택 여부 CSV 누적
 - 선택 후보 완료 정규장 1분봉과 최초 관찰 시각 SQLite 영속화
@@ -72,8 +75,8 @@
 
 ## 다음 우선순위
 
-1. KR instrument와 `KrVolumeSurgePayload`의 숫자 전용 symbol 계약을 실제 KIS 단축코드 `[0-9A-Z]{6}`로 명시적으로 버전 확장한 뒤, 저장된 current-cycle `kis_ranking` 거래량 행만 읽어 canonical `volume_surge` payload와 독립 terminal source run을 확정함. 영숫자 코드를 조용히 폐기하거나 KIS를 사후 재조회하지 않음
-2. DART·LS NEWS·KIS ranking·volume surge 네 adapter를 같은 cycle ID로 순서 실행하고 기존 DB-only coordinator를 마지막에만 호출하는 날짜별 orchestrator 구현
+1. DART → LS NEWS → KIS ranking → volume surge → 기존 DB-only coordinator를 하나의 새 cycle ID와 날짜로 순서 실행하는 local control-plane 오케스트레이터 구현. provider 단계나 SQLite Writer를 병렬 실행하지 않고, terminal replay는 불필요한 credential·network를 열지 않음
+2. 오케스트레이터 fixture E2E와 bounded production 동일-cycle을 순서대로 검증하고, 네 source coverage와 새 KR Opportunity projection을 immutable evidence로 확정함. source 실패를 성공이나 부분 complete로 축소하지 않음
 3. 열린 뉴욕 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증
 4. 실제 적격 ORB 세션마다 preregistered daily trial을 누적하고 terminal replay·실패·검열 운영 결과를 대사하되 열린 trial을 임의 terminal로 추정하지 않음
 5. 추가 부분체결이 실제 발생할 때 staged 보호 OCO cancel → terminal 대사 → 다음 호출 replacement를 같은 축소 한도에서 검증하되 체결을 억지로 만들지 않음
@@ -94,6 +97,6 @@
 ```text
 이 프로젝트의 README.md, CODEX_START_HERE.md, AGENTS.md와 docs/runtime_audit.md를 먼저 읽어줘.
 현재 KR raw-first source cycle과 Single Writer Alpaca Paper·ORB 일일 shadow trial 운영 경계를 이어서 개발해줘.
-KR 다음 단계는 저장된 `kis_ranking` evidence에서 canonical `volume_surge` source run을 만들고 현재 KIS를 사후 재조회하지 마.
+KR 다음 단계는 DART·LS NEWS·KIS ranking·volume surge 네 단계를 같은 새 cycle ID로 직렬 실행하고 마지막에만 DB-only coordinator를 호출하는 날짜별 오케스트레이터를 구현해줘. terminal replay에서 불필요한 자격증명이나 network를 열지 말고 provider·Writer를 병렬 실행하지 마.
 열린 정규장과 credential·current ORB 후보가 모두 갖춰진 경우에만 축소 Paper 수명주기 smoke를 실행하고, 하나라도 부족하면 broker mutation을 하지 마. 일일 trial은 exact preregistration과 terminal evidence를 유지하고 열린 trial을 추정으로 닫지 마.
 ```
