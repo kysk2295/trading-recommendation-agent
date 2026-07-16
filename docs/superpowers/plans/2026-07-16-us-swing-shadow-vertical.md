@@ -130,7 +130,7 @@ Commit with `git commit -m "feat: add US swing new-high RVOL signals"`.
 - Create: `trading_agent/swing_shadow_engine.py`
 - Create: `tests/test_swing_shadow_engine.py`
 
-- [ ] **Step 1: Write failing state-machine tests**
+- [x] **Step 1: Write failing state-machine tests**
 
 Use subsequent completed daily bars for one signal. Assert append-only `signal_created`, `entry_filled`, then `stopped`, `targeted`, `time_exit`, or `expired` events. Assert same-day stop/target collision resolves to stop, unfilled signals expire after next-session validity, replay adds no events, and a changed payload under the same identity conflicts.
 
@@ -139,13 +139,13 @@ events = store.events(signal.signal_id)
 assert tuple(event.kind for event in events) == ("signal_created", "entry_filled", "stopped")
 ```
 
-- [ ] **Step 2: Verify the tests fail**
+- [x] **Step 2: Verify the tests fail**
 
 Run `uv run pytest -q tests/test_swing_shadow_engine.py`.
 
 Expected: import failure because the swing shadow ledger and engine do not exist.
 
-- [ ] **Step 3: Implement isolated SQLite state**
+- [x] **Step 3: Implement isolated SQLite state**
 
 Create a mode-`600` SQLite ledger with one Writer lease and query-only Reader. Store immutable signals and ordered event payloads. Process complete next-session OHLCV as:
 
@@ -159,7 +159,7 @@ no fill by valid-until close -> expired
 
 Do not store broker/account/order identifiers and do not import Paper execution modules.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
