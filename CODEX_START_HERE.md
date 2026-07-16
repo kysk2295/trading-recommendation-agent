@@ -71,6 +71,8 @@
 - ORB NYSE 거래일마다 독립 `shadow_forward` trial을 pre-open에 등록하고 정규장에 시작한 뒤 exact daily/adaptive/snapshot/review evidence로 `completed`·`censored` terminal을 확정하는 서비스 구현
 - 같은 세션의 네 closed phase nonzero audit가 있을 때만 `failed` terminal을 허용하고, artifact·parent JSONL·scope·코드·데이터·비용·포트폴리오 계보 변조는 fail-closed 처리
 - local-only `run_orb_forward_trial.py`와 ORB watch opt-in `--experiment-ledger` 연결 구현. register/start는 provider scan보다 먼저 실행하고 장후 child 실패는 audited terminal로 닫으며 주문·상태·champion·allocation 권한은 없음
+- source-bound US swing 신고가·RVOL 신호 하나를 global `shadow_forward` trial 하나로 pre-open 등록하고 query-only swing shadow terminal로만 completed를 확정하는 수직선 구현. 별도 mode-600 append-only swing Reviewer는 artifact를 다시 해시해 `continue_collection`만 기록하고 lifecycle·champion·allocation·Paper 권한은 모두 false
+- local-only `run_swing_shadow_trial.py`가 `register → start → finalize → review`를 한 동작씩 실행. provider·credential·endpoint·arm·force 옵션이 없고 report는 redacted mode 600이며 external broker mutation은 0건
 - armed entry·safety smoke는 하나의 intraday pilot risk contract를 공유하며 100 USD·10 USD·1포지션·30 USD·편도 20bp·risk fraction 1/3000을 유지
 - armed entry CLI는 free-form 종목·가격·시각·수량을 받지 않고 query-only watch SQLite에서 현재 직전 완료 정규장 1분봉에 결합된 30초 이내 ORB `setup` 후보 정확히 하나만 1주 요청으로 투영한 뒤 credential·운영 세션을 연다
 - 모든 Alpaca Paper 운영 CLI는 잡힌 실행 예외의 클래스명만 stderr·보고서에 남기고 원문 계좌·broker·경로 정보를 버림
@@ -81,7 +83,7 @@
 ## 다음 우선순위
 
 1. 현재 NYSE post-close와 mode-600 data credential·정렬된 bounded universe가 동시에 맞을 때만 US swing 일봉 source를 read-only로 한 번 수집한다. 그 뒤에만 동일 CLI로 signal/shadow forward evidence를 누적하며, Paper 계좌·주문은 열지 않는다.
-2. source-bound US swing hypothesis card를 출발점으로 US swing shadow event를 global experiment ledger의 preregistered trial·Reviewer 계약에 연결하는 별도 설계와 수직 구현을 한다. 표본·동일 위험 비교·승격 근거가 쌓이기 전에는 lane 권한을 바꾸지 않는다.
+2. current NYSE post-close source가 안전하게 축적된 뒤에만 새 US swing signal을 다음 정규장 전 local trial로 등록하고 terminal evidence를 누적한다. 표본·동일 위험 비교·승격 근거가 쌓이기 전에는 lane 권한을 바꾸지 않는다.
 3. fixture E2E가 끝난 KR same-cycle orchestrator를 전체 품질 게이트와 수동 CLI QA로 확정한다. 현재 KST·자격증명·정상 endpoint 조건이 모두 맞을 때만 별도 bounded production same-cycle을 read-only로 실행하고, 아니면 provider를 억지로 열지 않는다.
 4. 동일-cycle production coverage가 immutable evidence로 확정된 뒤에만 별도 manifest로 KR keyword Opportunity projection을 실행한다. source 실패를 성공이나 부분 complete로 축소하지 않으며, projection도 TradeSignal·국내 주문을 열지 않는다.
 5. 열린 뉴욕 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증

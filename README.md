@@ -16,6 +16,8 @@
 
 같은 날 US swing `new_high_momentum` vertical도 fixture E2E까지 구현됐다. 확정 일봉 21세션으로 20일 신고가·RVOL 조건부 신호를 만들고 별도 append-only shadow ledger에 다중세션 결과를 기록한다. production은 current NYSE post-close의 bounded Alpaca market-data GET만 열 수 있으며, Paper 계좌·주문·현재 호가·외부 메시지는 이 vertical의 범위 밖이다.
 
+**2026-07-16 업데이트:** source-bound 신고가·RVOL 가설 카드와 정확히 일치하는 신호 하나를 global `shadow_forward` trial 하나로 사전등록한다. `run_swing_shadow_trial.py`의 local-only `register → start → finalize → review` 순서는 query-only swing shadow 원장을 다시 대조해 terminal artifact hash를 확정하고, 별도 mode-600 append-only Reviewer 원장에는 `continue_collection`만 기록한다. 이 경로는 lifecycle 전이, champion, allocation, Paper 계좌·주문과 provider 연결을 만들지 않으며, `expired`는 0수익 대체가 아니라 명시적 no-entry 관찰이다.
+
 ## 최종 목표
 
 ```text
@@ -56,7 +58,7 @@
 | Lane | 포함 연구 | 실행 권한 | 상태 |
 |---|---|---|---|
 | `intraday_momentum` | ORB, 첫 눌림 VWAP reclaim, HOD breakout, Gap-and-Go | 정규장 Alpaca Paper, 전용 account binding 필수 | manifest 1.0.1 등록 |
-| `swing_momentum` | 신고가·RVOL v1, Regend 후속 | shadow-only 다중세션 상태기계 | fixture E2E 및 private CLI 구현 |
+| `swing_momentum` | 신고가·RVOL v1, Regend 후속 | shadow-only 다중세션 상태기계 | fixture E2E, signal-level trial, 독립 Reviewer, local CLI 구현 |
 | `market_regime` | VIX, VIX3M, SKEW, SCR | signal-only, account binding 금지 | manifest 1.0.0 등록 |
 
 세 lane은 같은 실험 원장과 버전 체계를 사용하지만 성과를 사후 혼합하지 않는다. VIX 필터를 ORB에 추가하려면 `ORB baseline`과 `ORB + VIX regime`을 같은 기간·위험으로 비교하는 새 challenger를 등록해야 한다.
@@ -117,6 +119,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [KR projection output guard 체크포인트](docs/checkpoints/2026-07-16-kr-projection-output-guard-ko.md)
 - [KR projection output guard 구현 계획](docs/superpowers/plans/2026-07-16-kr-projection-output-guard.md)
 - [US swing shadow vertical 체크포인트](docs/checkpoints/2026-07-16-us-swing-shadow-vertical-ko.md)
+- [US swing signal-level trial·Reviewer 체크포인트](docs/checkpoints/2026-07-16-us-swing-shadow-trial-review-ko.md)
 - [연구 source lineage 설계](docs/superpowers/specs/2026-07-16-research-source-lineage-design.md)
 - [연구 source lineage 체크포인트](docs/checkpoints/2026-07-16-research-source-lineage-ko.md)
 - [연구 source lineage 구현 계획](docs/superpowers/plans/2026-07-16-research-source-lineage.md)

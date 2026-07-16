@@ -13,10 +13,17 @@
 ### Task 1: Canonical Swing Research Contract
 
 **Files:**
+- Create: `trading_agent/lane_identity_models.py`
+- Create: `trading_agent/experiment_scope_models.py`
+- Modify: `trading_agent/lane_policy_models.py`
+- Modify: `trading_agent/lane_contract_models.py`
+- Modify: `trading_agent/lane_contract_keys.py`
+- Modify: `trading_agent/experiment_ledger_models.py`
+- Modify: `trading_agent/research_identity_models.py`
 - Create: `trading_agent/swing_research_contract.py`
 - Create: `tests/test_swing_research_contract.py`
 
-- [ ] **Step 1: Write the failing contract tests**
+- [x] **Step 1: Write the failing contract tests**
 
 ```python
 from trading_agent.swing_research_contract import SWING_RESEARCH_CONTRACT
@@ -24,21 +31,22 @@ from trading_agent.swing_research_contract import SWING_RESEARCH_CONTRACT
 
 def test_swing_contract_matches_the_source_bound_hypothesis_card() -> None:
     contract = SWING_RESEARCH_CONTRACT
+    manifest = json.loads(EXAMPLE_MANIFEST.read_text(encoding="utf-8"))
 
-    assert contract.hypothesis_id == "H-SWING-NEW-HIGH-RVOL-001"
-    assert contract.strategy_id == "new_high_momentum"
-    assert contract.strategy_version == "new_high_rvol_20d_1p5_v1"
-    assert contract.experiment_scope.primary_lane is LaneId.SWING_MOMENTUM
+    assert contract.hypothesis_id == manifest["experiment_scope"]["hypothesis_id"]
+    assert contract.hypothesis == manifest["hypothesis"]
+    assert contract.falsification_rule == manifest["falsification_rule"]
+    assert contract.strategy_version == NEW_HIGH_RVOL_STRATEGY_VERSION
     assert "execution_costs=not_modeled" in contract.cost_model
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest -q tests/test_swing_research_contract.py`
 
 Expected: FAIL because `swing_research_contract` does not exist.
 
-- [ ] **Step 3: Implement the immutable contract**
+- [x] **Step 3: Implement the immutable contract**
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -58,15 +66,17 @@ class SwingResearchContract:
 SWING_RESEARCH_CONTRACT = SwingResearchContract(...)
 ```
 
-Use the exact scope timestamp, hypothesis text, falsification rule, lane, and strategy version in `examples/research/us-swing-new-high-rvol-v1.json` and `trading_agent/swing_new_high_rvol.py`. Keep all contract tuples non-empty, canonical, and explicit that costs are not modeled.
+First move only `LaneId` to `lane_identity_models.py` and `ExperimentScopeKind`/`ExperimentScope` plus its validation helpers to `experiment_scope_models.py`. Import these pure primitives in `lane_policy_models.py`, `lane_contract_models.py`, `experiment_ledger_models.py`, `research_identity_models.py`, and `swing_research_contract.py`; retain re-exports from the two legacy modules so existing imports preserve identity and behavior. Change `lane_contract_keys.py` model imports to `TYPE_CHECKING` only, because its runtime hash functions only require `BaseModel`. Do not move Paper policy, risk, account binding, snapshot, or execution classes.
 
-- [ ] **Step 4: Verify GREEN**
+Then implement the exact swing contract. Load the source-card manifest in tests rather than repeating its hypothesis, scope, or timestamp; derive the full parameter tuple from `NewHighRvolConfig`; and assert each data/cost/portfolio value. The import-boundary test must recursively resolve local `trading_agent` AST imports from both `swing_research_contract` and `experiment_ledger_models` and reject any module path containing `alpaca`, `paper`, `broker`, `execution`, `credential`, `provider`, `lifecycle_controller`, or `portfolio_manager`.
+
+- [x] **Step 4: Verify GREEN**
 
 Run: `uv run pytest -q tests/test_swing_research_contract.py`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add trading_agent/swing_research_contract.py tests/test_swing_research_contract.py
@@ -79,7 +89,7 @@ git commit -m "feat: add US swing research contract"
 - Create: `trading_agent/swing_shadow_trial.py`
 - Create: `tests/test_swing_shadow_trial.py`
 
-- [ ] **Step 1: Write failing registration and lifecycle tests**
+- [x] **Step 1: Write failing registration and lifecycle tests**
 
 ```python
 result = register_swing_shadow_trial(
@@ -98,13 +108,13 @@ assert experiments.lifecycle_events(SWING_RESEARCH_CONTRACT.strategy_version)[0]
 
 Add tests for exact research-card verification, new registration after the next open rejection, post-open replay only, code-version conflict, source-key mismatch, and no external imports.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest -q tests/test_swing_shadow_trial.py -k registration`
 
 Expected: FAIL because the trial service does not exist.
 
-- [ ] **Step 3: Implement prospective registration**
+- [x] **Step 3: Implement prospective registration**
 
 ```python
 def swing_shadow_trial_id(signal: TradeSignalEnvelope) -> str: ...
@@ -122,7 +132,7 @@ def register_swing_shadow_trial(...) -> SwingTrialRegistrationResult:
 
 Require exactly one `signal_created` event; require `registered_at` between that event's observation and the next regular open; use the request time rather than any backdated source timestamp; and atomically register version/lifecycle/trial. The lifecycle event has the signal source session as decision date and the trial planned start as effective date.
 
-- [ ] **Step 4: Write failing start/finalize tests**
+- [x] **Step 4: Write failing start/finalize tests**
 
 ```python
 started = start_swing_shadow_trial(..., started_at=REGULAR_OPEN + dt.timedelta(minutes=1))
@@ -135,13 +145,13 @@ assert terminal.event.artifact_sha256s == swing_shadow_trial_artifact_sha256s(si
 
 Cover regular-session-only start, open trial with no shadow terminal rejection, `expired` completed no-entry outcome, stopped/targeted/time-exit outcomes, tampered signal/event rejection, terminal replay, and conflicting terminal rejection.
 
-- [ ] **Step 5: Verify RED**
+- [x] **Step 5: Verify RED**
 
 Run: `uv run pytest -q tests/test_swing_shadow_trial.py -k 'start or finalize'`
 
 Expected: FAIL because start/finalize APIs do not exist.
 
-- [ ] **Step 6: Implement start and terminal projection**
+- [x] **Step 6: Implement start and terminal projection**
 
 ```python
 def start_swing_shadow_trial(...) -> SwingTrialEventResult: ...
@@ -156,7 +166,7 @@ def finalize_swing_shadow_trial(...) -> SwingTrialEventResult: ...
 
 Accept only an exact global trial whose static data-version matches canonical `signal_created` evidence. Require the global started event, an observed terminal final swing event, monotonic event sequence, and a finalization time at or after terminal observation. Append only one global `completed` event with canonical signal/event hashes. Never create `censored` or `failed` from absent source data.
 
-- [ ] **Step 7: Verify GREEN and commit**
+- [x] **Step 7: Verify GREEN and commit**
 
 Run: `uv run pytest -q tests/test_swing_shadow_trial.py`
 
@@ -175,7 +185,7 @@ git commit -m "feat: link US swing shadow signals to trials"
 - Create: `trading_agent/swing_shadow_reviewer.py`
 - Create: `tests/test_swing_shadow_reviewer.py`
 
-- [ ] **Step 1: Write failing review/store tests**
+- [x] **Step 1: Write failing review/store tests**
 
 ```python
 result = review_swing_shadow_trial(
@@ -194,13 +204,13 @@ assert result.event.allocation_change_allowed is False
 
 Add tests for global terminal/evidence mismatch rejection, source tampering rejection, exact replay, update/delete trigger rejection, query-only reader, second Writer failure, and mode `600` artifacts.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest -q tests/test_swing_shadow_reviewer.py`
 
 Expected: FAIL because the Reviewer modules do not exist.
 
-- [ ] **Step 3: Implement review contracts and append-only store**
+- [x] **Step 3: Implement review contracts and append-only store**
 
 ```python
 class SwingShadowReviewerAction(StrEnum):
@@ -219,7 +229,7 @@ class SwingShadowReviewEvent(BaseModel):
 
 Use a dedicated SQLite schema with one review table, update/delete triggers, owner-only Writer lock, and query-only Reader. Validate canonical event keys and payload hashes on every read.
 
-- [ ] **Step 4: Implement independent review projection**
+- [x] **Step 4: Implement independent review projection**
 
 ```python
 def review_swing_shadow_trial(...) -> SwingShadowReviewResult:
@@ -229,7 +239,7 @@ def review_swing_shadow_trial(...) -> SwingShadowReviewResult:
 
 Require a completed global terminal whose artifacts equal recomputed swing artifacts. Emit only `continue_collection`; include terminal-kind reason plus `automatic_state_change_forbidden`, `paper_authority_forbidden`, `cost_model_unmodeled`, and `forward_sample_insufficient` blockers. Do not import lifecycle, broker, provider, execution, or Paper modules.
 
-- [ ] **Step 5: Verify GREEN and commit**
+- [x] **Step 5: Verify GREEN and commit**
 
 Run: `uv run pytest -q tests/test_swing_shadow_reviewer.py`
 
@@ -246,7 +256,7 @@ git commit -m "feat: add US swing shadow reviewer"
 - Create: `run_swing_shadow_trial.py`
 - Create: `tests/test_swing_shadow_trial_cli.py`
 
-- [ ] **Step 1: Write failing CLI tests**
+- [x] **Step 1: Write failing CLI tests**
 
 ```python
 assert trial_cli.main(("--help",)) == 0
@@ -260,13 +270,13 @@ assert trial_cli.main(review_arguments, now=AFTER_REVIEW) == 0
 
 Verify subcommand help, malformed source no database creation, fixture register/start/finalize/review and replay, mode-600 report/ledger/lock, redacted report, and static absence of provider/credential/broker/Paper imports.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `uv run pytest -q tests/test_swing_shadow_trial_cli.py`
 
 Expected: FAIL because the CLI does not exist.
 
-- [ ] **Step 3: Implement four local-only operations**
+- [x] **Step 3: Implement four local-only operations**
 
 ```python
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace: ...
@@ -281,7 +291,7 @@ def main(
 
 Expose only required local file paths, signal ID, operation, and output directory. Use current UTC time and `git rev-parse HEAD` only when tests do not inject values. Catch source/SQLite/lease errors, return exit 1, and write an atomic mode-600 redacted report with `external broker mutation: 0`.
 
-- [ ] **Step 4: Verify GREEN and manual QA**
+- [x] **Step 4: Verify GREEN and manual QA**
 
 Run: `uv run pytest -q tests/test_swing_shadow_trial_cli.py`
 
@@ -293,7 +303,7 @@ Run the committed swing fixture through register/start/finalize/review with isol
 
 Expected: help succeeds; bad source returns nonzero without experiment/review database; fixture path completes and exact replay adds no new rows.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add run_swing_shadow_trial.py tests/test_swing_shadow_trial_cli.py
@@ -308,11 +318,11 @@ git commit -m "feat: add US swing shadow trial cli"
 - Modify: `docs/architecture_ko.md`
 - Create: `docs/checkpoints/2026-07-16-us-swing-shadow-trial-review-ko.md`
 
-- [ ] **Step 1: Document authority and operation boundaries**
+- [x] **Step 1: Document authority and operation boundaries**
 
 Document the local CLI sequence and state explicitly that no provider, Paper account/order, lifecycle transition, champion, allocation, or performance claim is created.
 
-- [ ] **Step 2: Run full verification one heavy process at a time**
+- [x] **Step 2: Run full verification one heavy process at a time**
 
 Run: `uv run pytest -q`
 
@@ -322,7 +332,7 @@ Run: `uv run basedpyright`
 
 Expected: all tests pass and static checks report zero findings.
 
-- [ ] **Step 3: Independent code review and fixes**
+- [x] **Step 3: Independent code review and fixes**
 
 Review source-lineage binding, prospective registration time, terminal artifact hashes, review authority booleans, append-only schema, and imports. Add a failing regression test before each substantive fix, then rerun the focused and full quality gates.
 

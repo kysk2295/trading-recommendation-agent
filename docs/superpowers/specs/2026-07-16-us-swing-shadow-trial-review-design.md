@@ -30,6 +30,8 @@ Connect each newly observed US swing new-high/RVOL shadow signal to one preregis
 - experiment scope: the exact source-bound single-lane scope used by `examples/research/us-swing-new-high-rvol-v1.json`
 - parameter, data, cost, and shadow-only portfolio contracts are explicit immutable tuples. The cost contract states that execution costs are not modelled; that fact is a Reviewer blocker rather than an implied performance claim.
 
+`LaneId`, `ExperimentScopeKind`, and `ExperimentScope` move behind import-pure modules. `lane_policy_models` and `lane_contract_models` re-export the exact same classes for legacy callers. This prevents the research contract, global experiment ledger, and future swing trial/Reviewer path from loading Paper risk, Paper order, or Alpaca endpoint modules merely to identify a lane or scope.
+
 ### Trial Registration
 
 `register_swing_shadow_trial(...)` accepts an `ExperimentLedgerStore`, query-only `SwingShadowReader`, one signal ID, an aware `registered_at`, and the exact runtime code version.
@@ -79,6 +81,6 @@ Each report contains only the operation, created/replayed status, terminal/revie
 
 ## Safety Boundary
 
-- No Alpaca, KIS, LS, OpenDART, HTTP, WebSocket, secret loader, broker, execution-store, mutation adapter, or Portfolio Manager import is permitted in the new modules.
+- No Alpaca, KIS, LS, OpenDART, HTTP, WebSocket, secret loader, broker, execution-store, mutation adapter, or Portfolio Manager import is permitted in the new modules or their local `trading_agent` import closure.
 - No new Paper account binding, order, cancellation, position, live endpoint, risk limit, champion, allocation, or lifecycle transition is created.
 - Existing historical swing shadow rows are not represented as preregistered trials. Only a registration made before the next regular open may create a new global trial.
