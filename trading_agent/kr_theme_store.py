@@ -604,13 +604,16 @@ class KrThemeWriter:
             ORDER BY observation.catalyst_id""",
             (run.collection_cycle_id, run.source.value),
         ).fetchall()
-        if (
-            len(observation_rows) != run.record_count
-            or any(
-                receipt_id is None or receipt_id not in run.receipt_ids
+        if run.source is KrCatalystSource.VOLUME_SURGE:
+            lineage_valid = not run.receipt_ids and all(
+                receipt_id is None for _, receipt_id in observation_rows
+            )
+        else:
+            lineage_valid = all(
+                receipt_id is not None and receipt_id in run.receipt_ids
                 for _, receipt_id in observation_rows
             )
-        ):
+        if len(observation_rows) != run.record_count or not lineage_valid:
             raise InvalidKrThemeSourceError
 
     def _catalyst(self, catalyst_id: str) -> StoredKrCatalyst | None:

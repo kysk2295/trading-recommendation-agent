@@ -421,6 +421,43 @@ def test_source_run_requires_exact_receipts_observations_and_links(tmp_path: Pat
             _ = writer.append_source_run(missing_receipt)
 
 
+def test_receipt_free_derived_volume_source_run_is_allowed(tmp_path: Path) -> None:
+    store = KrThemeStore(tmp_path / "kr-theme.sqlite3")
+    payload = b'{"schema_version":2,"symbols":[]}'
+    record = _direct_source_record(KrCatalystSource.VOLUME_SURGE, payload)
+    run = _receipt_free_source_run(KrCatalystSource.VOLUME_SURGE, record_count=1)
+
+    with store.writer() as writer:
+        _ = writer.append_catalyst(record, _observation(record), payload)
+        assert writer.append_source_run(run) is True
+        assert writer.append_source_run(run) is False
+
+    assert store.source_runs() == (run,)
+    assert store.observation_receipts() == ()
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        KrCatalystSource.NEWS,
+        KrCatalystSource.DART,
+        KrCatalystSource.KIS_RANKING,
+    ),
+)
+def test_receipt_free_provider_source_runs_remain_rejected(
+    tmp_path: Path,
+    source: KrCatalystSource,
+) -> None:
+    store = KrThemeStore(tmp_path / f"kr-theme-{source.value}.sqlite3")
+    payload = b'{"synthetic":true}'
+    record = _direct_source_record(source, payload)
+
+    with store.writer() as writer:
+        _ = writer.append_catalyst(record, _observation(record), payload)
+        with pytest.raises(InvalidKrThemeSourceError):
+            _ = writer.append_source_run(_receipt_free_source_run(source, record_count=1))
+
+
 def test_reader_detects_source_receipt_blob_tampering(tmp_path: Path) -> None:
     path = tmp_path / "kr-theme.sqlite3"
     store = KrThemeStore(path)
@@ -499,6 +536,41 @@ def _source_run(
         record_count=record_count,
         failure_code=None,
         receipt_ids=(receipt.receipt_id,),
+    )
+
+
+def _direct_source_record(
+    source: KrCatalystSource,
+    payload: bytes,
+) -> KrCatalystRecord:
+    return KrCatalystRecord(
+        source=source,
+        source_record_id=f"{source.value}://synthetic/direct-001",
+        publisher_id="synthetic",
+        published_at=None,
+        first_observed_at=OBSERVED_AT,
+        content_type="application/json",
+        payload_sha256=hashlib.sha256(payload).hexdigest(),
+    )
+
+
+def _receipt_free_source_run(
+    source: KrCatalystSource,
+    *,
+    record_count: int,
+) -> KrSourceCollectionRun:
+    return KrSourceCollectionRun(
+        source_run_id=f"kr-cycle-001:{source.value}",
+        collection_cycle_id="kr-cycle-001",
+        source=source,
+        adapter_version=f"synthetic-{source.value}-v1",
+        started_at=OBSERVED_AT,
+        completed_at=OBSERVED_AT,
+        status=KrCoverageStatus.SUCCESS,
+        record_count=record_count,
+        failure_code=None,
+        receipt_ids=(),
+        collection_date=OBSERVED_AT.date(),
     )
 
 
