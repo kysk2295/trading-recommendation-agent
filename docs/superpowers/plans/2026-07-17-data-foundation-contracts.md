@@ -16,7 +16,7 @@
 - Create: `tests/test_security_master_models.py`
 - Create: `trading_agent/security_master_models.py`
 
-- [ ] **Step 1: Write failing contract tests**
+- [x] **Step 1: Write failing contract tests**
 
 Cover these observable behaviors:
 
@@ -35,7 +35,7 @@ Run and confirm collection fails because the production module does not exist:
 uv run pytest -q tests/test_security_master_models.py
 ```
 
-- [ ] **Step 2: Implement the minimal security master module**
+- [x] **Step 2: Implement the minimal security master module**
 
 Create these public contracts:
 
@@ -53,7 +53,7 @@ resolve_instrument_alias
 
 Use point-in-time half-open intervals (`start <= as_of < end`). Do not add persistence, provider adapters, symbol heuristics, current-company backfills, option symbology, or futures roll logic in this task.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ```bash
 uv run pytest -q tests/test_security_master_models.py
