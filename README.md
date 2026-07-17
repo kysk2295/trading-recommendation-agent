@@ -90,6 +90,8 @@ flowchart LR
 
 **2026-07-17 Raw Lake M3.2b 업데이트:** Alpaca Paper `trade_update_raw_receipts`도 generic manifest에 read-only로 연결했다. 한 query-only SQLite transaction에서 모든 receipt의 timestamp metadata만 New York calendar date로 분류하고, 선택된 row의 BLOB만 500-row chunk로 검증·투영한다. snapshot은 bare receipt digest, aware received time, payload digest와 repr-hidden bytes만 보존하며 account fingerprint, connection epoch, wire kind, prefixed receipt key를 downstream에 전달하지 않는다. empty day는 manifest를 만들지 않고, malformed timestamp·hash·key·SQLite non-BLOB payload는 sanitized error로 fail-closed 한다. 이 경로는 기존 Paper order, position, reconciliation, account binding 또는 broker mutation을 읽거나 바꾸지 않는다. 다음 M3.3 경계는 typed Parquet canonical writer다.
 
+**2026-07-17 Raw Lake M3.3a 업데이트:** typed Parquet writer에 앞서 canonical dataset batch 계약을 추가했다. partition은 canonical `source_id`, 명시적 market domain, event type, market date, canonical event schema version을 고정하며, batch는 exact raw manifest와 immutable canonical event만 받는다. raw manifest date, event source/type/schema, event-to-receipt lineage가 partition과 정확히 맞지 않으면 fail-closed 한다. public `model_copy`도 재검증하므로 변경된 nested schema나 empty/mixed batch를 우회할 수 없다. raw bytes 또는 민감 lineage field가 있는 입력은 constructor, `model_validate`, `model_copy` 모두 sanitized validation error로 닫고, raw payload는 public dump과 오류 `str`/`repr`에 나오지 않는다. 이 단계는 provider, credential, broker, order 또는 기존 SQLite 원장을 읽거나 바꾸지 않는다. 다음 M3.3b에서 이 검증된 batch만 deterministic typed Parquet로 publish한다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \
