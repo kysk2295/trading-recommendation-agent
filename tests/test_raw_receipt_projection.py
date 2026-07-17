@@ -32,7 +32,7 @@ def _receipt(
     source_id: str = "synthetic.market",
     market_date: dt.date = MARKET_DATE,
 ) -> RawReceipt:
-    return RawReceipt(
+    return RawReceipt.from_payload(
         receipt_id=receipt_id,
         source_id=source_id,
         market_date=market_date,
@@ -67,8 +67,24 @@ def test_projection_replays_deterministically_without_mutating_receipts() -> Non
     assert first.total_byte_size == len(b"one") * 2
     assert first.receipts[0].receipt_id == "a" * 64
     assert first.receipts[1].receipt_id == "b" * 64
-    assert receipts[0].payload.value == b"one"
+    assert receipts[0]._payload_for_projection().value == b"one"
     assert "b'one'" not in repr(first)
+
+
+def test_projection_hashes_private_payload_bytes_without_public_export() -> None:
+    payload = b"distinctive-raw-secret-for-projection-hash"
+    receipt = _receipt("a" * 64, payload, RECEIVED_AT)
+
+    manifest = project_raw_receipt_partition(
+        (receipt,),
+        source_id="synthetic.market",
+        market_date=MARKET_DATE,
+        parent_ledger_generation=7,
+    )
+
+    assert manifest.receipts[0].payload_sha256 == hashlib.sha256(payload).hexdigest()
+    assert manifest.total_byte_size == len(payload)
+    assert payload.decode() not in receipt.model_dump_json()
 
 
 @pytest.mark.parametrize(
@@ -144,7 +160,7 @@ def test_projection_changes_identity_for_each_partition_input_change(
 
 def test_projection_rejects_mutated_payload_mixed_partition_and_noncanonical_order() -> None:
     tampered = _receipt("a" * 64, b"one", RECEIVED_AT)
-    object.__setattr__(tampered.payload, "value", b"tampered")
+    object.__setattr__(tampered._payload_for_projection(), "value", b"tampered")
     mixed_source = _receipt(
         "b" * 64,
         b"two",

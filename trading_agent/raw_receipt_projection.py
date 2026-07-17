@@ -36,7 +36,10 @@ def project_raw_receipt_partition(
         canonical_receipts = tuple(receipts)
         receipt_ids = tuple(receipt.receipt_id for receipt in canonical_receipts)
         if (
-            _SOURCE_ID.fullmatch(source_id) is None
+            type(source_id) is not str
+            or type(market_date) is not dt.date
+            or type(parent_ledger_generation) is not int
+            or _SOURCE_ID.fullmatch(source_id) is None
             or isinstance(market_date, dt.datetime)
             or parent_ledger_generation < 0
             or not canonical_receipts
@@ -45,8 +48,9 @@ def project_raw_receipt_partition(
                 receipt.source_id != source_id or receipt.market_date != market_date for receipt in canonical_receipts
             )
             or any(
-                not isinstance(receipt.payload, RawReceiptPayload)
-                or hashlib.sha256(receipt.payload.value).hexdigest() != receipt.payload_sha256
+                not isinstance(receipt._payload_for_projection(), RawReceiptPayload)
+                or hashlib.sha256(receipt._payload_for_projection().value).hexdigest()
+                != receipt.payload_sha256
                 for receipt in canonical_receipts
             )
         ):
@@ -56,7 +60,7 @@ def project_raw_receipt_partition(
                 receipt_id=receipt.receipt_id,
                 received_at=receipt.received_at,
                 payload_sha256=receipt.payload_sha256,
-                byte_size=len(receipt.payload.value),
+                byte_size=len(receipt._payload_for_projection().value),
             )
             for receipt in canonical_receipts
         )

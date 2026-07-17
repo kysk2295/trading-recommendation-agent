@@ -46,7 +46,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         fixture = RawReceiptProjectionFixture.model_validate_json(args.input.read_bytes())
         receipts = tuple(
-            RawReceipt(
+            RawReceipt.from_payload(
                 receipt_id=item.receipt_id,
                 source_id=fixture.source_id,
                 market_date=fixture.market_date,

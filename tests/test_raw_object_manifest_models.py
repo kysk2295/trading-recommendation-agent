@@ -19,7 +19,7 @@ PAYLOAD_SHA256 = hashlib.sha256(PAYLOAD).hexdigest()
 
 
 def test_raw_receipt_hides_payload_from_repr_and_rejects_noncanonical_values() -> None:
-    receipt = RawReceipt(
+    receipt = RawReceipt.from_payload(
         receipt_id="a" * 64,
         source_id="synthetic.market",
         market_date=dt.date(2026, 7, 17),
@@ -29,9 +29,9 @@ def test_raw_receipt_hides_payload_from_repr_and_rejects_noncanonical_values() -
     )
 
     assert PAYLOAD.decode() not in repr(receipt)
-    assert PAYLOAD.decode() not in repr(receipt.payload)
-    with pytest.raises(ValidationError, match="invalid raw receipt"):
-        _ = RawReceipt(
+    assert PAYLOAD.decode() not in repr(receipt._payload_for_projection())
+    with pytest.raises((ValidationError, ValueError), match="invalid raw receipt"):
+        _ = RawReceipt.from_payload(
             receipt_id="request-key-should-not-be-an-id",
             source_id="Synthetic.Market",
             market_date=dt.date(2026, 7, 17),
@@ -39,8 +39,8 @@ def test_raw_receipt_hides_payload_from_repr_and_rejects_noncanonical_values() -
             payload_sha256=PAYLOAD_SHA256.upper(),
             payload=RawReceiptPayload(PAYLOAD),
         )
-    with pytest.raises(ValidationError, match="invalid raw receipt"):
-        _ = RawReceipt(
+    with pytest.raises((ValidationError, ValueError), match="invalid raw receipt"):
+        _ = RawReceipt.from_payload(
             receipt_id="a" * 64,
             source_id="synthetic.market",
             market_date=dt.date(2026, 7, 17),
@@ -48,6 +48,49 @@ def test_raw_receipt_hides_payload_from_repr_and_rejects_noncanonical_values() -
             payload_sha256="0" * 64,
             payload=RawReceiptPayload(PAYLOAD),
         )
+
+
+def test_raw_receipt_public_pydantic_exports_hide_payload_bytes() -> None:
+    raw_secret = b"distinctive-raw-secret-for-export-test"
+    receipt = RawReceipt.from_payload(
+        receipt_id="a" * 64,
+        source_id="synthetic.market",
+        market_date=dt.date(2026, 7, 17),
+        received_at=RECEIVED_AT,
+        payload_sha256=hashlib.sha256(raw_secret).hexdigest(),
+        payload=RawReceiptPayload(raw_secret),
+    )
+
+    dumped = receipt.model_dump()
+
+    assert "payload" not in dumped
+    assert raw_secret.decode() not in repr(receipt)
+    assert raw_secret.decode() not in repr(dumped)
+    assert raw_secret.decode() not in receipt.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("receipt_id", b"a" * 64),
+        ("payload_sha256", b"a" * 64),
+        ("market_date", "2026-07-17T00:00:00+00:00"),
+        ("received_at", "2026-07-17T09:30:00+00:00"),
+    ),
+)
+def test_raw_receipt_rejects_values_before_pydantic_coercion(field: str, value: object) -> None:
+    values: dict[str, object] = {
+        "receipt_id": "a" * 64,
+        "source_id": "synthetic.market",
+        "market_date": dt.date(2026, 7, 17),
+        "received_at": RECEIVED_AT,
+        "payload_sha256": PAYLOAD_SHA256,
+        "payload": RawReceiptPayload(PAYLOAD),
+    }
+    values[field] = value
+
+    with pytest.raises(ValidationError, match="invalid raw receipt"):
+        _ = RawReceipt.from_payload(**values)
 
 
 def test_raw_object_reference_rejects_negative_byte_size() -> None:
@@ -58,6 +101,28 @@ def test_raw_object_reference_rejects_negative_byte_size() -> None:
             payload_sha256=PAYLOAD_SHA256,
             byte_size=-1,
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("receipt_id", b"a" * 64),
+        ("payload_sha256", b"a" * 64),
+        ("received_at", "2026-07-17T09:30:00+00:00"),
+        ("byte_size", True),
+    ),
+)
+def test_raw_object_reference_rejects_coerced_types(field: str, value: object) -> None:
+    values: dict[str, object] = {
+        "receipt_id": "a" * 64,
+        "received_at": RECEIVED_AT,
+        "payload_sha256": PAYLOAD_SHA256,
+        "byte_size": len(PAYLOAD),
+    }
+    values[field] = value
+
+    with pytest.raises(ValidationError, match="invalid raw object receipt reference"):
+        _ = RawObjectReceiptReference.model_validate(values)
 
 
 def test_manifest_contract_rejects_extra_fields_and_noncanonical_hashes() -> None:
