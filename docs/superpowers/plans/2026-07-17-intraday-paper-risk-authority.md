@@ -126,7 +126,7 @@ git commit -m "fix: bind safety planning to intraday risk"
 - Modify: `README.md`
 - Modify: `CODEX_START_HERE.md`
 
-- [ ] **Step 1: Create the checkpoint document**
+- [x] **Step 1: Create the checkpoint document**
 
 Write `docs/checkpoints/2026-07-17-intraday-paper-risk-authority-ko.md` with this structure and factual content:
 
@@ -168,13 +168,13 @@ Write `docs/checkpoints/2026-07-17-intraday-paper-risk-authority-ko.md` with thi
 
 The final implementation must replace the last verification paragraph with the exact commands and observed pass counts from Task 3. Do not include credentials, account identifiers, broker order IDs, local private database paths, or raw payloads.
 
-- [ ] **Step 2: Correct the README operator contract**
+- [x] **Step 2: Correct the README operator contract**
 
 In the `run_alpaca_paper_safety.py` section, replace the statement that the GET-only diagnostic uses the generic USD 300 default. State that the production helper now explicitly uses the active intraday lane's USD 30 daily-loss limit and that the command remains WSS + REST GET-only plus local append-only planning.
 
 Keep the separate explanation that `paper_risk.py` hard ceilings are not current pilot approval.
 
-- [ ] **Step 3: Update the durable start document**
+- [x] **Step 3: Update the durable start document**
 
 Add one current-state bullet to `CODEX_START_HERE.md` after the shared smoke risk bullet:
 
@@ -184,7 +184,7 @@ Add one current-state bullet to `CODEX_START_HERE.md` after the shared smoke ris
 
 Do not reorder or remove the existing live-session priorities.
 
-- [ ] **Step 4: Verify documentation consistency**
+- [x] **Step 4: Verify documentation consistency**
 
 Run:
 
@@ -201,7 +201,7 @@ Expected: README may mention USD 300 only as a generic hard ceiling; every curre
 - Verify all changed files and repository regressions.
 - Modify: `docs/checkpoints/2026-07-17-intraday-paper-risk-authority-ko.md` with actual verification evidence.
 
-- [ ] **Step 1: Run manual CLI help and invalid-path QA**
+- [x] **Step 1: Run manual CLI help and invalid-path QA**
 
 Run:
 
@@ -214,7 +214,7 @@ Run:
 
 Expected: `--help` exits 0 without credential loading. The missing-ledger invocation exits 1 before credential loading, does not create the database, and writes only a sanitized blocked report. Neither command calls broker POST, PATCH, or DELETE.
 
-- [ ] **Step 2: Run the fixture-backed happy path**
+- [x] **Step 2: Run the fixture-backed happy path**
 
 Run:
 
@@ -224,7 +224,7 @@ uv run pytest -q tests/test_alpaca_paper_safety_cli.py::test_safety_cli_writes_s
 
 Expected: PASS, with the fixture report proving GET-only labeling and redaction.
 
-- [ ] **Step 3: Run complete verification**
+- [x] **Step 3: Run complete verification**
 
 Run one heavy process at a time:
 
@@ -237,18 +237,18 @@ git diff --check
 
 Expected: all commands exit 0 with no pytest failures, Ruff violations, type errors, warnings, or whitespace errors.
 
-- [ ] **Step 4: Replace checkpoint verification prose with observed evidence**
+- [x] **Step 4: Replace checkpoint verification prose with observed evidence**
 
 Record the exact pytest pass count, Ruff result, basedpyright result, CLI exit codes, and `broker mutation: 0건` in the checkpoint. Do not claim any real-session Paper POST or strategy profitability.
 
-- [ ] **Step 5: Commit the documentation checkpoint**
+- [x] **Step 5: Commit the documentation checkpoint**
 
 ```bash
 git add README.md CODEX_START_HERE.md docs/checkpoints/2026-07-17-intraday-paper-risk-authority-ko.md
 git commit -m "docs: record intraday risk authority"
 ```
 
-- [ ] **Step 6: Confirm remote freshness and push main**
+- [x] **Step 6: Confirm remote freshness and push main**
 
 ```bash
 git fetch origin main

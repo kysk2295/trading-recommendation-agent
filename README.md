@@ -541,7 +541,7 @@ APCA_API_SECRET_KEY=...
 
 이 명령도 POST/DELETE를 호출하지 않는다. 실제 주문 승인에는 열린 런타임 세션 안에서 5초 이내 두 Pong과 같은 `connection_epoch`의 REST·원장 대사를 먼저 통과해야 한다. 그 뒤 브로커와 로컬 정규장 일치, 폐장 30분 전 이전, 방금 완성된 정확한 현재 정규장 1분봉, 현재 스트림 상태, 부분체결 포함 전체 포트폴리오 위험을 순서대로 검사한다. 기존 노출은 원장 손절거리와 왕복 최소 20bp 비용으로 다시 계산해 종목별 위험·명목 한도를 적용하고, 신규 수량은 여기에 관측 spread까지 포함해 내부 산정한다.
 
-현재 계좌의 cutoff·kill switch·EOD 조치를 current-epoch에서 계산하고 로컬 불변 원장에만 저장하려면 다음 명령을 사용한다. 이 GET-only 진단 CLI의 기본값은 일반 하드 상한인 일손실 USD 300이며, 현재 pilot mutation 승인값이 아니다. 실제 armed safety mutation smoke는 lane contract의 USD 30 한도를 사용한다. 15:30 ET부터 남은 entry를 취소 대상으로, kill switch 도달 시 또는 15:55 ET부터 entry·보호 OCO 취소 뒤 정수 주식 포지션 평탄화를 계획한다. 이 명령 자체는 broker 주문을 변경하지 않는다.
+현재 계좌의 cutoff·kill switch·EOD 조치를 current-epoch에서 계산하고 로컬 불변 원장에만 저장하려면 다음 명령을 사용한다. 이 GET-only 진단 CLI도 active intraday lane contract를 명시적으로 사용해 일손실 USD 30 한도를 적용하며, entry와 armed safety mutation smoke와 같은 위험 권위를 공유한다. 15:30 ET부터 남은 entry를 취소 대상으로, kill switch 도달 시 또는 15:55 ET부터 entry·보호 OCO 취소 뒤 정수 주식 포지션 평탄화를 계획한다. 이 명령 자체는 broker 주문을 변경하지 않는다.
 
 ```bash
 ./run_alpaca_paper_safety.py \
