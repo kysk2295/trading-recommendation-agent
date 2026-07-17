@@ -133,6 +133,7 @@ def build_grok_command(
         "json",
         "--max-turns",
         str(contract.max_turns),
+        "--no-plan",
         "--no-subagents",
         "--disable-web-search",
         "--sandbox",
