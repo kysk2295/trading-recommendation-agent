@@ -13,6 +13,7 @@ from trading_agent.execution_ledger_reader import (
     trade_update_receipt_reasons,
 )
 from trading_agent.execution_store import ExecutionStore
+from trading_agent.lane_defaults import INTRADAY_PILOT_PAPER_RISK_CONFIG
 from trading_agent.paper_mutation_recovery_models import PaperMutationRecoveryResult
 from trading_agent.paper_operating_session import (
     PaperOperatingSessionDependencies as PaperOperatingSessionDependencies,
@@ -57,7 +58,7 @@ def plan_current_paper_safety(
     store: ExecutionStore,
 ) -> PaperSafetyPlanDecision:
     with open_paper_operating_session(credentials, store) as session:
-        return session.plan_safety_actions()
+        return session.plan_safety_actions(INTRADAY_PILOT_PAPER_RISK_CONFIG)
 
 
 def recover_current_paper_mutations(

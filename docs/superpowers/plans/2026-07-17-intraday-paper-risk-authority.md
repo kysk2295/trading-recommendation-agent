@@ -16,7 +16,7 @@
 - Modify: `tests/test_paper_operating_session.py`
 - Modify: `trading_agent/paper_trade_update_runtime.py`
 
-- [ ] **Step 1: Write the failing boundary test**
+- [x] **Step 1: Write the failing boundary test**
 
 Add these imports to `tests/test_paper_operating_session.py`:
 
@@ -69,7 +69,7 @@ def test_current_safety_helper_uses_active_intraday_lane_risk_contract(
     assert captured == [INTRADAY_PILOT_PAPER_RISK_CONFIG]
 ```
 
-- [ ] **Step 2: Run the test and verify the current default fails**
+- [x] **Step 2: Run the test and verify the current default fails**
 
 Run:
 
@@ -79,7 +79,7 @@ uv run pytest -q tests/test_paper_operating_session.py::test_current_safety_help
 
 Expected: FAIL because `plan_current_paper_safety` currently calls `session.plan_safety_actions()` with no config, so the captured value is `DEFAULT_PAPER_RISK_CONFIG` rather than the active lane contract.
 
-- [ ] **Step 3: Inject the active lane contract at the production boundary**
+- [x] **Step 3: Inject the active lane contract at the production boundary**
 
 Add the import in `trading_agent/paper_trade_update_runtime.py`:
 
@@ -100,7 +100,7 @@ def plan_current_paper_safety(
 
 Do not change `DEFAULT_PAPER_RISK_CONFIG`, `PaperOperatingSession.plan_safety_actions`, risk hard ceilings, mutation adapters, credential loading, or broker URLs in this checkpoint.
 
-- [ ] **Step 4: Run focused tests and static checks**
+- [x] **Step 4: Run focused tests and static checks**
 
 Run:
 
@@ -112,7 +112,7 @@ uv run basedpyright trading_agent/paper_trade_update_runtime.py tests/test_paper
 
 Expected: all commands exit 0. Existing armed smoke tests must continue proving that entry and safety mutation use the same `INTRADAY_PILOT_PAPER_RISK_CONFIG` object.
 
-- [ ] **Step 5: Commit the code and regression test**
+- [x] **Step 5: Commit the code and regression test**
 
 ```bash
 git add trading_agent/paper_trade_update_runtime.py tests/test_paper_operating_session.py

@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -21,17 +22,24 @@ from tests.paper_trade_update_ingestion_fixtures import (
 from tests.trade_update_ledger_fixtures import OBSERVED_AT
 from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
 from trading_agent.execution_store import ExecutionStore, WriterLeaseUnavailableError
+from trading_agent.lane_defaults import INTRADAY_PILOT_PAPER_RISK_CONFIG
 from trading_agent.paper_execution_models import PaperBrokerState, PaperMarketClockSnapshot
 from trading_agent.paper_operating_session import LEDGER_GENERATION_CHANGED
 from trading_agent.paper_operating_session_models import (
     InactivePaperOperatingSessionError,
+    PaperOperatingSession,
     PaperOrderAdmissionRequest,
 )
 from trading_agent.paper_order_gate_models import (
     ApprovedPaperOrderGateDecision,
     BlockedPaperOrderGateDecision,
 )
-from trading_agent.paper_safety_models import PaperSafetyPhase, PaperSafetyPlan
+from trading_agent.paper_risk import DEFAULT_PAPER_RISK_CONFIG, PaperRiskConfig
+from trading_agent.paper_safety_models import (
+    BlockedPaperSafetyPlan,
+    PaperSafetyPhase,
+    PaperSafetyPlan,
+)
 from trading_agent.paper_stream_owner import PaperStreamOwnerDependencies
 from trading_agent.paper_trade_update_runtime import (
     PaperOperatingSessionDependencies,
@@ -63,6 +71,43 @@ def test_operating_session_surface_serializes_ingestion_and_admission() -> None:
 
     # Then: one owner exposes both stream ingestion and candidate admission.
     assert {"ingest_next", "evaluate_order", "plan_safety_actions"} <= operations
+
+
+def test_current_safety_helper_uses_active_intraday_lane_risk_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore(tmp_path / "execution.sqlite3")
+    captured: list[PaperRiskConfig] = []
+
+    class SafetySession:
+        def plan_safety_actions(
+            self,
+            config: PaperRiskConfig = DEFAULT_PAPER_RISK_CONFIG,
+        ) -> BlockedPaperSafetyPlan:
+            captured.append(config)
+            return BlockedPaperSafetyPlan(("fixture_block",))
+
+    @contextmanager
+    def opener(
+        _: AlpacaPaperCredentials,
+        __: ExecutionStore,
+    ) -> Iterator[PaperOperatingSession]:
+        yield cast(PaperOperatingSession, SafetySession())
+
+    monkeypatch.setattr(
+        trade_update_runtime,
+        "open_paper_operating_session",
+        opener,
+    )
+
+    decision = trade_update_runtime.plan_current_paper_safety(
+        AlpacaPaperCredentials("test-key", "test-secret"),
+        store,
+    )
+
+    assert isinstance(decision, BlockedPaperSafetyPlan)
+    assert captured == [INTRADAY_PILOT_PAPER_RISK_CONFIG]
 
 
 def test_operating_session_has_a_private_provider_injection_seam_for_contract_tests() -> None:
