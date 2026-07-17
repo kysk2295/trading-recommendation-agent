@@ -34,7 +34,7 @@ def project_raw_receipt_partition(
     """Build a content-addressed manifest without changing the supplied receipts."""
     try:
         canonical_receipts = tuple(receipts)
-        if any(not isinstance(receipt, RawReceipt) for receipt in canonical_receipts):
+        if any(type(receipt) is not RawReceipt for receipt in canonical_receipts):
             raise InvalidRawReceiptProjectionError
         receipt_ids = tuple(receipt.receipt_id for receipt in canonical_receipts)
         if (

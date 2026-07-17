@@ -159,6 +159,26 @@ def test_projection_rejects_schema_version_tampered_raw_receipt() -> None:
         )
 
 
+def test_projection_rejects_raw_receipt_subclass() -> None:
+    payload = b"one"
+    receipt = _RawReceiptSubclass(
+        receipt_id="a" * 64,
+        source_id="synthetic.market",
+        market_date=MARKET_DATE,
+        received_at=RECEIVED_AT,
+        payload_sha256=hashlib.sha256(payload).hexdigest(),
+        payload=RawReceiptPayload(payload),
+    )
+
+    with pytest.raises(InvalidRawReceiptProjectionError, match="raw receipt partition"):
+        _ = project_raw_receipt_partition(
+            (receipt,),
+            source_id="synthetic.market",
+            market_date=MARKET_DATE,
+            parent_ledger_generation=7,
+        )
+
+
 def test_fixture_loader_consumes_excluded_base64_payload(tmp_path: Path) -> None:
     fixture_path = tmp_path / "synthetic-fixture.json"
     fixture_path.write_text(json.dumps(_fixture()), encoding="utf-8")
@@ -355,6 +375,10 @@ class _LookalikeReceipt:
     received_at: dt.datetime
     payload_sha256: str
     payload: RawReceiptPayload
+
+
+class _RawReceiptSubclass(RawReceipt):
+    pass
 
 
 def _run_cli(*args: str) -> subprocess.CompletedProcess[str]:
