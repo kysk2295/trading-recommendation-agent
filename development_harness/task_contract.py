@@ -75,7 +75,7 @@ class GrokTaskContract(BaseModel):
     required_commands: tuple[str, ...]
     manual_qa_commands: tuple[str, ...]
     expected_summary_fields: tuple[str, ...]
-    max_turns: Annotated[int, Field(ge=1, le=24)] = 12
+    max_turns: Annotated[int, Field(ge=1, le=48)] = 12
 
     _summary_field_pattern: ClassVar[re.Pattern[str]] = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 
