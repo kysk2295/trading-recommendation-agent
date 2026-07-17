@@ -7,12 +7,18 @@ import json
 import os
 import stat
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
 import run_raw_receipt_projection as projection_cli
-from trading_agent.raw_object_manifest_models import RawReceipt, RawReceiptPayload
+from trading_agent.raw_object_manifest_models import (
+    RawObjectPartitionManifest,
+    RawObjectReceiptReference,
+    RawReceipt,
+    RawReceiptPayload,
+)
 from trading_agent.raw_receipt_projection import (
     InvalidRawReceiptProjectionError,
     project_raw_receipt_partition,
@@ -86,6 +92,59 @@ def test_projection_hashes_private_payload_bytes_without_public_export() -> None
     assert manifest.receipts[0].payload_sha256 == hashlib.sha256(payload).hexdigest()
     assert manifest.total_byte_size == len(payload)
     assert payload.decode() not in receipt.model_dump_json()
+
+
+def test_manifest_and_nested_receipt_round_trip_through_canonical_json() -> None:
+    manifest = project_raw_receipt_partition(
+        (_receipt("a" * 64, b"one", RECEIVED_AT),),
+        source_id="synthetic.market",
+        market_date=MARKET_DATE,
+        parent_ledger_generation=7,
+    )
+
+    assert RawObjectPartitionManifest.model_validate_json(manifest.model_dump_json()) == manifest
+    assert (
+        RawObjectReceiptReference.model_validate_json(manifest.receipts[0].model_dump_json())
+        == manifest.receipts[0]
+    )
+
+
+def test_manifest_rejects_noncanonical_json_date_and_timestamp_encodings() -> None:
+    manifest = project_raw_receipt_partition(
+        (_receipt("a" * 64, b"one", RECEIVED_AT),),
+        source_id="synthetic.market",
+        market_date=MARKET_DATE,
+        parent_ledger_generation=7,
+    )
+    malformed_date = json.loads(manifest.model_dump_json())
+    malformed_date["market_date"] = "2026-07-17T00:00:00Z"
+    malformed_timestamp = json.loads(manifest.model_dump_json())
+    malformed_timestamp["received_at_start"] = "2026-07-17T09:30:00+00:00"
+
+    with pytest.raises(ValueError, match="invalid raw object partition manifest"):
+        _ = RawObjectPartitionManifest.model_validate_json(json.dumps(malformed_date))
+    with pytest.raises(ValueError, match="invalid raw object partition manifest"):
+        _ = RawObjectPartitionManifest.model_validate_json(json.dumps(malformed_timestamp))
+
+
+def test_projection_rejects_mutable_lookalike_receipt() -> None:
+    payload = b"one"
+    lookalike = _LookalikeReceipt(
+        receipt_id="a" * 64,
+        source_id="synthetic.market",
+        market_date=MARKET_DATE,
+        received_at=RECEIVED_AT,
+        payload_sha256=hashlib.sha256(payload).hexdigest(),
+        payload=RawReceiptPayload(payload),
+    )
+
+    with pytest.raises(InvalidRawReceiptProjectionError, match="raw receipt partition"):
+        _ = project_raw_receipt_partition(
+            (lookalike,),  # type: ignore[arg-type]
+            source_id="synthetic.market",
+            market_date=MARKET_DATE,
+            parent_ledger_generation=7,
+        )
 
 
 def test_fixture_loader_consumes_excluded_base64_payload(tmp_path: Path) -> None:
@@ -274,6 +333,16 @@ def _fixture() -> dict[str, object]:
             }
         ],
     }
+
+
+@dataclass
+class _LookalikeReceipt:
+    receipt_id: str
+    source_id: str
+    market_date: dt.date
+    received_at: dt.datetime
+    payload_sha256: str
+    payload: RawReceiptPayload
 
 
 def _run_cli(*args: str) -> subprocess.CompletedProcess[str]:

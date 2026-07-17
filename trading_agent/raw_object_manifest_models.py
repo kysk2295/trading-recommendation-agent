@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal, Self, override
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 _OPAQUE_ID = re.compile(r"^[0-9a-f]{64}$")
 _SOURCE_ID = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
@@ -56,13 +56,13 @@ class RawReceipt(BaseModel):
 
     @field_validator("market_date", mode="before")
     @classmethod
-    def require_market_date(cls, value: Any) -> dt.date:
-        return _exact_date(value, "invalid raw receipt")
+    def require_market_date(cls, value: Any, info: ValidationInfo) -> dt.date:
+        return _exact_date(value, "invalid raw receipt", info)
 
     @field_validator("received_at", mode="before")
     @classmethod
-    def normalize_received_at(cls, value: Any) -> dt.datetime:
-        value = _exact_datetime(value, "invalid raw receipt")
+    def normalize_received_at(cls, value: Any, info: ValidationInfo) -> dt.datetime:
+        value = _exact_datetime(value, "invalid raw receipt", info)
         if not _aware(value):
             raise ValueError("invalid raw receipt")
         return value.astimezone(dt.UTC)
@@ -100,8 +100,8 @@ class RawObjectReceiptReference(BaseModel):
 
     @field_validator("received_at", mode="before")
     @classmethod
-    def normalize_received_at(cls, value: Any) -> dt.datetime:
-        value = _exact_datetime(value, "invalid raw object receipt reference")
+    def normalize_received_at(cls, value: Any, info: ValidationInfo) -> dt.datetime:
+        value = _exact_datetime(value, "invalid raw object receipt reference", info)
         if not _aware(value):
             raise ValueError("invalid raw object receipt reference")
         return value.astimezone(dt.UTC)
@@ -144,13 +144,13 @@ class RawObjectPartitionManifest(BaseModel):
 
     @field_validator("market_date", mode="before")
     @classmethod
-    def require_market_date(cls, value: Any) -> dt.date:
-        return _exact_date(value, "invalid raw object partition manifest")
+    def require_market_date(cls, value: Any, info: ValidationInfo) -> dt.date:
+        return _exact_date(value, "invalid raw object partition manifest", info)
 
     @field_validator("received_at_start", "received_at_end", mode="before")
     @classmethod
-    def normalize_received_range(cls, value: Any) -> dt.datetime:
-        value = _exact_datetime(value, "invalid raw object partition manifest")
+    def normalize_received_range(cls, value: Any, info: ValidationInfo) -> dt.datetime:
+        value = _exact_datetime(value, "invalid raw object partition manifest", info)
         if not _aware(value):
             raise ValueError("invalid raw object partition manifest")
         return value.astimezone(dt.UTC)
@@ -310,13 +310,37 @@ def _exact_int(value: Any, message: str) -> int:
     return value
 
 
-def _exact_date(value: Any, message: str) -> dt.date:
+def _exact_date(value: Any, message: str, info: ValidationInfo) -> dt.date:
+    if info.mode == "json":
+        if type(value) is not str:
+            raise ValueError(message)
+        try:
+            parsed = dt.date.fromisoformat(value)
+        except ValueError:
+            raise ValueError(message) from None
+        if parsed.isoformat() != value:
+            raise ValueError(message)
+        return parsed
     if type(value) is not dt.date:
         raise ValueError(message)
     return value
 
 
-def _exact_datetime(value: Any, message: str) -> dt.datetime:
+def _exact_datetime(value: Any, message: str, info: ValidationInfo) -> dt.datetime:
+    if info.mode == "json":
+        if type(value) is not str:
+            raise ValueError(message)
+        try:
+            parsed = dt.datetime.fromisoformat(value)
+        except ValueError:
+            raise ValueError(message) from None
+        if not _aware(parsed) or _canonical_json_timestamp(parsed) != value:
+            raise ValueError(message)
+        return parsed
     if type(value) is not dt.datetime:
         raise ValueError(message)
     return value
+
+
+def _canonical_json_timestamp(value: dt.datetime) -> str:
+    return value.astimezone(dt.UTC).isoformat().replace("+00:00", "Z")
