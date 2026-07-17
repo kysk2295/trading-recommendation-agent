@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Paper-only US momentum research and recommendation agent"
 requires-python = ">=3.12"
 dependencies = [
+  "duckdb==1.5.4",
   "httpx2[http2,brotli,zstd]",
   "pyarrow==25.0.0",
   "pydantic>=2.11",
