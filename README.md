@@ -84,6 +84,8 @@ flowchart LR
 
 **2026-07-17 데이터 foundation 업데이트:** `DataSourceId`, entitlement·retention·correction, capability quality/SLO, `StrategyDataRequirement`, point-in-time `InstrumentId`·alias·corporate action, raw-reference 기반 `CanonicalEventEnvelope` 계약을 추가했다. 순수 data gate는 manifest에 선언된 primary와 fallback만 순서대로 평가하고 entitlement, freshness, completeness, historical depth, timestamp semantics와 health를 고정 사유로 감사해 lane을 `ready`, `research_only`, `blocked_by_data`로 닫는다. `run_data_foundation_check.py`는 provider·credential·broker import 없이 offline local manifest를 검사하고 mode-600 aggregate report만 쓴다. 포함된 ORB 예시는 실제 feed 권한이 아닌 fixture 계약이다.
 
+**2026-07-17 Raw Lake M3.1 업데이트:** 기존 collector나 SQLite 원장을 변경하지 않는 generic raw receipt partition projection을 추가했다. immutable receipt는 source·market date·수신 범위·receipt 수·byte 수·content SHA-256·receipt-scoped parent generation을 가진 deterministic manifest로 투영되며, 원문 bytes와 reversible base64는 public model export·manifest·CLI report에서 제외된다. local-only fixture CLI는 `fixture.` source namespace와 current-user-owned mode `0700` parent를 요구하고, macOS exclusive directory publish로 mode `0700` output과 mode `0600` manifest/summary만 확정한다. 실제 US/KR receipt-store reader, typed Parquet canonicalization, DuckDB replay는 다음 checkpoint다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \
