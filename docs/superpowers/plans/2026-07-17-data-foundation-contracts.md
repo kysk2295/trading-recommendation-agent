@@ -161,7 +161,7 @@ git commit -m "feat: gate strategies on declared data capability"
 - Create: `trading_agent/data_foundation_manifest.py`
 - Create: `examples/data/us-orb-data-foundation-v1.json`
 
-- [ ] **Step 1: Write failing canonical event tests**
+- [x] **Step 1: Write failing canonical event tests**
 
 Cover:
 
@@ -176,7 +176,7 @@ Cover:
 uv run pytest -q tests/test_canonical_event_models.py
 ```
 
-- [ ] **Step 2: Implement canonical envelopes**
+- [x] **Step 2: Implement canonical envelopes**
 
 Create:
 
@@ -189,7 +189,7 @@ CanonicalEventEnvelope
 
 Do not include raw payload content, strategy features, recommendation logic, or inferred replacement timestamps.
 
-- [ ] **Step 3: Write failing manifest cross-reference tests**
+- [x] **Step 3: Write failing manifest cross-reference tests**
 
 `DataFoundationManifest` must enforce:
 
@@ -207,7 +207,7 @@ Do not include raw payload content, strategy features, recommendation logic, or 
 uv run pytest -q tests/test_data_foundation_manifest.py
 ```
 
-- [ ] **Step 4: Implement manifest loading and commit**
+- [x] **Step 4: Implement manifest loading and commit**
 
 Provide `InvalidDataFoundationManifestError`, `DataFoundationManifest`, `load_data_foundation_manifest`, and a method or pure helper that invokes `evaluate_strategy_data`. Resolve the manifest path strictly as a regular file and parse it with Pydantic. The example must use fixture identities and must not claim a live entitlement.
 

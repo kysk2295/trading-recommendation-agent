@@ -1,0 +1,188 @@
+{
+  "schema_version": 1,
+  "manifest_id": "us-orb-data-foundation-v1",
+  "registered_at": "2026-07-17T13:55:00Z",
+  "evaluated_at": "2026-07-17T14:00:00Z",
+  "strategy_lane": {
+    "schema_version": 1,
+    "market_id": "us_equities",
+    "agent_family": "day_trading",
+    "strategy_id": "orb"
+  },
+  "capabilities": [
+    {
+      "schema_version": 1,
+      "source_id": {
+        "schema_version": 1,
+        "provider": "fixture",
+        "feed": "sip"
+      },
+      "source_class": "market_microstructure",
+      "market_domains": [
+        "us_equities"
+      ],
+      "event_types": [
+        "minute_bar",
+        "quote",
+        "trade"
+      ],
+      "universe": "us_equities:all_active",
+      "delivery_modes": [
+        "rest_snapshot",
+        "websocket_stream"
+      ],
+      "historical_from": "2020-01-01",
+      "expected_latency_ms": 250,
+      "timestamp_semantics": [
+        "event_time",
+        "provider_time",
+        "received_at"
+      ],
+      "retention": {
+        "raw_retention_days": 30,
+        "derived_retention_days": 365,
+        "deletion_required": true,
+        "correction_policy": "append_correction"
+      },
+      "rate_limits": {
+        "requests_per_minute": 200,
+        "max_connections": 2,
+        "max_subscriptions": 30
+      },
+      "freshness_slo_seconds": 5,
+      "completeness_slo_bps": 9900,
+      "health_state": "complete",
+      "assessed_at": "2026-07-17T14:00:00Z",
+      "latest_event_received_at": "2026-07-17T13:59:59Z",
+      "observed_completeness_bps": 10000
+    }
+  ],
+  "entitlements": [
+    {
+      "schema_version": 1,
+      "entitlement_id": "fixture-sip-research-v1",
+      "source_id": {
+        "schema_version": 1,
+        "provider": "fixture",
+        "feed": "sip"
+      },
+      "market_domains": [
+        "us_equities"
+      ],
+      "event_types": [
+        "minute_bar",
+        "quote",
+        "trade"
+      ],
+      "permitted_uses": [
+        "historical_research",
+        "paper_recommendation",
+        "shadow_forward"
+      ],
+      "real_time": true,
+      "historical": true,
+      "redistribution_policy": "derived_only",
+      "retention": {
+        "raw_retention_days": 30,
+        "derived_retention_days": 365,
+        "deletion_required": true,
+        "correction_policy": "append_correction"
+      },
+      "effective_from": "2026-01-01T00:00:00Z",
+      "effective_to": "2027-01-01T00:00:00Z"
+    }
+  ],
+  "requirements": [
+    {
+      "schema_version": 1,
+      "requirement_id": "orb-minute-bar-current",
+      "strategy_lane": {
+        "schema_version": 1,
+        "market_id": "us_equities",
+        "agent_family": "day_trading",
+        "strategy_id": "orb"
+      },
+      "data_use": "paper_recommendation",
+      "market_domain": "us_equities",
+      "event_type": "minute_bar",
+      "primary_source_id": {
+        "schema_version": 1,
+        "provider": "fixture",
+        "feed": "sip"
+      },
+      "fallback_source_ids": [],
+      "required_delivery_modes": [
+        "websocket_stream"
+      ],
+      "required_timestamp_semantics": [
+        "event_time",
+        "received_at"
+      ],
+      "max_age_seconds": 5,
+      "minimum_completeness_bps": 9900,
+      "minimum_historical_start": null,
+      "allow_degraded": false,
+      "failure_mode": "blocked_by_data"
+    }
+  ],
+  "instruments": [
+    {
+      "schema_version": 1,
+      "value": "us-eq-fixture-0001",
+      "market_domain": "us_equities",
+      "asset_class": "equity",
+      "venue": "XNAS",
+      "currency": "USD",
+      "timezone": "America/New_York",
+      "valid_from": "2020-01-01T00:00:00Z",
+      "valid_to": null
+    }
+  ],
+  "aliases": [
+    {
+      "schema_version": 1,
+      "instrument_id": "us-eq-fixture-0001",
+      "namespace": "fixture",
+      "alias_type": "symbol",
+      "value": "FIXT",
+      "effective_from": "2020-01-01T00:00:00Z",
+      "effective_to": null
+    }
+  ],
+  "corporate_actions": [],
+  "events": [
+    {
+      "schema_version": 1,
+      "event_id": "fixture-minute-bar-20260717t135900z",
+      "source_id": {
+        "schema_version": 1,
+        "provider": "fixture",
+        "feed": "sip"
+      },
+      "provider_event_id": "bar-0001",
+      "entity_refs": [
+        {
+          "schema_version": 1,
+          "entity_type": "instrument",
+          "entity_id": "us-eq-fixture-0001"
+        }
+      ],
+      "event_type": "minute_bar",
+      "event_time": "2026-07-17T13:59:00Z",
+      "published_at": null,
+      "provider_time": "2026-07-17T13:59:00.100000Z",
+      "received_at": "2026-07-17T13:59:01Z",
+      "normalized_at": "2026-07-17T13:59:01.010000Z",
+      "effective_from": "2026-07-17T13:59:00Z",
+      "effective_to": "2026-07-17T14:00:00Z",
+      "sequence_or_offset": "1",
+      "operation": "original",
+      "correction_of": null,
+      "raw_receipt_ref": "spool:fixture:0001",
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "quality_flags": [
+        "fixture"
+      ]
+    }
+  ]
+}
