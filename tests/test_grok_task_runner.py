@@ -66,6 +66,9 @@ def test_prepare_dry_run_creates_no_worktree_and_returns_planned_command(tmp_pat
     assert "--sandbox" in plan.command
     assert "strict" in plan.command
     assert "--no-subagents" in plan.command
+    assert "acceptEdits" in plan.command
+    assert "Bash(ls *)" in plan.command
+    assert "Bash(find *)" in plan.command
     assert not plan.worktree_path.exists()
 
 
