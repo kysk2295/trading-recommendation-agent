@@ -66,6 +66,7 @@ include = [
   "run_alpaca_paper_mutation_recovery.py",
   "run_lane_control_plane_bootstrap.py",
   "run_data_foundation_check.py",
+  "run_raw_receipt_projection.py",
   "run_ls_nws_collect.py",
   "trading_agent/alpaca_archive.py",
   "trading_agent/alpaca_daily_cache.py",
