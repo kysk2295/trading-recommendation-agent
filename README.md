@@ -92,6 +92,8 @@ flowchart LR
 
 **2026-07-17 Raw Lake M3.3a 업데이트:** typed Parquet writer에 앞서 canonical dataset batch 계약을 추가했다. partition은 canonical `source_id`, 명시적 market domain, event type, market date, canonical event schema version을 고정하며, batch는 exact raw manifest와 immutable canonical event만 받는다. raw manifest date, event source/type/schema, event-to-receipt lineage가 partition과 정확히 맞지 않으면 fail-closed 한다. public `model_copy`도 재검증하므로 변경된 nested schema나 empty/mixed batch를 우회할 수 없다. raw bytes 또는 민감 lineage field가 있는 입력은 constructor, `model_validate`, `model_copy` 모두 sanitized validation error로 닫고, raw payload는 public dump과 오류 `str`/`repr`에 나오지 않는다. 이 단계는 provider, credential, broker, order 또는 기존 SQLite 원장을 읽거나 바꾸지 않는다. 다음 M3.3b에서 이 검증된 batch만 deterministic typed Parquet로 publish한다.
 
+**2026-07-17 Raw Lake M3.3b 업데이트:** 검증된 canonical batch만 explicit typed Parquet schema로 publish하는 private writer를 추가했다. event entity ref는 typed nested struct/list로, 모든 timestamp는 UTC microseconds로 기록하며 raw payload·receipt list·account/request key는 row, Parquet metadata, sidecar, public repr/error에서 제외한다. content-only SHA-256 dataset ID가 source/feed·market/event/date/schema hive partition 아래 immutable directory를 결정하고, PyArrow `25.0.0`을 정확히 고정해 locked environment에서 parquet bytes/hash가 재현된다. writer는 macOS `renamex_np(RENAME_EXCL)`와 Linux `renameat2(RENAME_NOREPLACE)`로 completed staging directory만 no-overwrite publish하고, 새 root/intermediate directory와 final parent를 fsync한다. Windows/unknown platform은 POSIX private descriptor 보장을 제공하지 않으므로 fail-closed 한다. 이 경로는 network·credential·broker·order·기존 receipt store를 읽거나 바꾸지 않는다. 다음 M3.4는 DuckDB deterministic replay hash conformance다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \
