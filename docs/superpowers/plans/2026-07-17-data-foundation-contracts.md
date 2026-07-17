@@ -227,7 +227,7 @@ git commit -m "feat: add canonical data foundation manifest"
 - Create: `run_data_foundation_check.py`
 - Modify: `pyproject.toml`
 
-- [ ] **Step 1: Write failing CLI tests**
+- [x] **Step 1: Write failing CLI tests**
 
 Cover:
 
@@ -241,11 +241,11 @@ Cover:
 uv run pytest -q tests/test_data_foundation_check_cli.py
 ```
 
-- [ ] **Step 2: Implement the CLI and type-check entry point**
+- [x] **Step 2: Implement the CLI and type-check entry point**
 
 Use `write_private_report`. Catch only validation, manifest, OS, and value errors. Do not print exception text. Add `run_data_foundation_check.py` to basedpyright includes.
 
-- [ ] **Step 3: Focused verification and commit**
+- [x] **Step 3: Focused verification and commit**
 
 ```bash
 uv run pytest -q tests/test_security_master_models.py tests/test_data_capability_models.py tests/test_strategy_data_gate.py tests/test_canonical_event_models.py tests/test_data_foundation_manifest.py tests/test_data_foundation_check_cli.py
