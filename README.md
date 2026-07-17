@@ -86,6 +86,8 @@ flowchart LR
 
 **2026-07-17 Raw Lake M3.1 업데이트:** 기존 collector나 SQLite 원장을 변경하지 않는 generic raw receipt partition projection을 추가했다. immutable receipt는 source·market date·수신 범위·receipt 수·byte 수·content SHA-256·receipt-scoped parent generation을 가진 deterministic manifest로 투영되며, 원문 bytes와 reversible base64는 public model export·manifest·CLI report에서 제외된다. local-only fixture CLI는 `fixture.` source namespace와 current-user-owned mode `0700` parent를 요구하고, macOS exclusive directory publish로 mode `0700` output과 mode `0600` manifest/summary만 확정한다. 실제 US/KR receipt-store reader, typed Parquet canonicalization, DuckDB replay는 다음 checkpoint다.
 
+**2026-07-17 Raw Lake M3.2a 업데이트:** KR theme ledger의 completed source run을 generic raw manifest로 read-only 투영하는 adapter를 추가했다. adapter는 하나의 query-only SQLite snapshot에서 해당 run과 그 receipt BLOB만 읽고 실제 receipt `rowid` high-water를 parent generation으로 보존한다. OpenDART·LS NWS·KIS ranking은 raw receipt가 정확히 연결된 성공 run만 허용하며, raw input이 없는 `volume_surge` 파생 run만 검증된 empty 결과를 낼 수 있다. orphan·실패·날짜 누락·late same-run receipt·요청과 다른 snapshot은 모두 fail-closed이고, raw bytes·request key·source-run ID는 public manifest와 오류에 노출하지 않는다. US Paper trade-update adapter가 다음 M3.2 경계다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \

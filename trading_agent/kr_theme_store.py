@@ -83,6 +83,13 @@ class StoredKrCatalyst:
     raw_payload: bytes = field(repr=False)
 
 
+@dataclass(frozen=True, slots=True)
+class KrSourceReceiptProjectionSnapshot:
+    run: KrSourceCollectionRun
+    receipts: tuple[StoredKrSourceReceipt, ...]
+    parent_ledger_generation: int
+
+
 class KrThemeReader:
     __slots__ = ("path",)
 
@@ -245,6 +252,80 @@ class KrThemeReader:
                 ).fetchall()
             )
         return tuple(_stored_source_run(row) for row in rows)
+
+    def source_receipt_projection_snapshot(
+        self,
+        *,
+        collection_cycle_id: str,
+        source: KrCatalystSource,
+    ) -> KrSourceReceiptProjectionSnapshot | None:
+        if (
+            type(collection_cycle_id) is not str
+            or type(source) is not KrCatalystSource
+            or not self.path.is_file()
+        ):
+            return None
+        with self.reader_connection() as connection:
+            _ = connection.execute("BEGIN")
+            run_rows: list[
+                tuple[str, str, str, str, str, str, str, int, str | None, str]
+            ] = (
+                connection.execute(
+                    """SELECT source_run_id, collection_cycle_id, source,
+                    adapter_version, started_at, completed_at, status,
+                    record_count, failure_code, payload_json
+                    FROM kr_source_collection_runs
+                    WHERE collection_cycle_id = ? AND source = ?
+                    ORDER BY rowid LIMIT 2""",
+                    (collection_cycle_id, source.value),
+                ).fetchall()
+            )
+            if len(run_rows) != 1:
+                return None
+            run = _stored_source_run(run_rows[0])
+            receipt_rows: list[
+                tuple[int, str, str, str, str, str, int, str, str, bytes]
+            ] = (
+                connection.execute(
+                    """SELECT rowid, receipt_id, source_run_id, source, request_key,
+                    received_at, http_status, content_type, payload_sha256,
+                    payload_blob FROM kr_source_receipts
+                    WHERE source_run_id = ? ORDER BY rowid""",
+                    (run.source_run_id,),
+                ).fetchall()
+            )
+        receipts = tuple(
+            _stored_source_receipt(
+                (
+                    receipt_id,
+                    receipt_source_run_id,
+                    receipt_source,
+                    request_key,
+                    received_at,
+                    http_status,
+                    content_type,
+                    payload_sha256,
+                    payload_blob,
+                )
+            )
+            for (
+                _,
+                receipt_id,
+                receipt_source_run_id,
+                receipt_source,
+                request_key,
+                received_at,
+                http_status,
+                content_type,
+                payload_sha256,
+                payload_blob,
+            ) in receipt_rows
+        )
+        return KrSourceReceiptProjectionSnapshot(
+            run=run,
+            receipts=receipts,
+            parent_ledger_generation=max((row[0] for row in receipt_rows), default=0),
+        )
 
     def reader_connection(self) -> sqlite3.Connection:
         connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
