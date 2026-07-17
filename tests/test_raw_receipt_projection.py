@@ -189,6 +189,20 @@ def test_fixture_loader_consumes_excluded_base64_payload(tmp_path: Path) -> None
     assert receipts[0].payload.value == CLI_PAYLOAD
 
 
+def test_cli_and_loader_reject_non_fixture_source_namespace(tmp_path: Path) -> None:
+    fixture_path = tmp_path / "arbitrary-fixture.json"
+    fixture_path.write_text(json.dumps(_fixture(source_id="arbitrary.local")), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalid raw receipt projection fixture"):
+        _ = projection_cli.load_raw_receipt_projection_fixture(fixture_path)
+    completed = _run_cli("--input", str(fixture_path), "--output-dir", str(tmp_path / "output"))
+
+    assert completed.returncode == 1
+    assert "raw receipt projection input is invalid" in completed.stderr
+    assert CLI_PAYLOAD.decode() not in completed.stderr
+    assert not (tmp_path / "output").exists()
+
+
 @pytest.mark.parametrize(
     ("changed_receipts", "source_id", "market_date", "parent_generation"),
     (
@@ -350,10 +364,10 @@ def test_projection_cli_writes_only_private_aggregate_report_and_manifest(tmp_pa
     assert "endpoint" not in completed.stdout.lower()
 
 
-def _fixture() -> dict[str, object]:
+def _fixture(*, source_id: str = "fixture.us.trade_updates") -> dict[str, object]:
     return {
         "schema_version": 1,
-        "source_id": "synthetic.market",
+        "source_id": source_id,
         "market_date": MARKET_DATE.isoformat(),
         "parent_ledger_generation": 3,
         "receipts": [

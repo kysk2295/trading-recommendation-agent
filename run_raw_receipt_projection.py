@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -30,6 +31,7 @@ MANIFEST_NAME = "raw_object_partition_manifest.json"
 REPORT_NAME = "raw_receipt_projection_summary.md"
 _INPUT_ERROR = "raw receipt projection input is invalid"
 _OUTPUT_ERROR = "raw receipt projection output could not be written"
+_FIXTURE_SOURCE_ID = re.compile(r"^fixture\.[a-z0-9][a-z0-9_.-]{0,55}$")
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -78,6 +80,8 @@ def load_raw_receipt_projection_fixture(
     path: Path,
 ) -> tuple[RawReceiptProjectionFixture, tuple[RawReceipt, ...]]:
     fixture = RawReceiptProjectionFixture.model_validate_json(path.read_bytes())
+    if _FIXTURE_SOURCE_ID.fullmatch(fixture.source_id) is None:
+        raise ValueError("invalid raw receipt projection fixture")
     receipts = tuple(
         RawReceipt.from_payload(
             receipt_id=item.receipt_id,
