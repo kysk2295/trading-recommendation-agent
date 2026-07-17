@@ -419,6 +419,69 @@ def test_cli_refuses_existing_empty_output_dir(tmp_path: Path) -> None:
     assert not tuple(output.iterdir())
 
 
+def test_cli_uses_exclusive_publish_for_existing_empty_output_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = tmp_path / "synthetic-fixture.json"
+    fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
+    output = tmp_path / "output"
+    output.mkdir()
+    publish_attempted = False
+
+    def reject_existing(stage_path: Path, output_path: Path) -> None:
+        nonlocal publish_attempted
+        publish_attempted = True
+        assert output_path == output
+        raise FileExistsError
+
+    monkeypatch.setattr(projection_cli, "_rename_directory_exclusively", reject_existing, raising=False)
+    code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
+
+    assert code == 2
+    assert publish_attempted
+    assert output.is_dir()
+    assert not tuple(output.iterdir())
+
+
+def test_cli_cleans_staging_after_exclusive_publish_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = tmp_path / "synthetic-fixture.json"
+    fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
+    output = tmp_path / "output"
+
+    def fail_exclusive_publish(stage_path: Path, output_path: Path) -> None:
+        raise OSError("forced exclusive publish failure")
+
+    monkeypatch.setattr(projection_cli, "_rename_directory_exclusively", fail_exclusive_publish, raising=False)
+    code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
+
+    assert code == 2
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(f"{projection_cli._STAGING_DIRECTORY_PREFIX}*"))
+
+
+def test_cli_fails_closed_without_darwin_exclusive_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fixture = tmp_path / "synthetic-fixture.json"
+    fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
+    output = tmp_path / "output"
+
+    monkeypatch.setattr(projection_cli.sys, "platform", "linux")
+    code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert "raw receipt projection output could not be written" in captured.err
+    assert CLI_PAYLOAD.decode() not in captured.err
+    assert not output.exists()
+
+
 @pytest.mark.parametrize("mode", (0o750, 0o755))
 def test_cli_rejects_output_parent_without_exact_private_mode(tmp_path: Path, mode: int) -> None:
     fixture = tmp_path / "synthetic-fixture.json"
@@ -580,13 +643,13 @@ def test_cli_renames_completed_staging_directory_atomically(
     original_publish = projection_cli._publish_staged_output
 
     def assert_completed_stage(
-        parent_fd: int,
+        parent_path: Path,
         source: str,
         destination: str,
     ) -> None:
         assert source.startswith(projection_cli._STAGING_DIRECTORY_PREFIX)
         assert destination == output.name
-        stage_fd = os.open(source, projection_cli._directory_open_flags(), dir_fd=parent_fd)
+        stage_fd = os.open(parent_path / source, projection_cli._directory_open_flags())
         try:
             assert set(os.listdir(stage_fd)) == {
                 "raw_object_partition_manifest.json",
@@ -595,7 +658,7 @@ def test_cli_renames_completed_staging_directory_atomically(
         finally:
             os.close(stage_fd)
         assert not output.exists()
-        original_publish(parent_fd, source, destination)
+        original_publish(parent_path, source, destination)
 
     monkeypatch.setattr(projection_cli, "_publish_staged_output", assert_completed_stage)
     code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
@@ -628,6 +691,38 @@ def test_cli_fsyncs_staging_and_parent_directories(tmp_path: Path, monkeypatch: 
     assert code == 0
     assert (parent.stat().st_dev, parent.stat().st_ino) in fsynced_identities
     assert (output.stat().st_dev, output.stat().st_ino) in fsynced_identities
+
+
+def test_cli_refuses_identity_mismatched_rollback_after_parent_sync_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = tmp_path / "synthetic-fixture.json"
+    fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    parent.chmod(0o700)
+    output = parent / "output"
+    parent_identity = (parent.stat().st_dev, parent.stat().st_ino)
+    replacement = output / projection_cli.MANIFEST_NAME
+    original_fsync = projection_cli.os.fsync
+
+    def replace_output_then_fail_parent_sync(descriptor: int) -> None:
+        metadata = os.fstat(descriptor)
+        if (metadata.st_dev, metadata.st_ino) == parent_identity:
+            for entry in output.iterdir():
+                entry.unlink()
+            output.rmdir()
+            output.mkdir(mode=0o700)
+            replacement.write_text("preserve", encoding="utf-8")
+            raise OSError("forced parent sync failure")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(projection_cli.os, "fsync", replace_output_then_fail_parent_sync)
+    code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
+
+    assert code == 2
+    assert replacement.read_text(encoding="utf-8") == "preserve"
 
 
 def _fixture(*, source_id: str = "fixture.us.trade_updates") -> dict[str, object]:
