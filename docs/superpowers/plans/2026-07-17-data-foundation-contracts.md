@@ -264,7 +264,7 @@ git commit -m "feat: add local data foundation check"
 - Modify: `CODEX_START_HERE.md`
 - Modify: `docs/superpowers/plans/2026-07-17-data-foundation-contracts.md`
 
-- [ ] **Step 1: Run manual CLI QA**
+- [x] **Step 1: Run manual CLI QA**
 
 ```bash
 ./run_data_foundation_check.py --help
@@ -274,7 +274,7 @@ git commit -m "feat: add local data foundation check"
 
 Expected exits are 0, 1, and 0. Reports are mode 600 and contain no credentials, endpoint URLs, raw payloads, account IDs, order IDs, or private input/output paths.
 
-- [ ] **Step 2: Run complete verification one heavy command at a time**
+- [x] **Step 2: Run complete verification one heavy command at a time**
 
 ```bash
 uv run pytest -q
@@ -283,11 +283,11 @@ uv run basedpyright
 git diff --check
 ```
 
-- [ ] **Step 3: Update durable documentation with exact evidence**
+- [x] **Step 3: Update durable documentation with exact evidence**
 
 Record models, fail-closed states, explicit fallback behavior, local-only CLI, test count, static-check results, manual exit codes, and external mutation 0. Update README current implementation/limitations without claiming a live source registry, raw lake, provider entitlement, strategy profitability, or Paper POST. Add the completed checkpoint and next Milestone 3 boundary to `CODEX_START_HERE.md` without reordering existing live-session priorities.
 
-- [ ] **Step 4: Commit, check remote freshness, and push main**
+- [x] **Step 4: Commit, check remote freshness, and push main**
 
 ```bash
 git add README.md CODEX_START_HERE.md docs/checkpoints/2026-07-17-data-foundation-contracts-ko.md docs/superpowers/plans/2026-07-17-data-foundation-contracts.md

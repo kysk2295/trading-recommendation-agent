@@ -76,6 +76,8 @@
 - local-only `run_swing_shadow_trial.py`가 `register → start → finalize → review`를 한 동작씩 실행. provider·credential·endpoint·arm·force 옵션이 없고 report는 redacted mode 600이며 external broker mutation은 0건
 - armed entry·safety smoke는 하나의 intraday pilot risk contract를 공유하며 100 USD·10 USD·1포지션·30 USD·편도 20bp·risk fraction 1/3000을 유지
 - GET-only `run_alpaca_paper_safety.py`도 active intraday lane risk contract를 명시적으로 주입해 entry·armed safety mutation과 같은 USD 100·USD 10·1포지션·USD 30·편도 20bp 권위를 사용
+- contract-only data foundation이 `DataSourceId`·entitlement·capability/SLO·`StrategyDataRequirement`·point-in-time instrument/alias/corporate action·canonical event를 검증하고, 명시된 primary/fallback만 평가해 `ready`·`research_only`·`blocked_by_data`를 결정
+- offline local-only `run_data_foundation_check.py`는 fixture manifest를 mode-600 aggregate report로 검증하며 provider·credential·broker·Paper 실행을 열지 않음. 실제 live capability registry·raw lake·Parquet replay는 아직 없음
 - armed entry CLI는 free-form 종목·가격·시각·수량을 받지 않고 query-only watch SQLite에서 현재 직전 완료 정규장 1분봉에 결합된 30초 이내 ORB `setup` 후보 정확히 하나만 1주 요청으로 투영한 뒤 credential·운영 세션을 연다
 - 모든 Alpaca Paper 운영 CLI는 잡힌 실행 예외의 클래스명만 stderr·보고서에 남기고 원문 계좌·broker·경로 정보를 버림
 - bootstrap·readiness·recovery·entry·보호 OCO·safety 운영 report는 기존 파일을 포함해 atomic mode `600`으로 강제 교체
@@ -94,6 +96,7 @@
 8. 추가 부분체결이 실제 발생할 때 staged 보호 OCO cancel → terminal 대사 → 다음 호출 replacement를 같은 축소 한도에서 검증하되 체결을 억지로 만들지 않음
 9. equal-risk terminal trial·broker/shadow·DSR/PBO·parameter plateau·SIP 증거 계약이 모두 생긴 뒤에만 comparison·promotion Controller 단계를 별도 구현
 10. 최소 두 executable lane champion 전에는 Portfolio Manager를 구현하지 않음
+11. Milestone 3은 기존 bounded US·KR raw receipt를 새 계약의 object partition manifest로 투영하는 read-only 경로부터 시작하고, 그 뒤에만 Parquet canonical writer·DuckDB replay·correction/tombstone conformance를 추가
 
 ## 시작 전 확인
 
