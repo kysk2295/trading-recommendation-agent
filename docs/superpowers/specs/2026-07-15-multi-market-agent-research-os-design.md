@@ -7,6 +7,8 @@
 - 첫 프로그램 범위: 공통 식별·신호 계약부터 KR Theme Opportunity + Day Shadow 수직 경로까지
 - 첫 코드 마일스톤: 공통 식별·신호 계약만 추가하며 DB·실행 동작은 변경하지 않음
 
+> 상위 제품·데이터·상시 운영 아키텍처는 [2026-07-17 기관형 다중 시장 Quant Research OS 설계](2026-07-17-institutional-multi-market-quant-research-os-design.md)가 확장한다. 이 문서는 이미 구현된 `MarketId`, `AgentFamily`, `StrategyLaneRef`, Opportunity·TradeSignal과 composite experiment 계약의 권위를 계속 가진다.
+
 ## 1. 제품 정의
 
 이 제품은 하나의 만능 트레이딩 봇이 아니다. 서로 다른 연구 임무를 가진 복수 에이전트가 전략을 독립적으로 만들고, 같은 검증 커널에서 실험하며, 증거에 따라 승격·강등되는 다중 시장 Trading Research OS다.
