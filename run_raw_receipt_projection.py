@@ -12,6 +12,8 @@ import binascii
 import contextlib
 import os
 import re
+import secrets
+import stat
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -35,7 +37,8 @@ _OUTPUT_ERROR = "raw receipt projection output could not be written"
 _FIXTURE_SOURCE_ID = re.compile(r"^fixture\.[a-z0-9][a-z0-9_.-]{0,55}$")
 _PRIVATE_OUTPUT_DIRECTORY_MODE = 0o700
 _PRIVATE_OUTPUT_FILE_MODE = 0o600
-_STAGING_DIRECTORY_NAME = ".staging"
+_STAGING_DIRECTORY_PREFIX = ".raw-receipt-projection-stage-"
+_STAGING_DIRECTORY_ATTEMPTS = 16
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -82,28 +85,27 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _write_projection_output(output_dir: Path, manifest_content: str, report_content: str) -> None:
     parent_fd, output_name = _open_existing_output_parent(output_dir)
-    claimed_identity: tuple[int, int] | None = None
+    stage_name: str | None = None
+    published = False
     try:
-        os.mkdir(output_name, mode=_PRIVATE_OUTPUT_DIRECTORY_MODE, dir_fd=parent_fd)
-        output_fd = _open_directory_at(parent_fd, output_name)
+        _ensure_output_target_absent(parent_fd, output_name)
+        stage_name, stage_fd = _create_staging_directory(parent_fd)
         try:
-            claimed_identity = _directory_identity(os.fstat(output_fd))
-            os.fchmod(output_fd, _PRIVATE_OUTPUT_DIRECTORY_MODE)
-            os.mkdir(_STAGING_DIRECTORY_NAME, mode=_PRIVATE_OUTPUT_DIRECTORY_MODE, dir_fd=output_fd)
-            staging_fd = _open_directory_at(output_fd, _STAGING_DIRECTORY_NAME)
-            try:
-                os.fchmod(staging_fd, _PRIVATE_OUTPUT_DIRECTORY_MODE)
-                _write_private_file(staging_fd, MANIFEST_NAME, manifest_content)
-                _write_private_file(staging_fd, REPORT_NAME, report_content)
-                _publish_staged_output(staging_fd, output_fd)
-            finally:
-                os.close(staging_fd)
-            os.rmdir(_STAGING_DIRECTORY_NAME, dir_fd=output_fd)
+            _write_private_file(stage_fd, MANIFEST_NAME, manifest_content)
+            _write_private_file(stage_fd, REPORT_NAME, report_content)
+            os.fsync(stage_fd)
         finally:
-            os.close(output_fd)
+            os.close(stage_fd)
+        _publish_staged_output(parent_fd, stage_name, output_name)
+        published = True
+        os.fsync(parent_fd)
     except Exception:
-        if claimed_identity is not None:
-            _remove_claimed_output_directory(parent_fd, output_name, claimed_identity)
+        if stage_name is not None:
+            if published:
+                _remove_published_output_directory(parent_fd, output_name)
+                os.fsync(parent_fd)
+            else:
+                _remove_stage_directory(parent_fd, stage_name)
         raise
     finally:
         os.close(parent_fd)
@@ -120,44 +122,68 @@ def _open_existing_output_parent(output_dir: Path) -> tuple[int, str]:
             next_fd = _open_directory_at(parent_fd, component)
             os.close(parent_fd)
             parent_fd = next_fd
+        _validate_trusted_parent(parent_fd)
         return parent_fd, destination.name
     except Exception:
         os.close(parent_fd)
         raise
 
 
-def _publish_staged_output(staging_fd: int, output_fd: int) -> None:
-    os.rename(
-        MANIFEST_NAME,
-        MANIFEST_NAME,
-        src_dir_fd=staging_fd,
-        dst_dir_fd=output_fd,
-    )
-    os.rename(
-        REPORT_NAME,
-        REPORT_NAME,
-        src_dir_fd=staging_fd,
-        dst_dir_fd=output_fd,
-    )
-
-
-def _remove_claimed_output_directory(
-    parent_fd: int,
-    output_name: str,
-    claimed_identity: tuple[int, int],
-) -> None:
-    _assert_claimed_output_identity(parent_fd, output_name, claimed_identity)
-    output_fd = _open_directory_at(parent_fd, output_name)
+def _ensure_output_target_absent(parent_fd: int, output_name: str) -> None:
     try:
-        if _directory_identity(os.fstat(output_fd)) != claimed_identity:
-            raise OSError
-        _remove_known_stage_directory(output_fd)
-        _unlink_if_present(output_fd, MANIFEST_NAME)
-        _unlink_if_present(output_fd, REPORT_NAME)
+        os.stat(output_name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    raise OSError
+
+
+def _create_staging_directory(parent_fd: int) -> tuple[str, int]:
+    for _ in range(_STAGING_DIRECTORY_ATTEMPTS):
+        stage_name = f"{_STAGING_DIRECTORY_PREFIX}{secrets.token_hex(16)}"
+        try:
+            os.mkdir(stage_name, mode=_PRIVATE_OUTPUT_DIRECTORY_MODE, dir_fd=parent_fd)
+        except FileExistsError:
+            continue
+        try:
+            stage_fd = _open_directory_at(parent_fd, stage_name)
+        except Exception:
+            _remove_stage_directory(parent_fd, stage_name)
+            raise
+        try:
+            os.fchmod(stage_fd, _PRIVATE_OUTPUT_DIRECTORY_MODE)
+        except Exception:
+            os.close(stage_fd)
+            _remove_stage_directory(parent_fd, stage_name)
+            raise
+        return stage_name, stage_fd
+    raise OSError
+
+
+def _publish_staged_output(parent_fd: int, stage_name: str, output_name: str) -> None:
+    os.rename(
+        stage_name,
+        output_name,
+        src_dir_fd=parent_fd,
+        dst_dir_fd=parent_fd,
+    )
+
+
+def _remove_stage_directory(parent_fd: int, stage_name: str) -> None:
+    _remove_private_output_directory(parent_fd, stage_name)
+
+
+def _remove_published_output_directory(parent_fd: int, output_name: str) -> None:
+    _remove_private_output_directory(parent_fd, output_name)
+
+
+def _remove_private_output_directory(parent_fd: int, directory_name: str) -> None:
+    directory_fd = _open_directory_at(parent_fd, directory_name)
+    try:
+        _unlink_if_present(directory_fd, MANIFEST_NAME)
+        _unlink_if_present(directory_fd, REPORT_NAME)
     finally:
-        os.close(output_fd)
-    _assert_claimed_output_identity(parent_fd, output_name, claimed_identity)
-    os.rmdir(output_name, dir_fd=parent_fd)
+        os.close(directory_fd)
+    os.rmdir(directory_name, dir_fd=parent_fd)
 
 
 def _write_private_file(directory_fd: int, name: str, content: str) -> None:
@@ -184,32 +210,9 @@ def _write_all(descriptor: int, content: bytes) -> None:
         offset += written
 
 
-def _remove_known_stage_directory(output_fd: int) -> None:
-    try:
-        staging_fd = _open_directory_at(output_fd, _STAGING_DIRECTORY_NAME)
-    except FileNotFoundError:
-        return
-    try:
-        _unlink_if_present(staging_fd, MANIFEST_NAME)
-        _unlink_if_present(staging_fd, REPORT_NAME)
-    finally:
-        os.close(staging_fd)
-    os.rmdir(_STAGING_DIRECTORY_NAME, dir_fd=output_fd)
-
-
 def _unlink_if_present(directory_fd: int, name: str) -> None:
     with contextlib.suppress(FileNotFoundError):
         os.unlink(name, dir_fd=directory_fd)
-
-
-def _assert_claimed_output_identity(
-    parent_fd: int,
-    output_name: str,
-    claimed_identity: tuple[int, int],
-) -> None:
-    metadata = os.stat(output_name, dir_fd=parent_fd, follow_symlinks=False)
-    if _directory_identity(metadata) != claimed_identity:
-        raise OSError
 
 
 def _open_directory_at(parent_fd: int, name: str) -> int:
@@ -220,8 +223,14 @@ def _directory_open_flags() -> int:
     return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
 
-def _directory_identity(metadata: os.stat_result) -> tuple[int, int]:
-    return metadata.st_dev, metadata.st_ino
+def _validate_trusted_parent(parent_fd: int) -> None:
+    metadata = os.fstat(parent_fd)
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != _PRIVATE_OUTPUT_DIRECTORY_MODE
+    ):
+        raise OSError
 
 
 def _require_descriptor_operations() -> None:
@@ -229,6 +238,8 @@ def _require_descriptor_operations() -> None:
     if (
         not hasattr(os, "O_DIRECTORY")
         or not hasattr(os, "O_NOFOLLOW")
+        or not hasattr(os, "getuid")
+        or not hasattr(os, "fsync")
         or any(operation not in os.supports_dir_fd for operation in required)
         or os.stat not in os.supports_follow_symlinks
     ):

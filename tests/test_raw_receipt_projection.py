@@ -419,12 +419,43 @@ def test_cli_refuses_existing_empty_output_dir(tmp_path: Path) -> None:
     assert not tuple(output.iterdir())
 
 
+@pytest.mark.parametrize("mode", (0o750, 0o755))
+def test_cli_rejects_output_parent_without_exact_private_mode(tmp_path: Path, mode: int) -> None:
+    fixture = tmp_path / "synthetic-fixture.json"
+    fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    parent.chmod(mode)
+    output = parent / "output"
+
+    code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
+
+    assert code == 2
+    assert not output.exists()
+
+
+def test_cli_rejects_output_parent_with_wrong_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fixture = tmp_path / "synthetic-fixture.json"
+    fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    parent.chmod(0o700)
+    output = parent / "output"
+
+    monkeypatch.setattr(projection_cli.os, "getuid", lambda: parent.stat().st_uid + 1)
+    code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
+
+    assert code == 2
+    assert not output.exists()
+
+
 def test_cli_rejects_absent_or_symlinked_output_parent(tmp_path: Path) -> None:
     fixture = tmp_path / "synthetic-fixture.json"
     fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
     missing_parent = tmp_path / "missing-parent"
     real_parent = tmp_path / "real-parent"
     real_parent.mkdir()
+    real_parent.chmod(0o700)
     symlink_parent = tmp_path / "symlink-parent"
     symlink_parent.symlink_to(real_parent, target_is_directory=True)
 
@@ -461,7 +492,7 @@ def test_cli_claims_private_output_and_stage_despite_umask_zero(
     assert code == 0
     assert stat.S_IMODE(output.stat().st_mode) == 0o700
     assert observed_stage_modes == [0o700, 0o700]
-    assert not (output / ".staging").exists()
+    assert not tuple(tmp_path.glob(f"{projection_cli._STAGING_DIRECTORY_PREFIX}*"))
 
 
 def test_cli_second_write_failure_leaves_no_partial_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -484,7 +515,7 @@ def test_cli_second_write_failure_leaves_no_partial_output(tmp_path: Path, monke
 
     assert code == 2
     assert not output.exists()
-    assert not tuple(tmp_path.glob(".output.staging-*"))
+    assert not tuple(tmp_path.glob(f"{projection_cli._STAGING_DIRECTORY_PREFIX}*"))
 
 
 def test_cli_publish_failure_leaves_no_partial_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -492,7 +523,7 @@ def test_cli_publish_failure_leaves_no_partial_output(tmp_path: Path, monkeypatc
     fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
     output = tmp_path / "output"
 
-    def fail_publish(staging_fd: int, output_fd: int) -> None:
+    def fail_publish(parent_fd: int, staging_name: str, output_name: str) -> None:
         raise OSError("forced publish failure")
 
     monkeypatch.setattr(projection_cli, "_publish_staged_output", fail_publish, raising=False)
@@ -501,7 +532,7 @@ def test_cli_publish_failure_leaves_no_partial_output(tmp_path: Path, monkeypatc
 
     assert code == 2
     assert not output.exists()
-    assert not tuple(tmp_path.glob(".output.staging-*"))
+    assert not tuple(tmp_path.glob(f"{projection_cli._STAGING_DIRECTORY_PREFIX}*"))
 
 
 def test_cli_cleanup_failure_still_returns_sanitized_output_error(
@@ -522,11 +553,11 @@ def test_cli_cleanup_failure_still_returns_sanitized_output_error(
             raise OSError("forced second write failure")
         original_write(directory_fd, name, content)
 
-    def fail_cleanup(parent_fd: int, output_name: str, claimed_identity: tuple[int, int]) -> None:
+    def fail_cleanup(parent_fd: int, staging_name: str) -> None:
         raise OSError("forced cleanup failure")
 
     monkeypatch.setattr(projection_cli, "_write_private_file", fail_second_write)
-    monkeypatch.setattr(projection_cli, "_remove_claimed_output_directory", fail_cleanup)
+    monkeypatch.setattr(projection_cli, "_remove_stage_directory", fail_cleanup)
 
     code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
     captured = capsys.readouterr()
@@ -536,28 +567,67 @@ def test_cli_cleanup_failure_still_returns_sanitized_output_error(
     assert CLI_PAYLOAD.decode() not in captured.err
 
 
-def test_cleanup_guard_preserves_replaced_output_target(tmp_path: Path) -> None:
-    output = tmp_path / "output"
-    output.mkdir()
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    parent_fd = os.open(tmp_path, flags)
-    original_fd = os.open(output.name, flags, dir_fd=parent_fd)
-    original = os.fstat(original_fd)
-    os.close(original_fd)
-    os.rmdir(output)
-    output.mkdir()
+def test_cli_renames_completed_staging_directory_atomically(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = tmp_path / "synthetic-fixture.json"
+    fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    parent.chmod(0o700)
+    output = parent / "output"
+    original_publish = projection_cli._publish_staged_output
 
-    try:
-        with pytest.raises(OSError):
-            projection_cli._remove_claimed_output_directory(
-                parent_fd,
-                output.name,
-                (original.st_dev, original.st_ino),
-            )
-    finally:
-        os.close(parent_fd)
+    def assert_completed_stage(
+        parent_fd: int,
+        source: str,
+        destination: str,
+    ) -> None:
+        assert source.startswith(projection_cli._STAGING_DIRECTORY_PREFIX)
+        assert destination == output.name
+        stage_fd = os.open(source, projection_cli._directory_open_flags(), dir_fd=parent_fd)
+        try:
+            assert set(os.listdir(stage_fd)) == {
+                "raw_object_partition_manifest.json",
+                "raw_receipt_projection_summary.md",
+            }
+        finally:
+            os.close(stage_fd)
+        assert not output.exists()
+        original_publish(parent_fd, source, destination)
 
-    assert output.is_dir()
+    monkeypatch.setattr(projection_cli, "_publish_staged_output", assert_completed_stage)
+    code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
+
+    assert code == 0
+    assert {path.name for path in output.iterdir()} == {
+        "raw_object_partition_manifest.json",
+        "raw_receipt_projection_summary.md",
+    }
+
+
+def test_cli_fsyncs_staging_and_parent_directories(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fixture = tmp_path / "synthetic-fixture.json"
+    fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    parent.chmod(0o700)
+    output = parent / "output"
+    original_fsync = projection_cli.os.fsync
+    fsynced_identities: list[tuple[int, int]] = []
+
+    def record_fsync(descriptor: int) -> None:
+        metadata = os.fstat(descriptor)
+        fsynced_identities.append((metadata.st_dev, metadata.st_ino))
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(projection_cli.os, "fsync", record_fsync)
+    code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
+
+    assert code == 0
+    assert (parent.stat().st_dev, parent.stat().st_ino) in fsynced_identities
+    assert (output.stat().st_dev, output.stat().st_ino) in fsynced_identities
 
 
 def _fixture(*, source_id: str = "fixture.us.trade_updates") -> dict[str, object]:
