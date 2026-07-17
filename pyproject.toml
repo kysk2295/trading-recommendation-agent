@@ -36,6 +36,7 @@ pythonVersion = "3.12"
 typeCheckingMode = "standard"
 include = [
   "trading_agent",
+  "development_harness",
   "scr_backtest",
   "run_kis_paper_scan.py",
   "run_kis_paper_watch.py",
@@ -69,6 +70,7 @@ include = [
   "run_lane_control_plane_bootstrap.py",
   "run_data_foundation_check.py",
   "run_raw_receipt_projection.py",
+  "run_grok_task.py",
   "run_ls_nws_collect.py",
   "trading_agent/alpaca_archive.py",
   "trading_agent/alpaca_daily_cache.py",

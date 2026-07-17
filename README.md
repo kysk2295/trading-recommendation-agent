@@ -180,6 +180,8 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 ## 문서
 
 - [기관형 다중 시장 Quant Research OS 최상위 설계](docs/superpowers/specs/2026-07-17-institutional-multi-market-quant-research-os-design.md)
+- [Grok 개발 하네스 설계](docs/superpowers/specs/2026-07-18-grok-development-harness-design.md)
+- [Grok 개발 하네스 체크포인트](docs/checkpoints/2026-07-18-grok-development-harness-ko.md)
 - [구현된 다중 시장 Agent·Signal 계약 설계](docs/superpowers/specs/2026-07-15-multi-market-agent-research-os-design.md)
 - [한국 테마주 Shadow 연구 Lane 설계](docs/superpowers/specs/2026-07-15-kr-theme-lane-design.md)
 - [KR Theme keyword·Opportunity projection 설계](docs/superpowers/specs/2026-07-15-kr-theme-keyword-opportunity-design.md)
@@ -804,6 +806,12 @@ spread 80/100/120bp, 편도 slippage 10/20/30bp, 최대 왕복비용 100/140/180
 ```bash
 uv run pytest -q
 ```
+
+## 개발 하네스
+
+`run_grok_task.py`는 개발 작업을 격리 Git worktree에서 수행하기 위한 developer-only 도구다. task contract가 base commit, 허용 파일, 검증 명령과 worker summary 형식을 고정하고, dry-run은 Grok 호출이나 worktree 생성 없이 preflight만 검사한다. worker 결과는 자동 병합되지 않으며 Codex가 diff, 허용 경로, 테스트, Ruff, basedpyright와 수동 CLI QA를 독립 검토한 뒤에만 `main`에 반영한다.
+
+이 도구는 `trading_agent` provider·credential·broker·execution 모듈을 import하지 않으며, 시장 데이터 수집, backtest, 외부 network 호출, Paper 주문이나 실제 자금 거래 권한이 없다. 최초 구현은 Grok CLI 결제 한도로 실행되지 않아 격리 fallback에서 검증했으며, 이후 Grok worker 호출도 같은 task contract와 Codex review 경계를 따라야 한다.
 
 ## 폴더 구조
 
