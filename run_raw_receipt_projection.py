@@ -10,7 +10,9 @@ import argparse
 import base64
 import binascii
 import re
+import shutil
 import sys
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -32,6 +34,7 @@ REPORT_NAME = "raw_receipt_projection_summary.md"
 _INPUT_ERROR = "raw receipt projection input is invalid"
 _OUTPUT_ERROR = "raw receipt projection output could not be written"
 _FIXTURE_SOURCE_ID = re.compile(r"^fixture\.[a-z0-9][a-z0-9_.-]{0,55}$")
+_PRIVATE_OUTPUT_DIRECTORY_MODE = 0o700
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -65,15 +68,43 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     try:
-        write_private_report(
-            args.output_dir / MANIFEST_NAME,
+        _write_projection_output(
+            args.output_dir,
             manifest.model_dump_json(indent=2) + "\n",
+            _report(manifest.receipt_count, manifest.total_byte_size),
         )
-        write_private_report(args.output_dir / REPORT_NAME, _report(manifest.receipt_count, manifest.total_byte_size))
     except OSError:
         print(_OUTPUT_ERROR, file=sys.stderr)
         return 2
     return 0
+
+
+def _write_projection_output(output_dir: Path, manifest_content: str, report_content: str) -> None:
+    if output_dir.exists() or output_dir.is_symlink():
+        raise OSError
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(
+        tempfile.mkdtemp(
+            prefix=f".{output_dir.name}.staging-",
+            dir=output_dir.parent,
+        )
+    )
+    published = False
+    try:
+        staging.chmod(_PRIVATE_OUTPUT_DIRECTORY_MODE)
+        write_private_report(staging / MANIFEST_NAME, manifest_content)
+        write_private_report(staging / REPORT_NAME, report_content)
+        if output_dir.exists() or output_dir.is_symlink():
+            raise OSError
+        _publish_staged_output(staging, output_dir)
+        published = True
+    finally:
+        if not published:
+            shutil.rmtree(staging, ignore_errors=True)
+
+
+def _publish_staged_output(staging: Path, destination: Path) -> None:
+    staging.rename(destination)
 
 
 def load_raw_receipt_projection_fixture(

@@ -52,11 +52,15 @@ def project_raw_receipt_partition(
             or any(
                 type(receipt.schema_version) is not int
                 or receipt.schema_version != 1
-                or not isinstance(receipt.payload, RawReceiptPayload)
-                or hashlib.sha256(receipt.payload.value).hexdigest()
-                != receipt.payload_sha256
+                or type(receipt.payload) is not RawReceiptPayload
                 for receipt in canonical_receipts
             )
+        ):
+            raise InvalidRawReceiptProjectionError
+        payload_snapshots = tuple(receipt.payload.value for receipt in canonical_receipts)
+        if any(
+            type(payload) is not bytes or hashlib.sha256(payload).hexdigest() != receipt.payload_sha256
+            for receipt, payload in zip(canonical_receipts, payload_snapshots, strict=True)
         ):
             raise InvalidRawReceiptProjectionError
         references = tuple(
@@ -64,9 +68,9 @@ def project_raw_receipt_partition(
                 receipt_id=receipt.receipt_id,
                 received_at=receipt.received_at,
                 payload_sha256=receipt.payload_sha256,
-                byte_size=len(receipt.payload.value),
+                byte_size=len(payload),
             )
-            for receipt in canonical_receipts
+            for receipt, payload in zip(canonical_receipts, payload_snapshots, strict=True)
         )
         received_at_start = min(item.received_at for item in references)
         received_at_end = max(item.received_at for item in references)

@@ -183,6 +183,26 @@ def test_projection_rejects_raw_receipt_subclass() -> None:
         )
 
 
+def test_projection_rejects_hostile_payload_subclass() -> None:
+    payload = b"one"
+    receipt = RawReceipt(
+        receipt_id="a" * 64,
+        source_id="synthetic.market",
+        market_date=MARKET_DATE,
+        received_at=RECEIVED_AT,
+        payload_sha256=hashlib.sha256(payload).hexdigest(),
+        payload=_HostilePayload(payload),
+    )
+
+    with pytest.raises(InvalidRawReceiptProjectionError, match="raw receipt partition"):
+        _ = project_raw_receipt_partition(
+            (receipt,),
+            source_id="synthetic.market",
+            market_date=MARKET_DATE,
+            parent_ledger_generation=7,
+        )
+
+
 def test_fixture_loader_consumes_excluded_base64_payload(tmp_path: Path) -> None:
     fixture_path = tmp_path / "synthetic-fixture.json"
     fixture_path.write_text(json.dumps(_fixture()), encoding="utf-8")
@@ -355,6 +375,7 @@ def test_projection_cli_writes_only_private_aggregate_report_and_manifest(tmp_pa
         "raw_object_partition_manifest.json",
         "raw_receipt_projection_summary.md",
     )
+    assert stat.S_IMODE(output.stat().st_mode) == 0o700
     assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in paths)
     manifest = json.loads((output / "raw_object_partition_manifest.json").read_text(encoding="utf-8"))
     report = (output / "raw_receipt_projection_summary.md").read_text(encoding="utf-8")
@@ -366,6 +387,63 @@ def test_projection_cli_writes_only_private_aggregate_report_and_manifest(tmp_pa
     assert hashlib.sha256(CLI_PAYLOAD).hexdigest() not in report
     assert "credential" not in completed.stdout.lower()
     assert "endpoint" not in completed.stdout.lower()
+
+
+def test_cli_refuses_existing_output_dir_without_overwrite(tmp_path: Path) -> None:
+    fixture = tmp_path / "synthetic-fixture.json"
+    fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
+    output = tmp_path / "output"
+    output.mkdir()
+    sentinel = output / "sentinel"
+    sentinel.write_text("keep", encoding="utf-8")
+
+    completed = _run_cli("--input", str(fixture), "--output-dir", str(output))
+
+    assert completed.returncode == 2
+    assert "raw receipt projection output could not be written" in completed.stderr
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+    assert not (output / "raw_object_partition_manifest.json").exists()
+    assert not (output / "raw_receipt_projection_summary.md").exists()
+
+
+def test_cli_second_write_failure_leaves_no_partial_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fixture = tmp_path / "synthetic-fixture.json"
+    fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
+    output = tmp_path / "output"
+    original_write = projection_cli.write_private_report
+    write_count = 0
+
+    def fail_second_write(destination: Path, content: str) -> None:
+        nonlocal write_count
+        write_count += 1
+        if write_count == 2:
+            raise OSError("forced second write failure")
+        original_write(destination, content)
+
+    monkeypatch.setattr(projection_cli, "write_private_report", fail_second_write)
+
+    code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
+
+    assert code == 2
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".output.staging-*"))
+
+
+def test_cli_publish_failure_leaves_no_partial_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fixture = tmp_path / "synthetic-fixture.json"
+    fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
+    output = tmp_path / "output"
+
+    def fail_publish(staging: Path, destination: Path) -> None:
+        raise OSError("forced publish failure")
+
+    monkeypatch.setattr(projection_cli, "_publish_staged_output", fail_publish, raising=False)
+
+    code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
+
+    assert code == 2
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".output.staging-*"))
 
 
 def _fixture(*, source_id: str = "fixture.us.trade_updates") -> dict[str, object]:
@@ -396,6 +474,10 @@ class _LookalikeReceipt:
 
 
 class _RawReceiptSubclass(RawReceipt):
+    pass
+
+
+class _HostilePayload(RawReceiptPayload):
     pass
 
 
