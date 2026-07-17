@@ -444,16 +444,14 @@ def test_cli_claims_private_output_and_stage_despite_umask_zero(
     fixture = tmp_path / "synthetic-fixture.json"
     fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
     output = tmp_path / "output"
-    original_write = projection_cli.write_private_report
+    original_write = projection_cli._write_private_file
     observed_stage_modes: list[int] = []
-    observed_stage_paths: list[Path] = []
 
-    def record_stage_mode(destination: Path, content: str) -> None:
-        observed_stage_modes.append(stat.S_IMODE(destination.parent.stat().st_mode))
-        observed_stage_paths.append(destination.parent)
-        original_write(destination, content)
+    def record_stage_mode(directory_fd: int, name: str, content: str) -> None:
+        observed_stage_modes.append(stat.S_IMODE(os.fstat(directory_fd).st_mode))
+        original_write(directory_fd, name, content)
 
-    monkeypatch.setattr(projection_cli, "write_private_report", record_stage_mode)
+    monkeypatch.setattr(projection_cli, "_write_private_file", record_stage_mode)
     previous_umask = os.umask(0)
     try:
         code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
@@ -463,7 +461,6 @@ def test_cli_claims_private_output_and_stage_despite_umask_zero(
     assert code == 0
     assert stat.S_IMODE(output.stat().st_mode) == 0o700
     assert observed_stage_modes == [0o700, 0o700]
-    assert observed_stage_paths == [output / ".staging", output / ".staging"]
     assert not (output / ".staging").exists()
 
 
@@ -471,17 +468,17 @@ def test_cli_second_write_failure_leaves_no_partial_output(tmp_path: Path, monke
     fixture = tmp_path / "synthetic-fixture.json"
     fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
     output = tmp_path / "output"
-    original_write = projection_cli.write_private_report
+    original_write = projection_cli._write_private_file
     write_count = 0
 
-    def fail_second_write(destination: Path, content: str) -> None:
+    def fail_second_write(directory_fd: int, name: str, content: str) -> None:
         nonlocal write_count
         write_count += 1
         if write_count == 2:
             raise OSError("forced second write failure")
-        original_write(destination, content)
+        original_write(directory_fd, name, content)
 
-    monkeypatch.setattr(projection_cli, "write_private_report", fail_second_write)
+    monkeypatch.setattr(projection_cli, "_write_private_file", fail_second_write)
 
     code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
 
@@ -495,7 +492,7 @@ def test_cli_publish_failure_leaves_no_partial_output(tmp_path: Path, monkeypatc
     fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
     output = tmp_path / "output"
 
-    def fail_publish(staging: Path, destination: Path) -> None:
+    def fail_publish(staging_fd: int, output_fd: int) -> None:
         raise OSError("forced publish failure")
 
     monkeypatch.setattr(projection_cli, "_publish_staged_output", fail_publish, raising=False)
@@ -515,21 +512,21 @@ def test_cli_cleanup_failure_still_returns_sanitized_output_error(
     fixture = tmp_path / "synthetic-fixture.json"
     fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
     output = tmp_path / "output"
-    original_write = projection_cli.write_private_report
+    original_write = projection_cli._write_private_file
     write_count = 0
 
-    def fail_second_write(destination: Path, content: str) -> None:
+    def fail_second_write(directory_fd: int, name: str, content: str) -> None:
         nonlocal write_count
         write_count += 1
         if write_count == 2:
             raise OSError("forced second write failure")
-        original_write(destination, content)
+        original_write(directory_fd, name, content)
 
-    def fail_cleanup(destination: Path) -> None:
+    def fail_cleanup(parent_fd: int, output_name: str, claimed_identity: tuple[int, int]) -> None:
         raise OSError("forced cleanup failure")
 
-    monkeypatch.setattr(projection_cli, "write_private_report", fail_second_write)
-    monkeypatch.setattr(projection_cli, "_remove_claimed_output_directory", fail_cleanup, raising=False)
+    monkeypatch.setattr(projection_cli, "_write_private_file", fail_second_write)
+    monkeypatch.setattr(projection_cli, "_remove_claimed_output_directory", fail_cleanup)
 
     code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
     captured = capsys.readouterr()
@@ -537,6 +534,30 @@ def test_cli_cleanup_failure_still_returns_sanitized_output_error(
     assert code == 2
     assert "raw receipt projection output could not be written" in captured.err
     assert CLI_PAYLOAD.decode() not in captured.err
+
+
+def test_cleanup_guard_preserves_replaced_output_target(tmp_path: Path) -> None:
+    output = tmp_path / "output"
+    output.mkdir()
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    parent_fd = os.open(tmp_path, flags)
+    original_fd = os.open(output.name, flags, dir_fd=parent_fd)
+    original = os.fstat(original_fd)
+    os.close(original_fd)
+    os.rmdir(output)
+    output.mkdir()
+
+    try:
+        with pytest.raises(OSError):
+            projection_cli._remove_claimed_output_directory(
+                parent_fd,
+                output.name,
+                (original.st_dev, original.st_ino),
+            )
+    finally:
+        os.close(parent_fd)
+
+    assert output.is_dir()
 
 
 def _fixture(*, source_id: str = "fixture.us.trade_updates") -> dict[str, object]:
