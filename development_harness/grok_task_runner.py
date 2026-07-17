@@ -169,6 +169,8 @@ def build_grok_command(
         "Bash(tail *)",
         "--allow",
         "Bash(wc *)",
+        "--allow",
+        "Bash(cat CODEX_START_HERE.md*)",
         "--deny",
         "Read(.hermes/**)",
         "--deny",
