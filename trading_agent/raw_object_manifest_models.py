@@ -197,11 +197,12 @@ class RawReceiptProjectionFixtureReceipt(BaseModel):
     def normalize_received_at(cls, value: Any) -> dt.datetime:
         if type(value) is not str:
             raise ValueError("invalid raw receipt projection fixture")
+        serialized = value
         try:
             value = dt.datetime.fromisoformat(value)
         except ValueError:
             raise ValueError("invalid raw receipt projection fixture") from None
-        if not _aware(value):
+        if not _aware(value) or _canonical_json_timestamp(value) != serialized:
             raise ValueError("invalid raw receipt projection fixture")
         return value.astimezone(dt.UTC)
 

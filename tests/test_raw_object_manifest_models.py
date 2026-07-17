@@ -124,6 +124,26 @@ def test_fixture_receipt_excludes_reversible_base64_from_public_exports() -> Non
 
 
 @pytest.mark.parametrize(
+    "timestamp",
+    (
+        "2026-07-17T09:30:00+00:00",
+        "2026-07-17T18:30:00+09:00",
+        "2026-07-17T09:30:00.000Z",
+    ),
+)
+def test_fixture_receipt_rejects_normalized_timestamp_variants(timestamp: str) -> None:
+    with pytest.raises(ValidationError, match="invalid raw receipt projection fixture"):
+        _ = RawReceiptProjectionFixtureReceipt.model_validate(
+            {
+                "receipt_id": "a" * 64,
+                "received_at": timestamp,
+                "payload_sha256": PAYLOAD_SHA256,
+                "payload_base64": "ZGlzdGluY3RpdmUtcmV2ZXJzaWJsZS1maXh0dXJlLXBheWxvYWQ=",
+            }
+        )
+
+
+@pytest.mark.parametrize(
     ("field", "value"),
     (
         ("receipt_id", b"a" * 64),

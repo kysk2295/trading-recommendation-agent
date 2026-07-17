@@ -147,6 +147,18 @@ def test_projection_rejects_mutable_lookalike_receipt() -> None:
         )
 
 
+def test_projection_rejects_schema_version_tampered_raw_receipt() -> None:
+    tampered = _receipt("a" * 64, b"one", RECEIVED_AT).model_copy(update={"schema_version": 2})
+
+    with pytest.raises(InvalidRawReceiptProjectionError, match="raw receipt partition"):
+        _ = project_raw_receipt_partition(
+            (tampered,),
+            source_id="synthetic.market",
+            market_date=MARKET_DATE,
+            parent_ledger_generation=7,
+        )
+
+
 def test_fixture_loader_consumes_excluded_base64_payload(tmp_path: Path) -> None:
     fixture_path = tmp_path / "synthetic-fixture.json"
     fixture_path.write_text(json.dumps(_fixture()), encoding="utf-8")

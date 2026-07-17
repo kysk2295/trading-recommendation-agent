@@ -50,7 +50,9 @@ def project_raw_receipt_partition(
                 receipt.source_id != source_id or receipt.market_date != market_date for receipt in canonical_receipts
             )
             or any(
-                not isinstance(receipt.payload, RawReceiptPayload)
+                type(receipt.schema_version) is not int
+                or receipt.schema_version != 1
+                or not isinstance(receipt.payload, RawReceiptPayload)
                 or hashlib.sha256(receipt.payload.value).hexdigest()
                 != receipt.payload_sha256
                 for receipt in canonical_receipts
