@@ -154,6 +154,8 @@ def build_grok_command(
         "--allow",
         "Bash(git rev-parse *)",
         "--allow",
+        "Bash(*)",
+        "--allow",
         "Bash(ls *)",
         "--allow",
         "Bash(find *)",
