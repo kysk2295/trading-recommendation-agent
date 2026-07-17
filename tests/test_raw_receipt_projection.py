@@ -31,6 +31,10 @@ SCRIPT = PROJECT / "run_raw_receipt_projection.py"
 CLI_PAYLOAD = b"synthetic-cli-private-payload"
 
 
+def test_projection_cli_shebang_forces_uv_offline_mode() -> None:
+    assert SCRIPT.read_text(encoding="utf-8").splitlines()[0] == "#!/usr/bin/env -S uv run --offline --script"
+
+
 def _receipt(
     receipt_id: str,
     payload: bytes,
