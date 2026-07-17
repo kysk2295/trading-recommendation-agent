@@ -693,7 +693,7 @@ def test_cli_fsyncs_staging_and_parent_directories(tmp_path: Path, monkeypatch: 
     assert (output.stat().st_dev, output.stat().st_ino) in fsynced_identities
 
 
-def test_cli_refuses_identity_mismatched_rollback_after_parent_sync_failure(
+def test_cli_preserves_completed_output_after_parent_sync_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -704,25 +704,75 @@ def test_cli_refuses_identity_mismatched_rollback_after_parent_sync_failure(
     parent.chmod(0o700)
     output = parent / "output"
     parent_identity = (parent.stat().st_dev, parent.stat().st_ino)
-    replacement = output / projection_cli.MANIFEST_NAME
     original_fsync = projection_cli.os.fsync
 
-    def replace_output_then_fail_parent_sync(descriptor: int) -> None:
+    def fail_parent_sync(descriptor: int) -> None:
         metadata = os.fstat(descriptor)
         if (metadata.st_dev, metadata.st_ino) == parent_identity:
-            for entry in output.iterdir():
-                entry.unlink()
-            output.rmdir()
-            output.mkdir(mode=0o700)
-            replacement.write_text("preserve", encoding="utf-8")
             raise OSError("forced parent sync failure")
         original_fsync(descriptor)
 
-    monkeypatch.setattr(projection_cli.os, "fsync", replace_output_then_fail_parent_sync)
+    monkeypatch.setattr(projection_cli.os, "fsync", fail_parent_sync)
     code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
 
     assert code == 2
-    assert replacement.read_text(encoding="utf-8") == "preserve"
+    paths = tuple(sorted(output.iterdir()))
+    assert tuple(path.name for path in paths) == (
+        "raw_object_partition_manifest.json",
+        "raw_receipt_projection_summary.md",
+    )
+    assert stat.S_IMODE(output.stat().st_mode) == 0o700
+    assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in paths)
+
+
+def test_cli_does_not_remove_published_output_after_parent_sync_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = tmp_path / "synthetic-fixture.json"
+    fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    parent.chmod(0o700)
+    output = parent / "output"
+    parent_identity = (parent.stat().st_dev, parent.stat().st_ino)
+    original_fsync = projection_cli.os.fsync
+    original_unlink = projection_cli.os.unlink
+    original_rmdir = projection_cli.os.rmdir
+    original_verify = projection_cli._verify_published_output
+    final_removal_attempts: list[tuple[str, str]] = []
+
+    def fail_parent_sync(descriptor: int) -> None:
+        metadata = os.fstat(descriptor)
+        if (metadata.st_dev, metadata.st_ino) == parent_identity:
+            raise OSError("forced parent sync failure")
+        original_fsync(descriptor)
+
+    def record_unlink(name: str, *, dir_fd: int | None = None) -> None:
+        final_removal_attempts.append(("unlink", name))
+        original_unlink(name, dir_fd=dir_fd)
+
+    def record_rmdir(name: str, *, dir_fd: int | None = None) -> None:
+        final_removal_attempts.append(("rmdir", name))
+        original_rmdir(name, dir_fd=dir_fd)
+
+    def instrument_final_cleanup(
+        parent_fd: int,
+        output_name: str,
+        stage_identity: tuple[int, int],
+    ) -> tuple[int, int]:
+        published_identity = original_verify(parent_fd, output_name, stage_identity)
+        monkeypatch.setattr(projection_cli.os, "unlink", record_unlink)
+        monkeypatch.setattr(projection_cli.os, "rmdir", record_rmdir)
+        return published_identity
+
+    monkeypatch.setattr(projection_cli.os, "fsync", fail_parent_sync)
+    monkeypatch.setattr(projection_cli, "_verify_published_output", instrument_final_cleanup)
+    code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
+
+    assert code == 2
+    assert final_removal_attempts == []
+    assert output.is_dir()
 
 
 def _fixture(*, source_id: str = "fixture.us.trade_updates") -> dict[str, object]:

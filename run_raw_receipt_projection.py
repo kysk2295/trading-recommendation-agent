@@ -90,7 +90,6 @@ def _write_projection_output(output_dir: Path, manifest_content: str, report_con
     parent_fd, parent_path, output_name = _open_existing_output_parent(output_dir)
     stage_name: str | None = None
     published = False
-    published_identity: tuple[int, int] | None = None
     try:
         stage_name, stage_fd = _create_staging_directory(parent_fd)
         try:
@@ -102,15 +101,12 @@ def _write_projection_output(output_dir: Path, manifest_content: str, report_con
             os.close(stage_fd)
         _publish_staged_output(parent_path, stage_name, output_name)
         published = True
-        published_identity = _verify_published_output(parent_fd, output_name, stage_identity)
+        _verify_published_output(parent_fd, output_name, stage_identity)
         os.fsync(parent_fd)
     except Exception:
-        if stage_name is not None:
-            if published_identity is not None:
-                _remove_published_output_directory(parent_fd, output_name, published_identity)
-                os.fsync(parent_fd)
-            elif not published:
-                _remove_stage_directory(parent_fd, stage_name)
+        # A successful exclusive rename leaves a completed final directory intact.
+        if stage_name is not None and not published:
+            _remove_stage_directory(parent_fd, stage_name)
         raise
     finally:
         os.close(parent_fd)
@@ -195,31 +191,13 @@ def _verify_published_output(
     return output_identity
 
 
-def _remove_published_output_directory(
-    parent_fd: int,
-    output_name: str,
-    published_identity: tuple[int, int],
-) -> None:
-    _remove_private_output_directory(parent_fd, output_name, published_identity)
-
-
-def _remove_private_output_directory(
-    parent_fd: int,
-    directory_name: str,
-    expected_identity: tuple[int, int] | None = None,
-) -> None:
-    if expected_identity is not None:
-        _assert_directory_identity(parent_fd, directory_name, expected_identity)
+def _remove_private_output_directory(parent_fd: int, directory_name: str) -> None:
     directory_fd = _open_directory_at(parent_fd, directory_name)
     try:
-        if expected_identity is not None and _directory_identity(os.fstat(directory_fd)) != expected_identity:
-            raise OSError
         _unlink_if_present(directory_fd, MANIFEST_NAME)
         _unlink_if_present(directory_fd, REPORT_NAME)
     finally:
         os.close(directory_fd)
-    if expected_identity is not None:
-        _assert_directory_identity(parent_fd, directory_name, expected_identity)
     os.rmdir(directory_name, dir_fd=parent_fd)
 
 
