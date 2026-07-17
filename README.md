@@ -88,6 +88,8 @@ flowchart LR
 
 **2026-07-17 Raw Lake M3.2a 업데이트:** KR theme ledger의 completed source run을 generic raw manifest로 read-only 투영하는 adapter를 추가했다. adapter는 하나의 query-only SQLite snapshot에서 해당 run과 그 receipt BLOB만 읽고 실제 receipt `rowid` high-water를 parent generation으로 보존한다. OpenDART·LS NWS·KIS ranking은 raw receipt가 정확히 연결된 성공 run만 허용하며, raw input이 없는 `volume_surge` 파생 run만 검증된 empty 결과를 낼 수 있다. orphan·실패·날짜 누락·late same-run receipt·요청과 다른 snapshot은 모두 fail-closed이고, raw bytes·request key·source-run ID는 public manifest와 오류에 노출하지 않는다. US Paper trade-update adapter가 다음 M3.2 경계다.
 
+**2026-07-17 Raw Lake M3.2b 업데이트:** Alpaca Paper `trade_update_raw_receipts`도 generic manifest에 read-only로 연결했다. 한 query-only SQLite transaction에서 모든 receipt의 timestamp metadata만 New York calendar date로 분류하고, 선택된 row의 BLOB만 500-row chunk로 검증·투영한다. snapshot은 bare receipt digest, aware received time, payload digest와 repr-hidden bytes만 보존하며 account fingerprint, connection epoch, wire kind, prefixed receipt key를 downstream에 전달하지 않는다. empty day는 manifest를 만들지 않고, malformed timestamp·hash·key·SQLite non-BLOB payload는 sanitized error로 fail-closed 한다. 이 경로는 기존 Paper order, position, reconciliation, account binding 또는 broker mutation을 읽거나 바꾸지 않는다. 다음 M3.3 경계는 typed Parquet canonical writer다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \

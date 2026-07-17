@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import datetime as dt
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import NewType, override
 
@@ -53,6 +54,20 @@ class StoredTradeUpdateReceipt:
     account_fingerprint: AccountFingerprint
     connection_epoch: str
     received_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class TradeUpdateRawReceiptProjectionRecord:
+    receipt_id: str
+    received_at: dt.datetime
+    payload_sha256: str
+    raw_payload: bytes = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class TradeUpdateReceiptProjectionSnapshot:
+    receipts: tuple[TradeUpdateRawReceiptProjectionRecord, ...]
+    parent_ledger_generation: int
 
 
 @dataclass(frozen=True, slots=True)

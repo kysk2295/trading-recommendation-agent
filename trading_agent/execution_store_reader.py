@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import sqlite3
 from pathlib import Path
 
@@ -52,12 +53,17 @@ from trading_agent.paper_stream_recovery import (
     read_paper_recovery_protective_ocos,
     read_paper_stream_recoveries,
 )
+from trading_agent.trade_update_receipt_models import (
+    InvalidTradeUpdateRawReceiptError,
+    TradeUpdateReceiptProjectionSnapshot,
+)
 from trading_agent.trade_update_receipts import (
     StoredTradeUpdateReceipt,
     StoredTradeUpdateReceiptDisposition,
     TradeUpdateReceiptKey,
     pending_trade_update_receipt_keys,
     read_trade_update_receipt_dispositions,
+    read_trade_update_receipt_projection_snapshot,
     read_trade_update_receipts,
 )
 from trading_agent.trade_update_schema import StoredTradeUpdate
@@ -129,6 +135,22 @@ class ExecutionStoreReader:
             return ()
         with self._reader_connection() as connection:
             return read_trade_update_receipts(connection)
+
+    def trade_update_receipt_projection_snapshot(
+        self,
+        *,
+        market_date: dt.date,
+    ) -> TradeUpdateReceiptProjectionSnapshot:
+        if type(market_date) is not dt.date:
+            raise InvalidTradeUpdateRawReceiptError
+        if not self.path.is_file():
+            return TradeUpdateReceiptProjectionSnapshot((), 0)
+        with self._reader_connection() as connection:
+            _ = connection.execute("BEGIN")
+            return read_trade_update_receipt_projection_snapshot(
+                connection,
+                market_date=market_date,
+            )
 
     def trade_update_receipt_dispositions(
         self,

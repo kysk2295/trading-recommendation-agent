@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import re
 import sqlite3
+from zoneinfo import ZoneInfo
 
 from trading_agent.alpaca_paper_order_stream import (
     PaperTradeUpdateFrame,
@@ -16,15 +18,22 @@ from trading_agent.trade_update_receipt_models import (
     InvalidTradeUpdateRawReceiptError,
     StoredTradeUpdateReceipt,
     StoredTradeUpdateReceiptDisposition,
+    TradeUpdateRawReceiptProjectionRecord,
     TradeUpdateReceiptConflictError,
     TradeUpdateReceiptDisposition,
     TradeUpdateReceiptKey,
+    TradeUpdateReceiptProjectionSnapshot,
     TradeUpdateReceiptReason,
     UnknownTradeUpdateReceiptError,
 )
 
 type RawReceiptRow = tuple[str, str, str, bytes, str, str, str]
 type DispositionRow = tuple[str, str, str | None, str | None, str, int]
+type RawReceiptMetadataRow = tuple[int, str]
+
+_NEW_YORK = ZoneInfo("America/New_York")
+_PROJECTION_RECEIPT_KEY = re.compile(r"alpaca:raw:([0-9a-f]{64})")
+_TRADE_UPDATE_RECEIPT_PROJECTION_ROWID_CHUNK_SIZE = 500
 
 
 def save_trade_update_receipt(
@@ -89,11 +98,7 @@ def classify_trade_update_receipt(
         raise UnknownTradeUpdateReceiptError
     existing = _disposition(connection, receipt_key)
     if existing is not None:
-        if (
-            existing.disposition is not disposition
-            or existing.event_key != event_key
-            or existing.reason is not reason
-        ):
+        if existing.disposition is not disposition or existing.event_key != event_key or existing.reason is not reason:
             raise TradeUpdateReceiptConflictError
         return False
     high_water_row: tuple[int] | None = connection.execute(
@@ -121,10 +126,41 @@ def classify_trade_update_receipt(
 def read_trade_update_receipts(
     connection: sqlite3.Connection,
 ) -> tuple[StoredTradeUpdateReceipt, ...]:
-    rows: list[RawReceiptRow] = connection.execute(
-        "SELECT * FROM trade_update_raw_receipts ORDER BY rowid"
-    ).fetchall()
+    rows: list[RawReceiptRow] = connection.execute("SELECT * FROM trade_update_raw_receipts ORDER BY rowid").fetchall()
     return tuple(_stored_raw_receipt(row) for row in rows)
+
+
+def read_trade_update_receipt_projection_snapshot(
+    connection: sqlite3.Connection,
+    *,
+    market_date: dt.date,
+) -> TradeUpdateReceiptProjectionSnapshot:
+    if type(market_date) is not dt.date:
+        raise InvalidTradeUpdateRawReceiptError
+    metadata_rows: list[RawReceiptMetadataRow] = connection.execute(
+        "SELECT rowid, received_at FROM trade_update_raw_receipts ORDER BY rowid"
+    ).fetchall()
+    selected_rowids: list[int] = []
+    for rowid, received_at in metadata_rows:
+        timestamp = _parse_received_at(received_at)
+        if timestamp.astimezone(_NEW_YORK).date() == market_date:
+            selected_rowids.append(rowid)
+    if not selected_rowids:
+        return TradeUpdateReceiptProjectionSnapshot((), 0)
+    receipts: list[TradeUpdateRawReceiptProjectionRecord] = []
+    for start in range(0, len(selected_rowids), _TRADE_UPDATE_RECEIPT_PROJECTION_ROWID_CHUNK_SIZE):
+        rowids = selected_rowids[start : start + _TRADE_UPDATE_RECEIPT_PROJECTION_ROWID_CHUNK_SIZE]
+        placeholders = ", ".join("?" for _ in rowids)
+        rows: list[RawReceiptRow] = connection.execute(
+            "SELECT receipt_key, raw_payload_sha256, wire_kind, raw_payload, "
+            "account_fingerprint, connection_epoch, received_at "
+            f"FROM trade_update_raw_receipts WHERE rowid IN ({placeholders}) ORDER BY rowid",
+            rowids,
+        ).fetchall()
+        receipts.extend(_projection_record(_stored_raw_receipt(row)) for row in rows)
+    if len(receipts) != len(selected_rowids):
+        raise InvalidTradeUpdateRawReceiptError
+    return TradeUpdateReceiptProjectionSnapshot(tuple(receipts), max(selected_rowids))
 
 
 def read_trade_update_receipt_dispositions(
@@ -171,19 +207,17 @@ def _disposition(
 
 
 def _stored_raw_receipt(row: RawReceiptRow) -> StoredTradeUpdateReceipt:
+    if type(row[3]) is not bytes:
+        raise InvalidTradeUpdateRawReceiptError
     receipt_key = TradeUpdateReceiptKey(row[0])
     wire_kind = PaperTradeUpdateWireKind(row[2])
     payload = bytes(row[3])
     account_fingerprint = AccountFingerprint(row[4])
     payload_hash = hashlib.sha256(payload).hexdigest()
-    try:
-        received_at = dt.datetime.fromisoformat(row[6])
-    except ValueError as error:
-        raise InvalidTradeUpdateRawReceiptError from error
+    received_at = _parse_received_at(row[6])
     if (
         row[1] != payload_hash
-        or receipt_key
-        != _receipt_key(account_fingerprint, row[5], wire_kind, payload_hash)
+        or receipt_key != _receipt_key(account_fingerprint, row[5], wire_kind, payload_hash)
         or not _is_aware(received_at)
     ):
         raise InvalidTradeUpdateRawReceiptError
@@ -195,6 +229,20 @@ def _stored_raw_receipt(row: RawReceiptRow) -> StoredTradeUpdateReceipt:
         account_fingerprint,
         row[5],
         row[6],
+    )
+
+
+def _projection_record(
+    stored: StoredTradeUpdateReceipt,
+) -> TradeUpdateRawReceiptProjectionRecord:
+    match = _PROJECTION_RECEIPT_KEY.fullmatch(stored.receipt_key)
+    if match is None:
+        raise InvalidTradeUpdateRawReceiptError
+    return TradeUpdateRawReceiptProjectionRecord(
+        receipt_id=match.group(1),
+        received_at=_parse_received_at(stored.received_at),
+        payload_sha256=stored.raw_payload_sha256,
+        raw_payload=stored.raw_payload,
     )
 
 
@@ -215,9 +263,7 @@ def _receipt_key(
     wire_kind: PaperTradeUpdateWireKind,
     payload_hash: str,
 ) -> TradeUpdateReceiptKey:
-    material = "\x00".join(
-        (account_fingerprint, connection_epoch, wire_kind.value, payload_hash)
-    )
+    material = "\x00".join((account_fingerprint, connection_epoch, wire_kind.value, payload_hash))
     digest = hashlib.sha256(material.encode()).hexdigest()
     return TradeUpdateReceiptKey(f"alpaca:raw:{digest}")
 
@@ -234,3 +280,13 @@ def _require_receipt_values(
 
 def _is_aware(value: dt.datetime) -> bool:
     return value.tzinfo is not None and value.utcoffset() is not None
+
+
+def _parse_received_at(value: str) -> dt.datetime:
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+    except (TypeError, ValueError) as error:
+        raise InvalidTradeUpdateRawReceiptError from error
+    if not _is_aware(parsed):
+        raise InvalidTradeUpdateRawReceiptError
+    return parsed
