@@ -11,6 +11,7 @@ from trading_agent.raw_object_manifest_models import (
     RawObjectReceiptReference,
     RawReceipt,
     RawReceiptPayload,
+    RawReceiptProjectionFixtureReceipt,
 )
 
 RECEIVED_AT = dt.datetime(2026, 7, 17, 9, 30, tzinfo=dt.UTC)
@@ -29,7 +30,7 @@ def test_raw_receipt_hides_payload_from_repr_and_rejects_noncanonical_values() -
     )
 
     assert PAYLOAD.decode() not in repr(receipt)
-    assert PAYLOAD.decode() not in repr(receipt._payload_for_projection())
+    assert PAYLOAD.decode() not in repr(receipt.payload)
     with pytest.raises((ValidationError, ValueError), match="invalid raw receipt"):
         _ = RawReceipt.from_payload(
             receipt_id="request-key-should-not-be-an-id",
@@ -67,6 +68,59 @@ def test_raw_receipt_public_pydantic_exports_hide_payload_bytes() -> None:
     assert raw_secret.decode() not in repr(receipt)
     assert raw_secret.decode() not in repr(dumped)
     assert raw_secret.decode() not in receipt.model_dump_json()
+    assert "payload" not in receipt.model_dump(include={"payload"})
+    assert raw_secret.decode() not in receipt.model_dump_json(include={"payload"})
+
+
+def test_raw_receipt_constructor_validates_required_payload_and_is_frozen() -> None:
+    raw_secret = b"distinctive-raw-secret-for-constructor-test"
+    payload_sha256 = hashlib.sha256(raw_secret).hexdigest()
+    receipt = RawReceipt(
+        receipt_id="a" * 64,
+        source_id="synthetic.market",
+        market_date=dt.date(2026, 7, 17),
+        received_at=RECEIVED_AT,
+        payload_sha256=payload_sha256,
+        payload=RawReceiptPayload(raw_secret),
+    )
+
+    assert receipt.payload.value == raw_secret
+    with pytest.raises(ValidationError, match="invalid raw receipt"):
+        _ = RawReceipt(
+            receipt_id="a" * 64,
+            source_id="synthetic.market",
+            market_date=dt.date(2026, 7, 17),
+            received_at=RECEIVED_AT,
+            payload_sha256="0" * 64,
+            payload=RawReceiptPayload(raw_secret),
+        )
+    with pytest.raises(ValidationError):
+        _ = RawReceipt(  # type: ignore[call-arg]
+            receipt_id="a" * 64,
+            source_id="synthetic.market",
+            market_date=dt.date(2026, 7, 17),
+            received_at=RECEIVED_AT,
+            payload_sha256=payload_sha256,
+        )
+    with pytest.raises(ValidationError):
+        receipt.payload = RawReceiptPayload(b"replacement")
+
+
+def test_fixture_receipt_excludes_reversible_base64_from_public_exports() -> None:
+    payload_base64 = "ZGlzdGluY3RpdmUtcmV2ZXJzaWJsZS1maXh0dXJlLXBheWxvYWQ="
+    receipt = RawReceiptProjectionFixtureReceipt.model_validate(
+        {
+            "receipt_id": "a" * 64,
+            "received_at": "2026-07-17T09:30:00Z",
+            "payload_sha256": PAYLOAD_SHA256,
+            "payload_base64": payload_base64,
+        }
+    )
+
+    assert "payload_base64" not in receipt.model_dump()
+    assert payload_base64 not in receipt.model_dump_json()
+    assert "payload_base64" not in receipt.model_dump(include={"payload_base64"})
+    assert payload_base64 not in receipt.model_dump_json(include={"payload_base64"})
 
 
 @pytest.mark.parametrize(

@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal, Self, override
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _OPAQUE_ID = re.compile(r"^[0-9a-f]{64}$")
 _SOURCE_ID = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
@@ -30,7 +30,7 @@ class RawReceiptPayload:
 
 
 class RawReceipt(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True, arbitrary_types_allowed=True)
 
     schema_version: Literal[1] = 1
     receipt_id: str
@@ -38,21 +38,11 @@ class RawReceipt(BaseModel):
     market_date: dt.date
     received_at: dt.datetime
     payload_sha256: str
-    _payload: RawReceiptPayload = PrivateAttr()
+    payload: RawReceiptPayload = Field(exclude=True, repr=False)
 
     @classmethod
     def from_payload(cls, **values: object) -> Self:
-        payload = values.pop("payload", None)
-        if not isinstance(payload, RawReceiptPayload):
-            raise ValueError("invalid raw receipt")
-        receipt = cls.model_validate(values)
-        if hashlib.sha256(payload.value).hexdigest() != receipt.payload_sha256:
-            raise ValueError("invalid raw receipt")
-        object.__setattr__(receipt, "_payload", payload)
-        return receipt
-
-    def _payload_for_projection(self) -> RawReceiptPayload:
-        return self._payload
+        return cls.model_validate(values)
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -83,6 +73,8 @@ class RawReceipt(BaseModel):
             _OPAQUE_ID.fullmatch(self.receipt_id) is None
             or _SOURCE_ID.fullmatch(self.source_id) is None
             or _SHA256.fullmatch(self.payload_sha256) is None
+            or not isinstance(self.payload, RawReceiptPayload)
+            or hashlib.sha256(self.payload.value).hexdigest() != self.payload_sha256
         ):
             raise ValueError("invalid raw receipt")
         return self
@@ -193,7 +185,7 @@ class RawReceiptProjectionFixtureReceipt(BaseModel):
     receipt_id: str
     received_at: dt.datetime
     payload_sha256: str
-    payload_base64: str = Field(repr=False)
+    payload_base64: str = Field(exclude=True, repr=False)
 
     @field_validator("receipt_id", "payload_sha256", "payload_base64", mode="before")
     @classmethod

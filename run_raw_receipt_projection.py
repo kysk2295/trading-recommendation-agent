@@ -44,18 +44,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        fixture = RawReceiptProjectionFixture.model_validate_json(args.input.read_bytes())
-        receipts = tuple(
-            RawReceipt.from_payload(
-                receipt_id=item.receipt_id,
-                source_id=fixture.source_id,
-                market_date=fixture.market_date,
-                received_at=item.received_at,
-                payload_sha256=item.payload_sha256,
-                payload=RawReceiptPayload(_decode_payload(item.payload_base64)),
-            )
-            for item in fixture.receipts
-        )
+        fixture, receipts = load_raw_receipt_projection_fixture(args.input)
         manifest = project_raw_receipt_partition(
             receipts,
             source_id=fixture.source_id,
@@ -83,6 +72,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(_OUTPUT_ERROR, file=sys.stderr)
         return 2
     return 0
+
+
+def load_raw_receipt_projection_fixture(
+    path: Path,
+) -> tuple[RawReceiptProjectionFixture, tuple[RawReceipt, ...]]:
+    fixture = RawReceiptProjectionFixture.model_validate_json(path.read_bytes())
+    receipts = tuple(
+        RawReceipt.from_payload(
+            receipt_id=item.receipt_id,
+            source_id=fixture.source_id,
+            market_date=fixture.market_date,
+            received_at=item.received_at,
+            payload_sha256=item.payload_sha256,
+            payload=RawReceiptPayload(_decode_payload(item.payload_base64)),
+        )
+        for item in fixture.receipts
+    )
+    return fixture, receipts
 
 
 def _decode_payload(value: str) -> bytes:

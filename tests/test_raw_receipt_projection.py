@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+import run_raw_receipt_projection as projection_cli
 from trading_agent.raw_object_manifest_models import RawReceipt, RawReceiptPayload
 from trading_agent.raw_receipt_projection import (
     InvalidRawReceiptProjectionError,
@@ -67,7 +68,7 @@ def test_projection_replays_deterministically_without_mutating_receipts() -> Non
     assert first.total_byte_size == len(b"one") * 2
     assert first.receipts[0].receipt_id == "a" * 64
     assert first.receipts[1].receipt_id == "b" * 64
-    assert receipts[0]._payload_for_projection().value == b"one"
+    assert receipts[0].payload.value == b"one"
     assert "b'one'" not in repr(first)
 
 
@@ -85,6 +86,16 @@ def test_projection_hashes_private_payload_bytes_without_public_export() -> None
     assert manifest.receipts[0].payload_sha256 == hashlib.sha256(payload).hexdigest()
     assert manifest.total_byte_size == len(payload)
     assert payload.decode() not in receipt.model_dump_json()
+
+
+def test_fixture_loader_consumes_excluded_base64_payload(tmp_path: Path) -> None:
+    fixture_path = tmp_path / "synthetic-fixture.json"
+    fixture_path.write_text(json.dumps(_fixture()), encoding="utf-8")
+
+    fixture, receipts = projection_cli.load_raw_receipt_projection_fixture(fixture_path)
+
+    assert fixture.receipts[0].payload_base64 == base64.b64encode(CLI_PAYLOAD).decode("ascii")
+    assert receipts[0].payload.value == CLI_PAYLOAD
 
 
 @pytest.mark.parametrize(
@@ -160,7 +171,7 @@ def test_projection_changes_identity_for_each_partition_input_change(
 
 def test_projection_rejects_mutated_payload_mixed_partition_and_noncanonical_order() -> None:
     tampered = _receipt("a" * 64, b"one", RECEIVED_AT)
-    object.__setattr__(tampered._payload_for_projection(), "value", b"tampered")
+    object.__setattr__(tampered.payload, "value", b"tampered")
     mixed_source = _receipt(
         "b" * 64,
         b"two",
