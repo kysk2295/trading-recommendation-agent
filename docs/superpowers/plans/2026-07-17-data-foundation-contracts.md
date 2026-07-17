@@ -72,7 +72,7 @@ git commit -m "feat: add point-in-time security master contracts"
 - Create: `trading_agent/data_capability_models.py`
 - Create: `trading_agent/strategy_data_gate.py`
 
-- [ ] **Step 1: Write failing model tests**
+- [x] **Step 1: Write failing model tests**
 
 Cover:
 
@@ -89,7 +89,7 @@ Run and confirm expected import/collection failure:
 uv run pytest -q tests/test_data_capability_models.py
 ```
 
-- [ ] **Step 2: Implement frozen capability contracts**
+- [x] **Step 2: Implement frozen capability contracts**
 
 Create enums and models for the design fields, including:
 
@@ -111,7 +111,7 @@ StrategyDataRequirement
 
 Reuse `DataMarketDomain` from the security master module and `StrategyLaneRef` from the existing research identity module. Keep source metadata free of secrets and endpoint URLs.
 
-- [ ] **Step 3: Write failing pure-gate tests**
+- [x] **Step 3: Write failing pure-gate tests**
 
 Prove:
 
@@ -129,7 +129,7 @@ Prove:
 uv run pytest -q tests/test_strategy_data_gate.py
 ```
 
-- [ ] **Step 4: Implement deterministic evaluation and commit**
+- [x] **Step 4: Implement deterministic evaluation and commit**
 
 Create:
 
