@@ -9,10 +9,11 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import os
 import re
 import shutil
+import stat
 import sys
-import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -35,6 +36,7 @@ _INPUT_ERROR = "raw receipt projection input is invalid"
 _OUTPUT_ERROR = "raw receipt projection output could not be written"
 _FIXTURE_SOURCE_ID = re.compile(r"^fixture\.[a-z0-9][a-z0-9_.-]{0,55}$")
 _PRIVATE_OUTPUT_DIRECTORY_MODE = 0o700
+_STAGING_DIRECTORY_NAME = ".staging"
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -80,31 +82,52 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _write_projection_output(output_dir: Path, manifest_content: str, report_content: str) -> None:
-    if output_dir.exists() or output_dir.is_symlink():
-        raise OSError
-    output_dir.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(
-        tempfile.mkdtemp(
-            prefix=f".{output_dir.name}.staging-",
-            dir=output_dir.parent,
-        )
-    )
-    published = False
+    destination = _validate_output_target(output_dir)
+    claimed = False
     try:
+        destination.mkdir(mode=_PRIVATE_OUTPUT_DIRECTORY_MODE)
+        claimed = True
+        destination.chmod(_PRIVATE_OUTPUT_DIRECTORY_MODE)
+        staging = destination / _STAGING_DIRECTORY_NAME
+        staging.mkdir(mode=_PRIVATE_OUTPUT_DIRECTORY_MODE)
         staging.chmod(_PRIVATE_OUTPUT_DIRECTORY_MODE)
         write_private_report(staging / MANIFEST_NAME, manifest_content)
         write_private_report(staging / REPORT_NAME, report_content)
-        if output_dir.exists() or output_dir.is_symlink():
+        _publish_staged_output(staging, destination)
+    except Exception:
+        if claimed:
+            _remove_claimed_output_directory(destination)
+        raise
+
+
+def _validate_output_target(output_dir: Path) -> Path:
+    destination = Path(os.path.abspath(output_dir))
+    current = Path(destination.anchor)
+    for component in destination.parts[1:-1]:
+        current = current / component
+        try:
+            metadata = current.lstat()
+        except OSError:
+            raise OSError from None
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
             raise OSError
-        _publish_staged_output(staging, output_dir)
-        published = True
-    finally:
-        if not published:
-            shutil.rmtree(staging, ignore_errors=True)
+    try:
+        _ = destination.lstat()
+    except FileNotFoundError:
+        return destination
+    except OSError:
+        raise OSError from None
+    raise OSError
 
 
 def _publish_staged_output(staging: Path, destination: Path) -> None:
-    staging.rename(destination)
+    (staging / MANIFEST_NAME).replace(destination / MANIFEST_NAME)
+    (staging / REPORT_NAME).replace(destination / REPORT_NAME)
+    staging.rmdir()
+
+
+def _remove_claimed_output_directory(destination: Path) -> None:
+    shutil.rmtree(destination)
 
 
 def load_raw_receipt_projection_fixture(

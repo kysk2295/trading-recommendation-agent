@@ -406,6 +406,67 @@ def test_cli_refuses_existing_output_dir_without_overwrite(tmp_path: Path) -> No
     assert not (output / "raw_receipt_projection_summary.md").exists()
 
 
+def test_cli_refuses_existing_empty_output_dir(tmp_path: Path) -> None:
+    fixture = tmp_path / "synthetic-fixture.json"
+    fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
+    output = tmp_path / "output"
+    output.mkdir()
+
+    code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
+
+    assert code == 2
+    assert output.is_dir()
+    assert not tuple(output.iterdir())
+
+
+def test_cli_rejects_absent_or_symlinked_output_parent(tmp_path: Path) -> None:
+    fixture = tmp_path / "synthetic-fixture.json"
+    fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
+    missing_parent = tmp_path / "missing-parent"
+    real_parent = tmp_path / "real-parent"
+    real_parent.mkdir()
+    symlink_parent = tmp_path / "symlink-parent"
+    symlink_parent.symlink_to(real_parent, target_is_directory=True)
+
+    missing_code = projection_cli.main(["--input", str(fixture), "--output-dir", str(missing_parent / "output")])
+    symlink_code = projection_cli.main(["--input", str(fixture), "--output-dir", str(symlink_parent / "output")])
+
+    assert missing_code == 2
+    assert symlink_code == 2
+    assert not missing_parent.exists()
+    assert not (real_parent / "output").exists()
+
+
+def test_cli_claims_private_output_and_stage_despite_umask_zero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = tmp_path / "synthetic-fixture.json"
+    fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
+    output = tmp_path / "output"
+    original_write = projection_cli.write_private_report
+    observed_stage_modes: list[int] = []
+    observed_stage_paths: list[Path] = []
+
+    def record_stage_mode(destination: Path, content: str) -> None:
+        observed_stage_modes.append(stat.S_IMODE(destination.parent.stat().st_mode))
+        observed_stage_paths.append(destination.parent)
+        original_write(destination, content)
+
+    monkeypatch.setattr(projection_cli, "write_private_report", record_stage_mode)
+    previous_umask = os.umask(0)
+    try:
+        code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
+    finally:
+        os.umask(previous_umask)
+
+    assert code == 0
+    assert stat.S_IMODE(output.stat().st_mode) == 0o700
+    assert observed_stage_modes == [0o700, 0o700]
+    assert observed_stage_paths == [output / ".staging", output / ".staging"]
+    assert not (output / ".staging").exists()
+
+
 def test_cli_second_write_failure_leaves_no_partial_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fixture = tmp_path / "synthetic-fixture.json"
     fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
@@ -444,6 +505,38 @@ def test_cli_publish_failure_leaves_no_partial_output(tmp_path: Path, monkeypatc
     assert code == 2
     assert not output.exists()
     assert not tuple(tmp_path.glob(".output.staging-*"))
+
+
+def test_cli_cleanup_failure_still_returns_sanitized_output_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fixture = tmp_path / "synthetic-fixture.json"
+    fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
+    output = tmp_path / "output"
+    original_write = projection_cli.write_private_report
+    write_count = 0
+
+    def fail_second_write(destination: Path, content: str) -> None:
+        nonlocal write_count
+        write_count += 1
+        if write_count == 2:
+            raise OSError("forced second write failure")
+        original_write(destination, content)
+
+    def fail_cleanup(destination: Path) -> None:
+        raise OSError("forced cleanup failure")
+
+    monkeypatch.setattr(projection_cli, "write_private_report", fail_second_write)
+    monkeypatch.setattr(projection_cli, "_remove_claimed_output_directory", fail_cleanup, raising=False)
+
+    code = projection_cli.main(["--input", str(fixture), "--output-dir", str(output)])
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert "raw receipt projection output could not be written" in captured.err
+    assert CLI_PAYLOAD.decode() not in captured.err
 
 
 def _fixture(*, source_id: str = "fixture.us.trade_updates") -> dict[str, object]:
