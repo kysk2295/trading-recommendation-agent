@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import sqlite3
+import stat
 from contextlib import closing
 from pathlib import Path
 from typing import final
@@ -48,6 +49,7 @@ class RuntimeFleetAuditStore:
                 payload,
             )
             with closing(self._connection(write=True)) as connection:
+                connection.execute("BEGIN IMMEDIATE")
                 existing = connection.execute(
                     "SELECT cycle_id,evaluated_at,payload_sha256,payload_json "
                     "FROM runtime_fleet_audit WHERE cycle_id=?",
@@ -68,6 +70,8 @@ class RuntimeFleetAuditStore:
             raise RuntimeFleetAuditError from None
 
     def latest(self) -> RuntimeFleetAuditRecord | None:
+        if self.path.is_symlink():
+            raise RuntimeFleetAuditError
         if not self.path.is_file():
             return None
         try:
@@ -86,21 +90,40 @@ class RuntimeFleetAuditStore:
             raise RuntimeFleetAuditError from None
 
     def _connection(self, *, write: bool) -> sqlite3.Connection:
+        if self.path.is_symlink():
+            raise RuntimeFleetAuditError
         if write:
             self.path.parent.mkdir(parents=True, exist_ok=True)
+            existed = self.path.exists()
+            if existed:
+                _require_private_file(self.path)
             connection = sqlite3.connect(self.path)
-            os.chmod(self.path, 0o600)
+            if not existed:
+                os.chmod(self.path, 0o600)
+            _require_private_file(self.path)
             if connection.execute("PRAGMA user_version").fetchone() == (0,):
                 connection.executescript(_SCHEMA)
                 connection.execute("PRAGMA user_version=1")
                 connection.commit()
         else:
+            _require_private_file(self.path)
             connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
             connection.execute("PRAGMA query_only=ON")
         if connection.execute("PRAGMA user_version").fetchone() != (1,):
             connection.close()
             raise RuntimeFleetAuditError
         return connection
+
+
+def _require_private_file(path: Path) -> None:
+    metadata = path.lstat()
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+    ):
+        raise RuntimeFleetAuditError
 
 
 __all__ = ("RuntimeFleetAuditStore",)

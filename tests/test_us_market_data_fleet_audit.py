@@ -62,6 +62,22 @@ def test_tampered_audit_payload_fails_replay(tmp_path: Path) -> None:
         store.latest()
 
 
+def test_non_private_or_symlink_audit_store_fails_replay(tmp_path: Path) -> None:
+    result, gate = _cycle(tmp_path, gap_symbol=None)
+    store = RuntimeFleetAuditStore(tmp_path / "fleet-audit.sqlite3")
+    assert store.append(build_runtime_fleet_audit(decision(), feature_requests(), result, gate))
+    store.path.chmod(0o644)
+
+    with pytest.raises(RuntimeFleetAuditError, match="invalid"):
+        store.latest()
+
+    store.path.chmod(0o600)
+    alias = tmp_path / "fleet-audit-alias.sqlite3"
+    alias.symlink_to(store.path)
+    with pytest.raises(RuntimeFleetAuditError, match="invalid"):
+        RuntimeFleetAuditStore(alias).latest()
+
+
 def _cycle(tmp_path: Path, *, gap_symbol: str | None):
     def respond(request: httpx2.Request) -> httpx2.Response:
         symbol = request.url.params["symbols"]

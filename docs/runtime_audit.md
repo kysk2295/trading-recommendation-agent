@@ -496,3 +496,10 @@
 - 최초 관찰: `DataCapability`의 complete/degraded 상태는 `latest_event_received_at`을 필수로 요구했다. 이를 그대로 KR source run에 연결하면 zero-record poll에 존재하지 않는 event 시각을 만들거나 정상 transport poll을 incomplete로 잘못 축약해야 했다.
 - 수정: 실제 event 수신시각과 source poll heartbeat를 별도 필드로 분리하고 둘 중 최신 causal 시각으로 freshness를 평가한다. KR projection은 exact 네 source의 run ID, adapter version, cycle/date와 terminal status를 검증하고 성공 run에는 heartbeat만, 실패 run에는 failed health를 append한다. LS 뉴스는 tombstone 가능 정책, 나머지는 append-correction 정책으로 고정한다.
 - 결과: zero-record 네 source가 fake event 없이 complete health로 등록되고 exact retry는 capability·entitlement 추가 0건이다. 미래 heartbeat, mixed run, failed source는 fail-closed 또는 incomplete로 보존된다. provider·credential·account/order endpoint와 broker mutation은 0건이다.
+
+## H70: fleet audit 파일 경계와 owner coverage 없이 runtime source를 complete로 본다
+
+- 판별 기준: mode·소유자·symlink가 잘못된 fleet audit을 registry가 거부하는지, 두 owner 중 하나의 sequence gap을 source complete로 축약하지 않는지 확인한다.
+- 최초 관찰: fleet audit은 payload hash와 cycle ID를 재계산했지만 reader가 private file mode·소유자·symlink를 검사하지 않았고 writer도 explicit single-writer transaction을 시작하지 않았다. 전역 capability registry로 연결되는 owner coverage 계약도 없었다.
+- 수정: audit store에 mode 600/current owner/regular file/no-symlink와 `BEGIN IMMEDIATE`를 추가했다. projection은 policy/fleet/gate 상호일관성, owner/runtime status, profile·feature digest와 unique symbol을 재검증하고 owner READY 비율을 source completeness bps로 집계한다.
+- 결과: 2/2 READY는 complete 10000 bps, 1/2 sequence gap은 degraded 5000 bps로 append된다. cycle 완료시각은 실제 event 시각을 위조하지 않고 source heartbeat에만 기록된다. local CLI exact retry는 추가 row 0건이며 provider·credential·account/order endpoint와 mutation은 0건이다.
