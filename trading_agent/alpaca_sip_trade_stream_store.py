@@ -186,7 +186,13 @@ class AlpacaSipTradeStreamStore:
     def control_count(self) -> int:
         return self._count("control_frames")
 
+    def control_count_for_epoch(self, connection_epoch: str) -> int:
+        return self._epoch_count("control_frames", connection_epoch)
+
     def data_link_count(self, connection_epoch: str) -> int:
+        return self._epoch_count("data_links", connection_epoch)
+
+    def _epoch_count(self, table: str, connection_epoch: str) -> int:
         try:
             require_private_alpaca_sip_stream_file(self.path)
             if not self.path.exists():
@@ -194,7 +200,7 @@ class AlpacaSipTradeStreamStore:
             with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
                 require_alpaca_sip_stream_schema(connection)
                 row: tuple[int] = connection.execute(
-                    "SELECT count(*) FROM data_links WHERE connection_epoch=?",
+                    f"SELECT count(*) FROM {table} WHERE connection_epoch=?",
                     (connection_epoch,),
                 ).fetchone()
             return row[0]

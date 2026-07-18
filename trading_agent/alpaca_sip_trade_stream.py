@@ -111,7 +111,7 @@ class _WebsocketSipTradeConnection:
 
 
 @contextmanager
-def _connect_alpaca_sip_trade_stream(url: str) -> Iterator[AlpacaSipTradeStreamConnection]:
+def connect_alpaca_sip_trade_stream(url: str) -> Iterator[AlpacaSipTradeStreamConnection]:
     with connect(
         url,
         proxy=None,
@@ -196,7 +196,7 @@ def open_alpaca_sip_trade_stream(
     config: AlpacaSipTradeStreamConfig,
     stores: AlpacaSipTradeStreamStores,
     *,
-    connector: AlpacaSipTradeStreamConnector = _connect_alpaca_sip_trade_stream,
+    connector: AlpacaSipTradeStreamConnector = connect_alpaca_sip_trade_stream,
     _clock: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
 ) -> Iterator[ReadyAlpacaSipTradeStream]:
     epoch = uuid.uuid4().hex
@@ -277,6 +277,7 @@ __all__ = (
     "AlpacaSipTradeStreamProtocolError",
     "AlpacaSipTradeStreamStores",
     "ReadyAlpacaSipTradeStream",
+    "connect_alpaca_sip_trade_stream",
     "open_alpaca_sip_trade_stream",
     "require_alpaca_sip_trade_stream_url",
 )

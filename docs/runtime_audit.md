@@ -559,3 +559,10 @@
 - 최초 관찰: `t/c/x` raw-first parser와 projection은 있었지만 connected/auth/subscription의 exact wire evidence, connection epoch owner와 terminal session이 없었다. 따라서 fixture chain은 provider transport가 연속이었다는 사실을 증명할 수 없었다.
 - 수정: SIP URL·final URL을 exact 고정하고 proxy를 끈 connector, raw-before-parse control receipt, 한 종목 trade/correction/cancel exact ACK와 epoch-scoped data link를 추가했다. stream audit SQLite는 mode 600/current owner/no-symlink, single-writer lock, update/delete trigger와 schema object set을 강제하고 read-back에서 payload hash·wire shape·sequence·terminal hash를 재검증한다. clean session의 completed time은 마지막 valid raw frame received time으로 닫는다.
 - 결과: redirect·IEX·추가/누락 channel, malformed control/data, raw control tamper, non-private/symlink store와 zero-data session은 fail-closed다. local fixture는 control 3개·data link 1개와 bounded complete history를 만들고 network·credential file·account/order endpoint·mutation은 0건이다. 실제 provider smoke, reconnect gap recovery와 장기 soak는 아직 증명하지 않았다.
+
+## H79: 휴장이나 긴 대기에서도 운영자가 SIP stream을 열 수 있다
+
+- 판별 기준: arm이 없거나 현재 NYSE 정규장이 아닌데 credential file·state dir·WebSocket을 여는지, 한 번 열린 뒤 장이 닫혀도 계속 frame을 기다리거나 성공 report를 만드는지 확인한다.
+- 최초 관찰: bounded stream library는 endpoint와 protocol을 검증했지만 실제 운영용 진입점이 없었다. 직접 library를 호출하면 현재 session gate, frame/timeout 상한, private output과 canonical publication 순서를 운영자가 매번 재구성해야 했다.
+- 수정: smoke CLI가 arm과 current regular session/date를 credential 전에 평가하고 private credential file과 mode-700 state root를 검증한다. frame·timeout은 각각 최대 10으로 제한하며 매 수신 뒤 session/date를 다시 확인한다. 성공은 한 epoch의 exact attestation·canonical complete coverage·private JSON report를 요구한다.
+- 결과: arm 누락과 일요일은 credential·state·network 0으로 exit 1이다. fixture 장중 종료는 raw frame을 보존하고 failed terminal로 exit 2이며 report를 만들지 않는다. fixture success는 control 3개·data link 1개·canonical event 3개·broker mutation 0을 mode-600 report로 확정한다. 실제 provider WebSocket smoke는 아직 0건이다.

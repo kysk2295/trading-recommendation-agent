@@ -108,6 +108,18 @@ flowchart LR
 
 **2026-07-19 Alpaca SIP bounded trade stream 업데이트:** read-only stock stream URL을 exact `wss://stream.data.alpaca.markets/v2/sip`로 고정하고 proxy·compression을 끈 단일 연결에서 connected→authenticated→trade subscription ACK를 순서대로 raw-first 보존한다. ACK는 요청한 한 종목의 `trades`, 자동 `corrections`, `cancelErrors`만 허용하며 redirect·IEX·추가 채널·누락 correction은 credential 전송 또는 attestation 전에 차단한다. control frame, data receipt link와 terminal session은 mode-600/current-owner/no-symlink append-only SQLite에 connection epoch별로 남고, payload hash·exact control wire·sequence·terminal hash를 read-back 때 다시 검증한다. 유효 frame이 0건이거나 수신/파싱이 실패한 session은 `failed`로 닫히며 complete-history가 아니다. clean bounded session의 완료시각은 context 종료시각으로 넓히지 않고 마지막 검증 raw frame 수신시각으로 고정한다. local fixture CLI의 `--stream-store` 경로는 이 실제 session API를 통과해 bounded `complete_history=true`를 만들지만 network·credential file·account/order endpoint와 mutation은 0건이다. 전체 **2357 tests**, Ruff, basedpyright 0/0, compileall, no-excuse가 통과했다.
 
+**2026-07-19 Alpaca SIP read-only stream smoke CLI 업데이트:** `run_alpaca_sip_trade_stream_smoke.py`가 명시적 `--arm-read-only`, 현재 NYSE 정규장, current market date, exact mode-600/current-owner/no-symlink credential file을 모두 통과한 뒤에만 한 종목 SIP WebSocket을 연다. frame은 최대 10개, frame별 timeout은 최대 10초로 제한하고 매 frame 뒤 현재 정규장과 날짜를 다시 확인한다. 장이 닫히거나 arm이 없으면 credential·state dir·network 전에 exit 1, auth/subscription·frame·projection·publication 실패는 sanitized exit 2와 failed terminal evidence로 닫힌다. 성공한 한 epoch만 raw trade/control SQLite, canonical Parquet와 mode-600 JSON report로 확정하며 계좌·주문 endpoint와 broker mutation은 코드 경로에 없다. fixture happy path와 장중 종료 failure E2E를 포함한 전체 **2364 tests**가 통과했다. 2026-07-19 일요일 실제 CLI는 credential을 읽기 전에 blocked 되었고 실제 WebSocket 연결은 0건이다.
+
+```bash
+uv run python run_alpaca_sip_trade_stream_smoke.py \
+  --instrument-id us-equity-aapl \
+  --symbol AAPL \
+  --state-dir outputs/alpaca-sip-trade-stream-smoke \
+  --max-frames 1 \
+  --receive-timeout-seconds 5 \
+  --arm-read-only
+```
+
 ```bash
 uv run python run_alpaca_sip_trade_history_fixture.py \
   --input fixtures/alpaca-sip-trade-history.json \
