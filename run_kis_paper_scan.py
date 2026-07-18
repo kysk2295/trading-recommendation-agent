@@ -27,6 +27,7 @@ from trading_agent.contract_outbox import (
     append_quote_actionability_batch,
     append_trade_signal_publication,
 )
+from trading_agent.data_foundation_manifest import load_data_foundation_manifest
 from trading_agent.engine import RecommendationEngine
 from trading_agent.kis_auth import (
     KisMode,
@@ -78,11 +79,14 @@ from trading_agent.trade_signal_publication import (
     TradeSignalPublication,
     project_trade_signal_publications,
 )
+from trading_agent.us_opportunity_scanner_projection import UsOpportunityScannerProjector
+from trading_agent.us_opportunity_scanner_store import UsOpportunityScannerStore
 from trading_agent.us_quote_actionability import QuoteAssessmentStatus
 from trading_agent.us_quote_publication import (
     UsQuotePublicationBatch,
     evaluate_quote_publications,
 )
+from trading_agent.us_subscription_models import BroadScannerSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +94,49 @@ class QuoteContractAppendCounts:
     snapshot_count: int
     validated_signal_count: int
     assessment_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchProjectionConfig:
+    foundation_manifest: Path
+    store: Path
+    canonical_root: Path
+
+
+def configure_research_projection(
+    foundation_manifest: str | None,
+    store: str | None,
+    canonical_root: str | None,
+) -> ResearchProjectionConfig | None:
+    values = (foundation_manifest, store, canonical_root)
+    if all(value is None for value in values):
+        return None
+    if (
+        foundation_manifest is None
+        or store is None
+        or canonical_root is None
+    ):
+        raise typer.BadParameter(
+            "research projection requires foundation manifest, store, and canonical root"
+        )
+    return ResearchProjectionConfig(
+        Path(foundation_manifest),
+        Path(store),
+        Path(canonical_root),
+    )
+
+
+def project_opportunity_research_input(
+    opportunity: OpportunitySnapshot | None,
+    config: ResearchProjectionConfig | None,
+) -> BroadScannerSnapshot | None:
+    if opportunity is None or config is None:
+        return None
+    foundation = load_data_foundation_manifest(config.foundation_manifest)
+    return UsOpportunityScannerProjector(
+        UsOpportunityScannerStore(config.store),
+        config.canonical_root,
+    ).project(opportunity, foundation)
 
 
 def write_current_alert_outbox(
@@ -223,6 +270,9 @@ def main(
     range_minutes: int = 5,
     max_pages: int = 10,
     strategy: StrategyMode = StrategyMode.ORB,
+    research_foundation_manifest: str | None = None,
+    research_projection_store: str | None = None,
+    research_canonical_root: str | None = None,
 ) -> None:
     if not 1 <= top <= 10:
         raise typer.BadParameter("top은 1~10이어야 합니다")
@@ -230,6 +280,11 @@ def main(
         raise typer.BadParameter("range-minutes는 1~30이어야 합니다")
     if not 1 <= max_pages <= 10:
         raise typer.BadParameter("max-pages는 1~10이어야 합니다")
+    research_projection = configure_research_projection(
+        research_foundation_manifest,
+        research_projection_store,
+        research_canonical_root,
+    )
     started_at = dt.datetime.now().astimezone()
     output = _output_path(output_dir, started_at)
     database = output / "paper_recommendations.sqlite3"
@@ -247,6 +302,7 @@ def main(
     selected_count = 0
     scan_completed = False
     opportunity: OpportunitySnapshot | None = None
+    scanner_snapshot: BroadScannerSnapshot | None = None
     conditional_publications: tuple[TradeSignalPublication, ...] = ()
     quote_batch = UsQuotePublicationBatch((), (), ())
     contract_published_at = started_at
@@ -296,6 +352,10 @@ def main(
                 halt_snapshot,
                 risk_screen,
                 checked_at,
+            )
+            scanner_snapshot = project_opportunity_research_input(
+                opportunity,
+                research_projection,
             )
             _ = track_candidates(database, checked_at, candidates)
             followers = unselected_tracked_candidates(
@@ -409,6 +469,7 @@ def main(
         + f"추적 {len(followers) + len(blocked_followers)}개, 추천 "
         + f"{len(store.recommendations())}개, 인과성 제외 {causality_exclusions}개, "
         + f"신규 카드 {queued}개, v2 기회 {int(opportunity is not None)}개, "
+        + f"검증 연구입력 {int(scanner_snapshot is not None)}개, "
         + f"신규 v2 조건부 신호 {contract_signals}개, 호가 평가 {quote_attempts}건, "
         + f"검증 대기 {waiting_validations}건, 검증 도달 {trigger_validations}건, "
         + f"차단 {blocked_assessments}건, 신규 현재호가 신호 "

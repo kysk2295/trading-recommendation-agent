@@ -378,3 +378,10 @@
 - RED: desired tuple 길이와 channel만 검사해 `OTHER` HTTP GET을 전송했고, 이후에는 ACME의 source-level epoch와 last sequence를 그대로 적용할 수 있었다.
 - 수정: `AlpacaSipRuntimeContext`가 session date뿐 아니라 exact instrument ID와 symbol을 고정한다. adapter는 desired subscription이 두 binding과 모두 같지 않으면 credential header가 있는 HTTP request 전에 sanitized error로 닫는다.
 - 결과: 한 adapter/supervisor가 한 종목만 소유한다는 M4 계약이 runtime 타입에 반영됐다. 다중 종목은 종목별 독립 adapter·runtime owner가 필요하며 현재 checkpoint를 종목 사이에 공유하지 않는다.
+
+## H53: M4 broad scanner가 fixture 객체만 소비하고 실제 후보 생산자가 없다
+
+- 판별 기준: KIS가 발행한 causal US Opportunity가 restart 가능한 M4.2 입력으로 도달하는 production 호출 경로와 durable artifact를 찾는다.
+- 최초 관찰: `BroadScannerSnapshot`과 subscription policy는 순수 계약 테스트에서만 직접 생성됐다. KIS Opportunity outbox, instrument master, canonical dataset, M4.2 사이의 운영 연결은 없었다.
+- 수정: KIS CLI에 all-or-none opt-in projection 설정을 추가했다. Opportunity raw bytes를 mode-600 append-only SQLite에 먼저 확정하고, 해당 시점에 유효한 US equity/ETF alias 하나만 허용해 candidate Parquet를 발행한 뒤 DuckDB replay identity와 scanner snapshot을 같은 immutable projection에 저장한다. 최신 snapshot reader는 SQLite 값만 읽지 않고 연결된 canonical dataset을 매번 다시 검증한다.
+- 결과: exact retry는 raw·dataset·snapshot을 중복 생성하지 않고, alias 누락·미래 foundation·부분 CLI 설정·dataset mode 변조는 fail-closed다. 옵션이 없으면 기존 KIS 동작은 그대로다. 현재 fixture manifest는 `FIXT` 하나만 포함하므로 실제 장중 universe를 지원한다는 주장은 하지 않으며 current US security master adapter가 다음 경계다.

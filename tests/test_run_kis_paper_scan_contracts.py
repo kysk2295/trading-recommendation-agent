@@ -6,12 +6,15 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+import typer
 
 import run_kis_paper_scan
 from run_kis_paper_scan import (
     append_quote_actionability_contracts,
     append_trade_signal_contracts,
     build_trade_signal_contracts,
+    configure_research_projection,
+    project_opportunity_research_input,
     publish_opportunity_contract,
     publish_trade_signal_contracts,
 )
@@ -32,9 +35,12 @@ from trading_agent.ranking_journal import (
 )
 from trading_agent.store import PaperStore
 from trading_agent.strategy_factory import StrategyMode
+from trading_agent.us_opportunity_scanner_store import UsOpportunityScannerStore
 from trading_agent.us_quote_publication import evaluate_quote_publications
 
 OBSERVED_AT = dt.datetime(2026, 7, 15, 14, 0, tzinfo=dt.UTC)
+PROJECT = Path(__file__).resolve().parents[1]
+FOUNDATION = PROJECT / "examples/data/us-orb-data-foundation-v1.json"
 
 
 def test_legacy_alert_timestamp_is_captured_at_outbox_write(
@@ -103,6 +109,63 @@ def test_failed_discovery_publishes_no_v2_contract(tmp_path: Path) -> None:
     assert snapshot is None
     assert not (tmp_path / "opportunities.v1.jsonl").exists()
     assert not (tmp_path / "trade-signals.v1.jsonl").exists()
+
+
+def test_research_projection_configuration_is_all_or_none(tmp_path: Path) -> None:
+    assert configure_research_projection(None, None, None) is None
+
+    with pytest.raises(typer.BadParameter, match="research projection"):
+        _ = configure_research_projection(
+            str(FOUNDATION),
+            str(tmp_path / "scanner.sqlite3"),
+            None,
+        )
+
+
+def test_opportunity_projects_to_durable_replay_bound_scanner_input(
+    tmp_path: Path,
+) -> None:
+    observed_at = dt.datetime(2026, 7, 17, 14, 0, tzinfo=dt.UTC)
+    stock = KisRankedStock(
+        exchange="NAS",
+        symbol="FIXT",
+        name="Fixture",
+        change_pct=12.5,
+        price=10.0,
+        bid=9.99,
+        ask=10.01,
+        volume=1_500_000,
+        dollar_volume=15_000_000.0,
+        average_daily_volume=1_000_000,
+        rank=1,
+    )
+    opportunity = publish_opportunity_contract(
+        tmp_path,
+        _complete_discovery(stock),
+        HaltSnapshot(observed_at, frozenset()),
+        MarketRiskScreen(
+            observed_at=observed_at,
+            config=MarketRiskConfig(),
+            selected=(stock,),
+            not_selected=(),
+            rejected=(),
+        ),
+        observed_at,
+    )
+    assert opportunity is not None
+    config = configure_research_projection(
+        str(FOUNDATION),
+        str(tmp_path / "scanner.sqlite3"),
+        str(tmp_path / "canonical"),
+    )
+    assert config is not None
+
+    snapshot = project_opportunity_research_input(opportunity, config)
+
+    assert snapshot is not None
+    assert snapshot.identity.scope == "us_equities.broad_scanner"
+    assert snapshot.candidates[0].instrument_id == "us-eq-fixture-0001"
+    assert UsOpportunityScannerStore(config.store).latest_snapshot() == snapshot
 
 
 def test_signal_helper_is_idempotent_and_does_not_touch_the_v1_outbox(

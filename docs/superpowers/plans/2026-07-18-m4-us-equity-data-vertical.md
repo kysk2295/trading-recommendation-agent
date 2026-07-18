@@ -89,6 +89,20 @@ candidate, and policy have no provider or order authority. Verification: 14
 focused policy tests, 54 M4.0-M4.2 tests, full **2143-test** suite, Ruff,
 basedpyright, compileall, and no-excuse all pass.
 
+**Operational producer checkpoint (2026-07-19): Complete.** The existing KIS
+US `OpportunitySnapshot` now has an opt-in producer path into M4.2. It stores
+the exact Opportunity payload before point-in-time security-master resolution,
+requires one active US equity/ETF instrument alias per symbol, publishes
+immutable scanner-candidate Parquet, verifies it through DuckDB, and stores the
+resulting replay identity with a durable scanner snapshot. Restart readers
+reverify the canonical dataset and identity before returning the latest input.
+The three KIS CLI paths are all-or-none and absent configuration preserves the
+existing scanner. The checked-in foundation is a one-symbol fixture, not a
+production universe; a raw-first current US security-master adapter remains the
+next operational input dependency.
+Focused projection and KIS contract tests total 14; the full 2176-test suite,
+Ruff, basedpyright, compileall, manual CLI QA, and no-excuse all pass.
+
 ### M4.3: Read-Only Runtime Supervisor
 
 Introduce provider-neutral read-only adapter and supervisor contracts. The
