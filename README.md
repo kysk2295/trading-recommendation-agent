@@ -106,6 +106,8 @@ flowchart LR
 
 **2026-07-19 Research evidence read model 업데이트:** entity/claim extraction 결과를 exact active canonical event의 source, content hash, raw receipt reference와 entity set에 결합하는 공통 계약을 추가했다. deterministic extractor는 version·output hash를, LLM extractor는 model·prompt version까지 필수로 남긴다. 순수 read model은 current/baseline window에서 독립 source corroboration, supporting/disputing conflict, novelty와 rate-normalized burst를 계산한다. content-addressed derived artifact는 evidence ID와 집계만 mode 600으로 보존하고 원문·raw receipt reference를 복제하지 않는다. 이 단계는 extractor나 provider 수집을 가장하지 않으며 다음 adapter가 검증된 extraction을 공급해야 한다.
 
+**2026-07-19 US SIP typed feature extraction 업데이트:** READY intraday feature snapshot의 breakout과 RVOL threshold를 해당 snapshot의 verified canonical dataset identity와 마지막 완료 1분봉 event에 exact 결합하는 deterministic adapter를 추가했다. dataset·source·entity·event 시각·bar 연속성, normalization causality와 20일 volume-profile evidence가 하나라도 다르면 차단한다. RVOL 기준은 claim key와 output hash에 포함되어 서로 다른 실험 기준이 섞이지 않는다. `run_us_runtime_fleet_cycle.py`의 opt-in `--research-artifact-root`는 종목별 read model을 따로 mode 600으로 저장하며 raw receipt reference를 derived artifact에 복제하지 않는다. 단일 `alpaca/sip` source의 기술적 사실은 `unconfirmed`이고 추천, 전략 우위, lifecycle 승격 또는 주문 권한이 아니다. fixture E2E와 전체 **2307 tests**, Ruff, basedpyright 0/0, compileall, no-excuse가 통과했다.
+
 **2026-07-18 US Always-On M4.0~M4.4 업데이트:** verified canonical replay identity, 완료된 연속 1분봉의 공통 indicator kernel, bounded quote/trade 구독 정책과 restart 가능한 read-only supervisor를 기존 US Opportunity·conditional TradeSignal 경로까지 연결했다. M4 전용 evidence gate는 candidate마다 exact ready feature를 요구하고 missing·gap·stale·insufficient·noncausal evidence를 구조화된 사유로 차단한다. Alpaca SIP provider bridge는 context에 고정된 단일 instrument/symbol의 정규장 완료 1분봉을 GET-only로 polling하고, pagination별 exact response body를 별도 append-only SQLite에 먼저 보존한 뒤 canonical Parquet·DuckDB replay identity를 supervisor에 공급한다. 동일 분 재시도와 정상 재시작은 idempotent하며, 일시적 provider minute gap은 이후 full-session sequence가 완전히 연속일 때만 verified recovery epoch로 해제한다. 불완전 backfill은 신규 receipt가 없어도 `blocked_sequence_gap`을 유지한다. 종목 교체, 휴장, 다중 종목, 비정상 base URL과 redirect는 HTTP 전에 fail-closed다. 이 경로는 streaming·계좌·주문 기능이 아니다. fixture E2E와 전체 **2170 tests**, Ruff, basedpyright, compileall, no-excuse가 통과했으며 실제 정규장 read-only GET smoke·장기 soak는 다음 운영 단계다.
 
 **2026-07-19 US scanner 운영 투영 업데이트:** KIS의 causal `OpportunitySnapshot`을 M4.2 broad-scanner 입력으로 만드는 실제 생산 경로를 추가했다. opt-in KIS CLI는 data-foundation manifest, mode-600 append-only projection store, private canonical root 세 경로가 모두 있을 때만 활성화된다. Opportunity 원문을 먼저 보존하고 시점 유효한 US instrument alias를 exact match한 뒤 candidate event를 immutable Parquet로 발행하며, DuckDB replay가 검증한 identity와 직렬화된 scanner snapshot을 같은 projection row에 확정한다. 재시작 reader도 Parquet와 identity를 다시 검증하므로 경로·SQLite payload만으로 후보를 신뢰하지 않는다. 일부 설정, alias 누락, 미래 foundation, 변조된 dataset은 fail-closed이고 옵션이 없으면 기존 KIS 스캔은 변하지 않는다. fixture manifest는 `FIXT` 전용이며 실제 동적 후보 운영을 뜻하지 않는다. 다음 입력 단계는 현재 US security master manifest를 raw-first로 생성하는 read-only adapter다.
@@ -232,6 +234,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [US runtime fleet-cycle audit 체크포인트](docs/checkpoints/2026-07-19-us-runtime-fleet-audit-ko.md)
 - [US runtime capability registry 체크포인트](docs/checkpoints/2026-07-19-us-runtime-capability-registry-ko.md)
 - [Research evidence read model 체크포인트](docs/checkpoints/2026-07-19-research-evidence-read-model-ko.md)
+- [US SIP typed feature extraction 체크포인트](docs/checkpoints/2026-07-19-us-sip-typed-feature-extraction-ko.md)
 - [US runtime fleet 운영 사이클 체크포인트](docs/checkpoints/2026-07-19-us-runtime-fleet-cycle-ko.md)
 - [US subscription policy state 체크포인트](docs/checkpoints/2026-07-19-us-subscription-policy-state-ko.md)
 - [Alpaca SIP profile 자동 materialization 체크포인트](docs/checkpoints/2026-07-19-alpaca-sip-profile-materializer-ko.md)
@@ -759,10 +762,12 @@ KIS 날짜별 paper 감시:
   --canonical-root outputs/runtime/us-sip-fleet/canonical \
   --audit-store outputs/runtime/us-sip-fleet/fleet-audit.sqlite3 \
   --policy-state-store outputs/runtime/us-sip-fleet/policy-state.sqlite3 \
+  --research-artifact-root outputs/runtime/us-sip-fleet/research-evidence \
+  --minimum-rvol-bps 15000 \
   --output-dir outputs/runtime/us-sip-fleet/report
 ```
 
-이 명령은 정규장·fresh scanner·만료 전 opportunity·exact candidate/profile coverage를 먼저 확인한 뒤에만 Alpaca data credential을 읽는다. trading origin, account, position, order API는 사용하지 않는다.
+이 명령은 정규장·fresh scanner·만료 전 opportunity·exact candidate/profile coverage를 먼저 확인한 뒤에만 Alpaca data credential을 읽는다. research artifact 옵션을 주면 owner별 breakout·RVOL evidence를 별도 read model로 만들며 서로 다른 종목을 하나의 corroborated claim으로 혼합하지 않는다. trading origin, account, position, order API는 사용하지 않는다.
 
 수동 profile 경로 대신 현재 desired 종목의 20일 history와 완료 분 profile을 자동 생성·재생하려면 `--profile`을 빼고 다음 옵션을 사용한다.
 

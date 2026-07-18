@@ -510,3 +510,10 @@
 - 최초 관찰: canonical Parquet는 event envelope와 content hash를 보존하지만 정규화된 뉴스·공시 내용은 포함하지 않는다. 이 envelope만으로 claim을 생성하면 hash에서 의미를 추측하거나 별도 extractor의 lineage를 잃게 된다.
 - 수정: 별도 extraction 계약이 event ID, content hash, source, raw receipt와 entity set을 모두 고정한다. deterministic과 LLM 방식을 분리하고 LLM은 model/prompt version을 필수화했다. read model은 active event exact match 뒤에만 독립 source, stance conflict, current/baseline novelty와 burst를 계산한다.
 - 결과: source/hash/receipt/entity mismatch, future extraction과 tombstone event는 fail-closed다. content-addressed mode-600 artifact에는 claim evidence ID와 집계만 남고 raw receipt reference와 원문은 없다. 이 커널은 실제 extraction adapter나 주문·승격 권한을 만들지 않는다.
+
+## H72: typed intraday 지표를 canonical event lineage 없이 연구 claim으로 사용한다
+
+- 판별 기준: breakout·RVOL 값이 READY snapshot의 exact verified dataset, 마지막 완료 1분봉, 20일 volume profile과 함께 재검증되는지, 서로 다른 RVOL 기준이나 종목이 같은 claim으로 섞이는지 확인한다.
+- 최초 관찰: M4 runtime은 causal typed indicator와 replay identity를 함께 만들었지만 research evidence read model에 공급하는 adapter가 없었다. feature hash만 복사하면 어떤 dataset·event·threshold에서 나온 값인지 독립적으로 대사할 수 없었다.
+- 수정: US SIP deterministic adapter가 snapshot identity를 canonical Parquet/DuckDB replay에서 다시 만들고 source, entity, event count·연속 시각, 정규장 개장부터 profile `through_minute`까지의 exact 구간, 마지막 완료 분봉, receipt·normalization causality와 volume-profile evidence를 검증한다. breakout bool과 RVOL threshold stance를 exact event에 결합하고 threshold·전체 typed indicator·identity를 output hash에 포함한다. fleet CLI는 opt-in으로 owner마다 별도 read model artifact를 만든다.
+- 결과: wrong dataset, blocked snapshot, missing latest event, future normalization과 invalid threshold는 provider 재호출 없이 차단됐다. 두 owner는 서로 다른 artifact/read model로 유지되고 단일 `alpaca/sip` evidence는 `unconfirmed`다. mode-600 derived artifact에는 raw receipt reference가 없으며 account/order endpoint와 mutation은 0건이다.

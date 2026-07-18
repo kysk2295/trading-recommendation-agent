@@ -26,7 +26,12 @@ from trading_agent.alpaca_sip_runtime_owner import (
     AlpacaSipRuntimeOwnerFactoryConfig,
 )
 from trading_agent.private_report import write_private_report
+from trading_agent.research_evidence_artifact import (
+    ResearchEvidenceArtifactError,
+    write_research_evidence_artifact,
+)
 from trading_agent.us_equity_calendar import NEW_YORK
+from trading_agent.us_feature_evidence_models import UsFeatureEvidenceBinding
 from trading_agent.us_market_data_fleet import UsMarketDataFleet
 from trading_agent.us_market_data_fleet_audit_store import RuntimeFleetAuditStore
 from trading_agent.us_opportunity_scanner_models import UsOpportunityScannerProjectionError
@@ -41,6 +46,10 @@ from trading_agent.us_runtime_policy_scope import (
     RuntimePolicyScopeError,
     RuntimePolicyScopeRequest,
     prepare_runtime_policy_scope,
+)
+from trading_agent.us_sip_research_evidence_projection import (
+    UsSipResearchEvidenceProjectionError,
+    project_us_sip_research_evidence,
 )
 from trading_agent.us_subscription_models import SubscriptionPolicyConfig
 from trading_agent.us_subscription_policy_state import (
@@ -65,6 +74,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--audit-store", type=Path, required=True)
     parser.add_argument("--policy-state-store", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--research-artifact-root", type=Path)
+    parser.add_argument("--minimum-rvol-bps", type=int, default=15_000)
     parser.add_argument("--secret-path", type=Path, default=DEFAULT_ALPACA_SECRET_PATH)
     parser.add_argument("--capacity", type=int, default=2)
     parser.add_argument("--max-candidate-age-seconds", type=int, default=30)
@@ -90,6 +101,7 @@ def main(
     args = parse_args(argv)
     evaluated_at = dt.datetime.now(dt.UTC) if now is None else now
     try:
+        _validate_research_options(args)
         state_store = SubscriptionPolicyStateStore(args.policy_state_store)
         prior_state = state_store.latest()
         manual_profiles = None if args.profile is None else _profile_bindings(args.profile)
@@ -135,21 +147,29 @@ def main(
                 UsMarketDataFleet(factory),
                 RuntimeFleetAuditStore(args.audit_store),
             )
+        research_counts = _write_research_artifacts(args, result.fleet.bindings)
     except (
         AlpacaSecretFileError,
         AlpacaSipProfileMaterializerError,
         MissingAlpacaCredentialsError,
         OSError,
+        ResearchEvidenceArtifactError,
         RuntimeFleetCycleError,
         RuntimePolicyScopeError,
         SubscriptionPolicyStateError,
         TypeError,
+        UsSipResearchEvidenceProjectionError,
         UsOpportunityScannerProjectionError,
         ValueError,
     ):
         _report(args.output_dir, ("result: blocked", "account/order mutation: 0"))
         return 1
     ready = result.audit.fleet_status == "ready" and result.audit.gate_status == "ready"
+    research_detail = (
+        "research evidence artifact: disabled"
+        if research_counts is None
+        else f"research evidence artifact: {research_counts[0]} new, {research_counts[1]} replay"
+    )
     _report(
         args.output_dir,
         (
@@ -159,6 +179,7 @@ def main(
             f"owner count: {len(result.audit.owners)}",
             f"audit append: {'new' if result.audit_appended else 'replay'}",
             f"policy state append: {'new' if state_appended else 'replay'}",
+            research_detail,
             "account/order mutation: 0",
         ),
     )
@@ -182,6 +203,26 @@ def _policy_config(args: argparse.Namespace) -> SubscriptionPolicyConfig:
         dt.timedelta(seconds=args.minimum_residency_seconds),
         dt.timedelta(seconds=args.eviction_cooldown_seconds),
     )
+
+
+def _validate_research_options(args: argparse.Namespace) -> None:
+    if type(args.minimum_rvol_bps) is not int or not 1 <= args.minimum_rvol_bps <= 100_000:
+        raise RuntimeFleetCycleError
+
+
+def _write_research_artifacts(
+    args: argparse.Namespace,
+    bindings: tuple[UsFeatureEvidenceBinding, ...],
+) -> tuple[int, int] | None:
+    if args.research_artifact_root is None:
+        return None
+    models = project_us_sip_research_evidence(
+        bindings,
+        args.canonical_root,
+        minimum_rvol_bps=args.minimum_rvol_bps,
+    )
+    created = tuple(write_research_evidence_artifact(args.research_artifact_root, model)[1] for model in models)
+    return sum(created), len(created) - sum(created)
 
 
 def _report(output_dir: Path, details: tuple[str, ...]) -> None:

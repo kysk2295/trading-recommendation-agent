@@ -12,6 +12,8 @@ import run_us_runtime_fleet_cycle as cli
 from tests.alpaca_sip_runtime_fleet_fixtures import NEW_YORK, wire_bars
 from tests.us_volume_profile_fixtures import volume_profile
 from trading_agent.data_foundation_manifest import load_data_foundation_manifest
+from trading_agent.research_evidence_artifact import load_research_evidence_artifact
+from trading_agent.research_evidence_models import ClaimCorroborationStatus
 from trading_agent.research_identity_models import AgentFamily, MarketId, StrategyLaneRef
 from trading_agent.signal_contract_models import (
     EvidenceRef,
@@ -75,7 +77,14 @@ def test_ready_fixture_cycle_uses_only_alpaca_data_get(tmp_path: Path) -> None:
 
     report = tmp_path / "report"
     code = cli.main(
-        _arguments(tmp_path, profile, report, scanner=scanner, secret=secret),
+        _arguments(
+            tmp_path,
+            profile,
+            report,
+            scanner=scanner,
+            secret=secret,
+            research_artifacts=True,
+        ),
         now=NOW,
         client_factory=client_factory,
     )
@@ -87,6 +96,14 @@ def test_ready_fixture_cycle_uses_only_alpaca_data_get(tmp_path: Path) -> None:
     assert requests[0].url.path == "/v2/stocks/bars"
     assert "result: ready" in _report(report)
     assert "gate: ready" in _report(report)
+    assert "research evidence artifact: 1 new, 0 replay" in _report(report)
+    artifacts = tuple((tmp_path / "research-artifacts").glob("research_evidence_*.json"))
+    assert len(artifacts) == 1
+    evidence = load_research_evidence_artifact(artifacts[0])
+    assert len(evidence.claims) == 2
+    assert all(item.corroboration_status is ClaimCorroborationStatus.UNCONFIRMED for item in evidence.claims)
+    assert b"raw_receipt_ref" not in artifacts[0].read_bytes()
+    assert stat.S_IMODE(artifacts[0].stat().st_mode) == 0o600
     audit = RuntimeFleetAuditStore(tmp_path / "audit.sqlite3").latest()
     assert audit is not None
     assert audit.gate_status == "ready"
@@ -95,6 +112,22 @@ def test_ready_fixture_cycle_uses_only_alpaca_data_get(tmp_path: Path) -> None:
     assert policy_state is not None
     assert policy_state.active[0].instrument_id == INSTRUMENT_ID
     assert policy_state.active[0].subscribed_at == NOW
+
+
+def test_invalid_research_threshold_blocks_before_provider_or_secret(tmp_path: Path) -> None:
+    report = tmp_path / "invalid-research-report"
+    code = cli.main(
+        [
+            *_arguments(tmp_path, tmp_path / "profile.json", report, research_artifacts=True),
+            "--minimum-rvol-bps",
+            "0",
+        ],
+        now=NOW,
+    )
+
+    assert code == 1
+    assert "result: blocked" in _report(report)
+    assert not (tmp_path / "policy-state.sqlite3").exists()
 
 
 def test_auto_profile_cycle_materializes_history_then_runs_current_get(tmp_path: Path) -> None:
@@ -182,11 +215,15 @@ def _arguments(
     scanner: Path | None = None,
     secret: Path | None = None,
     auto_profiles: bool = False,
+    research_artifacts: bool = False,
 ) -> list[str]:
     profile_arguments = (
         ["--auto-profile-root", str(tmp_path / "auto-profiles")]
         if auto_profiles
         else ["--profile", f"{INSTRUMENT_ID}={profile}"]
+    )
+    research_arguments = (
+        ["--research-artifact-root", str(tmp_path / "research-artifacts")] if research_artifacts else []
     )
     return [
         "--scanner-store",
@@ -204,6 +241,7 @@ def _arguments(
         str(report),
         "--secret-path",
         str(tmp_path / "missing.env" if secret is None else secret),
+        *research_arguments,
     ]
 
 

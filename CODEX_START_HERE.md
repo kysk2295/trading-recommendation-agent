@@ -90,11 +90,11 @@
 - append-only data capability registry 구현. 고정 source entitlement 계약과 시점별 health assessment를 분리해 보존하고 as-of snapshot이 미래 assessment를 배제한다. broad-scanner entitlement는 관측시각이 아니라 고정 계약 발효일을 사용하며 registry CLI가 foundation을 재평가한다.
 - KR same-cycle terminal source run을 capability registry에 연결했다. 정상 zero-record poll은 실제 event를 위조하지 않고 source heartbeat로 freshness를 보존하며 exact source-run ID, adapter version, cycle/date와 실패 상태를 재검증한다. 이 local projection은 provider나 주문 권한을 열지 않는다.
 - Alpaca SIP runtime fleet audit도 capability registry에 연결했다. owner별 READY 비율을 bounded runtime source completeness로 집계하고 cycle 완료시각은 event가 아닌 heartbeat로만 사용한다. 약했던 audit store의 mode·owner·symlink와 single-writer 경계도 강화했다.
-- canonical event-bound extraction과 entity/claim corroboration read model을 추가했다. exact source/content/raw receipt/entity lineage, deterministic 또는 LLM version 계약, 독립 source·conflict·novelty/burst 계산과 content-addressed private artifact를 제공한다. 실제 provider extractor 연결은 아직 다음 단계다.
+- canonical event-bound extraction과 entity/claim corroboration read model을 추가했다. US SIP READY snapshot의 breakout·RVOL extractor는 verified dataset과 마지막 완료 분봉에 결합되어 fleet cycle의 종목별 private artifact로 연결됐다. 단일 source evidence는 unconfirmed이며 추천·승격 권한이 아니다.
 
 ## 다음 우선순위
 
-1. KR DART·LS news와 US scanner/SIP의 provider-specific normalized extraction adapter를 추가해 새 research evidence read model에 실제 immutable evidence를 공급한다. canonical envelope에 없는 내용을 hash만 보고 추측하지 말고 raw-before-parse receipt 경계에서 typed extraction을 생성한다.
+1. KR DART·LS news와 US scanner candidate의 provider-specific normalized extraction adapter를 추가해 research evidence read model에 immutable evidence를 공급한다. canonical envelope에 없는 내용을 hash만 보고 추측하지 말고 raw-before-parse receipt 경계에서 typed extraction을 생성한다.
 2. 열린 NYSE 정규장과 mode-600 Alpaca data credential이 자연스럽게 동시에 맞을 때만 새 SIP bridge의 단일 종목 bounded GET smoke를 실행한다. exact raw page·canonical replay·runtime checkpoint를 대사하고 계좌·주문·Paper endpoint는 열지 않는다. 휴장에는 fixture E2E 결과만 유지한다.
 3. 실제 read-only smoke 뒤 pagination·재시작 offset·provider gap의 장기 soak를 누적한다. 이 polling bridge를 websocket streaming이나 전체시장 coverage로 표현하지 않는다.
 4. 현재 NYSE post-close와 mode-600 data credential·정렬된 bounded universe가 동시에 맞을 때만 US swing 일봉 source를 read-only로 한 번 수집한다. 그 뒤에만 동일 CLI로 signal/shadow forward evidence를 누적하며, Paper 계좌·주문은 열지 않는다.
