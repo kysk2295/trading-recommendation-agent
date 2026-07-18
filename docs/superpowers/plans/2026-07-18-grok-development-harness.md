@@ -16,8 +16,9 @@
 
 - Create `development_harness/__init__.py`: declares the isolated development-harness package.
 - Create `development_harness/task_contract.py`: frozen task-contract models and path/command validation with strict count/length bounds.
-- Create `development_harness/grok_workspace_guard.py`: main-only root checks, linked-worktree/symlink-component rejection, and stable re-exports of the snapshot API.
-- Create `development_harness/grok_workspace_fingerprint.py`: metadata-only workspace snapshots (logical index via `git ls-files --stage -v -z`, object symlinks, nested ignored dirs; no content reads; frozen tuples with ctime_ns).
+- Create `development_harness/grok_workspace_guard.py`: dirty-checkout and index/sparse masking checks, plus stable re-exports of the snapshot/topology API.
+- Create `development_harness/grok_worktree_topology.py`: main-only root checks, linked-worktree/symlink-component rejection, and repo-owned non-symlink index topology.
+- Create `development_harness/grok_workspace_fingerprint.py`: metadata-only workspace snapshots (logical index via `git ls-files --stage -v -z`, object symlinks, nested ignored dirs, unignored empty dirs, sparse-checkout control path; no content reads; frozen tuples with ctime_ns).
 - Create `development_harness/grok_worker_process.py`: process-group worker launch, file-backed stdout polling, DEVNULL stderr, timeout/oversize group kill plus survivor cleanup.
 - Create `development_harness/grok_worker_report.py`: bounded structuredOutput parsing with exact verification-set matching, fixed concern enum, JSON depth limits, and RecursionError handling.
 - Create `development_harness/grok_verification.py`: offline command rewrite, shared `cache_disabled_environ` (exact `PYTEST_ADDOPTS=-p no:cacheprovider`), and Ruff `--no-cache` injection for worker-facing and offline commands.
@@ -87,7 +88,8 @@ uv run basedpyright development_harness run_grok_task.py
 uv run python run_grok_task.py --help
 ```
 
-- [x] **Step 3: Close final review blockers** — pre-existing assume-unchanged/skip-worktree and sparse masking rejection; ambient `GIT_*` routing sanitize; launch/post-worker revalidation; verification process groups with ordinary descendant reap; `.git/shallow` and `.git/info/grafts` fingerprints; release checklist; full-suite baseline **2105 passed**. Preserve no-OS-sandbox and detached-setsid residuals.
+- [x] **Step 3: Close final review blockers** — pre-existing assume-unchanged/skip-worktree and sparse masking rejection; ambient `GIT_*` routing sanitize; launch/post-worker revalidation; verification process groups with ordinary descendant reap; `.git/shallow` and `.git/info/grafts` fingerprints; release checklist; full-suite baseline **2115 passed**. Preserve no-OS-sandbox and detached-setsid residuals.
+- [x] **Step 4: Close local postcheck bypasses** — force `git status --untracked-files=all` despite `status.showUntrackedFiles=no`; always re-run post-workspace validation after independent verification success/nonzero/timeout/side effect; fingerprint/reject `.git/info/sparse-checkout` after worker and verification; detect unignored empty directory create/delete while allowing only missing parents required by allowed paths; keep ignored and `.hermes`/`.omo` handling unchanged.
 
 ### Task 5: Codex Reconciliation and Main Integration
 
@@ -95,7 +97,7 @@ uv run python run_grok_task.py --help
 - Review: all worker changes only
 
 - [x] **Step 1: Inspect the worker diff without trusting its summary** (local Codex checkpoint commits exist specifically for exact-SHA review; workers never create commits)
-- [x] **Step 2: Run Codex's independent verification** (focused harness suite and full **2105-test** suite pass)
+- [x] **Step 2: Run Codex's independent verification** (focused harness suite and full **2115-test** suite pass)
 - [ ] **Step 3: Remote push / main integration only after all reviewers PASS** — local checkpoint commits for exact-SHA review are allowed; workers never commit; remote push waits for full reviewer PASS
 
 Do not stage `.hermes/` or `.omo/`. Do not create a worktree for later tasks.
@@ -106,6 +108,7 @@ Do not stage `.hermes/` or `.omo/`. Do not create a worktree for later tasks.
 - Stale worktree language removed: workers run in-place on main only.
 - Residual risk explicit: no OS sandbox; prompt/contract residual risk for credential/network/push/external writes and detached `setsid` descendants.
 - Index/object/ignored hardening: logical index flags, object-store symlinks, empty ignored directories, path symlink components, shared cache-disabled env for worker and offline verification.
-- Final blockers closed: pre-existing index/sparse masking, fail-closed strip of every `GIT_*` key, launch/post-worker revalidation including repo-owned non-symlink `.git/index`, verification process groups, shallow/grafts fingerprints, module size splits under 250 pure LOC, release checklist, and Codex-verified 2105-test baseline.
+- Final blockers closed: pre-existing index/sparse masking, fail-closed strip of every `GIT_*` key, launch/post-worker revalidation including repo-owned non-symlink `.git/index`, verification process groups, shallow/grafts fingerprints, module size splits under 250 pure LOC, release checklist, and Codex-verified 2115-test baseline.
+- Local postcheck bypasses closed: forced untracked reporting, post-verification workspace validation on every verification outcome, sparse-checkout fingerprint/reject after worker and verification, unignored empty-directory inventory with allowed-parent exception only.
 - Commit policy: local Codex checkpoint commits are for exact-SHA review only; workers never commit; only remote push waits for all reviewers PASS.
 - Bootstrap boundary: harness implementation itself is complete; later feature work uses this CLI.

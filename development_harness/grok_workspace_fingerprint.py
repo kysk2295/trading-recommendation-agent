@@ -2,7 +2,8 @@
 
 Captures immutable Git database, logical index, user-owned, and ignored-path
 inventories without reading file contents. Symlink directories are recorded
-once and never followed.
+once and never followed. Unignored empty directories are inventoried separately
+from ignored and user-owned trees.
 """
 
 from __future__ import annotations
@@ -19,10 +20,13 @@ from development_harness.grok_git_control import (
     git_index_fingerprint as _git_index_fingerprint,
 )
 from development_harness.grok_path_metadata import (
+    EmptyDirectoryInventoryError,
     OwnedMetaMap,
     PathMetaMap,
+    empty_unignored_directories,
     ignored_metadata,
     user_owned_metadata,
+    verify_empty_directory_inventory,
 )
 from development_harness.grok_process_env import sanitize_git_routing_environ
 
@@ -62,6 +66,7 @@ class WorkspaceSnapshot:
     index_entries: str
     user_owned: OwnedMetaMap
     ignored: PathMetaMap
+    empty_dirs: tuple[str, ...]
 
 
 def capture_workspace_snapshot(repo: Path) -> WorkspaceSnapshot:
@@ -71,10 +76,16 @@ def capture_workspace_snapshot(repo: Path) -> WorkspaceSnapshot:
         index_entries=git_index_fingerprint(repo),
         user_owned=user_owned_metadata(repo),
         ignored=ignored_metadata(repo, run_git=run_git),
+        empty_dirs=empty_unignored_directories(repo, run_git=run_git),
     )
 
 
-def verify_workspace_snapshot(repo: Path, snapshot: WorkspaceSnapshot) -> None:
+def verify_workspace_snapshot(
+    repo: Path,
+    snapshot: WorkspaceSnapshot,
+    *,
+    allowed_paths: tuple[str, ...] | None = None,
+) -> None:
     if run_git(repo, "rev-parse", "HEAD").strip() != snapshot.head:
         raise GrokWorkspaceGuardError(
             "worker committed changes; HEAD no longer matches the contract base"
@@ -87,3 +98,12 @@ def verify_workspace_snapshot(repo: Path, snapshot: WorkspaceSnapshot) -> None:
         raise GrokWorkspaceGuardError("user-owned state changed under the worker")
     if ignored_metadata(repo, run_git=run_git) != snapshot.ignored:
         raise GrokWorkspaceGuardError("ignored path metadata changed under the worker")
+    try:
+        verify_empty_directory_inventory(
+            repo,
+            snapshot.empty_dirs,
+            allowed_paths=allowed_paths,
+            run_git=run_git,
+        )
+    except EmptyDirectoryInventoryError as error:
+        raise GrokWorkspaceGuardError(str(error)) from error

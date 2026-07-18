@@ -23,6 +23,7 @@ from development_harness.grok_workspace_guard import (
     assert_allowed_paths_have_no_symlinks,
     assert_checkout_is_safe,
     assert_main_repository_root,
+    assert_not_sparse_checkout,
     capture_workspace_snapshot,
     verify_workspace_snapshot,
 )
@@ -171,24 +172,36 @@ def _revalidate_launch_state(plan: GrokTaskPlan) -> None:
         assert_checkout_is_safe(plan.repository)
         if _run_git(plan.repository, "rev-parse", "HEAD").strip() != plan.base_commit:
             raise GrokTaskRunnerError("task contract base does not match the checkout")
+        # Exact empty-dir inventory match before launch (no allowed-parent delta).
         verify_workspace_snapshot(plan.repository, plan.snapshot)
     except GrokWorkspaceGuardError as error:
         raise GrokTaskRunnerError(str(error)) from error
 
 
-def _post_worker_paths(plan: GrokTaskPlan) -> tuple[str, ...]:
+def _post_workspace_validation(plan: GrokTaskPlan) -> tuple[str, ...]:
+    """Validate topology, snapshot, sparse-checkout, and allow-listed changed paths."""
+
     try:
         # Revalidate symlink/.git topology before any post-worker Git inventory.
         repository = assert_main_repository_root(plan.repository)
         if repository != plan.repository:
             raise GrokTaskRunnerError("repository root changed under the worker")
-        verify_workspace_snapshot(plan.repository, plan.snapshot)
+        verify_workspace_snapshot(
+            plan.repository,
+            plan.snapshot,
+            allowed_paths=plan.contract.allowed_paths,
+        )
+        assert_not_sparse_checkout(plan.repository)
         assert_allowed_paths_have_no_symlinks(plan.repository, plan.contract.allowed_paths)
     except GrokWorkspaceGuardError as error:
         raise GrokTaskRunnerError(str(error)) from error
     changed_paths = _changed_paths(plan.repository, plan.base_commit)
     assert_changed_paths_allowed(changed_paths, plan.contract.allowed_paths)
     return changed_paths
+
+
+def _post_worker_paths(plan: GrokTaskPlan) -> tuple[str, ...]:
+    return _post_workspace_validation(plan)
 
 
 def _run_contract_verification(plan: GrokTaskPlan) -> bool:
@@ -252,9 +265,12 @@ def run_grok_task(plan: GrokTaskPlan, *, dry_run: bool) -> GrokTaskReport:
         or not _summary_matches_changed_paths(summary.changed_files, changed_paths)
     ):
         return _failed_report(plan, changed_paths=changed_paths, worker_exit_code=worker_exit_code)
-    if not _run_contract_verification(plan):
+    verification_ok = _run_contract_verification(plan)
+    # Always re-validate after independent verification success, nonzero, timeout,
+    # or side effect so verification cannot hide workspace damage.
+    changed_paths = _post_workspace_validation(plan)
+    if not verification_ok:
         return _failed_report(plan, changed_paths=changed_paths, worker_exit_code=worker_exit_code)
-    changed_paths = _post_worker_paths(plan)
     if not _summary_matches_changed_paths(summary.changed_files, changed_paths):
         return _failed_report(plan, changed_paths=changed_paths, worker_exit_code=worker_exit_code)
     return GrokTaskReport(

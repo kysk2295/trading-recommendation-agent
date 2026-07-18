@@ -1929,3 +1929,316 @@ def test_workspace_snapshot_fingerprints_shallow_and_grafts(tmp_path: Path) -> N
     grafts.write_text("b" * 40 + "\n", encoding="utf-8")
     with pytest.raises(GrokWorkspaceGuardError, match="Git database"):
         verify_workspace_snapshot(root, snapshot)
+
+
+def test_prepare_rejects_untracked_when_show_untracked_files_is_no(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    _run_git(repo, "config", "status.showUntrackedFiles", "no")
+    (repo / "sneaky-untracked.txt").write_text("hidden\n", encoding="utf-8")
+    assert _run_git(repo, "status", "--porcelain=v1") == ""
+
+    with pytest.raises(GrokTaskRunnerError, match="checkout contains changes"):
+        _ = prepare_grok_task(_contract(repo), repo=repo, dry_run=True)
+
+
+def test_workspace_snapshot_fingerprints_sparse_checkout_file(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    root = assert_main_repository_root(repo)
+    snapshot = capture_workspace_snapshot(root)
+
+    sparse = repo / ".git" / "info" / "sparse-checkout"
+    sparse.parent.mkdir(parents=True, exist_ok=True)
+    sparse.write_text("/*\n!README.md\n", encoding="utf-8")
+
+    with pytest.raises(GrokWorkspaceGuardError, match=r"Git database|sparse"):
+        verify_workspace_snapshot(root, snapshot)
+
+
+def test_runner_rejects_sparse_checkout_created_after_worker(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    allowed = "development_harness/task_contract.py"
+    (repo / "development_harness").mkdir()
+    fake_grok = tmp_path.resolve() / "sparse-grok"
+    verification = _verification_list()
+    fake_grok.write_text(
+        "\n".join(
+            (
+                "#!/usr/bin/env python3",
+                "import json",
+                "from pathlib import Path",
+                "",
+                f"target = Path({allowed!r})",
+                "target.parent.mkdir(parents=True, exist_ok=True)",
+                "target.write_text('worker change\\n', encoding='utf-8')",
+                "sparse = Path('.git/info/sparse-checkout')",
+                "sparse.parent.mkdir(parents=True, exist_ok=True)",
+                "sparse.write_text('/*\\n', encoding='utf-8')",
+                "print(json.dumps({",
+                "  'structuredOutput': {",
+                f"    'changed_files': [{allowed!r}],",
+                f"    'verification': {verification!r},",
+                "    'concerns': [],",
+                "  }",
+                "}))",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    fake_grok.chmod(0o700)
+    plan = prepare_grok_task(
+        _contract(repo),
+        repo=repo,
+        grok_binary=str(fake_grok),
+        dry_run=False,
+    )
+
+    with pytest.raises(GrokTaskRunnerError, match=r"sparse|Git database"):
+        _ = run_grok_task(plan, dry_run=False)
+
+
+def test_runner_rejects_empty_directory_created_outside_allowed_parents(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path)
+    allowed = "development_harness/task_contract.py"
+    (repo / "development_harness").mkdir()
+    fake_grok = tmp_path.resolve() / "empty-dir-grok"
+    verification = _verification_list()
+    fake_grok.write_text(
+        "\n".join(
+            (
+                "#!/usr/bin/env python3",
+                "import json",
+                "from pathlib import Path",
+                "",
+                f"target = Path({allowed!r})",
+                "target.parent.mkdir(parents=True, exist_ok=True)",
+                "target.write_text('worker change\\n', encoding='utf-8')",
+                "Path('sneaky-empty').mkdir()",
+                "print(json.dumps({",
+                "  'structuredOutput': {",
+                f"    'changed_files': [{allowed!r}],",
+                f"    'verification': {verification!r},",
+                "    'concerns': [],",
+                "  }",
+                "}))",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    fake_grok.chmod(0o700)
+    plan = prepare_grok_task(
+        _contract(repo),
+        repo=repo,
+        grok_binary=str(fake_grok),
+        dry_run=False,
+    )
+
+    with pytest.raises(GrokTaskRunnerError, match=r"empty director"):
+        _ = run_grok_task(plan, dry_run=False)
+
+
+def test_runner_allows_missing_parent_directories_for_allowed_paths(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    allowed = "development_harness/nested/task_contract.py"
+    required, manual = _passing_commands()
+    contract = GrokTaskContract(
+        schema_version=1,
+        task_id="m4-replay-input",
+        base_commit=_run_git(repo, "rev-parse", "HEAD"),
+        objective="Add a replay-bound research input contract.",
+        allowed_paths=(allowed,),
+        required_commands=required,
+        manual_qa_commands=manual,
+        expected_summary_fields=("changed_files", "verification", "concerns"),
+    )
+    fake_grok = _fake_grok(
+        tmp_path / "fake-grok",
+        changed_path=allowed,
+        summary={
+            "changed_files": [allowed],
+            "verification": _verification_list(),
+            "concerns": [],
+        },
+    )
+    plan = prepare_grok_task(contract, repo=repo, grok_binary=str(fake_grok), dry_run=False)
+
+    report = run_grok_task(plan, dry_run=False)
+
+    assert report.status == "completed"
+    assert report.changed_paths == (allowed,)
+
+
+def test_runner_rejects_preexisting_empty_directory_deletion(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    empty = repo / "preexisting-empty"
+    empty.mkdir()
+    allowed = "development_harness/task_contract.py"
+    (repo / "development_harness").mkdir()
+    fake_grok = tmp_path.resolve() / "delete-empty-grok"
+    verification = _verification_list()
+    fake_grok.write_text(
+        "\n".join(
+            (
+                "#!/usr/bin/env python3",
+                "import json",
+                "from pathlib import Path",
+                "",
+                f"target = Path({allowed!r})",
+                "target.parent.mkdir(parents=True, exist_ok=True)",
+                "target.write_text('worker change\\n', encoding='utf-8')",
+                "Path('preexisting-empty').rmdir()",
+                "print(json.dumps({",
+                "  'structuredOutput': {",
+                f"    'changed_files': [{allowed!r}],",
+                f"    'verification': {verification!r},",
+                "    'concerns': [],",
+                "  }",
+                "}))",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    fake_grok.chmod(0o700)
+    plan = prepare_grok_task(
+        _contract(repo),
+        repo=repo,
+        grok_binary=str(fake_grok),
+        dry_run=False,
+    )
+
+    with pytest.raises(GrokTaskRunnerError, match=r"empty director"):
+        _ = run_grok_task(plan, dry_run=False)
+
+
+def test_runner_postchecks_workspace_after_independent_verification_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import development_harness.grok_verification as verification_module
+
+    repo = _init_repo(tmp_path)
+    allowed = "development_harness/task_contract.py"
+    (repo / "development_harness").mkdir()
+
+    def _fail_with_side_effect(command: tuple[str, ...], **kwargs: object) -> int:
+        _ = command, kwargs
+        (repo / "verification-empty").mkdir()
+        return 2
+
+    monkeypatch.setattr(verification_module, "run_verification_command", _fail_with_side_effect)
+    fake_grok = _fake_grok(
+        tmp_path / "fake-grok",
+        changed_path=allowed,
+        summary={
+            "changed_files": [allowed],
+            "verification": _verification_list(),
+            "concerns": [],
+        },
+    )
+    plan = prepare_grok_task(
+        _contract(repo),
+        repo=repo,
+        grok_binary=str(fake_grok),
+        dry_run=False,
+    )
+
+    with pytest.raises(GrokTaskRunnerError, match=r"empty director"):
+        _ = run_grok_task(plan, dry_run=False)
+
+
+def test_runner_postchecks_workspace_after_independent_verification_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import development_harness.grok_verification as verification_module
+
+    repo = _init_repo(tmp_path)
+    allowed = "development_harness/task_contract.py"
+    (repo / "development_harness").mkdir()
+
+    def _timeout_with_side_effect(command: tuple[str, ...], **kwargs: object) -> int:
+        _ = kwargs
+        sparse = repo / ".git" / "info" / "sparse-checkout"
+        sparse.parent.mkdir(parents=True, exist_ok=True)
+        sparse.write_text("/*\n", encoding="utf-8")
+        raise subprocess.TimeoutExpired(cmd=command, timeout=1)
+
+    monkeypatch.setattr(verification_module, "run_verification_command", _timeout_with_side_effect)
+    fake_grok = _fake_grok(
+        tmp_path / "fake-grok",
+        changed_path=allowed,
+        summary={
+            "changed_files": [allowed],
+            "verification": _verification_list(),
+            "concerns": [],
+        },
+    )
+    plan = prepare_grok_task(
+        _contract(repo),
+        repo=repo,
+        grok_binary=str(fake_grok),
+        dry_run=False,
+    )
+
+    with pytest.raises(GrokTaskRunnerError, match=r"sparse|Git database"):
+        _ = run_grok_task(plan, dry_run=False)
+
+
+def test_runner_postchecks_workspace_after_successful_verification_side_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import development_harness.grok_verification as verification_module
+
+    repo = _init_repo(tmp_path)
+    allowed = "development_harness/task_contract.py"
+    (repo / "development_harness").mkdir()
+
+    def _ok_with_side_effect(command: tuple[str, ...], **kwargs: object) -> int:
+        _ = command, kwargs
+        (repo / "post-verify-empty").mkdir()
+        return 0
+
+    monkeypatch.setattr(verification_module, "run_verification_command", _ok_with_side_effect)
+    fake_grok = _fake_grok(
+        tmp_path / "fake-grok",
+        changed_path=allowed,
+        summary={
+            "changed_files": [allowed],
+            "verification": _verification_list(),
+            "concerns": [],
+        },
+    )
+    plan = prepare_grok_task(
+        _contract(repo),
+        repo=repo,
+        grok_binary=str(fake_grok),
+        dry_run=False,
+    )
+
+    with pytest.raises(GrokTaskRunnerError, match=r"empty director"):
+        _ = run_grok_task(plan, dry_run=False)
+
+
+def test_empty_ignored_directories_remain_inventoried_separately(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    gitignore = repo / ".gitignore"
+    gitignore.write_text(
+        gitignore.read_text(encoding="utf-8") + "empty-ignored/\n",
+        encoding="utf-8",
+    )
+    _run_git(repo, "add", ".gitignore")
+    _run_git(repo, "commit", "-m", "ignore empty dir")
+    (repo / "empty-ignored").mkdir()
+    (repo / "visible-empty").mkdir()
+
+    snapshot = capture_workspace_snapshot(repo)
+
+    assert any(path.rstrip("/") == "empty-ignored" for path, _meta in snapshot.ignored)
+    assert "visible-empty" in snapshot.empty_dirs
+    assert "empty-ignored" not in snapshot.empty_dirs
+    verify_workspace_snapshot(repo, snapshot)

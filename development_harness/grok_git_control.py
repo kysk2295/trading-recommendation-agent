@@ -61,6 +61,7 @@ def git_control_metadata(repo: Path) -> tuple[str, ...]:
         "info/exclude",
         "shallow",
         "info/grafts",
+        "info/sparse-checkout",
     ):
         formatted = optional_path_meta(git_dir / relative, relative)
         if formatted is not None:

@@ -75,18 +75,25 @@ directories) are unchanged by immutable metadata tuples
 `(mode, uid, size, mtime_ns, ctime_ns)` only—file contents are never read for
 snapshots. Control paths include `.git/HEAD`, `.git/config`, optional
 `.git/config.worktree`, `.git/packed-refs`, `.git/info/exclude`, `.git/shallow`,
-`.git/info/grafts`, and every entry under `.git/hooks` without following
-symlinks. The binary `.git/index` blob is not hashed (ordinary status refresh
-may rewrite it); only the stable logical index listing is fingerprinted.
-Preflight also rejects **pre-existing** `assume-unchanged` / `skip-worktree`
-flags and sparse-checkout masking. Immediately before worker launch the harness
-revalidates a clean snapshot and repository root; before any post-worker Git
-inventory it revalidates repository symlink / `.git` topology. The repository
-path and every allowed path must not include symlink components before or after
-the worker. The harness then compares every Git-changed path against the
-contract allow-list and fails closed on any extra path or worker commit.
-Timeout and OSError paths use the same enforcement so out-of-contract edits
-cannot hide behind a failed process.
+`.git/info/grafts`, `.git/info/sparse-checkout`, and every entry under
+`.git/hooks` without following symlinks. The binary `.git/index` blob is not
+hashed (ordinary status refresh may rewrite it); only the stable logical index
+listing is fingerprinted. Unignored empty directories outside user-owned roots
+are inventoried separately; create/delete is fail-closed except for missing
+parent directories required by allowed file paths. Preflight also rejects
+**pre-existing** `assume-unchanged` / `skip-worktree` flags and sparse-checkout
+masking, and forces untracked reporting with
+`git status --porcelain=v1 -z --untracked-files=all` so
+`status.showUntrackedFiles=no` cannot hide dirty checkouts. Immediately before
+worker launch the harness revalidates a clean snapshot and repository root;
+before any post-worker Git inventory and again after independent verification
+(success, nonzero, timeout, or side effect) it revalidates repository
+symlink / `.git` topology, sparse-checkout absence, empty-directory inventory,
+and allow-listed changed paths. The repository path and every allowed path must
+not include symlink components before or after the worker. The harness then
+compares every Git-changed path against the contract allow-list and fails
+closed on any extra path or worker commit. Timeout and OSError paths use the
+same enforcement so out-of-contract edits cannot hide behind a failed process.
 
 Every harness Git subprocess, the worker, and independent verification strip
 every ambient environment key whose name starts with `GIT_` (fail-closed; not an
@@ -108,7 +115,8 @@ timeout. Worker-claimed verification is never enough. Snapshot orchestration
 lives in `grok_workspace_fingerprint.py` with Git control/object helpers in
 `grok_git_control.py` and path metadata helpers in `grok_path_metadata.py`;
 command/prompt construction lives in `grok_command.py`; path-safety preflight
-remains in `grok_workspace_guard.py` with stable public re-exports.
+remains in `grok_workspace_guard.py` with stable public re-exports; repository
+root and index topology checks live in `grok_worktree_topology.py`.
 
 The harness captures only safe orchestration metadata: task ID, base commit,
 worker exit status, changed paths, and the bounded structured summary parsed
@@ -216,7 +224,12 @@ The implementation must use TDD and cover at least:
 - summary path/verification/concern contract-safe enum matching;
 - structured summary parsing from `structuredOutput` only with JSON depth bound;
 - process-group kill on timeout and stdout size bound;
-- fingerprinting of `.git/shallow` and `.git/info/grafts` control paths;
+- fingerprinting of `.git/shallow`, `.git/info/grafts`, and
+  `.git/info/sparse-checkout` control paths;
+- forced untracked status reporting despite `status.showUntrackedFiles=no`;
+- unignored empty-directory create/delete detection with allowed-parent exception;
+- post-workspace validation after independent verification success, nonzero,
+  timeout, or side effect;
 - independent offline re-run of required and manual QA before completed;
 - a safe failure when the Grok binary is absent, times out, or returns nonzero,
   with allow-list enforcement on timeout/OSError paths;
@@ -226,7 +239,7 @@ Codex independently reviews each Grok diff for plan compliance, unintended
 scope, secret exposure, provider/broker imports, test quality, and regressions.
 Acceptance requires targeted tests, full `pytest`, Ruff, basedpyright, and
 the task-specific manual QA specified by the contract. Full-suite baseline at
-final review blocker close is **2105 passed** from Codex's full-suite rerun.
+final review blocker close is **2115 passed** from Codex's full-suite rerun.
 Local Codex checkpoint commits are for exact-SHA review only; workers never
 commit; only remote push waits for all reviewers PASS.
 
@@ -237,7 +250,10 @@ successfully with `structuredOutput`-only consumption. Final review blockers
 (pre-existing index/sparse masking, fail-closed `GIT_*` stripping, launch/post-worker
 revalidation including non-symlink repo-owned index, verification process groups,
 shallow/grafts fingerprints, module splits under 250 pure LOC, release checklist,
-and the 2105-test baseline) are closed while preserving the documented
-no-OS-sandbox and detached-`setsid` residuals. An earlier bootstrap HTTP `402`
-spending-limit stop remains historical context only; it is not the current
-limitation of this harness.
+and the 2115-test baseline) are closed while preserving the documented
+no-OS-sandbox and detached-`setsid` residuals. Local postcheck bypasses are also
+closed: forced untracked reporting, always-on post-verification workspace
+validation, sparse-checkout fingerprint/reject after worker and verification,
+and unignored empty-directory inventory with allowed-parent exception only. An
+earlier bootstrap HTTP `402` spending-limit stop remains historical context only;
+it is not the current limitation of this harness.
