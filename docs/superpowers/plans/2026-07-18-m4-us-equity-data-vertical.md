@@ -99,6 +99,19 @@ and gap evidence, and passes only completed normalized events to M4.1.
 receipt idempotency, gap blocking, and no credential/account/order endpoint
 access. A real provider smoke remains optional and regular-session-only.
 
+**Checkpoint (2026-07-18): Complete.** A provider-neutral adapter exposes only
+bounded desired subscriptions and a restart sequence. The supervisor owns a
+mode-600 append-only SQLite projection under a non-blocking single-writer
+lease, stores raw receipts before sequence evaluation, and persists checkpoint,
+gap, and reconnect evidence. Exact duplicate receipts are idempotent;
+conflicting duplicates and sequence gaps fail closed, while a new connection
+epoch clears the prior gap block. Only persisted completed bars from a clean
+epoch reach the M4.1 kernel. A blocked M4.2 policy never calls the adapter.
+Fixture E2E covers normal collection, process restart, duplicate receipt, gap,
+and reconnect recovery without provider, credential, account, or order access.
+Verification: 8 focused tests, full **2151-test** suite, Ruff, basedpyright,
+compileall, and no-excuse all pass.
+
 ### M4.4: Evidence-Gated US Opportunity Projection
 
 Project an eligible feature snapshot into the existing US
