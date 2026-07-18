@@ -95,13 +95,13 @@
 - US broad scanner candidate extraction을 추가했다. raw Opportunity·foundation·security-master identity와 verified candidate dataset/event를 exact 대사하고 ranking_momentum 선택 사실만 private artifact로 투영한다. source independence를 과장하지 않아 모든 claim은 unconfirmed이며 provider·broker를 열지 않는다.
 - research evidence kernel이 full correction/tombstone chain의 as-of active event만 허용한다. superseded extraction은 차단되고 correction은 새 event-bound extraction이 필요하며 미래 correction은 조기 반영되지 않는다. 과거 artifact는 immutable로 유지된다.
 - KIS scan/watch의 기존 research projection opt-in이 scanner commit 직후 evidence artifact를 자동 생성한다. store 부모의 deterministic `research-evidence/`에 content-addressed artifact를 쓰며 exact retry는 하나만 유지하고 별도 provider·broker 호출은 없다.
-- Alpaca SIP trade `t/c/x` raw-first fixture vertical이 mode-600 SQLite receipt와 canonical original/correction/tombstone chain을 만든다. provider alias와 stable root identity를 검증하고 complete-history coverage는 subscription/connection continuity가 없으면 `continuity_unattested`로 차단한다. 실제 WebSocket collector는 아직 없으며 기존 REST minute-bar capability는 `snapshot_only`다.
+- Alpaca SIP trade `t/c/x` raw-first vertical 위에 exact SIP endpoint, connected/auth/trade subscription control receipt와 single-epoch data owner를 연결했다. mode-600 append-only stream audit가 control hash·exact ACK·sequence·terminal record를 재검증하며 유효 frame 0건·protocol failure는 `failed`로 닫는다. clean bounded session만 마지막 raw frame 수신시각까지 continuity를 attested할 수 있고 local fixture E2E에서 complete history를 확인했다. 실제 provider 연결 smoke·reconnect recovery·장기 soak는 아직 없으며 기존 REST minute-bar capability는 `snapshot_only`다.
 
 ## 다음 우선순위
 
-1. 검증된 Alpaca SIP `t/c/x` parser/store/projection 위에 read-only WebSocket auth·trade subscription·raw frame owner를 연결한다. subscription ACK부터 disconnect 전까지의 bounded continuity만 별도 epoch evidence로 증명하고, reconnect gap이나 continuity 미증명 구간은 complete-history evidence에서 차단한다.
-2. 열린 NYSE 정규장과 mode-600 Alpaca data credential이 자연스럽게 동시에 맞을 때만 새 SIP bridge의 단일 종목 bounded GET smoke를 실행한다. exact raw page·canonical replay·runtime checkpoint를 대사하고 계좌·주문·Paper endpoint는 열지 않는다. 휴장에는 fixture E2E 결과만 유지한다.
-3. 실제 read-only smoke 뒤 pagination·재시작 offset·provider gap의 장기 soak를 누적한다. 이 polling bridge를 websocket streaming이나 전체시장 coverage로 표현하지 않는다.
+1. 열린 NYSE 정규장과 mode-600 Alpaca market-data credential·SIP entitlement가 자연스럽게 동시에 맞을 때만 새 trade stream의 단일 종목 bounded read-only smoke를 실행한다. exact control/data receipt·canonical replay·terminal attestation을 대사하고 계좌·주문·Paper endpoint는 열지 않는다. 휴장에는 fixture E2E 결과만 유지한다.
+2. 실제 read-only stream smoke 뒤 disconnect/reconnect를 새 epoch로 기록하고 epoch 사이 gap은 complete-history에서 차단하는 restart cursor·recovery 계약을 구현한다. provider gap과 connection-limit error도 실패 terminal evidence로 보존한다.
+3. 기존 minute-bar polling bridge는 별도로 pagination·재시작 offset·provider gap 장기 soak를 누적한다. polling과 trade WebSocket을 서로의 coverage로 대체하거나 전체시장 coverage로 표현하지 않는다.
 4. 현재 NYSE post-close와 mode-600 data credential·정렬된 bounded universe가 동시에 맞을 때만 US swing 일봉 source를 read-only로 한 번 수집한다. 그 뒤에만 동일 CLI로 signal/shadow forward evidence를 누적하며, Paper 계좌·주문은 열지 않는다.
 5. current NYSE post-close source가 안전하게 축적된 뒤에만 새 US swing signal을 다음 정규장 전 local trial로 등록하고 terminal evidence를 누적한다. 표본·동일 위험 비교·승격 근거가 쌓이기 전에는 lane 권한을 바꾸지 않는다.
 6. fixture E2E가 끝난 KR same-cycle orchestrator를 전체 품질 게이트와 수동 CLI QA로 확정한다. 현재 KST·자격증명·정상 endpoint 조건이 모두 맞을 때만 별도 bounded production same-cycle을 read-only로 실행하고, 아니면 provider를 억지로 열지 않는다.

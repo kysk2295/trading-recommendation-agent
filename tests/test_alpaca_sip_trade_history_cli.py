@@ -82,6 +82,34 @@ def test_cli_when_fixture_is_valid_persists_raw_and_publishes_history(tmp_path: 
     assert len(tuple(output.rglob("events.parquet"))) == 1
 
 
+def test_cli_when_stream_store_is_requested_attests_bounded_history(tmp_path: Path) -> None:
+    # Given
+    fixture = tmp_path / "fixture.json"
+    fixture.write_text(json.dumps(_fixture()), encoding="utf-8")
+    stream_store = tmp_path / "stream.sqlite3"
+
+    # When
+    completed = _run(
+        "--input",
+        str(fixture),
+        "--store",
+        str(tmp_path / "raw.sqlite3"),
+        "--stream-store",
+        str(stream_store),
+        "--output-root",
+        str(tmp_path / "canonical"),
+    )
+
+    # Then
+    assert completed.returncode == 0, completed.stderr
+    summary = json.loads(completed.stdout)
+    assert summary["history_complete"] is True
+    assert summary["history_reason_codes"] == []
+    assert summary["stream_control_count"] == 3
+    assert summary["stream_data_link_count"] == 1
+    assert stat.S_IMODE(stream_store.stat().st_mode) == 0o600
+
+
 def _run(*arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         (sys.executable, str(_SCRIPT), *arguments),
