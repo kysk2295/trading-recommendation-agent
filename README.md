@@ -110,6 +110,8 @@ flowchart LR
 
 **2026-07-19 Alpaca historical profile collector 업데이트:** 목표 분에 필요한 직전 20개 적격 정규장 전체를 기존 GET-only Alpaca SIP minute page client로 수집하는 별도 collector를 추가했다. 각 응답 bytes는 완료성 검사 전에 기존 append-only evidence SQLite에 저장되고 세션별 canonical Parquet/DuckDB replay identity로 투영된다. 첫 fixture 실행은 20 GET으로 20개 완료 세션을 만들었고, 새 process의 동일 요청은 저장된 page chain과 canonical replay만 읽어 GET 0건으로 같은 profile을 재생했다. 마지막 분 누락은 raw 저장 후 profile 발행을 차단하며 canonical 파일 변조도 network fallback 없이 차단한다. 실제 credential smoke와 운영 CLI/fleet-cycle audit는 아직 후속 단계다.
 
+**2026-07-19 historical profile 운영 CLI 업데이트:** `run_alpaca_sip_historical_profile.py`가 mode-700 state dir 아래 raw evidence DB, canonical session dataset과 검증 가능한 mode-600 profile JSON을 생성한다. JSON reader는 20개 source identity의 내부 SHA-256과 profile median/evidence hash를 모두 재계산하고 symlink·mode·filename 불일치를 차단한다. 실제 Paper data credential과 AAPL canonical instrument alias로 2026-07-20 목표의 35분 profile을 수집해 historical GET 20건, raw page 20개, canonical session 20개, profile 1개를 확인했다. 같은 명령 재실행은 새 raw page 0개로 끝났다. account/order endpoint와 POST/DELETE는 0건이다. 다음 경계는 append-only fleet-cycle audit와 scanner→profile→runtime→M4.4 운영 연결이다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \
@@ -199,6 +201,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [Alpaca SIP runtime provider bridge 체크포인트](docs/checkpoints/2026-07-18-alpaca-sip-runtime-provider-bridge-ko.md)
 - [US intraday volume profile 체크포인트](docs/checkpoints/2026-07-19-us-intraday-volume-profile-ko.md)
 - [Alpaca historical profile collector 체크포인트](docs/checkpoints/2026-07-19-alpaca-historical-profile-collector-ko.md)
+- [Alpaca historical profile 운영 CLI 체크포인트](docs/checkpoints/2026-07-19-alpaca-historical-profile-cli-ko.md)
 - [US feature evidence projection 체크포인트](docs/checkpoints/2026-07-18-us-feature-evidence-projection-ko.md)
 - [Grok 개발 하네스 설계](docs/superpowers/specs/2026-07-18-grok-development-harness-design.md)
 - [Grok 개발 하네스 체크포인트](docs/checkpoints/2026-07-18-grok-development-harness-ko.md)

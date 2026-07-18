@@ -427,3 +427,10 @@
 - 최초 관찰: 순수 profile builder는 하나의 `ResearchInputIdentity`가 전체 20세션을 대표한다고 가정했고 실제 provider raw/canonical archive를 읽는 경로가 없었다. 기존 장중 runtime은 장 종료 시 마지막 분까지 완료 세션을 만들 수 없어 historical source로 부적합했다.
 - 수정: profile evidence가 exact source 날짜와 정렬된 20개 세션별 verified replay identity를 직접 보존하도록 바꿨다. 별도 historical collector는 각 정규장 전체를 GET-only page client로 읽고 response bytes를 먼저 append한 뒤 exact sequence 1..close를 검증하고 canonical projection한다. 저장된 page index/token chain, receipt ID, payload hash와 terminal token을 재검증해 재시작 시 HTTP 없이 재생한다.
 - 결과: 첫 fixture는 20 GET과 20 canonical dataset을 만들었고 두 번째 process는 GET 0건으로 동일 evidence를 반환했다. 마지막 1분 누락은 raw page를 보존하면서 profile을 차단했고 Parquet 변조도 HTTP fallback 없이 차단했다. account/order endpoint와 mutation은 0건이다.
+
+## H60: 운영 profile JSON을 신뢰하거나 private state 없이 credential collector를 실행한다
+
+- 판별 기준: 저장 artifact의 source dataset ID를 바꾸거나 filename·mode·symlink root를 조작했을 때 reader가 거부하는지, actual credential CLI가 data GET 이외 endpoint를 여는지, 재실행이 같은 20세션을 다시 요청하는지 확인한다.
+- 수정: CLI가 먼저 mode-700 state root를 확정하고 그 아래 evidence SQLite, canonical root와 content-addressed mode-600 profile을 쓴다. JSON load는 각 `ResearchInputIdentity`의 canonical payload SHA-256을 재계산하고 전체 profile을 다시 생성해 median, source dates, semantic version, evidence SHA와 filename을 비교한다. data client는 `https://data.alpaca.markets`와 redirect off로 고정했다.
+- 실제 관찰: AAPL canonical alias와 Paper data credential로 target 2026-07-20, through minute 35를 실행했다. historical GET 20건으로 raw page 20개, canonical session 20개와 profile 1개가 생성됐다. 즉시 재실행은 `new raw page: 0`이었다. 그 전에 잘못된 security-master SQL/table 및 symbol field 조회 두 번은 HTTP 전에 blocked됐고 profile을 만들지 않았다.
+- 결과: artifact 변조·symlink·mode 불일치와 불완전 CLI 인자는 차단됐다. actual account/order endpoint, POST/DELETE mutation은 0건이다.

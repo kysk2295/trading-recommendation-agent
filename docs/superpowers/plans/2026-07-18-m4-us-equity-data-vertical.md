@@ -214,6 +214,17 @@ raw evidence but blocks projection; tampered canonical data blocks without
 network fallback. Actual-credential historical GET smoke, operational CLI
 wiring, and durable fleet-cycle audit remain pending.
 
+**Historical profile operational CLI checkpoint (2026-07-19): Actual GET complete.**
+The CLI creates a private state root, uses only the fixed Alpaca data origin,
+persists raw/canonical evidence, and writes a content-addressed mode-600 JSON
+profile. Its reader recomputes every session identity SHA-256 and the complete
+profile median/evidence hash before returning data. An actual Paper data smoke
+for AAPL and target session 2026-07-20 made 20 historical GETs and produced 20
+session replays plus one 35-minute profile; an immediate rerun added zero raw
+pages. No account/order endpoint or mutation was opened. Durable fleet-cycle
+audit and the scanner-to-profile-to-runtime operational orchestrator remain
+pending.
+
 ### M4.4: Evidence-Gated US Opportunity Projection
 
 Project an eligible feature snapshot into the existing US
