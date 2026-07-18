@@ -517,3 +517,10 @@
 - 최초 관찰: M4 runtime은 causal typed indicator와 replay identity를 함께 만들었지만 research evidence read model에 공급하는 adapter가 없었다. feature hash만 복사하면 어떤 dataset·event·threshold에서 나온 값인지 독립적으로 대사할 수 없었다.
 - 수정: US SIP deterministic adapter가 snapshot identity를 canonical Parquet/DuckDB replay에서 다시 만들고 source, entity, event count·연속 시각, 정규장 개장부터 profile `through_minute`까지의 exact 구간, 마지막 완료 분봉, receipt·normalization causality와 volume-profile evidence를 검증한다. breakout bool과 RVOL threshold stance를 exact event에 결합하고 threshold·전체 typed indicator·identity를 output hash에 포함한다. fleet CLI는 opt-in으로 owner마다 별도 read model artifact를 만든다.
 - 결과: wrong dataset, blocked snapshot, missing latest event, future normalization과 invalid threshold는 provider 재호출 없이 차단됐다. 두 owner는 서로 다른 artifact/read model로 유지되고 단일 `alpaca/sip` evidence는 `unconfirmed`다. mode-600 derived artifact에는 raw receipt reference가 없으며 account/order endpoint와 mutation은 0건이다.
+
+## H73: 같은 classifier version 문자열만으로 저장된 KR 분류를 신뢰한다
+
+- 판별 기준: 원장에 저장된 DART·LS keyword classification과 run manifest가 같은 classifier/prompt version을 가지지만 실제 keyword rules 내용이 바뀐 상태로 research evidence를 재생한다.
+- 최초 관찰: version과 분류시각만 비교하면 keyword·theme·related symbol 규칙이 바뀌어도 과거 classification을 현재 manifest의 결과처럼 사용할 수 있었다. 이는 사전등록되지 않은 사후 테마·종목 결합을 숨길 수 있다.
+- 수정: query-only projection이 run manifest의 exact `KrKeywordRuleSet`과 `classified_at`으로 모든 eligible catalyst를 다시 분류하고 저장된 `KrThemeClassification` 전체와 동등성을 검사한다. DART는 exact `OpenDartDisclosure` canonical JSON, LS는 허용된 flat canonical JSON을 strict wire frame으로 재구성해 기존 parser 결과와 대사하며 raw receipt link·terminal source run·adapter version·payload hash도 함께 고정한다.
+- 결과: 같은 version을 유지한 rules 변조, source/run/receipt/payload 불일치와 비인과 분류는 artifact 전에 fail-closed다. exact DART·LS 두 source가 같은 사전등록 theme/entity를 지지할 때만 corroborated가 되고 derived artifact에는 원문·evidence quote·raw receipt reference가 없다. provider·credential·account/order endpoint와 mutation은 0건이다.

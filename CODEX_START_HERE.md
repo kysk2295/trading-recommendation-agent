@@ -91,10 +91,11 @@
 - KR same-cycle terminal source run을 capability registry에 연결했다. 정상 zero-record poll은 실제 event를 위조하지 않고 source heartbeat로 freshness를 보존하며 exact source-run ID, adapter version, cycle/date와 실패 상태를 재검증한다. 이 local projection은 provider나 주문 권한을 열지 않는다.
 - Alpaca SIP runtime fleet audit도 capability registry에 연결했다. owner별 READY 비율을 bounded runtime source completeness로 집계하고 cycle 완료시각은 event가 아닌 heartbeat로만 사용한다. 약했던 audit store의 mode·owner·symlink와 single-writer 경계도 강화했다.
 - canonical event-bound extraction과 entity/claim corroboration read model을 추가했다. US SIP READY snapshot의 breakout·RVOL extractor는 verified dataset과 마지막 완료 분봉에 결합되어 fleet cycle의 종목별 private artifact로 연결됐다. 단일 source evidence는 unconfirmed이며 추천·승격 권한이 아니다.
+- KR DART·LS normalized catalyst extraction을 추가했다. exact raw receipt link·terminal run·canonical payload와 run manifest의 keyword rules를 재생한 뒤에만 theme claim을 만들며, 서로 다른 두 provider가 같은 사전등록 theme/entity를 지지할 때만 corroborated artifact가 된다. provider·credential·계좌·주문 접근은 없다.
 
 ## 다음 우선순위
 
-1. KR DART·LS news와 US scanner candidate의 provider-specific normalized extraction adapter를 추가해 research evidence read model에 immutable evidence를 공급한다. canonical envelope에 없는 내용을 hash만 보고 추측하지 말고 raw-before-parse receipt 경계에서 typed extraction을 생성한다.
+1. US scanner candidate의 provider-specific normalized extraction adapter를 추가해 broad selection 근거를 research evidence read model에 공급한다. canonical envelope에 없는 내용을 hash만 보고 추측하지 말고 raw-before-parse receipt 경계에서 typed extraction을 생성한다.
 2. 열린 NYSE 정규장과 mode-600 Alpaca data credential이 자연스럽게 동시에 맞을 때만 새 SIP bridge의 단일 종목 bounded GET smoke를 실행한다. exact raw page·canonical replay·runtime checkpoint를 대사하고 계좌·주문·Paper endpoint는 열지 않는다. 휴장에는 fixture E2E 결과만 유지한다.
 3. 실제 read-only smoke 뒤 pagination·재시작 offset·provider gap의 장기 soak를 누적한다. 이 polling bridge를 websocket streaming이나 전체시장 coverage로 표현하지 않는다.
 4. 현재 NYSE post-close와 mode-600 data credential·정렬된 bounded universe가 동시에 맞을 때만 US swing 일봉 source를 read-only로 한 번 수집한다. 그 뒤에만 동일 CLI로 signal/shadow forward evidence를 누적하며, Paper 계좌·주문은 열지 않는다.
@@ -107,7 +108,7 @@
 11. 추가 부분체결이 실제 발생할 때 staged 보호 OCO cancel → terminal 대사 → 다음 호출 replacement를 같은 축소 한도에서 검증하되 체결을 억지로 만들지 않음
 12. equal-risk terminal trial·broker/shadow·DSR/PBO·parameter plateau·SIP 증거 계약이 모두 생긴 뒤에만 comparison·promotion Controller 단계를 별도 구현
 13. 최소 두 executable lane champion 전에는 Portfolio Manager를 구현하지 않음
-14. generic correction/tombstone replay 위에 provider별 deletion cursor·retention 이행과 source coverage를 추가하되 기존 immutable event를 덮어쓰지 않음
+14. generic correction/tombstone replay 위에 extraction invalidation과 provider별 deletion cursor·retention 이행을 추가하되 기존 immutable event를 덮어쓰지 않음
 
 ## 시작 전 확인
 
