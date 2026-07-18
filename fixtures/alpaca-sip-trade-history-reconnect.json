@@ -1,0 +1,18 @@
+{
+  "frames": [
+    {
+      "payload_base64": "W3siVCI6InQiLCJTIjoiQUFQTCIsImkiOjEwMSwieCI6IlYiLCJwIjoyMTEuMjUsInMiOjQwLCJjIjpbIkAiXSwidCI6IjIwMjYtMDctMTdUMTQ6Mjk6NTkuMTIzNDU2WiIsInoiOiJDIn1d",
+      "payload_sha256": "87e91e2a20a6e270d7ffe32d1f7176a32c76fa43ad910c32e30ee15f637fc9ea",
+      "received_at": "2026-07-17T14:30:00+00:00"
+    },
+    {
+      "payload_base64": "W3siVCI6ImMiLCJTIjoiQUFQTCIsIngiOiJWIiwib2kiOjEwMSwib3AiOjIxMS4yNSwib3MiOjQwLCJvYyI6WyJAIl0sImNpIjoxMDIsImNwIjoyMTEuMiwiY3MiOjM1LCJjYyI6WyJAIl0sInQiOiIyMDI2LTA3LTE3VDE0OjI5OjU5LjEyMzQ1NloiLCJ6IjoiQyJ9LHsiVCI6IngiLCJTIjoiQUFQTCIsImkiOjEwMiwieCI6IlYiLCJwIjoyMTEuMiwicyI6MzUsImEiOiJDIiwidCI6IjIwMjYtMDctMTdUMTQ6Mjk6NTkuMTIzNDU2WiIsInoiOiJDIn1d",
+      "payload_sha256": "4c2a60e556321d21087321794b98ae389e6f505e24c3ca5f2a1464ac2f0a0218",
+      "received_at": "2026-07-17T14:30:01+00:00"
+    }
+  ],
+  "instrument_id": "us-equity-aapl",
+  "market_date": "2026-07-17",
+  "schema_version": 1,
+  "symbol": "AAPL"
+}

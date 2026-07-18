@@ -110,6 +110,8 @@ flowchart LR
 
 **2026-07-19 Alpaca SIP read-only stream smoke CLI 업데이트:** `run_alpaca_sip_trade_stream_smoke.py`가 명시적 `--arm-read-only`, 현재 NYSE 정규장, current market date, exact mode-600/current-owner/no-symlink credential file을 모두 통과한 뒤에만 한 종목 SIP WebSocket을 연다. frame은 최대 10개, frame별 timeout은 최대 10초로 제한하고 매 frame 뒤 현재 정규장과 날짜를 다시 확인한다. 장이 닫히거나 arm이 없으면 credential·state dir·network 전에 exit 1, auth/subscription·frame·projection·publication 실패는 sanitized exit 2와 failed terminal evidence로 닫힌다. 성공한 한 epoch만 raw trade/control SQLite, canonical Parquet와 mode-600 JSON report로 확정하며 계좌·주문 endpoint와 broker mutation은 코드 경로에 없다. fixture happy path와 장중 종료 failure E2E를 포함한 전체 **2364 tests**가 통과했다. 2026-07-19 일요일 실제 CLI는 credential을 읽기 전에 blocked 되었고 실제 WebSocket 연결은 0건이다.
 
+**2026-07-19 Alpaca SIP reconnect recovery 업데이트:** 데이터 수신 뒤 끊긴 세션도 `failed` terminal과 그 epoch가 소유한 exact receipt 목록으로 보존하며, 재시작 reader는 같은 symbol/date의 terminal session을 단일 SQLite read snapshot에서 시간순으로 검증한다. 새 연결은 별도 epoch로만 이어지고 두 epoch의 receipt 합집합·수신시각·provider identity·비중복 소유권을 canonical batch와 다시 대사한다. 원거래 뒤 연결이 끊기고 새 연결에서 correction/cancel을 받은 fixture는 event chain을 재생하지만, 끊긴 구간의 provider backfill 증거가 없으므로 `complete_history=false`, `continuity_unattested`를 유지한다. local CLI의 `--simulate-reconnect-after`는 credential·network·broker 없이 이 경계를 재현하며 전체 **2368 tests**가 통과했다.
+
 ```bash
 uv run python run_alpaca_sip_trade_stream_smoke.py \
   --instrument-id us-equity-aapl \
@@ -126,6 +128,15 @@ uv run python run_alpaca_sip_trade_history_fixture.py \
   --store outputs/alpaca-sip-trades/raw.sqlite3 \
   --stream-store outputs/alpaca-sip-trades/stream.sqlite3 \
   --output-root outputs/alpaca-sip-trades/canonical
+```
+
+```bash
+uv run python run_alpaca_sip_trade_history_fixture.py \
+  --input fixtures/alpaca-sip-trade-history-reconnect.json \
+  --store outputs/alpaca-sip-reconnect/raw.sqlite3 \
+  --stream-store outputs/alpaca-sip-reconnect/stream.sqlite3 \
+  --simulate-reconnect-after 1 \
+  --output-root outputs/alpaca-sip-reconnect/canonical
 ```
 
 **2026-07-19 Research evidence read model 업데이트:** entity/claim extraction 결과를 exact active canonical event의 source, content hash, raw receipt reference와 entity set에 결합하는 공통 계약을 추가했다. deterministic extractor는 version·output hash를, LLM extractor는 model·prompt version까지 필수로 남긴다. 순수 read model은 current/baseline window에서 독립 source corroboration, supporting/disputing conflict, novelty와 rate-normalized burst를 계산한다. content-addressed derived artifact는 evidence ID와 집계만 mode 600으로 보존하고 원문·raw receipt reference를 복제하지 않는다. 이 단계는 extractor나 provider 수집을 가장하지 않으며 다음 adapter가 검증된 extraction을 공급해야 한다.

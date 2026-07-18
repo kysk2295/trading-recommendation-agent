@@ -11,16 +11,17 @@ from trading_agent.alpaca_sip_trade_stream_audit import (
     TerminalRow,
     load_control_sequences,
     load_data_links,
-    load_validated_control_times,
+    session_evidence_from_row,
     terminal_content_hash,
-    terminal_record_from_row,
 )
 from trading_agent.alpaca_sip_trade_stream_models import (
     AlpacaSipBoundedTradeHistoryAttestation,
     AlpacaSipRawControlFrame,
     AlpacaSipStreamTerminalRecord,
     AlpacaSipStreamTerminalStatus,
+    AlpacaSipTradeStreamConfig,
     AlpacaSipTradeStreamProtocolError,
+    AlpacaSipTradeStreamSessionEvidence,
 )
 from trading_agent.alpaca_sip_trade_stream_sqlite import (
     AlpacaSipStreamWriter,
@@ -134,6 +135,22 @@ class AlpacaSipTradeStreamStore:
             raise AlpacaSipTradeStreamProtocolError from None
 
     def load_attestation(self, connection_epoch: str) -> AlpacaSipBoundedTradeHistoryAttestation | None:
+        evidence = self.load_session_evidence(connection_epoch)
+        if evidence is None or evidence.status is not AlpacaSipStreamTerminalStatus.BOUNDED_COMPLETE:
+            return None
+        return AlpacaSipBoundedTradeHistoryAttestation(
+            evidence.connection_epoch,
+            evidence.config,
+            evidence.authorized_at,
+            evidence.subscribed_at,
+            evidence.terminal_at,
+            evidence.receipt_ids,
+        )
+
+    def load_session_evidence(
+        self,
+        connection_epoch: str,
+    ) -> AlpacaSipTradeStreamSessionEvidence | None:
         try:
             require_private_alpaca_sip_stream_file(self.path)
             if not self.path.exists():
@@ -145,26 +162,31 @@ class AlpacaSipTradeStreamStore:
                     "status,data_count,content_sha256 FROM terminal_sessions WHERE connection_epoch=?",
                     (connection_epoch,),
                 ).fetchone()
-                if row is None or row[6] != AlpacaSipStreamTerminalStatus.BOUNDED_COMPLETE.value:
+                if row is None:
                     return None
-                links = load_data_links(connection, connection_epoch)
-                control_times = load_validated_control_times(connection, connection_epoch, row[1])
-            record = terminal_record_from_row(row)
-            if (
-                control_times[1] != record.authorized_at
-                or control_times[2] != record.subscribed_at
-                or row[7] != len(links)
-                or row[8] != terminal_content_hash(record, len(links))
-            ):
+                return session_evidence_from_row(connection, row)
+        except (OSError, sqlite3.Error, TypeError, ValueError):
+            raise AlpacaSipTradeStreamProtocolError from None
+
+    def load_session_history(
+        self,
+        config: AlpacaSipTradeStreamConfig,
+    ) -> tuple[AlpacaSipTradeStreamSessionEvidence, ...]:
+        try:
+            if type(config) is not AlpacaSipTradeStreamConfig:
                 raise AlpacaSipTradeStreamProtocolError
-            return AlpacaSipBoundedTradeHistoryAttestation(
-                record.connection_epoch,
-                record.config,
-                record.authorized_at,
-                record.subscribed_at,
-                record.terminal_at,
-                tuple(item[2] for item in links),
-            )
+            require_private_alpaca_sip_stream_file(self.path)
+            if not self.path.exists():
+                return ()
+            with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
+                require_alpaca_sip_stream_schema(connection)
+                rows: list[TerminalRow] = connection.execute(
+                    "SELECT connection_epoch,symbol,market_date,authorized_at,subscribed_at,terminal_at,"
+                    "status,data_count,content_sha256 FROM terminal_sessions "
+                    "WHERE symbol=? AND market_date=? ORDER BY authorized_at,connection_epoch",
+                    (config.symbol, config.market_date.isoformat()),
+                ).fetchall()
+                return tuple(session_evidence_from_row(connection, row) for row in rows)
         except (OSError, sqlite3.Error, TypeError, ValueError):
             raise AlpacaSipTradeStreamProtocolError from None
 

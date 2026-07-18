@@ -29,9 +29,13 @@ from trading_agent.alpaca_sip_trade_history import (
 )
 from trading_agent.alpaca_sip_trade_history_coverage import (
     assess_alpaca_sip_bounded_trade_history_coverage,
+    assess_alpaca_sip_multi_epoch_trade_history_coverage,
     assess_alpaca_sip_trade_history_coverage,
 )
-from trading_agent.alpaca_sip_trade_store import AlpacaSipTradeHistoryStore
+from trading_agent.alpaca_sip_trade_store import (
+    AlpacaSipTradeHistoryStore,
+    StoredAlpacaSipTradeFrame,
+)
 from trading_agent.alpaca_sip_trade_stream import (
     ALPACA_SIP_TRADE_STREAM_URL,
     AlpacaSipTradeStreamConfig,
@@ -54,7 +58,7 @@ _PROJECTION_ERROR = "Alpaca SIP trade history fixture projection failed"
 class _FixtureStreamConnection:
     __slots__ = ("_responses", "final_url")
 
-    def __init__(self, responses: list[bytes]) -> None:
+    def __init__(self, responses: list[bytes | Exception]) -> None:
         self._responses = responses
         self.final_url = ALPACA_SIP_TRADE_STREAM_URL
 
@@ -63,7 +67,10 @@ class _FixtureStreamConnection:
 
     def recv(self, timeout: float | None = None) -> str | bytes:
         _ = timeout
-        return self._responses.pop(0)
+        response = self._responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -73,6 +80,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--input", required=True, type=Path, help="local fixture JSON")
     parser.add_argument("--store", required=True, type=Path, help="private raw-frame SQLite path")
     parser.add_argument("--stream-store", type=Path, help="optional private stream audit SQLite path")
+    parser.add_argument(
+        "--simulate-reconnect-after",
+        type=int,
+        help="local-only disconnect after this frame; requires --stream-store and more frames",
+    )
     parser.add_argument("--output-root", required=True, type=Path, help="private canonical dataset root")
     return parser.parse_args(argv)
 
@@ -84,44 +96,39 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (AlpacaSipTradeFixtureError, OSError, ValidationError, ValueError):
         print(_INPUT_ERROR, file=sys.stderr)
         return 1
+    split = args.simulate_reconnect_after
+    if split is not None and (args.stream_store is None or split <= 0 or split >= len(fixture.frames)):
+        print(_INPUT_ERROR, file=sys.stderr)
+        return 1
     try:
         store = AlpacaSipTradeHistoryStore(args.store)
         stream_summary: dict[str, int] = {}
+        session_history = ()
         if args.stream_store is None:
             frames = tuple(store.append_frame(frame.to_received_frame(fixture.market_date)) for frame in fixture.frames)
             attestation = None
         else:
             controls = AlpacaSipTradeStreamStore(args.stream_store)
             received_frames = tuple(frame.to_received_frame(fixture.market_date) for frame in fixture.frames)
-            connection = _FixtureStreamConnection(
-                [_connected(), _authenticated(), _subscribed(fixture.symbol)]
-                + [frame.payload for frame in received_frames]
-            )
-            first_received = received_frames[0].received_at
-            times = iter(
-                (
-                    first_received - dt.timedelta(microseconds=3),
-                    first_received - dt.timedelta(microseconds=2),
-                    first_received - dt.timedelta(microseconds=1),
-                    *(frame.received_at for frame in received_frames),
-                    received_frames[-1].received_at + dt.timedelta(microseconds=1),
-                )
-            )
-            with open_alpaca_sip_trade_stream(
-                AlpacaCredentials("local-fixture", "local-fixture"),
-                AlpacaSipTradeStreamConfig(fixture.market_date, fixture.symbol),
-                AlpacaSipTradeStreamStores(controls, store),
-                connector=_fixture_connector(connection),
-                _clock=times.__next__,
-            ) as stream:
-                frames = tuple(stream.receive_trade_frame(1.0) for _ in fixture.frames)
-                epoch = stream.connection_epoch
-            attestation = controls.load_attestation(epoch)
-            if attestation is None:
-                raise AlpacaSipTradeStreamError
+            stores = AlpacaSipTradeStreamStores(controls, store)
+            config = AlpacaSipTradeStreamConfig(fixture.market_date, fixture.symbol)
+            if split is None:
+                frames = _receive_fixture_session(config, stores, received_frames, fail=False)
+                session_history = controls.load_session_history(config)
+                attestation = controls.load_attestation(session_history[0].connection_epoch)
+                if attestation is None:
+                    raise AlpacaSipTradeStreamError
+            else:
+                first = _receive_fixture_session(config, stores, received_frames[:split], fail=True)
+                second = _receive_fixture_session(config, stores, received_frames[split:], fail=False)
+                frames = first + second
+                session_history = controls.load_session_history(config)
+                attestation = None
             stream_summary = {
                 "stream_control_count": controls.control_count(),
-                "stream_data_link_count": controls.data_link_count(epoch),
+                "stream_data_link_count": sum(len(item.receipt_ids) for item in session_history),
+                "stream_failed_session_count": sum(item.status.value == "failed" for item in session_history),
+                "stream_session_count": len(session_history),
             }
         batch = project_alpaca_sip_trade_history(
             frames,
@@ -133,11 +140,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         publication = write_canonical_dataset_parquet(batch, output_root=args.output_root)
         as_of = max(event.normalized_at for event in batch.events)
         active = active_canonical_events_as_of(batch.events, as_of=as_of)
-        coverage = (
-            assess_alpaca_sip_trade_history_coverage(batch)
-            if attestation is None
-            else assess_alpaca_sip_bounded_trade_history_coverage(batch, attestation)
-        )
+        if split is not None:
+            coverage = assess_alpaca_sip_multi_epoch_trade_history_coverage(batch, session_history)
+        elif attestation is not None:
+            coverage = assess_alpaca_sip_bounded_trade_history_coverage(batch, attestation)
+        else:
+            coverage = assess_alpaca_sip_trade_history_coverage(batch)
     except (
         AlpacaSipTradeFixtureError,
         AlpacaSipTradeHistoryError,
@@ -163,6 +171,48 @@ def main(argv: Sequence[str] | None = None) -> int:
     summary.update(stream_summary)
     print(json.dumps(summary, ensure_ascii=True, separators=(",", ":"), sort_keys=True))
     return 0
+
+
+def _receive_fixture_session(
+    config: AlpacaSipTradeStreamConfig,
+    stores: AlpacaSipTradeStreamStores,
+    received_frames: tuple,
+    *,
+    fail: bool,
+) -> tuple[StoredAlpacaSipTradeFrame, ...]:
+    responses: list[bytes | Exception] = [
+        _connected(),
+        _authenticated(),
+        _subscribed(config.symbol),
+        *(frame.payload for frame in received_frames),
+    ]
+    if fail:
+        responses.append(TimeoutError())
+    times = iter(
+        (
+            received_frames[0].received_at - dt.timedelta(microseconds=3),
+            received_frames[0].received_at - dt.timedelta(microseconds=2),
+            received_frames[0].received_at - dt.timedelta(microseconds=1),
+            *(frame.received_at for frame in received_frames),
+            received_frames[-1].received_at + dt.timedelta(microseconds=1),
+        )
+    )
+    stored: tuple[StoredAlpacaSipTradeFrame, ...] = ()
+    try:
+        with open_alpaca_sip_trade_stream(
+            AlpacaCredentials("local-fixture", "local-fixture"),
+            config,
+            stores,
+            connector=_fixture_connector(_FixtureStreamConnection(responses)),
+            _clock=times.__next__,
+        ) as stream:
+            stored = tuple(stream.receive_trade_frame(1.0) for _ in received_frames)
+            if fail:
+                _ = stream.receive_trade_frame(1.0)
+    except AlpacaSipTradeStreamError:
+        if not fail or len(stored) != len(received_frames):
+            raise
+    return stored
 
 
 def _fixture_connector(

@@ -11,6 +11,7 @@ from trading_agent.alpaca_sip_trade_stream_models import (
     AlpacaSipStreamTerminalStatus,
     AlpacaSipTradeStreamConfig,
     AlpacaSipTradeStreamProtocolError,
+    AlpacaSipTradeStreamSessionEvidence,
     parse_alpaca_sip_control_frame,
 )
 
@@ -91,12 +92,42 @@ def terminal_content_hash(record: AlpacaSipStreamTerminalRecord, data_count: int
     return hashlib.sha256(encoded).hexdigest()
 
 
+def session_evidence_from_row(
+    connection: sqlite3.Connection,
+    row: TerminalRow,
+) -> AlpacaSipTradeStreamSessionEvidence:
+    record = terminal_record_from_row(row)
+    links = load_data_links(connection, record.connection_epoch)
+    control_times = load_validated_control_times(
+        connection,
+        record.connection_epoch,
+        record.config.symbol,
+    )
+    if (
+        control_times[1] != record.authorized_at
+        or control_times[2] != record.subscribed_at
+        or row[7] != len(links)
+        or row[8] != terminal_content_hash(record, len(links))
+    ):
+        raise AlpacaSipTradeStreamProtocolError
+    return AlpacaSipTradeStreamSessionEvidence(
+        record.connection_epoch,
+        record.config,
+        record.authorized_at,
+        record.subscribed_at,
+        record.terminal_at,
+        record.status,
+        tuple(item[2] for item in links),
+    )
+
+
 __all__ = (
     "DataLinkRow",
     "TerminalRow",
     "load_control_sequences",
     "load_data_links",
     "load_validated_control_times",
+    "session_evidence_from_row",
     "terminal_content_hash",
     "terminal_record_from_row",
 )

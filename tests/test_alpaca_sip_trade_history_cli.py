@@ -8,6 +8,7 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 _ROOT = Path(__file__).parents[1]
 _SCRIPT = _ROOT / "run_alpaca_sip_trade_history_fixture.py"
@@ -110,6 +111,36 @@ def test_cli_when_stream_store_is_requested_attests_bounded_history(tmp_path: Pa
     assert stat.S_IMODE(stream_store.stat().st_mode) == 0o600
 
 
+def test_cli_when_reconnect_is_simulated_preserves_gap_as_incomplete(tmp_path: Path) -> None:
+    # Given
+    fixture = tmp_path / "fixture.json"
+    fixture.write_text(json.dumps(_reconnect_fixture()), encoding="utf-8")
+
+    # When
+    completed = _run(
+        "--input",
+        str(fixture),
+        "--store",
+        str(tmp_path / "raw.sqlite3"),
+        "--stream-store",
+        str(tmp_path / "stream.sqlite3"),
+        "--simulate-reconnect-after",
+        "1",
+        "--output-root",
+        str(tmp_path / "canonical"),
+    )
+
+    # Then
+    assert completed.returncode == 0, completed.stderr
+    summary = json.loads(completed.stdout)
+    assert summary["history_complete"] is False
+    assert summary["history_reason_codes"] == ["continuity_unattested"]
+    assert summary["stream_session_count"] == 2
+    assert summary["stream_failed_session_count"] == 1
+    assert summary["stream_control_count"] == 6
+    assert summary["stream_data_link_count"] == 2
+
+
 def _run(*arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         (sys.executable, str(_SCRIPT), *arguments),
@@ -175,4 +206,24 @@ def _fixture() -> dict[str, int | str | list[dict[str, str]]]:
                 "payload_base64": base64.b64encode(payload).decode("ascii"),
             }
         ],
+    }
+
+
+def _reconnect_fixture() -> dict[str, Any]:
+    fixture = cast(dict[str, Any], _fixture())
+    frame = fixture["frames"][0]
+    messages = json.loads(base64.b64decode(frame["payload_base64"]))
+    fixture["frames"] = [
+        _encoded_frame(messages[:1], dt.datetime(2026, 7, 17, 14, 30, tzinfo=dt.UTC)),
+        _encoded_frame(messages[1:], dt.datetime(2026, 7, 17, 14, 30, 1, tzinfo=dt.UTC)),
+    ]
+    return fixture
+
+
+def _encoded_frame(messages: list[dict[str, Any]], received_at: dt.datetime) -> dict[str, str]:
+    payload = json.dumps(messages, separators=(",", ":")).encode()
+    return {
+        "received_at": received_at.isoformat(),
+        "payload_sha256": hashlib.sha256(payload).hexdigest(),
+        "payload_base64": base64.b64encode(payload).decode("ascii"),
     }

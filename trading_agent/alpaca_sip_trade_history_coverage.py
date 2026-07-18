@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from trading_agent.alpaca_sip_trade_stream_models import AlpacaSipBoundedTradeHistoryAttestation
+from itertools import pairwise
+
+from trading_agent.alpaca_sip_trade_stream_models import (
+    AlpacaSipBoundedTradeHistoryAttestation,
+    AlpacaSipTradeStreamSessionEvidence,
+)
 from trading_agent.canonical_dataset_models import CanonicalDatasetBatch
 from trading_agent.canonical_event_history import active_canonical_events_as_of
 from trading_agent.canonical_event_models import CanonicalEventOperation
@@ -49,6 +54,48 @@ def assess_alpaca_sip_bounded_trade_history_coverage(
         raise CanonicalHistoryCoverageError from None
 
 
+def assess_alpaca_sip_multi_epoch_trade_history_coverage(
+    batch: CanonicalDatasetBatch,
+    sessions: tuple[AlpacaSipTradeStreamSessionEvidence, ...],
+) -> CanonicalHistoryCoverage:
+    try:
+        checked = _checked_batch(batch)
+        if (
+            type(sessions) is not tuple
+            or len(sessions) < 2
+            or any(type(item) is not AlpacaSipTradeStreamSessionEvidence for item in sessions)
+        ):
+            raise CanonicalHistoryCoverageError
+        ordered = tuple(sorted(sessions, key=lambda item: (item.authorized_at, item.connection_epoch)))
+        config = sessions[0].config
+        receipt_owners = {receipt_id: session for session in sessions for receipt_id in session.receipt_ids}
+        receipt_ids = tuple(receipt.receipt_id for receipt in checked.raw_manifest.receipts)
+        if (
+            sessions != ordered
+            or any(item.config != config for item in sessions)
+            or config.market_date != checked.partition.market_date
+            or len(receipt_owners) != sum(len(item.receipt_ids) for item in sessions)
+            or set(receipt_owners) != set(receipt_ids)
+            or any(previous.terminal_at > following.authorized_at for previous, following in pairwise(sessions))
+            or any(
+                not receipt_owners[receipt.receipt_id].subscribed_at
+                <= receipt.received_at
+                <= receipt_owners[receipt.receipt_id].terminal_at
+                for receipt in checked.raw_manifest.receipts
+            )
+        ):
+            raise CanonicalHistoryCoverageError
+        identity_prefix = f"{config.market_date.isoformat()}:{config.symbol}:"
+        if any(
+            event.provider_event_id is None or not event.provider_event_id.startswith(identity_prefix)
+            for event in checked.events
+        ):
+            raise CanonicalHistoryCoverageError
+        return _coverage(checked, continuity_attested=False)
+    except (AttributeError, TypeError, ValueError):
+        raise CanonicalHistoryCoverageError from None
+
+
 def _checked_batch(batch: CanonicalDatasetBatch) -> CanonicalDatasetBatch:
     if type(batch) is not CanonicalDatasetBatch:
         raise CanonicalHistoryCoverageError
@@ -93,5 +140,6 @@ def _coverage(
 
 __all__ = (
     "assess_alpaca_sip_bounded_trade_history_coverage",
+    "assess_alpaca_sip_multi_epoch_trade_history_coverage",
     "assess_alpaca_sip_trade_history_coverage",
 )

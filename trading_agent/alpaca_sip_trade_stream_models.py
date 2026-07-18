@@ -162,6 +162,31 @@ class AlpacaSipBoundedTradeHistoryAttestation:
             raise AlpacaSipTradeStreamProtocolError
 
 
+@dataclass(frozen=True, slots=True)
+class AlpacaSipTradeStreamSessionEvidence:
+    connection_epoch: str
+    config: AlpacaSipTradeStreamConfig
+    authorized_at: dt.datetime
+    subscribed_at: dt.datetime
+    terminal_at: dt.datetime
+    status: AlpacaSipStreamTerminalStatus
+    receipt_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        times = (self.authorized_at, self.subscribed_at, self.terminal_at)
+        aware = all(value.tzinfo is not None and value.utcoffset() is not None for value in times)
+        if (
+            _EPOCH.fullmatch(self.connection_epoch) is None
+            or type(self.config) is not AlpacaSipTradeStreamConfig
+            or not aware
+            or not self.authorized_at <= self.subscribed_at <= self.terminal_at
+            or type(self.status) is not AlpacaSipStreamTerminalStatus
+            or self.receipt_ids != tuple(dict.fromkeys(self.receipt_ids))
+            or any(_RECEIPT.fullmatch(receipt_id) is None for receipt_id in self.receipt_ids)
+        ):
+            raise AlpacaSipTradeStreamProtocolError
+
+
 def parse_alpaca_sip_control_frame(
     payload: bytes,
     stage: AlpacaSipControlStage,
@@ -215,5 +240,6 @@ __all__ = (
     "AlpacaSipTradeStreamEndpointError",
     "AlpacaSipTradeStreamError",
     "AlpacaSipTradeStreamProtocolError",
+    "AlpacaSipTradeStreamSessionEvidence",
     "parse_alpaca_sip_control_frame",
 )
