@@ -123,6 +123,19 @@ blocks publication with an auditable reason.
 valid fixture evidence preserves conditional-only signal semantics; invalid
 evidence is fail-closed.
 
+**Checkpoint (2026-07-18): Complete.** An opt-in typed gate consumes the
+existing US `OpportunitySnapshot` plus one exact M4 feature binding per
+candidate. Missing, extra, gap-marked, stale, insufficient-history,
+noncausal, and expired evidence cannot produce a gated Opportunity. A ready
+snapshot contributes only a canonical SHA-256 evidence reference; indicator
+values are not copied into candidate or signal fields. The derived Opportunity
+ID binds the complete base payload, evaluation time, and sorted evidence set.
+Only `UsFeatureGateReady` reaches the unchanged publication implementation,
+which retains `conditional` actionability and no quote validation. Existing
+scanner and publication APIs remain unchanged. Verification: 8 focused tests,
+full **2159-test** suite, fixture library E2E, Ruff, basedpyright, compileall,
+and no-excuse all pass.
+
 ## Integration Rules
 
 - Codex implements each delivery slice directly on `main` with TDD and a narrow
