@@ -86,10 +86,11 @@
 - Alpaca SIP 단일 종목 완료 1분봉 provider bridge 구현. context의 exact instrument/symbol binding, 정규장·canonical data URL·redirect 금지·단일 desired subscription을 HTTP 전에 검사하고, exact response body를 mode-600 append-only SQLite에 먼저 저장한 뒤 canonical Parquet·DuckDB replay identity와 full runtime checkpoint를 M4 supervisor에 공급. 정상 restart는 기존 epoch·offset을 잇고 transient gap은 이후 full-session sequence가 완전히 연속일 때만 새 verified recovery epoch로 해제. fixture pagination·동일 분 retry·재시작·gap recovery·종목교체·휴장·다중종목·redirect E2E를 통과했으며 계좌·주문 import와 실제 외부 network 호출은 0건
 - KIS US Opportunity를 replay-bound M4 broad-scanner 입력으로 만드는 opt-in 운영 투영 구현. foundation/store/canonical-root가 모두 있어야 활성화되고, raw Opportunity 보존 → point-in-time instrument exact match → immutable candidate Parquet → DuckDB replay → durable scanner snapshot 순서를 강제한다. 최신 snapshot reader도 canonical dataset과 identity를 다시 검증하며 fixture manifest의 `FIXT`를 실제 동적 universe로 간주하지 않는다.
 - Alpaca Paper `GET /v2/assets`의 raw-first US security master 구현. 실제 응답 33,351행을 exact mode-600 원장에 먼저 저장하고 active listed/supported 13,011종목을 asset UUID instrument와 provider-symbol alias로 투영했다. actual snapshot으로 synthetic KIS candidate의 replay-bound 결합을 확인했으며 account/order endpoint와 mutation은 0건이다.
+- canonical Parquet correction/tombstone history replay 구현. 여러 verified dataset의 원본→정정→삭제 chain을 as-of로 재생하며 missing target·branch·역방향 시각·identity 변경을 fail-closed하고 tombstone 뒤 active state를 제거한다. local CLI는 집계만 mode 600 보고서로 남기며 provider·계좌·주문을 열지 않는다.
 
 ## 다음 우선순위
 
-1. 현재 Alpaca SIP raw/canonical/runtime checkpoint를 읽어 실제 source capability와 entitlement 상태를 평가하고, KIS projection이 사용할 non-fixture `ready` data-foundation manifest를 생성한다. fixture provider나 stale security master는 운영 경로에서 허용하지 않는다.
+1. 관측 시각으로 매 cycle 재생성되는 broad-scanner entitlement의 의미를 실제 계약 발효 근거와 분리한 뒤, source 계약·시점별 health assessment를 보존하는 append-only capability registry를 구현한다. fixture provider나 추정 entitlement를 운영 권한으로 승격하지 않는다.
 2. 열린 NYSE 정규장과 mode-600 Alpaca data credential이 자연스럽게 동시에 맞을 때만 새 SIP bridge의 단일 종목 bounded GET smoke를 실행한다. exact raw page·canonical replay·runtime checkpoint를 대사하고 계좌·주문·Paper endpoint는 열지 않는다. 휴장에는 fixture E2E 결과만 유지한다.
 3. 실제 read-only smoke 뒤 pagination·재시작 offset·provider gap의 장기 soak를 누적한다. 이 polling bridge를 websocket streaming이나 전체시장 coverage로 표현하지 않는다.
 4. 현재 NYSE post-close와 mode-600 data credential·정렬된 bounded universe가 동시에 맞을 때만 US swing 일봉 source를 read-only로 한 번 수집한다. 그 뒤에만 동일 CLI로 signal/shadow forward evidence를 누적하며, Paper 계좌·주문은 열지 않는다.
@@ -102,7 +103,7 @@
 11. 추가 부분체결이 실제 발생할 때 staged 보호 OCO cancel → terminal 대사 → 다음 호출 replacement를 같은 축소 한도에서 검증하되 체결을 억지로 만들지 않음
 12. equal-risk terminal trial·broker/shadow·DSR/PBO·parameter plateau·SIP 증거 계약이 모두 생긴 뒤에만 comparison·promotion Controller 단계를 별도 구현
 13. 최소 두 executable lane champion 전에는 Portfolio Manager를 구현하지 않음
-14. 완료된 raw manifest·Parquet·DuckDB 경로에 provider correction/tombstone conformance를 추가하되 기존 immutable event를 덮어쓰지 않음
+14. generic correction/tombstone replay 위에 provider별 deletion cursor·retention 이행과 source coverage를 추가하되 기존 immutable event를 덮어쓰지 않음
 
 ## 시작 전 확인
 

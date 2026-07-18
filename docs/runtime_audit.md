@@ -475,3 +475,10 @@
 - 최초 관찰: supervisor 순수 계약은 있었지만 실제 자동 cycle과 연결되지 않아 stale scanner block 뒤 `latest()`의 과거 READY audit을 잘못 연결할 위험이 남았다.
 - 수정: CLI operation은 현재 evaluated time을 단발 자동 cycle에 전달하고 exit 0 뒤에도 fleet audit의 evaluated time을 exact 비교한다. 불일치·누락·reader 변조는 `runtime_cycle_blocked`로 supervisor audit에만 남기고 다음 attempt를 계속한다.
 - 결과: fresh scanner를 sleeper에서 추가한 2-cycle soak가 historical 20 + current 2, 총 GET 22건과 READY record 2개를 만들었다. 폐장 시작은 credential과 두 audit DB를 열지 않았다. account/order endpoint와 mutation은 0건이다.
+
+## H67: canonical correction/tombstone 필드는 있지만 history 의미를 검증하지 않는다
+
+- 판별 기준: 여러 immutable dataset에 걸친 원본, 정정과 삭제를 당시 `normalized_at` 기준으로 재생하고 branch·missing target·identity 변경을 차단하는지 확인한다.
+- 최초 관찰: 개별 envelope는 correction target 문자열의 형태만 검사했고 Parquet writer와 DuckDB replay도 각 dataset의 schema/hash만 검증했다. 없는 event를 정정하거나 동일 원본에서 두 갈래로 분기하고 tombstone 뒤 다시 정정해도 dataset 간 history 단계에서 막는 경로가 없었다.
+- 수정: verified dataset event reader와 별도 history engine을 추가했다. 전체 chain은 직전 active target 하나만 후속 event를 가질 수 있고 source, event type, provider event ID와 entity refs가 같아야 한다. received/normalized 시각 역행을 금지하고 as-of 뒤 normalized event는 당시 active projection에서 제외한다.
+- 결과: correction 시 active event가 후속 버전으로 교체되고 tombstone 시 root chain이 active state에서 제거된다. 원본 bytes와 immutable event는 그대로 보존된다. local CLI는 집계만 mode 600 보고서로 출력하고 provider, credential, account/order endpoint를 열지 않는다.
