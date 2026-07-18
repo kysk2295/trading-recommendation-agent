@@ -545,3 +545,10 @@
 - 최초 관찰: scanner raw·Parquet·SQLite와 standalone evidence CLI는 모두 있었지만 scan process는 snapshot만 반환했다. 자동 루프에서는 artifact 생성 누락과 다른 store 선택이 가능했다.
 - 수정: 기존 research projection opt-in 내부에서 scanner projection commit 뒤 동일 store를 query-only loader로 다시 검증하고 content-addressed evidence를 쓴다. 별도 인자를 늘리지 않고 projection store 부모의 `research-evidence/`를 deterministic root로 고정했다.
 - 결과: 최초와 exact retry는 동일 snapshot·artifact 1개·unconfirmed claim을 만든다. projection 미설정 또는 Opportunity 없음은 기존 no-op이고 evidence 실패를 성공으로 축소하지 않는다. provider·credential·account/order endpoint와 mutation 추가 호출은 0건이다.
+
+## H77: correction wire 지원을 complete provider history로 과장한다
+
+- 판별 기준: Alpaca SIP trade original·correction·cancel/error를 파싱할 수 있다는 이유만으로 WebSocket subscription 이전·재연결 gap까지 손실 없는 이력으로 표시하는지, 현재 REST minute-bar polling capability가 실제 append-correction collector처럼 선언되는지 확인한다.
+- 최초 관찰: `alpaca/sip` minute-bar capability는 REST snapshot owner만 구현됐지만 correction policy가 `append_correction`이었다. generic canonical history는 이미 수집된 chain만 검증하므로 provider가 보내지 못했거나 collector가 놓친 correction을 발견할 수 없다.
+- 수정: exact `t/c/x` frame bytes를 mode-600 SQLite에 먼저 append하고 provider `oi/ci/i` alias를 active canonical chain에 연결하는 strict fixture vertical을 추가했다. 별도 history coverage는 raw-first와 correction/tombstone 지원·관측을 기록하지만 subscription/connection continuity가 없으면 `complete_history=false`, `continuity_unattested`로 닫는다. minute-bar capability는 `snapshot_only`로 수정했다.
+- 결과: missing original, mismatched original values, tombstone 이후 correction, NY market date가 다른 wire timestamp와 unbound symbol은 fail-closed다. market date가 다른 동일 trade ID는 서로 다른 provider/event identity를 만들고, 두 raw frame의 chain은 private Parquet/DuckDB replay에서 tombstoned root로 재생된다. fixture CLI는 network request 0건을 보고하며 실제 WebSocket, credential, account/order endpoint와 broker mutation을 열지 않는다.

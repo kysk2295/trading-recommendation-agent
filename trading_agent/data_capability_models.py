@@ -56,6 +56,7 @@ class RedistributionPolicy(StrEnum):
 
 
 class DataCorrectionPolicy(StrEnum):
+    SNAPSHOT_ONLY = "snapshot_only"
     APPEND_CORRECTION = "append_correction"
     APPEND_TOMBSTONE = "append_tombstone"
 

@@ -36,7 +36,7 @@ _RETENTION: Final = DataRetentionPolicy(
     raw_retention_days=30,
     derived_retention_days=365,
     deletion_required=True,
-    correction_policy=DataCorrectionPolicy.APPEND_CORRECTION,
+    correction_policy=DataCorrectionPolicy.SNAPSHOT_ONLY,
 )
 
 

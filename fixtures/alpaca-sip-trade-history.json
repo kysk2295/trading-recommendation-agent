@@ -1,0 +1,13 @@
+{
+  "frames": [
+    {
+      "payload_base64": "W3siVCI6InQiLCJTIjoiQUFQTCIsImkiOjEwMSwieCI6IlYiLCJwIjoyMTEuMjUsInMiOjQwLCJjIjpbIkAiXSwidCI6IjIwMjYtMDctMTdUMTQ6Mjk6NTkuMTIzNDU2WiIsInoiOiJDIn0seyJUIjoiYyIsIlMiOiJBQVBMIiwieCI6IlYiLCJvaSI6MTAxLCJvcCI6MjExLjI1LCJvcyI6NDAsIm9jIjpbIkAiXSwiY2kiOjEwMiwiY3AiOjIxMS4yLCJjcyI6MzUsImNjIjpbIkAiXSwidCI6IjIwMjYtMDctMTdUMTQ6Mjk6NTkuMTIzNDU2WiIsInoiOiJDIn0seyJUIjoieCIsIlMiOiJBQVBMIiwiaSI6MTAyLCJ4IjoiViIsInAiOjIxMS4yLCJzIjozNSwiYSI6IkMiLCJ0IjoiMjAyNi0wNy0xN1QxNDoyOTo1OS4xMjM0NTZaIiwieiI6IkMifV0=",
+      "payload_sha256": "efc6ac6080f90233101f2abbc76175c889907262d84caa1a076a74efa7828db6",
+      "received_at": "2026-07-17T14:30:00+00:00"
+    }
+  ],
+  "instrument_id": "us-equity-aapl",
+  "market_date": "2026-07-17",
+  "schema_version": 1,
+  "symbol": "AAPL"
+}

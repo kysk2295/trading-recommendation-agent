@@ -95,10 +95,11 @@
 - US broad scanner candidate extraction을 추가했다. raw Opportunity·foundation·security-master identity와 verified candidate dataset/event를 exact 대사하고 ranking_momentum 선택 사실만 private artifact로 투영한다. source independence를 과장하지 않아 모든 claim은 unconfirmed이며 provider·broker를 열지 않는다.
 - research evidence kernel이 full correction/tombstone chain의 as-of active event만 허용한다. superseded extraction은 차단되고 correction은 새 event-bound extraction이 필요하며 미래 correction은 조기 반영되지 않는다. 과거 artifact는 immutable로 유지된다.
 - KIS scan/watch의 기존 research projection opt-in이 scanner commit 직후 evidence artifact를 자동 생성한다. store 부모의 deterministic `research-evidence/`에 content-addressed artifact를 쓰며 exact retry는 하나만 유지하고 별도 provider·broker 호출은 없다.
+- Alpaca SIP trade `t/c/x` raw-first fixture vertical이 mode-600 SQLite receipt와 canonical original/correction/tombstone chain을 만든다. provider alias와 stable root identity를 검증하고 complete-history coverage는 subscription/connection continuity가 없으면 `continuity_unattested`로 차단한다. 실제 WebSocket collector는 아직 없으며 기존 REST minute-bar capability는 `snapshot_only`다.
 
 ## 다음 우선순위
 
-1. generic correction/tombstone replay 위에 provider별 deletion cursor·retention 이행과 source coverage를 추가한다. 최신 evidence projection은 반드시 complete history scope를 전달하고 기존 immutable event·artifact를 덮어쓰지 않는다.
+1. 검증된 Alpaca SIP `t/c/x` parser/store/projection 위에 read-only WebSocket auth·trade subscription·raw frame owner를 연결한다. subscription ACK부터 disconnect 전까지의 bounded continuity만 별도 epoch evidence로 증명하고, reconnect gap이나 continuity 미증명 구간은 complete-history evidence에서 차단한다.
 2. 열린 NYSE 정규장과 mode-600 Alpaca data credential이 자연스럽게 동시에 맞을 때만 새 SIP bridge의 단일 종목 bounded GET smoke를 실행한다. exact raw page·canonical replay·runtime checkpoint를 대사하고 계좌·주문·Paper endpoint는 열지 않는다. 휴장에는 fixture E2E 결과만 유지한다.
 3. 실제 read-only smoke 뒤 pagination·재시작 offset·provider gap의 장기 soak를 누적한다. 이 polling bridge를 websocket streaming이나 전체시장 coverage로 표현하지 않는다.
 4. 현재 NYSE post-close와 mode-600 data credential·정렬된 bounded universe가 동시에 맞을 때만 US swing 일봉 source를 read-only로 한 번 수집한다. 그 뒤에만 동일 CLI로 signal/shadow forward evidence를 누적하며, Paper 계좌·주문은 열지 않는다.

@@ -8,7 +8,7 @@ from tests.alpaca_sip_runtime_fleet_fixtures import (
     feature_requests,
 )
 from tests.test_us_market_data_fleet_audit import _cycle
-from trading_agent.data_capability_models import DataHealthState
+from trading_agent.data_capability_models import DataCorrectionPolicy, DataHealthState
 from trading_agent.us_market_data_fleet_audit import build_runtime_fleet_audit
 from trading_agent.us_runtime_capability_projection import (
     project_us_runtime_capability,
@@ -29,6 +29,7 @@ def test_ready_fleet_projects_complete_aggregate_and_owner_health(tmp_path: Path
     assert projection.capability.observed_completeness_bps == 10_000
     assert projection.capability.latest_event_received_at is None
     assert projection.capability.latest_source_heartbeat_at == NOW
+    assert projection.capability.retention.correction_policy is DataCorrectionPolicy.SNAPSHOT_ONLY
     assert projection.entitlement.effective_from <= NOW
 
 
