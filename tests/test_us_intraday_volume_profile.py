@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 from dataclasses import replace
 from decimal import Decimal
 
@@ -30,7 +31,6 @@ def test_profile_uses_latest_twenty_completed_prior_sessions_and_median() -> Non
     )
 
     profile = build_intraday_volume_profile(
-        _identity(),
         _INSTRUMENT_ID,
         _TARGET,
         through_minute=35,
@@ -40,6 +40,8 @@ def test_profile_uses_latest_twenty_completed_prior_sessions_and_median() -> Non
     expected_dates = tuple(item.session_date for item in sessions[-20:])
     expected_cumulative = tuple(35 * (index + 3) for index in range(20))
     assert profile.source_session_dates == expected_dates
+    assert len(profile.source_identities) == 20
+    assert len({item.identity_sha256 for item in profile.source_identities}) == 20
     assert profile.session_cumulative_volumes == expected_cumulative
     assert profile.expected_cumulative_volume == Decimal("437.5")
     assert profile.through_minute == 35
@@ -50,10 +52,9 @@ def test_profile_uses_latest_twenty_completed_prior_sessions_and_median() -> Non
 
 def test_profile_identity_changes_with_historical_replay_identity() -> None:
     sessions = tuple(_session(day, volume_per_minute=10) for day in _prior_sessions(20))
-    first = build_intraday_volume_profile(_identity("a"), _INSTRUMENT_ID, _TARGET, through_minute=35, sessions=sessions)
-    second = build_intraday_volume_profile(
-        _identity("d"), _INSTRUMENT_ID, _TARGET, through_minute=35, sessions=sessions
-    )
+    first = build_intraday_volume_profile(_INSTRUMENT_ID, _TARGET, through_minute=35, sessions=sessions)
+    changed = (*sessions[:-1], replace(sessions[-1], identity=_identity("d")))
+    second = build_intraday_volume_profile(_INSTRUMENT_ID, _TARGET, through_minute=35, sessions=changed)
 
     assert first.expected_cumulative_volume == second.expected_cumulative_volume
     assert first.evidence_sha256 != second.evidence_sha256
@@ -65,7 +66,7 @@ def test_current_or_future_session_is_noncausal(offset: int) -> None:
     sessions += (_session(_TARGET + dt.timedelta(days=offset), volume_per_minute=10),)
 
     with pytest.raises(IntradayVolumeProfileError, match="invalid"):
-        build_intraday_volume_profile(_identity(), _INSTRUMENT_ID, _TARGET, through_minute=35, sessions=sessions)
+        build_intraday_volume_profile(_INSTRUMENT_ID, _TARGET, through_minute=35, sessions=sessions)
 
 
 def test_incomplete_or_gapped_historical_session_is_rejected() -> None:
@@ -74,26 +75,26 @@ def test_incomplete_or_gapped_historical_session_is_rejected() -> None:
     sessions[-1] = replace(broken, bars=broken.bars[:10] + broken.bars[11:])
 
     with pytest.raises(IntradayVolumeProfileError, match="invalid"):
-        build_intraday_volume_profile(_identity(), _INSTRUMENT_ID, _TARGET, through_minute=35, sessions=tuple(sessions))
+        build_intraday_volume_profile(_INSTRUMENT_ID, _TARGET, through_minute=35, sessions=tuple(sessions))
 
 
 def test_fewer_than_twenty_eligible_sessions_is_rejected() -> None:
     sessions = tuple(_session(day, volume_per_minute=10) for day in _prior_sessions(19))
 
     with pytest.raises(IntradayVolumeProfileError, match="invalid"):
-        build_intraday_volume_profile(_identity(), _INSTRUMENT_ID, _TARGET, through_minute=35, sessions=sessions)
+        build_intraday_volume_profile(_INSTRUMENT_ID, _TARGET, through_minute=35, sessions=sessions)
 
 
 def test_stale_profile_with_missing_latest_session_is_rejected() -> None:
     sessions = tuple(_session(day, volume_per_minute=10) for day in _prior_sessions(21)[:-1])
 
     with pytest.raises(IntradayVolumeProfileError, match="invalid"):
-        build_intraday_volume_profile(_identity(), _INSTRUMENT_ID, _TARGET, through_minute=35, sessions=sessions)
+        build_intraday_volume_profile(_INSTRUMENT_ID, _TARGET, through_minute=35, sessions=sessions)
 
 
 def test_tampered_profile_fails_self_validation() -> None:
     sessions = tuple(_session(day, volume_per_minute=10) for day in _prior_sessions(20))
-    profile = build_intraday_volume_profile(_identity(), _INSTRUMENT_ID, _TARGET, through_minute=35, sessions=sessions)
+    profile = build_intraday_volume_profile(_INSTRUMENT_ID, _TARGET, through_minute=35, sessions=sessions)
 
     with pytest.raises(IntradayVolumeProfileError, match="invalid"):
         validate_intraday_volume_profile(replace(profile, expected_cumulative_volume=Decimal("999")))
@@ -117,7 +118,20 @@ def _session(session_date: dt.date, *, volume_per_minute: int) -> HistoricalVolu
     opened, closed = bounds
     count = int((closed - opened) / dt.timedelta(minutes=1))
     bars = tuple(_bar(opened + dt.timedelta(minutes=index), volume_per_minute) for index in range(count))
-    return HistoricalVolumeSession(session_date, bars)
+    return HistoricalVolumeSession(session_date, _identity_for_date(session_date), bars)
+
+
+def _identity_for_date(session_date: dt.date) -> ResearchInputIdentity:
+    digest = hashlib.sha256(session_date.isoformat().encode()).hexdigest()
+    replay = CanonicalDatasetReplay(
+        dataset_id=f"historical-session-{session_date.isoformat()}",
+        event_count=390,
+        canonical_event_content_sha256=digest,
+        parquet_sha256="c" * 64,
+        raw_manifest_id=f"raw-historical-session-{session_date.isoformat()}",
+        raw_manifest_content_sha256="b" * 64,
+    )
+    return ResearchInputIdentity.from_verified_replay("us_equities.day_trading.runtime_features", replay)
 
 
 def _bar(start_at: dt.datetime, volume: int) -> CompletedMinuteBar:

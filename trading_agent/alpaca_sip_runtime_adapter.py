@@ -151,6 +151,17 @@ def _runtime_bars(
     return tuple(bars)
 
 
+def normalize_alpaca_sip_runtime_bars(
+    page_set: AlpacaSipMinutePage,
+    session_open: dt.datetime,
+    completed_boundary: dt.datetime,
+) -> tuple[AlpacaSipRuntimeBar, ...]:
+    try:
+        return _runtime_bars(page_set, session_open, completed_boundary)
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+        raise AlpacaSipRuntimeError from None
+
+
 def _runtime_bar(
     wire_bar: AlpacaBar,
     page_index: int,
@@ -222,4 +233,4 @@ def _valid_checkpoint(checkpoint: MarketDataRuntimeCheckpoint | None) -> bool:
     )
 
 
-__all__ = ("AlpacaSipRuntimeAdapter",)
+__all__ = ("AlpacaSipRuntimeAdapter", "normalize_alpaca_sip_runtime_bars")

@@ -106,7 +106,9 @@ flowchart LR
 
 **2026-07-19 Alpaca SIP runtime fleet 업데이트:** M4.2의 bounded desired set을 단일 adapter에 넣지 않고 종목별 독립 owner로 분배하는 read-only fleet를 추가했다. owner key는 instrument ID와 symbol의 SHA-256이고 각 owner는 mode-700 전용 디렉터리, mode-600 runtime/evidence SQLite, 별도 canonical root와 single writer checkpoint를 가진다. 두 후보 fixture는 각각 35개 완료 분봉을 raw-first Parquet/DuckDB evidence로 만들고 READY binding 두 개를 기존 M4.4 gate에 전달했다. 한 종목의 sequence gap이나 provider failure는 다른 종목 수집을 중단하지 않지만 fleet를 `degraded`로 만들고 실패 종목 evidence는 만들지 않는다. 프로세스 재시작은 두 owner가 기존 20개 checkpoint를 읽어 신규 15개 분봉만 추가했으며 symlink owner root와 request coverage mismatch는 HTTP 전에 차단됐다. 이 경로는 account/order API와 mutation을 import하지 않는다. 실제 운영 전에 `expected_cumulative_volume`의 historical intraday volume-profile lineage가 필요하며 KIS 현재 누적 거래량으로 임의 추정하지 않는다.
 
-**2026-07-19 인과적 intraday volume profile 업데이트:** bare `expected_cumulative_volume` 입력을 제거하고, 목표 분까지 거래 가능한 직전 20개 완료 정규장의 누적 거래량 median evidence로 교체했다. evidence는 verified historical replay identity, exact source session dates, 세션별 누적 거래량, 목표 거래일·분, semantic version과 SHA-256을 함께 고정한다. 현재·미래·누락·오래된 세션, 정규장 공백, 미완료 세션, 변조된 median/hash는 fail-closed다. runtime request와 feature snapshot이 같은 profile 객체를 소유하고 M4.4 evidence hash에도 profile ID와 denominator가 결합된다. 20일 historical fixture replay에서 두 종목 profile이 독립 SIP owner와 READY Opportunity gate까지 도달했다. 실제 Alpaca archive/canonical catalog에서 이 evidence를 만드는 durable loader와 정규장 외부 GET은 아직 후속 운영 단계다.
+**2026-07-19 인과적 intraday volume profile 업데이트:** bare `expected_cumulative_volume` 입력을 제거하고, 목표 분까지 거래 가능한 직전 20개 완료 정규장의 누적 거래량 median evidence로 교체했다. evidence는 세션별 verified replay identity 20개, exact source session dates, 세션별 누적 거래량, 목표 거래일·분, semantic version과 SHA-256을 함께 고정한다. 현재·미래·누락·오래된 세션, 정규장 공백, 미완료 세션, 변조된 median/hash는 fail-closed다. runtime request와 feature snapshot이 같은 profile 객체를 소유하고 M4.4 evidence hash에도 profile ID와 denominator가 결합된다. 20일 historical fixture replay에서 두 종목 profile이 독립 SIP owner와 READY Opportunity gate까지 도달했다.
+
+**2026-07-19 Alpaca historical profile collector 업데이트:** 목표 분에 필요한 직전 20개 적격 정규장 전체를 기존 GET-only Alpaca SIP minute page client로 수집하는 별도 collector를 추가했다. 각 응답 bytes는 완료성 검사 전에 기존 append-only evidence SQLite에 저장되고 세션별 canonical Parquet/DuckDB replay identity로 투영된다. 첫 fixture 실행은 20 GET으로 20개 완료 세션을 만들었고, 새 process의 동일 요청은 저장된 page chain과 canonical replay만 읽어 GET 0건으로 같은 profile을 재생했다. 마지막 분 누락은 raw 저장 후 profile 발행을 차단하며 canonical 파일 변조도 network fallback 없이 차단한다. 실제 credential smoke와 운영 CLI/fleet-cycle audit는 아직 후속 단계다.
 
 ```bash
 ./run_data_foundation_check.py \
@@ -196,6 +198,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [US read-only runtime supervisor 체크포인트](docs/checkpoints/2026-07-18-us-market-data-runtime-supervisor-ko.md)
 - [Alpaca SIP runtime provider bridge 체크포인트](docs/checkpoints/2026-07-18-alpaca-sip-runtime-provider-bridge-ko.md)
 - [US intraday volume profile 체크포인트](docs/checkpoints/2026-07-19-us-intraday-volume-profile-ko.md)
+- [Alpaca historical profile collector 체크포인트](docs/checkpoints/2026-07-19-alpaca-historical-profile-collector-ko.md)
 - [US feature evidence projection 체크포인트](docs/checkpoints/2026-07-18-us-feature-evidence-projection-ko.md)
 - [Grok 개발 하네스 설계](docs/superpowers/specs/2026-07-18-grok-development-harness-design.md)
 - [Grok 개발 하네스 체크포인트](docs/checkpoints/2026-07-18-grok-development-harness-ko.md)

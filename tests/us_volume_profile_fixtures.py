@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 from decimal import Decimal
 
 from trading_agent.canonical_duckdb_replay import CanonicalDatasetReplay
@@ -29,7 +30,7 @@ def volume_profile(
     source_dates = _prior_sessions(target_session_date)
     volumes = (expected_cumulative_volume,) * INTRADAY_VOLUME_PROFILE_SESSIONS
     return create_intraday_volume_profile_evidence(
-        _identity(identity_fill),
+        tuple(_identity_for_date(day, identity_fill) for day in source_dates),
         instrument_id,
         target_session_date,
         through_minute,
@@ -45,9 +46,10 @@ def historical_volume_profile(
     through_minute: int = 35,
     identity_fill: str = "7",
 ) -> IntradayVolumeProfileEvidence:
-    sessions = tuple(_historical_session(day, through_minute) for day in _prior_sessions(target_session_date))
+    sessions = tuple(
+        _historical_session(day, through_minute, identity_fill) for day in _prior_sessions(target_session_date)
+    )
     return build_intraday_volume_profile(
-        _identity(identity_fill),
         instrument_id,
         target_session_date,
         through_minute=through_minute,
@@ -55,13 +57,14 @@ def historical_volume_profile(
     )
 
 
-def _identity(fill: str) -> ResearchInputIdentity:
+def _identity_for_date(session_date: dt.date, fill: str) -> ResearchInputIdentity:
+    digest = hashlib.sha256(f"{session_date.isoformat()}:{fill}".encode()).hexdigest()
     replay = CanonicalDatasetReplay(
-        dataset_id=f"historical-volume-{fill}",
-        event_count=INTRADAY_VOLUME_PROFILE_SESSIONS * 390,
-        canonical_event_content_sha256=fill * 64,
+        dataset_id=f"historical-volume-{session_date.isoformat()}-{fill}",
+        event_count=390,
+        canonical_event_content_sha256=digest,
         parquet_sha256="e" * 64,
-        raw_manifest_id=f"raw-historical-volume-{fill}",
+        raw_manifest_id=f"raw-historical-volume-{session_date.isoformat()}-{fill}",
         raw_manifest_content_sha256="f" * 64,
     )
     return ResearchInputIdentity.from_verified_replay(
@@ -73,6 +76,7 @@ def _identity(fill: str) -> ResearchInputIdentity:
 def _historical_session(
     session_date: dt.date,
     through_minute: int,
+    identity_fill: str,
 ) -> HistoricalVolumeSession:
     bounds = regular_session_bounds(session_date)
     assert bounds is not None
@@ -81,7 +85,11 @@ def _historical_session(
     volumes = [100] * count
     volumes[through_minute - 1] = 600
     bars = tuple(_historical_bar(opened + dt.timedelta(minutes=index), volume) for index, volume in enumerate(volumes))
-    return HistoricalVolumeSession(session_date, bars)
+    return HistoricalVolumeSession(
+        session_date,
+        _identity_for_date(session_date, identity_fill),
+        bars,
+    )
 
 
 def _historical_bar(start_at: dt.datetime, volume: int) -> CompletedMinuteBar:

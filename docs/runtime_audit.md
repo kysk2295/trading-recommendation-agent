@@ -420,3 +420,10 @@
 - 최초 관찰: `RuntimeFeatureRequest.expected_cumulative_volume`은 양수 Decimal만 검사했고 어떤 과거 세션에서 계산했는지 증명하지 않았다. 동일 숫자를 KIS 현재 누적 거래량이나 수동 값으로 넣어도 구별할 수 없었다.
 - 수정: 목표 분까지 거래 가능한 직전 20개 완료 정규장을 exact calendar 날짜로 요구하고, 각 세션의 정규장 전체 연속 1분봉에서 해당 분 누적 거래량을 계산해 median evidence를 만든다. verified replay identity, source 날짜·누적값, 목표일·분, version과 SHA-256을 불변 객체에 결합했다. runtime policy 평가일과 목표일 불일치, 정규장 시작이 아닌 현재 bar 창, profile보다 많은 현재 bar도 차단한다.
 - 결과: 20일 historical fixture replay가 두 종목별 denominator를 만들고 독립 SIP owner, canonical feature와 M4.4 READY gate까지 도달했다. profile identity만 바꿔도 derived Opportunity ID가 달라졌다. 현재·미래·오래된·공백·미완료·변조 profile은 모두 차단됐다. 실제 외부 GET, account/order endpoint와 POST/DELETE mutation은 0건이다.
+
+## H59: 20개 세션을 매번 다시 GET하거나 여러 replay를 하나의 가짜 identity로 축약한다
+
+- 판별 기준: 첫 수집 뒤 새 process가 provider를 열지 않고 같은 profile을 재생하는지, 20개 session replay가 개별 lineage로 보존되는지, 불완전 응답과 canonical 변조에서 network fallback을 하는지 확인한다.
+- 최초 관찰: 순수 profile builder는 하나의 `ResearchInputIdentity`가 전체 20세션을 대표한다고 가정했고 실제 provider raw/canonical archive를 읽는 경로가 없었다. 기존 장중 runtime은 장 종료 시 마지막 분까지 완료 세션을 만들 수 없어 historical source로 부적합했다.
+- 수정: profile evidence가 exact source 날짜와 정렬된 20개 세션별 verified replay identity를 직접 보존하도록 바꿨다. 별도 historical collector는 각 정규장 전체를 GET-only page client로 읽고 response bytes를 먼저 append한 뒤 exact sequence 1..close를 검증하고 canonical projection한다. 저장된 page index/token chain, receipt ID, payload hash와 terminal token을 재검증해 재시작 시 HTTP 없이 재생한다.
+- 결과: 첫 fixture는 20 GET과 20 canonical dataset을 만들었고 두 번째 process는 GET 0건으로 동일 evidence를 반환했다. 마지막 1분 누락은 raw page를 보존하면서 profile을 차단했고 Parquet 변조도 HTTP fallback 없이 차단했다. account/order endpoint와 mutation은 0건이다.

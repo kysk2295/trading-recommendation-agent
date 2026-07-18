@@ -18,11 +18,11 @@ from trading_agent.us_intraday_volume_profile_models import (
 @dataclass(frozen=True, slots=True)
 class HistoricalVolumeSession:
     session_date: dt.date
+    identity: ResearchInputIdentity
     bars: tuple[CompletedMinuteBar, ...]
 
 
 def build_intraday_volume_profile(
-    identity: ResearchInputIdentity,
     instrument_id: str,
     target_session_date: dt.date,
     *,
@@ -31,8 +31,7 @@ def build_intraday_volume_profile(
 ) -> IntradayVolumeProfileEvidence:
     target_bounds = regular_session_bounds(target_session_date) if type(target_session_date) is dt.date else None
     if (
-        type(identity) is not ResearchInputIdentity
-        or type(instrument_id) is not str
+        type(instrument_id) is not str
         or not instrument_id
         or target_bounds is None
         or type(through_minute) is not int
@@ -59,7 +58,7 @@ def build_intraday_volume_profile(
         raise IntradayVolumeProfileError
     cumulative = tuple(sum(bar.volume for bar in session.bars[:through_minute]) for session in selected)
     return create_intraday_volume_profile_evidence(
-        identity,
+        tuple(session.identity for session in selected),
         instrument_id,
         target_session_date,
         through_minute,
@@ -79,6 +78,7 @@ def _validate_completed_session(
     )
     if (
         bounds is None
+        or type(session.identity) is not ResearchInputIdentity
         or session.session_date >= target_session_date
         or type(session.bars) is not tuple
         or len(session.bars) != _session_minutes(bounds)

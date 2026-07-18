@@ -6,10 +6,13 @@ import hashlib
 import json
 import os
 import sqlite3
+from itertools import pairwise
 from pathlib import Path
 from typing import final
 
+from trading_agent.alpaca_models import BARS_ADAPTER
 from trading_agent.alpaca_sip_runtime_models import (
+    AlpacaSipMinutePage,
     AlpacaSipMinutePageRequest,
     AlpacaSipRawPage,
     AlpacaSipRuntimeError,
@@ -48,6 +51,34 @@ class AlpacaSipRuntimeEvidenceStore:
                 ).fetchone()
             return None if row is None else Path(row[0])
         except sqlite3.Error:
+            raise AlpacaSipRuntimeError from None
+
+    def load_page_set(
+        self,
+        request: AlpacaSipMinutePageRequest,
+    ) -> AlpacaSipMinutePage | None:
+        if not self.path.is_file():
+            return None
+        try:
+            with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
+                _require_schema(connection)
+                rows = connection.execute(
+                    "SELECT receipt_id,page_index,page_token,received_at,payload_sha256,raw_response "
+                    "FROM alpaca_sip_raw_pages WHERE session_date=? AND symbol=? "
+                    "AND request_start_at=? AND request_end_at=? ORDER BY page_index",
+                    (
+                        request.session_date.isoformat(),
+                        request.symbol,
+                        request.start_at.isoformat(),
+                        request.end_at.isoformat(),
+                    ),
+                ).fetchall()
+            if not rows:
+                return None
+            pages = tuple(_loaded_page(request, row) for row in rows)
+            _validate_page_chain(pages)
+            return AlpacaSipMinutePage(request, pages)
+        except (OSError, sqlite3.Error, TypeError, ValueError):
             raise AlpacaSipRuntimeError from None
 
     def append_page(
@@ -202,6 +233,34 @@ def _receipt_id(request: AlpacaSipMinutePageRequest, page: AlpacaSipRawPage) -> 
 
 def _stored(row: tuple[int, str, int, str, str, bytes]) -> StoredAlpacaSipRawPage:
     return StoredAlpacaSipRawPage(row[0], row[1], row[2], dt.datetime.fromisoformat(row[3]), row[4], row[5])
+
+
+def _loaded_page(
+    request: AlpacaSipMinutePageRequest,
+    row: tuple[str, int, str | None, str, str, bytes],
+) -> AlpacaSipRawPage:
+    page = AlpacaSipRawPage(
+        row[1],
+        row[2],
+        dt.datetime.fromisoformat(row[3]),
+        row[5],
+        BARS_ADAPTER.validate_json(row[5]),
+    )
+    if row[0] != _receipt_id(request, page) or row[4] != hashlib.sha256(row[5]).hexdigest():
+        raise AlpacaSipRuntimeError
+    return page
+
+
+def _validate_page_chain(pages: tuple[AlpacaSipRawPage, ...]) -> None:
+    if (
+        tuple(page.page_index for page in pages) != tuple(range(len(pages)))
+        or pages[0].page_token is not None
+        or pages[-1].payload.next_page_token is not None
+    ):
+        raise AlpacaSipRuntimeError
+    for previous, current in pairwise(pages):
+        if previous.payload.next_page_token != current.page_token:
+            raise AlpacaSipRuntimeError
 
 
 def _prepare(connection: sqlite3.Connection) -> None:

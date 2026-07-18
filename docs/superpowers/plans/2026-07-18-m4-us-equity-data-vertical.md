@@ -200,9 +200,19 @@ semantic version, and deterministic SHA-256. Missing, stale, current/future,
 gapped, incomplete, non-positive, and tampered inputs fail closed. The runtime
 request, feature snapshot, and M4.4 evidence hash now share this lineage, and
 a two-instrument fixture built from full historical sessions reaches the
-independent SIP owners and READY opportunity gate. The operational loader from
-durable Alpaca historical archives/canonical catalog and regular-session
-external fleet smoke remain pending.
+independent SIP owners and READY opportunity gate.
+
+**Historical profile collector checkpoint (2026-07-19): Fixture complete.**
+A separate GET-only collector now requests the exact prior 20 eligible regular
+sessions through the existing Alpaca SIP page client. Exact response bytes are
+appended to the evidence SQLite before completeness checks, then each complete
+session is normalized, written as canonical Parquet, verified by DuckDB, and
+retained as one of the profile's 20 replay identities. Stored request/page
+chains are strictly revalidated and allow a fresh process to reproduce the
+same profile with zero HTTP calls. A missing final minute remains persisted
+raw evidence but blocks projection; tampered canonical data blocks without
+network fallback. Actual-credential historical GET smoke, operational CLI
+wiring, and durable fleet-cycle audit remain pending.
 
 ### M4.4: Evidence-Gated US Opportunity Projection
 
