@@ -538,3 +538,10 @@
 - 최초 관찰: kernel은 extraction이 가리키는 개별 event의 hash·source·receipt·entity만 검사했다. tuple 안에 successor가 있어도 original extraction은 통과해 현재 claim으로 다시 만들어졌다.
 - 수정: canonical history의 complete chain 검증과 as-of materialization을 in-memory event tuple에도 적용했다. read model은 active event map에 존재하는 extraction만 허용하고 correction에는 successor content·receipt에 결합된 새 extraction을 요구한다. source event count도 `normalized_at <= as_of`인 실제 visible event만 센다.
 - 결과: correction·tombstone의 superseded extraction은 모두 fail-closed다. 미래 correction은 효력 발생 전 original claim과 count에 영향을 주지 않는다. immutable 과거 artifact는 삭제하지 않으며, 호출자가 complete history scope를 누락하면 이 kernel만으로 provider의 미수집 correction을 추측하지 않는다.
+
+## H76: scanner projection과 evidence artifact 사이에 수동 handoff가 남는다
+
+- 판별 기준: KIS scan/watch가 durable scanner projection을 성공한 뒤 운영자가 별도 standalone CLI와 경로를 다시 입력해야 evidence artifact가 생기는지 확인한다.
+- 최초 관찰: scanner raw·Parquet·SQLite와 standalone evidence CLI는 모두 있었지만 scan process는 snapshot만 반환했다. 자동 루프에서는 artifact 생성 누락과 다른 store 선택이 가능했다.
+- 수정: 기존 research projection opt-in 내부에서 scanner projection commit 뒤 동일 store를 query-only loader로 다시 검증하고 content-addressed evidence를 쓴다. 별도 인자를 늘리지 않고 projection store 부모의 `research-evidence/`를 deterministic root로 고정했다.
+- 결과: 최초와 exact retry는 동일 snapshot·artifact 1개·unconfirmed claim을 만든다. projection 미설정 또는 Opportunity 없음은 기존 no-op이고 evidence 실패를 성공으로 축소하지 않는다. provider·credential·account/order endpoint와 mutation 추가 호출은 0건이다.

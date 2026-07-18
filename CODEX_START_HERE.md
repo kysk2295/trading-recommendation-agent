@@ -94,6 +94,7 @@
 - KR DART·LS normalized catalyst extraction을 추가했다. exact raw receipt link·terminal run·canonical payload와 run manifest의 keyword rules를 재생한 뒤에만 theme claim을 만들며, 서로 다른 두 provider가 같은 사전등록 theme/entity를 지지할 때만 corroborated artifact가 된다. provider·credential·계좌·주문 접근은 없다.
 - US broad scanner candidate extraction을 추가했다. raw Opportunity·foundation·security-master identity와 verified candidate dataset/event를 exact 대사하고 ranking_momentum 선택 사실만 private artifact로 투영한다. source independence를 과장하지 않아 모든 claim은 unconfirmed이며 provider·broker를 열지 않는다.
 - research evidence kernel이 full correction/tombstone chain의 as-of active event만 허용한다. superseded extraction은 차단되고 correction은 새 event-bound extraction이 필요하며 미래 correction은 조기 반영되지 않는다. 과거 artifact는 immutable로 유지된다.
+- KIS scan/watch의 기존 research projection opt-in이 scanner commit 직후 evidence artifact를 자동 생성한다. store 부모의 deterministic `research-evidence/`에 content-addressed artifact를 쓰며 exact retry는 하나만 유지하고 별도 provider·broker 호출은 없다.
 
 ## 다음 우선순위
 

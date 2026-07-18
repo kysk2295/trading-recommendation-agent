@@ -7,11 +7,15 @@ import typer
 
 from trading_agent.alpaca_security_master_store import AlpacaSecurityMasterStore
 from trading_agent.data_foundation_manifest import load_data_foundation_manifest
+from trading_agent.research_evidence_artifact import write_research_evidence_artifact
 from trading_agent.signal_contract_models import OpportunitySnapshot
 from trading_agent.us_broad_scanner_foundation import build_us_broad_scanner_foundation
 from trading_agent.us_opportunity_scanner_models import UsOpportunityScannerProjectionError
 from trading_agent.us_opportunity_scanner_projection import UsOpportunityScannerProjector
 from trading_agent.us_opportunity_scanner_store import UsOpportunityScannerStore
+from trading_agent.us_scanner_research_projection import (
+    project_us_scanner_research_evidence,
+)
 from trading_agent.us_subscription_models import BroadScannerSnapshot
 
 
@@ -28,6 +32,7 @@ class ResearchProjectionConfig:
     foundation_manifest: Path | None
     store: Path
     canonical_root: Path
+    evidence_artifact_root: Path
     security_master_store: Path | None = None
 
 
@@ -50,6 +55,7 @@ def configure_research_projection(
         None if options.foundation_manifest is None else Path(options.foundation_manifest),
         Path(options.store),
         Path(options.canonical_root),
+        Path(options.store).parent / "research-evidence",
         None if options.security_master_store is None else Path(options.security_master_store),
     )
 
@@ -72,10 +78,13 @@ def project_opportunity_research_input(
         if security_master is not None
         else load_data_foundation_manifest(_required_foundation_path(config))
     )
-    return UsOpportunityScannerProjector(
+    snapshot = UsOpportunityScannerProjector(
         UsOpportunityScannerStore(config.store),
         config.canonical_root,
     ).project(opportunity, foundation, security_master=security_master)
+    model = project_us_scanner_research_evidence(config.store)
+    _ = write_research_evidence_artifact(config.evidence_artifact_root, model)
+    return snapshot
 
 
 def _required_foundation_path(config: ResearchProjectionConfig) -> Path:
