@@ -468,3 +468,10 @@
 - 최초 관찰: 단발 runtime CLI와 fleet audit은 성공/부분 실패 cycle을 보존했지만 profile 이전 preflight block은 fleet audit을 만들 수 없었고 반복 수명주기 계약도 없었다.
 - 수정: provider-neutral bounded supervisor가 operation block을 구조화된 `runtime_cycle_blocked`로 변환하고 READY/blocked attempt 모두 별도 deterministic record로 append한다. 최대 390회와 interval 범위를 검증하고 매 operation 전에 New York 정규장 경계를 재확인한다.
 - 결과: 첫 blocked 뒤 두 번째 READY 회복이 기록됐고 15:59 한 번 실행 뒤 16:00에는 호출하지 않았다. payload/mode/symlink 변조는 replay에서 차단됐다. 이 supervisor 계약에는 credential, account, order 필드가 없다.
+
+## H66: supervisor가 이전 성공 fleet audit을 현재 blocked cycle의 성공으로 재사용한다
+
+- 판별 기준: 매 attempt scanner를 다시 읽는지, child cycle 성공 뒤 audit evaluated time이 현재 attempt와 정확히 같은지, 두 번째 분이 historical cache를 재사용하는지 확인한다.
+- 최초 관찰: supervisor 순수 계약은 있었지만 실제 자동 cycle과 연결되지 않아 stale scanner block 뒤 `latest()`의 과거 READY audit을 잘못 연결할 위험이 남았다.
+- 수정: CLI operation은 현재 evaluated time을 단발 자동 cycle에 전달하고 exit 0 뒤에도 fleet audit의 evaluated time을 exact 비교한다. 불일치·누락·reader 변조는 `runtime_cycle_blocked`로 supervisor audit에만 남기고 다음 attempt를 계속한다.
+- 결과: fresh scanner를 sleeper에서 추가한 2-cycle soak가 historical 20 + current 2, 총 GET 22건과 READY record 2개를 만들었다. 폐장 시작은 credential과 두 audit DB를 열지 않았다. account/order endpoint와 mutation은 0건이다.

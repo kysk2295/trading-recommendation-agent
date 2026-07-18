@@ -122,6 +122,8 @@ flowchart LR
 
 **2026-07-19 US bounded minute supervisor 계약 업데이트:** 정규장 안에서 최대 390회, 1~3600초 interval로 read-only runtime operation을 반복하는 provider-neutral supervisor를 추가했다. 각 attempt는 시작/종료 시각, 순번, READY 또는 구조화된 blocked reason, 연결된 fleet cycle ID를 deterministic hash로 묶어 별도 append-only SQLite에 저장한다. 한 cycle의 stale scanner/profile/provider block은 다음 cycle을 중단하지 않으며 16:00 ET에는 operation 전에 종료한다. store는 mode 600 current-user regular file, no-symlink, `BEGIN IMMEDIATE`, canonical payload/hash replay를 요구한다. 아직 production CLI runner 결합과 fixture soak는 다음 단계다.
 
+**2026-07-19 US runtime fleet supervisor CLI 업데이트:** `run_us_runtime_fleet_supervisor.py`가 매 attempt마다 scanner를 다시 읽고 자동 historical profile cycle을 실행한 뒤, 같은 evaluated time의 새 fleet audit만 READY 근거로 supervisor audit에 연결한다. 이전 fleet audit 재사용은 차단하며 cycle block은 다음 분으로 격리한다. 2-cycle fixture soak에서 첫 분 historical 20 + current 1 GET, fresh scanner 갱신 뒤 두 번째 분 current 1 GET만 추가되어 총 22건이었고 두 attempt 모두 READY였다. 폐장 시작은 credential, supervisor DB, fleet DB를 열기 전에 종료했다. 실제 운영에서는 별도 KIS watch가 30초 이내 scanner snapshot을 계속 공급해야 한다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \
@@ -217,6 +219,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [US subscription policy state 체크포인트](docs/checkpoints/2026-07-19-us-subscription-policy-state-ko.md)
 - [Alpaca SIP profile 자동 materialization 체크포인트](docs/checkpoints/2026-07-19-alpaca-sip-profile-materializer-ko.md)
 - [US bounded minute supervisor 계약 체크포인트](docs/checkpoints/2026-07-19-us-runtime-minute-supervisor-ko.md)
+- [US runtime fleet supervisor CLI 체크포인트](docs/checkpoints/2026-07-19-us-runtime-fleet-supervisor-cli-ko.md)
 - [US feature evidence projection 체크포인트](docs/checkpoints/2026-07-18-us-feature-evidence-projection-ko.md)
 - [Grok 개발 하네스 설계](docs/superpowers/specs/2026-07-18-grok-development-harness-design.md)
 - [Grok 개발 하네스 체크포인트](docs/checkpoints/2026-07-18-grok-development-harness-ko.md)
@@ -747,6 +750,22 @@ KIS 날짜별 paper 감시:
 
 ```bash
   --auto-profile-root outputs/runtime/us-sip-fleet/profiles
+```
+
+fresh scanner를 외부 KIS watch가 계속 갱신하는 동안 bounded supervisor를 실행한다.
+
+```bash
+./run_us_runtime_fleet_supervisor.py \
+  --scanner-store outputs/runtime/us-broad-scanner/scanner.sqlite3 \
+  --auto-profile-root outputs/runtime/us-sip-fleet/profiles \
+  --runtime-root outputs/runtime/us-sip-fleet/owners \
+  --canonical-root outputs/runtime/us-sip-fleet/canonical \
+  --audit-store outputs/runtime/us-sip-fleet/fleet-audit.sqlite3 \
+  --policy-state-store outputs/runtime/us-sip-fleet/policy-state.sqlite3 \
+  --supervisor-store outputs/runtime/us-sip-fleet/supervisor.sqlite3 \
+  --output-dir outputs/runtime/us-sip-fleet/report \
+  --secret-path ~/.config/trading-agent/alpaca.env \
+  --cycles 390 --interval-seconds 60
 ```
 
 첫 명령은 Paper assets endpoint를 GET-only로 한 번 읽어 pre-session 종목 마스터를 갱신한다. 최신 snapshot이 KIS Opportunity보다 미래이거나 1일을 넘으면 watch의 연구 투영은 fail-closed한다.

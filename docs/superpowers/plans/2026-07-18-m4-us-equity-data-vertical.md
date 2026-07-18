@@ -283,6 +283,17 @@ symlinks and public modes, serializes writers, and verifies canonical payload
 and record hashes. The production cycle runner and fixture soak remain the
 next checkpoint.
 
+**Runtime fleet supervisor CLI checkpoint (2026-07-19): Fixture soak complete.**
+The CLI reloads the scanner and durable policy state for every attempt, runs
+automatic profile materialization plus the current-minute fleet, and accepts
+only a fleet audit whose evaluated timestamp exactly matches that attempt.
+Blocked cycles cannot reuse an older audit and remain isolated for the next
+minute. In a two-cycle fixture, the first attempt made 20 historical and one
+current GET; after a fresh scanner projection the second reused all history
+and made one current GET, for 22 total and two READY supervisor records. A
+closed-session start touched neither credentials nor runtime audit stores.
+Actual regular-session smoke and longer soak observation remain pending.
+
 ### M4.4: Evidence-Gated US Opportunity Projection
 
 Project an eligible feature snapshot into the existing US
