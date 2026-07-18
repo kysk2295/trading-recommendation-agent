@@ -93,10 +93,11 @@
 - canonical event-bound extraction과 entity/claim corroboration read model을 추가했다. US SIP READY snapshot의 breakout·RVOL extractor는 verified dataset과 마지막 완료 분봉에 결합되어 fleet cycle의 종목별 private artifact로 연결됐다. 단일 source evidence는 unconfirmed이며 추천·승격 권한이 아니다.
 - KR DART·LS normalized catalyst extraction을 추가했다. exact raw receipt link·terminal run·canonical payload와 run manifest의 keyword rules를 재생한 뒤에만 theme claim을 만들며, 서로 다른 두 provider가 같은 사전등록 theme/entity를 지지할 때만 corroborated artifact가 된다. provider·credential·계좌·주문 접근은 없다.
 - US broad scanner candidate extraction을 추가했다. raw Opportunity·foundation·security-master identity와 verified candidate dataset/event를 exact 대사하고 ranking_momentum 선택 사실만 private artifact로 투영한다. source independence를 과장하지 않아 모든 claim은 unconfirmed이며 provider·broker를 열지 않는다.
+- research evidence kernel이 full correction/tombstone chain의 as-of active event만 허용한다. superseded extraction은 차단되고 correction은 새 event-bound extraction이 필요하며 미래 correction은 조기 반영되지 않는다. 과거 artifact는 immutable로 유지된다.
 
 ## 다음 우선순위
 
-1. canonical correction/tombstone 이후 기존 research extraction과 artifact를 stale로 재사용하지 못하게 as-of invalidation replay를 추가한다. immutable 과거 artifact를 덮어쓰지 말고 active event history에 결합된 새 projection identity로 표현한다.
+1. generic correction/tombstone replay 위에 provider별 deletion cursor·retention 이행과 source coverage를 추가한다. 최신 evidence projection은 반드시 complete history scope를 전달하고 기존 immutable event·artifact를 덮어쓰지 않는다.
 2. 열린 NYSE 정규장과 mode-600 Alpaca data credential이 자연스럽게 동시에 맞을 때만 새 SIP bridge의 단일 종목 bounded GET smoke를 실행한다. exact raw page·canonical replay·runtime checkpoint를 대사하고 계좌·주문·Paper endpoint는 열지 않는다. 휴장에는 fixture E2E 결과만 유지한다.
 3. 실제 read-only smoke 뒤 pagination·재시작 offset·provider gap의 장기 soak를 누적한다. 이 polling bridge를 websocket streaming이나 전체시장 coverage로 표현하지 않는다.
 4. 현재 NYSE post-close와 mode-600 data credential·정렬된 bounded universe가 동시에 맞을 때만 US swing 일봉 source를 read-only로 한 번 수집한다. 그 뒤에만 동일 CLI로 signal/shadow forward evidence를 누적하며, Paper 계좌·주문은 열지 않는다.

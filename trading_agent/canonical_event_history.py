@@ -56,6 +56,22 @@ def replay_canonical_event_history(
         raise CanonicalEventHistoryError from None
 
 
+def active_canonical_events_as_of(
+    events: Sequence[CanonicalEventEnvelope],
+    *,
+    as_of: dt.datetime,
+) -> tuple[CanonicalEventEnvelope, ...]:
+    try:
+        checked = tuple(CanonicalEventEnvelope.model_validate(event.model_dump(mode="python")) for event in events)
+        if not checked or not _aware(as_of):
+            raise ValueError
+        ordered = _ordered_unique_events(checked)
+        _validate_complete_chain(ordered)
+        return _materialize(ordered, dataset_ids=(), as_of=as_of).active_events
+    except (AttributeError, TypeError, ValueError):
+        raise CanonicalEventHistoryError from None
+
+
 def _read_datasets(
     paths: tuple[Path, ...],
 ) -> tuple[tuple[str, ...], tuple[CanonicalEventEnvelope, ...]]:
@@ -161,5 +177,6 @@ def _aware(value: dt.datetime) -> bool:
 __all__ = (
     "CanonicalEventHistoryError",
     "CanonicalEventHistoryReplay",
+    "active_canonical_events_as_of",
     "replay_canonical_event_history",
 )

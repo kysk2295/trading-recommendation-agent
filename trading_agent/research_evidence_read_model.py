@@ -6,6 +6,10 @@ from typing import override
 
 from pydantic import ValidationError
 
+from trading_agent.canonical_event_history import (
+    CanonicalEventHistoryError,
+    active_canonical_events_as_of,
+)
 from trading_agent.canonical_event_models import (
     CanonicalEventEnvelope,
     CanonicalEventOperation,
@@ -49,7 +53,8 @@ def build_research_evidence_read_model(
             baseline_window,
             burst_threshold_bps,
         )
-        by_event = {item.event_id: item for item in checked_events}
+        active_events = active_canonical_events_as_of(checked_events, as_of=as_of)
+        by_event = {item.event_id: item for item in active_events}
         for extraction in checked_extractions:
             _validate_lineage(extraction, by_event[extraction.event_id], as_of)
         claims = _claims(
@@ -67,13 +72,19 @@ def build_research_evidence_read_model(
             claims=claims,
             current_window_seconds=int(current_window.total_seconds()),
             extraction_count=len(checked_extractions),
-            source_event_count=len(checked_events),
+            source_event_count=sum(event.normalized_at <= as_of for event in checked_events),
             content_sha256="0" * 64,
         )
         normalized = provisional.model_dump(mode="json")
         _ = normalized.pop("content_sha256")
         return ResearchEvidenceReadModel(**normalized, content_sha256=content_sha256(normalized))
-    except (KeyError, TypeError, ValidationError, ValueError):
+    except (
+        CanonicalEventHistoryError,
+        KeyError,
+        TypeError,
+        ValidationError,
+        ValueError,
+    ):
         raise ResearchEvidenceReadModelError from None
 
 

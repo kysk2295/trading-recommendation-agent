@@ -531,3 +531,10 @@
 - 최초 관찰: scanner projection은 raw Opportunity와 candidate event를 보존하지만 event source는 `internal/us_opportunity` 하나다. Opportunity의 evidence reference는 selection 입력 계보다. 이를 별도 event로 제조하면 실제 provider normalized payload·receipt 검증 없이 독립 source 수를 부풀리게 된다.
 - 수정: query-only loader가 scanner SQLite의 raw Opportunity·ready foundation·optional security-master ID와 verified Parquet event를 결합한다. raw receipt identity, dataset ID, candidate symbol/rank/score, instrument, canonical candidate payload hash와 event 시간을 exact 대사하고 factual `ranking_momentum` selection claim만 추출한다. KIS·NYSE reference는 output hash lineage에만 포함한다.
 - 결과: security-master ID, raw receipt, candidate shape 또는 canonical event가 바뀌면 artifact 전에 fail-closed다. source는 `internal/us_opportunity` 하나여서 claim은 `unconfirmed`이고 derived artifact에는 raw receipt와 source evidence reference가 없다. provider·credential·account/order endpoint와 mutation은 0건이다.
+
+## H75: correction/tombstone 뒤 superseded extraction을 active claim으로 재사용한다
+
+- 판별 기준: original과 그 correction 또는 tombstone을 함께 read-model kernel에 전달하면서 extraction은 original event에 결합된 과거 값만 제공한다.
+- 최초 관찰: kernel은 extraction이 가리키는 개별 event의 hash·source·receipt·entity만 검사했다. tuple 안에 successor가 있어도 original extraction은 통과해 현재 claim으로 다시 만들어졌다.
+- 수정: canonical history의 complete chain 검증과 as-of materialization을 in-memory event tuple에도 적용했다. read model은 active event map에 존재하는 extraction만 허용하고 correction에는 successor content·receipt에 결합된 새 extraction을 요구한다. source event count도 `normalized_at <= as_of`인 실제 visible event만 센다.
+- 결과: correction·tombstone의 superseded extraction은 모두 fail-closed다. 미래 correction은 효력 발생 전 original claim과 count에 영향을 주지 않는다. immutable 과거 artifact는 삭제하지 않으며, 호출자가 complete history scope를 누락하면 이 kernel만으로 provider의 미수집 correction을 추측하지 않는다.

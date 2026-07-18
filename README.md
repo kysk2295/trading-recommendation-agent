@@ -127,6 +127,8 @@ uv run python run_us_scanner_research_evidence.py \
   --output-dir outputs/runtime/us-scanner-research-report
 ```
 
+**2026-07-19 Research evidence history invalidation 업데이트:** 공통 read-model kernel이 입력 event tuple을 canonical original→correction→tombstone chain으로 먼저 검증하고 `as_of` 시점의 active event set을 계산한다. superseded original에 결합된 기존 extraction은 correction과 tombstone 모두 fail-closed하며, correction은 새 event content·receipt에 결합된 새 extraction만 허용한다. 미래 correction은 효력 발생 전 original claim을 무효화하지 않고 `source_event_count`에도 포함되지 않는다. immutable 과거 artifact는 삭제·수정하지 않으며 최신 projection을 만들 때 full history를 제공해야 이 invalidation 보장이 성립한다. 전체 **2325 tests**, Ruff, basedpyright 0/0, compileall, no-excuse가 통과했다.
+
 **2026-07-18 US Always-On M4.0~M4.4 업데이트:** verified canonical replay identity, 완료된 연속 1분봉의 공통 indicator kernel, bounded quote/trade 구독 정책과 restart 가능한 read-only supervisor를 기존 US Opportunity·conditional TradeSignal 경로까지 연결했다. M4 전용 evidence gate는 candidate마다 exact ready feature를 요구하고 missing·gap·stale·insufficient·noncausal evidence를 구조화된 사유로 차단한다. Alpaca SIP provider bridge는 context에 고정된 단일 instrument/symbol의 정규장 완료 1분봉을 GET-only로 polling하고, pagination별 exact response body를 별도 append-only SQLite에 먼저 보존한 뒤 canonical Parquet·DuckDB replay identity를 supervisor에 공급한다. 동일 분 재시도와 정상 재시작은 idempotent하며, 일시적 provider minute gap은 이후 full-session sequence가 완전히 연속일 때만 verified recovery epoch로 해제한다. 불완전 backfill은 신규 receipt가 없어도 `blocked_sequence_gap`을 유지한다. 종목 교체, 휴장, 다중 종목, 비정상 base URL과 redirect는 HTTP 전에 fail-closed다. 이 경로는 streaming·계좌·주문 기능이 아니다. fixture E2E와 전체 **2170 tests**, Ruff, basedpyright, compileall, no-excuse가 통과했으며 실제 정규장 read-only GET smoke·장기 soak는 다음 운영 단계다.
 
 **2026-07-19 US scanner 운영 투영 업데이트:** KIS의 causal `OpportunitySnapshot`을 M4.2 broad-scanner 입력으로 만드는 실제 생산 경로를 추가했다. opt-in KIS CLI는 data-foundation manifest, mode-600 append-only projection store, private canonical root 세 경로가 모두 있을 때만 활성화된다. Opportunity 원문을 먼저 보존하고 시점 유효한 US instrument alias를 exact match한 뒤 candidate event를 immutable Parquet로 발행하며, DuckDB replay가 검증한 identity와 직렬화된 scanner snapshot을 같은 projection row에 확정한다. 재시작 reader도 Parquet와 identity를 다시 검증하므로 경로·SQLite payload만으로 후보를 신뢰하지 않는다. 일부 설정, alias 누락, 미래 foundation, 변조된 dataset은 fail-closed이고 옵션이 없으면 기존 KIS 스캔은 변하지 않는다. fixture manifest는 `FIXT` 전용이며 실제 동적 후보 운영을 뜻하지 않는다. 다음 입력 단계는 현재 US security master manifest를 raw-first로 생성하는 read-only adapter다.
@@ -256,6 +258,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [US SIP typed feature extraction 체크포인트](docs/checkpoints/2026-07-19-us-sip-typed-feature-extraction-ko.md)
 - [KR normalized research evidence 체크포인트](docs/checkpoints/2026-07-19-kr-normalized-research-evidence-ko.md)
 - [US scanner candidate evidence 체크포인트](docs/checkpoints/2026-07-19-us-scanner-candidate-evidence-ko.md)
+- [Research evidence history invalidation 체크포인트](docs/checkpoints/2026-07-19-research-evidence-history-invalidation-ko.md)
 - [US runtime fleet 운영 사이클 체크포인트](docs/checkpoints/2026-07-19-us-runtime-fleet-cycle-ko.md)
 - [US subscription policy state 체크포인트](docs/checkpoints/2026-07-19-us-subscription-policy-state-ko.md)
 - [Alpaca SIP profile 자동 materialization 체크포인트](docs/checkpoints/2026-07-19-alpaca-sip-profile-materializer-ko.md)
