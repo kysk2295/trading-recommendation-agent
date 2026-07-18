@@ -78,6 +78,8 @@ def is_safe_command(value: str) -> bool:
             return False
         saw_path = False
         for arg in args[1:]:
+            if arg == "--no-cache":
+                continue
             if arg.startswith("-") or not _is_repo_path_arg(arg):
                 return False
             saw_path = True
@@ -85,9 +87,5 @@ def is_safe_command(value: str) -> bool:
     if tool == "basedpyright":
         return bool(args) and all(_is_repo_path_arg(arg) for arg in args)
     if tool == "python":
-        if args == ["-c", "pass"] or args == ["run_grok_task.py", "--help"]:
-            return True
-        if len(args) >= 4 and args[:3] == ["-m", "compileall", "-q"]:
-            return all(_is_repo_path_arg(arg) for arg in args[3:])
-        return False
+        return args == ["-c", "pass"] or args == ["run_grok_task.py", "--help"]
     return False

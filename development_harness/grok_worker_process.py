@@ -6,9 +6,12 @@ import signal
 import subprocess
 import tempfile
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
+
+from development_harness.grok_verification import cache_disabled_environ
 
 _DEFAULT_MAX_STDOUT_BYTES: Final = 1_048_576
 _POLL_SECONDS: Final = 0.05
@@ -52,8 +55,14 @@ def run_worker_process(
     cwd: Path,
     timeout_seconds: float,
     max_stdout_bytes: int = _DEFAULT_MAX_STDOUT_BYTES,
+    env: Mapping[str, str] | None = None,
 ) -> WorkerProcessResult:
-    """Run a worker with file-backed stdout bounds and process-group kill."""
+    """Run a worker with file-backed stdout bounds and process-group kill.
+
+    The worker always receives :func:`cache_disabled_environ` (optionally based
+    on ``env``) so required pytest/Ruff/Python runs inside the worker cannot
+    create ignored cache artifacts before the post-worker snapshot.
+    """
 
     if not command:
         raise WorkerProcessError("worker command is empty")
@@ -62,6 +71,7 @@ def run_worker_process(
     if max_stdout_bytes <= 0:
         raise WorkerProcessError("stdout bound must be positive")
 
+    worker_env = cache_disabled_environ(base=env)
     stdout_path: Path | None = None
     process: subprocess.Popen[bytes] | None = None
     try:
@@ -77,6 +87,7 @@ def run_worker_process(
                 stdout=handle,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
+                env=worker_env,
             )
     except OSError as error:
         if stdout_path is not None:

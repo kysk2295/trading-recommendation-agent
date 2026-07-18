@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from development_harness.grok_verification import GrokVerificationError, run_contract_commands
+from development_harness.grok_verification import (
+    GrokVerificationError,
+    cache_safe_command,
+    run_contract_commands,
+)
 from development_harness.grok_worker_process import WorkerProcessError, run_worker_process
 from development_harness.grok_worker_report import (
     WORKER_SUMMARY_JSON_SCHEMA,
@@ -66,15 +70,26 @@ def _bullet_block(values: tuple[str, ...]) -> str:
     return "\n".join(f"- {value}" for value in values)
 
 
+def _worker_facing_commands(commands: tuple[str, ...]) -> tuple[str, ...]:
+    """Commands shown to the worker, with Ruff ``--no-cache`` injected when needed."""
+
+    try:
+        return tuple(cache_safe_command(command) for command in commands)
+    except GrokVerificationError as error:
+        raise GrokTaskRunnerError(str(error)) from error
+
+
 def _build_prompt(contract: GrokTaskContract) -> str:
     fields = ", ".join(contract.expected_summary_fields)
+    required = _worker_facing_commands(contract.required_commands)
+    manual = _worker_facing_commands(contract.manual_qa_commands)
     return (
         "Implement exactly this bounded development task.\n"
         f"Task ID: {contract.task_id}\n"
         f"Objective: {contract.objective}\n\n"
         f"Allowed paths:\n{_bullet_block(contract.allowed_paths)}\n\n"
-        f"Required verification commands:\n{_bullet_block(contract.required_commands)}\n\n"
-        f"Manual QA commands:\n{_bullet_block(contract.manual_qa_commands)}\n\n"
+        f"Required verification commands:\n{_bullet_block(required)}\n\n"
+        f"Manual QA commands:\n{_bullet_block(manual)}\n\n"
         "Rules: use TDD; do not change paths outside the allow-list; do not read credentials, "
         "provider modules, broker modules, or user-owned .hermes/.omo state; do not make network, "
         "market-data, broker, Paper, or live-trading calls; do not commit, push, create a branch, "
@@ -214,7 +229,13 @@ def _run_contract_verification(plan: GrokTaskPlan) -> bool:
 
 
 def _parse_summary(plan: GrokTaskPlan, stdout: str) -> GrokWorkerSummary | None:
-    required = frozenset((*plan.contract.required_commands, *plan.contract.manual_qa_commands))
+    # Match the same cache-safe command forms shown in the worker prompt.
+    required = frozenset(
+        (
+            *_worker_facing_commands(plan.contract.required_commands),
+            *_worker_facing_commands(plan.contract.manual_qa_commands),
+        )
+    )
     return parse_worker_summary(
         stdout,
         allowed_paths=frozenset(plan.contract.allowed_paths),

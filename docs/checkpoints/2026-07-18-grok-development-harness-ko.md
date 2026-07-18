@@ -11,7 +11,7 @@
 - `GrokTaskContract`는 base commit, 허용 파일, 검증·수동 QA 명령과 worker summary 필드를 immutable JSON contract로 고정한다.
 - absolute/traversal path, `.git`·`.grok`·`.hermes`·`.omo`, 환경·비밀 관련 경로, 중복/빈 경로, path/command 개수·길이 상한 초과, shell metacharacter가 있는 명령, 잘못된 commit과 unknown field는 sanitized error로 거절한다.
 - runner는 exact HEAD와 contract base를 대조하고, checkout이 clean이거나 사전 존재하는 user-owned `?? .hermes/` 및/또는 `?? .omo/` 상태일 때만 진행한다.
-- preflight는 `main` branch 전용이며 linked worktree와 symlink repository root를 거절한다. 실행 전·후 workspace snapshot은 user-owned/ignored 파일과 Git control path(`.git/HEAD`, `.git/config`, optional `.git/config.worktree`, `.git/packed-refs`, `.git/info/exclude`, `.git/hooks/*`)를 **내용을 읽지 않고** immutable metadata tuple(mode/uid/size/mtime_ns/ctime_ns)로 비교하며 refs/reflog/object inventory도 포함한다. `.git/index`는 status refresh가 쓸 수 있어 snapshot하지 않는다. commit 후 reset으로 HEAD만 되돌리거나 local config/hook을 바꾸는 것도 fail-closed다. allowed path의 symlink component도 실행 전·후에 거절한다.
+- preflight는 `main` branch 전용이며 linked worktree와 repository path의 symlink component(중간 경로 포함)를 거절한다. 실행 전·후 workspace snapshot은 user-owned/ignored 파일·디렉터리(빈 ignored 디렉터리 포함)와 Git control path(`.git/HEAD`, `.git/config`, optional `.git/config.worktree`, `.git/packed-refs`, `.git/info/exclude`, `.git/hooks/*`)를 **내용을 읽지 않고** immutable metadata tuple(mode/uid/size/mtime_ns/ctime_ns)로 비교하며 refs/reflog/object inventory(`.git/objects` symlink entry 포함)도 포함한다. binary `.git/index` blob 대신 `git ls-files --stage -v -z` logical index entry/flag를 fingerprint하여 assume-unchanged·skip-worktree로 out-of-scope 편집을 숨기는 것을 막는다. commit 후 reset으로 HEAD만 되돌리거나 local config/hook을 바꾸는 것도 fail-closed다. allowed path의 symlink component도 실행 전·후에 거절한다.
 - dry-run은 Grok process를 호출하지 않고 Git 상태도 바꾸지 않는다.
 - 실제 worker는 worktree/branch/clone 없이 현재 repository root에서 in-place non-interactive로 실행한다. allow-list 안 working-tree 파일은 수정할 수 있지만 main history에 commit/push 하면 안 된다.
 - 생성 명령은 `--cwd`(repository root), `--always-approve`, `--permission-mode bypassPermissions`, `-p` single-turn, `--output-format json`, strict `--json-schema`(changed_files/verification/concerns), `--no-plan`, `--no-subagents`, `--disable-web-search`, `--no-memory`, `--max-turns`를 사용한다. `--sandbox strict`와 branch/worktree 생성은 사용하지 않는다.
@@ -20,13 +20,14 @@
 - timeout/OSError 경로에서도 snapshot·allow-list를 강제한다. 허용 밖 변경을 failure report로 숨기지 않는다.
 - public report는 top-level `structuredOutput`에서만 bounded summary를 파싱한다. `text`의 연결 draft JSON에 의존하지 않으며 raw stdout/stderr, prompt, objective, absolute path, credential, provider payload는 노출하지 않는다.
 - summary `changed_files`는 contract allow-list subset이어야 하고, Git `changed_paths`와 중복 없이 동일한 unique path 집합이어야 한다. `verification`은 required+manual 명령의 exact unique set과 일치해야 하며 subset/empty/duplicate는 거절한다. `concerns`는 고정 enum만 허용한다.
-- completed 전에 harness가 required/manual QA 명령을 `uv run --offline`으로 독립 재실행하며 stdout/stderr는 DEVNULL이다. timeout/OSError는 worker_failed다.
+- worker process와 completed 전 offline 재검증이 동일한 `cache_disabled_environ` helper로 Python bytecode를 끄고 `PYTEST_ADDOPTS`를 정확히 `-p no:cacheprovider`로 고정한다(상속된 pytest 옵션은 fail-closed로 폐기). Ruff는 undocumented env가 아니라 documented `ruff check --no-cache`를 worker에 보이는 명령과 offline 재실행 명령 양쪽에 inject한다. offline 재실행은 `uv run --offline`이며 stdout/stderr는 DEVNULL이다. timeout/OSError는 worker_failed다. contract 명령에서 `compileall`은 허용되지 않으며 임의 Ruff flag도 거절한다.
+- workspace snapshot fingerprint(metadata/index/Git DB)는 `development_harness/grok_workspace_fingerprint.py`로 분리하고, `grok_workspace_guard`는 path safety와 안정적 public re-export를 유지한다.
 - `expected_summary_fields`는 정확히 `changed_files`, `verification`, `concerns`여야 한다.
 - CLI는 `--worktree-root`를 요구하지 않는다. nonzero/timeout/missing binary는 안전한 `worker_failed`로 보존한다.
 
 ## Residual risk (prompt-only)
 
-`--sandbox strict`를 쓰지 않으므로 credential 읽기, network 호출, `git push`, allow-list 밖 external write 방지는 OS sandbox가 아니라 prompt/contract/post-condition 검사에만 의존한다. 이 residual risk는 의도된 한계이며, Codex independent review가 최종 통합 전 통제다.
+`--sandbox strict`를 쓰지 않으므로 credential 읽기, network 호출, `git push`, allow-list 밖 external write, 그리고 `setsid` 등으로 process group에서 분리된 descendant 재수거 실패는 OS sandbox가 아니라 prompt/contract/post-condition 검사에만 의존하는 residual risk다. 이 한계는 의도된 것이며, Codex independent review가 최종 통합 전 통제다.
 
 ## 현재 상태
 
@@ -37,7 +38,7 @@
 - task contract validation: targeted pytest
 - Git preflight, dry-run, worker nonzero, structured summary, out-of-scope changed-path rejection: temporary Git repository pytest
 - CLI `--help`, malformed contract, and dry-run happy path: subprocess pytest
-- focused harness pytest, Ruff, basedpyright, compileall, and CLI help/invalid/dry-run QA
+- focused harness pytest, Ruff, basedpyright, and CLI help/invalid/dry-run QA
 
 ## 운영 규칙
 

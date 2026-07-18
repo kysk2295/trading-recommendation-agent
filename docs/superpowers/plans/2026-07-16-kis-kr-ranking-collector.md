@@ -466,7 +466,7 @@ Expected: all commands exit 0. Record the actual pytest count and durations in t
 
 - [ ] **Step 4: Codex code review**
 
-Review before integration for behavioral regressions, raw-first ordering, restart ambiguity, partial evidence accounting, pagination/retry bounds, report redaction, secret handling and missing tests. Fix findings in the worker branch and rerun focused/full verification.
+Review before integration for behavioral regressions, raw-first ordering, restart ambiguity, partial evidence accounting, pagination/retry bounds, report redaction, secret handling and missing tests. Fix findings in-place on `main` working tree (or the active in-place worker allow-list) and rerun focused/full verification.
 
 - [ ] **Step 5: Optional bounded production read-only smoke**
 
@@ -474,4 +474,4 @@ Only when the fixed credential file is current-user-owned mode 600, the collecti
 
 - [ ] **Step 6: Integrate and push**
 
-Fast-forward or cherry-pick reviewed worker commits onto `main`, rerun `git status --short --branch` and the required verification, then push `main` to `origin`. Confirm local `HEAD` equals `origin/main` and remove the completed worker worktree/branch only after integration.
+After independent review of the in-place working-tree diff, create one small Codex-owned commit on `main`, rerun `git status --short --branch` and the required verification, then push `main` to `origin` only after review. Confirm local `HEAD` equals `origin/main`. Do not create or rely on a worker worktree/branch, and do not cherry-pick worker history.

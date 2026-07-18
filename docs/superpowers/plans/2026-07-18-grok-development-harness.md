@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, Pydantic 2, stdlib `subprocess`/`pathlib`/`json`, pytest, Ruff, basedpyright, installed Grok CLI.
 
-**Residual risk:** Credential, network, push, and external-write prevention is prompt/contract-only. There is no OS sandbox (`--sandbox strict` is intentionally not used) while preserving direct main and `bypassPermissions`.
+**Residual risk:** Credential reads, network calls, push, external writes, and detached `setsid` descendants are prompt/contract residual risk only. There is no OS sandbox (`--sandbox strict` is intentionally not used) while preserving direct main and `bypassPermissions`.
 
 ---
 
@@ -16,9 +16,11 @@
 
 - Create `development_harness/__init__.py`: declares the isolated development-harness package.
 - Create `development_harness/task_contract.py`: frozen task-contract models and path/command validation with strict count/length bounds.
-- Create `development_harness/grok_workspace_guard.py`: main-only root checks, linked-worktree/symlink rejection, metadata-only workspace snapshots (no content reads; frozen tuples with ctime_ns).
+- Create `development_harness/grok_workspace_guard.py`: main-only root checks, linked-worktree/symlink-component rejection, and stable re-exports of the snapshot API.
+- Create `development_harness/grok_workspace_fingerprint.py`: metadata-only workspace snapshots (logical index via `git ls-files --stage -v -z`, object symlinks, nested ignored dirs; no content reads; frozen tuples with ctime_ns).
 - Create `development_harness/grok_worker_process.py`: process-group worker launch, file-backed stdout polling, DEVNULL stderr, timeout/oversize group kill plus survivor cleanup.
 - Create `development_harness/grok_worker_report.py`: bounded structuredOutput parsing with exact verification-set matching, fixed concern enum, JSON depth limits, and RecursionError handling.
+- Create `development_harness/grok_verification.py`: offline command rewrite, shared `cache_disabled_environ` (exact `PYTEST_ADDOPTS=-p no:cacheprovider`), and Ruff `--no-cache` injection for worker-facing and offline commands.
 - Create `development_harness/grok_task_runner.py`: Git preflight, constrained Grok command construction, offline verification re-run, and changed-path validation.
 - Create `run_grok_task.py`: argparse CLI that loads one JSON contract and writes only JSON to stdout.
 - Create `tests/test_development_harness_task_contract.py`: contract model tests.
@@ -70,7 +72,7 @@
 - Update: `docs/superpowers/specs/2026-07-18-grok-development-harness-design.md`
 - Update: this plan (stale worktree language removed)
 
-- [x] **Step 1: Document that credential/network/push/external-write prevention is prompt-only residual risk without an OS sandbox.**
+- [x] **Step 1: Document that credential/network/push/external-write and detached-setsid residual risk remains without an OS sandbox.**
 - [x] **Step 2: Run focused harness verification**
 
 ```bash
@@ -95,5 +97,6 @@ Do not stage `.hermes/` or `.omo/`. Do not create a worktree for later tasks.
 
 - Scope coverage: contract validation, main-only launch, workspace snapshot, process-group timeout, changed-path checking, offline re-run, CLI, TDD, documentation, and independent review each have an implementation task.
 - Stale worktree language removed: workers run in-place on main only.
-- Residual risk explicit: no OS sandbox; prompt/contract residual risk for credential/network/push/external writes.
+- Residual risk explicit: no OS sandbox; prompt/contract residual risk for credential/network/push/external writes and detached `setsid` descendants.
+- Index/object/ignored hardening: logical index flags, object-store symlinks, empty ignored directories, path symlink components, shared cache-disabled env for worker and offline verification.
 - Bootstrap boundary: harness implementation itself is complete; later feature work uses this CLI.

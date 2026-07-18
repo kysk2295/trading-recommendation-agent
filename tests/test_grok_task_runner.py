@@ -18,6 +18,7 @@ from development_harness.grok_worker_process import run_worker_process
 from development_harness.grok_worker_report import parse_worker_summary
 from development_harness.grok_workspace_guard import (
     GrokWorkspaceGuardError,
+    absolute_path_has_symlink_component,
     assert_main_repository_root,
     capture_workspace_snapshot,
     verify_workspace_snapshot,
@@ -36,7 +37,9 @@ def _run_git(repo: Path, *args: str) -> str:
 
 
 def _init_repo(tmp_path: Path) -> Path:
-    repo = tmp_path / "repo"
+    # Resolve so macOS temp roots are ``/private/var/...`` without ``/var`` symlink components.
+    base = tmp_path.resolve()
+    repo = base / "repo"
     repo.mkdir()
     _run_git(repo, "init", "-b", "main")
     _run_git(repo, "config", "user.email", "tests@example.invalid")
@@ -1250,3 +1253,374 @@ def test_dry_run_does_not_invoke_worker_or_change_git(tmp_path: Path) -> None:
     assert _run_git(repo, "rev-parse", "HEAD") == head_before
     assert _run_git(repo, "status", "--porcelain=v1") == ""
     assert not (tmp_path / "must-not-run").exists()
+
+
+@pytest.mark.parametrize("flag_args", (("--assume-unchanged",), ("--skip-worktree",)))
+def test_workspace_snapshot_rejects_index_flag_changes(
+    tmp_path: Path,
+    flag_args: tuple[str, ...],
+) -> None:
+    repo = _init_repo(tmp_path)
+    root = assert_main_repository_root(repo)
+    snapshot = capture_workspace_snapshot(root)
+
+    _run_git(repo, "update-index", *flag_args, "README.md")
+
+    with pytest.raises(GrokWorkspaceGuardError, match="index"):
+        verify_workspace_snapshot(root, snapshot)
+
+
+def test_workspace_snapshot_includes_object_symlinks(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    root = assert_main_repository_root(repo)
+    snapshot = capture_workspace_snapshot(root)
+
+    objects = repo / ".git" / "objects" / "zz"
+    objects.mkdir(parents=True, exist_ok=True)
+    (objects / "symlink-entry").symlink_to("/tmp/outside-object-target")
+
+    with pytest.raises(GrokWorkspaceGuardError, match="Git database"):
+        verify_workspace_snapshot(root, snapshot)
+
+
+def test_workspace_snapshot_inventories_empty_ignored_directories(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    gitignore = repo / ".gitignore"
+    gitignore.write_text(gitignore.read_text(encoding="utf-8") + "empty-ignored/\n", encoding="utf-8")
+    _run_git(repo, "add", ".gitignore")
+    _run_git(repo, "commit", "-m", "ignore empty dir")
+    empty = repo / "empty-ignored"
+    empty.mkdir()
+
+    snapshot = capture_workspace_snapshot(repo)
+
+    assert any(path.rstrip("/") == "empty-ignored" for path, _meta in snapshot.ignored)
+    verify_workspace_snapshot(repo, snapshot)
+
+    empty.rmdir()
+    with pytest.raises(GrokWorkspaceGuardError, match="ignored"):
+        verify_workspace_snapshot(repo, snapshot)
+
+
+def test_prepare_rejects_symlink_component_in_repository_path(tmp_path: Path) -> None:
+    root = tmp_path.resolve()
+    base = root / "base"
+    base.mkdir()
+    repo = _init_repo(base)
+    link = root / "via-link"
+    link.symlink_to(base, target_is_directory=True)
+    linked_repo = link / "repo"
+
+    with pytest.raises(GrokTaskRunnerError, match="symlink"):
+        _ = prepare_grok_task(_contract(repo), repo=linked_repo, dry_run=True)
+
+
+def test_offline_verification_disables_caches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import development_harness.grok_verification as verification_module
+
+    captured: dict[str, object] = {}
+
+    def _record(command: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        captured["env"] = kwargs.get("env")
+        captured["command"] = command
+        return subprocess.CompletedProcess(command if isinstance(command, list) else [], 0)
+
+    monkeypatch.setattr(subprocess, "run", _record)
+    code = verification_module.run_verification_command(
+        verification_module.offline_command("uv run ruff check development_harness"),
+        cwd=tmp_path,
+    )
+
+    assert code == 0
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env.get("PYTHONDONTWRITEBYTECODE") == "1"
+    assert "RUFF_NO_CACHE" not in env
+    assert env.get("PYTEST_ADDOPTS", "").split() == ["-p", "no:cacheprovider"]
+    assert captured["command"] == (
+        "uv",
+        "run",
+        "--offline",
+        "ruff",
+        "check",
+        "--no-cache",
+        "development_harness",
+    )
+
+
+def test_cache_disabled_environ_replaces_inherited_pytest_addopts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from development_harness.grok_verification import cache_disabled_environ
+
+    monkeypatch.setenv("PYTEST_ADDOPTS", "-q -p cacheprovider --tb=short -p myplugin")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    first = cache_disabled_environ()
+    second = cache_disabled_environ(base=first)
+    assert first["PYTEST_ADDOPTS"] == "-p no:cacheprovider"
+    assert second["PYTEST_ADDOPTS"] == "-p no:cacheprovider"
+    # Unrelated keys are preserved; inherited pytest options cannot re-enable cache.
+    assert first["PATH"] == "/usr/bin"
+    assert "cacheprovider" not in first["PYTEST_ADDOPTS"].replace("no:cacheprovider", "")
+    assert "myplugin" not in first["PYTEST_ADDOPTS"]
+
+
+def test_cache_safe_and_offline_commands_inject_ruff_no_cache_idempotently() -> None:
+    from development_harness.grok_verification import cache_safe_command, offline_command
+
+    base = "uv run ruff check development_harness tests"
+    already = "uv run ruff check --no-cache development_harness tests"
+    assert cache_safe_command(base) == "uv run ruff check --no-cache development_harness tests"
+    assert cache_safe_command(already) == already
+    assert offline_command(base) == (
+        "uv",
+        "run",
+        "--offline",
+        "ruff",
+        "check",
+        "--no-cache",
+        "development_harness",
+        "tests",
+    )
+    assert offline_command(already) == (
+        "uv",
+        "run",
+        "--offline",
+        "ruff",
+        "check",
+        "--no-cache",
+        "development_harness",
+        "tests",
+    )
+
+
+def test_cache_disabled_environ_is_shared_by_worker_and_verification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from development_harness.grok_verification import cache_disabled_environ
+
+    expected = cache_disabled_environ()
+    assert expected.get("PYTHONDONTWRITEBYTECODE") == "1"
+    assert "RUFF_NO_CACHE" not in expected
+    assert expected.get("PYTEST_ADDOPTS", "").split() == ["-p", "no:cacheprovider"]
+
+    probe = tmp_path.resolve() / "env-probe.py"
+    probe.write_text(
+        "\n".join(
+            (
+                "#!/usr/bin/env python3",
+                "import json",
+                "import os",
+                "print(json.dumps({",
+                "  'PYTHONDONTWRITEBYTECODE': os.environ.get('PYTHONDONTWRITEBYTECODE'),",
+                "  'PYTEST_ADDOPTS': os.environ.get('PYTEST_ADDOPTS'),",
+                "  'has_ruff_no_cache_env': 'RUFF_NO_CACHE' in os.environ,",
+                "}))",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    probe.chmod(0o700)
+    worker_result = run_worker_process(
+        (str(probe),),
+        cwd=tmp_path.resolve(),
+        timeout_seconds=5.0,
+        max_stdout_bytes=4_096,
+    )
+    worker_env = json.loads(worker_result.stdout.decode())
+    assert worker_env["PYTHONDONTWRITEBYTECODE"] == expected["PYTHONDONTWRITEBYTECODE"]
+    assert worker_env["PYTEST_ADDOPTS"] == expected["PYTEST_ADDOPTS"]
+    assert worker_env["has_ruff_no_cache_env"] is False
+
+    captured: dict[str, object] = {}
+
+    def _record(command: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        captured["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(command if isinstance(command, list) else [], 0)
+
+    import development_harness.grok_verification as verification_module
+
+    monkeypatch.setattr(subprocess, "run", _record)
+    _ = verification_module.run_verification_command(
+        ("uv", "run", "--offline", "python", "-c", "pass"),
+        cwd=tmp_path.resolve(),
+    )
+    verification_env = captured["env"]
+    assert isinstance(verification_env, dict)
+    assert verification_env.get("PYTHONDONTWRITEBYTECODE") == expected["PYTHONDONTWRITEBYTECODE"]
+    assert verification_env.get("PYTEST_ADDOPTS") == expected["PYTEST_ADDOPTS"]
+    assert "RUFF_NO_CACHE" not in verification_env
+
+
+def test_worker_prompt_shows_ruff_no_cache(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    contract = _contract(repo).model_copy(
+        update={
+            "required_commands": ("uv run ruff check development_harness",),
+            "manual_qa_commands": ("uv run python -c pass",),
+        }
+    )
+    plan = prepare_grok_task(contract, repo=repo, dry_run=True)
+    assert "uv run ruff check --no-cache development_harness" in plan.prompt
+    assert "uv run ruff check development_harness\n" not in plan.prompt.replace(
+        "uv run ruff check --no-cache development_harness", ""
+    )
+
+
+def test_actual_ruff_offline_command_leaves_no_ruff_cache(tmp_path: Path) -> None:
+    from development_harness.grok_verification import offline_command, run_verification_command
+
+    repo = tmp_path.resolve() / "ruff-repo"
+    repo.mkdir()
+    (repo / "sample.py").write_text("x = 1\n", encoding="utf-8")
+    command = offline_command("uv run ruff check sample.py")
+    assert "--no-cache" in command
+    code = run_verification_command(command, cwd=repo)
+    assert code == 0
+    assert not (repo / ".ruff_cache").exists()
+
+
+def test_worker_subprocess_cache_disabled_env_blocks_ignored_cache_mutation(
+    tmp_path: Path,
+) -> None:
+    """Integration: a real worker child under the harness env cannot leave cache dirt."""
+
+    repo = _init_repo(tmp_path)
+    gitignore = repo / ".gitignore"
+    gitignore.write_text(
+        gitignore.read_text(encoding="utf-8")
+        + "__pycache__/\n*.py[cod]\n.pytest_cache/\n.ruff_cache/\n",
+        encoding="utf-8",
+    )
+    _run_git(repo, "add", ".gitignore")
+    _run_git(repo, "commit", "-m", "ignore tool caches")
+    (repo / "development_harness").mkdir()
+    allowed = "development_harness/task_contract.py"
+    verification = ["uv run python -c pass"]
+
+    # Simulates a worker that would create tool caches unless the harness env disables them.
+    fake_grok = tmp_path.resolve() / "cache-probe-grok"
+    fake_grok.write_text(
+        "\n".join(
+            (
+                "#!/usr/bin/env python3",
+                "import json",
+                "import os",
+                "import sys",
+                "from pathlib import Path",
+                "",
+                "root = Path.cwd()",
+                "mod = root / '_cache_probe_mod.py'",
+                "mod.write_text('VALUE = 1\\n', encoding='utf-8')",
+                "sys.path.insert(0, str(root))",
+                "import importlib",
+                "try:",
+                "    importlib.invalidate_caches()",
+                "    importlib.import_module('_cache_probe_mod')",
+                "finally:",
+                "    mod.unlink(missing_ok=True)",
+                "",
+                "# Mirror tool behavior: write caches only when the harness env failed to disable them.",
+                "if os.environ.get('PYTHONDONTWRITEBYTECODE') != '1':",
+                "    pycache = root / '__pycache__'",
+                "    pycache.mkdir(exist_ok=True)",
+                "    (pycache / '_cache_probe_mod.cpython-fake.pyc').write_bytes(b'fake')",
+                "tokens = os.environ.get('PYTEST_ADDOPTS', '').split()",
+                "has_pair = any(",
+                "    tokens[i] == '-p' and tokens[i + 1] == 'no:cacheprovider'",
+                "    for i in range(len(tokens) - 1)",
+                ")",
+                "if not has_pair:",
+                "    pytest_cache = root / '.pytest_cache' / 'v' / 'cache'",
+                "    pytest_cache.mkdir(parents=True, exist_ok=True)",
+                "    (pytest_cache / 'nodeids').write_text('[]\\n', encoding='utf-8')",
+                "",
+                f"target = Path({allowed!r})",
+                "target.parent.mkdir(parents=True, exist_ok=True)",
+                "target.write_text('worker change\\n', encoding='utf-8')",
+                "print(json.dumps({",
+                "  'structuredOutput': {",
+                f"    'changed_files': [{allowed!r}],",
+                f"    'verification': {verification!r},",
+                "    'concerns': [],",
+                "  }",
+                "}))",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    fake_grok.chmod(0o700)
+
+    plan = prepare_grok_task(
+        _contract(repo),
+        repo=repo,
+        grok_binary=str(fake_grok),
+        dry_run=False,
+    )
+    report = run_grok_task(plan, dry_run=False)
+
+    assert report.status == "completed"
+    assert not (repo / "__pycache__").exists()
+    assert not (repo / ".pytest_cache").exists()
+    assert not (repo / ".ruff_cache").exists()
+    assert not (repo / "_cache_probe_mod.py").exists()
+
+
+def test_absolute_path_rejects_every_symlink_component_including_parent(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path.resolve()
+    real = base / "real"
+    real.mkdir()
+    (real / "child").mkdir()
+    parent_link = base / "parent-link"
+    parent_link.symlink_to(real, target_is_directory=True)
+
+    assert absolute_path_has_symlink_component(real / "child") is False
+    assert absolute_path_has_symlink_component(parent_link) is True
+    assert absolute_path_has_symlink_component(parent_link / "child") is True
+    # Resolved macOS-style temp path has no symlink components.
+    assert absolute_path_has_symlink_component(base) is False
+
+
+def test_workspace_snapshot_detects_nested_ignored_directory_mode_change(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path)
+    gitignore = repo / ".gitignore"
+    gitignore.write_text(
+        gitignore.read_text(encoding="utf-8") + "ignored-tree/\n",
+        encoding="utf-8",
+    )
+    _run_git(repo, "add", ".gitignore")
+    _run_git(repo, "commit", "-m", "ignore tree")
+    nested = repo / "ignored-tree" / "nested"
+    nested.mkdir(parents=True)
+    snapshot = capture_workspace_snapshot(repo)
+    assert any(path == "ignored-tree/nested" for path, _meta in snapshot.ignored)
+
+    nested.chmod(0o700)
+    with pytest.raises(GrokWorkspaceGuardError, match="ignored"):
+        verify_workspace_snapshot(repo, snapshot)
+
+
+def test_workspace_guard_reexports_fingerprint_snapshot_api(tmp_path: Path) -> None:
+    """Public guard imports remain stable after fingerprint extraction."""
+
+    import development_harness.grok_workspace_fingerprint as fingerprint
+    import development_harness.grok_workspace_guard as guard
+
+    repo = _init_repo(tmp_path)
+    assert guard.capture_workspace_snapshot is fingerprint.capture_workspace_snapshot
+    assert guard.verify_workspace_snapshot is fingerprint.verify_workspace_snapshot
+    assert guard.WorkspaceSnapshot is fingerprint.WorkspaceSnapshot
+    assert guard.GrokWorkspaceGuardError is fingerprint.GrokWorkspaceGuardError
+    snapshot = guard.capture_workspace_snapshot(repo)
+    assert isinstance(snapshot, fingerprint.WorkspaceSnapshot)
+    fingerprint.verify_workspace_snapshot(repo, snapshot)

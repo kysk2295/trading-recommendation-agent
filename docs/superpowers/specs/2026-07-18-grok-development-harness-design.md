@@ -28,8 +28,8 @@ touching the trading runtime.
 - It does not create a Git worktree, branch, or clone for the worker.
 - The in-place worker may edit allow-listed files in the current main working
   tree, but it must not commit or push main history.
-- It does not provide an OS sandbox. Credential, network, push, and
-  external-write prevention remain prompt/contract residual risk.
+- It does not provide an OS sandbox. Credential reads, network calls, push,
+  external writes, and detached `setsid` descendants remain residual risk.
 
 ## Chosen Architecture
 
@@ -64,22 +64,38 @@ size and deadline; stderr goes to `DEVNULL`. Timeout or oversize kills the
 process group and surviving descendants; the result never returns stderr.
 
 After execution the harness verifies a workspace snapshot: `git rev-parse HEAD`
-still equals `contract.base_commit`; Git refs/reflog/object inventory and local
-Git control-path metadata are unchanged (including commit-then-reset, local
-config edits, and hook create/replace); and pre-existing user-owned `.hermes` /
-`.omo` plus ignored-file entries are unchanged by immutable metadata tuples
+still equals `contract.base_commit`; Git refs/reflog/object inventory (including
+symlink entries under `.git/objects`) and local Git control-path metadata are
+unchanged (including commit-then-reset, local config edits, and hook
+create/replace); logical Git index entries and flags from
+`git ls-files --stage -v -z` are unchanged so `assume-unchanged` /
+`skip-worktree` cannot hide out-of-scope edits; and pre-existing user-owned
+`.hermes` / `.omo` plus ignored files and directories (including empty ignored
+directories) are unchanged by immutable metadata tuples
 `(mode, uid, size, mtime_ns, ctime_ns)` only—file contents are never read for
 snapshots. Control paths include `.git/HEAD`, `.git/config`, optional
 `.git/config.worktree`, `.git/packed-refs`, `.git/info/exclude`, and every
-entry under `.git/hooks` without following symlinks. `.git/index` is not
-snapshotted because ordinary status refresh may rewrite it. Allowed paths must
-not include symlink components before or after the worker. The harness then
-compares every Git-changed path against the contract allow-list and fails
-closed on any extra path or worker commit. Timeout and OSError paths use the
-same enforcement so out-of-contract edits cannot hide behind a failed process.
+entry under `.git/hooks` without following symlinks. The binary `.git/index`
+blob is not hashed (ordinary status refresh may rewrite it); only the stable
+logical index listing is fingerprinted. The repository path and every allowed
+path must not include symlink components before or after the worker. The
+harness then compares every Git-changed path against the contract allow-list
+and fails closed on any extra path or worker commit. Timeout and OSError paths
+use the same enforcement so out-of-contract edits cannot hide behind a failed
+process.
 
-Before `completed`, the harness independently re-runs every required and manual
-QA command with `uv run --offline`. Worker-claimed verification is never enough.
+The worker process itself receives the same cache-disabled environment helper
+used for verification (`PYTHONDONTWRITEBYTECODE`, and `PYTEST_ADDOPTS` set
+exactly to `-p no:cacheprovider`, discarding inherited pytest options
+fail-closed). Ruff cache is disabled by injecting the documented
+`ruff check --no-cache` flag into both the commands shown to the worker and the
+independent offline re-run (contract input may omit it). Before `completed`, the
+harness independently re-runs every required and manual QA command with
+`uv run --offline` under that environment and those rewritten commands.
+Worker-claimed verification is never enough. Workspace snapshot fingerprint
+logic (index/Git DB/user-owned/ignored metadata) lives in
+`development_harness/grok_workspace_fingerprint.py`; path-safety preflight
+remains in `grok_workspace_guard.py` with stable public re-exports.
 
 The harness captures only safe orchestration metadata: task ID, base commit,
 worker exit status, changed paths, and the bounded structured summary parsed
@@ -94,8 +110,8 @@ contract allow-list, `verification` must equal the exact unique set of
 required+manual commands (not a subset, empty list, or duplicates), and
 `concerns` must come from a small fixed enum. Omissions, extras, duplicates,
 and unsafe tokens produce `worker_failed` without exposing the summary.
-Contract commands are validated strictly (pytest/ruff/basedpyright/python
-forms only).
+Contract commands are validated strictly (pytest/ruff/basedpyright and a
+narrow set of python forms only; `compileall` is not permitted).
 
 Contract validation also bounds path counts/lengths and command counts/lengths.
 
@@ -149,10 +165,18 @@ loosen neither the live-trading boundary nor the credential boundary.
 ### Residual risk without OS sandbox
 
 Because the harness preserves direct main execution with
-`bypassPermissions` and does not enable `--sandbox strict`, prevention of
-credential reads, network calls, `git push`, and writes outside the repository
-is prompt-and-contract residual risk only. Post-conditions catch in-repo and
-Git-database damage, but they are not an OS sandbox.
+`bypassPermissions` and does not enable `--sandbox strict`, the following remain
+prompt-and-contract residual risk only (not OS-enforced):
+
+- credential reads;
+- network calls;
+- `git push` and other remote publication;
+- writes outside the repository;
+- worker descendants that call `setsid` (or equivalent) and detach from the
+  process group, so timeout/oversize group kill cannot reliably reap them.
+
+Post-conditions catch in-repo and Git-database damage, but they are not an OS
+sandbox.
 
 ## Verification
 
@@ -163,8 +187,13 @@ The implementation must use TDD and cover at least:
   lists, `.omo` / `.hermes`, and prohibited overlap;
 - dirty-checkout behavior and preservation of `.hermes/` / `.omo/`;
 - main-only preflight and rejection of linked worktrees/symlink roots;
-- Git refs/reflog/object and local control-path metadata change detection,
-  including commit-reset, config edits, and hook create/replace;
+- Git refs/reflog/object (including object-store symlinks) and local
+  control-path metadata change detection, including commit-reset, config
+  edits, and hook create/replace;
+- logical index entry/flag fingerprinting via `git ls-files --stage -v -z`;
+- ignored directory inventory including empty ignored directories;
+- rejection of symlink components on the repository path and allowed paths;
+- offline verification with bytecode/pytest/Ruff caches disabled;
 - dry-run planning without invoking Grok or changing Git state;
 - changed-path allow-list comparison, including rename old/new sides;
 - summary path/verification/concern contract-safe enum matching;
@@ -186,10 +215,3 @@ A real in-place Grok worker run and the subsequent review hardening completed
 successfully with `structuredOutput`-only consumption. An earlier bootstrap
 HTTP `402` spending-limit stop remains historical context only; it is not the
 current limitation of this harness.
-
-## First Use
-
-The first real worker task will be a small M4 contract-only increment, not a
-network collector or execution change. It will bind a verified canonical replay
-result to a research input identity. This proves the harness before it is used
-for an always-on US market-data component.
