@@ -524,3 +524,10 @@
 - 최초 관찰: version과 분류시각만 비교하면 keyword·theme·related symbol 규칙이 바뀌어도 과거 classification을 현재 manifest의 결과처럼 사용할 수 있었다. 이는 사전등록되지 않은 사후 테마·종목 결합을 숨길 수 있다.
 - 수정: query-only projection이 run manifest의 exact `KrKeywordRuleSet`과 `classified_at`으로 모든 eligible catalyst를 다시 분류하고 저장된 `KrThemeClassification` 전체와 동등성을 검사한다. DART는 exact `OpenDartDisclosure` canonical JSON, LS는 허용된 flat canonical JSON을 strict wire frame으로 재구성해 기존 parser 결과와 대사하며 raw receipt link·terminal source run·adapter version·payload hash도 함께 고정한다.
 - 결과: 같은 version을 유지한 rules 변조, source/run/receipt/payload 불일치와 비인과 분류는 artifact 전에 fail-closed다. exact DART·LS 두 source가 같은 사전등록 theme/entity를 지지할 때만 corroborated가 되고 derived artifact에는 원문·evidence quote·raw receipt reference가 없다. provider·credential·account/order endpoint와 mutation은 0건이다.
+
+## H74: broad scanner의 source evidence reference를 독립 corroboration으로 과장한다
+
+- 판별 기준: 하나의 KIS Opportunity에 포함된 KIS ranking·NYSE halt reference를 별도 canonical source event처럼 세어 scanner candidate claim을 corroborated로 만드는지 확인한다.
+- 최초 관찰: scanner projection은 raw Opportunity와 candidate event를 보존하지만 event source는 `internal/us_opportunity` 하나다. Opportunity의 evidence reference는 selection 입력 계보다. 이를 별도 event로 제조하면 실제 provider normalized payload·receipt 검증 없이 독립 source 수를 부풀리게 된다.
+- 수정: query-only loader가 scanner SQLite의 raw Opportunity·ready foundation·optional security-master ID와 verified Parquet event를 결합한다. raw receipt identity, dataset ID, candidate symbol/rank/score, instrument, canonical candidate payload hash와 event 시간을 exact 대사하고 factual `ranking_momentum` selection claim만 추출한다. KIS·NYSE reference는 output hash lineage에만 포함한다.
+- 결과: security-master ID, raw receipt, candidate shape 또는 canonical event가 바뀌면 artifact 전에 fail-closed다. source는 `internal/us_opportunity` 하나여서 claim은 `unconfirmed`이고 derived artifact에는 raw receipt와 source evidence reference가 없다. provider·credential·account/order endpoint와 mutation은 0건이다.

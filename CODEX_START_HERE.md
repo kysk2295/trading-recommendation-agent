@@ -92,10 +92,11 @@
 - Alpaca SIP runtime fleet audit도 capability registry에 연결했다. owner별 READY 비율을 bounded runtime source completeness로 집계하고 cycle 완료시각은 event가 아닌 heartbeat로만 사용한다. 약했던 audit store의 mode·owner·symlink와 single-writer 경계도 강화했다.
 - canonical event-bound extraction과 entity/claim corroboration read model을 추가했다. US SIP READY snapshot의 breakout·RVOL extractor는 verified dataset과 마지막 완료 분봉에 결합되어 fleet cycle의 종목별 private artifact로 연결됐다. 단일 source evidence는 unconfirmed이며 추천·승격 권한이 아니다.
 - KR DART·LS normalized catalyst extraction을 추가했다. exact raw receipt link·terminal run·canonical payload와 run manifest의 keyword rules를 재생한 뒤에만 theme claim을 만들며, 서로 다른 두 provider가 같은 사전등록 theme/entity를 지지할 때만 corroborated artifact가 된다. provider·credential·계좌·주문 접근은 없다.
+- US broad scanner candidate extraction을 추가했다. raw Opportunity·foundation·security-master identity와 verified candidate dataset/event를 exact 대사하고 ranking_momentum 선택 사실만 private artifact로 투영한다. source independence를 과장하지 않아 모든 claim은 unconfirmed이며 provider·broker를 열지 않는다.
 
 ## 다음 우선순위
 
-1. US scanner candidate의 provider-specific normalized extraction adapter를 추가해 broad selection 근거를 research evidence read model에 공급한다. canonical envelope에 없는 내용을 hash만 보고 추측하지 말고 raw-before-parse receipt 경계에서 typed extraction을 생성한다.
+1. canonical correction/tombstone 이후 기존 research extraction과 artifact를 stale로 재사용하지 못하게 as-of invalidation replay를 추가한다. immutable 과거 artifact를 덮어쓰지 말고 active event history에 결합된 새 projection identity로 표현한다.
 2. 열린 NYSE 정규장과 mode-600 Alpaca data credential이 자연스럽게 동시에 맞을 때만 새 SIP bridge의 단일 종목 bounded GET smoke를 실행한다. exact raw page·canonical replay·runtime checkpoint를 대사하고 계좌·주문·Paper endpoint는 열지 않는다. 휴장에는 fixture E2E 결과만 유지한다.
 3. 실제 read-only smoke 뒤 pagination·재시작 offset·provider gap의 장기 soak를 누적한다. 이 polling bridge를 websocket streaming이나 전체시장 coverage로 표현하지 않는다.
 4. 현재 NYSE post-close와 mode-600 data credential·정렬된 bounded universe가 동시에 맞을 때만 US swing 일봉 source를 read-only로 한 번 수집한다. 그 뒤에만 동일 CLI로 signal/shadow forward evidence를 누적하며, Paper 계좌·주문은 열지 않는다.
