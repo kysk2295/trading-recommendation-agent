@@ -31,6 +31,14 @@ class AlpacaSipTradeStreamProtocolError(AlpacaSipTradeStreamError):
         return "Alpaca SIP trade stream protocol is invalid"
 
 
+class AlpacaSipProviderStreamError(AlpacaSipTradeStreamProtocolError):
+    __slots__ = ("code",)
+
+    def __init__(self, code: int) -> None:
+        super().__init__()
+        self.code = code
+
+
 class AlpacaSipControlStage(StrEnum):
     CONNECTED = "connected"
     AUTHENTICATED = "authenticated"
@@ -197,6 +205,8 @@ def parse_alpaca_sip_control_frame(
         if len(messages) != 1:
             raise AlpacaSipTradeStreamProtocolError
         message = messages[0]
+        if type(message) is _ErrorMessage:
+            raise AlpacaSipProviderStreamError(message.code)
         match stage:
             case AlpacaSipControlStage.CONNECTED:
                 valid = type(message) is _ConnectedMessage
@@ -233,6 +243,7 @@ def _subscription_is_exact(message: _SubscriptionMessage, symbol: str) -> bool:
 __all__ = (
     "AlpacaSipBoundedTradeHistoryAttestation",
     "AlpacaSipControlStage",
+    "AlpacaSipProviderStreamError",
     "AlpacaSipRawControlFrame",
     "AlpacaSipStreamTerminalRecord",
     "AlpacaSipStreamTerminalStatus",

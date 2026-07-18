@@ -9,8 +9,8 @@ from types import TracebackType
 
 from trading_agent.alpaca_sip_trade_stream_models import AlpacaSipTradeStreamProtocolError
 
-_SCHEMA_VERSION = 1
-_SCHEMA = (
+_SCHEMA_VERSION = 2
+_SCHEMA_V1 = (
     "CREATE TABLE IF NOT EXISTS control_frames (generation INTEGER PRIMARY KEY AUTOINCREMENT,"
     "connection_epoch TEXT NOT NULL,sequence INTEGER NOT NULL,received_at TEXT NOT NULL,"
     "payload_sha256 TEXT NOT NULL,payload BLOB NOT NULL,UNIQUE(connection_epoch,sequence));"
@@ -33,7 +33,16 @@ _SCHEMA = (
     "CREATE TRIGGER terminal_sessions_no_delete BEFORE DELETE ON terminal_sessions "
     "BEGIN SELECT RAISE(ABORT,'append-only'); END;"
 )
-_SCHEMA_OBJECTS = {
+_SCHEMA_V2 = (
+    "CREATE TABLE IF NOT EXISTS connection_attempts (connection_epoch TEXT PRIMARY KEY,"
+    "symbol TEXT NOT NULL,market_date TEXT NOT NULL,failed_at TEXT NOT NULL,stage TEXT NOT NULL,"
+    "failure_code TEXT NOT NULL,content_sha256 TEXT NOT NULL);"
+    "CREATE TRIGGER connection_attempts_no_update BEFORE UPDATE ON connection_attempts "
+    "BEGIN SELECT RAISE(ABORT,'append-only'); END;"
+    "CREATE TRIGGER connection_attempts_no_delete BEFORE DELETE ON connection_attempts "
+    "BEGIN SELECT RAISE(ABORT,'append-only'); END;"
+)
+_SCHEMA_OBJECTS_V1 = {
     "control_frames",
     "control_frames_no_delete",
     "control_frames_no_update",
@@ -43,6 +52,11 @@ _SCHEMA_OBJECTS = {
     "terminal_sessions",
     "terminal_sessions_no_delete",
     "terminal_sessions_no_update",
+}
+_SCHEMA_OBJECTS_V2 = _SCHEMA_OBJECTS_V1 | {
+    "connection_attempts",
+    "connection_attempts_no_delete",
+    "connection_attempts_no_update",
 }
 
 
@@ -97,9 +111,12 @@ def require_alpaca_sip_stream_schema(connection: sqlite3.Connection) -> None:
     rows = connection.execute(
         "SELECT name FROM sqlite_master WHERE type IN ('table','trigger') AND name NOT LIKE 'sqlite_%'"
     ).fetchall()
+    version = connection.execute("PRAGMA user_version").fetchone()
+    objects = {row[0] for row in rows}
     if (
-        connection.execute("PRAGMA user_version").fetchone() != (_SCHEMA_VERSION,)
-        or {row[0] for row in rows} != _SCHEMA_OBJECTS
+        (version == (1,) and objects != _SCHEMA_OBJECTS_V1)
+        or (version == (_SCHEMA_VERSION,) and objects != _SCHEMA_OBJECTS_V2)
+        or version not in {(1,), (_SCHEMA_VERSION,)}
     ):
         raise AlpacaSipTradeStreamProtocolError
 
@@ -120,8 +137,15 @@ def require_private_alpaca_sip_stream_file(path: Path) -> None:
 
 
 def _prepare(connection: sqlite3.Connection) -> None:
-    if connection.execute("PRAGMA user_version").fetchone() == (0,):
-        connection.executescript(_SCHEMA)
+    version = connection.execute("PRAGMA user_version").fetchone()
+    if version == (0,):
+        connection.executescript(_SCHEMA_V1)
+        _ = connection.execute("PRAGMA user_version=1")
+        connection.commit()
+        version = (1,)
+    if version == (1,):
+        require_alpaca_sip_stream_schema(connection)
+        connection.executescript(_SCHEMA_V2)
         _ = connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         connection.commit()
     require_alpaca_sip_stream_schema(connection)

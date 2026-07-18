@@ -69,6 +69,38 @@ def test_stream_store_when_path_is_broken_symlink_fails_closed(tmp_path: Path) -
         _ = store.load_attestation(_EPOCH)
 
 
+def test_stream_store_when_v1_state_is_read_then_written_migrates_without_row_rewrite(
+    tmp_path: Path,
+) -> None:
+    # Given
+    store = _completed_store(tmp_path)
+    with sqlite3.connect(store.path) as database:
+        database.executescript(
+            "DROP TRIGGER connection_attempts_no_update;"
+            "DROP TRIGGER connection_attempts_no_delete;"
+            "DROP TABLE connection_attempts;"
+            "PRAGMA user_version=1;"
+        )
+
+    # When
+    attestation = store.load_attestation(_EPOCH)
+    _ = store.append_control(
+        AlpacaSipRawControlFrame(
+            _EPOCH,
+            1,
+            _NOW + dt.timedelta(milliseconds=1),
+            _connected(),
+        )
+    )
+
+    # Then
+    assert attestation is not None
+    with sqlite3.connect(store.path) as database:
+        assert database.execute("PRAGMA user_version").fetchone() == (2,)
+        assert database.execute("SELECT count(*) FROM connection_attempts").fetchone() == (0,)
+        assert database.execute("SELECT count(*) FROM terminal_sessions").fetchone() == (1,)
+
+
 def _completed_store(tmp_path: Path) -> AlpacaSipTradeStreamStore:
     store = AlpacaSipTradeStreamStore(tmp_path / "stream.sqlite3")
     controls = (_connected(), _authenticated(), _subscribed())

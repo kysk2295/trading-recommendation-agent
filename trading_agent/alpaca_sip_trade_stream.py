@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import ssl
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
-from typing import Final, Protocol, final
+from typing import Protocol, final
 
 from websockets.exceptions import ConnectionClosed, InvalidHandshake
-from websockets.http11 import Request
 from websockets.sync.client import connect
 from websockets.sync.connection import Connection
 
@@ -23,6 +21,15 @@ from trading_agent.alpaca_sip_trade_models import (
 from trading_agent.alpaca_sip_trade_store import (
     AlpacaSipTradeHistoryStore,
     StoredAlpacaSipTradeFrame,
+)
+from trading_agent.alpaca_sip_trade_stream_attempts import (
+    AlpacaSipConnectionAttemptStage,
+    AlpacaSipConnectionAttemptTracker,
+)
+from trading_agent.alpaca_sip_trade_stream_endpoint import (
+    ALPACA_SIP_TRADE_STREAM_URL,
+    final_alpaca_sip_connection_url,
+    require_alpaca_sip_trade_stream_url,
 )
 from trading_agent.alpaca_sip_trade_stream_models import (
     AlpacaSipControlStage,
@@ -37,8 +44,7 @@ from trading_agent.alpaca_sip_trade_stream_models import (
 )
 from trading_agent.alpaca_sip_trade_stream_store import AlpacaSipTradeStreamStore
 
-ALPACA_SIP_TRADE_STREAM_URL: Final = "wss://stream.data.alpaca.markets/v2/sip"
-_MAX_FRAME_BYTES: Final = 1_048_576
+_MAX_FRAME_BYTES = 1_048_576
 
 
 class AlpacaSipTradeStreamConnection(Protocol):
@@ -126,7 +132,7 @@ def connect_alpaca_sip_trade_stream(url: str) -> Iterator[AlpacaSipTradeStreamCo
     ) as connection:
         yield _WebsocketSipTradeConnection(
             connection,
-            _final_connection_url(connection, connection.request),
+            final_alpaca_sip_connection_url(connection, connection.request),
         )
 
 
@@ -184,12 +190,6 @@ class ReadyAlpacaSipTradeStream:
         return stored
 
 
-def require_alpaca_sip_trade_stream_url(url: str) -> str:
-    if url != ALPACA_SIP_TRADE_STREAM_URL:
-        raise AlpacaSipTradeStreamEndpointError
-    return url
-
-
 @contextmanager
 def open_alpaca_sip_trade_stream(
     credentials: AlpacaCredentials,
@@ -201,11 +201,15 @@ def open_alpaca_sip_trade_stream(
 ) -> Iterator[ReadyAlpacaSipTradeStream]:
     epoch = uuid.uuid4().hex
     url = require_alpaca_sip_trade_stream_url(ALPACA_SIP_TRADE_STREAM_URL)
+    attempt = AlpacaSipConnectionAttemptTracker(stores.controls.path, epoch, config, _clock)
     try:
         with connector(url) as connection:
+            attempt.advance(AlpacaSipConnectionAttemptStage.ENDPOINT)
             _ = require_alpaca_sip_trade_stream_url(connection.final_url)
+            attempt.advance(AlpacaSipConnectionAttemptStage.CONNECTED_CONTROL)
             control_context = _ControlContext(stores.controls, epoch, _clock, config.symbol)
             _ = _receive_control(connection, control_context, 1, AlpacaSipControlStage.CONNECTED)
+            attempt.advance(AlpacaSipConnectionAttemptStage.AUTHENTICATION_CONTROL)
             connection.send(
                 json.dumps(
                     {"action": "auth", "key": credentials.key_id, "secret": credentials.secret_key},
@@ -218,6 +222,7 @@ def open_alpaca_sip_trade_stream(
                 2,
                 AlpacaSipControlStage.AUTHENTICATED,
             )
+            attempt.advance(AlpacaSipConnectionAttemptStage.SUBSCRIPTION_CONTROL)
             connection.send(json.dumps({"action": "subscribe", "trades": [config.symbol]}, separators=(",", ":")))
             subscribed_at = _receive_control(
                 connection,
@@ -225,6 +230,7 @@ def open_alpaca_sip_trade_stream(
                 3,
                 AlpacaSipControlStage.SUBSCRIBED,
             )
+            attempt.ready()
             session = _ReadySession(config, stores, epoch, _clock, authorized_at, subscribed_at)
             stream = ReadyAlpacaSipTradeStream(connection, session)
             try:
@@ -241,9 +247,11 @@ def open_alpaca_sip_trade_stream(
                     stream.last_received_at,
                 )
             )
-    except AlpacaSipTradeStreamError:
+    except AlpacaSipTradeStreamError as error:
+        attempt.fail(error)
         raise
-    except (ConnectionClosed, InvalidHandshake, OSError, TimeoutError):
+    except (ConnectionClosed, InvalidHandshake, OSError, TimeoutError) as error:
+        attempt.fail(error)
         raise AlpacaSipTradeStreamError from None
 
 
@@ -259,14 +267,6 @@ def _receive_control(
     _ = context.store.append_control(AlpacaSipRawControlFrame(context.connection_epoch, sequence, received_at, payload))
     parse_alpaca_sip_control_frame(payload, stage, context.symbol)
     return received_at
-
-
-def _final_connection_url(connection: Connection, request: Request | None) -> str:
-    if request is None:
-        return ""
-    scheme = "wss" if isinstance(connection.socket, ssl.SSLSocket) else "ws"
-    host = request.headers.get("Host", "")
-    return f"{scheme}://{host}{request.path}"
 
 
 __all__ = (

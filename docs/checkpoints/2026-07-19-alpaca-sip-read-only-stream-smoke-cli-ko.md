@@ -55,4 +55,4 @@ uv run python run_alpaca_sip_trade_stream_smoke.py \
 - 열린 NYSE 정규장에서 frame 1개 actual read-only smoke
 - actual control/data/terminal/canonical/report exact 대사
 - 구현된 reconnect fixture 계약을 실제 disconnect 관측 시 private epoch history와 대사
-- connection-limit/provider error를 pre-auth terminal attempt evidence로 보존
+- 구현된 connection-limit/provider failed attempt를 실제 관측 시 private evidence와 대사

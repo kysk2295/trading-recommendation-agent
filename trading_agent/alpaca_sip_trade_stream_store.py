@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import final
 
 from trading_agent.alpaca_sip_trade_store import StoredAlpacaSipTradeFrame
+from trading_agent.alpaca_sip_trade_stream_attempts import (
+    AlpacaSipConnectionAttemptStore,
+    AlpacaSipFailedConnectionAttempt,
+)
 from trading_agent.alpaca_sip_trade_stream_audit import (
     TerminalRow,
     load_control_sequences,
@@ -204,6 +208,12 @@ class AlpacaSipTradeStreamStore:
             return None if row is None else AlpacaSipStreamTerminalStatus(row[0])
         except (OSError, sqlite3.Error, TypeError, ValueError):
             raise AlpacaSipTradeStreamProtocolError from None
+
+    def load_connection_attempts(
+        self,
+        config: AlpacaSipTradeStreamConfig,
+    ) -> tuple[AlpacaSipFailedConnectionAttempt, ...]:
+        return AlpacaSipConnectionAttemptStore(self.path).load(config)
 
     def control_count(self) -> int:
         return self._count("control_frames")
