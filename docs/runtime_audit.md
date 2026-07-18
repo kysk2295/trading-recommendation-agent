@@ -482,3 +482,10 @@
 - 최초 관찰: 개별 envelope는 correction target 문자열의 형태만 검사했고 Parquet writer와 DuckDB replay도 각 dataset의 schema/hash만 검증했다. 없는 event를 정정하거나 동일 원본에서 두 갈래로 분기하고 tombstone 뒤 다시 정정해도 dataset 간 history 단계에서 막는 경로가 없었다.
 - 수정: verified dataset event reader와 별도 history engine을 추가했다. 전체 chain은 직전 active target 하나만 후속 event를 가질 수 있고 source, event type, provider event ID와 entity refs가 같아야 한다. received/normalized 시각 역행을 금지하고 as-of 뒤 normalized event는 당시 active projection에서 제외한다.
 - 결과: correction 시 active event가 후속 버전으로 교체되고 tombstone 시 root chain이 active state에서 제거된다. 원본 bytes와 immutable event는 그대로 보존된다. local CLI는 집계만 mode 600 보고서로 출력하고 provider, credential, account/order endpoint를 열지 않는다.
+
+## H68: source 관측시각을 entitlement 계약 발효시각으로 재사용한다
+
+- 판별 기준: 같은 source 계약이 여러 scanner cycle에서 동일한지, runtime health만 시점별로 append되는지, as-of 조회가 미래 assessment와 겹치는 권한을 배제하는지 확인한다.
+- 최초 관찰: broad-scanner foundation은 최신 source receipt time을 entitlement `effective_from`으로 넣었다. 같은 entitlement ID의 payload가 매 cycle 달라져 immutable registry에 등록할 수 없고 데이터 수신 성공을 이용권 발효처럼 표현했다.
+- 수정: entitlement는 2026-07-17 등록 계약 버전의 고정 발효일을 사용하고 capability의 assessed/latest event 시각만 cycle마다 변경한다. 별도 mode-600 append-only registry는 entitlement와 capability assessment를 분리해 저장하고 UTC as-of snapshot을 제공한다.
+- 결과: 서로 다른 두 scanner cycle의 entitlement tuple은 같고 capability assessment 시각만 다르다. exact retry는 추가 row 0건이며 overlapping entitlement, 동일 source/time conflict, payload/interval 변조와 symlink/mode 위반은 fail-closed다. local CLI 재평가 외 provider·credential·broker 접근은 0건이다.

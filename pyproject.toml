@@ -70,6 +70,7 @@ include = [
   "run_lane_control_plane_bootstrap.py",
   "run_data_foundation_check.py",
   "run_canonical_event_history.py",
+  "run_data_capability_registry.py",
   "run_raw_receipt_projection.py",
   "run_grok_task.py",
   "run_ls_nws_collect.py",

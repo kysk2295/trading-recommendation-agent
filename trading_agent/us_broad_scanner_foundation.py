@@ -36,6 +36,7 @@ _KIS_COVERAGE: Final = frozenset(
     f"kis_{source}_{exchange}" for source in ("updown", "volume") for exchange in ("ams", "nas", "nys")
 )
 _EXPECTED_COVERAGE: Final = _KIS_COVERAGE | {"nyse_halts"}
+_ENTITLEMENT_CONTRACT_EFFECTIVE_FROM: Final = dt.datetime(2026, 7, 17, tzinfo=dt.UTC)
 _RETENTION: Final = DataRetentionPolicy(
     raw_retention_days=30,
     derived_retention_days=365,
@@ -201,7 +202,7 @@ def _entitlement(contract: _SourceContract) -> DataEntitlement:
         historical=False,
         redistribution_policy=RedistributionPolicy.DERIVED_ONLY,
         retention=_RETENTION,
-        effective_from=contract.latest_received_at,
+        effective_from=_ENTITLEMENT_CONTRACT_EFFECTIVE_FROM,
     )
 
 

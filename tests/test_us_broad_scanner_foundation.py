@@ -58,6 +58,37 @@ def test_complete_kis_coverage_and_current_master_build_ready_foundation() -> No
     assert all(item.source_id.provider != "fixture" for item in first.capabilities)
 
 
+def test_entitlement_authority_is_stable_across_observation_cycles() -> None:
+    first = build_us_broad_scanner_foundation(_opportunity(), _security_master())
+    later_at = OBSERVED_AT + dt.timedelta(minutes=1)
+    opportunity = OpportunitySnapshot.model_validate(
+        {
+            **_opportunity().model_dump(mode="python"),
+            "opportunity_id": "us-opportunity-foundation-later",
+            "observed_at": later_at,
+            "valid_until": later_at + dt.timedelta(minutes=1),
+            "evidence_refs": (
+                EvidenceRef(
+                    namespace="manual/qa",
+                    record_id="foundation:later",
+                    observed_at=later_at,
+                ),
+            ),
+            "source_coverage": tuple(
+                item.model_copy(update={"observed_at": later_at}) for item in _opportunity().source_coverage
+            ),
+        }
+    )
+    security = _security_master(observed_at=later_at - dt.timedelta(minutes=1))
+
+    later = build_us_broad_scanner_foundation(opportunity, security)
+
+    assert later.entitlements == first.entitlements
+    assert tuple(item.assessed_at for item in later.capabilities) == (later_at,) * 3
+    assert tuple(item.assessed_at for item in first.capabilities) == (OBSERVED_AT,) * 3
+    assert all(item.effective_from < OBSERVED_AT for item in first.entitlements)
+
+
 @pytest.mark.parametrize("mutation", ("missing", "wrong_producer", "stale_security"))
 def test_incomplete_or_noncausal_foundation_input_fails_closed(mutation: str) -> None:
     opportunity = _opportunity()

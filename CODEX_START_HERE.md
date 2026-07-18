@@ -77,7 +77,7 @@
 - armed entry·safety smoke는 하나의 intraday pilot risk contract를 공유하며 100 USD·10 USD·1포지션·30 USD·편도 20bp·risk fraction 1/3000을 유지
 - GET-only `run_alpaca_paper_safety.py`도 active intraday lane risk contract를 명시적으로 주입해 entry·armed safety mutation과 같은 USD 100·USD 10·1포지션·USD 30·편도 20bp 권위를 사용
 - contract-only data foundation이 `DataSourceId`·entitlement·capability/SLO·`StrategyDataRequirement`·point-in-time instrument/alias/corporate action·canonical event를 검증하고, 명시된 primary/fallback만 평가해 `ready`·`research_only`·`blocked_by_data`를 결정
-- offline local-only `run_data_foundation_check.py`는 fixture manifest를 mode-600 aggregate report로 검증하며 provider·credential·broker·Paper 실행을 열지 않음. 실제 live capability registry·raw lake·Parquet replay는 아직 없음
+- offline local-only `run_data_foundation_check.py`는 fixture manifest를 mode-600 aggregate report로 검증하며 provider·credential·broker·Paper 실행을 열지 않음. append-only capability registry와 raw lake·Parquet replay도 구현됐지만 모든 live source health가 연결된 것은 아님
 - armed entry CLI는 free-form 종목·가격·시각·수량을 받지 않고 query-only watch SQLite에서 현재 직전 완료 정규장 1분봉에 결합된 30초 이내 ORB `setup` 후보 정확히 하나만 1주 요청으로 투영한 뒤 credential·운영 세션을 연다
 - 모든 Alpaca Paper 운영 CLI는 잡힌 실행 예외의 클래스명만 stderr·보고서에 남기고 원문 계좌·broker·경로 정보를 버림
 - bootstrap·readiness·recovery·entry·보호 OCO·safety 운영 report는 기존 파일을 포함해 atomic mode `600`으로 강제 교체
@@ -87,10 +87,11 @@
 - KIS US Opportunity를 replay-bound M4 broad-scanner 입력으로 만드는 opt-in 운영 투영 구현. foundation/store/canonical-root가 모두 있어야 활성화되고, raw Opportunity 보존 → point-in-time instrument exact match → immutable candidate Parquet → DuckDB replay → durable scanner snapshot 순서를 강제한다. 최신 snapshot reader도 canonical dataset과 identity를 다시 검증하며 fixture manifest의 `FIXT`를 실제 동적 universe로 간주하지 않는다.
 - Alpaca Paper `GET /v2/assets`의 raw-first US security master 구현. 실제 응답 33,351행을 exact mode-600 원장에 먼저 저장하고 active listed/supported 13,011종목을 asset UUID instrument와 provider-symbol alias로 투영했다. actual snapshot으로 synthetic KIS candidate의 replay-bound 결합을 확인했으며 account/order endpoint와 mutation은 0건이다.
 - canonical Parquet correction/tombstone history replay 구현. 여러 verified dataset의 원본→정정→삭제 chain을 as-of로 재생하며 missing target·branch·역방향 시각·identity 변경을 fail-closed하고 tombstone 뒤 active state를 제거한다. local CLI는 집계만 mode 600 보고서로 남기며 provider·계좌·주문을 열지 않는다.
+- append-only data capability registry 구현. 고정 source entitlement 계약과 시점별 health assessment를 분리해 보존하고 as-of snapshot이 미래 assessment를 배제한다. broad-scanner entitlement는 관측시각이 아니라 고정 계약 발효일을 사용하며 registry CLI가 foundation을 재평가한다.
 
 ## 다음 우선순위
 
-1. 관측 시각으로 매 cycle 재생성되는 broad-scanner entitlement의 의미를 실제 계약 발효 근거와 분리한 뒤, source 계약·시점별 health assessment를 보존하는 append-only capability registry를 구현한다. fixture provider나 추정 entitlement를 운영 권한으로 승격하지 않는다.
+1. 현재 Alpaca SIP runtime audit과 KR terminal source run을 capability registry의 시점별 health assessment로 투영한다. entitlement는 별도 고정 계약만 등록하고 fixture provider나 관측 성공을 운영 권한으로 승격하지 않는다.
 2. 열린 NYSE 정규장과 mode-600 Alpaca data credential이 자연스럽게 동시에 맞을 때만 새 SIP bridge의 단일 종목 bounded GET smoke를 실행한다. exact raw page·canonical replay·runtime checkpoint를 대사하고 계좌·주문·Paper endpoint는 열지 않는다. 휴장에는 fixture E2E 결과만 유지한다.
 3. 실제 read-only smoke 뒤 pagination·재시작 offset·provider gap의 장기 soak를 누적한다. 이 polling bridge를 websocket streaming이나 전체시장 coverage로 표현하지 않는다.
 4. 현재 NYSE post-close와 mode-600 data credential·정렬된 bounded universe가 동시에 맞을 때만 US swing 일봉 source를 read-only로 한 번 수집한다. 그 뒤에만 동일 CLI로 signal/shadow forward evidence를 누적하며, Paper 계좌·주문은 열지 않는다.
