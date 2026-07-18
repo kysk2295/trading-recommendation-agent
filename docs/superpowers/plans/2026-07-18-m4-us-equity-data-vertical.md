@@ -112,6 +112,20 @@ and reconnect recovery without provider, credential, account, or order access.
 Verification: 8 focused tests, full **2151-test** suite, Ruff, basedpyright,
 compileall, and no-excuse all pass.
 
+**Provider bridge checkpoint (2026-07-18): Fixture complete, production smoke pending.**
+The first actual provider adapter polls one bounded symbol from Alpaca's SIP
+minute-bars GET endpoint only during its current regular session. Every
+paginated response body is persisted to a separate mode-600 append-only
+evidence store before canonical Parquet publication and DuckDB replay. The
+verified replay identity then reaches the existing supervisor; same-minute
+retry is idempotent, restart resumes after the durable sequence, and a missing
+provider minute remains a fail-closed sequence gap. Noncanonical base URLs,
+redirects, closed sessions, and multi-symbol input are rejected before unsafe
+follow-up calls. This is completed-bar polling, not quote/trade streaming, and
+it imports no account or order path. Eight focused provider tests and 186 M4
+regression tests pass. A regular-session external GET smoke and soak remain
+pending because this checkpoint was completed on a Saturday.
+
 ### M4.4: Evidence-Gated US Opportunity Projection
 
 Project an eligible feature snapshot into the existing US

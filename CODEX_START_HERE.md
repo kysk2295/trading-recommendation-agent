@@ -83,20 +83,23 @@
 - bootstrap·readiness·recovery·entry·보호 OCO·safety 운영 report는 기존 파일을 포함해 atomic mode `600`으로 강제 교체
 - 첫 정규장 smoke의 GET-only 준비, exact current ORB 후보 선택, armed entry, 보호 OCO, timeout 복구, staged EOD 평탄화와 최종 flat 대사를 하나의 운영 런북으로 고정
 - 동일 공개 운영 세션 API의 fake broker E2E가 entry→체결 trade update→보호 OCO→staged EOD cancel/close→최종 flat broker/shadow 대사를 검증하며, 실제 Paper POST/DELETE는 계속 0건
+- Alpaca SIP 단일 종목 완료 1분봉 provider bridge 구현. 정규장·canonical data URL·redirect 금지·단일 desired subscription을 HTTP 전에 검사하고, exact response body를 mode-600 append-only SQLite에 먼저 저장한 뒤 canonical Parquet·DuckDB replay identity와 restart offset을 M4 supervisor에 공급. fixture pagination·동일 분 retry·재시작·gap·휴장·다중종목·redirect E2E를 통과했으며 계좌·주문 import와 실제 외부 network 호출은 0건
 
 ## 다음 우선순위
 
-1. 현재 NYSE post-close와 mode-600 data credential·정렬된 bounded universe가 동시에 맞을 때만 US swing 일봉 source를 read-only로 한 번 수집한다. 그 뒤에만 동일 CLI로 signal/shadow forward evidence를 누적하며, Paper 계좌·주문은 열지 않는다.
-2. current NYSE post-close source가 안전하게 축적된 뒤에만 새 US swing signal을 다음 정규장 전 local trial로 등록하고 terminal evidence를 누적한다. 표본·동일 위험 비교·승격 근거가 쌓이기 전에는 lane 권한을 바꾸지 않는다.
-3. fixture E2E가 끝난 KR same-cycle orchestrator를 전체 품질 게이트와 수동 CLI QA로 확정한다. 현재 KST·자격증명·정상 endpoint 조건이 모두 맞을 때만 별도 bounded production same-cycle을 read-only로 실행하고, 아니면 provider를 억지로 열지 않는다.
-4. 동일-cycle production coverage가 immutable evidence로 확정된 뒤에만 별도 manifest로 KR keyword Opportunity projection을 실행한다. source 실패를 성공이나 부분 complete로 축소하지 않으며, projection도 TradeSignal·국내 주문을 열지 않는다.
-5. 새 코드 commit이 생긴 경우 다음 NYSE 개장 전에 clean checkout의 local-only experiment ledger bootstrap을 실행해 code-coupled strategy version을 append한다. 정규장 뒤 누락된 preregistration은 소급 생성하지 않고 read-only 관찰만 보존한다.
-6. 열린 뉴욕 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증
-7. 실제 적격 ORB 세션마다 preregistered daily trial을 누적하고 terminal replay·실패·검열 운영 결과를 대사하되 열린 trial을 임의 terminal로 추정하지 않음
-8. 추가 부분체결이 실제 발생할 때 staged 보호 OCO cancel → terminal 대사 → 다음 호출 replacement를 같은 축소 한도에서 검증하되 체결을 억지로 만들지 않음
-9. equal-risk terminal trial·broker/shadow·DSR/PBO·parameter plateau·SIP 증거 계약이 모두 생긴 뒤에만 comparison·promotion Controller 단계를 별도 구현
-10. 최소 두 executable lane champion 전에는 Portfolio Manager를 구현하지 않음
-11. Milestone 3은 기존 bounded US·KR raw receipt를 새 계약의 object partition manifest로 투영하는 read-only 경로부터 시작하고, 그 뒤에만 Parquet canonical writer·DuckDB replay·correction/tombstone conformance를 추가
+1. 열린 NYSE 정규장과 mode-600 Alpaca data credential이 자연스럽게 동시에 맞을 때만 새 SIP bridge의 단일 종목 bounded GET smoke를 실행한다. exact raw page·canonical replay·runtime checkpoint를 대사하고 계좌·주문·Paper endpoint는 열지 않는다. 휴장에는 fixture E2E 결과만 유지한다.
+2. 실제 read-only smoke 뒤 pagination·재시작 offset·provider gap의 장기 soak를 누적한다. 이 polling bridge를 websocket streaming이나 전체시장 coverage로 표현하지 않는다.
+3. 현재 NYSE post-close와 mode-600 data credential·정렬된 bounded universe가 동시에 맞을 때만 US swing 일봉 source를 read-only로 한 번 수집한다. 그 뒤에만 동일 CLI로 signal/shadow forward evidence를 누적하며, Paper 계좌·주문은 열지 않는다.
+4. current NYSE post-close source가 안전하게 축적된 뒤에만 새 US swing signal을 다음 정규장 전 local trial로 등록하고 terminal evidence를 누적한다. 표본·동일 위험 비교·승격 근거가 쌓이기 전에는 lane 권한을 바꾸지 않는다.
+5. fixture E2E가 끝난 KR same-cycle orchestrator를 전체 품질 게이트와 수동 CLI QA로 확정한다. 현재 KST·자격증명·정상 endpoint 조건이 모두 맞을 때만 별도 bounded production same-cycle을 read-only로 실행하고, 아니면 provider를 억지로 열지 않는다.
+6. 동일-cycle production coverage가 immutable evidence로 확정된 뒤에만 별도 manifest로 KR keyword Opportunity projection을 실행한다. source 실패를 성공이나 부분 complete로 축소하지 않으며, projection도 TradeSignal·국내 주문을 열지 않는다.
+7. 새 코드 commit이 생긴 경우 다음 NYSE 개장 전에 clean checkout의 local-only experiment ledger bootstrap을 실행해 code-coupled strategy version을 append한다. 정규장 뒤 누락된 preregistration은 소급 생성하지 않고 read-only 관찰만 보존한다.
+8. 열린 뉴욕 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증
+9. 실제 적격 ORB 세션마다 preregistered daily trial을 누적하고 terminal replay·실패·검열 운영 결과를 대사하되 열린 trial을 임의 terminal로 추정하지 않음
+10. 추가 부분체결이 실제 발생할 때 staged 보호 OCO cancel → terminal 대사 → 다음 호출 replacement를 같은 축소 한도에서 검증하되 체결을 억지로 만들지 않음
+11. equal-risk terminal trial·broker/shadow·DSR/PBO·parameter plateau·SIP 증거 계약이 모두 생긴 뒤에만 comparison·promotion Controller 단계를 별도 구현
+12. 최소 두 executable lane champion 전에는 Portfolio Manager를 구현하지 않음
+13. Milestone 3은 기존 bounded US·KR raw receipt를 새 계약의 object partition manifest로 투영하는 read-only 경로부터 시작하고, 그 뒤에만 Parquet canonical writer·DuckDB replay·correction/tombstone conformance를 추가
 
 ## 시작 전 확인
 
@@ -112,6 +115,7 @@
 ```text
 이 프로젝트의 README.md, CODEX_START_HERE.md, AGENTS.md와 docs/runtime_audit.md를 먼저 읽어줘.
 현재 KR raw-first source cycle과 Single Writer Alpaca Paper·ORB 일일 shadow trial 운영 경계를 이어서 개발해줘.
+Alpaca SIP 단일 종목 완료 분봉 polling bridge의 fixture E2E는 완료됐다. 실제 외부 GET은 열린 NYSE 정규장·mode-600 market-data credential·SIP entitlement가 모두 맞을 때만 bounded read-only smoke로 실행하고, 계좌·주문·Paper endpoint는 열지 마.
 KR same-cycle orchestrator와 fixture E2E는 구현됐다. 다음에는 전체 품질 게이트와 수동 CLI QA를 마무리하고, 현재 KST·자격증명·정상 endpoint 조건이 모두 갖춰질 때만 bounded production same-cycle을 read-only로 수집해줘. 그 coverage가 확정된 뒤에는 별도 manifest로 KR keyword Opportunity projection을 실행하되 TradeSignal·국내 주문은 열지 마.
 열린 정규장과 credential·current ORB 후보가 모두 갖춰진 경우에만 축소 Paper 수명주기 smoke를 실행하고, 하나라도 부족하면 broker mutation을 하지 마. 일일 trial은 exact preregistration과 terminal evidence를 유지하고 열린 trial을 추정으로 닫지 마.
 ```
