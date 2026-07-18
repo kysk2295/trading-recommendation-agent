@@ -454,3 +454,10 @@
 - 최초 관찰: 단발 운영 CLI가 매번 `active=()`, `cooldowns=()`로 policy를 평가해 순수 정책의 체류·냉각 계약이 프로세스 경계에서 사라졌다.
 - 수정: exact policy decision SHA, evaluated time, desired별 최초 subscribed time과 unexpired cooldown을 content-addressed append-only state로 저장한다. READY preflight 뒤 policy intent를 먼저 확정하고 provider 결과는 별도 fleet audit에 둔다. 파일은 mode 600/current user/regular/no-symlink, payload hash와 state ID 재계산, `BEGIN IMMEDIATE` single writer를 요구한다.
 - 결과: 30초 재시작에서는 100점 challenger가 incumbent를 밀어내지 못했고, 3분 후 정상 퇴출된 incumbent는 5분 cooldown 동안 재진입하지 못했다. state payload·mode·symlink 변조는 replay에서 차단됐다. provider 연결 성공이나 broker/account/order 상태는 이 state가 표현하지 않는다.
+
+## H64: 현재 분 profile 파일을 사람이 매 cycle 선택한다
+
+- 판별 기준: policy가 선택한 exact desired set을 중복 계산하지 않고 profile collector에 전달하는지, 같은 20일 history를 매분 다시 GET하지 않는지, profile 분과 runtime 완료 분이 일치하는지 확인한다.
+- 최초 관찰: 기존 운영 CLI는 검증된 `--profile INSTRUMENT=PATH`를 요구했지만 다음 분이 되면 다른 artifact 경로를 사람이 다시 계산해야 했다. policy decision은 profile binding 내부에 있어 자동 collector가 desired set을 얻으려면 policy를 중복 실행해야 했다.
+- 수정: scanner→policy 검증을 provider-free scope로 분리하고 exact completed minute와 desired set을 반환한다. 자동 materializer는 instrument/symbol hash별 private cache에서 기존 historical raw page/canonical replay를 재사용하고 그 분의 content-addressed profile을 만든 뒤 strict binding 단계로 넘긴다.
+- 결과: 2종목 첫 실행은 historical GET 40건, 동일 scope 재실행은 0건이었다. CLI 1종목은 historical 20건과 current 1건 모두 Alpaca data GET만 사용해 READY가 됐다. 수동/자동 입력 동시 사용은 argparse에서 차단되고 account/order mutation은 0건이다.

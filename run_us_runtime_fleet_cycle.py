@@ -16,6 +16,10 @@ from trading_agent.alpaca_http import (
     MissingAlpacaCredentialsError,
     load_alpaca_credentials,
 )
+from trading_agent.alpaca_sip_profile_materializer import (
+    AlpacaSipProfileMaterializer,
+    AlpacaSipProfileMaterializerError,
+)
 from trading_agent.alpaca_sip_runtime_http import AlpacaSipMinutePageClient
 from trading_agent.alpaca_sip_runtime_owner import (
     AlpacaSipRuntimeOwnerFactory,
@@ -30,9 +34,13 @@ from trading_agent.us_opportunity_scanner_store import UsOpportunityScannerStore
 from trading_agent.us_runtime_fleet_cycle import (
     ProfileArtifactBinding,
     RuntimeFleetCycleError,
-    RuntimeFleetCycleRequest,
+    bind_runtime_profiles,
     execute_runtime_fleet_cycle,
-    prepare_runtime_fleet_cycle,
+)
+from trading_agent.us_runtime_policy_scope import (
+    RuntimePolicyScopeError,
+    RuntimePolicyScopeRequest,
+    prepare_runtime_policy_scope,
 )
 from trading_agent.us_subscription_models import SubscriptionPolicyConfig
 from trading_agent.us_subscription_policy_state import (
@@ -49,7 +57,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         description="US scanner/profile을 Alpaca SIP GET-only runtime fleet와 M4.4 gate에 연결",
     )
     parser.add_argument("--scanner-store", type=Path, required=True)
-    parser.add_argument("--profile", action="append", required=True, metavar="INSTRUMENT_ID=PATH")
+    profile_source = parser.add_mutually_exclusive_group(required=True)
+    profile_source.add_argument("--profile", action="append", metavar="INSTRUMENT_ID=PATH")
+    profile_source.add_argument("--auto-profile-root", type=Path)
     parser.add_argument("--runtime-root", type=Path, required=True)
     parser.add_argument("--canonical-root", type=Path, required=True)
     parser.add_argument("--audit-store", type=Path, required=True)
@@ -82,19 +92,20 @@ def main(
     try:
         state_store = SubscriptionPolicyStateStore(args.policy_state_store)
         prior_state = state_store.latest()
-        prepared = prepare_runtime_fleet_cycle(
+        manual_profiles = None if args.profile is None else _profile_bindings(args.profile)
+        scope = prepare_runtime_policy_scope(
             UsOpportunityScannerStore(args.scanner_store),
-            RuntimeFleetCycleRequest(
+            RuntimePolicyScopeRequest(
                 evaluated_at,
                 () if prior_state is None else prior_state.active,
                 () if prior_state is None else prior_state.cooldowns,
                 _policy_config(args),
-                _profile_bindings(args.profile),
             ),
         )
         state_appended = state_store.append(
-            advance_subscription_policy_state(prior_state, prepared.decision),
+            advance_subscription_policy_state(prior_state, scope.decision),
         )
+        prepared = None if manual_profiles is None else bind_runtime_profiles(scope, manual_profiles)
         credentials = load_alpaca_credentials(args.secret_path)
         with client_factory() as client:
             page_client = AlpacaSipMinutePageClient(
@@ -102,6 +113,14 @@ def main(
                 credentials,
                 clock=lambda: evaluated_at,
             )
+            if prepared is None:
+                if args.auto_profile_root is None:
+                    raise RuntimeFleetCycleError
+                profiles = AlpacaSipProfileMaterializer(
+                    page_client,
+                    args.auto_profile_root,
+                ).materialize(scope)
+                prepared = bind_runtime_profiles(scope, profiles)
             factory = AlpacaSipRuntimeOwnerFactory(
                 page_client,
                 AlpacaSipRuntimeOwnerFactoryConfig(
@@ -118,9 +137,11 @@ def main(
             )
     except (
         AlpacaSecretFileError,
+        AlpacaSipProfileMaterializerError,
         MissingAlpacaCredentialsError,
         OSError,
         RuntimeFleetCycleError,
+        RuntimePolicyScopeError,
         SubscriptionPolicyStateError,
         TypeError,
         UsOpportunityScannerProjectionError,

@@ -22,8 +22,13 @@ from trading_agent.us_runtime_fleet_cycle import (
     ProfileArtifactBinding,
     RuntimeFleetCycleError,
     RuntimeFleetCycleRequest,
+    bind_runtime_profiles,
     execute_runtime_fleet_cycle,
     prepare_runtime_fleet_cycle,
+)
+from trading_agent.us_runtime_policy_scope import (
+    RuntimePolicyScopeRequest,
+    prepare_runtime_policy_scope,
 )
 from trading_agent.us_subscription_models import BroadScannerCandidate, BroadScannerSnapshot
 
@@ -79,6 +84,23 @@ def test_profile_coverage_mismatch_blocks_before_fleet_or_http(tmp_path: Path) -
 
     with pytest.raises(RuntimeFleetCycleError, match="runtime fleet cycle input is invalid"):
         _ = prepare_runtime_fleet_cycle(_Scanner(_bundle()), missing)
+
+
+def test_policy_scope_exposes_desired_and_completed_minute_before_profile_io(tmp_path: Path) -> None:
+    policy = decision()
+    scope = prepare_runtime_policy_scope(
+        _Scanner(_bundle()),
+        RuntimePolicyScopeRequest(NOW, (), (), policy.config),
+    )
+
+    assert tuple(item.instrument_id for item in scope.decision.desired) == (
+        "alpaca:asset-aaa",
+        "alpaca:asset-bbb",
+    )
+    assert scope.completed_minute == 35
+    with pytest.raises(RuntimeFleetCycleError, match="runtime fleet cycle input is invalid"):
+        _ = bind_runtime_profiles(scope, ())
+    assert not (tmp_path / "profiles").exists()
 
 
 def test_expired_opportunity_blocks_before_profile_read(tmp_path: Path) -> None:

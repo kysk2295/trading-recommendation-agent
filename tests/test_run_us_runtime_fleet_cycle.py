@@ -97,6 +97,42 @@ def test_ready_fixture_cycle_uses_only_alpaca_data_get(tmp_path: Path) -> None:
     assert policy_state.active[0].subscribed_at == NOW
 
 
+def test_auto_profile_cycle_materializes_history_then_runs_current_get(tmp_path: Path) -> None:
+    scanner, _profile = _inputs(tmp_path)
+    secret = tmp_path / "alpaca.env"
+    secret.write_text("APCA_API_KEY_ID=fixture\nAPCA_API_SECRET_KEY=fixture\n", encoding="utf-8")
+    secret.chmod(0o600)
+    requests: list[httpx2.Request] = []
+
+    def client_factory() -> httpx2.Client:
+        def respond(request: httpx2.Request) -> httpx2.Response:
+            requests.append(request)
+            if request.url.params["asof"] == NOW.date().isoformat():
+                return httpx2.Response(
+                    200,
+                    json={"bars": {"FIXT": wire_bars("FIXT", 35)}, "next_page_token": None},
+                )
+            return _historical_response(request)
+
+        return httpx2.Client(
+            base_url="https://data.alpaca.markets",
+            transport=httpx2.MockTransport(respond),
+            follow_redirects=False,
+        )
+
+    report = tmp_path / "auto-report"
+    code = cli.main(
+        _arguments(tmp_path, None, report, scanner=scanner, secret=secret, auto_profiles=True),
+        now=NOW,
+        client_factory=client_factory,
+    )
+
+    assert code == 0
+    assert len(requests) == 21
+    assert all(item.method == "GET" for item in requests)
+    assert "result: ready" in _report(report)
+
+
 def _inputs(tmp_path: Path) -> tuple[Path, Path]:
     scanner = tmp_path / "scanner.sqlite3"
     observed_at = NOW - dt.timedelta(seconds=1)
@@ -140,17 +176,22 @@ def _inputs(tmp_path: Path) -> tuple[Path, Path]:
 
 def _arguments(
     tmp_path: Path,
-    profile: Path,
+    profile: Path | None,
     report: Path,
     *,
     scanner: Path | None = None,
     secret: Path | None = None,
+    auto_profiles: bool = False,
 ) -> list[str]:
+    profile_arguments = (
+        ["--auto-profile-root", str(tmp_path / "auto-profiles")]
+        if auto_profiles
+        else ["--profile", f"{INSTRUMENT_ID}={profile}"]
+    )
     return [
         "--scanner-store",
         str(tmp_path / "scanner.sqlite3" if scanner is None else scanner),
-        "--profile",
-        f"{INSTRUMENT_ID}={profile}",
+        *profile_arguments,
         "--runtime-root",
         str(tmp_path / "runtime"),
         "--canonical-root",
@@ -168,3 +209,23 @@ def _arguments(
 
 def _report(path: Path) -> str:
     return (path / cli.REPORT_NAME).read_text(encoding="utf-8")
+
+
+def _historical_response(request: httpx2.Request) -> httpx2.Response:
+    opened = dt.datetime.fromisoformat(request.url.params["start"])
+    closed = dt.datetime.fromisoformat(request.url.params["end"])
+    count = int((closed - opened) / dt.timedelta(minutes=1)) + 1
+    bars = tuple(
+        {
+            "t": (opened + dt.timedelta(minutes=index)).isoformat(),
+            "o": 100.0,
+            "h": 101.0,
+            "l": 99.0,
+            "c": 100.0,
+            "v": 1000,
+            "n": 10,
+            "vw": 100.0,
+        }
+        for index in range(count)
+    )
+    return httpx2.Response(200, json={"bars": {"FIXT": bars}, "next_page_token": None})

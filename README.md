@@ -118,6 +118,8 @@ flowchart LR
 
 **2026-07-19 US subscription policy state 업데이트:** process restart마다 비어 있던 active/cooldown 입력을 deterministic decision SHA에 결합된 append-only runtime state로 교체했다. READY preflight 직후 desired instrument의 최초 `subscribed_at`을 보존하고, 퇴출 종목의 `eligible_after`를 만료 전까지 유지한다. state SQLite는 mode 600, current-user regular file, no-symlink, `BEGIN IMMEDIATE` single writer와 exact retry를 요구하며 payload/state hash를 재계산한다. restart fixture에서 30초 뒤 고득점 challenger가 minimum residency를 우회하지 못했고, 3분 뒤 퇴출된 종목은 5분 cooldown 동안 재진입하지 못했다. 이 상태는 policy intent만 나타내며 provider 연결이나 broker/account 상태를 주장하지 않는다.
 
+**2026-07-19 Alpaca SIP profile 자동 materialization 업데이트:** runtime preflight를 provider/profile과 무관한 policy scope와 검증 profile binding 단계로 분리했다. `--auto-profile-root` 경로는 fresh scanner와 durable policy state로 desired instrument를 먼저 확정하고, 종목별 mode-700 cache에서 직전 20개 완료 정규장을 raw-first 수집·canonical replay한 뒤 현재 완료 분 profile을 자동 발행한다. 2종목 첫 fixture는 historical GET 40건, 즉시 재실행은 0건이었고, CLI 1종목 E2E는 historical GET 20건 뒤 current GET 1건으로 READY gate에 도달했다. 수동 `--profile`과 자동 경로는 상호배타적이며 account/order API는 없다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \
@@ -211,6 +213,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [US runtime fleet-cycle audit 체크포인트](docs/checkpoints/2026-07-19-us-runtime-fleet-audit-ko.md)
 - [US runtime fleet 운영 사이클 체크포인트](docs/checkpoints/2026-07-19-us-runtime-fleet-cycle-ko.md)
 - [US subscription policy state 체크포인트](docs/checkpoints/2026-07-19-us-subscription-policy-state-ko.md)
+- [Alpaca SIP profile 자동 materialization 체크포인트](docs/checkpoints/2026-07-19-alpaca-sip-profile-materializer-ko.md)
 - [US feature evidence projection 체크포인트](docs/checkpoints/2026-07-18-us-feature-evidence-projection-ko.md)
 - [Grok 개발 하네스 설계](docs/superpowers/specs/2026-07-18-grok-development-harness-design.md)
 - [Grok 개발 하네스 체크포인트](docs/checkpoints/2026-07-18-grok-development-harness-ko.md)
@@ -736,6 +739,12 @@ KIS 날짜별 paper 감시:
 ```
 
 이 명령은 정규장·fresh scanner·만료 전 opportunity·exact candidate/profile coverage를 먼저 확인한 뒤에만 Alpaca data credential을 읽는다. trading origin, account, position, order API는 사용하지 않는다.
+
+수동 profile 경로 대신 현재 desired 종목의 20일 history와 완료 분 profile을 자동 생성·재생하려면 `--profile`을 빼고 다음 옵션을 사용한다.
+
+```bash
+  --auto-profile-root outputs/runtime/us-sip-fleet/profiles
+```
 
 첫 명령은 Paper assets endpoint를 GET-only로 한 번 읽어 pre-session 종목 마스터를 갱신한다. 최신 snapshot이 KIS Opportunity보다 미래이거나 1일을 넘으면 watch의 연구 투영은 fail-closed한다.
 

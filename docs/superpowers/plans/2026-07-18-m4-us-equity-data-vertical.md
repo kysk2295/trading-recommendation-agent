@@ -259,6 +259,19 @@ SQLite file rejects symlinks and public modes, serializes writers with
 fixtures preserve minimum residency and cooldown behavior. This state grants
 no account, broker, or order authority.
 
+**Automatic historical profile materialization checkpoint (2026-07-19): Complete.**
+Runtime preparation is split into a provider-free policy scope and a strict
+profile-binding step. The scope exposes only the causally verified
+Opportunity, full desired set, and current completed regular-session minute.
+The Alpaca materializer then owns one private cache per instrument, reuses
+the existing raw-first 20-session collector, writes a content-addressed
+profile for that exact minute, and returns bindings in desired order. A
+two-owner fixture required 40 historical GETs once and zero on immediate
+replay. The automatic CLI path required 20 historical GETs plus one current
+GET and reached the M4.4 READY gate. Manual and automatic profile inputs are
+mutually exclusive. Repeated scheduling and regular-session external smoke
+remain pending.
+
 ### M4.4: Evidence-Gated US Opportunity Projection
 
 Project an eligible feature snapshot into the existing US
