@@ -809,9 +809,9 @@ uv run pytest -q
 
 ## 개발 하네스
 
-`run_grok_task.py`는 현재 repository root에서 in-place non-interactive Grok worker를 돌리기 위한 developer-only 도구다. task contract가 base commit, 허용 파일, 검증 명령과 worker summary 형식을 고정하고, dry-run은 Grok 호출이나 Git 상태 변경 없이 preflight만 검사한다. worker는 branch/worktree를 만들지 않으며 allow-list 안 working-tree 파일만 수정할 수 있고 main history commit/push는 금지된다. 실행 후 HEAD가 contract base와 같고 변경 경로가 allow-list 안이어야 한다. 결과는 자동 병합되지 않으며 Codex가 diff, 허용 경로, 테스트, Ruff, basedpyright와 수동 CLI QA를 독립 검토한 뒤에만 `main`에 반영한다.
+`run_grok_task.py`는 현재 repository root의 `main`에서 in-place non-interactive Grok worker를 돌리기 위한 developer-only 도구다. task contract가 base commit, 허용 파일, 검증 명령과 worker summary 형식을 고정하고, dry-run은 Grok 호출이나 Git 상태 변경 없이 preflight만 검사한다. worker는 branch/worktree를 만들지 않으며 allow-list 안 working-tree 파일만 수정할 수 있고 main history commit/push는 금지된다. linked worktree·symlink root는 거절하고, 실행 후 HEAD·refs/reflog/object inventory·user-owned/ignored metadata가 snapshot과 같아야 하며 변경 경로는 allow-list 안이어야 한다. completed 전에 required/manual QA를 `uv run --offline`으로 독립 재실행한다. 결과는 자동 병합되지 않으며 Codex가 diff, 허용 경로, 테스트, Ruff, basedpyright와 수동 CLI QA를 독립 검토한 뒤에만 `main`에 반영한다.
 
-이 도구는 `trading_agent` provider·credential·broker·execution 모듈을 import하지 않으며, 시장 데이터 수집, backtest, 외부 network 호출, Paper 주문이나 실제 자금 거래 권한이 없다. 생성 명령은 `--cwd`, `--always-approve`, `--permission-mode bypassPermissions`, `-p`, strict JSON schema summary, `--no-plan`, `--no-subagents`, `--disable-web-search`, `--no-memory` 경계를 따르며 summary는 `structuredOutput`만 사용하고 raw stdout/stderr·prompt·credential은 보고하지 않는다.
+이 도구는 `trading_agent` provider·credential·broker·execution 모듈을 import하지 않으며, 시장 데이터 수집, backtest, 외부 network 호출, Paper 주문이나 실제 자금 거래 권한이 없다. 생성 명령은 `--cwd`, `--always-approve`, `--permission-mode bypassPermissions`, `-p`, strict JSON schema summary, `--no-plan`, `--no-subagents`, `--disable-web-search`, `--no-memory` 경계를 따르며 summary는 `structuredOutput`만 사용하고 raw stdout/stderr·prompt·credential은 보고하지 않는다. `--sandbox strict`는 사용하지 않으므로 credential 읽기·network·push·repo 밖 write 방지는 OS sandbox가 아니라 prompt/contract residual risk다.
 
 ## 폴더 구조
 

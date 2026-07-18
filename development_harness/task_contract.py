@@ -2,18 +2,19 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from pathlib import PurePosixPath
-from typing import Annotated, Any, ClassVar, Literal, Self
+from typing import Annotated, Any, ClassVar, Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from development_harness.safe_command import (
+    MAX_COMMAND_LENGTH,
+    MAX_PATH_LENGTH,
+    is_safe_command,
+    is_safe_path,
+)
+
 _COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
-_COMMAND_PATTERN = re.compile(r"^[A-Za-z0-9_./:=+@%,-]+(?: [A-Za-z0-9_./:=+@%,-]+)*$")
-_ALLOWED_COMMANDS = frozenset({"pytest", "ruff", "basedpyright", "python"})
 _TASK_ID_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
-_PROTECTED_ROOTS = frozenset({".git", ".grok", ".hermes"})
-_SECRET_PATH_PARTS = frozenset({"credentials", "credential", "secrets", "secret", "id_rsa"})
-_SECRET_SUFFIXES = (".env", ".key", ".pem", ".p12", ".pfx")
 _MODEL_FIELDS = frozenset(
     {
         "schema_version",
@@ -29,36 +30,23 @@ _MODEL_FIELDS = frozenset(
 )
 _REQUIRED_SUMMARY_FIELDS = ("changed_files", "verification", "concerns")
 
+MAX_ALLOWED_PATHS: Final = 32
+MAX_COMMANDS_PER_LIST: Final = 16
+
+# Re-export bounds used by contract tests.
+__all__ = (
+    "MAX_ALLOWED_PATHS",
+    "MAX_COMMANDS_PER_LIST",
+    "MAX_COMMAND_LENGTH",
+    "MAX_PATH_LENGTH",
+    "GrokTaskContract",
+    "InvalidGrokTaskContractError",
+)
+
 
 class _GrokTaskValidationError(ValueError):
     def __init__(self) -> None:
         super().__init__("invalid Grok task contract")
-
-
-def _is_safe_path(value: str) -> bool:
-    if not value or value.startswith("/") or "\\" in value:
-        return False
-    path = PurePosixPath(value)
-    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
-        return False
-    for part in path.parts:
-        lower = part.lower()
-        if lower in _PROTECTED_ROOTS or lower in _SECRET_PATH_PARTS:
-            return False
-        if lower == ".env" or lower.startswith(".env."):
-            return False
-        if "token" in lower or "secret" in lower or lower.endswith(_SECRET_SUFFIXES):
-            return False
-    return True
-
-
-def _is_safe_command(value: str) -> bool:
-    if not _COMMAND_PATTERN.fullmatch(value):
-        return False
-    parts = value.split()
-    if len(parts) < 3 or parts[:2] != ["uv", "run"] or parts[2] not in _ALLOWED_COMMANDS:
-        return False
-    return parts[2] == "basedpyright" or len(parts) > 3
 
 
 class InvalidGrokTaskContractError(ValueError):
@@ -170,14 +158,24 @@ class GrokTaskContract(BaseModel):
     @field_validator("allowed_paths")
     @classmethod
     def _validate_allowed_paths(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if not value or len(value) != len(set(value)) or any(not _is_safe_path(path) for path in value):
+        if (
+            not value
+            or len(value) > MAX_ALLOWED_PATHS
+            or len(value) != len(set(value))
+            or any(not is_safe_path(path) for path in value)
+        ):
             raise _GrokTaskValidationError()
         return value
 
     @field_validator("required_commands", "manual_qa_commands")
     @classmethod
     def _validate_commands(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if not value or any(not _is_safe_command(command) for command in value):
+        if (
+            not value
+            or len(value) > MAX_COMMANDS_PER_LIST
+            or len(value) != len(set(value))
+            or any(not is_safe_command(command) for command in value)
+        ):
             raise _GrokTaskValidationError()
         return value
 

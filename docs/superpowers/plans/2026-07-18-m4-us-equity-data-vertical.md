@@ -103,10 +103,16 @@ evidence is fail-closed.
 
 - One Grok task implements one delivery slice or a smaller testable part.
 - A task may edit only paths specified by a Codex-written contract. It runs
-  local tests and static checks but never provider, broker, or credential calls.
+  in-place on `main` through `run_grok_task.py` (no Git worktree/branch/clone)
+  with local tests and static checks, and never provider, broker, or credential
+  calls.
+- The harness does not enable an OS sandbox. Credential, network, push, and
+  external-write prevention remain prompt/contract residual risk; Codex review
+  is the final control before integration.
 - Codex reviews the diff, runs targeted and full verification, updates this
-  plan/checkpoint documentation, and alone cherry-picks/commits/pushes `main`.
-- Failed worker worktrees are retained for diagnosis and never merged.
+  plan/checkpoint documentation, and alone commits/pushes `main`.
+- Failed in-place worker edits stay uncommitted in the working tree for
+  diagnosis and are never auto-merged.
 
 ## Non-Goals
 

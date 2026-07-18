@@ -12,7 +12,7 @@ SCRIPT = PROJECT / "run_grok_task.py"
 def _init_repo(tmp_path: Path) -> tuple[Path, str]:
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(("git", "init"), cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(("git", "init", "-b", "main"), cwd=repo, check=True, capture_output=True, text=True)
     subprocess.run(("git", "config", "user.email", "tests@example.invalid"), cwd=repo, check=True)
     subprocess.run(("git", "config", "user.name", "Tests"), cwd=repo, check=True)
     (repo / ".gitignore").write_text(".worktrees/\n", encoding="utf-8")

@@ -5,16 +5,28 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from development_harness.grok_verification import GrokVerificationError, run_contract_commands
+from development_harness.grok_worker_process import WorkerProcessError, run_worker_process
 from development_harness.grok_worker_report import (
     WORKER_SUMMARY_JSON_SCHEMA,
     GrokTaskReport,
+    GrokWorkerSummary,
     parse_worker_summary,
+)
+from development_harness.grok_workspace_guard import (
+    GrokWorkspaceGuardError,
+    WorkspaceSnapshot,
+    assert_allowed_paths_have_no_symlinks,
+    assert_checkout_is_safe,
+    assert_main_repository_root,
+    capture_workspace_snapshot,
+    verify_workspace_snapshot,
 )
 from development_harness.task_contract import GrokTaskContract
 
 _GIT_TIMEOUT_SECONDS: Final = 30
 _GROK_TIMEOUT_SECONDS: Final = 1_800
-_USER_OWNED_STATUS_ENTRIES: Final = frozenset({"?? .hermes/", "?? .omo/"})
+_MAX_WORKER_STDOUT_BYTES: Final = 1_048_576
 _USER_OWNED_PATH_ROOTS: Final = frozenset({".hermes", ".omo", ".hermes/", ".omo/"})
 
 
@@ -30,6 +42,7 @@ class GrokTaskPlan:
     command: tuple[str, ...]
     prompt: str
     contract: GrokTaskContract
+    snapshot: WorkspaceSnapshot
 
 
 def _run_git(repo: Path, *args: str) -> str:
@@ -43,23 +56,6 @@ def _run_git(repo: Path, *args: str) -> str:
     if completed.returncode != 0:
         raise GrokTaskRunnerError("Git preflight failed")
     return completed.stdout
-
-
-def _repository_root(repo: Path) -> Path:
-    resolved = repo.resolve(strict=True)
-    root = Path(_run_git(resolved, "rev-parse", "--show-toplevel").strip()).resolve(strict=True)
-    if root != resolved:
-        raise GrokTaskRunnerError("task runner requires the repository root")
-    return root
-
-
-def _status_entries(repo: Path) -> tuple[str, ...]:
-    return tuple(entry for entry in _run_git(repo, "status", "--porcelain=v1", "-z").split("\0") if entry)
-
-
-def _assert_checkout_is_safe(status_entries: tuple[str, ...]) -> None:
-    if status_entries and not set(status_entries).issubset(_USER_OWNED_STATUS_ENTRIES):
-        raise GrokTaskRunnerError("checkout contains changes outside the approved user-owned state")
 
 
 def _is_user_owned_path(path: str) -> bool:
@@ -125,13 +121,21 @@ def prepare_grok_task(
     grok_binary: str = "grok",
     dry_run: bool,
 ) -> GrokTaskPlan:
+    _ = dry_run
     if type(contract) is not GrokTaskContract:
         raise GrokTaskRunnerError("invalid task contract")
     contract = GrokTaskContract.model_validate(contract.model_dump(mode="python"))
-    repository = _repository_root(repo)
-    if _run_git(repository, "rev-parse", "HEAD").strip() != contract.base_commit:
-        raise GrokTaskRunnerError("task contract base does not match the checkout")
-    _assert_checkout_is_safe(_status_entries(repository))
+    try:
+        repository = assert_main_repository_root(repo)
+        # Symlink allow-list checks precede dirty-checkout so protected path
+        # problems surface before untracked fixture noise.
+        assert_allowed_paths_have_no_symlinks(repository, contract.allowed_paths)
+        assert_checkout_is_safe(repository)
+        if _run_git(repository, "rev-parse", "HEAD").strip() != contract.base_commit:
+            raise GrokTaskRunnerError("task contract base does not match the checkout")
+        snapshot = capture_workspace_snapshot(repository)
+    except GrokWorkspaceGuardError as error:
+        raise GrokTaskRunnerError(str(error)) from error
     prompt = _build_prompt(contract)
     return GrokTaskPlan(
         task_id=contract.task_id,
@@ -142,6 +146,7 @@ def prepare_grok_task(
         ),
         prompt=prompt,
         contract=contract,
+        snapshot=snapshot,
     )
 
 
@@ -150,25 +155,25 @@ def assert_changed_paths_allowed(changed_paths: tuple[str, ...], allowed_paths: 
         raise GrokTaskRunnerError("worker changed a path outside the contract")
 
 
-def _assert_head_unchanged(repo: Path, base_commit: str) -> None:
-    if _run_git(repo, "rev-parse", "HEAD").strip() != base_commit:
-        raise GrokTaskRunnerError("worker committed changes; HEAD no longer matches the contract base")
-
-
 def _nul_paths(output: str) -> tuple[str, ...]:
     return tuple(path for path in output.split("\0") if path)
 
 
 def _changed_paths(repo: Path, base_commit: str) -> tuple[str, ...]:
-    # Disable rename detection so moves surface as both the old and new paths.
     worktree = _nul_paths(_run_git(repo, "diff", "--name-only", "-z", "--no-renames", base_commit))
-    index = _nul_paths(_run_git(repo, "diff", "--name-only", "-z", "--no-renames", "--cached", base_commit))
+    index = _nul_paths(
+        _run_git(repo, "diff", "--name-only", "-z", "--no-renames", "--cached", base_commit)
+    )
     untracked = _nul_paths(_run_git(repo, "ls-files", "-z", "--others", "--exclude-standard"))
-    paths = {path for path in (*worktree, *index, *untracked) if path and not _is_user_owned_path(path)}
+    paths = {
+        path for path in (*worktree, *index, *untracked) if path and not _is_user_owned_path(path)
+    }
     return tuple(sorted(paths))
 
 
-def _summary_matches_changed_paths(summary_files: tuple[str, ...], changed_paths: tuple[str, ...]) -> bool:
+def _summary_matches_changed_paths(
+    summary_files: tuple[str, ...], changed_paths: tuple[str, ...]
+) -> bool:
     return len(summary_files) == len(set(summary_files)) and set(summary_files) == set(changed_paths)
 
 
@@ -190,10 +195,31 @@ def _failed_report(
 
 
 def _post_worker_paths(plan: GrokTaskPlan) -> tuple[str, ...]:
-    _assert_head_unchanged(plan.repository, plan.base_commit)
+    try:
+        verify_workspace_snapshot(plan.repository, plan.snapshot)
+        assert_allowed_paths_have_no_symlinks(plan.repository, plan.contract.allowed_paths)
+    except GrokWorkspaceGuardError as error:
+        raise GrokTaskRunnerError(str(error)) from error
     changed_paths = _changed_paths(plan.repository, plan.base_commit)
     assert_changed_paths_allowed(changed_paths, plan.contract.allowed_paths)
     return changed_paths
+
+
+def _run_contract_verification(plan: GrokTaskPlan) -> bool:
+    commands = (*plan.contract.required_commands, *plan.contract.manual_qa_commands)
+    try:
+        return run_contract_commands(commands, cwd=plan.repository)
+    except GrokVerificationError:
+        return False
+
+
+def _parse_summary(plan: GrokTaskPlan, stdout: str) -> GrokWorkerSummary | None:
+    required = frozenset((*plan.contract.required_commands, *plan.contract.manual_qa_commands))
+    return parse_worker_summary(
+        stdout,
+        allowed_paths=frozenset(plan.contract.allowed_paths),
+        required_verification=required,
+    )
 
 
 def run_grok_task(plan: GrokTaskPlan, *, dry_run: bool) -> GrokTaskReport:
@@ -208,32 +234,39 @@ def run_grok_task(plan: GrokTaskPlan, *, dry_run: bool) -> GrokTaskReport:
             summary=None,
         )
 
+    worker_exit_code: int | None
+    stdout_text = ""
     try:
-        completed = subprocess.run(
+        result = run_worker_process(
             plan.command,
             cwd=plan.repository,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=_GROK_TIMEOUT_SECONDS,
+            timeout_seconds=_GROK_TIMEOUT_SECONDS,
+            max_stdout_bytes=_MAX_WORKER_STDOUT_BYTES,
         )
-    except (OSError, subprocess.TimeoutExpired):
+        worker_exit_code = result.returncode
+        stdout_text = result.stdout.decode("utf-8", errors="replace")
+    except (OSError, TimeoutError, WorkerProcessError):
         return _failed_report(plan, changed_paths=_post_worker_paths(plan), worker_exit_code=None)
 
     changed_paths = _post_worker_paths(plan)
-    summary = parse_worker_summary(completed.stdout)
+    summary = _parse_summary(plan, stdout_text)
     if (
-        completed.returncode != 0
+        worker_exit_code != 0
         or summary is None
         or not _summary_matches_changed_paths(summary.changed_files, changed_paths)
     ):
-        return _failed_report(plan, changed_paths=changed_paths, worker_exit_code=completed.returncode)
+        return _failed_report(plan, changed_paths=changed_paths, worker_exit_code=worker_exit_code)
+    if not _run_contract_verification(plan):
+        return _failed_report(plan, changed_paths=changed_paths, worker_exit_code=worker_exit_code)
+    changed_paths = _post_worker_paths(plan)
+    if not _summary_matches_changed_paths(summary.changed_files, changed_paths):
+        return _failed_report(plan, changed_paths=changed_paths, worker_exit_code=worker_exit_code)
     return GrokTaskReport(
         schema_version=1,
         task_id=plan.task_id,
         base_commit=plan.base_commit,
         status="completed",
         changed_paths=changed_paths,
-        worker_exit_code=completed.returncode,
+        worker_exit_code=worker_exit_code,
         summary=summary,
     )
