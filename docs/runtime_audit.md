@@ -503,3 +503,10 @@
 - 최초 관찰: fleet audit은 payload hash와 cycle ID를 재계산했지만 reader가 private file mode·소유자·symlink를 검사하지 않았고 writer도 explicit single-writer transaction을 시작하지 않았다. 전역 capability registry로 연결되는 owner coverage 계약도 없었다.
 - 수정: audit store에 mode 600/current owner/regular file/no-symlink와 `BEGIN IMMEDIATE`를 추가했다. projection은 policy/fleet/gate 상호일관성, owner/runtime status, profile·feature digest와 unique symbol을 재검증하고 owner READY 비율을 source completeness bps로 집계한다.
 - 결과: 2/2 READY는 complete 10000 bps, 1/2 sequence gap은 degraded 5000 bps로 append된다. cycle 완료시각은 실제 event 시각을 위조하지 않고 source heartbeat에만 기록된다. local CLI exact retry는 추가 row 0건이며 provider·credential·account/order endpoint와 mutation은 0건이다.
+
+## H71: metadata-only canonical envelope에서 claim 내용을 추측한다
+
+- 판별 기준: claim extraction이 active canonical event의 exact source/content/raw receipt/entity에 결합되는지, LLM model·prompt·output identity 없이 증거가 생성되는지, derived artifact가 원문 reference를 재배포하는지 확인한다.
+- 최초 관찰: canonical Parquet는 event envelope와 content hash를 보존하지만 정규화된 뉴스·공시 내용은 포함하지 않는다. 이 envelope만으로 claim을 생성하면 hash에서 의미를 추측하거나 별도 extractor의 lineage를 잃게 된다.
+- 수정: 별도 extraction 계약이 event ID, content hash, source, raw receipt와 entity set을 모두 고정한다. deterministic과 LLM 방식을 분리하고 LLM은 model/prompt version을 필수화했다. read model은 active event exact match 뒤에만 독립 source, stance conflict, current/baseline novelty와 burst를 계산한다.
+- 결과: source/hash/receipt/entity mismatch, future extraction과 tombstone event는 fail-closed다. content-addressed mode-600 artifact에는 claim evidence ID와 집계만 남고 raw receipt reference와 원문은 없다. 이 커널은 실제 extraction adapter나 주문·승격 권한을 만들지 않는다.
