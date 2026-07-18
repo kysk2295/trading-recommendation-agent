@@ -12,14 +12,18 @@ from pathlib import Path
 from typing import final
 
 from trading_agent.canonical_duckdb_replay import replay_canonical_dataset
+from trading_agent.data_foundation_manifest import DataFoundationManifest
+from trading_agent.strategy_data_gate import StrategyDataStatus
 from trading_agent.us_opportunity_scanner_models import (
     StoredUsOpportunityRaw,
     UsOpportunityScannerProjectionError,
+    UsOpportunityScannerProjectionRecord,
     decode_broad_scanner_snapshot,
     encode_broad_scanner_snapshot,
 )
 from trading_agent.us_opportunity_scanner_schema import (
     CREATE_US_OPPORTUNITY_SCANNER_SCHEMA,
+    MIGRATE_US_OPPORTUNITY_SCANNER_V1_TO_V2,
     US_OPPORTUNITY_SCANNER_SCHEMA_VERSION,
 )
 from trading_agent.us_subscription_models import BroadScannerSnapshot
@@ -87,8 +91,7 @@ class UsOpportunityScannerStore:
             with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
                 _require_schema(connection)
                 row: tuple[str] | None = connection.execute(
-                    "SELECT dataset_directory FROM us_opportunity_scanner_projections "
-                    "WHERE projection_key = ?",
+                    "SELECT dataset_directory FROM us_opportunity_scanner_projections WHERE projection_key = ?",
                     (projection_key,),
                 ).fetchone()
             return None if row is None else Path(row[0])
@@ -97,28 +100,27 @@ class UsOpportunityScannerStore:
 
     def append_projection(
         self,
-        dataset_id: str,
-        projection_key: str,
-        opportunity_id: str,
-        dataset_directory: Path,
-        snapshot: BroadScannerSnapshot,
-        recorded_at: dt.datetime,
+        record: UsOpportunityScannerProjectionRecord,
     ) -> None:
         try:
             row = (
-                dataset_id,
-                projection_key,
-                opportunity_id,
-                str(dataset_directory),
-                encode_broad_scanner_snapshot(snapshot),
-                recorded_at.isoformat(),
+                record.dataset_id,
+                record.projection_key,
+                record.opportunity_id,
+                str(record.dataset_directory),
+                encode_broad_scanner_snapshot(record.snapshot),
+                record.foundation.manifest_id,
+                record.foundation.model_dump_json().encode(),
+                record.security_master_id,
+                record.recorded_at.isoformat(),
             )
             with _writer(self.path) as connection:
                 existing = connection.execute(
                     "SELECT dataset_id,projection_key,opportunity_id,dataset_directory,"
-                    "snapshot_payload,recorded_at "
+                    "snapshot_payload,foundation_manifest_id,foundation_payload,"
+                    "security_master_id,recorded_at "
                     "FROM us_opportunity_scanner_projections WHERE projection_key = ?",
-                    (projection_key,),
+                    (record.projection_key,),
                 ).fetchone()
                 if existing is not None:
                     if tuple(existing) != row:
@@ -127,7 +129,8 @@ class UsOpportunityScannerStore:
                 _ = connection.execute(
                     "INSERT INTO us_opportunity_scanner_projections "
                     "(dataset_id,projection_key,opportunity_id,dataset_directory,snapshot_payload,"
-                    "recorded_at) VALUES (?,?,?,?,?,?)",
+                    "foundation_manifest_id,foundation_payload,security_master_id,recorded_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?)",
                     row,
                 )
                 connection.commit()
@@ -140,14 +143,37 @@ class UsOpportunityScannerStore:
         try:
             with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
                 _require_schema(connection)
-                row: tuple[str, bytes] | None = connection.execute(
-                    "SELECT dataset_directory,snapshot_payload "
+                row: tuple[str, bytes, str, bytes] | None = connection.execute(
+                    "SELECT dataset_directory,snapshot_payload,foundation_manifest_id,"
+                    "foundation_payload "
                     "FROM us_opportunity_scanner_projections ORDER BY generation DESC LIMIT 1"
                 ).fetchone()
             if row is None:
                 return None
             replay = replay_canonical_dataset(Path(row[0]))
-            return decode_broad_scanner_snapshot(row[1], replay)
+            snapshot = decode_broad_scanner_snapshot(row[1], replay)
+            _ = _decode_foundation(row[3], row[2], snapshot.observed_at)
+            return snapshot
+        except (OSError, sqlite3.Error, TypeError, ValueError):
+            raise UsOpportunityScannerProjectionError from None
+
+    def latest_foundation(self) -> DataFoundationManifest | None:
+        if not self.path.is_file():
+            return None
+        try:
+            with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
+                _require_schema(connection)
+                row: tuple[str, bytes, str] | None = connection.execute(
+                    "SELECT foundation_manifest_id,foundation_payload,recorded_at "
+                    "FROM us_opportunity_scanner_projections ORDER BY generation DESC LIMIT 1"
+                ).fetchone()
+            if row is None:
+                return None
+            return _decode_foundation(
+                row[1],
+                row[0],
+                dt.datetime.fromisoformat(row[2]),
+            )
         except (OSError, sqlite3.Error, TypeError, ValueError):
             raise UsOpportunityScannerProjectionError from None
 
@@ -207,7 +233,26 @@ def _prepare(connection: sqlite3.Connection) -> None:
         connection.executescript(CREATE_US_OPPORTUNITY_SCANNER_SCHEMA)
         _ = connection.execute(f"PRAGMA user_version = {US_OPPORTUNITY_SCANNER_SCHEMA_VERSION}")
         connection.commit()
+    elif version == (1,):
+        connection.executescript(MIGRATE_US_OPPORTUNITY_SCANNER_V1_TO_V2)
+        _ = connection.execute(f"PRAGMA user_version = {US_OPPORTUNITY_SCANNER_SCHEMA_VERSION}")
+        connection.commit()
     _require_schema(connection)
+
+
+def _decode_foundation(
+    payload: bytes,
+    manifest_id: str,
+    observed_at: dt.datetime,
+) -> DataFoundationManifest:
+    foundation = DataFoundationManifest.model_validate_json(payload)
+    if (
+        foundation.manifest_id != manifest_id
+        or foundation.evaluated_at > observed_at
+        or foundation.evaluate_data_readiness().status is not StrategyDataStatus.READY
+    ):
+        raise UsOpportunityScannerProjectionError
+    return foundation
 
 
 def _require_schema(connection: sqlite3.Connection) -> None:

@@ -20,9 +20,11 @@ def test_watch_scan_command_uses_ten_candidate_portfolio_by_default(tmp_path: Pa
     # When: the watch builds its child scan command.
     command = run_kis_paper_watch._scan_command(
         tmp_path,
-        run_kis_paper_watch.StrategyMode.GAP_AND_GO,
-        10,
-        max_pages,
+        run_kis_paper_watch.WatchScanConfig(
+            run_kis_paper_watch.StrategyMode.GAP_AND_GO,
+            10,
+            max_pages,
+        ),
     )
 
     # Then: both the portfolio cap and bounded history request reach the child.

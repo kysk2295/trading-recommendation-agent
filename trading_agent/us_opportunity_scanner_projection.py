@@ -26,6 +26,7 @@ from trading_agent.us_equity_calendar import NEW_YORK
 from trading_agent.us_opportunity_scanner_models import (
     StoredUsOpportunityRaw,
     UsOpportunityScannerProjectionError,
+    UsOpportunityScannerProjectionRecord,
 )
 from trading_agent.us_opportunity_scanner_store import UsOpportunityScannerStore
 from trading_agent.us_opportunity_security_resolution import (
@@ -80,12 +81,16 @@ class UsOpportunityScannerProjector:
                     raise UsOpportunityScannerProjectionError
                 snapshot = _snapshot(opportunity, resolved, replay)
                 self._store.append_projection(
-                    replay.dataset_id,
-                    projection_key,
-                    opportunity.opportunity_id,
-                    existing,
-                    snapshot,
-                    opportunity.observed_at,
+                    UsOpportunityScannerProjectionRecord(
+                        replay.dataset_id,
+                        projection_key,
+                        opportunity.opportunity_id,
+                        existing,
+                        snapshot,
+                        foundation,
+                        None if security_master is None else security_master.snapshot_id,
+                        opportunity.observed_at,
+                    )
                 )
                 return snapshot
             publication = write_canonical_dataset_parquet(
@@ -104,12 +109,16 @@ class UsOpportunityScannerProjector:
             replay = replay_canonical_dataset(publication.dataset_directory)
             snapshot = _snapshot(opportunity, resolved, replay)
             self._store.append_projection(
-                replay.dataset_id,
-                projection_key,
-                opportunity.opportunity_id,
-                publication.dataset_directory,
-                snapshot,
-                opportunity.observed_at,
+                UsOpportunityScannerProjectionRecord(
+                    replay.dataset_id,
+                    projection_key,
+                    opportunity.opportunity_id,
+                    publication.dataset_directory,
+                    snapshot,
+                    foundation,
+                    None if security_master is None else security_master.snapshot_id,
+                    opportunity.observed_at,
+                )
             )
             return snapshot
         except (KeyError, OSError, TypeError, ValueError):
@@ -117,10 +126,7 @@ class UsOpportunityScannerProjector:
 
 
 def _opportunity_payload(opportunity: OpportunitySnapshot) -> bytes:
-    if (
-        type(opportunity) is not OpportunitySnapshot
-        or opportunity.strategy_lane.market_id is not MarketId.US_EQUITIES
-    ):
+    if type(opportunity) is not OpportunitySnapshot or opportunity.strategy_lane.market_id is not MarketId.US_EQUITIES:
         raise UsOpportunityScannerProjectionError
     return json.dumps(
         opportunity.model_dump(mode="json"),

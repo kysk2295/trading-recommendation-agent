@@ -109,14 +109,29 @@ response without opening account or order APIs. Exact bytes enter a private
 append-only ledger before strict parsing. Active listed supported assets become
 point-in-time instruments keyed by the stable Alpaca asset UUID and one
 provider-symbol alias. The latest reader recomputes the raw payload hash and
-receipt identity. External snapshots are limited to three days and can only be
+receipt identity. External snapshots are limited to one day and can only be
 combined with a ready non-fixture foundation. The actual read-only QA preserved
 33,351 raw rows, projected 13,011 active instruments, and resolved an actual
-symbol into the canonical scanner path. The next dependency is producing the
-non-fixture foundation from current SIP runtime evidence.
+symbol into the canonical scanner path. The next dependency is producing a
+causal broad-scanner foundation without candidate-specific SIP evidence first.
 Focused security-master and scanner integration tests total 25; the full
 2187-test suite, Ruff, basedpyright, compileall, actual GET QA, and no-excuse
 all pass.
+
+**Broad-scanner foundation checkpoint (2026-07-19): Complete.** The circular
+SIP dependency is removed: complete KIS up/down and volume coverage for AMS,
+NAS, and NYS plus current NYSE halts and a one-day-current Alpaca instrument
+snapshot deterministically produce the non-fixture ready foundation. Its ID
+binds the exact Opportunity, security snapshot, and source coverage. The exact
+foundation payload and optional security snapshot ID are stored in the same
+append-only scanner projection row as the replay-bound snapshot. Schema v1
+stores migrate forward before their first v2 projection, while legacy rows
+without foundation evidence fail closed on replay. Both one-shot KIS scan and
+the regular-session watch accept the operational security-master mode; watch
+paths are all-or-none and never carry credential, arm, endpoint, or mutation
+flags. A local E2E used the actual 13,011-instrument snapshot to produce one
+canonical candidate and a ready three-source foundation without external I/O.
+SIP remains downstream bounded feature evidence for selected candidates.
 
 ### M4.3: Read-Only Runtime Supervisor
 

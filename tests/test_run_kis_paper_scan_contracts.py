@@ -5,6 +5,7 @@ import json
 from decimal import Decimal
 from pathlib import Path
 
+import httpx2
 import pytest
 import typer
 
@@ -18,8 +19,12 @@ from run_kis_paper_scan import (
     publish_opportunity_contract,
     publish_trade_signal_contracts,
 )
+from trading_agent.alpaca_http import AlpacaCredentials
+from trading_agent.alpaca_security_master import collect_alpaca_security_master
+from trading_agent.alpaca_security_master_store import AlpacaSecurityMasterStore
 from trading_agent.contract_outbox import ContractOutboxConflictError
 from trading_agent.kis_provider import KisRankedStock
+from trading_agent.kis_research_projection import ResearchProjectionOptions
 from trading_agent.kis_us_quote import KisUsLevelOneQuote
 from trading_agent.market_risk import (
     HaltSnapshot,
@@ -113,20 +118,43 @@ def test_failed_discovery_publishes_no_v2_contract(tmp_path: Path) -> None:
 
 
 def test_research_projection_configuration_is_all_or_none(tmp_path: Path) -> None:
-    assert configure_research_projection(None, None, None) is None
+    assert configure_research_projection(ResearchProjectionOptions(None, None, None)) is None
 
     with pytest.raises(typer.BadParameter, match="research projection"):
         _ = configure_research_projection(
-            str(FOUNDATION),
-            str(tmp_path / "scanner.sqlite3"),
-            None,
+            ResearchProjectionOptions(
+                str(FOUNDATION),
+                str(tmp_path / "scanner.sqlite3"),
+                None,
+            )
         )
     with pytest.raises(typer.BadParameter, match="research projection"):
         _ = configure_research_projection(
+            ResearchProjectionOptions(
+                None,
+                None,
+                None,
+                str(tmp_path / "security-master.sqlite3"),
+            )
+        )
+    dynamic = configure_research_projection(
+        ResearchProjectionOptions(
             None,
-            None,
-            None,
+            str(tmp_path / "dynamic-scanner.sqlite3"),
+            str(tmp_path / "dynamic-canonical"),
             str(tmp_path / "security-master.sqlite3"),
+        )
+    )
+    assert dynamic is not None
+    assert dynamic.foundation_manifest is None
+    with pytest.raises(typer.BadParameter, match="mutually exclusive"):
+        _ = configure_research_projection(
+            ResearchProjectionOptions(
+                str(FOUNDATION),
+                str(tmp_path / "scanner.sqlite3"),
+                str(tmp_path / "canonical"),
+                str(tmp_path / "security-master.sqlite3"),
+            )
         )
 
 
@@ -162,9 +190,11 @@ def test_opportunity_projects_to_durable_replay_bound_scanner_input(
     )
     assert opportunity is not None
     config = configure_research_projection(
-        str(FOUNDATION),
-        str(tmp_path / "scanner.sqlite3"),
-        str(tmp_path / "canonical"),
+        ResearchProjectionOptions(
+            str(FOUNDATION),
+            str(tmp_path / "scanner.sqlite3"),
+            str(tmp_path / "canonical"),
+        )
     )
     assert config is not None
 
@@ -176,14 +206,96 @@ def test_opportunity_projects_to_durable_replay_bound_scanner_input(
     assert UsOpportunityScannerStore(config.store).latest_snapshot() == snapshot
 
     missing_security = configure_research_projection(
-        str(FOUNDATION),
-        str(tmp_path / "scanner-2.sqlite3"),
-        str(tmp_path / "canonical-2"),
-        str(tmp_path / "missing-security.sqlite3"),
+        ResearchProjectionOptions(
+            None,
+            str(tmp_path / "scanner-2.sqlite3"),
+            str(tmp_path / "canonical-2"),
+            str(tmp_path / "missing-security.sqlite3"),
+        )
     )
     assert missing_security is not None
     with pytest.raises(UsOpportunityScannerProjectionError):
         _ = project_opportunity_research_input(opportunity, missing_security)
+
+
+def test_dynamic_security_store_builds_ready_foundation_for_kis_opportunity(
+    tmp_path: Path,
+) -> None:
+    observed_at = dt.datetime(2026, 7, 20, 13, 30, tzinfo=dt.UTC)
+    stock = KisRankedStock(
+        exchange="NAS",
+        symbol="FIXT",
+        name="Fixture",
+        change_pct=0.125,
+        price=10.0,
+        bid=9.99,
+        ask=10.01,
+        volume=1_500_000,
+        dollar_volume=15_000_000.0,
+        average_daily_volume=1_000_000,
+        rank=1,
+    )
+    opportunity = publish_opportunity_contract(
+        tmp_path,
+        _complete_discovery(stock),
+        HaltSnapshot(observed_at, frozenset()),
+        MarketRiskScreen(
+            observed_at=observed_at,
+            config=MarketRiskConfig(),
+            selected=(stock,),
+            not_selected=(),
+            rejected=(),
+        ),
+        observed_at,
+    )
+    assert opportunity is not None
+    security_path = tmp_path / "security-master.sqlite3"
+    body = json.dumps(
+        (
+            {
+                "id": "asset-fixt",
+                "class": "us_equity",
+                "exchange": "NASDAQ",
+                "symbol": "FIXT",
+                "name": "Fixture",
+                "status": "active",
+                "tradable": True,
+            },
+        )
+    ).encode()
+    with httpx2.Client(
+        base_url="https://paper-api.alpaca.markets",
+        transport=httpx2.MockTransport(lambda request: httpx2.Response(200, content=body)),
+        follow_redirects=False,
+    ) as client:
+        _ = collect_alpaca_security_master(
+            client,
+            AlpacaCredentials("fixture-key", "fixture-secret"),
+            AlpacaSecurityMasterStore(security_path),
+            observed_at=observed_at - dt.timedelta(minutes=1),
+        )
+    config = configure_research_projection(
+        ResearchProjectionOptions(
+            None,
+            str(tmp_path / "scanner.sqlite3"),
+            str(tmp_path / "canonical"),
+            str(security_path),
+        )
+    )
+    assert config is not None
+
+    snapshot = project_opportunity_research_input(opportunity, config)
+
+    assert snapshot is not None
+    assert snapshot.candidates[0].instrument_id == "alpaca:asset-fixt"
+    foundation = UsOpportunityScannerStore(config.store).latest_foundation()
+    assert foundation is not None
+    assert foundation.evaluate_data_readiness().status.value == "ready"
+    assert tuple(item.source_id.canonical_id for item in foundation.capabilities) == (
+        "alpaca/assets",
+        "kis/us_ranking",
+        "nyse/current_halts",
+    )
 
 
 def test_signal_helper_is_idempotent_and_does_not_touch_the_v1_outbox(
@@ -294,16 +406,18 @@ def test_fake_quote_path_appends_conditional_then_validated_contracts(
     batch = evaluate_quote_publications(
         publications,
         exchange_by_symbol={"ACME": "NAS"},
-        fetch_quote=lambda exchange, symbol: calls.append((exchange, symbol))
-        or KisUsLevelOneQuote(
-            exchange=exchange,
-            symbol=symbol,
-            provider_observed_at=evaluated_at - dt.timedelta(seconds=1),
-            received_at=evaluated_at - dt.timedelta(milliseconds=500),
-            bid=Decimal("10.49"),
-            ask=Decimal("10.50"),
-            bid_size=1_000,
-            ask_size=900,
+        fetch_quote=lambda exchange, symbol: (
+            calls.append((exchange, symbol))
+            or KisUsLevelOneQuote(
+                exchange=exchange,
+                symbol=symbol,
+                provider_observed_at=evaluated_at - dt.timedelta(seconds=1),
+                received_at=evaluated_at - dt.timedelta(milliseconds=500),
+                bid=Decimal("10.49"),
+                ask=Decimal("10.50"),
+                bid_size=1_000,
+                ask_size=900,
+            )
         ),
         scan_started_at=OBSERVED_AT,
         clock=lambda: evaluated_at,
@@ -317,25 +431,14 @@ def test_fake_quote_path_appends_conditional_then_validated_contracts(
     assert counts.validated_signal_count == 1
     assert counts.assessment_count == 1
     signals = tuple(
-        json.loads(line)
-        for line in (tmp_path / "trade-signals.v1.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
+        json.loads(line) for line in (tmp_path / "trade-signals.v1.jsonl").read_text(encoding="utf-8").splitlines()
     )
     assert tuple(item["signal"]["actionability"] for item in signals) == (
         "conditional",
         "current_quote_validated",
     )
-    assert len(
-        (tmp_path / "us-quote-snapshots.v2.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
-    ) == 1
-    assert len(
-        (tmp_path / "quote-actionability-assessments.v2.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
-    ) == 1
+    assert len((tmp_path / "us-quote-snapshots.v2.jsonl").read_text(encoding="utf-8").splitlines()) == 1
+    assert len((tmp_path / "quote-actionability-assessments.v2.jsonl").read_text(encoding="utf-8").splitlines()) == 1
     assert len(tuple((tmp_path / "trade-signal-cards-ko").glob("*.ko.md"))) == 2
 
 
@@ -379,19 +482,13 @@ def test_conflicting_terminal_batch_writes_no_partial_quote_artifacts(
         tmp_path / "quote-actionability-assessments.v2.jsonl",
     )
     before = {path: path.read_bytes() for path in paths}
-    cards_before = {
-        path.name: path.read_bytes()
-        for path in (tmp_path / "trade-signal-cards-ko").iterdir()
-    }
+    cards_before = {path.name: path.read_bytes() for path in (tmp_path / "trade-signal-cards-ko").iterdir()}
 
     with pytest.raises(ContractOutboxConflictError):
         _ = append_quote_actionability_contracts(tmp_path, second)
 
     assert {path: path.read_bytes() for path in paths} == before
-    assert {
-        path.name: path.read_bytes()
-        for path in (tmp_path / "trade-signal-cards-ko").iterdir()
-    } == cards_before
+    assert {path.name: path.read_bytes() for path in (tmp_path / "trade-signal-cards-ko").iterdir()} == cards_before
 
 
 def test_v2_quote_contracts_leave_legacy_v1_files_untouched(

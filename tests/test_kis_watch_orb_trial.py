@@ -11,6 +11,7 @@ import pytest
 import typer
 
 import run_kis_paper_watch as watch
+from trading_agent import kis_watch_research_projection as watch_research
 from trading_agent.orb_forward_trial import OrbTrialFailurePhase
 from trading_agent.store import PaperStore
 
@@ -22,6 +23,65 @@ AFTER_CLOSE = dt.datetime(2026, 7, 10, 16, 1, tzinfo=ZoneInfo("America/New_York"
 _UV = shutil.which("uv")
 assert _UV is not None
 UV = Path(_UV)
+
+
+def test_research_projection_watch_configuration_is_all_or_none(
+    tmp_path: Path,
+) -> None:
+    assert watch._research_projection_watch_config(None, None, None) is None
+
+    with pytest.raises(typer.BadParameter, match="research projection"):
+        _ = watch._research_projection_watch_config(
+            tmp_path / "scanner.sqlite3",
+            tmp_path / "canonical",
+            None,
+        )
+
+    assert watch._research_projection_watch_config(
+        tmp_path / "scanner.sqlite3",
+        tmp_path / "canonical",
+        tmp_path / "security.sqlite3",
+    ) == watch_research.ResearchProjectionWatchConfig(
+        tmp_path / "scanner.sqlite3",
+        tmp_path / "canonical",
+        tmp_path / "security.sqlite3",
+    )
+
+
+def test_watch_scan_command_passes_operational_research_projection_paths(
+    tmp_path: Path,
+) -> None:
+    research = watch_research.ResearchProjectionWatchConfig(
+        tmp_path / "scanner.sqlite3",
+        tmp_path / "canonical",
+        tmp_path / "security.sqlite3",
+    )
+
+    command = watch._scan_command(
+        tmp_path / "session",
+        watch.WatchScanConfig(watch.StrategyMode.ORB, 7, 2, research),
+    )
+
+    assert command == (
+        str(PROJECT / "run_kis_paper_scan.py"),
+        "--output-dir",
+        str(tmp_path / "session"),
+        "--strategy",
+        "orb",
+        "--top",
+        "7",
+        "--max-pages",
+        "2",
+        "--research-projection-store",
+        str(research.projection_store),
+        "--research-canonical-root",
+        str(research.canonical_root),
+        "--research-security-master-store",
+        str(research.security_master_store),
+    )
+    joined = " ".join(command).lower()
+    for forbidden in ("--arm", "--credential", "--endpoint", "--fixture", "--force"):
+        assert forbidden not in joined
 
 
 def test_trial_configuration_is_opt_in_orb_only_and_requires_lane_paths(

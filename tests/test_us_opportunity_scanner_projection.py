@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import sqlite3
 from decimal import Decimal
 from pathlib import Path
 
@@ -48,8 +49,9 @@ def test_verified_opportunity_projection_drives_bounded_subscription_policy(
 ) -> None:
     store = UsOpportunityScannerStore(tmp_path / "scanner.sqlite3")
     projector = UsOpportunityScannerProjector(store, tmp_path / "canonical")
+    foundation = load_data_foundation_manifest(FOUNDATION)
 
-    snapshot = projector.project(_opportunity(), load_data_foundation_manifest(FOUNDATION))
+    snapshot = projector.project(_opportunity(), foundation)
     decision = build_subscription_policy_decision(
         snapshot,
         evaluated_at=OBSERVED_AT,
@@ -69,6 +71,7 @@ def test_verified_opportunity_projection_drives_bounded_subscription_policy(
     assert store.raw_count() == 1
     assert store.projection_count() == 1
     assert store.latest_snapshot() == snapshot
+    assert store.latest_foundation() == foundation
     assert len(tuple((tmp_path / "canonical").rglob("events.parquet"))) == 1
 
 
@@ -89,6 +92,36 @@ def test_exact_projection_retry_reuses_raw_receipt_and_verified_dataset(
     assert len(tuple((tmp_path / "canonical").rglob("events.parquet"))) == 1
 
 
+def test_empty_v1_store_migrates_before_first_audited_projection(tmp_path: Path) -> None:
+    database = tmp_path / "scanner.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            "CREATE TABLE us_opportunity_scanner_raw ("
+            "generation INTEGER PRIMARY KEY AUTOINCREMENT,receipt_id TEXT NOT NULL UNIQUE,"
+            "opportunity_id TEXT NOT NULL UNIQUE,observed_at TEXT NOT NULL,"
+            "payload_sha256 TEXT NOT NULL,raw_payload BLOB NOT NULL);"
+            "CREATE TABLE us_opportunity_scanner_projections ("
+            "generation INTEGER PRIMARY KEY AUTOINCREMENT,dataset_id TEXT NOT NULL UNIQUE,"
+            "projection_key TEXT NOT NULL UNIQUE,opportunity_id TEXT NOT NULL UNIQUE,"
+            "dataset_directory TEXT NOT NULL,snapshot_payload BLOB NOT NULL,"
+            "recorded_at TEXT NOT NULL);"
+            "PRAGMA user_version = 1;"
+        )
+
+    store = UsOpportunityScannerStore(database)
+    foundation = load_data_foundation_manifest(FOUNDATION)
+    snapshot = UsOpportunityScannerProjector(store, tmp_path / "canonical").project(
+        _opportunity(),
+        foundation,
+    )
+
+    with sqlite3.connect(database) as connection:
+        version = connection.execute("PRAGMA user_version").fetchone()
+    assert version == (2,)
+    assert store.latest_snapshot() == snapshot
+    assert store.latest_foundation() == foundation
+
+
 def test_latest_snapshot_reverifies_immutable_canonical_dataset(tmp_path: Path) -> None:
     store = UsOpportunityScannerStore(tmp_path / "scanner.sqlite3")
     projector = UsOpportunityScannerProjector(store, tmp_path / "canonical")
@@ -101,6 +134,24 @@ def test_latest_snapshot_reverifies_immutable_canonical_dataset(tmp_path: Path) 
         match="US opportunity scanner projection is invalid",
     ):
         _ = store.latest_snapshot()
+
+
+def test_latest_readers_reject_foundation_identity_column_mismatch(tmp_path: Path) -> None:
+    database = tmp_path / "scanner.sqlite3"
+    store = UsOpportunityScannerStore(database)
+    projector = UsOpportunityScannerProjector(store, tmp_path / "canonical")
+    _ = projector.project(_opportunity(), load_data_foundation_manifest(FOUNDATION))
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TRIGGER us_opportunity_scanner_projections_no_update")
+        connection.execute(
+            "UPDATE us_opportunity_scanner_projections SET foundation_manifest_id = 'tampered-foundation'"
+        )
+        connection.commit()
+
+    with pytest.raises(UsOpportunityScannerProjectionError):
+        _ = store.latest_snapshot()
+    with pytest.raises(UsOpportunityScannerProjectionError):
+        _ = store.latest_foundation()
 
 
 def test_missing_symbol_alias_preserves_raw_evidence_but_blocks_projection(
@@ -161,7 +212,7 @@ def test_future_security_master_preserves_opportunity_raw_but_blocks_projection(
 @pytest.mark.parametrize(
     ("security_observed_at", "foundation"),
     (
-        (OBSERVED_AT - dt.timedelta(days=3, seconds=1), None),
+        (OBSERVED_AT - dt.timedelta(days=1, seconds=1), None),
         (OBSERVED_AT - dt.timedelta(minutes=1), "fixture"),
     ),
 )
@@ -175,9 +226,7 @@ def test_stale_security_or_fixture_foundation_blocks_external_master(
         tmp_path / "canonical",
     )
     selected_foundation = (
-        load_data_foundation_manifest(FOUNDATION)
-        if foundation == "fixture"
-        else _operational_foundation()
+        load_data_foundation_manifest(FOUNDATION) if foundation == "fixture" else _operational_foundation()
     )
 
     with pytest.raises(UsOpportunityScannerProjectionError):
@@ -274,14 +323,8 @@ def _operational_foundation() -> DataFoundationManifest:
         registered_at=fixture.registered_at,
         evaluated_at=fixture.evaluated_at,
         strategy_lane=fixture.strategy_lane,
-        capabilities=tuple(
-            item.model_copy(update={"source_id": source})
-            for item in fixture.capabilities
-        ),
-        entitlements=tuple(
-            item.model_copy(update={"source_id": source})
-            for item in fixture.entitlements
-        ),
+        capabilities=tuple(item.model_copy(update={"source_id": source}) for item in fixture.capabilities),
+        entitlements=tuple(item.model_copy(update={"source_id": source}) for item in fixture.entitlements),
         requirements=tuple(
             item.model_copy(
                 update={
@@ -294,8 +337,5 @@ def _operational_foundation() -> DataFoundationManifest:
         instruments=fixture.instruments,
         aliases=fixture.aliases,
         corporate_actions=fixture.corporate_actions,
-        events=tuple(
-            item.model_copy(update={"source_id": source})
-            for item in fixture.events
-        ),
+        events=tuple(item.model_copy(update={"source_id": source}) for item in fixture.events),
     )

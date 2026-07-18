@@ -30,10 +30,7 @@ def resolve_us_opportunity_candidates(
     foundation: DataFoundationManifest,
     security_master: AlpacaSecurityMasterSnapshot | None,
 ) -> tuple[ResolvedUsOpportunityCandidate, ...]:
-    if (
-        type(foundation) is not DataFoundationManifest
-        or foundation.evaluated_at > opportunity.observed_at
-    ):
+    if type(foundation) is not DataFoundationManifest or foundation.evaluated_at > opportunity.observed_at:
         raise UsOpportunityScannerProjectionError
     if security_master is None:
         instruments = foundation.instruments
@@ -43,12 +40,9 @@ def resolve_us_opportunity_candidates(
         if (
             type(security_master) is not AlpacaSecurityMasterSnapshot
             or security_master.observed_at > opportunity.observed_at
-            or opportunity.observed_at - security_master.observed_at > dt.timedelta(days=3)
+            or opportunity.observed_at - security_master.observed_at > dt.timedelta(days=1)
             or foundation.evaluate_data_readiness().status is not StrategyDataStatus.READY
-            or any(
-                capability.source_id.provider == "fixture"
-                for capability in foundation.capabilities
-            )
+            or any(capability.source_id.provider == "fixture" for capability in foundation.capabilities)
         ):
             raise UsOpportunityScannerProjectionError
         instruments = security_master.instruments
@@ -80,8 +74,7 @@ def _resolve_candidate(
         alias
         for alias in aliases
         if alias.value == candidate.symbol
-        and alias.alias_type
-        in {InstrumentAliasType.SYMBOL, InstrumentAliasType.PROVIDER_SYMBOL}
+        and alias.alias_type in {InstrumentAliasType.SYMBOL, InstrumentAliasType.PROVIDER_SYMBOL}
         and alias.effective_from <= opportunity.observed_at
         and (alias.effective_to is None or opportunity.observed_at < alias.effective_to)
     )
@@ -93,10 +86,7 @@ def _resolve_candidate(
         or instrument.asset_class not in {AssetClass.EQUITY, AssetClass.ETF}
         or instrument.currency != "USD"
         or instrument.valid_from > opportunity.observed_at
-        or (
-            instrument.valid_to is not None
-            and opportunity.observed_at >= instrument.valid_to
-        )
+        or (instrument.valid_to is not None and opportunity.observed_at >= instrument.valid_to)
         or candidate.score < 0
     ):
         raise UsOpportunityScannerProjectionError

@@ -391,7 +391,7 @@
 - 판별 기준: `/v2/assets` 응답의 exact bytes, 최초 관측시각, stable instrument ID와 재시작 검증 가능한 snapshot이 있는지 확인한다.
 - 최초 관찰: 기존 archive helper는 응답을 메모리에서 바로 Pydantic으로 파싱하고 symbol CSV를 교체했다. provider schema drift나 시점별 alias를 원문으로 재생할 수 없었다.
 - 수정: GET response를 파싱 전에 mode-600 append-only SQLite에 확정하고, active listed/supported asset만 Alpaca UUID instrument와 provider-symbol alias로 투영한다. latest reader는 raw SHA와 receipt ID를 다시 계산한다.
-- 결과: 실제 원문 33,351행에서 active instrument 13,011개를 확정했고 synthetic KIS candidate가 actual asset UUID와 canonical replay identity에 결합됐다. live trading origin, redirect, duplicate identity, 3일 초과 stale snapshot과 fixture foundation은 차단된다.
+- 결과: 실제 원문 33,351행에서 active instrument 13,011개를 확정했고 synthetic KIS candidate가 actual asset UUID와 canonical replay identity에 결합됐다. live trading origin, redirect, duplicate identity, 1일 초과 stale snapshot과 fixture foundation은 차단된다.
 
 ## H55: 실제 provider schema 확장을 인증 실패로 오인할 수 있다
 
@@ -399,3 +399,10 @@
 - 최초 관찰: 첫 raw 응답에는 기존 모델에 없던 `borrow_status`, `margin_requirement_long`, `margin_requirement_short`가 있었고, 21개 비식별 name에 provider 공백이 포함돼 strict parser가 snapshot 전에 닫혔다. 두 실패 모두 raw receipt는 먼저 보존됐다.
 - 수정: 실제 응답의 필드 집합과 타입만 집계해 새 필드를 명시적으로 계약에 추가했다. 투영에 쓰지 않는 name은 최대 길이만 제한하고, asset UUID·symbol·exchange·class·status 검증은 유지했다.
 - 결과: 세 번째 bounded GET은 ready로 종료됐다. 실제 외부 GET은 총 3건, account/order endpoint와 POST/DELETE mutation은 0건이다.
+
+## H56: broad candidate 이전에 candidate별 SIP evidence를 요구해 구독 순환이 생긴다
+
+- 판별 기준: KIS Opportunity만 존재하고 SIP candidate subscription이 아직 없을 때 non-fixture broad-scanner foundation과 durable M4.2 snapshot을 만들 수 있는지 확인한다.
+- 최초 관찰: actual security master는 있었지만 production projection은 별도 ready foundation을 요구했고, 그 foundation의 다음 입력으로 SIP runtime을 지목했다. 그러나 SIP bounded subscription은 broad scanner candidate가 먼저 있어야 결정되므로 운영 순서가 순환했다.
+- 수정: complete KIS 상승률·거래량 6개 coverage와 NYSE halt coverage, 1일 이내 Alpaca security snapshot을 검증해 세 source의 causal ready foundation을 결정적으로 만든다. exact foundation JSON과 security snapshot ID를 schema v2 scanner projection row에 저장하고 latest reader가 canonical dataset과 foundation을 함께 재검증한다. KIS watch는 projection store·canonical root·security store 세 경로를 all-or-none으로 하위 scan에 전달한다.
+- 결과: 실제 13,011-instrument snapshot과 synthetic KIS Opportunity의 local E2E가 external I/O 없이 ready foundation, canonical candidate 1개, raw/projection row 각 1개를 만들었다. SIP는 broad selection 뒤 feature gate로 남고 계좌·주문·mutation 권한은 추가되지 않았다.

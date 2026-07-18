@@ -18,6 +18,15 @@ from trading_agent.kis_eod_watch import EodWaitConfig, eod_catchup_command, wait
 from trading_agent.kis_live import (
     regular_session_is_open,
 )
+from trading_agent.kis_watch_research_projection import (
+    WatchScanConfig,
+)
+from trading_agent.kis_watch_research_projection import (
+    research_projection_watch_config as _research_projection_watch_config,
+)
+from trading_agent.kis_watch_research_projection import (
+    scan_command as _scan_command,
+)
 from trading_agent.kis_watch_wait import (
     PremarketWaitConfig,
     SessionWaitConfig,
@@ -94,25 +103,6 @@ def finalize_session_output(output: Path, observed_at: dt.datetime) -> int:
     if finalized:
         write_report(output / "recommendations_ko.md", store)
     return finalized
-
-
-def _scan_command(
-    output: Path,
-    strategy: StrategyMode,
-    top: int,
-    max_pages: int,
-) -> tuple[str, ...]:
-    return (
-        str(Path(__file__).with_name("run_kis_paper_scan.py")),
-        "--output-dir",
-        str(output),
-        "--strategy",
-        strategy.value,
-        "--top",
-        str(top),
-        "--max-pages",
-        str(max_pages),
-    )
 
 
 def _premarket_scan_command(output: Path, top: int) -> tuple[str, ...]:
@@ -365,6 +355,9 @@ def main(
     lane_review_ledger: Path | None = None,
     lane_forward_output_dir: Path | None = None,
     experiment_ledger: Path | None = None,
+    research_projection_store: Path | None = None,
+    research_canonical_root: Path | None = None,
+    research_security_master_store: Path | None = None,
 ) -> None:
     if not 1 <= cycles <= 390:
         raise typer.BadParameter("cycles는 1~390이어야 합니다")
@@ -378,6 +371,12 @@ def main(
         raise typer.BadParameter("max-pages는 1~10이어야 합니다")
     if not 60.0 <= premarket_interval_seconds <= 3600.0:
         raise typer.BadParameter("premarket-interval-seconds는 60~3600이어야 합니다")
+    research_projection = _research_projection_watch_config(
+        research_projection_store,
+        research_canonical_root,
+        research_security_master_store,
+    )
+    scan_config = WatchScanConfig(strategy, top, max_pages, research_projection)
     lane_forward_validation = _lane_forward_validation_config(
         strategy,
         lane_execution_database,
@@ -448,7 +447,7 @@ def main(
 
     def scan_once() -> int:
         return _run_and_audit(
-            _scan_command(output, strategy, top, max_pages),
+            _scan_command(output, scan_config),
             output / "watch_cycles.csv",
         )
 

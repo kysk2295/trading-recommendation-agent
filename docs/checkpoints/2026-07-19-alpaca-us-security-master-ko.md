@@ -13,7 +13,7 @@
 - active 상태이고 지원 listed venue와 canonical symbol을 가진 asset만 투영한다. instrument ID는 stable Alpaca asset UUID에 `alpaca:` namespace를 결합한다.
 - provider class `us_equity`는 ETF 여부를 추정하지 않고 현재 계약의 `equity`로 기록한다. 세부 ETF 분류는 별도 authoritative source가 생길 때 correction event로 추가해야 한다.
 - snapshot은 관측시각부터만 유효하다. latest reader는 연결 raw payload SHA-256과 receipt ID를 재계산하고 snapshot payload의 instrument/alias geometry를 다시 검증한다.
-- KIS scanner projector는 optional security-master store가 주어지면 foundation 내부 fixture alias 대신 이 snapshot을 사용한다. snapshot은 미래일 수 없고 3일을 넘길 수 없으며 foundation은 `ready`이고 fixture provider가 없어야 한다.
+- KIS scanner projector는 optional security-master store가 주어지면 foundation 내부 fixture alias 대신 이 snapshot을 사용한다. snapshot은 미래일 수 없고 1일을 넘길 수 없으며 foundation은 `ready`이고 fixture provider가 없어야 한다.
 
 ## 실제 QA
 
@@ -33,4 +33,4 @@
 
 ## 다음 경계
 
-actual security master만으로 현재 SIP data capability가 ready라고 주장하지 않는다. 다음 단계는 실제 Alpaca SIP raw/canonical/runtime checkpoint와 entitlement 설정을 읽어 non-fixture data-foundation manifest를 만드는 local control-plane이다. 그 manifest가 ready일 때만 KIS dynamic candidate projection을 운영 활성화한다.
+actual security master만으로 SIP feature evidence가 ready라고 주장하지 않는다. broad scanner foundation은 완전한 KIS 6개 랭킹·NYSE halt coverage와 이 snapshot으로 만들고, SIP는 그 결과 선택된 bounded candidate의 분봉 feature evidence에만 사용한다.

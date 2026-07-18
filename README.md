@@ -100,7 +100,9 @@ flowchart LR
 
 **2026-07-19 US scanner 운영 투영 업데이트:** KIS의 causal `OpportunitySnapshot`을 M4.2 broad-scanner 입력으로 만드는 실제 생산 경로를 추가했다. opt-in KIS CLI는 data-foundation manifest, mode-600 append-only projection store, private canonical root 세 경로가 모두 있을 때만 활성화된다. Opportunity 원문을 먼저 보존하고 시점 유효한 US instrument alias를 exact match한 뒤 candidate event를 immutable Parquet로 발행하며, DuckDB replay가 검증한 identity와 직렬화된 scanner snapshot을 같은 projection row에 확정한다. 재시작 reader도 Parquet와 identity를 다시 검증하므로 경로·SQLite payload만으로 후보를 신뢰하지 않는다. 일부 설정, alias 누락, 미래 foundation, 변조된 dataset은 fail-closed이고 옵션이 없으면 기존 KIS 스캔은 변하지 않는다. fixture manifest는 `FIXT` 전용이며 실제 동적 후보 운영을 뜻하지 않는다. 다음 입력 단계는 현재 US security master manifest를 raw-first로 생성하는 read-only adapter다.
 
-**2026-07-19 Alpaca US security master 업데이트:** 기존 `GET /v2/assets` universe 호출 앞에 별도 raw-first 경계를 추가했다. exact response bytes는 파싱 전에 mode-600 append-only SQLite에 저장되고, active listed/supported symbol만 Alpaca asset UUID 기반 `InstrumentId`와 provider-symbol alias로 시점 유효 snapshot에 투영된다. latest reader는 snapshot payload뿐 아니라 연결된 raw BLOB의 SHA-256과 receipt ID를 다시 계산한다. strict schema drift, duplicate ID/symbol, stale/future snapshot, live trading origin, redirect와 fixture foundation 결합은 fail-closed다. GET-only CLI의 실제 Paper asset 호출 3회 중 첫 두 회는 새 provider 필드와 비식별 name 공백을 raw 보존 후 차단했고 계약을 보정한 세 번째 호출은 33,351 raw asset 중 active instrument **13,011개**를 확정했다. 계좌·주문 endpoint와 mutation은 0건이다. 실제 snapshot의 symbol을 synthetic KIS Opportunity에 결합해 canonical broad-scanner replay까지 검증했다. 남은 운영 의존성은 현재 SIP evidence에서 생성한 non-fixture `ready` data-foundation manifest다.
+**2026-07-19 Alpaca US security master 업데이트:** 기존 `GET /v2/assets` universe 호출 앞에 별도 raw-first 경계를 추가했다. exact response bytes는 파싱 전에 mode-600 append-only SQLite에 저장되고, active listed/supported symbol만 Alpaca asset UUID 기반 `InstrumentId`와 provider-symbol alias로 시점 유효 snapshot에 투영된다. latest reader는 snapshot payload뿐 아니라 연결된 raw BLOB의 SHA-256과 receipt ID를 다시 계산한다. strict schema drift, duplicate ID/symbol, stale/future snapshot, live trading origin, redirect와 fixture foundation 결합은 fail-closed다. GET-only CLI의 실제 Paper asset 호출 3회 중 첫 두 회는 새 provider 필드와 비식별 name 공백을 raw 보존 후 차단했고 계약을 보정한 세 번째 호출은 33,351 raw asset 중 active instrument **13,011개**를 확정했다. 계좌·주문 endpoint와 mutation은 0건이다. 실제 snapshot의 symbol을 synthetic KIS Opportunity에 결합해 canonical broad-scanner replay까지 검증했다. 이 snapshot은 다음 broad-scanner foundation의 point-in-time universe 입력이다.
+
+**2026-07-19 US broad-scanner foundation 업데이트:** broad candidate를 만들기 전에 narrow SIP evidence를 요구하던 순환 의존성을 제거했다. 완전한 KIS 상승률·거래량 6개 랭킹과 NYSE halt coverage, 1일 이내의 Alpaca security-master snapshot을 결합해 `alpaca/assets`, `kis/us_ranking`, `nyse/current_halts` 세 source의 causal `ready` foundation을 매 cycle 결정적으로 만든다. Opportunity ID·security snapshot ID·coverage가 manifest ID에 결합되고 exact manifest JSON은 scanner snapshot과 같은 append-only SQLite row에 저장된다. schema v1 빈 저장소는 v2로 전진 마이그레이션되며 과거 foundation 없는 row는 재생 시 신뢰하지 않는다. KIS 단발 scan과 watch는 fixture manifest 또는 operational security store 중 하나만 허용하고, watch의 세 operational 경로는 all-or-none이다. 실제 저장된 13,011개 종목 마스터를 사용한 local E2E에서 AAPL 후보, canonical replay, persisted foundation이 `ready`로 확인됐으며 외부 GET·계좌·주문·mutation은 발생하지 않았다. SIP는 이 broad scanner 뒤에 선택된 종목의 feature evidence를 만드는 M4.3/M4.4 경계로 유지된다.
 
 ```bash
 ./run_data_foundation_check.py \
@@ -685,6 +687,22 @@ KIS 날짜별 paper 감시:
   --collect-premarket --premarket-interval-seconds 300 \
   --cycles 390 --interval-seconds 60 --top 10 --max-pages 1
 ```
+
+현재 Alpaca 종목 마스터로 broad-scanner 입력까지 함께 보존하는 operational watch는 세 경로를 모두 지정한다. 이 옵션은 read-only 연구 투영만 추가하며 Paper 주문 권한을 열지 않는다.
+
+```bash
+./run_alpaca_security_master.py \
+  --store outputs/runtime/alpaca-security-master/security-master.sqlite3 \
+  --output-dir outputs/runtime/alpaca-security-master
+
+./run_kis_paper_watch.py --wait-until-open --max-wait-minutes 720 \
+  --cycles 390 --interval-seconds 60 --top 10 --max-pages 1 \
+  --research-projection-store outputs/runtime/us-broad-scanner/scanner.sqlite3 \
+  --research-canonical-root outputs/runtime/us-broad-scanner/canonical \
+  --research-security-master-store outputs/runtime/alpaca-security-master/security-master.sqlite3
+```
+
+첫 명령은 Paper assets endpoint를 GET-only로 한 번 읽어 pre-session 종목 마스터를 갱신한다. 최신 snapshot이 KIS Opportunity보다 미래이거나 1일을 넘으면 watch의 연구 투영은 fail-closed한다.
 
 장 전에 실행하면 최대 대기시간 안에서 뉴욕 정규장 개장을 30초 간격으로 확인한 뒤 시작한다. `--wait-until-open`을 생략하면 폐장 중에는 API를 호출하지 않고 즉시 종료한다.
 `--collect-premarket`을 사용하면 04:00~09:29 ET에는 전용 읽기 전용 CLI가 원시 랭킹과 위험판정만 기본 5분 간격으로 저장하고, 09:30부터 기존 전략 감시로 전환한다. 장전에는 추천 DB·후보 watchlist·분봉 전략 평가를 만들지 않는다.

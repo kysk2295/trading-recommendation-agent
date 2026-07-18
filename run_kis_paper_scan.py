@@ -16,7 +16,6 @@ from scr_backtest.kis_http import (
     end_retry_capture,
 )
 from scr_backtest.kis_intraday import KisSession
-from trading_agent.alpaca_security_master_store import AlpacaSecurityMasterStore
 from trading_agent.bar_archive import track_candidates, tracked_candidates
 from trading_agent.candidate_input_audit import (
     CandidateInputCycleAudit,
@@ -28,7 +27,6 @@ from trading_agent.contract_outbox import (
     append_quote_actionability_batch,
     append_trade_signal_publication,
 )
-from trading_agent.data_foundation_manifest import load_data_foundation_manifest
 from trading_agent.engine import RecommendationEngine
 from trading_agent.kis_auth import (
     KisMode,
@@ -43,6 +41,11 @@ from trading_agent.kis_rankings import (
 )
 from trading_agent.kis_rankings import (
     timestamp_rankings,
+)
+from trading_agent.kis_research_projection import (
+    ResearchProjectionOptions,
+    configure_research_projection,
+    project_opportunity_research_input,
 )
 from trading_agent.kis_retry_audit import append_kis_retry_audit
 from trading_agent.kis_scan import KisPaperScanner, ScanObservation
@@ -80,9 +83,6 @@ from trading_agent.trade_signal_publication import (
     TradeSignalPublication,
     project_trade_signal_publications,
 )
-from trading_agent.us_opportunity_scanner_models import UsOpportunityScannerProjectionError
-from trading_agent.us_opportunity_scanner_projection import UsOpportunityScannerProjector
-from trading_agent.us_opportunity_scanner_store import UsOpportunityScannerStore
 from trading_agent.us_quote_actionability import QuoteAssessmentStatus
 from trading_agent.us_quote_publication import (
     UsQuotePublicationBatch,
@@ -96,59 +96,6 @@ class QuoteContractAppendCounts:
     snapshot_count: int
     validated_signal_count: int
     assessment_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class ResearchProjectionConfig:
-    foundation_manifest: Path
-    store: Path
-    canonical_root: Path
-    security_master_store: Path | None = None
-
-
-def configure_research_projection(
-    foundation_manifest: str | None,
-    store: str | None,
-    canonical_root: str | None,
-    security_master_store: str | None = None,
-) -> ResearchProjectionConfig | None:
-    values = (foundation_manifest, store, canonical_root)
-    if all(value is None for value in values) and security_master_store is None:
-        return None
-    if (
-        foundation_manifest is None
-        or store is None
-        or canonical_root is None
-    ):
-        raise typer.BadParameter(
-            "research projection requires foundation manifest, store, and canonical root"
-        )
-    return ResearchProjectionConfig(
-        Path(foundation_manifest),
-        Path(store),
-        Path(canonical_root),
-        None if security_master_store is None else Path(security_master_store),
-    )
-
-
-def project_opportunity_research_input(
-    opportunity: OpportunitySnapshot | None,
-    config: ResearchProjectionConfig | None,
-) -> BroadScannerSnapshot | None:
-    if opportunity is None or config is None:
-        return None
-    foundation = load_data_foundation_manifest(config.foundation_manifest)
-    security_master = (
-        None
-        if config.security_master_store is None
-        else AlpacaSecurityMasterStore(config.security_master_store).latest_snapshot()
-    )
-    if config.security_master_store is not None and security_master is None:
-        raise UsOpportunityScannerProjectionError
-    return UsOpportunityScannerProjector(
-        UsOpportunityScannerStore(config.store),
-        config.canonical_root,
-    ).project(opportunity, foundation, security_master=security_master)
 
 
 def write_current_alert_outbox(
@@ -294,10 +241,12 @@ def main(
     if not 1 <= max_pages <= 10:
         raise typer.BadParameter("max-pages는 1~10이어야 합니다")
     research_projection = configure_research_projection(
-        research_foundation_manifest,
-        research_projection_store,
-        research_canonical_root,
-        research_security_master_store,
+        ResearchProjectionOptions(
+            research_foundation_manifest,
+            research_projection_store,
+            research_canonical_root,
+            research_security_master_store,
+        )
     )
     started_at = dt.datetime.now().astimezone()
     output = _output_path(output_dir, started_at)
@@ -414,9 +363,7 @@ def main(
             )
             quote_batch = evaluate_quote_publications(
                 conditional_publications,
-                exchange_by_symbol={
-                    stock.symbol: stock.exchange for stock in candidates
-                },
+                exchange_by_symbol={stock.symbol: stock.exchange for stock in candidates},
                 fetch_quote=lambda exchange, symbol: fetch_kis_us_level_one_quote(
                     client,
                     session,
@@ -447,16 +394,12 @@ def main(
     )
     quote_contracts = append_quote_actionability_contracts(output, quote_batch)
     waiting_validations = sum(
-        assessment.status is QuoteAssessmentStatus.VALIDATED_WAITING
-        for assessment in quote_batch.assessments
+        assessment.status is QuoteAssessmentStatus.VALIDATED_WAITING for assessment in quote_batch.assessments
     )
     trigger_validations = sum(
-        assessment.status is QuoteAssessmentStatus.VALIDATED_TRIGGER_REACHED
-        for assessment in quote_batch.assessments
+        assessment.status is QuoteAssessmentStatus.VALIDATED_TRIGGER_REACHED for assessment in quote_batch.assessments
     )
-    blocked_assessments = (
-        len(quote_batch.assessments) - waiting_validations - trigger_validations
-    )
+    blocked_assessments = len(quote_batch.assessments) - waiting_validations - trigger_validations
     quote_attempts = sum(
         assessment.status
         not in {
