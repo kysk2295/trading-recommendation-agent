@@ -87,5 +87,12 @@ def is_safe_command(value: str) -> bool:
     if tool == "basedpyright":
         return bool(args) and all(_is_repo_path_arg(arg) for arg in args)
     if tool == "python":
-        return args == ["-c", "pass"] or args == ["run_grok_task.py", "--help"]
+        if args == ["-c", "pass"]:
+            return True
+        return (
+            len(args) == 2
+            and args[1] == "--help"
+            and args[0].endswith(".py")
+            and _is_repo_path_arg(args[0])
+        )
     return False

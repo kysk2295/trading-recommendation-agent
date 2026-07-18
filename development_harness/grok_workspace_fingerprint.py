@@ -1,9 +1,9 @@
 """Metadata-only workspace fingerprinting for in-place Grok workers.
 
-Captures immutable Git database, logical index, user-owned, and ignored-path
-inventories without reading file contents. Symlink directories are recorded
-once and never followed. Unignored empty directories are inventoried separately
-from ignored and user-owned trees.
+Captures immutable Git database topology, logical index, user-owned, ignored,
+and visible worktree inventories without reading file contents. Symlink
+directories are recorded once and never followed. Unignored empty directories
+are inventoried separately from ignored and user-owned trees.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from development_harness.grok_git_control import GitControlError
 from development_harness.grok_git_control import (
     git_database_fingerprint as _git_database_fingerprint,
 )
@@ -20,15 +21,20 @@ from development_harness.grok_git_control import (
     git_index_fingerprint as _git_index_fingerprint,
 )
 from development_harness.grok_path_metadata import (
-    EmptyDirectoryInventoryError,
     OwnedMetaMap,
+    PathMetadataError,
     PathMetaMap,
-    empty_unignored_directories,
     ignored_metadata,
     user_owned_metadata,
-    verify_empty_directory_inventory,
 )
 from development_harness.grok_process_env import sanitize_git_routing_environ
+from development_harness.grok_worktree_metadata import (
+    EmptyDirectoryInventoryError,
+    WorktreeMetadataError,
+    empty_unignored_directories,
+    verify_empty_directory_inventory,
+    visible_worktree_metadata,
+)
 
 _GIT_TIMEOUT_SECONDS: Final = 30
 
@@ -56,7 +62,10 @@ def git_index_fingerprint(repo: Path) -> str:
 
 
 def git_database_fingerprint(repo: Path) -> str:
-    return _git_database_fingerprint(repo, run_git=run_git)
+    try:
+        return _git_database_fingerprint(repo, run_git=run_git)
+    except GitControlError as error:
+        raise GrokWorkspaceGuardError(str(error)) from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,17 +76,32 @@ class WorkspaceSnapshot:
     user_owned: OwnedMetaMap
     ignored: PathMetaMap
     empty_dirs: tuple[str, ...]
+    worktree: PathMetaMap
+    allowed_paths: tuple[str, ...]
 
 
-def capture_workspace_snapshot(repo: Path) -> WorkspaceSnapshot:
-    return WorkspaceSnapshot(
-        head=run_git(repo, "rev-parse", "HEAD").strip(),
-        refs_and_objects=git_database_fingerprint(repo),
-        index_entries=git_index_fingerprint(repo),
-        user_owned=user_owned_metadata(repo),
-        ignored=ignored_metadata(repo, run_git=run_git),
-        empty_dirs=empty_unignored_directories(repo, run_git=run_git),
-    )
+def capture_workspace_snapshot(
+    repo: Path,
+    *,
+    allowed_paths: tuple[str, ...] = (),
+) -> WorkspaceSnapshot:
+    try:
+        return WorkspaceSnapshot(
+            head=run_git(repo, "rev-parse", "HEAD").strip(),
+            refs_and_objects=git_database_fingerprint(repo),
+            index_entries=git_index_fingerprint(repo),
+            user_owned=user_owned_metadata(repo),
+            ignored=ignored_metadata(repo, run_git=run_git),
+            empty_dirs=empty_unignored_directories(repo, run_git=run_git),
+            worktree=visible_worktree_metadata(
+                repo,
+                allowed_paths=allowed_paths,
+                run_git=run_git,
+            ),
+            allowed_paths=allowed_paths,
+        )
+    except (GitControlError, PathMetadataError, WorktreeMetadataError) as error:
+        raise GrokWorkspaceGuardError(str(error)) from error
 
 
 def verify_workspace_snapshot(
@@ -90,15 +114,24 @@ def verify_workspace_snapshot(
         raise GrokWorkspaceGuardError(
             "worker committed changes; HEAD no longer matches the contract base"
         )
-    if git_database_fingerprint(repo) != snapshot.refs_and_objects:
-        raise GrokWorkspaceGuardError("Git database changed under the worker")
-    if git_index_fingerprint(repo) != snapshot.index_entries:
-        raise GrokWorkspaceGuardError("Git index entries or flags changed under the worker")
-    if user_owned_metadata(repo) != snapshot.user_owned:
-        raise GrokWorkspaceGuardError("user-owned state changed under the worker")
-    if ignored_metadata(repo, run_git=run_git) != snapshot.ignored:
-        raise GrokWorkspaceGuardError("ignored path metadata changed under the worker")
     try:
+        if git_database_fingerprint(repo) != snapshot.refs_and_objects:
+            raise GrokWorkspaceGuardError("Git database changed under the worker")
+        if git_index_fingerprint(repo) != snapshot.index_entries:
+            raise GrokWorkspaceGuardError("Git index entries or flags changed under the worker")
+        if user_owned_metadata(repo) != snapshot.user_owned:
+            raise GrokWorkspaceGuardError("user-owned state changed under the worker")
+        if ignored_metadata(repo, run_git=run_git) != snapshot.ignored:
+            raise GrokWorkspaceGuardError("ignored path metadata changed under the worker")
+        if (
+            visible_worktree_metadata(
+                repo,
+                allowed_paths=snapshot.allowed_paths,
+                run_git=run_git,
+            )
+            != snapshot.worktree
+        ):
+            raise GrokWorkspaceGuardError("worktree metadata changed under the worker")
         verify_empty_directory_inventory(
             repo,
             snapshot.empty_dirs,
@@ -106,4 +139,6 @@ def verify_workspace_snapshot(
             run_git=run_git,
         )
     except EmptyDirectoryInventoryError as error:
+        raise GrokWorkspaceGuardError(str(error)) from error
+    except (GitControlError, PathMetadataError, WorktreeMetadataError) as error:
         raise GrokWorkspaceGuardError(str(error)) from error

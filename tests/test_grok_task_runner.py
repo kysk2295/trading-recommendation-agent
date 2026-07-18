@@ -46,20 +46,51 @@ def _init_repo(tmp_path: Path) -> Path:
     _run_git(repo, "config", "user.name", "Tests")
     (repo / ".gitignore").write_text(".worktrees/\nignored-fixture.txt\n", encoding="utf-8")
     (repo / "README.md").write_text("fixture\n", encoding="utf-8")
-    _run_git(repo, "add", ".gitignore", "README.md")
+    (repo / "sample_module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_fixture.py").write_text(
+        "def test_ok() -> None:\n    assert True\n",
+        encoding="utf-8",
+    )
+    (repo / "run_grok_task.py").write_text(
+        "import argparse\n\nargparse.ArgumentParser(prog='run_grok_task.py').parse_args()\n",
+        encoding="utf-8",
+    )
+    _run_git(
+        repo,
+        "add",
+        ".gitignore",
+        "README.md",
+        "sample_module.py",
+        "tests/test_fixture.py",
+        "run_grok_task.py",
+    )
     _run_git(repo, "commit", "-m", "fixture")
     return repo
 
 
 def _passing_commands() -> tuple[tuple[str, ...], tuple[str, ...]]:
-    required = ("uv run python -c pass",)
-    manual = ("uv run python -c pass",)
+    required = (
+        "uv run pytest tests/test_fixture.py -q",
+        "uv run ruff check sample_module.py",
+        "uv run basedpyright sample_module.py",
+    )
+    manual = ("uv run python run_grok_task.py --help",)
     return required, manual
 
 
 def _verification_list() -> list[str]:
+    from development_harness.grok_command import worker_facing_commands
+
     required, manual = _passing_commands()
-    return sorted(set((*required, *manual)))
+    return sorted(
+        set(
+            (
+                *worker_facing_commands(required),
+                *worker_facing_commands(manual),
+            )
+        )
+    )
 
 
 def _contract(repo: Path, *, allowed_paths: tuple[str, ...] | None = None) -> GrokTaskContract:
@@ -240,12 +271,15 @@ def test_runner_rejects_symlink_created_on_allowed_path(tmp_path: Path) -> None:
     fake_grok.chmod(0o700)
     plan = prepare_grok_task(_contract(repo), repo=repo, grok_binary=str(fake_grok), dry_run=False)
 
-    with pytest.raises(GrokTaskRunnerError, match="symlink"):
+    with pytest.raises(GrokTaskRunnerError, match=r"symlink|worktree metadata"):
         _ = run_grok_task(plan, dry_run=False)
 
 
 def test_changed_paths_rejects_path_outside_contract() -> None:
-    with pytest.raises(GrokTaskRunnerError, match="worker changed a path outside the contract"):
+    with pytest.raises(
+        GrokTaskRunnerError,
+        match=r"worker changed a path outside the contract",
+    ):
         assert_changed_paths_allowed(("README.md",), ("development_harness/task_contract.py",))
 
 
@@ -377,7 +411,10 @@ def test_runner_rejects_worker_change_outside_contract(tmp_path: Path) -> None:
         dry_run=False,
     )
 
-    with pytest.raises(GrokTaskRunnerError, match="worker changed a path outside the contract"):
+    with pytest.raises(
+        GrokTaskRunnerError,
+        match=r"worker changed a path outside the contract|worktree metadata",
+    ):
         _ = run_grok_task(plan, dry_run=False)
 
 
@@ -454,8 +491,8 @@ def test_runner_accepts_summary_changed_files_in_any_order(tmp_path: Path) -> No
     first = "development_harness/task_contract.py"
     second = "tests/test_development_harness_task_contract.py"
     required, manual = _passing_commands()
-    (repo / "development_harness").mkdir()
-    (repo / "tests").mkdir()
+    (repo / "development_harness").mkdir(exist_ok=True)
+    (repo / "tests").mkdir(exist_ok=True)
     contract = GrokTaskContract(
         schema_version=1,
         task_id="m4-replay-input",
@@ -540,7 +577,10 @@ def test_runner_rejects_rename_from_allowed_path_to_out_of_contract_path(tmp_pat
         dry_run=False,
     )
 
-    with pytest.raises(GrokTaskRunnerError, match="worker changed a path outside the contract"):
+    with pytest.raises(
+        GrokTaskRunnerError,
+        match=r"worker changed a path outside the contract|worktree metadata",
+    ):
         _ = run_grok_task(plan, dry_run=False)
 
 
@@ -569,7 +609,10 @@ def test_runner_timeout_enforces_allow_list_before_returning(
         dry_run=False,
     )
 
-    with pytest.raises(GrokTaskRunnerError, match="worker changed a path outside the contract"):
+    with pytest.raises(
+        GrokTaskRunnerError,
+        match=r"worker changed a path outside the contract|worktree metadata",
+    ):
         _ = run_grok_task(plan, dry_run=False)
 
 
@@ -828,7 +871,25 @@ def test_runner_reruns_required_and_manual_commands_offline_before_completed(
     assert report.status == "completed"
     assert calls
     assert all(command[:3] == ("uv", "run", "--offline") for command in calls)
-    assert ("uv", "run", "--offline", "python", "-c", "pass") in calls
+    assert ("uv", "run", "--offline", "pytest", "tests/test_fixture.py", "-q") in calls
+    assert (
+        "uv",
+        "run",
+        "--offline",
+        "ruff",
+        "check",
+        "--no-cache",
+        "sample_module.py",
+    ) in calls
+    assert ("uv", "run", "--offline", "basedpyright", "sample_module.py") in calls
+    assert (
+        "uv",
+        "run",
+        "--offline",
+        "python",
+        "run_grok_task.py",
+        "--help",
+    ) in calls
 
 
 def test_runner_fails_when_independent_verification_fails(
@@ -1130,14 +1191,14 @@ def test_workspace_snapshot_rejects_hook_create_or_replace_without_head_move(
 
     created = hooks / "pre-commit"
     created.write_text("#!/bin/sh\necho tamper\n", encoding="utf-8")
-    with pytest.raises(GrokWorkspaceGuardError, match="Git database"):
+    with pytest.raises(GrokWorkspaceGuardError, match=r"Git database|symlink"):
         verify_workspace_snapshot(root, snapshot)
 
     created.unlink()
     # Replace an existing hook entry (symlink) without moving HEAD.
     existing.unlink()
     existing.symlink_to("/bin/true")
-    with pytest.raises(GrokWorkspaceGuardError, match="Git database"):
+    with pytest.raises(GrokWorkspaceGuardError, match=r"Git database|symlink"):
         verify_workspace_snapshot(root, snapshot)
     assert _run_git(repo, "rev-parse", "HEAD") == head_before
 
@@ -1219,14 +1280,15 @@ def test_runner_rejects_worker_commit(tmp_path: Path) -> None:
 
 
 def test_contract_requires_exact_expected_summary_fields() -> None:
+    required, manual = _passing_commands()
     payload = {
         "schema_version": 1,
         "task_id": "m4-replay-input",
         "base_commit": "a" * 40,
         "objective": "Add a replay-bound research input contract.",
         "allowed_paths": ("development_harness/task_contract.py",),
-        "required_commands": ("uv run pytest tests/test_development_harness_task_contract.py -q",),
-        "manual_qa_commands": ("uv run python run_grok_task.py --help",),
+        "required_commands": required,
+        "manual_qa_commands": manual,
         "expected_summary_fields": ("changed_files", "verification"),
     }
 
@@ -1279,7 +1341,7 @@ def test_workspace_snapshot_includes_object_symlinks(tmp_path: Path) -> None:
     objects.mkdir(parents=True, exist_ok=True)
     (objects / "symlink-entry").symlink_to("/tmp/outside-object-target")
 
-    with pytest.raises(GrokWorkspaceGuardError, match="Git database"):
+    with pytest.raises(GrokWorkspaceGuardError, match=r"Git database|symlink"):
         verify_workspace_snapshot(root, snapshot)
 
 
@@ -1494,10 +1556,15 @@ def test_cache_disabled_environ_is_shared_by_worker_and_verification(
 
 def test_worker_prompt_shows_ruff_no_cache(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
+    required, manual = _passing_commands()
     contract = _contract(repo).model_copy(
         update={
-            "required_commands": ("uv run ruff check development_harness",),
-            "manual_qa_commands": ("uv run python -c pass",),
+            "required_commands": (
+                required[0],
+                "uv run ruff check development_harness",
+                required[2],
+            ),
+            "manual_qa_commands": manual,
         }
     )
     plan = prepare_grok_task(contract, repo=repo, dry_run=True)
@@ -1536,7 +1603,7 @@ def test_worker_subprocess_cache_disabled_env_blocks_ignored_cache_mutation(
     _run_git(repo, "commit", "-m", "ignore tool caches")
     (repo / "development_harness").mkdir()
     allowed = "development_harness/task_contract.py"
-    verification = ["uv run python -c pass"]
+    verification = _verification_list()
 
     # Simulates a worker that would create tool caches unless the harness env disables them.
     fake_grok = tmp_path.resolve() / "cache-probe-grok"
@@ -1677,7 +1744,7 @@ def test_prepare_rejects_sparse_checkout_masking(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     _run_git(repo, "sparse-checkout", "init", "--cone")
 
-    with pytest.raises(GrokTaskRunnerError, match=r"sparse"):
+    with pytest.raises(GrokTaskRunnerError, match=r"sparse|index masking|assume-unchanged|skip-worktree"):
         _ = prepare_grok_task(_contract(repo), repo=repo, dry_run=True)
 
 
@@ -2036,7 +2103,7 @@ def test_runner_rejects_empty_directory_created_outside_allowed_parents(
         dry_run=False,
     )
 
-    with pytest.raises(GrokTaskRunnerError, match=r"empty director"):
+    with pytest.raises(GrokTaskRunnerError, match=r"empty director|worktree metadata"):
         _ = run_grok_task(plan, dry_run=False)
 
 
@@ -2110,7 +2177,7 @@ def test_runner_rejects_preexisting_empty_directory_deletion(tmp_path: Path) -> 
         dry_run=False,
     )
 
-    with pytest.raises(GrokTaskRunnerError, match=r"empty director"):
+    with pytest.raises(GrokTaskRunnerError, match=r"empty director|worktree metadata"):
         _ = run_grok_task(plan, dry_run=False)
 
 
@@ -2146,7 +2213,7 @@ def test_runner_postchecks_workspace_after_independent_verification_failure(
         dry_run=False,
     )
 
-    with pytest.raises(GrokTaskRunnerError, match=r"empty director"):
+    with pytest.raises(GrokTaskRunnerError, match=r"empty director|worktree metadata"):
         _ = run_grok_task(plan, dry_run=False)
 
 
@@ -2220,7 +2287,7 @@ def test_runner_postchecks_workspace_after_successful_verification_side_effect(
         dry_run=False,
     )
 
-    with pytest.raises(GrokTaskRunnerError, match=r"empty director"):
+    with pytest.raises(GrokTaskRunnerError, match=r"empty director|worktree metadata"):
         _ = run_grok_task(plan, dry_run=False)
 
 
@@ -2242,3 +2309,152 @@ def test_empty_ignored_directories_remain_inventoried_separately(tmp_path: Path)
     assert "visible-empty" in snapshot.empty_dirs
     assert "empty-ignored" not in snapshot.empty_dirs
     verify_workspace_snapshot(repo, snapshot)
+
+
+def test_prepare_rejects_git_index_lock(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    (repo / ".git" / "index.lock").write_text("locked\n", encoding="utf-8")
+
+    with pytest.raises(GrokTaskRunnerError, match=r"index\.lock"):
+        _ = prepare_grok_task(_contract(repo), repo=repo, dry_run=True)
+
+
+def test_prepare_rejects_shared_index_state(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    (repo / ".git" / "sharedindex.deadbeef").write_text("shared\n", encoding="utf-8")
+
+    with pytest.raises(GrokTaskRunnerError, match=r"shared index"):
+        _ = prepare_grok_task(_contract(repo), repo=repo, dry_run=True)
+
+
+def test_prepare_rejects_git_operation_state(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    (repo / ".git" / "MERGE_HEAD").write_text("a" * 40 + "\n", encoding="utf-8")
+
+    with pytest.raises(GrokTaskRunnerError, match=r"operation state"):
+        _ = prepare_grok_task(_contract(repo), repo=repo, dry_run=True)
+
+
+def test_prepare_rejects_internal_git_symlink(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    target = repo / ".git" / "HEAD"
+    link = repo / ".git" / "evil-link"
+    link.symlink_to(target)
+
+    with pytest.raises(GrokTaskRunnerError, match=r"symlink"):
+        _ = prepare_grok_task(_contract(repo), repo=repo, dry_run=True)
+
+
+def test_prepare_rejects_symlinked_objects_root(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    objects = repo / ".git" / "objects"
+    relocated = repo / ".git" / "objects-real"
+    objects.rename(relocated)
+    objects.symlink_to(relocated)
+
+    with pytest.raises(GrokTaskRunnerError, match=r"objects root|symlink"):
+        _ = prepare_grok_task(_contract(repo), repo=repo, dry_run=True)
+
+
+def test_prepare_rejects_git_index_with_extra_hard_link(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    index = repo / ".git" / "index"
+    hardlink = repo / ".git" / "index-hardlink"
+    hardlink.hardlink_to(index)
+
+    with pytest.raises(GrokTaskRunnerError, match=r"hard link|git index"):
+        _ = prepare_grok_task(_contract(repo), repo=repo, dry_run=True)
+
+
+def test_prepare_rejects_git_control_file_with_extra_hard_link(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    description = repo / ".git" / "description"
+    hardlink = repo / ".git" / "description-hardlink"
+    hardlink.hardlink_to(description)
+
+    with pytest.raises(GrokTaskRunnerError, match=r"hard link|git control"):
+        _ = prepare_grok_task(_contract(repo), repo=repo, dry_run=True)
+
+
+def test_workspace_snapshot_excludes_binary_index_from_topology_fingerprint(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path)
+    root = assert_main_repository_root(repo)
+    snapshot = capture_workspace_snapshot(root)
+
+    # Ordinary index refresh rewrites binary index metadata without logical entry changes.
+    _run_git(repo, "status", "--porcelain=v1")
+    verify_workspace_snapshot(root, snapshot)
+
+
+def test_workspace_snapshot_detects_full_git_topology_control_file(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path)
+    root = assert_main_repository_root(repo)
+    snapshot = capture_workspace_snapshot(root)
+
+    description = repo / ".git" / "description"
+    description.write_text("topology-probe\n", encoding="utf-8")
+    with pytest.raises(GrokWorkspaceGuardError, match="Git database"):
+        verify_workspace_snapshot(root, snapshot)
+
+
+def test_workspace_snapshot_fingerprints_visible_worktree_except_allowed_paths(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path)
+    allowed = "development_harness/task_contract.py"
+    (repo / "development_harness").mkdir()
+    (repo / "watched.txt").write_text("before\n", encoding="utf-8")
+    snapshot = capture_workspace_snapshot(repo, allowed_paths=(allowed,))
+
+    (repo / allowed).write_text("allowed change\n", encoding="utf-8")
+    verify_workspace_snapshot(repo, snapshot, allowed_paths=(allowed,))
+
+    (repo / "watched.txt").write_text("tampered\n", encoding="utf-8")
+    with pytest.raises(GrokWorkspaceGuardError, match="worktree metadata"):
+        verify_workspace_snapshot(repo, snapshot, allowed_paths=(allowed,))
+
+
+def test_runner_rejects_worktree_metadata_tamper_outside_allow_list(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    allowed = "development_harness/task_contract.py"
+    (repo / "development_harness").mkdir()
+    (repo / "watched.txt").write_text("before\n", encoding="utf-8")
+    _run_git(repo, "add", "watched.txt")
+    _run_git(repo, "commit", "-m", "watch")
+    contract = _contract(repo)
+    # Refresh contract base after the extra commit.
+    contract = contract.model_copy(update={"base_commit": _run_git(repo, "rev-parse", "HEAD")})
+    verification = _verification_list()
+    fake_grok = tmp_path.resolve() / "worktree-tamper-grok"
+    fake_grok.write_text(
+        "\n".join(
+            (
+                "#!/usr/bin/env python3",
+                "import json",
+                "from pathlib import Path",
+                "",
+                f"target = Path({allowed!r})",
+                "target.parent.mkdir(parents=True, exist_ok=True)",
+                "target.write_text('worker change\\n', encoding='utf-8')",
+                "Path('watched.txt').write_text('tampered\\n', encoding='utf-8')",
+                "print(json.dumps({",
+                "  'structuredOutput': {",
+                f"    'changed_files': [{allowed!r}],",
+                f"    'verification': {verification!r},",
+                "    'concerns': [],",
+                "  }",
+                "}))",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    fake_grok.chmod(0o700)
+    plan = prepare_grok_task(contract, repo=repo, grok_binary=str(fake_grok), dry_run=False)
+
+    with pytest.raises(GrokTaskRunnerError, match=r"worktree metadata|outside the contract"):
+        _ = run_grok_task(plan, dry_run=False)

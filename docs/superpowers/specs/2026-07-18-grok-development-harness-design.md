@@ -64,42 +64,44 @@ size and deadline; stderr goes to `DEVNULL`. Timeout or oversize kills the
 process group and surviving descendants; the result never returns stderr.
 
 After execution the harness verifies a workspace snapshot: `git rev-parse HEAD`
-still equals `contract.base_commit`; Git refs/reflog/object inventory (including
-symlink entries under `.git/objects`) and local Git control-path metadata are
-unchanged (including commit-then-reset, local config edits, and hook
-create/replace); logical Git index entries and flags from
-`git ls-files --stage -v -z` are unchanged so `assume-unchanged` /
-`skip-worktree` cannot hide out-of-scope edits; and pre-existing user-owned
+still equals `contract.base_commit`; Git refs/reflog plus a metadata-only full
+`.git` topology/state inventory are unchanged (including commit-then-reset,
+local config edits, and hook create/replace); logical Git index entries and
+flags from `git ls-files --stage -v -z` are unchanged so `assume-unchanged` /
+`skip-worktree` cannot hide out-of-scope edits; pre-existing user-owned
 `.hermes` / `.omo` plus ignored files and directories (including empty ignored
 directories) are unchanged by immutable metadata tuples
 `(mode, uid, size, mtime_ns, ctime_ns)` only—file contents are never read for
-snapshots. Control paths include `.git/HEAD`, `.git/config`, optional
-`.git/config.worktree`, `.git/packed-refs`, `.git/info/exclude`, `.git/shallow`,
-`.git/info/grafts`, `.git/info/sparse-checkout`, and every entry under
-`.git/hooks` without following symlinks. The binary `.git/index` blob is not
-hashed (ordinary status refresh may rewrite it); only the stable logical index
-listing is fingerprinted. Unignored empty directories outside user-owned roots
-are inventoried separately; create/delete is fail-closed except for missing
-parent directories required by allowed file paths. Preflight also rejects
-**pre-existing** `assume-unchanged` / `skip-worktree` flags and sparse-checkout
-masking, and forces untracked reporting with
-`git status --porcelain=v1 -z --untracked-files=all` so
+snapshots; and every other visible worktree entry is fingerprinted except exact
+allowed paths, required parents of allowed paths, ignored paths, and user-owned
+roots. The binary `.git/index` blob is not fingerprinted (ordinary status
+refresh may rewrite it). Full `.git` inventory rejects `index.lock`,
+`sharedindex.*`, in-progress operation state, every internal symlink, and a
+symlinked objects root. `.git/index` must be a current-user-owned regular file
+with `st_nlink=1`. Every walk/stat/enumeration error fails closed. Unignored
+empty directories outside user-owned roots are inventoried separately;
+create/delete is fail-closed except for missing parent directories required by
+allowed file paths. Preflight also rejects **pre-existing** `assume-unchanged` /
+`skip-worktree` flags and sparse-checkout masking, and forces untracked
+reporting with `git status --porcelain=v1 -z --untracked-files=all` so
 `status.showUntrackedFiles=no` cannot hide dirty checkouts. Immediately before
 worker launch the harness revalidates a clean snapshot and repository root;
 before any post-worker Git inventory and again after independent verification
 (success, nonzero, timeout, or side effect) it revalidates repository
 symlink / `.git` topology, sparse-checkout absence, empty-directory inventory,
-and allow-listed changed paths. The repository path and every allowed path must
-not include symlink components before or after the worker. The harness then
-compares every Git-changed path against the contract allow-list and fails
-closed on any extra path or worker commit. Timeout and OSError paths use the
-same enforcement so out-of-contract edits cannot hide behind a failed process.
+visible worktree metadata, and allow-listed changed paths. The repository path
+and every allowed path must not include symlink components before or after the
+worker. The harness then compares every Git-changed path against the contract
+allow-list and fails closed on any extra path or worker commit. Timeout and
+OSError paths use the same enforcement so out-of-contract edits cannot hide
+behind a failed process.
 
 Every harness Git subprocess, the worker, and independent verification strip
 every ambient environment key whose name starts with `GIT_` (fail-closed; not an
 allow-list) via `development_harness/grok_process_env.py`. Preflight and
-post-worker topology checks also reject a symlinked `.git/index` and require the
-effective `git rev-parse --git-path index` path to resolve exactly to the
+post-worker topology checks also reject a non-regular, non-owned, multi-link, or
+symlinked `.git/index` and require the effective
+`git rev-parse --git-path index` path to resolve exactly to the
 repository-owned `.git/index`. The worker process itself receives the same
 cache-disabled environment helper used for verification
 (`PYTHONDONTWRITEBYTECODE`, and `PYTEST_ADDOPTS` set exactly to
@@ -111,9 +113,13 @@ re-runs every required and manual QA command with `uv run --offline` under that
 prepared environment, each inside a new process group
 (`grok_verification_process.py`) that receives the caller-prepared env, strips
 `GIT_*` only, and reaps ordinary background descendants on success, failure, and
-timeout. Worker-claimed verification is never enough. Snapshot orchestration
-lives in `grok_workspace_fingerprint.py` with Git control/object helpers in
-`grok_git_control.py` and path metadata helpers in `grok_path_metadata.py`;
+timeout. Worker-claimed verification is never enough. Task contracts require
+pytest, Ruff, and basedpyright in `required_commands` plus meaningful
+task-specific manual QA using a safe repository-relative Python CLI `--help`
+command, not `python -c pass`. Snapshot orchestration lives in
+`grok_workspace_fingerprint.py` with full `.git` topology helpers in
+`grok_git_control.py`, path metadata helpers in `grok_path_metadata.py`, and
+visible worktree/empty-directory helpers in `grok_worktree_metadata.py`;
 command/prompt construction lives in `grok_command.py`; path-safety preflight
 remains in `grok_workspace_guard.py` with stable public re-exports; repository
 root and index topology checks live in `grok_worktree_topology.py`.
@@ -208,12 +214,18 @@ The implementation must use TDD and cover at least:
   lists, `.omo` / `.hermes`, and prohibited overlap;
 - dirty-checkout behavior and preservation of `.hermes/` / `.omo/`;
 - main-only preflight and rejection of linked worktrees/symlink roots;
-- Git refs/reflog/object (including object-store symlinks) and local
-  control-path metadata change detection, including commit-reset, config
-  edits, and hook create/replace;
+- Git refs/reflog and full metadata-only `.git` topology/state inventory change
+  detection (binary index excluded; index.lock/sharedindex/operation
+  state/internal symlink/symlinked objects root rejected), including
+  commit-reset, config edits, and hook create/replace;
 - logical index entry/flag fingerprinting via `git ls-files --stage -v -z`;
 - rejection of pre-existing assume-unchanged/skip-worktree and sparse masking;
+- `.git/index` current-user-owned regular single-link topology;
 - ignored directory inventory including empty ignored directories;
+- visible worktree entry metadata fingerprint excluding allowed paths/parents,
+  ignored paths, and user-owned roots;
+- fail-closed walk/stat/enumeration errors;
+- contract requirement for pytest + Ruff + basedpyright and meaningful manual QA;
 - rejection of symlink components on the repository path and allowed paths;
 - sanitization of ambient Git routing variables for harness Git/worker/verification;
 - launch-time clean snapshot/root revalidation and post-worker topology checks;
@@ -238,8 +250,8 @@ The implementation must use TDD and cover at least:
 Codex independently reviews each Grok diff for plan compliance, unintended
 scope, secret exposure, provider/broker imports, test quality, and regressions.
 Acceptance requires targeted tests, full `pytest`, Ruff, basedpyright, and
-the task-specific manual QA specified by the contract. Full-suite baseline at
-final review blocker close is **2115 passed** from Codex's full-suite rerun.
+the task-specific manual QA specified by the contract. The final full-suite
+baseline is **2129 passed** from Codex's full-suite rerun.
 Local Codex checkpoint commits are for exact-SHA review only; workers never
 commit; only remote push waits for all reviewers PASS.
 
@@ -247,10 +259,13 @@ commit; only remote push waits for all reviewers PASS.
 
 A real in-place Grok worker run and the subsequent review hardening completed
 successfully with `structuredOutput`-only consumption. Final review blockers
-(pre-existing index/sparse masking, fail-closed `GIT_*` stripping, launch/post-worker
-revalidation including non-symlink repo-owned index, verification process groups,
-shallow/grafts fingerprints, module splits under 250 pure LOC, release checklist,
-and the 2115-test baseline) are closed while preserving the documented
+and local harness invariants (pre-existing index/sparse masking, fail-closed
+`GIT_*` stripping, launch/post-worker revalidation including current-user regular
+single-link repo-owned index, full `.git` topology/state inventory with
+lock/sharedindex/operation/symlink rejects, visible worktree metadata
+fingerprints, fail-closed walk/stat/enumeration, pytest/Ruff/basedpyright plus
+meaningful manual QA contracts, verification process groups, module splits under
+250 pure LOC, and release checklist) are closed while preserving the documented
 no-OS-sandbox and detached-`setsid` residuals. Local postcheck bypasses are also
 closed: forced untracked reporting, always-on post-verification workspace
 validation, sparse-checkout fingerprint/reject after worker and verification,

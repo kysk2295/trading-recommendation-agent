@@ -11,6 +11,14 @@ from development_harness.task_contract import (
 )
 
 
+def _required_tool_commands() -> tuple[str, str, str]:
+    return (
+        "uv run pytest tests/test_development_harness_task_contract.py -q",
+        "uv run ruff check development_harness",
+        "uv run basedpyright development_harness run_grok_task.py",
+    )
+
+
 def _valid_contract() -> dict[str, object]:
     return {
         "schema_version": 1,
@@ -21,7 +29,7 @@ def _valid_contract() -> dict[str, object]:
             "development_harness/task_contract.py",
             "tests/test_development_harness_task_contract.py",
         ),
-        "required_commands": ("uv run pytest tests/test_development_harness_task_contract.py -q",),
+        "required_commands": _required_tool_commands(),
         "manual_qa_commands": ("uv run python run_grok_task.py --help",),
         "expected_summary_fields": ("changed_files", "verification", "concerns"),
     }
@@ -85,7 +93,12 @@ def test_contract_rejects_unsafe_allowed_path(path: str) -> None:
 )
 def test_contract_rejects_unsafe_or_unbounded_commands(command: str) -> None:
     payload = _valid_contract()
-    payload["required_commands"] = (command,)
+    # Keep the required tool set valid except replace pytest with the unsafe command.
+    payload["required_commands"] = (
+        command,
+        "uv run ruff check development_harness",
+        "uv run basedpyright development_harness run_grok_task.py",
+    )
 
     with pytest.raises(ValueError, match="invalid Grok task contract"):
         _ = GrokTaskContract.model_validate(payload)
@@ -100,20 +113,66 @@ def test_contract_rejects_unsafe_or_unbounded_commands(command: str) -> None:
         "uv run ruff check --no-cache development_harness",
         "uv run basedpyright development_harness run_grok_task.py",
         "uv run basedpyright trading_agent",
-        "uv run python -c pass",
-        "uv run python run_grok_task.py --help",
     ),
 )
 def test_contract_accepts_strictly_validated_commands(command: str) -> None:
     payload = _valid_contract()
-    payload["required_commands"] = (command,)
-    payload["manual_qa_commands"] = ("uv run python -c pass",) if command != "uv run python -c pass" else (
-        "uv run python run_grok_task.py --help",
-    )
+    tools = list(_required_tool_commands())
+    # Ensure the parameterized command is present alongside the full tool set.
+    if command.startswith("uv run pytest"):
+        tools[0] = command
+    elif command.startswith("uv run ruff"):
+        tools[1] = command
+    else:
+        tools[2] = command
+    payload["required_commands"] = tuple(tools)
+    payload["manual_qa_commands"] = ("uv run python run_grok_task.py --help",)
 
     contract = GrokTaskContract.model_validate(payload)
 
     assert command in contract.required_commands
+
+
+def test_contract_requires_pytest_ruff_basedpyright_and_meaningful_manual_qa() -> None:
+    missing_ruff = _valid_contract()
+    missing_ruff["required_commands"] = (
+        "uv run pytest tests/test_development_harness_task_contract.py -q",
+        "uv run basedpyright development_harness run_grok_task.py",
+    )
+    noop_manual = _valid_contract()
+    noop_manual["manual_qa_commands"] = ("uv run python -c pass",)
+
+    with pytest.raises(ValueError, match="invalid Grok task contract"):
+        _ = GrokTaskContract.model_validate(missing_ruff)
+    with pytest.raises(ValueError, match="invalid Grok task contract"):
+        _ = GrokTaskContract.model_validate(noop_manual)
+
+
+def test_contract_accepts_task_specific_python_cli_help_manual_qa() -> None:
+    payload = _valid_contract()
+    payload["manual_qa_commands"] = ("uv run python tools/replay_fixture_cli.py --help",)
+
+    contract = GrokTaskContract.model_validate(payload)
+
+    assert contract.manual_qa_commands == (
+        "uv run python tools/replay_fixture_cli.py --help",
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "uv run python tools/replay_fixture_cli.py --version",
+        "uv run python tools/replay_fixture_cli.py --help extra",
+        "uv run python tools/replay_fixture_cli.txt --help",
+    ),
+)
+def test_contract_rejects_non_help_manual_qa_commands(command: str) -> None:
+    payload = _valid_contract()
+    payload["manual_qa_commands"] = (command,)
+
+    with pytest.raises(ValueError, match="invalid Grok task contract"):
+        _ = GrokTaskContract.model_validate(payload)
 
 
 def test_contract_rejects_duplicate_paths_and_shell_syntax() -> None:

@@ -29,6 +29,8 @@ _MODEL_FIELDS = frozenset(
     }
 )
 _REQUIRED_SUMMARY_FIELDS = ("changed_files", "verification", "concerns")
+_REQUIRED_VERIFICATION_TOOLS: Final = frozenset({"pytest", "ruff", "basedpyright"})
+_NOOP_MANUAL_QA: Final = frozenset({"uv run python -c pass"})
 
 MAX_ALLOWED_PATHS: Final = 32
 MAX_COMMANDS_PER_LIST: Final = 16
@@ -188,9 +190,39 @@ class GrokTaskContract(BaseModel):
             raise _GrokTaskValidationError()
         return value
 
+    @staticmethod
+    def _command_tool(command: str) -> str | None:
+        parts = command.split()
+        if len(parts) < 3 or parts[0] != "uv" or parts[1] != "run":
+            return None
+        return parts[2]
+
+    @staticmethod
+    def _is_python_cli_help(command: str) -> bool:
+        parts = command.split()
+        return (
+            len(parts) == 5
+            and parts[:3] == ["uv", "run", "python"]
+            and parts[3].endswith(".py")
+            and parts[4] == "--help"
+        )
+
     @model_validator(mode="after")
     def _reject_empty_values(self) -> GrokTaskContract:
         if not self.objective or not self.required_commands or not self.manual_qa_commands:
+            raise _GrokTaskValidationError()
+        tools = {
+            tool
+            for command in self.required_commands
+            if (tool := self._command_tool(command)) is not None
+        }
+        if not _REQUIRED_VERIFICATION_TOOLS.issubset(tools):
+            raise _GrokTaskValidationError()
+        if any(command in _NOOP_MANUAL_QA for command in self.manual_qa_commands):
+            raise _GrokTaskValidationError()
+        if not any(self._is_python_cli_help(command) for command in self.manual_qa_commands):
+            # Task-specific manual QA must include a real CLI help probe, not only
+            # automated lint/type/test commands already covered by required_commands.
             raise _GrokTaskValidationError()
         return self
 

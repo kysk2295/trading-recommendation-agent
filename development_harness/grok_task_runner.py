@@ -97,7 +97,10 @@ def prepare_grok_task(
         assert_checkout_is_safe(repository)
         if _run_git(repository, "rev-parse", "HEAD").strip() != contract.base_commit:
             raise GrokTaskRunnerError("task contract base does not match the checkout")
-        snapshot = capture_workspace_snapshot(repository)
+        snapshot = capture_workspace_snapshot(
+            repository,
+            allowed_paths=contract.allowed_paths,
+        )
     except GrokWorkspaceGuardError as error:
         raise GrokTaskRunnerError(str(error)) from error
     try:

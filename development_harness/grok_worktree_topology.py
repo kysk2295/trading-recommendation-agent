@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path, PurePosixPath
 
 from development_harness.grok_workspace_fingerprint import GrokWorkspaceGuardError, run_git
@@ -56,16 +57,31 @@ def absolute_path_has_symlink_component(path: Path) -> bool:
 
 
 def assert_git_index_topology(repo: Path) -> None:
-    """Reject a symlinked index and require the effective path to be repo-owned."""
+    """Require repo-owned regular single-link current-user ``.git/index``."""
 
     owned = repo / ".git" / "index"
-    if owned.is_symlink():
+    try:
+        meta = owned.lstat()
+    except OSError as error:
+        raise GrokWorkspaceGuardError("git index path is not usable") from error
+    if stat.S_ISLNK(meta.st_mode):
         raise GrokWorkspaceGuardError("git index must not be a symlink")
+    if not stat.S_ISREG(meta.st_mode):
+        raise GrokWorkspaceGuardError("git index must be a regular file")
+    if meta.st_uid != os.getuid():
+        raise GrokWorkspaceGuardError("git index must be current-user-owned")
+    if meta.st_nlink != 1:
+        raise GrokWorkspaceGuardError("git index must have a single hard link")
+
     raw = run_git(repo, "rev-parse", "--git-path", "index").strip()
     if not raw:
         raise GrokWorkspaceGuardError("git index path is not usable")
     effective = Path(raw) if Path(raw).is_absolute() else repo / raw
-    if effective.is_symlink():
+    try:
+        effective_meta = effective.lstat()
+    except OSError as error:
+        raise GrokWorkspaceGuardError("git index path is not usable") from error
+    if stat.S_ISLNK(effective_meta.st_mode):
         raise GrokWorkspaceGuardError("git index must not be a symlink")
     try:
         effective_resolved = effective.resolve(strict=True)

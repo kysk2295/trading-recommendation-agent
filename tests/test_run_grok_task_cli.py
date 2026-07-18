@@ -36,7 +36,11 @@ def _write_contract(path: Path, base_commit: str) -> Path:
         "base_commit": base_commit,
         "objective": "Private objective that must not appear in a report.",
         "allowed_paths": ["development_harness/task_contract.py"],
-        "required_commands": ["uv run pytest tests/test_development_harness_task_contract.py -q"],
+        "required_commands": [
+            "uv run pytest tests/test_development_harness_task_contract.py -q",
+            "uv run ruff check development_harness",
+            "uv run basedpyright development_harness run_grok_task.py",
+        ],
         "manual_qa_commands": ["uv run python run_grok_task.py --help"],
         "expected_summary_fields": ["changed_files", "verification", "concerns"],
     }
