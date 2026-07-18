@@ -104,6 +104,8 @@ flowchart LR
 
 **2026-07-19 US broad-scanner foundation 업데이트:** broad candidate를 만들기 전에 narrow SIP evidence를 요구하던 순환 의존성을 제거했다. 완전한 KIS 상승률·거래량 6개 랭킹과 NYSE halt coverage, 1일 이내의 Alpaca security-master snapshot을 결합해 `alpaca/assets`, `kis/us_ranking`, `nyse/current_halts` 세 source의 causal `ready` foundation을 매 cycle 결정적으로 만든다. Opportunity ID·security snapshot ID·coverage가 manifest ID에 결합되고 exact manifest JSON은 scanner snapshot과 같은 append-only SQLite row에 저장된다. schema v1 빈 저장소는 v2로 전진 마이그레이션되며 과거 foundation 없는 row는 재생 시 신뢰하지 않는다. KIS 단발 scan과 watch는 fixture manifest 또는 operational security store 중 하나만 허용하고, watch의 세 operational 경로는 all-or-none이다. 실제 저장된 13,011개 종목 마스터를 사용한 local E2E에서 AAPL 후보, canonical replay, persisted foundation이 `ready`로 확인됐으며 외부 GET·계좌·주문·mutation은 발생하지 않았다. SIP는 이 broad scanner 뒤에 선택된 종목의 feature evidence를 만드는 M4.3/M4.4 경계로 유지된다.
 
+**2026-07-19 Alpaca SIP runtime fleet 업데이트:** M4.2의 bounded desired set을 단일 adapter에 넣지 않고 종목별 독립 owner로 분배하는 read-only fleet를 추가했다. owner key는 instrument ID와 symbol의 SHA-256이고 각 owner는 mode-700 전용 디렉터리, mode-600 runtime/evidence SQLite, 별도 canonical root와 single writer checkpoint를 가진다. 두 후보 fixture는 각각 35개 완료 분봉을 raw-first Parquet/DuckDB evidence로 만들고 READY binding 두 개를 기존 M4.4 gate에 전달했다. 한 종목의 sequence gap이나 provider failure는 다른 종목 수집을 중단하지 않지만 fleet를 `degraded`로 만들고 실패 종목 evidence는 만들지 않는다. 프로세스 재시작은 두 owner가 기존 20개 checkpoint를 읽어 신규 15개 분봉만 추가했으며 symlink owner root와 request coverage mismatch는 HTTP 전에 차단됐다. 이 경로는 account/order API와 mutation을 import하지 않는다. 실제 운영 전에 `expected_cumulative_volume`의 historical intraday volume-profile lineage가 필요하며 KIS 현재 누적 거래량으로 임의 추정하지 않는다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \

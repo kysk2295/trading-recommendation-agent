@@ -406,3 +406,10 @@
 - 최초 관찰: actual security master는 있었지만 production projection은 별도 ready foundation을 요구했고, 그 foundation의 다음 입력으로 SIP runtime을 지목했다. 그러나 SIP bounded subscription은 broad scanner candidate가 먼저 있어야 결정되므로 운영 순서가 순환했다.
 - 수정: complete KIS 상승률·거래량 6개 coverage와 NYSE halt coverage, 1일 이내 Alpaca security snapshot을 검증해 세 source의 causal ready foundation을 결정적으로 만든다. exact foundation JSON과 security snapshot ID를 schema v2 scanner projection row에 저장하고 latest reader가 canonical dataset과 foundation을 함께 재검증한다. KIS watch는 projection store·canonical root·security store 세 경로를 all-or-none으로 하위 scan에 전달한다.
 - 결과: 실제 13,011-instrument snapshot과 synthetic KIS Opportunity의 local E2E가 external I/O 없이 ready foundation, canonical candidate 1개, raw/projection row 각 1개를 만들었다. SIP는 broad selection 뒤 feature gate로 남고 계좌·주문·mutation 권한은 추가되지 않았다.
+
+## H57: 다중 desired candidate가 단일 SIP checkpoint와 writer를 공유한다
+
+- 판별 기준: 두 instrument를 같은 policy cycle에서 수집하고 한 종목의 gap·provider 실패 및 프로세스 재시작이 다른 종목의 checkpoint, receipt와 feature binding에 영향을 주는지 확인한다.
+- 최초 관찰: Alpaca SIP adapter는 의도적으로 exact instrument/symbol 하나만 허용하고 supervisor checkpoint는 provider source ID로 조회한다. 여러 종목을 한 runtime DB나 adapter에 넣으면 validation 또는 source checkpoint 충돌이 발생한다.
+- 수정: policy capacity 안의 desired subscription마다 instrument/symbol SHA-256 owner를 만들고 mode-700 전용 디렉터리 아래 runtime/evidence SQLite를 각각 mode 600으로 유지한다. global decision은 owner별 exact one-symbol decision으로 축소되고 READY feature만 symbol binding으로 반환한다. owner 생성·provider 오류는 typed failure로 격리하고 symlink root와 request coverage mismatch는 HTTP 전에 차단한다.
+- 결과: 두 owner fixture가 각각 35개 완료 분봉과 canonical evidence를 만들고 M4.4 gate가 READY가 됐다. 한 owner gap·503에서는 다른 binding만 보존되어 gate가 missing evidence로 닫혔다. 재시작은 owner별 기존 20개 뒤 15개만 추가했다. 실제 운영은 historical intraday volume-profile denominator lineage가 생길 때까지 열지 않는다.

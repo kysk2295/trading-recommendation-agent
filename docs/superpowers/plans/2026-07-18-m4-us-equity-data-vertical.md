@@ -175,6 +175,21 @@ it imports no account or order path. Eight focused provider tests and 186 M4
 regression tests pass. A regular-session external GET smoke and soak remain
 pending because this checkpoint was completed on a Saturday.
 
+**Per-instrument runtime fleet checkpoint (2026-07-19): Fixture complete.**
+The bounded desired set now creates one fixed-context SIP adapter, runtime
+ledger, raw evidence ledger, canonical root, and writer owner per instrument.
+Owner paths use an instrument/symbol SHA-256 under private mode-700 roots;
+runtime and evidence databases remain mode 600. A two-candidate fixture cycle
+produces two independent ready feature bindings and reaches the existing M4.4
+gate. A sequence gap or provider failure degrades only its exact owner and
+withholds that binding while the other owner continues. A fresh fleet process
+reuses each deterministic path and checkpoint, adding only 15 new bars after
+the first 20. Request coverage mismatch and symlinked owner roots block before
+HTTP. The fleet imports no account or order authority. Production activation
+remains blocked until expected cumulative volume is supplied by a causal,
+historically derived intraday volume-profile contract rather than an estimate
+from the current KIS cumulative volume.
+
 ### M4.4: Evidence-Gated US Opportunity Projection
 
 Project an eligible feature snapshot into the existing US
