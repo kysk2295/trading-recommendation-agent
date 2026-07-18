@@ -127,6 +127,7 @@ def build_grok_command(
         grok_binary,
         "--cwd",
         str(worktree),
+        "--always-approve",
         "-p",
         prompt,
         "--output-format",
