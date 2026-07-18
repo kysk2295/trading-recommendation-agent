@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import os
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
+
+from development_harness.grok_process_env import sanitize_git_routing_environ
 
 _VERIFICATION_TIMEOUT_SECONDS: Final = 1_800
 _CACHE_DISABLE_ENV: Final[Mapping[str, str]] = {
@@ -25,14 +26,16 @@ def cache_disabled_environ(*, base: Mapping[str, str] | None = None) -> dict[str
     neither path can drift into writing pytest or bytecode cache artifacts that
     would mutate ignored-path snapshot metadata.
 
-    ``PYTEST_ADDOPTS`` is always set to exactly ``-p no:cacheprovider``.
+    Ambient Git routing variables are stripped first so worker and verification
+    children cannot be redirected by inherited ``GIT_DIR`` / index / object-store
+    settings. ``PYTEST_ADDOPTS`` is always set to exactly ``-p no:cacheprovider``.
     Inherited pytest options are discarded fail-closed so a caller cannot
     re-enable cacheprovider or load plugins after the injected pair. Unrelated
     environment keys are preserved. Ruff cache is disabled by injecting the
     documented ``--no-cache`` flag into commands, not via env.
     """
 
-    env = dict(os.environ if base is None else base)
+    env = sanitize_git_routing_environ(base=base)
     env.update(_CACHE_DISABLE_ENV)
     env["PYTEST_ADDOPTS"] = _PYTEST_ADDOPTS_EXACT
     return env
@@ -70,16 +73,21 @@ def offline_command(command: str) -> tuple[str, ...]:
 
 
 def run_verification_command(command: tuple[str, ...], *, cwd: Path) -> int:
-    completed = subprocess.run(
-        command,
-        cwd=cwd,
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=_VERIFICATION_TIMEOUT_SECONDS,
-        env=cache_disabled_environ(),
+    from development_harness.grok_verification_process import (
+        VerificationProcessError,
+        run_verification_process,
     )
-    return completed.returncode
+
+    # Pass a fully prepared cache-disabled env; the process helper only strips GIT_*.
+    try:
+        return run_verification_process(
+            command,
+            cwd=cwd,
+            timeout_seconds=_VERIFICATION_TIMEOUT_SECONDS,
+            env=cache_disabled_environ(),
+        )
+    except VerificationProcessError as error:
+        raise GrokVerificationError(str(error)) from error
 
 
 def run_contract_commands(commands: tuple[str, ...], *, cwd: Path) -> bool:
@@ -87,6 +95,6 @@ def run_contract_commands(commands: tuple[str, ...], *, cwd: Path) -> bool:
         for command in commands:
             if run_verification_command(offline_command(command), cwd=cwd) != 0:
                 return False
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired, GrokVerificationError):
         return False
     return True

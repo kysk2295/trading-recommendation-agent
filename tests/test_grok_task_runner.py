@@ -1320,15 +1320,33 @@ def test_offline_verification_disables_caches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import development_harness.grok_verification as verification_module
+    import development_harness.grok_verification_process as verification_process_module
 
     captured: dict[str, object] = {}
 
-    def _record(command: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+    def _record(
+        command: object,
+        **kwargs: object,
+    ) -> subprocess.Popen[bytes]:
         captured["env"] = kwargs.get("env")
         captured["command"] = command
-        return subprocess.CompletedProcess(command if isinstance(command, list) else [], 0)
+        captured["start_new_session"] = kwargs.get("start_new_session")
 
-    monkeypatch.setattr(subprocess, "run", _record)
+        class _Finished:
+            pid = 12_345
+            returncode = 0
+
+            def poll(self) -> int:
+                return 0
+
+            def wait(self, timeout: float | None = None) -> int:
+                _ = timeout
+                return 0
+
+        return _Finished()  # type: ignore[return-value]
+
+    monkeypatch.setattr(verification_process_module.subprocess, "Popen", _record)
+    monkeypatch.setattr(verification_process_module, "_kill_process_group", lambda _pid: None)
     code = verification_module.run_verification_command(
         verification_module.offline_command("uv run ruff check development_harness"),
         cwd=tmp_path,
@@ -1340,6 +1358,7 @@ def test_offline_verification_disables_caches(
     assert env.get("PYTHONDONTWRITEBYTECODE") == "1"
     assert "RUFF_NO_CACHE" not in env
     assert env.get("PYTEST_ADDOPTS", "").split() == ["-p", "no:cacheprovider"]
+    assert captured["start_new_session"] is True
     assert captured["command"] == (
         "uv",
         "run",
@@ -1439,13 +1458,28 @@ def test_cache_disabled_environ_is_shared_by_worker_and_verification(
 
     captured: dict[str, object] = {}
 
-    def _record(command: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+    def _record(command: object, **kwargs: object) -> object:
+        _ = command
         captured["env"] = kwargs.get("env")
-        return subprocess.CompletedProcess(command if isinstance(command, list) else [], 0)
+
+        class _Finished:
+            pid = 12_345
+            returncode = 0
+
+            def poll(self) -> int:
+                return 0
+
+            def wait(self, timeout: float | None = None) -> int:
+                _ = timeout
+                return 0
+
+        return _Finished()
 
     import development_harness.grok_verification as verification_module
+    import development_harness.grok_verification_process as verification_process_module
 
-    monkeypatch.setattr(subprocess, "run", _record)
+    monkeypatch.setattr(verification_process_module.subprocess, "Popen", _record)
+    monkeypatch.setattr(verification_process_module, "_kill_process_group", lambda _pid: None)
     _ = verification_module.run_verification_command(
         ("uv", "run", "--offline", "python", "-c", "pass"),
         cwd=tmp_path.resolve(),
@@ -1455,6 +1489,7 @@ def test_cache_disabled_environ_is_shared_by_worker_and_verification(
     assert verification_env.get("PYTHONDONTWRITEBYTECODE") == expected["PYTHONDONTWRITEBYTECODE"]
     assert verification_env.get("PYTEST_ADDOPTS") == expected["PYTEST_ADDOPTS"]
     assert "RUFF_NO_CACHE" not in verification_env
+    assert "GIT_DIR" not in verification_env
 
 
 def test_worker_prompt_shows_ruff_no_cache(tmp_path: Path) -> None:
@@ -1624,3 +1659,273 @@ def test_workspace_guard_reexports_fingerprint_snapshot_api(tmp_path: Path) -> N
     snapshot = guard.capture_workspace_snapshot(repo)
     assert isinstance(snapshot, fingerprint.WorkspaceSnapshot)
     fingerprint.verify_workspace_snapshot(repo, snapshot)
+
+
+@pytest.mark.parametrize("flag_args", (("--assume-unchanged",), ("--skip-worktree",)))
+def test_prepare_rejects_preexisting_index_masking_flags(
+    tmp_path: Path,
+    flag_args: tuple[str, ...],
+) -> None:
+    repo = _init_repo(tmp_path)
+    _run_git(repo, "update-index", *flag_args, "README.md")
+
+    with pytest.raises(GrokTaskRunnerError, match=r"assume-unchanged|skip-worktree|index masking"):
+        _ = prepare_grok_task(_contract(repo), repo=repo, dry_run=True)
+
+
+def test_prepare_rejects_sparse_checkout_masking(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    _run_git(repo, "sparse-checkout", "init", "--cone")
+
+    with pytest.raises(GrokTaskRunnerError, match=r"sparse"):
+        _ = prepare_grok_task(_contract(repo), repo=repo, dry_run=True)
+
+
+def test_sanitize_git_routing_environ_removes_every_git_prefix_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from development_harness.grok_process_env import sanitize_git_routing_environ
+
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setenv("GIT_DIR", "/tmp/evil")
+    monkeypatch.setenv("GIT_UNKNOWN_CUSTOM_ROUTE", "should-be-removed")
+    monkeypatch.setenv("GIT_TRACE2_EVENT", "1")
+    monkeypatch.setenv("NOT_GIT_RELATED", "keep")
+    sanitized = sanitize_git_routing_environ()
+    assert sanitized["PATH"] == "/usr/bin"
+    assert sanitized["NOT_GIT_RELATED"] == "keep"
+    assert not any(key.startswith("GIT_") for key in sanitized)
+
+
+def test_harness_git_and_worker_drop_ambient_git_routing_vars(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from development_harness.grok_process_env import sanitize_git_routing_environ
+    from development_harness.grok_verification import cache_disabled_environ
+
+    repo = _init_repo(tmp_path)
+    expected_head = _run_git(repo, "rev-parse", "HEAD")
+    contract = _contract(repo)
+    evil = tmp_path.resolve() / "evil-git"
+    evil.mkdir()
+    _run_git(evil, "init", "-b", "main")
+    _run_git(evil, "config", "user.email", "tests@example.invalid")
+    _run_git(evil, "config", "user.name", "Tests")
+    (evil / "trap.txt").write_text("evil\n", encoding="utf-8")
+    _run_git(evil, "add", "trap.txt")
+    _run_git(evil, "commit", "-m", "evil")
+    monkeypatch.setenv("GIT_DIR", str(evil / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(evil))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(evil / ".git" / "index"))
+    monkeypatch.setenv("GIT_OBJECT_DIRECTORY", str(evil / ".git" / "objects"))
+    monkeypatch.setenv("GIT_COMMON_DIR", str(evil / ".git"))
+    monkeypatch.setenv("GIT_UNKNOWN_CUSTOM_ROUTE", "evil-route")
+
+    sanitized = sanitize_git_routing_environ()
+    assert not any(key.startswith("GIT_") for key in sanitized)
+    assert "GIT_UNKNOWN_CUSTOM_ROUTE" not in cache_disabled_environ()
+
+    # Ambient GIT_* would redirect unsanitized git to evil; harness must stay on repo.
+    plan = prepare_grok_task(contract, repo=repo, dry_run=True)
+    assert plan.base_commit == expected_head
+
+    probe = tmp_path.resolve() / "git-env-probe.py"
+    probe.write_text(
+        "\n".join(
+            (
+                "#!/usr/bin/env python3",
+                "import json",
+                "import os",
+                "print(json.dumps({",
+                "  'GIT_DIR': os.environ.get('GIT_DIR'),",
+                "  'GIT_WORK_TREE': os.environ.get('GIT_WORK_TREE'),",
+                "  'GIT_INDEX_FILE': os.environ.get('GIT_INDEX_FILE'),",
+                "  'GIT_UNKNOWN_CUSTOM_ROUTE': os.environ.get('GIT_UNKNOWN_CUSTOM_ROUTE'),",
+                "}))",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    probe.chmod(0o700)
+    worker_result = run_worker_process(
+        (str(probe),),
+        cwd=tmp_path.resolve(),
+        timeout_seconds=5.0,
+        max_stdout_bytes=4_096,
+    )
+    worker_env = json.loads(worker_result.stdout.decode())
+    assert worker_env["GIT_DIR"] is None
+    assert worker_env["GIT_WORK_TREE"] is None
+    assert worker_env["GIT_INDEX_FILE"] is None
+    assert worker_env["GIT_UNKNOWN_CUSTOM_ROUTE"] is None
+
+
+def test_prepare_rejects_symlinked_git_index(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    index = repo / ".git" / "index"
+    real_index = repo / ".git" / "index-real"
+    index.rename(real_index)
+    index.symlink_to(real_index)
+
+    with pytest.raises(GrokTaskRunnerError, match=r"git index|symlink"):
+        _ = prepare_grok_task(_contract(repo), repo=repo, dry_run=True)
+
+
+def test_runner_rejects_symlinked_git_index_after_worker(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    allowed = "development_harness/task_contract.py"
+    (repo / "development_harness").mkdir()
+    fake_grok = tmp_path.resolve() / "index-symlink-grok"
+    verification = _verification_list()
+    fake_grok.write_text(
+        "\n".join(
+            (
+                "#!/usr/bin/env python3",
+                "import json",
+                "from pathlib import Path",
+                "",
+                "index = Path('.git/index')",
+                "real = Path('.git/index-real')",
+                "index.rename(real)",
+                "index.symlink_to(real)",
+                f"target = Path({allowed!r})",
+                "target.parent.mkdir(parents=True, exist_ok=True)",
+                "target.write_text('worker change\\n', encoding='utf-8')",
+                "print(json.dumps({",
+                "  'structuredOutput': {",
+                f"    'changed_files': [{allowed!r}],",
+                f"    'verification': {verification!r},",
+                "    'concerns': [],",
+                "  }",
+                "}))",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    fake_grok.chmod(0o700)
+    plan = prepare_grok_task(
+        _contract(repo),
+        repo=repo,
+        grok_binary=str(fake_grok),
+        dry_run=False,
+    )
+
+    with pytest.raises(GrokTaskRunnerError, match=r"git index|symlink"):
+        _ = run_grok_task(plan, dry_run=False)
+
+
+def test_runner_revalidates_clean_snapshot_before_worker_launch(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    fake_grok = _fake_grok(tmp_path / "fake-grok", changed_path=None)
+    plan = prepare_grok_task(
+        _contract(repo),
+        repo=repo,
+        grok_binary=str(fake_grok),
+        dry_run=False,
+    )
+    (repo / "README.md").write_text("dirty-after-prepare\n", encoding="utf-8")
+
+    with pytest.raises(GrokTaskRunnerError, match="checkout contains changes"):
+        _ = run_grok_task(plan, dry_run=False)
+
+
+def test_runner_revalidates_repository_topology_before_post_worker_git(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path)
+    allowed = "development_harness/task_contract.py"
+    (repo / "development_harness").mkdir()
+    fake_grok = tmp_path.resolve() / "topology-grok"
+    verification = _verification_list()
+    fake_grok.write_text(
+        "\n".join(
+            (
+                "#!/usr/bin/env python3",
+                "import json",
+                "import shutil",
+                "from pathlib import Path",
+                "",
+                "root = Path.cwd()",
+                "real = root.parent / 'relocated-repo'",
+                "shutil.move(str(root), str(real))",
+                "root.symlink_to(real, target_is_directory=True)",
+                f"target = Path({allowed!r})",
+                "target.parent.mkdir(parents=True, exist_ok=True)",
+                "target.write_text('worker change\\n', encoding='utf-8')",
+                "print(json.dumps({",
+                "  'structuredOutput': {",
+                f"    'changed_files': [{allowed!r}],",
+                f"    'verification': {verification!r},",
+                "    'concerns': [],",
+                "  }",
+                "}))",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    fake_grok.chmod(0o700)
+    plan = prepare_grok_task(
+        _contract(repo),
+        repo=repo,
+        grok_binary=str(fake_grok),
+        dry_run=False,
+    )
+
+    with pytest.raises(GrokTaskRunnerError, match=r"symlink|linked worktree|repository"):
+        _ = run_grok_task(plan, dry_run=False)
+
+
+def test_independent_verification_runs_in_process_group_and_reaps_descendants(
+    tmp_path: Path,
+) -> None:
+    from development_harness.grok_verification import run_verification_command
+
+    marker = tmp_path.resolve() / "verification-child-alive"
+    probe = tmp_path.resolve() / "verification-probe.py"
+    probe.write_text(
+        "\n".join(
+            (
+                "#!/usr/bin/env python3",
+                "import os",
+                "import time",
+                "from pathlib import Path",
+                f"marker = Path({str(marker)!r})",
+                "if os.fork() == 0:",
+                "    time.sleep(30)",
+                "    marker.write_text('alive', encoding='utf-8')",
+                "    raise SystemExit(0)",
+                "raise SystemExit(0)",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    probe.chmod(0o700)
+    code = run_verification_command((str(probe),), cwd=tmp_path.resolve())
+    time.sleep(1.0)
+    assert code == 0
+    assert not marker.exists()
+
+
+def test_workspace_snapshot_fingerprints_shallow_and_grafts(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    root = assert_main_repository_root(repo)
+    snapshot = capture_workspace_snapshot(root)
+
+    shallow = repo / ".git" / "shallow"
+    shallow.write_text("a" * 40 + "\n", encoding="utf-8")
+    with pytest.raises(GrokWorkspaceGuardError, match="Git database"):
+        verify_workspace_snapshot(root, snapshot)
+
+    shallow.unlink()
+    verify_workspace_snapshot(root, snapshot)
+
+    grafts = repo / ".git" / "info" / "grafts"
+    grafts.parent.mkdir(parents=True, exist_ok=True)
+    grafts.write_text("b" * 40 + "\n", encoding="utf-8")
+    with pytest.raises(GrokWorkspaceGuardError, match="Git database"):
+        verify_workspace_snapshot(root, snapshot)

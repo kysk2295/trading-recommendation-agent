@@ -27,7 +27,10 @@ __all__ = (
     "absolute_path_has_symlink_component",
     "assert_allowed_paths_have_no_symlinks",
     "assert_checkout_is_safe",
+    "assert_git_index_topology",
     "assert_main_repository_root",
+    "assert_no_index_masking",
+    "assert_not_sparse_checkout",
     "capture_workspace_snapshot",
     "path_has_symlink_component",
     "verify_workspace_snapshot",
@@ -74,6 +77,29 @@ def absolute_path_has_symlink_component(path: Path) -> bool:
     return False
 
 
+def assert_git_index_topology(repo: Path) -> None:
+    """Reject a symlinked index and require the effective path to be repo-owned."""
+
+    owned = repo / ".git" / "index"
+    if owned.is_symlink():
+        raise GrokWorkspaceGuardError("git index must not be a symlink")
+    raw = run_git(repo, "rev-parse", "--git-path", "index").strip()
+    if not raw:
+        raise GrokWorkspaceGuardError("git index path is not usable")
+    effective = Path(raw) if Path(raw).is_absolute() else repo / raw
+    if effective.is_symlink():
+        raise GrokWorkspaceGuardError("git index must not be a symlink")
+    try:
+        effective_resolved = effective.resolve(strict=True)
+        owned_resolved = owned.resolve(strict=True)
+    except OSError as error:
+        raise GrokWorkspaceGuardError("git index path is not usable") from error
+    if effective_resolved != owned_resolved:
+        raise GrokWorkspaceGuardError(
+            "effective git index path must resolve to repository-owned .git/index"
+        )
+
+
 def assert_main_repository_root(repo: Path) -> Path:
     """Require a non-linked, non-symlink main-branch repository root."""
 
@@ -109,7 +135,43 @@ def assert_main_repository_root(repo: Path) -> Path:
         raise GrokWorkspaceGuardError("linked worktree checkouts are not allowed")
     if run_git(resolved, "branch", "--show-current").strip() != "main":
         raise GrokWorkspaceGuardError("task runner requires the main branch")
+    assert_git_index_topology(resolved)
     return root
+
+
+def _git_config_value(repo: Path, key: str) -> str | None:
+    try:
+        value = run_git(repo, "config", "--get", key).strip()
+    except GrokWorkspaceGuardError:
+        return None
+    return value or None
+
+
+def assert_no_index_masking(repo: Path) -> None:
+    """Reject pre-existing assume-unchanged / skip-worktree flags that hide edits."""
+
+    output = run_git(repo, "ls-files", "-v", "-z")
+    for entry in output.split("\0"):
+        if not entry:
+            continue
+        tag = entry[0]
+        # Lowercase tags mark assume-unchanged; S/s mark skip-worktree.
+        if tag.islower() or tag == "S":
+            raise GrokWorkspaceGuardError(
+                "checkout has assume-unchanged or skip-worktree index masking"
+            )
+
+
+def assert_not_sparse_checkout(repo: Path) -> None:
+    """Reject sparse-checkout configurations that mask repository paths."""
+
+    sparse = (_git_config_value(repo, "core.sparseCheckout") or "").lower()
+    if sparse in {"true", "1", "yes", "on"}:
+        raise GrokWorkspaceGuardError("sparse checkout masking is not allowed")
+    sparse_file = repo / ".git" / "info" / "sparse-checkout"
+    if sparse_file.is_symlink() or sparse_file.is_file():
+        # A present sparse-checkout definition is treated as active masking risk.
+        raise GrokWorkspaceGuardError("sparse checkout masking is not allowed")
 
 
 def assert_checkout_is_safe(repo: Path) -> None:
@@ -120,6 +182,8 @@ def assert_checkout_is_safe(repo: Path) -> None:
         raise GrokWorkspaceGuardError(
             "checkout contains changes outside the approved user-owned state"
         )
+    assert_no_index_masking(repo)
+    assert_not_sparse_checkout(repo)
 
 
 def assert_allowed_paths_have_no_symlinks(repo: Path, allowed_paths: tuple[str, ...]) -> None:

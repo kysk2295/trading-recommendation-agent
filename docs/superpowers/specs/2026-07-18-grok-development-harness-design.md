@@ -74,27 +74,40 @@ create/replace); logical Git index entries and flags from
 directories) are unchanged by immutable metadata tuples
 `(mode, uid, size, mtime_ns, ctime_ns)` only—file contents are never read for
 snapshots. Control paths include `.git/HEAD`, `.git/config`, optional
-`.git/config.worktree`, `.git/packed-refs`, `.git/info/exclude`, and every
-entry under `.git/hooks` without following symlinks. The binary `.git/index`
-blob is not hashed (ordinary status refresh may rewrite it); only the stable
-logical index listing is fingerprinted. The repository path and every allowed
-path must not include symlink components before or after the worker. The
-harness then compares every Git-changed path against the contract allow-list
-and fails closed on any extra path or worker commit. Timeout and OSError paths
-use the same enforcement so out-of-contract edits cannot hide behind a failed
-process.
+`.git/config.worktree`, `.git/packed-refs`, `.git/info/exclude`, `.git/shallow`,
+`.git/info/grafts`, and every entry under `.git/hooks` without following
+symlinks. The binary `.git/index` blob is not hashed (ordinary status refresh
+may rewrite it); only the stable logical index listing is fingerprinted.
+Preflight also rejects **pre-existing** `assume-unchanged` / `skip-worktree`
+flags and sparse-checkout masking. Immediately before worker launch the harness
+revalidates a clean snapshot and repository root; before any post-worker Git
+inventory it revalidates repository symlink / `.git` topology. The repository
+path and every allowed path must not include symlink components before or after
+the worker. The harness then compares every Git-changed path against the
+contract allow-list and fails closed on any extra path or worker commit.
+Timeout and OSError paths use the same enforcement so out-of-contract edits
+cannot hide behind a failed process.
 
-The worker process itself receives the same cache-disabled environment helper
-used for verification (`PYTHONDONTWRITEBYTECODE`, and `PYTEST_ADDOPTS` set
-exactly to `-p no:cacheprovider`, discarding inherited pytest options
-fail-closed). Ruff cache is disabled by injecting the documented
-`ruff check --no-cache` flag into both the commands shown to the worker and the
-independent offline re-run (contract input may omit it). Before `completed`, the
-harness independently re-runs every required and manual QA command with
-`uv run --offline` under that environment and those rewritten commands.
-Worker-claimed verification is never enough. Workspace snapshot fingerprint
-logic (index/Git DB/user-owned/ignored metadata) lives in
-`development_harness/grok_workspace_fingerprint.py`; path-safety preflight
+Every harness Git subprocess, the worker, and independent verification strip
+every ambient environment key whose name starts with `GIT_` (fail-closed; not an
+allow-list) via `development_harness/grok_process_env.py`. Preflight and
+post-worker topology checks also reject a symlinked `.git/index` and require the
+effective `git rev-parse --git-path index` path to resolve exactly to the
+repository-owned `.git/index`. The worker process itself receives the same
+cache-disabled environment helper used for verification
+(`PYTHONDONTWRITEBYTECODE`, and `PYTEST_ADDOPTS` set exactly to
+`-p no:cacheprovider`, discarding inherited pytest options fail-closed). Ruff
+cache is disabled by injecting the documented `ruff check --no-cache` flag into
+both the commands shown to the worker and the independent offline re-run
+(contract input may omit it). Before `completed`, the harness independently
+re-runs every required and manual QA command with `uv run --offline` under that
+prepared environment, each inside a new process group
+(`grok_verification_process.py`) that receives the caller-prepared env, strips
+`GIT_*` only, and reaps ordinary background descendants on success, failure, and
+timeout. Worker-claimed verification is never enough. Snapshot orchestration
+lives in `grok_workspace_fingerprint.py` with Git control/object helpers in
+`grok_git_control.py` and path metadata helpers in `grok_path_metadata.py`;
+command/prompt construction lives in `grok_command.py`; path-safety preflight
 remains in `grok_workspace_guard.py` with stable public re-exports.
 
 The harness captures only safe orchestration metadata: task ID, base commit,
@@ -191,14 +204,19 @@ The implementation must use TDD and cover at least:
   control-path metadata change detection, including commit-reset, config
   edits, and hook create/replace;
 - logical index entry/flag fingerprinting via `git ls-files --stage -v -z`;
+- rejection of pre-existing assume-unchanged/skip-worktree and sparse masking;
 - ignored directory inventory including empty ignored directories;
 - rejection of symlink components on the repository path and allowed paths;
+- sanitization of ambient Git routing variables for harness Git/worker/verification;
+- launch-time clean snapshot/root revalidation and post-worker topology checks;
 - offline verification with bytecode/pytest/Ruff caches disabled;
+- independent verification process-group isolation and ordinary descendant reap;
 - dry-run planning without invoking Grok or changing Git state;
 - changed-path allow-list comparison, including rename old/new sides;
 - summary path/verification/concern contract-safe enum matching;
 - structured summary parsing from `structuredOutput` only with JSON depth bound;
 - process-group kill on timeout and stdout size bound;
+- fingerprinting of `.git/shallow` and `.git/info/grafts` control paths;
 - independent offline re-run of required and manual QA before completed;
 - a safe failure when the Grok binary is absent, times out, or returns nonzero,
   with allow-list enforcement on timeout/OSError paths;
@@ -207,11 +225,19 @@ The implementation must use TDD and cover at least:
 Codex independently reviews each Grok diff for plan compliance, unintended
 scope, secret exposure, provider/broker imports, test quality, and regressions.
 Acceptance requires targeted tests, full `pytest`, Ruff, basedpyright, and
-the task-specific manual QA specified by the contract.
+the task-specific manual QA specified by the contract. Full-suite baseline at
+final review blocker close is **2105 passed** from Codex's full-suite rerun.
+Local Codex checkpoint commits are for exact-SHA review only; workers never
+commit; only remote push waits for all reviewers PASS.
 
 ## Status Notes
 
 A real in-place Grok worker run and the subsequent review hardening completed
-successfully with `structuredOutput`-only consumption. An earlier bootstrap
-HTTP `402` spending-limit stop remains historical context only; it is not the
-current limitation of this harness.
+successfully with `structuredOutput`-only consumption. Final review blockers
+(pre-existing index/sparse masking, fail-closed `GIT_*` stripping, launch/post-worker
+revalidation including non-symlink repo-owned index, verification process groups,
+shallow/grafts fingerprints, module splits under 250 pure LOC, release checklist,
+and the 2105-test baseline) are closed while preserving the documented
+no-OS-sandbox and detached-`setsid` residuals. An earlier bootstrap HTTP `402`
+spending-limit stop remains historical context only; it is not the current
+limitation of this harness.

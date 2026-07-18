@@ -1,3 +1,5 @@
+"""Orchestrate bounded in-place Grok task prepare/run with fail-closed guards."""
+
 from __future__ import annotations
 
 import subprocess
@@ -5,18 +7,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from development_harness.grok_verification import (
-    GrokVerificationError,
-    cache_safe_command,
-    run_contract_commands,
+from development_harness.grok_command import (
+    GrokCommandError,
+    build_grok_command,
+    build_worker_prompt,
+    worker_facing_commands,
 )
+from development_harness.grok_process_env import sanitize_git_routing_environ
+from development_harness.grok_verification import GrokVerificationError, run_contract_commands
 from development_harness.grok_worker_process import WorkerProcessError, run_worker_process
-from development_harness.grok_worker_report import (
-    WORKER_SUMMARY_JSON_SCHEMA,
-    GrokTaskReport,
-    GrokWorkerSummary,
-    parse_worker_summary,
-)
+from development_harness.grok_worker_report import GrokTaskReport, GrokWorkerSummary, parse_worker_summary
 from development_harness.grok_workspace_guard import (
     GrokWorkspaceGuardError,
     WorkspaceSnapshot,
@@ -32,6 +32,16 @@ _GIT_TIMEOUT_SECONDS: Final = 30
 _GROK_TIMEOUT_SECONDS: Final = 1_800
 _MAX_WORKER_STDOUT_BYTES: Final = 1_048_576
 _USER_OWNED_PATH_ROOTS: Final = frozenset({".hermes", ".omo", ".hermes/", ".omo/"})
+
+# Stable public re-export for callers/tests that import command builders from the runner.
+__all__ = (
+    "GrokTaskPlan",
+    "GrokTaskRunnerError",
+    "assert_changed_paths_allowed",
+    "build_grok_command",
+    "prepare_grok_task",
+    "run_grok_task",
+)
 
 
 class GrokTaskRunnerError(RuntimeError):
@@ -56,6 +66,7 @@ def _run_git(repo: Path, *args: str) -> str:
         capture_output=True,
         text=True,
         timeout=_GIT_TIMEOUT_SECONDS,
+        env=sanitize_git_routing_environ(),
     )
     if completed.returncode != 0:
         raise GrokTaskRunnerError("Git preflight failed")
@@ -64,69 +75,6 @@ def _run_git(repo: Path, *args: str) -> str:
 
 def _is_user_owned_path(path: str) -> bool:
     return path in _USER_OWNED_PATH_ROOTS or path.startswith(".hermes/") or path.startswith(".omo/")
-
-
-def _bullet_block(values: tuple[str, ...]) -> str:
-    return "\n".join(f"- {value}" for value in values)
-
-
-def _worker_facing_commands(commands: tuple[str, ...]) -> tuple[str, ...]:
-    """Commands shown to the worker, with Ruff ``--no-cache`` injected when needed."""
-
-    try:
-        return tuple(cache_safe_command(command) for command in commands)
-    except GrokVerificationError as error:
-        raise GrokTaskRunnerError(str(error)) from error
-
-
-def _build_prompt(contract: GrokTaskContract) -> str:
-    fields = ", ".join(contract.expected_summary_fields)
-    required = _worker_facing_commands(contract.required_commands)
-    manual = _worker_facing_commands(contract.manual_qa_commands)
-    return (
-        "Implement exactly this bounded development task.\n"
-        f"Task ID: {contract.task_id}\n"
-        f"Objective: {contract.objective}\n\n"
-        f"Allowed paths:\n{_bullet_block(contract.allowed_paths)}\n\n"
-        f"Required verification commands:\n{_bullet_block(required)}\n\n"
-        f"Manual QA commands:\n{_bullet_block(manual)}\n\n"
-        "Rules: use TDD; do not change paths outside the allow-list; do not read credentials, "
-        "provider modules, broker modules, or user-owned .hermes/.omo state; do not make network, "
-        "market-data, broker, Paper, or live-trading calls; do not commit, push, create a branch, "
-        "create a worktree, or spawn a subagent. Work in-place on the current repository root only. "
-        "You may edit allow-listed working-tree files but must not commit or push history. "
-        "Run the required verification. Your final response must be JSON only and contain these keys: "
-        f"{fields}.\n"
-    )
-
-
-def build_grok_command(
-    contract: GrokTaskContract,
-    *,
-    grok_binary: str,
-    repository: Path,
-    prompt: str,
-) -> tuple[str, ...]:
-    return (
-        grok_binary,
-        "--cwd",
-        str(repository),
-        "--always-approve",
-        "--permission-mode",
-        "bypassPermissions",
-        "-p",
-        prompt,
-        "--output-format",
-        "json",
-        "--json-schema",
-        WORKER_SUMMARY_JSON_SCHEMA,
-        "--no-plan",
-        "--no-subagents",
-        "--disable-web-search",
-        "--no-memory",
-        "--max-turns",
-        str(contract.max_turns),
-    )
 
 
 def prepare_grok_task(
@@ -151,7 +99,10 @@ def prepare_grok_task(
         snapshot = capture_workspace_snapshot(repository)
     except GrokWorkspaceGuardError as error:
         raise GrokTaskRunnerError(str(error)) from error
-    prompt = _build_prompt(contract)
+    try:
+        prompt = build_worker_prompt(contract)
+    except GrokCommandError as error:
+        raise GrokTaskRunnerError(str(error)) from error
     return GrokTaskPlan(
         task_id=contract.task_id,
         base_commit=contract.base_commit,
@@ -209,8 +160,28 @@ def _failed_report(
     )
 
 
+def _revalidate_launch_state(plan: GrokTaskPlan) -> None:
+    """Re-check clean snapshot and repository root immediately before launch."""
+
+    try:
+        repository = assert_main_repository_root(plan.repository)
+        if repository != plan.repository:
+            raise GrokTaskRunnerError("repository root changed before worker launch")
+        assert_allowed_paths_have_no_symlinks(plan.repository, plan.contract.allowed_paths)
+        assert_checkout_is_safe(plan.repository)
+        if _run_git(plan.repository, "rev-parse", "HEAD").strip() != plan.base_commit:
+            raise GrokTaskRunnerError("task contract base does not match the checkout")
+        verify_workspace_snapshot(plan.repository, plan.snapshot)
+    except GrokWorkspaceGuardError as error:
+        raise GrokTaskRunnerError(str(error)) from error
+
+
 def _post_worker_paths(plan: GrokTaskPlan) -> tuple[str, ...]:
     try:
+        # Revalidate symlink/.git topology before any post-worker Git inventory.
+        repository = assert_main_repository_root(plan.repository)
+        if repository != plan.repository:
+            raise GrokTaskRunnerError("repository root changed under the worker")
         verify_workspace_snapshot(plan.repository, plan.snapshot)
         assert_allowed_paths_have_no_symlinks(plan.repository, plan.contract.allowed_paths)
     except GrokWorkspaceGuardError as error:
@@ -229,13 +200,15 @@ def _run_contract_verification(plan: GrokTaskPlan) -> bool:
 
 
 def _parse_summary(plan: GrokTaskPlan, stdout: str) -> GrokWorkerSummary | None:
-    # Match the same cache-safe command forms shown in the worker prompt.
-    required = frozenset(
-        (
-            *_worker_facing_commands(plan.contract.required_commands),
-            *_worker_facing_commands(plan.contract.manual_qa_commands),
+    try:
+        required = frozenset(
+            (
+                *worker_facing_commands(plan.contract.required_commands),
+                *worker_facing_commands(plan.contract.manual_qa_commands),
+            )
         )
-    )
+    except GrokCommandError:
+        return None
     return parse_worker_summary(
         stdout,
         allowed_paths=frozenset(plan.contract.allowed_paths),
@@ -254,6 +227,8 @@ def run_grok_task(plan: GrokTaskPlan, *, dry_run: bool) -> GrokTaskReport:
             worker_exit_code=None,
             summary=None,
         )
+
+    _revalidate_launch_state(plan)
 
     worker_exit_code: int | None
     stdout_text = ""
