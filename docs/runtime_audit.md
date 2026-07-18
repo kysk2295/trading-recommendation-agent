@@ -385,3 +385,17 @@
 - 최초 관찰: `BroadScannerSnapshot`과 subscription policy는 순수 계약 테스트에서만 직접 생성됐다. KIS Opportunity outbox, instrument master, canonical dataset, M4.2 사이의 운영 연결은 없었다.
 - 수정: KIS CLI에 all-or-none opt-in projection 설정을 추가했다. Opportunity raw bytes를 mode-600 append-only SQLite에 먼저 확정하고, 해당 시점에 유효한 US equity/ETF alias 하나만 허용해 candidate Parquet를 발행한 뒤 DuckDB replay identity와 scanner snapshot을 같은 immutable projection에 저장한다. 최신 snapshot reader는 SQLite 값만 읽지 않고 연결된 canonical dataset을 매번 다시 검증한다.
 - 결과: exact retry는 raw·dataset·snapshot을 중복 생성하지 않고, alias 누락·미래 foundation·부분 CLI 설정·dataset mode 변조는 fail-closed다. 옵션이 없으면 기존 KIS 동작은 그대로다. 현재 fixture manifest는 `FIXT` 하나만 포함하므로 실제 장중 universe를 지원한다는 주장은 하지 않으며 current US security master adapter가 다음 경계다.
+
+## H54: 기존 Alpaca universe가 provider 응답을 파싱한 뒤 CSV만 남긴다
+
+- 판별 기준: `/v2/assets` 응답의 exact bytes, 최초 관측시각, stable instrument ID와 재시작 검증 가능한 snapshot이 있는지 확인한다.
+- 최초 관찰: 기존 archive helper는 응답을 메모리에서 바로 Pydantic으로 파싱하고 symbol CSV를 교체했다. provider schema drift나 시점별 alias를 원문으로 재생할 수 없었다.
+- 수정: GET response를 파싱 전에 mode-600 append-only SQLite에 확정하고, active listed/supported asset만 Alpaca UUID instrument와 provider-symbol alias로 투영한다. latest reader는 raw SHA와 receipt ID를 다시 계산한다.
+- 결과: 실제 원문 33,351행에서 active instrument 13,011개를 확정했고 synthetic KIS candidate가 actual asset UUID와 canonical replay identity에 결합됐다. live trading origin, redirect, duplicate identity, 3일 초과 stale snapshot과 fixture foundation은 차단된다.
+
+## H55: 실제 provider schema 확장을 인증 실패로 오인할 수 있다
+
+- 판별 기준: GET-only CLI를 실제 Paper assets endpoint에 실행하고 raw receipt와 terminal snapshot을 각각 확인한다.
+- 최초 관찰: 첫 raw 응답에는 기존 모델에 없던 `borrow_status`, `margin_requirement_long`, `margin_requirement_short`가 있었고, 21개 비식별 name에 provider 공백이 포함돼 strict parser가 snapshot 전에 닫혔다. 두 실패 모두 raw receipt는 먼저 보존됐다.
+- 수정: 실제 응답의 필드 집합과 타입만 집계해 새 필드를 명시적으로 계약에 추가했다. 투영에 쓰지 않는 name은 최대 길이만 제한하고, asset UUID·symbol·exchange·class·status 검증은 유지했다.
+- 결과: 세 번째 bounded GET은 ready로 종료됐다. 실제 외부 GET은 총 3건, account/order endpoint와 POST/DELETE mutation은 0건이다.

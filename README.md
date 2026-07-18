@@ -100,6 +100,8 @@ flowchart LR
 
 **2026-07-19 US scanner 운영 투영 업데이트:** KIS의 causal `OpportunitySnapshot`을 M4.2 broad-scanner 입력으로 만드는 실제 생산 경로를 추가했다. opt-in KIS CLI는 data-foundation manifest, mode-600 append-only projection store, private canonical root 세 경로가 모두 있을 때만 활성화된다. Opportunity 원문을 먼저 보존하고 시점 유효한 US instrument alias를 exact match한 뒤 candidate event를 immutable Parquet로 발행하며, DuckDB replay가 검증한 identity와 직렬화된 scanner snapshot을 같은 projection row에 확정한다. 재시작 reader도 Parquet와 identity를 다시 검증하므로 경로·SQLite payload만으로 후보를 신뢰하지 않는다. 일부 설정, alias 누락, 미래 foundation, 변조된 dataset은 fail-closed이고 옵션이 없으면 기존 KIS 스캔은 변하지 않는다. fixture manifest는 `FIXT` 전용이며 실제 동적 후보 운영을 뜻하지 않는다. 다음 입력 단계는 현재 US security master manifest를 raw-first로 생성하는 read-only adapter다.
 
+**2026-07-19 Alpaca US security master 업데이트:** 기존 `GET /v2/assets` universe 호출 앞에 별도 raw-first 경계를 추가했다. exact response bytes는 파싱 전에 mode-600 append-only SQLite에 저장되고, active listed/supported symbol만 Alpaca asset UUID 기반 `InstrumentId`와 provider-symbol alias로 시점 유효 snapshot에 투영된다. latest reader는 snapshot payload뿐 아니라 연결된 raw BLOB의 SHA-256과 receipt ID를 다시 계산한다. strict schema drift, duplicate ID/symbol, stale/future snapshot, live trading origin, redirect와 fixture foundation 결합은 fail-closed다. GET-only CLI의 실제 Paper asset 호출 3회 중 첫 두 회는 새 provider 필드와 비식별 name 공백을 raw 보존 후 차단했고 계약을 보정한 세 번째 호출은 33,351 raw asset 중 active instrument **13,011개**를 확정했다. 계좌·주문 endpoint와 mutation은 0건이다. 실제 snapshot의 symbol을 synthetic KIS Opportunity에 결합해 canonical broad-scanner replay까지 검증했다. 남은 운영 의존성은 현재 SIP evidence에서 생성한 non-fixture `ready` data-foundation manifest다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \

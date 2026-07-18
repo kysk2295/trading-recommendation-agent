@@ -35,6 +35,7 @@ from trading_agent.ranking_journal import (
 )
 from trading_agent.store import PaperStore
 from trading_agent.strategy_factory import StrategyMode
+from trading_agent.us_opportunity_scanner_models import UsOpportunityScannerProjectionError
 from trading_agent.us_opportunity_scanner_store import UsOpportunityScannerStore
 from trading_agent.us_quote_publication import evaluate_quote_publications
 
@@ -120,6 +121,13 @@ def test_research_projection_configuration_is_all_or_none(tmp_path: Path) -> Non
             str(tmp_path / "scanner.sqlite3"),
             None,
         )
+    with pytest.raises(typer.BadParameter, match="research projection"):
+        _ = configure_research_projection(
+            None,
+            None,
+            None,
+            str(tmp_path / "security-master.sqlite3"),
+        )
 
 
 def test_opportunity_projects_to_durable_replay_bound_scanner_input(
@@ -166,6 +174,16 @@ def test_opportunity_projects_to_durable_replay_bound_scanner_input(
     assert snapshot.identity.scope == "us_equities.broad_scanner"
     assert snapshot.candidates[0].instrument_id == "us-eq-fixture-0001"
     assert UsOpportunityScannerStore(config.store).latest_snapshot() == snapshot
+
+    missing_security = configure_research_projection(
+        str(FOUNDATION),
+        str(tmp_path / "scanner-2.sqlite3"),
+        str(tmp_path / "canonical-2"),
+        str(tmp_path / "missing-security.sqlite3"),
+    )
+    assert missing_security is not None
+    with pytest.raises(UsOpportunityScannerProjectionError):
+        _ = project_opportunity_research_input(opportunity, missing_security)
 
 
 def test_signal_helper_is_idempotent_and_does_not_touch_the_v1_outbox(

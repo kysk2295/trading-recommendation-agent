@@ -85,10 +85,11 @@
 - 동일 공개 운영 세션 API의 fake broker E2E가 entry→체결 trade update→보호 OCO→staged EOD cancel/close→최종 flat broker/shadow 대사를 검증하며, 실제 Paper POST/DELETE는 계속 0건
 - Alpaca SIP 단일 종목 완료 1분봉 provider bridge 구현. context의 exact instrument/symbol binding, 정규장·canonical data URL·redirect 금지·단일 desired subscription을 HTTP 전에 검사하고, exact response body를 mode-600 append-only SQLite에 먼저 저장한 뒤 canonical Parquet·DuckDB replay identity와 full runtime checkpoint를 M4 supervisor에 공급. 정상 restart는 기존 epoch·offset을 잇고 transient gap은 이후 full-session sequence가 완전히 연속일 때만 새 verified recovery epoch로 해제. fixture pagination·동일 분 retry·재시작·gap recovery·종목교체·휴장·다중종목·redirect E2E를 통과했으며 계좌·주문 import와 실제 외부 network 호출은 0건
 - KIS US Opportunity를 replay-bound M4 broad-scanner 입력으로 만드는 opt-in 운영 투영 구현. foundation/store/canonical-root가 모두 있어야 활성화되고, raw Opportunity 보존 → point-in-time instrument exact match → immutable candidate Parquet → DuckDB replay → durable scanner snapshot 순서를 강제한다. 최신 snapshot reader도 canonical dataset과 identity를 다시 검증하며 fixture manifest의 `FIXT`를 실제 동적 universe로 간주하지 않는다.
+- Alpaca Paper `GET /v2/assets`의 raw-first US security master 구현. 실제 응답 33,351행을 exact mode-600 원장에 먼저 저장하고 active listed/supported 13,011종목을 asset UUID instrument와 provider-symbol alias로 투영했다. actual snapshot으로 synthetic KIS candidate의 replay-bound 결합을 확인했으며 account/order endpoint와 mutation은 0건이다.
 
 ## 다음 우선순위
 
-1. KIS의 실제 동적 US 후보를 fixture alias 없이 해석할 수 있도록 공식 read-only 종목 master 원문을 먼저 보존하고 point-in-time `InstrumentId`·alias manifest로 투영한다. ambiguous/missing symbol은 후보를 추정하지 않고 차단한다.
+1. 현재 Alpaca SIP raw/canonical/runtime checkpoint를 읽어 실제 source capability와 entitlement 상태를 평가하고, KIS projection이 사용할 non-fixture `ready` data-foundation manifest를 생성한다. fixture provider나 stale security master는 운영 경로에서 허용하지 않는다.
 2. 열린 NYSE 정규장과 mode-600 Alpaca data credential이 자연스럽게 동시에 맞을 때만 새 SIP bridge의 단일 종목 bounded GET smoke를 실행한다. exact raw page·canonical replay·runtime checkpoint를 대사하고 계좌·주문·Paper endpoint는 열지 않는다. 휴장에는 fixture E2E 결과만 유지한다.
 3. 실제 read-only smoke 뒤 pagination·재시작 offset·provider gap의 장기 soak를 누적한다. 이 polling bridge를 websocket streaming이나 전체시장 coverage로 표현하지 않는다.
 4. 현재 NYSE post-close와 mode-600 data credential·정렬된 bounded universe가 동시에 맞을 때만 US swing 일봉 source를 read-only로 한 번 수집한다. 그 뒤에만 동일 CLI로 signal/shadow forward evidence를 누적하며, Paper 계좌·주문은 열지 않는다.

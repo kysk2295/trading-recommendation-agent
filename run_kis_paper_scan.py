@@ -16,6 +16,7 @@ from scr_backtest.kis_http import (
     end_retry_capture,
 )
 from scr_backtest.kis_intraday import KisSession
+from trading_agent.alpaca_security_master_store import AlpacaSecurityMasterStore
 from trading_agent.bar_archive import track_candidates, tracked_candidates
 from trading_agent.candidate_input_audit import (
     CandidateInputCycleAudit,
@@ -79,6 +80,7 @@ from trading_agent.trade_signal_publication import (
     TradeSignalPublication,
     project_trade_signal_publications,
 )
+from trading_agent.us_opportunity_scanner_models import UsOpportunityScannerProjectionError
 from trading_agent.us_opportunity_scanner_projection import UsOpportunityScannerProjector
 from trading_agent.us_opportunity_scanner_store import UsOpportunityScannerStore
 from trading_agent.us_quote_actionability import QuoteAssessmentStatus
@@ -101,15 +103,17 @@ class ResearchProjectionConfig:
     foundation_manifest: Path
     store: Path
     canonical_root: Path
+    security_master_store: Path | None = None
 
 
 def configure_research_projection(
     foundation_manifest: str | None,
     store: str | None,
     canonical_root: str | None,
+    security_master_store: str | None = None,
 ) -> ResearchProjectionConfig | None:
     values = (foundation_manifest, store, canonical_root)
-    if all(value is None for value in values):
+    if all(value is None for value in values) and security_master_store is None:
         return None
     if (
         foundation_manifest is None
@@ -123,6 +127,7 @@ def configure_research_projection(
         Path(foundation_manifest),
         Path(store),
         Path(canonical_root),
+        None if security_master_store is None else Path(security_master_store),
     )
 
 
@@ -133,10 +138,17 @@ def project_opportunity_research_input(
     if opportunity is None or config is None:
         return None
     foundation = load_data_foundation_manifest(config.foundation_manifest)
+    security_master = (
+        None
+        if config.security_master_store is None
+        else AlpacaSecurityMasterStore(config.security_master_store).latest_snapshot()
+    )
+    if config.security_master_store is not None and security_master is None:
+        raise UsOpportunityScannerProjectionError
     return UsOpportunityScannerProjector(
         UsOpportunityScannerStore(config.store),
         config.canonical_root,
-    ).project(opportunity, foundation)
+    ).project(opportunity, foundation, security_master=security_master)
 
 
 def write_current_alert_outbox(
@@ -273,6 +285,7 @@ def main(
     research_foundation_manifest: str | None = None,
     research_projection_store: str | None = None,
     research_canonical_root: str | None = None,
+    research_security_master_store: str | None = None,
 ) -> None:
     if not 1 <= top <= 10:
         raise typer.BadParameter("top은 1~10이어야 합니다")
@@ -284,6 +297,7 @@ def main(
         research_foundation_manifest,
         research_projection_store,
         research_canonical_root,
+        research_security_master_store,
     )
     started_at = dt.datetime.now().astimezone()
     output = _output_path(output_dir, started_at)

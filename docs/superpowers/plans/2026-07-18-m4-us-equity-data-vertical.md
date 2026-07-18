@@ -103,6 +103,21 @@ next operational input dependency.
 Focused projection and KIS contract tests total 14; the full 2176-test suite,
 Ruff, basedpyright, compileall, manual CLI QA, and no-excuse all pass.
 
+**Current security-master checkpoint (2026-07-19): Complete.** A separate
+raw-first adapter now collects the official Alpaca Paper `GET /v2/assets`
+response without opening account or order APIs. Exact bytes enter a private
+append-only ledger before strict parsing. Active listed supported assets become
+point-in-time instruments keyed by the stable Alpaca asset UUID and one
+provider-symbol alias. The latest reader recomputes the raw payload hash and
+receipt identity. External snapshots are limited to three days and can only be
+combined with a ready non-fixture foundation. The actual read-only QA preserved
+33,351 raw rows, projected 13,011 active instruments, and resolved an actual
+symbol into the canonical scanner path. The next dependency is producing the
+non-fixture foundation from current SIP runtime evidence.
+Focused security-master and scanner integration tests total 25; the full
+2187-test suite, Ruff, basedpyright, compileall, actual GET QA, and no-excuse
+all pass.
+
 ### M4.3: Read-Only Runtime Supervisor
 
 Introduce provider-neutral read-only adapter and supervisor contracts. The

@@ -6,8 +6,20 @@ from pathlib import Path
 
 import pytest
 
-from trading_agent.data_foundation_manifest import load_data_foundation_manifest
+from trading_agent.alpaca_security_master_models import (
+    AlpacaSecurityMasterSnapshot,
+    build_alpaca_security_master_snapshot,
+)
+from trading_agent.data_capability_models import DataSourceId
+from trading_agent.data_foundation_manifest import DataFoundationManifest, load_data_foundation_manifest
 from trading_agent.research_identity_models import AgentFamily, MarketId, StrategyLaneRef
+from trading_agent.security_master_models import (
+    AssetClass,
+    DataMarketDomain,
+    InstrumentAlias,
+    InstrumentAliasType,
+    InstrumentId,
+)
 from trading_agent.signal_contract_models import (
     EvidenceRef,
     FeatureValue,
@@ -109,6 +121,76 @@ def test_missing_symbol_alias_preserves_raw_evidence_but_blocks_projection(
     assert not (tmp_path / "canonical").exists()
 
 
+def test_current_security_master_resolves_dynamic_candidate_outside_foundation_fixture(
+    tmp_path: Path,
+) -> None:
+    store = UsOpportunityScannerStore(tmp_path / "scanner.sqlite3")
+    projector = UsOpportunityScannerProjector(store, tmp_path / "canonical")
+
+    snapshot = projector.project(
+        _opportunity(symbol="DYN"),
+        _operational_foundation(),
+        security_master=_security_master("DYN"),
+    )
+
+    assert snapshot.candidates[0].instrument_id == "alpaca:asset-dyn"
+    assert snapshot.candidates[0].symbol == "DYN"
+    assert store.latest_snapshot() == snapshot
+
+
+def test_future_security_master_preserves_opportunity_raw_but_blocks_projection(
+    tmp_path: Path,
+) -> None:
+    store = UsOpportunityScannerStore(tmp_path / "scanner.sqlite3")
+    projector = UsOpportunityScannerProjector(store, tmp_path / "canonical")
+
+    with pytest.raises(UsOpportunityScannerProjectionError):
+        _ = projector.project(
+            _opportunity(symbol="DYN"),
+            _operational_foundation(),
+            security_master=_security_master(
+                "DYN",
+                observed_at=OBSERVED_AT + dt.timedelta(seconds=1),
+            ),
+        )
+
+    assert store.raw_count() == 1
+    assert store.projection_count() == 0
+
+
+@pytest.mark.parametrize(
+    ("security_observed_at", "foundation"),
+    (
+        (OBSERVED_AT - dt.timedelta(days=3, seconds=1), None),
+        (OBSERVED_AT - dt.timedelta(minutes=1), "fixture"),
+    ),
+)
+def test_stale_security_or_fixture_foundation_blocks_external_master(
+    tmp_path: Path,
+    security_observed_at: dt.datetime,
+    foundation: str | None,
+) -> None:
+    projector = UsOpportunityScannerProjector(
+        UsOpportunityScannerStore(tmp_path / "scanner.sqlite3"),
+        tmp_path / "canonical",
+    )
+    selected_foundation = (
+        load_data_foundation_manifest(FOUNDATION)
+        if foundation == "fixture"
+        else _operational_foundation()
+    )
+
+    with pytest.raises(UsOpportunityScannerProjectionError):
+        _ = projector.project(
+            _opportunity(symbol="DYN"),
+            selected_foundation,
+            security_master=_security_master(
+                "DYN",
+                observed_at=security_observed_at,
+            ),
+        )
+
+
 def _opportunity(*, symbol: str = "FIXT") -> OpportunitySnapshot:
     return OpportunitySnapshot(
         opportunity_id=f"us-opportunity-{symbol.lower()}-20260717t140000z",
@@ -152,4 +234,68 @@ def _config() -> SubscriptionPolicyConfig:
         max_candidate_age=dt.timedelta(seconds=30),
         minimum_residency=dt.timedelta(minutes=2),
         eviction_cooldown=dt.timedelta(minutes=5),
+    )
+
+
+def _security_master(
+    symbol: str,
+    *,
+    observed_at: dt.datetime = OBSERVED_AT - dt.timedelta(minutes=1),
+) -> AlpacaSecurityMasterSnapshot:
+    instrument = InstrumentId(
+        value=f"alpaca:asset-{symbol.lower()}",
+        market_domain=DataMarketDomain.US_EQUITIES,
+        asset_class=AssetClass.EQUITY,
+        venue="XNAS",
+        currency="USD",
+        timezone="America/New_York",
+        valid_from=observed_at,
+    )
+    alias = InstrumentAlias(
+        instrument_id=instrument.value,
+        namespace="alpaca",
+        alias_type=InstrumentAliasType.PROVIDER_SYMBOL,
+        value=symbol,
+        effective_from=observed_at,
+    )
+    return build_alpaca_security_master_snapshot(
+        "a" * 64,
+        observed_at,
+        (instrument,),
+        (alias,),
+    )
+
+
+def _operational_foundation() -> DataFoundationManifest:
+    fixture = load_data_foundation_manifest(FOUNDATION)
+    source = DataSourceId(provider="alpaca", feed="sip")
+    return DataFoundationManifest(
+        manifest_id="us-orb-operational-test-v1",
+        registered_at=fixture.registered_at,
+        evaluated_at=fixture.evaluated_at,
+        strategy_lane=fixture.strategy_lane,
+        capabilities=tuple(
+            item.model_copy(update={"source_id": source})
+            for item in fixture.capabilities
+        ),
+        entitlements=tuple(
+            item.model_copy(update={"source_id": source})
+            for item in fixture.entitlements
+        ),
+        requirements=tuple(
+            item.model_copy(
+                update={
+                    "primary_source_id": source,
+                    "fallback_source_ids": (),
+                }
+            )
+            for item in fixture.requirements
+        ),
+        instruments=fixture.instruments,
+        aliases=fixture.aliases,
+        corporate_actions=fixture.corporate_actions,
+        events=tuple(
+            item.model_copy(update={"source_id": source})
+            for item in fixture.events
+        ),
     )
