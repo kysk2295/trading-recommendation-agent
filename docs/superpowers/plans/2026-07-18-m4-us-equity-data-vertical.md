@@ -225,6 +225,16 @@ pages. No account/order endpoint or mutation was opened. Durable fleet-cycle
 audit and the scanner-to-profile-to-runtime operational orchestrator remain
 pending.
 
+**Runtime fleet-cycle audit checkpoint (2026-07-19): Complete.**
+Each bounded policy cycle now has a deterministic append-only audit record
+covering desired instrument/symbol order, request profile evidence IDs, owner
+and runtime status, connection epoch, last sequence, ready feature replay
+identity, and the M4.4 gate outcome. Exact retries are idempotent; the reader
+recomputes payload and cycle hashes. READY and one-owner-degraded fixture
+cycles replay correctly, while direct payload tampering fails closed. The
+audit contains no account/order fields. Wiring this store into an operational
+scanner/profile/fleet orchestrator remains pending.
+
 ### M4.4: Evidence-Gated US Opportunity Projection
 
 Project an eligible feature snapshot into the existing US

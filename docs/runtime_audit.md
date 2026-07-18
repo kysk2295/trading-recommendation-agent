@@ -434,3 +434,9 @@
 - 수정: CLI가 먼저 mode-700 state root를 확정하고 그 아래 evidence SQLite, canonical root와 content-addressed mode-600 profile을 쓴다. JSON load는 각 `ResearchInputIdentity`의 canonical payload SHA-256을 재계산하고 전체 profile을 다시 생성해 median, source dates, semantic version, evidence SHA와 filename을 비교한다. data client는 `https://data.alpaca.markets`와 redirect off로 고정했다.
 - 실제 관찰: AAPL canonical alias와 Paper data credential로 target 2026-07-20, through minute 35를 실행했다. historical GET 20건으로 raw page 20개, canonical session 20개와 profile 1개가 생성됐다. 즉시 재실행은 `new raw page: 0`이었다. 그 전에 잘못된 security-master SQL/table 및 symbol field 조회 두 번은 HTTP 전에 blocked됐고 profile을 만들지 않았다.
 - 결과: artifact 변조·symlink·mode 불일치와 불완전 CLI 인자는 차단됐다. actual account/order endpoint, POST/DELETE mutation은 0건이다.
+
+## H61: owner별 runtime 결과가 메모리에서만 결합되어 재시작 후 cycle을 감사할 수 없다
+
+- 판별 기준: policy decision, profile request, 두 owner 결과와 M4.4 gate를 하나의 durable identity로 재생할 수 있는지, 한 owner gap이 gate 결과와 함께 보존되는지, SQLite payload 변조를 탐지하는지 확인한다.
+- 수정: desired 순서별 instrument/symbol, profile evidence SHA, owner/runtime status, connection epoch, last sequence, ready feature replay identity와 gate status/reason/opportunity ID를 canonical JSON으로 직렬화하고 deterministic cycle ID를 계산한다. mode-600 SQLite는 update/delete trigger와 exact retry 비교를 사용하며 reader는 payload SHA·canonical bytes·cycle ID를 재검증한다.
+- 결과: 두 owner READY cycle과 BBB gap의 `ready/blocked`, fleet `degraded`, gate `missing_evidence`가 각각 round-trip됐다. trigger를 제거한 뒤 payload를 `{}`로 바꾼 공격은 latest replay에서 차단됐다. account/order 데이터와 mutation 권한은 추가되지 않았다.

@@ -112,6 +112,8 @@ flowchart LR
 
 **2026-07-19 historical profile 운영 CLI 업데이트:** `run_alpaca_sip_historical_profile.py`가 mode-700 state dir 아래 raw evidence DB, canonical session dataset과 검증 가능한 mode-600 profile JSON을 생성한다. JSON reader는 20개 source identity의 내부 SHA-256과 profile median/evidence hash를 모두 재계산하고 symlink·mode·filename 불일치를 차단한다. 실제 Paper data credential과 AAPL canonical instrument alias로 2026-07-20 목표의 35분 profile을 수집해 historical GET 20건, raw page 20개, canonical session 20개, profile 1개를 확인했다. 같은 명령 재실행은 새 raw page 0개로 끝났다. account/order endpoint와 POST/DELETE는 0건이다. 다음 경계는 append-only fleet-cycle audit와 scanner→profile→runtime→M4.4 운영 연결이다.
 
+**2026-07-19 runtime fleet-cycle audit 업데이트:** 하나의 bounded policy cycle에서 desired instrument/symbol, 각 request의 profile evidence SHA, owner status, runtime status·epoch·last sequence, ready feature replay identity와 M4.4 gate 결과를 deterministic cycle ID로 묶는 감사 계약을 추가했다. mode-600 append-only SQLite는 exact retry만 idempotent하게 허용하고 latest reader가 payload SHA, canonical JSON과 cycle ID를 다시 계산한다. 두-owner READY와 one-owner gap/degraded→`missing_evidence`를 모두 재생했고 trigger를 우회한 payload 변조도 차단했다. 계좌·주문 필드는 감사 payload에 없다. 다음 단계는 이 store를 실제 scanner/profile/fleet orchestration에 연결하는 것이다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \
@@ -202,6 +204,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [US intraday volume profile 체크포인트](docs/checkpoints/2026-07-19-us-intraday-volume-profile-ko.md)
 - [Alpaca historical profile collector 체크포인트](docs/checkpoints/2026-07-19-alpaca-historical-profile-collector-ko.md)
 - [Alpaca historical profile 운영 CLI 체크포인트](docs/checkpoints/2026-07-19-alpaca-historical-profile-cli-ko.md)
+- [US runtime fleet-cycle audit 체크포인트](docs/checkpoints/2026-07-19-us-runtime-fleet-audit-ko.md)
 - [US feature evidence projection 체크포인트](docs/checkpoints/2026-07-18-us-feature-evidence-projection-ko.md)
 - [Grok 개발 하네스 설계](docs/superpowers/specs/2026-07-18-grok-development-harness-design.md)
 - [Grok 개발 하네스 체크포인트](docs/checkpoints/2026-07-18-grok-development-harness-ko.md)
