@@ -440,3 +440,10 @@
 - 판별 기준: policy decision, profile request, 두 owner 결과와 M4.4 gate를 하나의 durable identity로 재생할 수 있는지, 한 owner gap이 gate 결과와 함께 보존되는지, SQLite payload 변조를 탐지하는지 확인한다.
 - 수정: desired 순서별 instrument/symbol, profile evidence SHA, owner/runtime status, connection epoch, last sequence, ready feature replay identity와 gate status/reason/opportunity ID를 canonical JSON으로 직렬화하고 deterministic cycle ID를 계산한다. mode-600 SQLite는 update/delete trigger와 exact retry 비교를 사용하며 reader는 payload SHA·canonical bytes·cycle ID를 재검증한다.
 - 결과: 두 owner READY cycle과 BBB gap의 `ready/blocked`, fleet `degraded`, gate `missing_evidence`가 각각 round-trip됐다. trigger를 제거한 뒤 payload를 `{}`로 바꾼 공격은 latest replay에서 차단됐다. account/order 데이터와 mutation 권한은 추가되지 않았다.
+
+## H62: scanner, profile, runtime을 수동 인자로 조합해 다른 세대나 다른 분의 증거를 섞는다
+
+- 판별 기준: scanner raw Opportunity과 broad snapshot이 같은 projection 세대인지, desired candidate마다 현재 완료 분의 exact profile이 있는지, 만료·폐장·stale·coverage mismatch가 credential/HTTP 전에 닫히는지 확인한다.
+- 최초 관찰: 개별 scanner reader, profile artifact, fleet와 audit 계약은 있었지만 운영 호출자가 임의 Opportunity 또는 서로 다른 시점 profile을 넘겨도 하나의 상위 경계에서 막는 실행 경로가 없었다.
+- 수정: projection row와 raw row를 같은 read-only query로 join하고 raw/canonical/foundation hash, 관측시각과 symbol 순서를 재검증하는 bundle reader를 추가했다. 운영 preflight는 full candidate policy, opportunity 유효기간, target session과 현재 완료 분, desired instrument별 artifact coverage를 확인한 뒤에만 credential loader와 Alpaca data client에 도달한다. 실행 뒤 fleet result, M4.4 gate와 audit append를 한 결과로 반환한다.
+- 결과: 두-owner library E2E와 한-owner CLI E2E가 READY에 도달했고 CLI는 `/v2/stocks/bars` GET만 1건 열었다. malformed profile과 폐장/누락 scanner는 audit·credential·HTTP 전에 blocked됐다. account/order endpoint와 mutation은 0건이다.

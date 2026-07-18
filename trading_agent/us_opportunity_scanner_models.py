@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 from trading_agent.canonical_duckdb_replay import CanonicalDatasetReplay
 from trading_agent.data_foundation_manifest import DataFoundationManifest
 from trading_agent.research_input_identity import ResearchInputIdentity
+from trading_agent.signal_contract_models import OpportunitySnapshot
 from trading_agent.us_subscription_models import (
     BroadScannerCandidate,
     BroadScannerSnapshot,
@@ -55,6 +56,13 @@ class UsOpportunityScannerProjectionRecord:
     foundation: DataFoundationManifest
     security_master_id: str | None
     recorded_at: dt.datetime
+
+
+@dataclass(frozen=True, slots=True)
+class UsOpportunityScannerBundle:
+    opportunity: OpportunitySnapshot
+    snapshot: BroadScannerSnapshot
+    foundation: DataFoundationManifest
 
 
 class _IdentityPayload(BaseModel):
@@ -180,6 +188,7 @@ def _validate_snapshot(snapshot: BroadScannerSnapshot) -> None:
 
 __all__ = (
     "StoredUsOpportunityRaw",
+    "UsOpportunityScannerBundle",
     "UsOpportunityScannerProjectionError",
     "UsOpportunityScannerProjectionRecord",
     "decode_broad_scanner_snapshot",

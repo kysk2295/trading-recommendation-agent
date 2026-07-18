@@ -232,8 +232,20 @@ and runtime status, connection epoch, last sequence, ready feature replay
 identity, and the M4.4 gate outcome. Exact retries are idempotent; the reader
 recomputes payload and cycle hashes. READY and one-owner-degraded fixture
 cycles replay correctly, while direct payload tampering fails closed. The
-audit contains no account/order fields. Wiring this store into an operational
-scanner/profile/fleet orchestrator remains pending.
+audit contains no account/order fields.
+
+**Operational scanner/profile/fleet checkpoint (2026-07-19): Fixture complete.**
+The scanner reader now joins the raw Opportunity, verified broad snapshot,
+foundation, and canonical dataset from one projection generation and
+recomputes their hashes and cross-object timestamps/symbol coverage. A
+preflight requires a fresh READY policy, unexpired full-candidate scope, one
+validated content-addressed profile per desired instrument, and an exact
+profile minute equal to the current completed regular-session minute before
+credentials or HTTP are reachable. The CLI then runs isolated SIP owners,
+the M4.4 gate, and the append-only cycle audit. A fixture CLI cycle made one
+data GET and reached READY; closed, malformed, missing, stale, expired, and
+minute-mismatched inputs remain fail-closed. Actual regular-session GET smoke,
+durable residency/cooldown policy state, and soak supervision remain pending.
 
 ### M4.4: Evidence-Gated US Opportunity Projection
 

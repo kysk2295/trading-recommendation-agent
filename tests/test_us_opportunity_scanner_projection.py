@@ -72,6 +72,11 @@ def test_verified_opportunity_projection_drives_bounded_subscription_policy(
     assert store.projection_count() == 1
     assert store.latest_snapshot() == snapshot
     assert store.latest_foundation() == foundation
+    bundle = store.latest_bundle()
+    assert bundle is not None
+    assert bundle.opportunity == _opportunity()
+    assert bundle.snapshot == snapshot
+    assert bundle.foundation == foundation
     assert len(tuple((tmp_path / "canonical").rglob("events.parquet"))) == 1
 
 
@@ -152,6 +157,20 @@ def test_latest_readers_reject_foundation_identity_column_mismatch(tmp_path: Pat
         _ = store.latest_snapshot()
     with pytest.raises(UsOpportunityScannerProjectionError):
         _ = store.latest_foundation()
+
+
+def test_latest_bundle_rejects_tampered_raw_opportunity(tmp_path: Path) -> None:
+    database = tmp_path / "scanner.sqlite3"
+    store = UsOpportunityScannerStore(database)
+    projector = UsOpportunityScannerProjector(store, tmp_path / "canonical")
+    _ = projector.project(_opportunity(), load_data_foundation_manifest(FOUNDATION))
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TRIGGER us_opportunity_scanner_raw_no_update")
+        connection.execute("UPDATE us_opportunity_scanner_raw SET raw_payload = X'7B7D'")
+        connection.commit()
+
+    with pytest.raises(UsOpportunityScannerProjectionError):
+        _ = store.latest_bundle()
 
 
 def test_missing_symbol_alias_preserves_raw_evidence_but_blocks_projection(

@@ -14,8 +14,10 @@ from typing import final
 from trading_agent.canonical_duckdb_replay import replay_canonical_dataset
 from trading_agent.data_foundation_manifest import DataFoundationManifest
 from trading_agent.strategy_data_gate import StrategyDataStatus
+from trading_agent.us_opportunity_scanner_bundle import load_latest_us_opportunity_scanner_bundle
 from trading_agent.us_opportunity_scanner_models import (
     StoredUsOpportunityRaw,
+    UsOpportunityScannerBundle,
     UsOpportunityScannerProjectionError,
     UsOpportunityScannerProjectionRecord,
     decode_broad_scanner_snapshot,
@@ -176,6 +178,9 @@ class UsOpportunityScannerStore:
             )
         except (OSError, sqlite3.Error, TypeError, ValueError):
             raise UsOpportunityScannerProjectionError from None
+
+    def latest_bundle(self) -> UsOpportunityScannerBundle | None:
+        return load_latest_us_opportunity_scanner_bundle(self.path)
 
     def _count(self, table: str) -> int:
         if not self.path.is_file():

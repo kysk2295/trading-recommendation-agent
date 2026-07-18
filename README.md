@@ -114,6 +114,8 @@ flowchart LR
 
 **2026-07-19 runtime fleet-cycle audit 업데이트:** 하나의 bounded policy cycle에서 desired instrument/symbol, 각 request의 profile evidence SHA, owner status, runtime status·epoch·last sequence, ready feature replay identity와 M4.4 gate 결과를 deterministic cycle ID로 묶는 감사 계약을 추가했다. mode-600 append-only SQLite는 exact retry만 idempotent하게 허용하고 latest reader가 payload SHA, canonical JSON과 cycle ID를 다시 계산한다. 두-owner READY와 one-owner gap/degraded→`missing_evidence`를 모두 재생했고 trigger를 우회한 payload 변조도 차단했다. 계좌·주문 필드는 감사 payload에 없다. 다음 단계는 이 store를 실제 scanner/profile/fleet orchestration에 연결하는 것이다.
 
+**2026-07-19 US runtime fleet 운영 사이클 업데이트:** scanner DB의 원본 `OpportunitySnapshot`, verified broad snapshot, data foundation을 같은 projection 세대에서 원자적으로 재생하는 bundle reader를 추가했다. `run_us_runtime_fleet_cycle.py`는 현재 완료 분과 exact `through_minute`가 일치하는 content-addressed profile을 desired candidate마다 요구한 뒤에만 종목별 Alpaca SIP owner를 실행하고, M4.4 gate와 fleet-cycle audit을 한 사이클로 확정한다. 만료·stale·폐장·후보 축소·profile 누락/변조/분 불일치는 credential read와 HTTP 전에 차단된다. fixture CLI E2E는 FIXT 35분 입력으로 data GET 1건, READY gate와 mode-600 audit을 확인했다. account/order endpoint와 mutation은 0건이다. 정규장 actual GET smoke와 durable subscription residency/cooldown state는 다음 운영 단계다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \
@@ -205,6 +207,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [Alpaca historical profile collector 체크포인트](docs/checkpoints/2026-07-19-alpaca-historical-profile-collector-ko.md)
 - [Alpaca historical profile 운영 CLI 체크포인트](docs/checkpoints/2026-07-19-alpaca-historical-profile-cli-ko.md)
 - [US runtime fleet-cycle audit 체크포인트](docs/checkpoints/2026-07-19-us-runtime-fleet-audit-ko.md)
+- [US runtime fleet 운영 사이클 체크포인트](docs/checkpoints/2026-07-19-us-runtime-fleet-cycle-ko.md)
 - [US feature evidence projection 체크포인트](docs/checkpoints/2026-07-18-us-feature-evidence-projection-ko.md)
 - [Grok 개발 하네스 설계](docs/superpowers/specs/2026-07-18-grok-development-harness-design.md)
 - [Grok 개발 하네스 체크포인트](docs/checkpoints/2026-07-18-grok-development-harness-ko.md)
@@ -715,6 +718,20 @@ KIS 날짜별 paper 감시:
   --research-canonical-root outputs/runtime/us-broad-scanner/canonical \
   --research-security-master-store outputs/runtime/alpaca-security-master/security-master.sqlite3
 ```
+
+선택된 종목별 historical profile을 현재 완료 분까지 준비한 뒤, scanner→SIP feature→M4.4를 GET-only로 한 번 실행한다. `--profile`은 desired candidate마다 반복한다.
+
+```bash
+./run_us_runtime_fleet_cycle.py \
+  --scanner-store outputs/runtime/us-broad-scanner/scanner.sqlite3 \
+  --profile 'alpaca:ASSET_UUID=/private/profile/root/profile_SHA256.json' \
+  --runtime-root outputs/runtime/us-sip-fleet/owners \
+  --canonical-root outputs/runtime/us-sip-fleet/canonical \
+  --audit-store outputs/runtime/us-sip-fleet/fleet-audit.sqlite3 \
+  --output-dir outputs/runtime/us-sip-fleet/report
+```
+
+이 명령은 정규장·fresh scanner·만료 전 opportunity·exact candidate/profile coverage를 먼저 확인한 뒤에만 Alpaca data credential을 읽는다. trading origin, account, position, order API는 사용하지 않는다.
 
 첫 명령은 Paper assets endpoint를 GET-only로 한 번 읽어 pre-session 종목 마스터를 갱신한다. 최신 snapshot이 KIS Opportunity보다 미래이거나 1일을 넘으면 watch의 연구 투영은 fail-closed한다.
 
