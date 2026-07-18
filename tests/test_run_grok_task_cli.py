@@ -54,7 +54,27 @@ def _run_cli(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_cli_dry_run_emits_safe_plan(tmp_path: Path) -> None:
+def test_cli_dry_run_emits_safe_plan_without_worktree_root(tmp_path: Path) -> None:
+    repo, head = _init_repo(tmp_path)
+    contract = _write_contract(tmp_path / "contract.json", head)
+
+    result = _run_cli(
+        "--contract",
+        str(contract),
+        "--dry-run",
+        cwd=repo,
+    )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "planned"
+    assert payload["task_id"] == "m4-replay-input"
+    assert "worktree_id" not in payload
+    assert "Private objective" not in result.stdout
+    assert "worktree-root" not in result.stderr
+
+
+def test_cli_rejects_worktree_root_flag(tmp_path: Path) -> None:
     repo, head = _init_repo(tmp_path)
     contract = _write_contract(tmp_path / "contract.json", head)
 
@@ -67,12 +87,7 @@ def test_cli_dry_run_emits_safe_plan(tmp_path: Path) -> None:
         cwd=repo,
     )
 
-    assert result.returncode == 0
-    payload = json.loads(result.stdout)
-    assert payload["status"] == "planned"
-    assert payload["worktree_id"] == "m4-replay-input"
-    assert "Private objective" not in result.stdout
-    assert not (tmp_path / "workers").exists()
+    assert result.returncode != 0
 
 
 def test_cli_rejects_invalid_contract_without_echoing_contents(tmp_path: Path) -> None:
@@ -83,8 +98,6 @@ def test_cli_rejects_invalid_contract_without_echoing_contents(tmp_path: Path) -
     result = _run_cli(
         "--contract",
         str(contract),
-        "--worktree-root",
-        str(tmp_path / "workers"),
         "--dry-run",
         cwd=repo,
     )
@@ -104,6 +117,7 @@ def test_cli_help_is_available() -> None:
 
     assert result.returncode == 0
     assert "Grok" in result.stdout
+    assert "--worktree-root" not in result.stdout
 
 
 def test_cli_returns_nonzero_when_worker_fails(tmp_path: Path) -> None:
@@ -116,8 +130,6 @@ def test_cli_returns_nonzero_when_worker_fails(tmp_path: Path) -> None:
     result = _run_cli(
         "--contract",
         str(contract),
-        "--worktree-root",
-        str(tmp_path / "workers"),
         "--grok-binary",
         str(fake_grok),
         cwd=repo,

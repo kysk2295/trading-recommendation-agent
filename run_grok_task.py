@@ -13,10 +13,14 @@ from development_harness.task_contract import GrokTaskContract
 _MAX_CONTRACT_BYTES = 64 * 1024
 
 
+class _InvalidGrokTaskRequestError(ValueError):
+    def __init__(self) -> None:
+        super().__init__("invalid Grok task request")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Bounded Grok development-task harness")
     parser.add_argument("--contract", type=Path, required=True)
-    parser.add_argument("--worktree-root", type=Path, required=True)
     parser.add_argument("--grok-binary", default="grok")
     parser.add_argument("--dry-run", action="store_true")
     return parser
@@ -29,7 +33,7 @@ def _load_contract(path: Path) -> GrokTaskContract:
         payload: Any = json.loads(path.read_text(encoding="utf-8"))
         return GrokTaskContract.model_validate(payload)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
-        raise ValueError("invalid Grok task request") from None
+        raise _InvalidGrokTaskRequestError() from None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,7 +43,6 @@ def main(argv: list[str] | None = None) -> int:
         plan = prepare_grok_task(
             contract,
             repo=Path.cwd(),
-            worktree_root=args.worktree_root,
             grok_binary=args.grok_binary,
             dry_run=args.dry_run,
         )

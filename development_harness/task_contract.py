@@ -27,6 +27,12 @@ _MODEL_FIELDS = frozenset(
         "max_turns",
     }
 )
+_REQUIRED_SUMMARY_FIELDS = ("changed_files", "verification", "concerns")
+
+
+class _GrokTaskValidationError(ValueError):
+    def __init__(self) -> None:
+        super().__init__("invalid Grok task contract")
 
 
 def _is_safe_path(value: str) -> bool:
@@ -137,57 +143,57 @@ class GrokTaskContract(BaseModel):
     @classmethod
     def _reject_unknown_or_non_mapping_input(cls, value: Any) -> Any:
         if not isinstance(value, dict) or set(value).difference(_MODEL_FIELDS):
-            raise ValueError("invalid Grok task contract")
+            raise _GrokTaskValidationError()
         return value
 
     @field_validator("task_id")
     @classmethod
     def _validate_task_id(cls, value: str) -> str:
         if not _TASK_ID_PATTERN.fullmatch(value):
-            raise ValueError("invalid Grok task contract")
+            raise _GrokTaskValidationError()
         return value
 
     @field_validator("base_commit")
     @classmethod
     def _validate_base_commit(cls, value: str) -> str:
         if not _COMMIT_PATTERN.fullmatch(value):
-            raise ValueError("invalid Grok task contract")
+            raise _GrokTaskValidationError()
         return value
 
     @field_validator("objective")
     @classmethod
     def _validate_objective(cls, value: str) -> str:
         if value != value.strip() or "\x00" in value:
-            raise ValueError("invalid Grok task contract")
+            raise _GrokTaskValidationError()
         return value
 
     @field_validator("allowed_paths")
     @classmethod
     def _validate_allowed_paths(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if not value or len(value) != len(set(value)) or any(not _is_safe_path(path) for path in value):
-            raise ValueError("invalid Grok task contract")
+            raise _GrokTaskValidationError()
         return value
 
     @field_validator("required_commands", "manual_qa_commands")
     @classmethod
     def _validate_commands(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if not value or any(not _is_safe_command(command) for command in value):
-            raise ValueError("invalid Grok task contract")
+            raise _GrokTaskValidationError()
         return value
 
     @field_validator("expected_summary_fields")
     @classmethod
     def _validate_expected_summary_fields(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if not value or len(value) != len(set(value)):
-            raise ValueError("invalid Grok task contract")
+        if value != _REQUIRED_SUMMARY_FIELDS:
+            raise _GrokTaskValidationError()
         if any(not cls._summary_field_pattern.fullmatch(field) for field in value):
-            raise ValueError("invalid Grok task contract")
+            raise _GrokTaskValidationError()
         return value
 
     @model_validator(mode="after")
     def _reject_empty_values(self) -> GrokTaskContract:
         if not self.objective or not self.required_commands or not self.manual_qa_commands:
-            raise ValueError("invalid Grok task contract")
+            raise _GrokTaskValidationError()
         return self
 
     def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
