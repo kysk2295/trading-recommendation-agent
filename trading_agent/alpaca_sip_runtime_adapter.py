@@ -21,6 +21,7 @@ from trading_agent.research_input_identity import ResearchInputIdentity
 from trading_agent.us_equity_calendar import regular_session_bounds
 from trading_agent.us_market_data_runtime_models import (
     MarketDataRuntimeBatch,
+    MarketDataRuntimeCheckpoint,
     build_market_data_runtime_receipt,
 )
 from trading_agent.us_subscription_models import (
@@ -59,10 +60,10 @@ class AlpacaSipRuntimeAdapter:
     def read_batch(
         self,
         desired: tuple[DesiredMarketDataSubscription, ...],
-        after_sequence: int | None,
+        checkpoint: MarketDataRuntimeCheckpoint | None,
     ) -> MarketDataRuntimeBatch:
         try:
-            subscription, now, session_open, session_close = self._validate(desired, after_sequence)
+            subscription, now, session_open, session_close = self._validate(desired, checkpoint)
             completed_boundary = now.replace(second=0, microsecond=0)
             if completed_boundary <= session_open:
                 raise AlpacaSipRuntimeError
@@ -76,7 +77,15 @@ class AlpacaSipRuntimeAdapter:
             )
             bars = _runtime_bars(page_set, session_open, min(completed_boundary, session_close))
             identity = self._projector.project(page_set, subscription.instrument_id, bars)
-            connection_epoch = _connection_epoch(self._context.session_date, subscription)
+            recovering = checkpoint is not None and checkpoint.gap_blocked and _contiguous_from_open(bars)
+            connection_epoch = _connection_epoch(
+                self._context.session_date,
+                subscription,
+                checkpoint,
+                identity,
+                recovering=recovering,
+            )
+            after_sequence = None if checkpoint is None or recovering else checkpoint.last_sequence
             receipts = tuple(
                 build_market_data_runtime_receipt(
                     source_id=self.source_id,
@@ -98,7 +107,7 @@ class AlpacaSipRuntimeAdapter:
     def _validate(
         self,
         desired: tuple[DesiredMarketDataSubscription, ...],
-        after_sequence: int | None,
+        checkpoint: MarketDataRuntimeCheckpoint | None,
     ) -> tuple[DesiredMarketDataSubscription, dt.datetime, dt.datetime, dt.datetime]:
         now = self._context.clock()
         bounds = regular_session_bounds(self._context.session_date)
@@ -107,7 +116,7 @@ class AlpacaSipRuntimeAdapter:
             or type(desired) is not tuple
             or len(desired) != 1
             or type(desired[0]) is not DesiredMarketDataSubscription
-            or (after_sequence is not None and (type(after_sequence) is not int or after_sequence < 0))
+            or not _valid_checkpoint(checkpoint)
             or type(now) is not dt.datetime
             or now.tzinfo is None
             or now.utcoffset() is None
@@ -118,6 +127,8 @@ class AlpacaSipRuntimeAdapter:
         if (
             not subscription.instrument_id
             or not subscription.symbol
+            or subscription.instrument_id != self._context.instrument_id
+            or subscription.symbol != self._context.symbol
             or subscription.channels != (SubscriptionChannel.QUOTE, SubscriptionChannel.TRADE)
             or not bounds[0] < now < bounds[1]
         ):
@@ -178,9 +189,37 @@ def _runtime_bar(
 def _connection_epoch(
     session_date: dt.date,
     subscription: DesiredMarketDataSubscription,
+    checkpoint: MarketDataRuntimeCheckpoint | None,
+    identity: ResearchInputIdentity,
+    *,
+    recovering: bool,
 ) -> str:
-    encoded = f"{session_date.isoformat()}:{subscription.instrument_id}:{subscription.symbol}".encode()
+    if checkpoint is not None and not recovering:
+        return checkpoint.connection_epoch
+    base = f"{session_date.isoformat()}:{subscription.instrument_id}:{subscription.symbol}"
+    recovery = "" if checkpoint is None else f":{checkpoint.connection_epoch}:{identity.identity_sha256}"
+    encoded = f"{base}{recovery}".encode()
     return f"alpaca-sip-{hashlib.sha256(encoded).hexdigest()[:24]}"
+
+
+def _contiguous_from_open(bars: tuple[AlpacaSipRuntimeBar, ...]) -> bool:
+    return tuple(bar.sequence for bar in bars) == tuple(range(1, bars[-1].sequence + 1))
+
+
+def _valid_checkpoint(checkpoint: MarketDataRuntimeCheckpoint | None) -> bool:
+    if checkpoint is None:
+        return True
+    return (
+        type(checkpoint) is MarketDataRuntimeCheckpoint
+        and checkpoint.source_id == _SOURCE_ID
+        and bool(checkpoint.connection_epoch)
+        and type(checkpoint.last_sequence) is int
+        and checkpoint.last_sequence > 0
+        and type(checkpoint.gap_blocked) is bool
+        and type(checkpoint.recorded_at) is dt.datetime
+        and checkpoint.recorded_at.tzinfo is not None
+        and checkpoint.recorded_at.utcoffset() is not None
+    )
 
 
 __all__ = ("AlpacaSipRuntimeAdapter",)

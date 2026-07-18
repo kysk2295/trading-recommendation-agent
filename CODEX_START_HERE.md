@@ -83,7 +83,7 @@
 - bootstrap·readiness·recovery·entry·보호 OCO·safety 운영 report는 기존 파일을 포함해 atomic mode `600`으로 강제 교체
 - 첫 정규장 smoke의 GET-only 준비, exact current ORB 후보 선택, armed entry, 보호 OCO, timeout 복구, staged EOD 평탄화와 최종 flat 대사를 하나의 운영 런북으로 고정
 - 동일 공개 운영 세션 API의 fake broker E2E가 entry→체결 trade update→보호 OCO→staged EOD cancel/close→최종 flat broker/shadow 대사를 검증하며, 실제 Paper POST/DELETE는 계속 0건
-- Alpaca SIP 단일 종목 완료 1분봉 provider bridge 구현. 정규장·canonical data URL·redirect 금지·단일 desired subscription을 HTTP 전에 검사하고, exact response body를 mode-600 append-only SQLite에 먼저 저장한 뒤 canonical Parquet·DuckDB replay identity와 restart offset을 M4 supervisor에 공급. fixture pagination·동일 분 retry·재시작·gap·휴장·다중종목·redirect E2E를 통과했으며 계좌·주문 import와 실제 외부 network 호출은 0건
+- Alpaca SIP 단일 종목 완료 1분봉 provider bridge 구현. context의 exact instrument/symbol binding, 정규장·canonical data URL·redirect 금지·단일 desired subscription을 HTTP 전에 검사하고, exact response body를 mode-600 append-only SQLite에 먼저 저장한 뒤 canonical Parquet·DuckDB replay identity와 full runtime checkpoint를 M4 supervisor에 공급. 정상 restart는 기존 epoch·offset을 잇고 transient gap은 이후 full-session sequence가 완전히 연속일 때만 새 verified recovery epoch로 해제. fixture pagination·동일 분 retry·재시작·gap recovery·종목교체·휴장·다중종목·redirect E2E를 통과했으며 계좌·주문 import와 실제 외부 network 호출은 0건
 
 ## 다음 우선순위
 

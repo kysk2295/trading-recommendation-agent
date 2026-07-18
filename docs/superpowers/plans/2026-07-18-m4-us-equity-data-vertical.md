@@ -114,12 +114,17 @@ compileall, and no-excuse all pass.
 
 **Provider bridge checkpoint (2026-07-18): Fixture complete, production smoke pending.**
 The first actual provider adapter polls one bounded symbol from Alpaca's SIP
-minute-bars GET endpoint only during its current regular session. Every
+minute-bars GET endpoint only during its current regular session. Its context
+binds one exact instrument ID and symbol, so a desired-symbol rotation cannot
+reuse another instrument's source-level checkpoint. Every
 paginated response body is persisted to a separate mode-600 append-only
 evidence store before canonical Parquet publication and DuckDB replay. The
 verified replay identity then reaches the existing supervisor; same-minute
 retry is idempotent, restart resumes after the durable sequence, and a missing
-provider minute remains a fail-closed sequence gap. Noncanonical base URLs,
+provider minute remains a fail-closed sequence gap. The adapter receives the
+full durable checkpoint: a later full-session response opens a new recovery
+epoch only when every sequence from session open is present, while an
+incomplete backfill preserves the blocked epoch. Noncanonical base URLs,
 redirects, closed sessions, and multi-symbol input are rejected before unsafe
 follow-up calls. This is completed-bar polling, not quote/trade streaming, and
 it imports no account or order path. Eight focused provider tests and 186 M4

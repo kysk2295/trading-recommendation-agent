@@ -32,7 +32,7 @@ class ReadOnlyUsMarketDataAdapter(Protocol):
     def read_batch(
         self,
         desired: tuple[DesiredMarketDataSubscription, ...],
-        after_sequence: int | None,
+        checkpoint: MarketDataRuntimeCheckpoint | None,
     ) -> MarketDataRuntimeBatch: ...
 
 
@@ -70,8 +70,7 @@ class UsMarketDataSupervisor:
 
         with self._store.writer() as writer:
             prior = writer.latest_checkpoint(source_id)
-            after_sequence = None if prior is None else prior.last_sequence
-            batch = self._adapter.read_batch(decision.desired, after_sequence)
+            batch = self._adapter.read_batch(decision.desired, prior)
             self._validate_batch(batch, decision)
             now = self._valid_now()
             incidents: list[MarketDataRuntimeIncident] = []
@@ -120,7 +119,11 @@ class UsMarketDataSupervisor:
 
             if inserted_count == 0:
                 return MarketDataRuntimeResult(
-                    MarketDataRuntimeStatus.NO_NEW_DATA,
+                    (
+                        MarketDataRuntimeStatus.BLOCKED_SEQUENCE_GAP
+                        if gap_blocked
+                        else MarketDataRuntimeStatus.NO_NEW_DATA
+                    ),
                     source_id,
                     batch.connection_epoch,
                     None if prior is None else prior.last_sequence,

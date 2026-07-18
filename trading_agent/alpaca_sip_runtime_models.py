@@ -12,7 +12,7 @@ _ERROR_MESSAGE: Final = "alpaca SIP runtime input is invalid"
 
 
 class AlpacaSipRuntimeError(ValueError):
-    def __init__(self, *_args: object) -> None:
+    def __init__(self) -> None:
         super().__init__(_ERROR_MESSAGE)
 
     @override
@@ -58,6 +58,8 @@ class AlpacaSipRuntimeBar:
 @dataclass(frozen=True, slots=True)
 class AlpacaSipRuntimeContext:
     session_date: dt.date
+    instrument_id: str
+    symbol: str
     clock: Callable[[], dt.datetime] = field(repr=False)
 
 

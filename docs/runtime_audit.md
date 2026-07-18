@@ -364,3 +364,17 @@
 - RED: 첫 수정도 외부 sizing을 재검산할 뿐 최소 거래비용을 강제하지 않아 USD 75 위험 한도를 우회할 수 있었다. 포지션과 남은 주문이 같은 종목인 정상 부분체결은 두 슬롯으로 세거나 불일치로 차단했고, 호출자가 만든 합계 자체를 신뢰했다.
 - 수정: 게이트 입력에서 `SizedPaperOrder`와 사전 합계를 제거했다. 브로커 주문·포지션과 원장 intent를 직접 결합하고, 부분체결은 현재 포지션 market value와 남은 주문 명목금액을 합친 단일 노출로 만든다. market value가 0·수량과 반대 부호면 불완전으로 차단하고, 유효해도 진입가 기준 명목금액보다 작게 세지 않는다. 미체결 주문이 없는 완전체결 포지션은 현재 세션의 유일한 intent와 로컬 `fill` 이벤트 증거가 모두 있어야 한다. 기존 노출 위험은 거래당 예약 한도와 원장 수량 전체의 손절거리·동일 config 최소비용 위험 중 큰 값으로 계산하고 각 노출의 위험·명목 한도도 별도 검사한다. join 누락·수량 불일치·동일 종목 중복·모호한 intent는 불완전 포트폴리오로 차단한다. 신규 주문은 conservative equity, 유동성 수량, spread, 손절거리와 왕복 최소 20bp 비용으로 내부 재산정한다.
 - 결과: 진입 100·손절 99·spread 0 예시는 주당위험 1.398, 53주, 계획위험 약 USD 74.094로만 승인된다. 20bp spread에서는 46주로 줄며, 70주 기존 주문 위험은 USD 97.86으로 재계산되어 종목 한도를 초과한다. torn partial fill, 축소된 market value와 외부 합계 조작 경로는 `PORTFOLIO_BLOCKED`다.
+
+## H51: SIP provider의 일시적 분봉 누락이 같은 세션에서 영구 gap block이 된다
+
+- 판별 기준: 첫 SIP 응답이 session sequence 1·3만 반환한 뒤 같은 process의 다음 응답이 1·2·3 전체를 반환하도록 한다.
+- RED: supervisor는 adapter에 마지막 sequence 3만 넘겼고 adapter는 두 번째 응답의 1·2·3을 모두 과거 offset으로 버렸다. 결과는 `no_new_data`였으며 기존 `gap_blocked` checkpoint를 해제할 방법이 없었다.
+- 수정: read-only adapter 계약이 숫자 offset 대신 exact `MarketDataRuntimeCheckpoint`를 받는다. 정상 checkpoint는 기존 epoch와 last sequence를 그대로 이어가고, gap checkpoint에서는 full-session 응답이 sequence 1부터 현재 마지막까지 완전히 연속일 때만 prior epoch와 verified replay identity에 결합된 새 recovery epoch로 전체 backfill을 전달한다. 여전히 빠진 sequence가 있으면 기존 epoch와 gap block을 유지한다.
+- 결과: raw·canonical gap evidence를 보존한 채 두 번째 full backfill이 `reconnect` incident와 clean checkpoint를 만들고 feature 계산을 다시 연다. 불완전 backfill은 신규 receipt가 0이어도 외부 상태를 `no_new_data`로 축소하지 않고 `blocked_sequence_gap`을 유지한다. fixture에서 receipt는 gap epoch 2개와 recovery epoch 3개로 분리됐다. 외부 network·credential·account·order 호출은 0건이다.
+
+## H52: 단일종목 SIP adapter가 다른 종목의 desired subscription에 이전 checkpoint를 재사용한다
+
+- 판별 기준: ACME용 adapter와 runtime checkpoint에 단일 desired subscription `OTHER`를 전달한다.
+- RED: desired tuple 길이와 channel만 검사해 `OTHER` HTTP GET을 전송했고, 이후에는 ACME의 source-level epoch와 last sequence를 그대로 적용할 수 있었다.
+- 수정: `AlpacaSipRuntimeContext`가 session date뿐 아니라 exact instrument ID와 symbol을 고정한다. adapter는 desired subscription이 두 binding과 모두 같지 않으면 credential header가 있는 HTTP request 전에 sanitized error로 닫는다.
+- 결과: 한 adapter/supervisor가 한 종목만 소유한다는 M4 계약이 runtime 타입에 반영됐다. 다중 종목은 종목별 독립 adapter·runtime owner가 필요하며 현재 checkpoint를 종목 사이에 공유하지 않는다.

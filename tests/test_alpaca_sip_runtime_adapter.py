@@ -32,7 +32,11 @@ from trading_agent.us_dynamic_subscription_policy import (
     SubscriptionPolicyConfig,
     build_subscription_policy_decision,
 )
-from trading_agent.us_market_data_runtime_models import MarketDataRuntimeStatus, RuntimeFeatureRequest
+from trading_agent.us_market_data_runtime_models import (
+    MarketDataRuntimeIncidentKind,
+    MarketDataRuntimeStatus,
+    RuntimeFeatureRequest,
+)
 from trading_agent.us_market_data_runtime_store import MarketDataRuntimeStore
 from trading_agent.us_market_data_supervisor import UsMarketDataSupervisor
 from trading_agent.us_subscription_models import (
@@ -193,7 +197,43 @@ def test_missing_provider_minute_is_persisted_then_blocks_sequence_gap(tmp_path:
     assert evidence.projection_count() == 1
 
 
-@pytest.mark.parametrize("fault", ("closed", "multiple"))
+def test_later_contiguous_backfill_starts_clean_recovery_epoch(tmp_path: Path) -> None:
+    now = dt.datetime(2026, 7, 17, 9, 33, 30, tzinfo=_NY)
+    responses = iter(
+        (
+            (_wire_bar(0), _wire_bar(2)),
+            _wire_bars(0, 3),
+        )
+    )
+
+    def respond(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={"bars": {_SYMBOL: next(responses)}, "next_page_token": None},
+        )
+
+    adapter, evidence = _adapter(tmp_path, now, respond)
+    runtime = MarketDataRuntimeStore(tmp_path / "runtime.sqlite3")
+    supervisor = UsMarketDataSupervisor(adapter, runtime, clock=lambda: now)
+
+    gap = supervisor.run_cycle(_decision(now), _feature_requests())
+    recovered = supervisor.run_cycle(_decision(now), _feature_requests())
+
+    assert gap.status is MarketDataRuntimeStatus.BLOCKED_SEQUENCE_GAP
+    assert recovered.status is MarketDataRuntimeStatus.READY
+    assert recovered.connection_epoch != gap.connection_epoch
+    assert recovered.last_sequence == 3
+    assert recovered.feature_snapshots[0].status is FeatureSnapshotStatus.BLOCKED_INSUFFICIENT_HISTORY
+    assert tuple(incident.kind for incident in runtime.incidents(_SOURCE_ID)) == (
+        MarketDataRuntimeIncidentKind.SEQUENCE_GAP,
+        MarketDataRuntimeIncidentKind.RECONNECT,
+    )
+    assert runtime.receipt_count(_SOURCE_ID) == 5
+    assert evidence.page_count() == 2
+    assert evidence.projection_count() == 2
+
+
+@pytest.mark.parametrize("fault", ("closed", "multiple", "changed"))
 def test_closed_session_or_multiple_symbols_is_blocked_before_http(
     tmp_path: Path,
     fault: str,
@@ -210,6 +250,14 @@ def test_closed_session_or_multiple_symbols_is_blocked_before_http(
     if fault == "multiple":
         desired = (
             *desired,
+            DesiredMarketDataSubscription(
+                instrument_id="us-eq-fixture-other",
+                symbol="OTHER",
+                channels=(SubscriptionChannel.QUOTE, SubscriptionChannel.TRADE),
+            ),
+        )
+    if fault == "changed":
+        desired = (
             DesiredMarketDataSubscription(
                 instrument_id="us-eq-fixture-other",
                 symbol="OTHER",
@@ -273,7 +321,12 @@ def _adapter(
     adapter = AlpacaSipRuntimeAdapter(
         page_client,
         projector,
-        AlpacaSipRuntimeContext(session_date=_SESSION_DATE, clock=lambda: now),
+        AlpacaSipRuntimeContext(
+            session_date=_SESSION_DATE,
+            instrument_id=_INSTRUMENT_ID,
+            symbol=_SYMBOL,
+            clock=lambda: now,
+        ),
     )
     return adapter, evidence
 

@@ -19,6 +19,7 @@ from trading_agent.us_dynamic_subscription_policy import (
 )
 from trading_agent.us_market_data_runtime_models import (
     MarketDataRuntimeBatch,
+    MarketDataRuntimeCheckpoint,
     MarketDataRuntimeIncidentKind,
     MarketDataRuntimeStatus,
     RuntimeFeatureRequest,
@@ -46,14 +47,14 @@ class _FixtureAdapter:
     def __init__(self, batches: Sequence[MarketDataRuntimeBatch]) -> None:
         self.source_id = _SOURCE_ID
         self._batches = list(batches)
-        self.calls: list[tuple[tuple[DesiredMarketDataSubscription, ...], int | None]] = []
+        self.calls: list[tuple[tuple[DesiredMarketDataSubscription, ...], MarketDataRuntimeCheckpoint | None]] = []
 
     def read_batch(
         self,
         desired: tuple[DesiredMarketDataSubscription, ...],
-        after_sequence: int | None,
+        checkpoint: MarketDataRuntimeCheckpoint | None,
     ) -> MarketDataRuntimeBatch:
-        self.calls.append((desired, after_sequence))
+        self.calls.append((desired, checkpoint))
         return self._batches.pop(0)
 
 
@@ -184,7 +185,9 @@ def test_restart_recovers_checkpoint_and_uses_persisted_completed_bars(tmp_path:
     second_result = restarted.run_cycle(_decision(), _request())
 
     assert first_result.feature_snapshots[0].status is FeatureSnapshotStatus.BLOCKED_INSUFFICIENT_HISTORY
-    assert second_adapter.calls == [(_decision().desired, 20)]
+    assert second_adapter.calls[0][0] == _decision().desired
+    assert second_adapter.calls[0][1] is not None
+    assert second_adapter.calls[0][1].last_sequence == 20
     assert second_result.status is MarketDataRuntimeStatus.READY
     assert second_result.last_sequence == 35
     assert second_result.feature_snapshots[0].status is FeatureSnapshotStatus.READY
@@ -244,8 +247,10 @@ def test_sequence_gap_blocks_same_epoch_until_reconnect(tmp_path: Path) -> None:
         MarketDataRuntimeIncidentKind.SEQUENCE_GAP,
         MarketDataRuntimeIncidentKind.RECONNECT,
     )
-    assert adapter.calls[1][1] == 3
-    assert adapter.calls[2][1] == 4
+    assert adapter.calls[1][1] is not None
+    assert adapter.calls[1][1].last_sequence == 3
+    assert adapter.calls[2][1] is not None
+    assert adapter.calls[2][1].last_sequence == 4
 
 
 def test_conflicting_duplicate_sequence_fails_closed(tmp_path: Path) -> None:
