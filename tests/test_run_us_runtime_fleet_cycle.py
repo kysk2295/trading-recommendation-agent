@@ -24,6 +24,7 @@ from trading_agent.us_intraday_volume_profile_artifact import IntradayVolumeProf
 from trading_agent.us_market_data_fleet_audit_store import RuntimeFleetAuditStore
 from trading_agent.us_opportunity_scanner_projection import UsOpportunityScannerProjector
 from trading_agent.us_opportunity_scanner_store import UsOpportunityScannerStore
+from trading_agent.us_subscription_policy_state_store import SubscriptionPolicyStateStore
 
 PROJECT = Path(__file__).resolve().parents[1]
 FOUNDATION = PROJECT / "examples/data/us-orb-data-foundation-v1.json"
@@ -48,6 +49,7 @@ def test_closed_session_blocks_before_secret_file_read(tmp_path: Path) -> None:
     assert code == 1
     assert "result: blocked" in _report(report)
     assert "account/order mutation: 0" in _report(report)
+    assert not (tmp_path / "policy-state.sqlite3").exists()
 
 
 def test_ready_fixture_cycle_uses_only_alpaca_data_get(tmp_path: Path) -> None:
@@ -89,6 +91,10 @@ def test_ready_fixture_cycle_uses_only_alpaca_data_get(tmp_path: Path) -> None:
     assert audit is not None
     assert audit.gate_status == "ready"
     assert stat.S_IMODE((tmp_path / "audit.sqlite3").stat().st_mode) == 0o600
+    policy_state = SubscriptionPolicyStateStore(tmp_path / "policy-state.sqlite3").latest()
+    assert policy_state is not None
+    assert policy_state.active[0].instrument_id == INSTRUMENT_ID
+    assert policy_state.active[0].subscribed_at == NOW
 
 
 def _inputs(tmp_path: Path) -> tuple[Path, Path]:
@@ -151,6 +157,8 @@ def _arguments(
         str(tmp_path / "canonical"),
         "--audit-store",
         str(tmp_path / "audit.sqlite3"),
+        "--policy-state-store",
+        str(tmp_path / "policy-state.sqlite3"),
         "--output-dir",
         str(report),
         "--secret-path",

@@ -35,6 +35,11 @@ from trading_agent.us_runtime_fleet_cycle import (
     prepare_runtime_fleet_cycle,
 )
 from trading_agent.us_subscription_models import SubscriptionPolicyConfig
+from trading_agent.us_subscription_policy_state import (
+    SubscriptionPolicyStateError,
+    advance_subscription_policy_state,
+)
+from trading_agent.us_subscription_policy_state_store import SubscriptionPolicyStateStore
 
 REPORT_NAME = "us_runtime_fleet_cycle_ko.md"
 
@@ -48,6 +53,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--runtime-root", type=Path, required=True)
     parser.add_argument("--canonical-root", type=Path, required=True)
     parser.add_argument("--audit-store", type=Path, required=True)
+    parser.add_argument("--policy-state-store", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--secret-path", type=Path, default=DEFAULT_ALPACA_SECRET_PATH)
     parser.add_argument("--capacity", type=int, default=2)
@@ -74,15 +80,20 @@ def main(
     args = parse_args(argv)
     evaluated_at = dt.datetime.now(dt.UTC) if now is None else now
     try:
+        state_store = SubscriptionPolicyStateStore(args.policy_state_store)
+        prior_state = state_store.latest()
         prepared = prepare_runtime_fleet_cycle(
             UsOpportunityScannerStore(args.scanner_store),
             RuntimeFleetCycleRequest(
                 evaluated_at,
-                (),
-                (),
+                () if prior_state is None else prior_state.active,
+                () if prior_state is None else prior_state.cooldowns,
                 _policy_config(args),
                 _profile_bindings(args.profile),
             ),
+        )
+        state_appended = state_store.append(
+            advance_subscription_policy_state(prior_state, prepared.decision),
         )
         credentials = load_alpaca_credentials(args.secret_path)
         with client_factory() as client:
@@ -110,6 +121,7 @@ def main(
         MissingAlpacaCredentialsError,
         OSError,
         RuntimeFleetCycleError,
+        SubscriptionPolicyStateError,
         TypeError,
         UsOpportunityScannerProjectionError,
         ValueError,
@@ -125,6 +137,7 @@ def main(
             f"gate: {result.audit.gate_status}",
             f"owner count: {len(result.audit.owners)}",
             f"audit append: {'new' if result.audit_appended else 'replay'}",
+            f"policy state append: {'new' if state_appended else 'replay'}",
             "account/order mutation: 0",
         ),
     )

@@ -244,8 +244,20 @@ profile minute equal to the current completed regular-session minute before
 credentials or HTTP are reachable. The CLI then runs isolated SIP owners,
 the M4.4 gate, and the append-only cycle audit. A fixture CLI cycle made one
 data GET and reached READY; closed, malformed, missing, stale, expired, and
-minute-mismatched inputs remain fail-closed. Actual regular-session GET smoke,
-durable residency/cooldown policy state, and soak supervision remain pending.
+minute-mismatched inputs remain fail-closed. Actual regular-session GET smoke
+and soak supervision remain pending.
+
+**Durable subscription policy state checkpoint (2026-07-19): Complete.**
+The operational CLI no longer supplies empty active/cooldown tuples after
+every process restart. A content-hashed append-only state records the exact
+policy decision, desired instrument subscription start times, and unexpired
+eviction cooldowns. READY preflight appends policy intent before opening
+credentials or provider I/O; fleet audit separately records whether each
+runtime owner actually produced evidence. The mode-600 current-user regular
+SQLite file rejects symlinks and public modes, serializes writers with
+`BEGIN IMMEDIATE`, and revalidates canonical payload/state hashes. Restart
+fixtures preserve minimum residency and cooldown behavior. This state grants
+no account, broker, or order authority.
 
 ### M4.4: Evidence-Gated US Opportunity Projection
 

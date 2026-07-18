@@ -114,7 +114,9 @@ flowchart LR
 
 **2026-07-19 runtime fleet-cycle audit 업데이트:** 하나의 bounded policy cycle에서 desired instrument/symbol, 각 request의 profile evidence SHA, owner status, runtime status·epoch·last sequence, ready feature replay identity와 M4.4 gate 결과를 deterministic cycle ID로 묶는 감사 계약을 추가했다. mode-600 append-only SQLite는 exact retry만 idempotent하게 허용하고 latest reader가 payload SHA, canonical JSON과 cycle ID를 다시 계산한다. 두-owner READY와 one-owner gap/degraded→`missing_evidence`를 모두 재생했고 trigger를 우회한 payload 변조도 차단했다. 계좌·주문 필드는 감사 payload에 없다. 다음 단계는 이 store를 실제 scanner/profile/fleet orchestration에 연결하는 것이다.
 
-**2026-07-19 US runtime fleet 운영 사이클 업데이트:** scanner DB의 원본 `OpportunitySnapshot`, verified broad snapshot, data foundation을 같은 projection 세대에서 원자적으로 재생하는 bundle reader를 추가했다. `run_us_runtime_fleet_cycle.py`는 현재 완료 분과 exact `through_minute`가 일치하는 content-addressed profile을 desired candidate마다 요구한 뒤에만 종목별 Alpaca SIP owner를 실행하고, M4.4 gate와 fleet-cycle audit을 한 사이클로 확정한다. 만료·stale·폐장·후보 축소·profile 누락/변조/분 불일치는 credential read와 HTTP 전에 차단된다. fixture CLI E2E는 FIXT 35분 입력으로 data GET 1건, READY gate와 mode-600 audit을 확인했다. account/order endpoint와 mutation은 0건이다. 정규장 actual GET smoke와 durable subscription residency/cooldown state는 다음 운영 단계다.
+**2026-07-19 US runtime fleet 운영 사이클 업데이트:** scanner DB의 원본 `OpportunitySnapshot`, verified broad snapshot, data foundation을 같은 projection 세대에서 원자적으로 재생하는 bundle reader를 추가했다. `run_us_runtime_fleet_cycle.py`는 현재 완료 분과 exact `through_minute`가 일치하는 content-addressed profile을 desired candidate마다 요구한 뒤에만 종목별 Alpaca SIP owner를 실행하고, M4.4 gate와 fleet-cycle audit을 한 사이클로 확정한다. 만료·stale·폐장·후보 축소·profile 누락/변조/분 불일치는 credential read와 HTTP 전에 차단된다. fixture CLI E2E는 FIXT 35분 입력으로 data GET 1건, READY gate와 mode-600 audit을 확인했다. account/order endpoint와 mutation은 0건이다. 정규장 actual GET smoke와 반복 supervisor는 다음 운영 단계다.
+
+**2026-07-19 US subscription policy state 업데이트:** process restart마다 비어 있던 active/cooldown 입력을 deterministic decision SHA에 결합된 append-only runtime state로 교체했다. READY preflight 직후 desired instrument의 최초 `subscribed_at`을 보존하고, 퇴출 종목의 `eligible_after`를 만료 전까지 유지한다. state SQLite는 mode 600, current-user regular file, no-symlink, `BEGIN IMMEDIATE` single writer와 exact retry를 요구하며 payload/state hash를 재계산한다. restart fixture에서 30초 뒤 고득점 challenger가 minimum residency를 우회하지 못했고, 3분 뒤 퇴출된 종목은 5분 cooldown 동안 재진입하지 못했다. 이 상태는 policy intent만 나타내며 provider 연결이나 broker/account 상태를 주장하지 않는다.
 
 ```bash
 ./run_data_foundation_check.py \
@@ -208,6 +210,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [Alpaca historical profile 운영 CLI 체크포인트](docs/checkpoints/2026-07-19-alpaca-historical-profile-cli-ko.md)
 - [US runtime fleet-cycle audit 체크포인트](docs/checkpoints/2026-07-19-us-runtime-fleet-audit-ko.md)
 - [US runtime fleet 운영 사이클 체크포인트](docs/checkpoints/2026-07-19-us-runtime-fleet-cycle-ko.md)
+- [US subscription policy state 체크포인트](docs/checkpoints/2026-07-19-us-subscription-policy-state-ko.md)
 - [US feature evidence projection 체크포인트](docs/checkpoints/2026-07-18-us-feature-evidence-projection-ko.md)
 - [Grok 개발 하네스 설계](docs/superpowers/specs/2026-07-18-grok-development-harness-design.md)
 - [Grok 개발 하네스 체크포인트](docs/checkpoints/2026-07-18-grok-development-harness-ko.md)
@@ -728,6 +731,7 @@ KIS 날짜별 paper 감시:
   --runtime-root outputs/runtime/us-sip-fleet/owners \
   --canonical-root outputs/runtime/us-sip-fleet/canonical \
   --audit-store outputs/runtime/us-sip-fleet/fleet-audit.sqlite3 \
+  --policy-state-store outputs/runtime/us-sip-fleet/policy-state.sqlite3 \
   --output-dir outputs/runtime/us-sip-fleet/report
 ```
 

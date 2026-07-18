@@ -447,3 +447,10 @@
 - 최초 관찰: 개별 scanner reader, profile artifact, fleet와 audit 계약은 있었지만 운영 호출자가 임의 Opportunity 또는 서로 다른 시점 profile을 넘겨도 하나의 상위 경계에서 막는 실행 경로가 없었다.
 - 수정: projection row와 raw row를 같은 read-only query로 join하고 raw/canonical/foundation hash, 관측시각과 symbol 순서를 재검증하는 bundle reader를 추가했다. 운영 preflight는 full candidate policy, opportunity 유효기간, target session과 현재 완료 분, desired instrument별 artifact coverage를 확인한 뒤에만 credential loader와 Alpaca data client에 도달한다. 실행 뒤 fleet result, M4.4 gate와 audit append를 한 결과로 반환한다.
 - 결과: 두-owner library E2E와 한-owner CLI E2E가 READY에 도달했고 CLI는 `/v2/stocks/bars` GET만 1건 열었다. malformed profile과 폐장/누락 scanner는 audit·credential·HTTP 전에 blocked됐다. account/order endpoint와 mutation은 0건이다.
+
+## H63: 프로세스 재시작마다 active/cooldown을 비워 정책 회전 제한을 우회한다
+
+- 판별 기준: 신규 종목의 최초 구독 뒤 재시작해도 minimum residency가 유지되는지, 퇴출 뒤 cooldown 중 재시작해도 고득점 재진입이 차단되는지 확인한다.
+- 최초 관찰: 단발 운영 CLI가 매번 `active=()`, `cooldowns=()`로 policy를 평가해 순수 정책의 체류·냉각 계약이 프로세스 경계에서 사라졌다.
+- 수정: exact policy decision SHA, evaluated time, desired별 최초 subscribed time과 unexpired cooldown을 content-addressed append-only state로 저장한다. READY preflight 뒤 policy intent를 먼저 확정하고 provider 결과는 별도 fleet audit에 둔다. 파일은 mode 600/current user/regular/no-symlink, payload hash와 state ID 재계산, `BEGIN IMMEDIATE` single writer를 요구한다.
+- 결과: 30초 재시작에서는 100점 challenger가 incumbent를 밀어내지 못했고, 3분 후 정상 퇴출된 incumbent는 5분 cooldown 동안 재진입하지 못했다. state payload·mode·symlink 변조는 replay에서 차단됐다. provider 연결 성공이나 broker/account/order 상태는 이 state가 표현하지 않는다.
