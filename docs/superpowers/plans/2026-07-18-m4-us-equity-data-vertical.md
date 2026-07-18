@@ -1,6 +1,6 @@
 # M4 US Equity Always-On Data Vertical
 
-**Owner:** Codex design; Grok implements bounded tasks; Codex reviews and integrates.
+**Owner:** Codex implements, verifies, documents, and integrates directly.
 
 ## Purpose
 
@@ -78,6 +78,17 @@ capacity, deterministic eviction, cooldown, and no provider import.
 **Acceptance:** a candidate cannot subscribe itself; ties and capacity pressure
 are deterministic; stale or closed-session input has no desired subscription.
 
+**Checkpoint (2026-07-18): Complete.** A replay-bound `BroadScannerSnapshot`
+now feeds a pure versioned policy that emits only bounded quote/trade desired
+state and ordered subscribe/unsubscribe actions. Ranking is stable by priority
+score, source rank, instrument ID, and symbol. Hard capacity, incumbent minimum
+residency, deterministic eviction, eviction cooldown, and symbol-lineage
+consistency are fail-closed. Stale or non-regular-session input removes every
+desired subscription without manufacturing cooldown evidence. The scanner,
+candidate, and policy have no provider or order authority. Verification: 14
+focused policy tests, 54 M4.0-M4.2 tests, full **2143-test** suite, Ruff,
+basedpyright, compileall, and no-excuse all pass.
+
 ### M4.3: Read-Only Runtime Supervisor
 
 Introduce provider-neutral read-only adapter and supervisor contracts. The
@@ -101,18 +112,15 @@ evidence is fail-closed.
 
 ## Integration Rules
 
-- One Grok task implements one delivery slice or a smaller testable part.
-- A task may edit only paths specified by a Codex-written contract. It runs
-  in-place on `main` through `run_grok_task.py` (no Git worktree/branch/clone)
-  with local tests and static checks, and never provider, broker, or credential
-  calls.
-- The harness does not enable an OS sandbox. Credential, network, push, and
-  external-write prevention remain prompt/contract residual risk; Codex review
-  is the final control before integration.
-- Codex reviews the diff, runs targeted and full verification, updates this
-  plan/checkpoint documentation, and alone commits/pushes `main`.
-- Failed in-place worker edits stay uncommitted in the working tree for
-  diagnosis and are never auto-merged.
+- Codex implements each delivery slice directly on `main` with TDD and a narrow
+  changed-file scope; the Grok development harness is not used for M4 work.
+- Pure contract/kernel slices never call provider, broker, credential, account,
+  or order paths. Runtime slices begin with local fixtures and read-only adapter
+  contracts.
+- Every slice runs focused tests, Ruff, basedpyright, compile QA, relevant
+  manual QA, and the full repository suite before its checkpoint commit.
+- Codex updates this plan and README, checks the working tree before and after,
+  and alone commits and pushes `main`.
 
 ## Non-Goals
 
