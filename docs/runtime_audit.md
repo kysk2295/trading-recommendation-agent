@@ -489,3 +489,10 @@
 - 최초 관찰: broad-scanner foundation은 최신 source receipt time을 entitlement `effective_from`으로 넣었다. 같은 entitlement ID의 payload가 매 cycle 달라져 immutable registry에 등록할 수 없고 데이터 수신 성공을 이용권 발효처럼 표현했다.
 - 수정: entitlement는 2026-07-17 등록 계약 버전의 고정 발효일을 사용하고 capability의 assessed/latest event 시각만 cycle마다 변경한다. 별도 mode-600 append-only registry는 entitlement와 capability assessment를 분리해 저장하고 UTC as-of snapshot을 제공한다.
 - 결과: 서로 다른 두 scanner cycle의 entitlement tuple은 같고 capability assessment 시각만 다르다. exact retry는 추가 row 0건이며 overlapping entitlement, 동일 source/time conflict, payload/interval 변조와 symlink/mode 위반은 fail-closed다. local CLI 재평가 외 provider·credential·broker 접근은 0건이다.
+
+## H69: 성공한 희소 source poll에 가짜 최신 event 시각을 부여한다
+
+- 판별 기준: DART·뉴스 source run이 성공했지만 record count가 0일 때 실제 event 없이 current health를 표현할 수 있는지, 실패 run이나 다른 adapter/cycle을 같은 상태로 투영하지 않는지 확인한다.
+- 최초 관찰: `DataCapability`의 complete/degraded 상태는 `latest_event_received_at`을 필수로 요구했다. 이를 그대로 KR source run에 연결하면 zero-record poll에 존재하지 않는 event 시각을 만들거나 정상 transport poll을 incomplete로 잘못 축약해야 했다.
+- 수정: 실제 event 수신시각과 source poll heartbeat를 별도 필드로 분리하고 둘 중 최신 causal 시각으로 freshness를 평가한다. KR projection은 exact 네 source의 run ID, adapter version, cycle/date와 terminal status를 검증하고 성공 run에는 heartbeat만, 실패 run에는 failed health를 append한다. LS 뉴스는 tombstone 가능 정책, 나머지는 append-correction 정책으로 고정한다.
+- 결과: zero-record 네 source가 fake event 없이 complete health로 등록되고 exact retry는 capability·entitlement 추가 0건이다. 미래 heartbeat, mixed run, failed source는 fail-closed 또는 incomplete로 보존된다. provider·credential·account/order endpoint와 broker mutation은 0건이다.

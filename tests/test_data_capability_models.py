@@ -102,6 +102,17 @@ def test_capability_records_current_quality_and_source_contract() -> None:
     assert capability.observed_completeness_bps == 10_000
 
 
+def test_current_sparse_source_can_use_heartbeat_without_inventing_event() -> None:
+    payload = _capability().model_dump(mode="python")
+    payload["latest_event_received_at"] = None
+    payload["latest_source_heartbeat_at"] = LATEST_EVENT
+
+    capability = DataCapability.model_validate(payload)
+
+    assert capability.latest_event_received_at is None
+    assert capability.latest_source_heartbeat_at == LATEST_EVENT
+
+
 @pytest.mark.parametrize(
     "override",
     (
@@ -111,6 +122,7 @@ def test_capability_records_current_quality_and_source_contract() -> None:
         {"timestamp_semantics": (TimestampSemantic.RECEIVED_AT, TimestampSemantic.EVENT_TIME)},
         {"expected_latency_ms": 5_001},
         {"latest_event_received_at": ASSESSED_AT + dt.timedelta(microseconds=1)},
+        {"latest_source_heartbeat_at": ASSESSED_AT + dt.timedelta(microseconds=1)},
         {"health_state": DataHealthState.COMPLETE, "observed_completeness_bps": 9_899},
         {"health_state": DataHealthState.DEGRADED, "latest_event_received_at": None},
         {"assessed_at": ASSESSED_AT.replace(tzinfo=None)},

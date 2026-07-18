@@ -80,6 +80,17 @@ def test_declared_fallback_is_selected_after_audited_primary_failure() -> None:
     assert evaluation.attempts[1].satisfied is True
 
 
+def test_fresh_sparse_source_heartbeat_satisfies_freshness_without_event() -> None:
+    capability = _capability(
+        latest_event_received_at=None,
+        latest_source_heartbeat_at=EVALUATED_AT - dt.timedelta(seconds=1),
+    )
+
+    decision = _evaluate(capabilities=(capability,), entitlements=(_entitlement(),))
+
+    assert decision.status is StrategyDataStatus.READY
+
+
 @pytest.mark.parametrize(
     ("case", "reason"),
     (
@@ -150,9 +161,7 @@ def test_degraded_capability_requires_explicit_strategy_permission() -> None:
 
 def test_soft_unresolved_requirements_close_as_research_only() -> None:
     decision = _evaluate(
-        requirements=(
-            _requirement(failure_mode=DataRequirementFailureMode.RESEARCH_ONLY),
-        ),
+        requirements=(_requirement(failure_mode=DataRequirementFailureMode.RESEARCH_ONLY),),
         capabilities=(),
         entitlements=(),
     )

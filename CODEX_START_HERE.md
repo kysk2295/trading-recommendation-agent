@@ -88,10 +88,11 @@
 - Alpaca Paper `GET /v2/assets`의 raw-first US security master 구현. 실제 응답 33,351행을 exact mode-600 원장에 먼저 저장하고 active listed/supported 13,011종목을 asset UUID instrument와 provider-symbol alias로 투영했다. actual snapshot으로 synthetic KIS candidate의 replay-bound 결합을 확인했으며 account/order endpoint와 mutation은 0건이다.
 - canonical Parquet correction/tombstone history replay 구현. 여러 verified dataset의 원본→정정→삭제 chain을 as-of로 재생하며 missing target·branch·역방향 시각·identity 변경을 fail-closed하고 tombstone 뒤 active state를 제거한다. local CLI는 집계만 mode 600 보고서로 남기며 provider·계좌·주문을 열지 않는다.
 - append-only data capability registry 구현. 고정 source entitlement 계약과 시점별 health assessment를 분리해 보존하고 as-of snapshot이 미래 assessment를 배제한다. broad-scanner entitlement는 관측시각이 아니라 고정 계약 발효일을 사용하며 registry CLI가 foundation을 재평가한다.
+- KR same-cycle terminal source run을 capability registry에 연결했다. 정상 zero-record poll은 실제 event를 위조하지 않고 source heartbeat로 freshness를 보존하며 exact source-run ID, adapter version, cycle/date와 실패 상태를 재검증한다. 이 local projection은 provider나 주문 권한을 열지 않는다.
 
 ## 다음 우선순위
 
-1. 현재 Alpaca SIP runtime audit과 KR terminal source run을 capability registry의 시점별 health assessment로 투영한다. entitlement는 별도 고정 계약만 등록하고 fixture provider나 관측 성공을 운영 권한으로 승격하지 않는다.
+1. 현재 Alpaca SIP runtime fleet audit의 종목별 minute-bar 결과를 capability registry의 시점별 health assessment로 투영한다. entitlement는 고정 계약만 등록하고 fleet READY나 fixture 성공을 provider 전체 coverage 또는 운영 권한으로 승격하지 않는다.
 2. 열린 NYSE 정규장과 mode-600 Alpaca data credential이 자연스럽게 동시에 맞을 때만 새 SIP bridge의 단일 종목 bounded GET smoke를 실행한다. exact raw page·canonical replay·runtime checkpoint를 대사하고 계좌·주문·Paper endpoint는 열지 않는다. 휴장에는 fixture E2E 결과만 유지한다.
 3. 실제 read-only smoke 뒤 pagination·재시작 offset·provider gap의 장기 soak를 누적한다. 이 polling bridge를 websocket streaming이나 전체시장 coverage로 표현하지 않는다.
 4. 현재 NYSE post-close와 mode-600 data credential·정렬된 bounded universe가 동시에 맞을 때만 US swing 일봉 source를 read-only로 한 번 수집한다. 그 뒤에만 동일 CLI로 signal/shadow forward evidence를 누적하며, Paper 계좌·주문은 열지 않는다.

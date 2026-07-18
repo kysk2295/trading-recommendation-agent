@@ -15,6 +15,10 @@ _OPAQUE_ID = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,127}$")
 _EVENT_TYPE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,63}$")
 
 
+class DataCapabilityContractError(ValueError):
+    pass
+
+
 class DataSourceClass(StrEnum):
     MARKET_MICROSTRUCTURE = "market_microstructure"
     DERIVATIVES = "derivatives"
@@ -78,7 +82,7 @@ class DataSourceId(BaseModel):
     @model_validator(mode="after")
     def validate_source(self) -> Self:
         if _SLUG.fullmatch(self.provider) is None or _SLUG.fullmatch(self.feed) is None:
-            raise ValueError("invalid data source identity")
+            raise DataCapabilityContractError("invalid data source identity")
         return self
 
     @property
@@ -101,7 +105,7 @@ class DataRetentionPolicy(BaseModel):
             or self.derived_retention_days < 0
             or self.derived_retention_days < self.raw_retention_days
         ):
-            raise ValueError("invalid data retention policy")
+            raise DataCapabilityContractError("invalid data retention policy")
         return self
 
 
@@ -116,7 +120,7 @@ class DataRateLimits(BaseModel):
     def validate_limits(self) -> Self:
         values = (self.requests_per_minute, self.max_connections, self.max_subscriptions)
         if all(value is None for value in values) or any(value is not None and value <= 0 for value in values):
-            raise ValueError("invalid data rate limits")
+            raise DataCapabilityContractError("invalid data rate limits")
         return self
 
 
@@ -154,7 +158,7 @@ class DataEntitlement(BaseModel):
                 and (not _aware(self.effective_to) or self.effective_to <= self.effective_from)
             )
         ):
-            raise ValueError("invalid data entitlement")
+            raise DataCapabilityContractError("invalid data entitlement")
         return self
 
 
@@ -178,6 +182,7 @@ class DataCapability(BaseModel):
     health_state: DataHealthState
     assessed_at: dt.datetime
     latest_event_received_at: dt.datetime | None = None
+    latest_source_heartbeat_at: dt.datetime | None = None
     observed_completeness_bps: int
 
     @model_validator(mode="after")
@@ -189,6 +194,12 @@ class DataCapability(BaseModel):
             and _aware(self.latest_event_received_at)
             and assessed_aware
             and self.latest_event_received_at <= self.assessed_at
+        )
+        heartbeat_valid = (
+            self.latest_source_heartbeat_at is not None
+            and _aware(self.latest_source_heartbeat_at)
+            and assessed_aware
+            and self.latest_source_heartbeat_at <= self.assessed_at
         )
         complete_valid = (
             self.health_state is not DataHealthState.COMPLETE
@@ -207,10 +218,11 @@ class DataCapability(BaseModel):
             or not 0 <= self.observed_completeness_bps <= 10_000
             or not assessed_aware
             or (self.latest_event_received_at is not None and not latest_valid)
-            or (current_health and not latest_valid)
+            or (self.latest_source_heartbeat_at is not None and not heartbeat_valid)
+            or (current_health and not (latest_valid or heartbeat_valid))
             or not complete_valid
         ):
-            raise ValueError("invalid data capability")
+            raise DataCapabilityContractError("invalid data capability")
         return self
 
 
@@ -245,12 +257,9 @@ class StrategyDataRequirement(BaseModel):
             or not _canonical_enum_tuple(self.required_timestamp_semantics)
             or not 1 <= self.max_age_seconds <= 86_400
             or not 1 <= self.minimum_completeness_bps <= 10_000
-            or (
-                self.data_use is DataUse.HISTORICAL_RESEARCH
-                and self.minimum_historical_start is None
-            )
+            or (self.data_use is DataUse.HISTORICAL_RESEARCH and self.minimum_historical_start is None)
         ):
-            raise ValueError("invalid strategy data requirement")
+            raise DataCapabilityContractError("invalid strategy data requirement")
         return self
 
     @property
