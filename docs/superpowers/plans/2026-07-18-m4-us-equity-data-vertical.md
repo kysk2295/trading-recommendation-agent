@@ -61,6 +61,14 @@ flags without provider-specific indicator values.
 incomplete sequence is blocked; same-bar stop/target collision remains outside
 this kernel and retains the existing stop-first execution rule.
 
+**Checkpoint (2026-07-18): Complete.** `CompletedMinuteBar` and the pure
+`IntradayFeatureSnapshot` kernel now bind every result to a
+`ResearchInputIdentity`. It accepts only contiguous completed one-minute bars,
+blocks gaps, stale data, insufficient history, and malformed bar fields with
+null indicators, and computes deterministic Decimal VWAP, Wilder ATR/RSI,
+MACD, RVOL, and strict breakout evidence for ready snapshots. Verification:
+24 focused tests, the full 2013-test suite, Ruff, and basedpyright all pass.
+
 ### M4.2: Candidate and Dynamic Subscription Policy
 
 Add a pure policy that consumes broad scanner candidates and emits a bounded
