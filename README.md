@@ -120,6 +120,8 @@ flowchart LR
 
 **2026-07-19 Alpaca SIP profile 자동 materialization 업데이트:** runtime preflight를 provider/profile과 무관한 policy scope와 검증 profile binding 단계로 분리했다. `--auto-profile-root` 경로는 fresh scanner와 durable policy state로 desired instrument를 먼저 확정하고, 종목별 mode-700 cache에서 직전 20개 완료 정규장을 raw-first 수집·canonical replay한 뒤 현재 완료 분 profile을 자동 발행한다. 2종목 첫 fixture는 historical GET 40건, 즉시 재실행은 0건이었고, CLI 1종목 E2E는 historical GET 20건 뒤 current GET 1건으로 READY gate에 도달했다. 수동 `--profile`과 자동 경로는 상호배타적이며 account/order API는 없다.
 
+**2026-07-19 US bounded minute supervisor 계약 업데이트:** 정규장 안에서 최대 390회, 1~3600초 interval로 read-only runtime operation을 반복하는 provider-neutral supervisor를 추가했다. 각 attempt는 시작/종료 시각, 순번, READY 또는 구조화된 blocked reason, 연결된 fleet cycle ID를 deterministic hash로 묶어 별도 append-only SQLite에 저장한다. 한 cycle의 stale scanner/profile/provider block은 다음 cycle을 중단하지 않으며 16:00 ET에는 operation 전에 종료한다. store는 mode 600 current-user regular file, no-symlink, `BEGIN IMMEDIATE`, canonical payload/hash replay를 요구한다. 아직 production CLI runner 결합과 fixture soak는 다음 단계다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \
@@ -214,6 +216,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [US runtime fleet 운영 사이클 체크포인트](docs/checkpoints/2026-07-19-us-runtime-fleet-cycle-ko.md)
 - [US subscription policy state 체크포인트](docs/checkpoints/2026-07-19-us-subscription-policy-state-ko.md)
 - [Alpaca SIP profile 자동 materialization 체크포인트](docs/checkpoints/2026-07-19-alpaca-sip-profile-materializer-ko.md)
+- [US bounded minute supervisor 계약 체크포인트](docs/checkpoints/2026-07-19-us-runtime-minute-supervisor-ko.md)
 - [US feature evidence projection 체크포인트](docs/checkpoints/2026-07-18-us-feature-evidence-projection-ko.md)
 - [Grok 개발 하네스 설계](docs/superpowers/specs/2026-07-18-grok-development-harness-design.md)
 - [Grok 개발 하네스 체크포인트](docs/checkpoints/2026-07-18-grok-development-harness-ko.md)

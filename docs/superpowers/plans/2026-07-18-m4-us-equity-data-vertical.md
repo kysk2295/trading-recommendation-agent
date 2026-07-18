@@ -272,6 +272,17 @@ GET and reached the M4.4 READY gate. Manual and automatic profile inputs are
 mutually exclusive. Repeated scheduling and regular-session external smoke
 remain pending.
 
+**Bounded minute supervisor contract checkpoint (2026-07-19): Complete.**
+A provider-neutral supervisor runs at most 390 regular-session attempts with
+an explicit 1-to-3600-second interval. Every attempt records deterministic
+start/finish timestamps, index, READY or structured blocked status, and an
+optional fleet-cycle ID in a separate append-only SQLite audit. One blocked
+operation does not terminate later attempts, while a 16:00 ET clock stops
+before another operation. The mode-600 current-user regular store rejects
+symlinks and public modes, serializes writers, and verifies canonical payload
+and record hashes. The production cycle runner and fixture soak remain the
+next checkpoint.
+
 ### M4.4: Evidence-Gated US Opportunity Projection
 
 Project an eligible feature snapshot into the existing US

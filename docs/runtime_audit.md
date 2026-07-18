@@ -461,3 +461,10 @@
 - 최초 관찰: 기존 운영 CLI는 검증된 `--profile INSTRUMENT=PATH`를 요구했지만 다음 분이 되면 다른 artifact 경로를 사람이 다시 계산해야 했다. policy decision은 profile binding 내부에 있어 자동 collector가 desired set을 얻으려면 policy를 중복 실행해야 했다.
 - 수정: scanner→policy 검증을 provider-free scope로 분리하고 exact completed minute와 desired set을 반환한다. 자동 materializer는 instrument/symbol hash별 private cache에서 기존 historical raw page/canonical replay를 재사용하고 그 분의 content-addressed profile을 만든 뒤 strict binding 단계로 넘긴다.
 - 결과: 2종목 첫 실행은 historical GET 40건, 동일 scope 재실행은 0건이었다. CLI 1종목은 historical 20건과 current 1건 모두 Alpaca data GET만 사용해 READY가 됐다. 수동/자동 입력 동시 사용은 argparse에서 차단되고 account/order mutation은 0건이다.
+
+## H65: 한 번의 stale scanner/provider 실패로 장중 runtime loop 전체가 종료된다
+
+- 판별 기준: 첫 cycle이 blocked여도 다음 분 operation이 실행되는지, 모든 시도가 durable audit에 남는지, 정규장 종료 뒤 추가 호출이 없는지 확인한다.
+- 최초 관찰: 단발 runtime CLI와 fleet audit은 성공/부분 실패 cycle을 보존했지만 profile 이전 preflight block은 fleet audit을 만들 수 없었고 반복 수명주기 계약도 없었다.
+- 수정: provider-neutral bounded supervisor가 operation block을 구조화된 `runtime_cycle_blocked`로 변환하고 READY/blocked attempt 모두 별도 deterministic record로 append한다. 최대 390회와 interval 범위를 검증하고 매 operation 전에 New York 정규장 경계를 재확인한다.
+- 결과: 첫 blocked 뒤 두 번째 READY 회복이 기록됐고 15:59 한 번 실행 뒤 16:00에는 호출하지 않았다. payload/mode/symlink 변조는 replay에서 차단됐다. 이 supervisor 계약에는 credential, account, order 필드가 없다.
