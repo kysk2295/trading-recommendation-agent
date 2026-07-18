@@ -190,6 +190,20 @@ remains blocked until expected cumulative volume is supplied by a causal,
 historically derived intraday volume-profile contract rather than an estimate
 from the current KIS cumulative volume.
 
+**Causal intraday volume-profile checkpoint (2026-07-19): Contract and fixture replay complete.**
+The bare runtime denominator is replaced by immutable evidence derived from
+the exact latest 20 eligible completed regular sessions before the target
+session. Each historical session must be contiguous from regular open through
+its calendar close; the profile stores the verified replay identity, exact
+session dates, cumulative volumes through the target minute, Decimal median,
+semantic version, and deterministic SHA-256. Missing, stale, current/future,
+gapped, incomplete, non-positive, and tampered inputs fail closed. The runtime
+request, feature snapshot, and M4.4 evidence hash now share this lineage, and
+a two-instrument fixture built from full historical sessions reaches the
+independent SIP owners and READY opportunity gate. The operational loader from
+durable Alpaca historical archives/canonical catalog and regular-session
+external fleet smoke remain pending.
+
 ### M4.4: Evidence-Gated US Opportunity Projection
 
 Project an eligible feature snapshot into the existing US

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import fields
+from dataclasses import fields, replace
 from decimal import Decimal
 
 import pytest
 
+from tests.us_volume_profile_fixtures import volume_profile
 from trading_agent.canonical_duckdb_replay import CanonicalDatasetReplay
 from trading_agent.intraday_feature_kernel import (
     CompletedMinuteBar,
@@ -18,7 +19,11 @@ from trading_agent.research_input_identity import ResearchInputIdentity
 _UTC = dt.UTC
 _SCOPE = "us_equities.day_trading.orb"
 _INSTRUMENT_ID = "us-eq-fixture-aapl"
-_EXPECTED_VOLUME = Decimal("10000")
+_EXPECTED_VOLUME = volume_profile(
+    _INSTRUMENT_ID,
+    dt.date(2026, 7, 17),
+    expected_cumulative_volume=10_000,
+)
 _INDICATOR_NONE_FIELDS = (
     "vwap",
     "atr14",
@@ -74,11 +79,7 @@ def _bars(
 ) -> tuple[CompletedMinuteBar, ...]:
     bars: list[CompletedMinuteBar] = []
     for index in range(count):
-        close = (
-            closes[index]
-            if closes is not None
-            else str(Decimal("100") + (Decimal(index % 5) * Decimal("0.1")))
-        )
+        close = closes[index] if closes is not None else str(Decimal("100") + (Decimal(index % 5) * Decimal("0.1")))
         high = highs[index] if highs is not None else None
         low = lows[index] if lows is not None else None
         volume = volumes[index] if volumes is not None else 100 + index
@@ -140,6 +141,7 @@ def test_completed_minute_bar_and_snapshot_are_frozen_slots() -> None:
     )
     assert tuple(field.name for field in fields(IntradayFeatureSnapshot)) == (
         "identity",
+        "volume_profile",
         "instrument_id",
         "observed_at",
         "status",
@@ -196,7 +198,7 @@ def test_ready_snapshot_is_deterministic_and_byte_stable() -> None:
     assert first.source_start_at == bars[0].start_at
     assert first.source_end_at == bars[-1].end_at
     assert first.bar_count == 35
-    assert first.indicator_semantic_version == "intraday_completed_minute_v1"
+    assert first.indicator_semantic_version == "intraday_completed_minute_v2"
     assert isinstance(first.vwap, Decimal)
     assert isinstance(first.atr14, Decimal)
     assert isinstance(first.rsi14, Decimal)
@@ -225,7 +227,11 @@ def test_ready_vwap_rvol_and_breakout_match_closed_form() -> None:
         volumes=[100] * 35,
     )
     observed_at = bars[-1].end_at + dt.timedelta(minutes=1)
-    expected = Decimal("3500")
+    expected = volume_profile(
+        _INSTRUMENT_ID,
+        dt.date(2026, 7, 17),
+        expected_cumulative_volume=3_500,
+    )
 
     snapshot = build_intraday_feature_snapshot(
         _identity(),
@@ -235,13 +241,11 @@ def test_ready_vwap_rvol_and_breakout_match_closed_form() -> None:
         expected,
     )
 
-    typical_pv = sum(
-        ((bar.high + bar.low + bar.close) / Decimal(3)) * Decimal(bar.volume) for bar in bars
-    )
+    typical_pv = sum(((bar.high + bar.low + bar.close) / Decimal(3)) * Decimal(bar.volume) for bar in bars)
     total_volume = sum(Decimal(bar.volume) for bar in bars)
     assert snapshot.status is FeatureSnapshotStatus.READY
     assert snapshot.vwap == typical_pv / total_volume
-    assert snapshot.rvol == total_volume / expected
+    assert snapshot.rvol == total_volume / expected.expected_cumulative_volume
     assert snapshot.breakout_close_above_prior_high is True
 
 
@@ -384,21 +388,20 @@ def test_insufficient_history_blocks_all_indicators() -> None:
     _assert_blocked_indicators(snapshot)
 
 
-def test_non_positive_expected_volume_blocks_as_insufficient_history() -> None:
+def test_tampered_volume_profile_raises_before_feature_calculation() -> None:
     start = dt.datetime(2026, 7, 17, 14, 0, tzinfo=_UTC)
     bars = _bars(35, start=start)
     observed_at = bars[-1].end_at + dt.timedelta(seconds=30)
 
-    snapshot = build_intraday_feature_snapshot(
-        _identity(),
-        _INSTRUMENT_ID,
-        observed_at,
-        bars,
-        Decimal("0"),
-    )
-
-    assert snapshot.status is FeatureSnapshotStatus.BLOCKED_INSUFFICIENT_HISTORY
-    _assert_blocked_indicators(snapshot)
+    tampered = replace(_EXPECTED_VOLUME, expected_cumulative_volume=Decimal("0"))
+    with pytest.raises(ValueError, match="invalid intraday volume profile"):
+        build_intraday_feature_snapshot(
+            _identity(),
+            _INSTRUMENT_ID,
+            observed_at,
+            bars,
+            tampered,
+        )
 
 
 def test_gap_blocks_all_indicators() -> None:

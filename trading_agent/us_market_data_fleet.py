@@ -12,7 +12,7 @@ from trading_agent.us_market_data_runtime_models import (
     MarketDataRuntimeResult,
     MarketDataRuntimeStatus,
     RuntimeFeatureRequest,
-    validate_runtime_request,
+    validate_runtime_request_for_evaluation,
 )
 from trading_agent.us_subscription_models import (
     DesiredMarketDataSubscription,
@@ -170,7 +170,7 @@ def _validate_cycle(
     request_by_id: dict[str, RuntimeFeatureRequest] = {}
     for request in requests:
         try:
-            validate_runtime_request(request)
+            validate_runtime_request_for_evaluation(request, decision.evaluated_at)
         except ValueError:
             raise UsMarketDataFleetError from None
         request_by_id[request.instrument_id] = request

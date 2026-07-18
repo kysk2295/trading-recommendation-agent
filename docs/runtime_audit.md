@@ -413,3 +413,10 @@
 - 최초 관찰: Alpaca SIP adapter는 의도적으로 exact instrument/symbol 하나만 허용하고 supervisor checkpoint는 provider source ID로 조회한다. 여러 종목을 한 runtime DB나 adapter에 넣으면 validation 또는 source checkpoint 충돌이 발생한다.
 - 수정: policy capacity 안의 desired subscription마다 instrument/symbol SHA-256 owner를 만들고 mode-700 전용 디렉터리 아래 runtime/evidence SQLite를 각각 mode 600으로 유지한다. global decision은 owner별 exact one-symbol decision으로 축소되고 READY feature만 symbol binding으로 반환한다. owner 생성·provider 오류는 typed failure로 격리하고 symlink root와 request coverage mismatch는 HTTP 전에 차단한다.
 - 결과: 두 owner fixture가 각각 35개 완료 분봉과 canonical evidence를 만들고 M4.4 gate가 READY가 됐다. 한 owner gap·503에서는 다른 binding만 보존되어 gate가 missing evidence로 닫혔다. 재시작은 owner별 기존 20개 뒤 15개만 추가했다. 실제 운영은 historical intraday volume-profile denominator lineage가 생길 때까지 열지 않는다.
+
+## H58: 현재 누적 거래량이나 임의 숫자를 RVOL denominator로 사용한다
+
+- 판별 기준: runtime request가 historical point-in-time lineage 없이 숫자만 받을 수 있는지, 목표일 뒤 데이터나 누락된 최근 세션이 profile에 들어가는지, profile 변경이 최종 M4.4 evidence identity에 반영되는지 확인한다.
+- 최초 관찰: `RuntimeFeatureRequest.expected_cumulative_volume`은 양수 Decimal만 검사했고 어떤 과거 세션에서 계산했는지 증명하지 않았다. 동일 숫자를 KIS 현재 누적 거래량이나 수동 값으로 넣어도 구별할 수 없었다.
+- 수정: 목표 분까지 거래 가능한 직전 20개 완료 정규장을 exact calendar 날짜로 요구하고, 각 세션의 정규장 전체 연속 1분봉에서 해당 분 누적 거래량을 계산해 median evidence를 만든다. verified replay identity, source 날짜·누적값, 목표일·분, version과 SHA-256을 불변 객체에 결합했다. runtime policy 평가일과 목표일 불일치, 정규장 시작이 아닌 현재 bar 창, profile보다 많은 현재 bar도 차단한다.
+- 결과: 20일 historical fixture replay가 두 종목별 denominator를 만들고 독립 SIP owner, canonical feature와 M4.4 READY gate까지 도달했다. profile identity만 바꿔도 derived Opportunity ID가 달라졌다. 현재·미래·오래된·공백·미완료·변조 profile은 모두 차단됐다. 실제 외부 GET, account/order endpoint와 POST/DELETE mutation은 0건이다.

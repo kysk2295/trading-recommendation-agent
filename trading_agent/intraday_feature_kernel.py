@@ -10,6 +10,12 @@ from enum import StrEnum
 from typing import Final
 
 from trading_agent.research_input_identity import ResearchInputIdentity
+from trading_agent.us_equity_calendar import NEW_YORK
+from trading_agent.us_intraday_volume_profile_models import (
+    IntradayVolumeProfileError,
+    IntradayVolumeProfileEvidence,
+    validate_intraday_volume_profile,
+)
 
 _ONE_MINUTE: Final = dt.timedelta(minutes=1)
 _MAX_STALENESS: Final = dt.timedelta(minutes=2)
@@ -19,7 +25,7 @@ _RSI_PERIOD: Final = 14
 _MACD_FAST: Final = 12
 _MACD_SLOW: Final = 26
 _MACD_SIGNAL: Final = 9
-_INDICATOR_SEMANTIC_VERSION: Final = "intraday_completed_minute_v1"
+_INDICATOR_SEMANTIC_VERSION: Final = "intraday_completed_minute_v2"
 
 
 class FeatureSnapshotStatus(StrEnum):
@@ -43,6 +49,7 @@ class CompletedMinuteBar:
 @dataclass(frozen=True, slots=True)
 class IntradayFeatureSnapshot:
     identity: ResearchInputIdentity
+    volume_profile: IntradayVolumeProfileEvidence
     instrument_id: str
     observed_at: dt.datetime
     status: FeatureSnapshotStatus
@@ -65,7 +72,7 @@ def build_intraday_feature_snapshot(
     instrument_id: str,
     observed_at: dt.datetime,
     bars: Sequence[CompletedMinuteBar],
-    expected_cumulative_volume: Decimal,
+    volume_profile: IntradayVolumeProfileEvidence,
 ) -> IntradayFeatureSnapshot:
     if type(identity) is not ResearchInputIdentity:
         raise ValueError("invalid research input identity")
@@ -73,16 +80,26 @@ def build_intraday_feature_snapshot(
         raise ValueError("invalid instrument id")
     if type(observed_at) is not dt.datetime or not _aware(observed_at):
         raise ValueError("invalid observed_at")
-    if type(expected_cumulative_volume) is not Decimal or not expected_cumulative_volume.is_finite():
-        raise ValueError("invalid expected cumulative volume")
+    try:
+        validate_intraday_volume_profile(volume_profile)
+    except IntradayVolumeProfileError as error:
+        raise ValueError("invalid intraday volume profile") from error
+    if (
+        volume_profile.instrument_id != instrument_id
+        or volume_profile.target_session_date != observed_at.astimezone(NEW_YORK).date()
+    ):
+        raise ValueError("invalid intraday volume profile")
 
     bar_tuple = tuple(bars)
     bar_count = len(bar_tuple)
     source_start_at, source_end_at = _safe_source_range(bar_tuple)
+    if bar_count > volume_profile.through_minute:
+        raise ValueError("invalid intraday volume profile")
 
     if not _bars_are_valid_contiguous(bar_tuple):
         return _blocked(
             identity=identity,
+            volume_profile=volume_profile,
             instrument_id=instrument_id,
             observed_at=observed_at,
             status=FeatureSnapshotStatus.BLOCKED_GAP,
@@ -91,9 +108,10 @@ def build_intraday_feature_snapshot(
             bar_count=bar_count,
         )
 
-    if bar_count < _MINIMUM_BARS or expected_cumulative_volume <= 0:
+    if bar_count < max(_MINIMUM_BARS, volume_profile.through_minute):
         return _blocked(
             identity=identity,
+            volume_profile=volume_profile,
             instrument_id=instrument_id,
             observed_at=observed_at,
             status=FeatureSnapshotStatus.BLOCKED_INSUFFICIENT_HISTORY,
@@ -107,6 +125,7 @@ def build_intraday_feature_snapshot(
     if latest_end >= observed_at or age > _MAX_STALENESS:
         return _blocked(
             identity=identity,
+            volume_profile=volume_profile,
             instrument_id=instrument_id,
             observed_at=observed_at,
             status=FeatureSnapshotStatus.BLOCKED_STALE,
@@ -119,6 +138,7 @@ def build_intraday_feature_snapshot(
     if total_volume <= 0:
         return _blocked(
             identity=identity,
+            volume_profile=volume_profile,
             instrument_id=instrument_id,
             observed_at=observed_at,
             status=FeatureSnapshotStatus.BLOCKED_INSUFFICIENT_HISTORY,
@@ -128,22 +148,20 @@ def build_intraday_feature_snapshot(
         )
 
     typical_price_volume = sum(
-        (
-            ((bar.high + bar.low + bar.close) / Decimal(3)) * Decimal(bar.volume)
-            for bar in bar_tuple
-        ),
+        (((bar.high + bar.low + bar.close) / Decimal(3)) * Decimal(bar.volume) for bar in bar_tuple),
         Decimal(0),
     )
     vwap = typical_price_volume / total_volume
     atr14 = _wilder_atr14(bar_tuple)
     rsi14 = _wilder_rsi14(bar_tuple)
     macd_line, macd_signal, macd_histogram = _macd_12_26_9(bar_tuple)
-    rvol = total_volume / expected_cumulative_volume
+    rvol = total_volume / volume_profile.expected_cumulative_volume
     prior_high = max(bar.high for bar in bar_tuple[:-1])
     breakout = bar_tuple[-1].close > prior_high
 
     return IntradayFeatureSnapshot(
         identity=identity,
+        volume_profile=volume_profile,
         instrument_id=instrument_id,
         observed_at=observed_at,
         status=FeatureSnapshotStatus.READY,
@@ -165,6 +183,7 @@ def build_intraday_feature_snapshot(
 def _blocked(
     *,
     identity: ResearchInputIdentity,
+    volume_profile: IntradayVolumeProfileEvidence,
     instrument_id: str,
     observed_at: dt.datetime,
     status: FeatureSnapshotStatus,
@@ -174,6 +193,7 @@ def _blocked(
 ) -> IntradayFeatureSnapshot:
     return IntradayFeatureSnapshot(
         identity=identity,
+        volume_profile=volume_profile,
         instrument_id=instrument_id,
         observed_at=observed_at,
         status=status,
@@ -193,11 +213,7 @@ def _blocked(
 
 
 def _aware(value: object) -> bool:
-    return (
-        type(value) is dt.datetime
-        and value.tzinfo is not None
-        and value.utcoffset() is not None
-    )
+    return type(value) is dt.datetime and value.tzinfo is not None and value.utcoffset() is not None
 
 
 def _safe_aware_datetime(value: object) -> dt.datetime | None:
@@ -215,9 +231,7 @@ def _safe_source_range(
         return None, None
     first = bars[0]
     last = bars[-1]
-    start_at = (
-        _safe_aware_datetime(first.start_at) if type(first) is CompletedMinuteBar else None
-    )
+    start_at = _safe_aware_datetime(first.start_at) if type(first) is CompletedMinuteBar else None
     end_at = _safe_aware_datetime(last.end_at) if type(last) is CompletedMinuteBar else None
     return start_at, end_at
 

@@ -4,8 +4,12 @@ import datetime as dt
 from collections.abc import Callable
 from typing import Protocol
 
-from trading_agent.intraday_feature_kernel import build_intraday_feature_snapshot
+from trading_agent.intraday_feature_kernel import (
+    IntradayFeatureSnapshot,
+    build_intraday_feature_snapshot,
+)
 from trading_agent.research_input_identity import ResearchInputIdentity
+from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
 from trading_agent.us_market_data_runtime_models import (
     MarketDataRuntimeBatch,
     MarketDataRuntimeCheckpoint,
@@ -16,7 +20,7 @@ from trading_agent.us_market_data_runtime_models import (
     MarketDataRuntimeResult,
     MarketDataRuntimeStatus,
     RuntimeFeatureRequest,
-    validate_runtime_request,
+    validate_runtime_request_for_evaluation,
 )
 from trading_agent.us_market_data_runtime_store import MarketDataRuntimeStore
 from trading_agent.us_subscription_models import (
@@ -150,16 +154,25 @@ class UsMarketDataSupervisor:
 
             if latest_received_at is None:
                 raise MarketDataRuntimeError
-            snapshots = tuple(
-                build_intraday_feature_snapshot(
-                    batch.identity,
+            snapshots: list[IntradayFeatureSnapshot] = []
+            for request in requests:
+                bars = writer.completed_bars(
+                    source_id,
+                    batch.connection_epoch,
                     request.instrument_id,
-                    latest_received_at,
-                    writer.completed_bars(source_id, batch.connection_epoch, request.instrument_id),
-                    request.expected_cumulative_volume,
                 )
-                for request in requests
-            )
+                bounds = regular_session_bounds(request.volume_profile.target_session_date)
+                if bounds is None or not bars or bars[0].start_at.astimezone(NEW_YORK) != bounds[0]:
+                    raise MarketDataRuntimeError
+                snapshots.append(
+                    build_intraday_feature_snapshot(
+                        batch.identity,
+                        request.instrument_id,
+                        latest_received_at,
+                        bars,
+                        request.volume_profile,
+                    )
+                )
             return MarketDataRuntimeResult(
                 MarketDataRuntimeStatus.READY,
                 source_id,
@@ -167,7 +180,7 @@ class UsMarketDataSupervisor:
                 last_sequence,
                 inserted_count,
                 duplicate_count,
-                snapshots,
+                tuple(snapshots),
                 tuple(incidents),
             )
 
@@ -184,7 +197,7 @@ class UsMarketDataSupervisor:
         if type(requests) is not tuple:
             raise MarketDataRuntimeError
         for request in requests:
-            validate_runtime_request(request)
+            validate_runtime_request_for_evaluation(request, decision.evaluated_at)
         return source_id
 
     def _validate_batch(

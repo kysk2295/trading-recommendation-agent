@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import httpx2
 
+from tests.us_volume_profile_fixtures import volume_profile
 from trading_agent.alpaca_http import ALPACA_DATA_URL, AlpacaCredentials
 from trading_agent.alpaca_sip_runtime_http import AlpacaSipMinutePageClient
 from trading_agent.alpaca_sip_runtime_owner import (
@@ -111,7 +112,7 @@ def feature_requests() -> tuple[RuntimeFeatureRequest, ...]:
     return tuple(
         RuntimeFeatureRequest(
             f"alpaca:asset-{symbol.lower()}",
-            Decimal("4000"),
+            volume_profile(f"alpaca:asset-{symbol.lower()}", SESSION_DATE),
         )
         for symbol in SYMBOLS
     )

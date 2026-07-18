@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import stat
+from decimal import Decimal
 from pathlib import Path
 
 import httpx2
@@ -17,6 +18,7 @@ from tests.alpaca_sip_runtime_fleet_fixtures import (
     opportunity,
     wire_bars,
 )
+from tests.us_volume_profile_fixtures import historical_volume_profile
 from trading_agent.us_feature_evidence_models import (
     UsFeatureGateBlocked,
     UsFeatureGateBlockedReason,
@@ -28,6 +30,7 @@ from trading_agent.us_market_data_fleet import (
     RuntimeOwnerStatus,
     UsMarketDataFleetError,
 )
+from trading_agent.us_market_data_runtime_models import RuntimeFeatureRequest
 
 
 def test_two_candidates_receive_independent_runtime_owners_and_ready_bindings(
@@ -72,6 +75,40 @@ def test_two_candidates_receive_independent_runtime_owners_and_ready_bindings(
     assert all(stat.S_IMODE((path / "runtime.sqlite3").stat().st_mode) == 0o600 for path in owner_dirs)
     assert all(stat.S_IMODE((path / "evidence.sqlite3").stat().st_mode) == 0o600 for path in owner_dirs)
     assert len(tuple((tmp_path / "canonical").rglob("events.parquet"))) == 2
+
+
+def test_historical_profile_replay_reaches_two_owner_feature_gate(tmp_path: Path) -> None:
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        symbol = request.url.params["symbols"]
+        return httpx2.Response(
+            200,
+            json={"bars": {symbol: wire_bars(symbol, 35)}, "next_page_token": None},
+        )
+
+    requests = tuple(
+        RuntimeFeatureRequest(
+            f"alpaca:asset-{symbol.lower()}",
+            historical_volume_profile(
+                f"alpaca:asset-{symbol.lower()}",
+                dt.date(2026, 7, 17),
+                identity_fill=str(index + 7),
+            ),
+        )
+        for index, symbol in enumerate(SYMBOLS)
+    )
+    result = fleet(tmp_path, respond).run_cycle(decision(), requests)
+    gate = project_us_opportunity_with_feature_evidence(
+        opportunity(),
+        result.bindings,
+        evaluated_at=NOW,
+    )
+
+    assert result.status is RuntimeFleetStatus.READY
+    assert type(gate) is UsFeatureGateReady
+    assert tuple(binding.snapshot.volume_profile.expected_cumulative_volume for binding in result.bindings) == (
+        Decimal("4000"),
+        Decimal("4000"),
+    )
 
 
 def test_gap_in_one_owner_keeps_other_ready_but_degrades_fleet(tmp_path: Path) -> None:

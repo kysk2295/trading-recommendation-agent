@@ -6,6 +6,7 @@ from decimal import Decimal
 
 import pytest
 
+from tests.us_volume_profile_fixtures import volume_profile
 from trading_agent.canonical_duckdb_replay import CanonicalDatasetReplay
 from trading_agent.intraday_feature_kernel import (
     CompletedMinuteBar,
@@ -95,6 +96,33 @@ def test_derived_identity_changes_when_base_candidate_content_changes() -> None:
     second = project_us_opportunity_with_feature_evidence(
         changed,
         binding,
+        evaluated_at=_EVALUATED,
+    )
+
+    assert type(first) is UsFeatureGateReady
+    assert type(second) is UsFeatureGateReady
+    assert first.opportunity.opportunity_id != second.opportunity.opportunity_id
+
+
+def test_derived_identity_changes_with_volume_profile_lineage() -> None:
+    first_feature = _ready_feature()
+    second_feature = replace(
+        first_feature,
+        volume_profile=volume_profile(
+            "us-eq-fixture-acme",
+            dt.date(2026, 7, 17),
+            identity_fill="9",
+        ),
+    )
+
+    first = project_us_opportunity_with_feature_evidence(
+        _opportunity(),
+        (UsFeatureEvidenceBinding(_SYMBOL, first_feature),),
+        evaluated_at=_EVALUATED,
+    )
+    second = project_us_opportunity_with_feature_evidence(
+        _opportunity(),
+        (UsFeatureEvidenceBinding(_SYMBOL, second_feature),),
         evaluated_at=_EVALUATED,
     )
 
@@ -213,7 +241,7 @@ def _ready_feature() -> IntradayFeatureSnapshot:
         "us-eq-fixture-acme",
         _FEATURE_OBSERVED,
         bars,
-        Decimal("4000"),
+        volume_profile("us-eq-fixture-acme", dt.date(2026, 7, 17)),
     )
 
 

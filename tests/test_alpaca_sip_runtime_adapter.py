@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import httpx2
 import pytest
 
+from tests.us_volume_profile_fixtures import volume_profile
 from trading_agent.alpaca_http import ALPACA_DATA_URL, AlpacaCredentials
 from trading_agent.alpaca_sip_runtime_adapter import AlpacaSipRuntimeAdapter
 from trading_agent.alpaca_sip_runtime_evidence import (
@@ -404,7 +405,7 @@ def _feature_requests() -> tuple[RuntimeFeatureRequest, ...]:
     return (
         RuntimeFeatureRequest(
             instrument_id=_INSTRUMENT_ID,
-            expected_cumulative_volume=Decimal("4000"),
+            volume_profile=volume_profile(_INSTRUMENT_ID, _SESSION_DATE),
         ),
     )
 

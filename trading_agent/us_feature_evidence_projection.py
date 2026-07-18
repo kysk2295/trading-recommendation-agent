@@ -18,6 +18,7 @@ from trading_agent.trade_signal_publication import (
     TradeSignalPublication,
     project_trade_signal_publications,
 )
+from trading_agent.us_equity_calendar import NEW_YORK
 from trading_agent.us_feature_evidence_models import (
     EvidenceGatedSignalRequest,
     UsFeatureEvidenceBinding,
@@ -25,6 +26,10 @@ from trading_agent.us_feature_evidence_models import (
     UsFeatureGateBlockedReason,
     UsFeatureGateReady,
     UsFeatureGateResult,
+)
+from trading_agent.us_intraday_volume_profile_models import (
+    IntradayVolumeProfileError,
+    validate_intraday_volume_profile,
 )
 
 _MAX_FEATURE_AGE: Final = dt.timedelta(minutes=2)
@@ -167,6 +172,10 @@ def _blocked_feature_reason(
 
 
 def _validate_ready_snapshot(snapshot: IntradayFeatureSnapshot) -> None:
+    try:
+        validate_intraday_volume_profile(snapshot.volume_profile)
+    except IntradayVolumeProfileError:
+        raise InvalidUsFeatureEvidenceProjectionError from None
     values = (
         snapshot.vwap,
         snapshot.atr14,
@@ -179,7 +188,9 @@ def _validate_ready_snapshot(snapshot: IntradayFeatureSnapshot) -> None:
     if (
         type(snapshot.identity) is not ResearchInputIdentity
         or not snapshot.instrument_id
+        or snapshot.volume_profile.instrument_id != snapshot.instrument_id
         or not _aware(snapshot.observed_at)
+        or snapshot.volume_profile.target_session_date != snapshot.observed_at.astimezone(NEW_YORK).date()
         or snapshot.source_start_at is None
         or snapshot.source_end_at is None
         or not _aware(snapshot.source_start_at)
@@ -215,6 +226,8 @@ def _feature_evidence_ref(snapshot: IntradayFeatureSnapshot) -> EvidenceRef:
         "source_end_at": source_end_at.isoformat(),
         "source_start_at": source_start_at.isoformat(),
         "vwap": str(snapshot.vwap),
+        "volume_profile_evidence_sha256": snapshot.volume_profile.evidence_sha256,
+        "volume_profile_expected_cumulative_volume": str(snapshot.volume_profile.expected_cumulative_volume),
     }
     encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
     return EvidenceRef(

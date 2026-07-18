@@ -10,6 +10,12 @@ from typing import Final, override
 
 from trading_agent.intraday_feature_kernel import CompletedMinuteBar, IntradayFeatureSnapshot
 from trading_agent.research_input_identity import ResearchInputIdentity
+from trading_agent.us_equity_calendar import NEW_YORK
+from trading_agent.us_intraday_volume_profile_models import (
+    IntradayVolumeProfileError,
+    IntradayVolumeProfileEvidence,
+    validate_intraday_volume_profile,
+)
 
 _ERROR_MESSAGE: Final = "market data runtime input is invalid"
 
@@ -42,7 +48,7 @@ class MarketDataRuntimeIncidentKind(StrEnum):
 @dataclass(frozen=True, slots=True)
 class RuntimeFeatureRequest:
     instrument_id: str
-    expected_cumulative_volume: Decimal
+    volume_profile: IntradayVolumeProfileEvidence
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,8 +165,23 @@ def validate_runtime_request(request: RuntimeFeatureRequest) -> None:
         raise MarketDataRuntimeError
     if not _valid_text(request.instrument_id):
         raise MarketDataRuntimeError
-    volume = request.expected_cumulative_volume
-    if type(volume) is not Decimal or not volume.is_finite() or volume <= 0:
+    try:
+        validate_intraday_volume_profile(request.volume_profile)
+    except IntradayVolumeProfileError:
+        raise MarketDataRuntimeError from None
+    if request.volume_profile.instrument_id != request.instrument_id:
+        raise MarketDataRuntimeError
+
+
+def validate_runtime_request_for_evaluation(
+    request: RuntimeFeatureRequest,
+    evaluated_at: dt.datetime,
+) -> None:
+    validate_runtime_request(request)
+    if (
+        not _aware(evaluated_at)
+        or request.volume_profile.target_session_date != evaluated_at.astimezone(NEW_YORK).date()
+    ):
         raise MarketDataRuntimeError
 
 
@@ -217,4 +238,5 @@ __all__ = (
     "RuntimeFeatureRequest",
     "build_market_data_runtime_receipt",
     "validate_market_data_runtime_receipt",
+    "validate_runtime_request_for_evaluation",
 )

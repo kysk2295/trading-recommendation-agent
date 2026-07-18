@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.us_volume_profile_fixtures import volume_profile
 from trading_agent.canonical_duckdb_replay import CanonicalDatasetReplay
 from trading_agent.intraday_feature_kernel import CompletedMinuteBar, FeatureSnapshotStatus
 from trading_agent.research_input_identity import ResearchInputIdentity
@@ -20,6 +21,7 @@ from trading_agent.us_dynamic_subscription_policy import (
 from trading_agent.us_market_data_runtime_models import (
     MarketDataRuntimeBatch,
     MarketDataRuntimeCheckpoint,
+    MarketDataRuntimeError,
     MarketDataRuntimeIncidentKind,
     MarketDataRuntimeStatus,
     RuntimeFeatureRequest,
@@ -146,9 +148,31 @@ def _request() -> tuple[RuntimeFeatureRequest, ...]:
     return (
         RuntimeFeatureRequest(
             instrument_id=_INSTRUMENT_ID,
-            expected_cumulative_volume=Decimal("4000"),
+            volume_profile=volume_profile(_INSTRUMENT_ID, dt.date(2026, 7, 17)),
         ),
     )
+
+
+def _late_start_batch() -> MarketDataRuntimeBatch:
+    base = _batch("epoch-late", range(1, 36), identity_suffix="late")
+    receipts = tuple(
+        build_market_data_runtime_receipt(
+            source_id=base.source_id,
+            connection_epoch=base.connection_epoch,
+            sequence=receipt.sequence,
+            received_at=receipt.received_at + dt.timedelta(minutes=30),
+            raw_payload=receipt.raw_payload + b":late",
+            instrument_id=receipt.instrument_id,
+            symbol=receipt.symbol,
+            completed_bar=replace(
+                receipt.completed_bar,
+                start_at=receipt.completed_bar.start_at + dt.timedelta(minutes=30),
+                end_at=receipt.completed_bar.end_at + dt.timedelta(minutes=30),
+            ),
+        )
+        for receipt in base.receipts
+    )
+    return replace(base, receipts=receipts)
 
 
 def _store(tmp_path: Path) -> MarketDataRuntimeStore:
@@ -171,6 +195,34 @@ def test_normal_cycle_persists_raw_receipts_and_builds_ready_feature(tmp_path: P
     assert store.receipt_count(_SOURCE_ID) == 35
     assert store.incidents(_SOURCE_ID) == ()
     assert adapter.calls == [(_decision().desired, None)]
+
+
+def test_future_profile_target_is_blocked_before_adapter_call(tmp_path: Path) -> None:
+    adapter = _FixtureAdapter(())
+    supervisor = UsMarketDataSupervisor(adapter, _store(tmp_path), clock=lambda: _NOW)
+    request = RuntimeFeatureRequest(
+        _INSTRUMENT_ID,
+        volume_profile(_INSTRUMENT_ID, dt.date(2026, 7, 20)),
+    )
+
+    with pytest.raises(MarketDataRuntimeError):
+        supervisor.run_cycle(_decision(), (request,))
+
+    assert adapter.calls == []
+
+
+def test_non_opening_cumulative_window_is_blocked_after_raw_persistence(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    adapter = _FixtureAdapter((_late_start_batch(),))
+    supervisor = UsMarketDataSupervisor(adapter, store, clock=lambda: _NOW)
+
+    with pytest.raises(MarketDataRuntimeError):
+        supervisor.run_cycle(_decision(), _request())
+
+    assert len(adapter.calls) == 1
+    assert store.receipt_count(_SOURCE_ID) == 35
 
 
 def test_restart_recovers_checkpoint_and_uses_persisted_completed_bars(tmp_path: Path) -> None:
