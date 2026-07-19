@@ -45,6 +45,8 @@
 - actual composite/onboard/trial/verifier help와 missing-input CLI: 기대 exit `0/2`, 권한 옵션 0건
 - provider credential/live network와 국내 account/order mutation: `0`
 
+검증 transcript: related selection은 `242 passed, 2561 deselected in 13.14s`, full suite는 `2803 passed in 145.77s`, basedpyright는 `0 errors, 0 warnings, 0 notes`로 종료했다. 실제 명령은 위 항목에 고정했으며 이 체크포인트 파일이 해당 실행 기록의 추적 가능한 저장 위치다.
+
 fixture의 시계는 현재 장 전 실행환경에서 09:03 evidence를 재현하기 위한 test-only injection이다. production CLI에는 시각 override가 없으며 실제 열린 KRX session의 read-only KIS GET smoke는 수행하지 않았다.
 
 ## 다음 운영 단계

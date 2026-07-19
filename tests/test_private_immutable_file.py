@@ -3,9 +3,13 @@ from __future__ import annotations
 import multiprocessing
 import os
 import stat
+import threading
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from multiprocessing.synchronize import Barrier
 from pathlib import Path
+from typing import Protocol
 
 import pytest
 
@@ -13,10 +17,26 @@ import trading_agent.private_immutable_file as private_file
 from trading_agent.private_immutable_file import publish_private_immutable_text
 
 
+class _ManagedProcess(Protocol):
+    def is_alive(self) -> bool: ...
+
+    def terminate(self) -> None: ...
+
+    def join(self, timeout: float | None = None) -> None: ...
+
+
 def _publish_after_gate(path: Path, gate: Barrier) -> None:
     _ = gate.wait(timeout=10)
     created = publish_private_immutable_text(path, '{"session":"fixture"}\n')
     raise SystemExit(10 if created else 11)
+
+
+def _terminate_processes(processes: Sequence[_ManagedProcess]) -> None:
+    for process in processes:
+        if process.is_alive():
+            process.terminate()
+    for process in processes:
+        process.join(timeout=10)
 
 
 def test_publication_repairs_interrupted_hard_link_cleanup(tmp_path: Path) -> None:
@@ -86,17 +106,34 @@ def test_publication_cleans_orphan_staging_before_retry(tmp_path: Path) -> None:
     assert not orphan.exists()
 
 
-def test_publication_serializes_threads_in_one_process(tmp_path: Path) -> None:
+def test_publication_waits_for_process_local_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Given
     path = tmp_path / "session.json"
     payload = '{"session":"fixture"}\n'
+    ready = threading.Event()
+    original_open_parent = private_file.open_private_parent
+
+    def signal_before_process_lock(parent: Path, *, create: bool) -> int:
+        descriptor = original_open_parent(parent, create=create)
+        ready.set()
+        return descriptor
+
+    monkeypatch.setattr(private_file, "open_private_parent", signal_before_process_lock)
 
     # When
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(lambda _index: publish_private_immutable_text(path, payload), range(2)))
+        with private_file._PROCESS_PUBLICATION_LOCK:
+            future = pool.submit(publish_private_immutable_text, path, payload)
+            assert ready.wait(timeout=10)
+            with pytest.raises(FutureTimeoutError):
+                _ = future.result(timeout=0.1)
+        created = future.result(timeout=10)
 
     # Then
-    assert sorted(results) == [False, True]
+    assert created is True
     assert path.stat().st_nlink == 1
 
 
@@ -132,13 +169,16 @@ def test_publication_serializes_first_publishers_across_processes(tmp_path: Path
     context = multiprocessing.get_context("spawn")
     gate = context.Barrier(5)
     processes = [context.Process(target=_publish_after_gate, args=(path, gate)) for _index in range(4)]
-    for process in processes:
-        process.start()
+    try:
+        for process in processes:
+            process.start()
 
-    # When
-    _ = gate.wait(timeout=10)
-    for process in processes:
-        process.join(timeout=10)
+        # When
+        _ = gate.wait(timeout=10)
+        for process in processes:
+            process.join(timeout=10)
+    finally:
+        _terminate_processes(processes)
 
     # Then
     exit_codes = tuple(process.exitcode for process in processes)

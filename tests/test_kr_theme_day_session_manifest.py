@@ -69,6 +69,7 @@ def test_manifest_round_trip_is_content_addressed_and_private(tmp_path: Path) ->
 
     # Then
     assert loaded == manifest
+    assert loaded.schema_version == 2
     assert len(loaded.session_id) == 64
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
