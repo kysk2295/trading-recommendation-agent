@@ -15,6 +15,8 @@ from tests.test_kr_theme_day_lifecycle import _calendar_evidence as current_cale
 from tests.test_kr_theme_day_reviewer import REVIEWED_AT
 from tests.test_kr_theme_day_session_manifest import _identity
 from tests.test_kr_theme_day_shadow_entry import CODE, VERSION, _ledger
+from tests.test_kr_theme_day_shadow_entry import OBSERVED as LATER_OBSERVED
+from tests.test_kr_theme_day_shadow_entry import _signal as later_signal
 from tests.test_kr_theme_day_trial import _calendar_evidence
 from tests.test_kr_theme_day_trial_terminal import CLOSED_AT
 from trading_agent.contract_outbox import append_opportunity_snapshot
@@ -22,6 +24,7 @@ from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.kis_kr_market_receipt_store import KisKrMarketReceiptStore
 from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStore
 from trading_agent.kr_theme_day_review_store import KrThemeDayReviewStore
+from trading_agent.kr_theme_day_session_audit import KrThemeDaySessionPhase
 from trading_agent.kr_theme_day_session_audit_store import KrThemeDaySessionAuditStore
 from trading_agent.kr_theme_day_session_evidence_store import KrThemeDaySessionEvidenceStore
 from trading_agent.kr_theme_day_session_manifest import (
@@ -29,10 +32,14 @@ from trading_agent.kr_theme_day_session_manifest import (
     KrThemeDaySessionPaths,
     build_kr_theme_day_session_manifest,
 )
+from trading_agent.kr_theme_day_session_source_state import (
+    resolve_kr_theme_day_session_source_state,
+)
 from trading_agent.kr_theme_day_session_supervisor import (
     KrThemeDaySessionRuntime,
     run_kr_theme_day_session_tick,
 )
+from trading_agent.kr_theme_day_shadow_entry import project_kr_theme_day_shadow_entry
 from trading_agent.kr_theme_day_shadow_entry_store import KrThemeDayShadowEntryStore
 
 KST = dt.timezone(dt.timedelta(hours=9))
@@ -66,6 +73,41 @@ def test_fixture_tick_runs_all_real_intraday_children_end_to_end(tmp_path: Path)
     assert len(KrThemeDayShadowEntryStore(paths.entry_store).entries()) == 1
     assert len(KrThemeDaySessionAuditStore(paths.audit_store).events(manifest.session_id)) == 5
     assert len(KrThemeDaySessionEvidenceStore(paths.audit_store).attestations(manifest.session_id)) == 5
+
+
+def test_later_entry_does_not_change_prior_cycle_source_state(tmp_path: Path) -> None:
+    # Given
+    manifest = _manifest(tmp_path)
+    assert append_opportunity_snapshot(manifest.paths.opportunity_outbox, _opportunity()) is True
+    manifest.paths.opportunity_outbox.chmod(0o600)
+    observed = dt.datetime(2026, 7, 20, 9, 4, 4, tzinfo=KST)
+    _ = run_kr_theme_day_session_tick(
+        manifest,
+        observed,
+        KrThemeDaySessionRuntime.production(clock=lambda: observed),
+    )
+    cycle = "2026-07-20T09:04+09:00"
+    before = resolve_kr_theme_day_session_source_state(
+        manifest,
+        KrThemeDaySessionPhase.INTRADAY_ENTRY,
+        cycle,
+    )
+
+    # When
+    _ = project_kr_theme_day_shadow_entry(
+        ExperimentLedgerStore(manifest.paths.experiment_ledger),
+        KrThemeDayShadowEntryStore(manifest.paths.entry_store),
+        later_signal(),
+        filled_at=LATER_OBSERVED + dt.timedelta(seconds=1),
+    )
+    after = resolve_kr_theme_day_session_source_state(
+        manifest,
+        KrThemeDaySessionPhase.INTRADAY_ENTRY,
+        cycle,
+    )
+
+    # Then
+    assert after == before
 
 
 def test_restartable_fixture_day_reaches_censored_review_and_lifecycle(tmp_path: Path) -> None:

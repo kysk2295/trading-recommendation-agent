@@ -43,26 +43,29 @@ def resolve_kr_theme_day_session_source_state(
             case KrThemeDaySessionPhase.INTRADAY_COLLECT:
                 references = (*trial_refs, *_receipt_references(manifest, phase, cycle_key))
             case KrThemeDaySessionPhase.INTRADAY_ENTRY:
+                cutoff = _phase_cutoff(manifest, phase, cycle_key)
                 references = (
                     *trial_refs,
                     *_receipt_references(manifest, phase, cycle_key),
-                    *_entry_references(manifest),
+                    *_entry_references(manifest, cutoff),
                 )
             case KrThemeDaySessionPhase.INTRADAY_EXIT:
+                cutoff = _phase_cutoff(manifest, phase, cycle_key)
                 references = (
                     *trial_refs,
                     *_receipt_references(manifest, phase, cycle_key),
-                    *_entry_references(manifest),
-                    *_exit_references(manifest),
+                    *_entry_references(manifest, cutoff),
+                    *_exit_references(manifest, cutoff),
                 )
             case KrThemeDaySessionPhase.EOD_COLLECT:
                 references = (*trial_refs, *_receipt_references(manifest, phase, cycle_key))
             case KrThemeDaySessionPhase.EOD_EXIT:
+                cutoff = _phase_cutoff(manifest, phase, cycle_key)
                 references = (
                     *trial_refs,
                     *_receipt_references(manifest, phase, cycle_key),
-                    *_entry_references(manifest),
-                    *_exit_references(manifest),
+                    *_entry_references(manifest, cutoff),
+                    *_exit_references(manifest, cutoff),
                 )
             case KrThemeDaySessionPhase.POST_SESSION:
                 references = (*trial_refs, *_post_session_references(manifest))
@@ -136,28 +139,45 @@ def _receipt_in_cycle(
     return local.replace(second=0, microsecond=0) == cycle.replace(second=0, microsecond=0)
 
 
-def _entry_references(manifest: KrThemeDaySessionManifest) -> tuple[str, ...]:
+def _entry_references(
+    manifest: KrThemeDaySessionManifest,
+    cutoff: dt.datetime,
+) -> tuple[str, ...]:
     trial_id = kr_theme_day_trial_id(manifest.session_date, manifest.strategy_version)
     ids = tuple(
         sorted(
             entry.entry_id
             for entry in KrThemeDayShadowEntryStore(manifest.paths.entry_store).entries()
-            if entry.trial_id == trial_id
+            if entry.trial_id == trial_id and entry.filled_at.astimezone(KST) <= cutoff
         )
     )
     return (f"entry-count:{len(ids)}", *(f"entry:{value}" for value in ids))
 
 
-def _exit_references(manifest: KrThemeDaySessionManifest) -> tuple[str, ...]:
+def _exit_references(
+    manifest: KrThemeDaySessionManifest,
+    cutoff: dt.datetime,
+) -> tuple[str, ...]:
     trial_id = kr_theme_day_trial_id(manifest.session_date, manifest.strategy_version)
     ids = tuple(
         sorted(
             exit.exit_id
             for exit in KrThemeDayShadowExitStore(manifest.paths.exit_store).exits()
-            if exit.trial_id == trial_id
+            if exit.trial_id == trial_id and exit.evaluated_at.astimezone(KST) <= cutoff
         )
     )
     return (f"exit-count:{len(ids)}", *(f"exit:{value}" for value in ids))
+
+
+def _phase_cutoff(
+    manifest: KrThemeDaySessionManifest,
+    phase: KrThemeDaySessionPhase,
+    cycle_key: str,
+) -> dt.datetime:
+    if phase is KrThemeDaySessionPhase.EOD_EXIT:
+        return dt.datetime.combine(manifest.session_date, dt.time(15, 31), tzinfo=KST)
+    cycle = dt.datetime.fromisoformat(cycle_key).astimezone(KST)
+    return cycle.replace(second=59, microsecond=999_999)
 
 
 def _post_session_references(manifest: KrThemeDaySessionManifest) -> tuple[str, ...]:
@@ -174,7 +194,11 @@ def _post_session_references(manifest: KrThemeDaySessionManifest) -> tuple[str, 
         for event in KrThemeDayReviewStore(manifest.paths.review_store).events()
         if event.strategy_version == manifest.strategy_version and event.as_of_session == manifest.session_date
     )
-    lifecycle = ledger.multi_market_lifecycle_events(manifest.strategy_version)
+    lifecycle = tuple(
+        item
+        for item in ledger.multi_market_lifecycle_events(manifest.strategy_version)
+        if item.event.decision_session_date == manifest.session_date
+    )
     if len(events) != 2 or len(artifacts) != 1 or len(reviews) != 1 or not lifecycle:
         raise InvalidKrThemeDaySessionEvidenceError
     return (
