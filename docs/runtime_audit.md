@@ -690,3 +690,10 @@
 - 차단: created receipt 누락·mode 0644, unknown/invalid lock, 중복 terminal key, selected 또는 new/replay 분할 mismatch는 sanitized verification error다. report에는 completed/selected와 created/replay/artifact aggregate만 있고 ID, symbol, price, path와 raw exception은 없다.
 - 한계: terminal이 이전 crash 시도에서 완료됐지만 artifact append만 현재 재시작에서 처음 성공한 경우, schema v1 artifact store에는 append-attempt 시각이 없어 child `new`를 독립적으로 증명할 수 없다. verifier는 이를 성공으로 추정하지 않고 차단하며 다음 계약은 projection attempt binding을 append-only로 보존하는 것이다.
 - 결과: actual CLI help exit 0, missing input exit 1/input create 0, 2분 fixture happy `completed/selected=2/2`, `created/replay/artifact=1/1/1`을 확인했다. 관련 31개와 전체 2570 tests, 정적 게이트가 통과했고 provider·credential·account/order mutation은 0건이다.
+
+## H97: artifact 최초 append 시도를 schema v1에서 증명할 수 없다
+
+- 결함: actionability artifact는 base signal과 terminal bundle을 보존하지만 어느 runtime manifest 시도에서 처음 append됐는지는 저장하지 않았다. 이전 crash 시도의 terminal을 현재 재시작이 처음 투영한 경우 child `new`와 terminal 시각만으로 생성 시도를 추정할 수 없었다.
+- 수정: schema v1 artifact payload를 유지하고 schema v2에 artifact별 단 하나의 content-addressed creation row를 추가했다. exact manifest ID와 snapshot 관측시각을 보존하며 신규 `append_for_manifest()`가 artifact와 creation을 같은 `BEGIN IMMEDIATE` transaction에 append한다.
+- 호환성: v1 query는 파일을 migration하지 않고 creation history를 빈 tuple로 반환한다. 다음 v2 Writer만 table과 append-only trigger를 추가하며, 이미 존재하는 legacy artifact에는 creation을 사후 backfill하지 않는다.
+- 결과: atomic append/replay, v1 무변경, 신규 artifact 시 migration, legacy backfill과 v2 legacy writer 거부, trigger tamper를 관련 25개와 전체 2576 tests 및 정적 게이트로 확인했다. 아직 live projector는 v1 append를 사용하므로 runtime 자동 생성과 verifier 소비는 다음 체크포인트에서 연결한다. provider·credential·network·account/order mutation은 0건이다.
