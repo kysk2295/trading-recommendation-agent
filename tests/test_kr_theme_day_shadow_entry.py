@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from tests.test_kr_theme_day_trial import _calendar_evidence
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.kr_theme_day_shadow_entry import (
     project_kr_theme_day_shadow_entry,
@@ -58,6 +59,7 @@ def _ledger(path: Path, *, started: bool = True) -> ExperimentLedgerStore:
             code_version=CODE,
             session_date=SESSION,
             registered_at=REGISTERED,
+            calendar_snapshot=_calendar_evidence()[1],
         ),
     )
     if started:

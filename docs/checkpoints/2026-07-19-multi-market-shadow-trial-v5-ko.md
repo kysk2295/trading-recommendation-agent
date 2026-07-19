@@ -10,7 +10,7 @@ v1~v4 migration은 기존 payload와 key를 재작성하지 않는다. 두 table
 
 - exact lane: `kr_equities/day_trading/theme_leader_vwap_reclaim`
 - strategy: 등록된 code-coupled shadow version만 허용
-- timing: 다음 평일 KST 09:00 전에 register, 09:00 이후 start
+- timing: 공식 KIS 거래일 snapshot이 open으로 확인한 session을 KST 09:00 전에 register, 09:00 이후 start
 - entitlement: `KIS_read_only_domestic_quotes`
 - fixed budget: no-entry baseline, entry ask+20bp, missing evidence 0, 20 forward sessions, 30 completed signals, fillability/drawdown/stability/multiple-testing review
 - generic writer로 만든 budget·session·parent 변형 trial은 전용 start API에서 차단
@@ -30,7 +30,7 @@ v1~v4 migration은 기존 payload와 key를 재작성하지 않는다. 두 table
 
 이 체크포인트는 local experiment lineage만 append한다. provider, credential, KIS/LS/Alpaca network, 국내 계좌·잔고·포지션·주문을 호출하지 않는다. shadow fill, terminal event, lifecycle, champion과 주문 권한은 아직 닫혀 있다.
 
-v1 timing은 평일과 KST 09:00만 검증한다. KRX 휴장일·임시 세션을 판정하는 authoritative calendar gate는 아직 연결하지 않았으므로 실제 forward register/start 전 운영 gate에서 별도로 fail-closed해야 한다.
+최초 v1 체크포인트는 평일과 KST 09:00만 검증했다. [KIS KR 거래일 게이트 체크포인트](2026-07-19-kis-kr-session-calendar-gate-ko.md)에서 공식 KIS 휴장일 계약의 raw-first snapshot을 등록 필수 evidence로 연결해 이 한계를 닫았다.
 
 ## 다음 단계
 

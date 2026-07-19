@@ -795,3 +795,10 @@
 - 수정: strategy/as-of에 해당하는 등록 trial 집합과 terminal artifact 집합이 정확히 같아야 한다. 각 sequence 1/2 key, artifact SHA/reason/time과 ordered entry·exit ID·canonical SHA를 원장에서 다시 계산한다.
 - 평가: completed exit만 `exit_at` 순서로 compounded return, mean realized R, win rate와 max drawdown을 계산한다. censored/failed가 하나라도 있으면 `data_quality_review`, 20 sessions·30 signals 전에는 `continue_collection`, 충족 후에도 `comparison_ready`다.
 - 권한·저장: review event는 정책을 counts에서 재계산해 action/reason/blocker 불일치를 거부하고 private append-only store에 `(strategy_version, as_of_session, reviewer_version)` 하나만 보존한다. lifecycle, Paper order와 allocation 변경 권한은 모두 false다.
+
+## H112: 평일만으로 KR trial을 등록하면 KRX 휴장일을 forward session으로 오인한다
+
+- 최초 관찰: multi-market shadow trial v1은 KST 시각과 평일만 검사해 공휴일·임시 휴장일에도 빈 trial을 사전등록할 수 있었다. 빈 날을 censored로 누적하면 실제 시장 관찰일과 데이터 품질 실패가 섞인다.
+- 수정: 공식 KIS sample commit `885dd4e2f5c37e4f7e23dd63c15555a9967bc7bc`의 `GET /uapi/domestic-stock/v1/quotations/chk-holiday`, TR `CTCA0903R` 응답을 raw-first receipt로 보존한다. base date별 mode-600 append-only SQLite snapshot은 `bzdy_yn`·`tr_day_yn`·`opnd_yn`이 모두 참인 session만 연다. KR day registration은 등록일 KST와 같은 base date, 관측 후 5분 이내인 exact snapshot을 요구하고 ID를 evidence budget과 data version에 결합한다.
+- 판별 기준: 휴장 row, 5분 초과 evidence, missing/public/tampered store는 global trial append 0이어야 한다. exact raw/store/trial replay는 새 행을 만들지 않아야 한다.
+- 결과: 관련 KR day 44개와 전체 2698 tests가 통과했다. 실제 CLI는 missing store를 exit 1로 닫고 fixture-backed register/replay를 exit 0, mode 600, external mutation 0으로 재현했다. 계좌·잔고·포지션·주문 API는 import하거나 호출하지 않았다.

@@ -15,6 +15,12 @@ from trading_agent.experiment_ledger_store import (
     ExperimentLedgerWriterLeaseUnavailableError,
     InvalidExperimentLedgerSourceError,
 )
+from trading_agent.kis_kr_session_calendar_models import KrSessionCalendarSnapshot
+from trading_agent.kr_theme_day_trial_calendar import (
+    calendar_snapshot_id_from_evidence,
+    kr_theme_day_trial_evidence_budget,
+    require_kr_theme_day_trial_calendar,
+)
 from trading_agent.kr_theme_lane import KR_THEME_LEADER_VWAP_RECLAIM_LANE
 from trading_agent.kr_theme_research_registration import (
     InvalidKrThemeResearchRegistrationError,
@@ -27,7 +33,7 @@ from trading_agent.multi_market_trial_models import MultiMarketExperimentTrialRe
 
 _EVALUATOR_VERSION: Final = "kr-theme-day-forward-v1"
 _FEED_ENTITLEMENT: Final = "KIS_read_only_domestic_quotes"
-_EVIDENCE_BUDGET: Final = (
+_BASE_EVIDENCE_BUDGET: Final = (
     "cost_model:entry_ask_plus_20bps",
     "counterfactual:no_entry",
     "maximum_missing_evidence_rate:0",
@@ -50,6 +56,7 @@ class KrThemeDayTrialRegistrationRequest(BaseModel):
     code_version: str
     session_date: dt.date
     registered_at: dt.datetime
+    calendar_snapshot: KrSessionCalendarSnapshot
 
     @model_validator(mode="after")
     def validate_request(self) -> Self:
@@ -61,6 +68,11 @@ class KrThemeDayTrialRegistrationRequest(BaseModel):
             or not _aware(self.registered_at)
         ):
             raise InvalidKrThemeDayTrialError
+        _ = require_kr_theme_day_trial_calendar(
+            self.calendar_snapshot,
+            self.session_date,
+            self.registered_at,
+        )
         return self
 
 
@@ -74,6 +86,15 @@ class KrThemeDayTrialRegistrationResult:
 class KrThemeDayTrialEventResult:
     created: bool
     event: ExperimentTrialEvent
+
+
+@dataclass(frozen=True, slots=True)
+class _TrialRegistrationIdentity:
+    strategy_version: str
+    code_version: str
+    session_date: dt.date
+    registered_at: dt.datetime
+    calendar_snapshot_id: str
 
 
 def kr_theme_day_trial_id(session_date: dt.date, strategy_version: str) -> str:
@@ -167,20 +188,31 @@ def _registration(
     request: KrThemeDayTrialRegistrationRequest,
     hypothesis: MultiMarketHypothesisRegistration,
 ) -> MultiMarketExperimentTrialRegistration:
+    return _registration_from_identity(_identity(request), hypothesis)
+
+
+def _registration_from_identity(
+    identity: _TrialRegistrationIdentity,
+    hypothesis: MultiMarketHypothesisRegistration,
+) -> MultiMarketExperimentTrialRegistration:
+    evidence_budget = kr_theme_day_trial_evidence_budget(
+        _BASE_EVIDENCE_BUDGET,
+        identity.calendar_snapshot_id,
+    )
     return MultiMarketExperimentTrialRegistration(
-        trial_id=kr_theme_day_trial_id(request.session_date, request.strategy_version),
-        strategy_version=request.strategy_version,
+        trial_id=kr_theme_day_trial_id(identity.session_date, identity.strategy_version),
+        strategy_version=identity.strategy_version,
         trial_kind=TrialKind.SHADOW_FORWARD,
         experiment_scope=hypothesis.experiment_scope,
         experiment_scope_key=hypothesis.experiment_scope_key,
         strategy_lane=KR_THEME_LEADER_VWAP_RECLAIM_LANE,
         evaluator_version=_EVALUATOR_VERSION,
-        data_version=_data_version(request),
+        data_version=_data_version(identity, evidence_budget),
         feed_entitlement=_FEED_ENTITLEMENT,
-        planned_start=request.session_date,
-        planned_end=request.session_date,
-        registered_at=request.registered_at,
-        evidence_budget=_EVIDENCE_BUDGET,
+        planned_start=identity.session_date,
+        planned_end=identity.session_date,
+        registered_at=identity.registered_at,
+        evidence_budget=evidence_budget,
     )
 
 
@@ -203,12 +235,13 @@ def require_exact_kr_theme_day_trial(
     ):
         raise InvalidKrThemeDayTrialError
     hypothesis = _hypothesis(ledger, version.hypothesis_id, version.experiment_scope_key)
-    expected = _registration(
-        KrThemeDayTrialRegistrationRequest(
+    expected = _registration_from_identity(
+        _TrialRegistrationIdentity(
             strategy_version=version.strategy_version,
             code_version=version.code_version,
             session_date=trial.planned_start,
             registered_at=trial.registered_at,
+            calendar_snapshot_id=calendar_snapshot_id_from_evidence(trial.evidence_budget),
         ),
         hypothesis,
     )
@@ -216,15 +249,33 @@ def require_exact_kr_theme_day_trial(
         raise InvalidKrThemeDayTrialError
 
 
-def _data_version(request: KrThemeDayTrialRegistrationRequest) -> str:
+def _identity(request: KrThemeDayTrialRegistrationRequest) -> _TrialRegistrationIdentity:
+    return _TrialRegistrationIdentity(
+        strategy_version=request.strategy_version,
+        code_version=request.code_version,
+        session_date=request.session_date,
+        registered_at=request.registered_at,
+        calendar_snapshot_id=require_kr_theme_day_trial_calendar(
+            request.calendar_snapshot,
+            request.session_date,
+            request.registered_at,
+        ),
+    )
+
+
+def _data_version(
+    identity: _TrialRegistrationIdentity,
+    evidence_budget: tuple[str, ...],
+) -> str:
     material = "|".join(
         (
             _EVALUATOR_VERSION,
-            request.strategy_version,
-            request.code_version,
-            request.session_date.isoformat(),
+            identity.strategy_version,
+            identity.code_version,
+            identity.session_date.isoformat(),
+            identity.calendar_snapshot_id,
             _FEED_ENTITLEMENT,
-            *_EVIDENCE_BUDGET,
+            *evidence_budget,
         )
     )
     return hashlib.sha256(material.encode()).hexdigest()

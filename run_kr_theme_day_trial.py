@@ -11,10 +11,16 @@ import datetime as dt
 import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
+from trading_agent.kis_kr_session_calendar_models import KrSessionCalendarSnapshot
+from trading_agent.kis_kr_session_calendar_store import (
+    InvalidKisKrSessionCalendarStoreError,
+    KisKrSessionCalendarStore,
+)
 from trading_agent.kr_theme_day_trial import (
     InvalidKrThemeDayTrialError,
     KrThemeDayTrialRegistrationRequest,
@@ -24,6 +30,7 @@ from trading_agent.kr_theme_day_trial import (
 from trading_agent.private_report import write_private_report
 
 REPORT_NAME = "kr_theme_day_trial_ko.md"
+KST = ZoneInfo("Asia/Seoul")
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -34,6 +41,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     register.add_argument("--code-version", required=True)
     register.add_argument("--session-date", required=True)
     register.add_argument("--registered-at", required=True)
+    register.add_argument("--calendar-store", type=Path, required=True)
     _paths(register)
     start = commands.add_parser("start")
     start.add_argument("--trial-id", required=True)
@@ -44,24 +52,29 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    details: tuple[str, ...] = ()
     try:
         ledger = ExperimentLedgerStore(args.database)
         if args.command == "register":
+            registered_at = dt.datetime.fromisoformat(args.registered_at)
+            calendar_snapshot = _calendar_snapshot(args.calendar_store, registered_at)
             result = register_kr_theme_day_shadow_trial(
                 ledger,
                 KrThemeDayTrialRegistrationRequest(
                     strategy_version=args.strategy_version,
                     code_version=args.code_version,
                     session_date=dt.date.fromisoformat(args.session_date),
-                    registered_at=dt.datetime.fromisoformat(args.registered_at),
+                    registered_at=registered_at,
+                    calendar_snapshot=calendar_snapshot,
                 ),
             )
             details = (
                 _created_reused("trial", result.created),
                 f"trial id: {result.registration.trial_id}",
+                f"calendar snapshot: {calendar_snapshot.snapshot_id}",
                 "operating mode: shadow",
             )
-        elif args.command == "start":
+        if args.command == "start":
             event = start_kr_theme_day_shadow_trial(
                 ledger,
                 args.trial_id,
@@ -72,9 +85,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"event kind: {event.event.event_kind.value}",
                 "operating mode: shadow",
             )
-        else:
+        if args.command not in {"register", "start"}:
             raise InvalidKrThemeDayTrialError
-    except (InvalidKrThemeDayTrialError, OSError, sqlite3.Error, ValidationError, ValueError):
+    except (
+        InvalidKisKrSessionCalendarStoreError,
+        InvalidKrThemeDayTrialError,
+        OSError,
+        sqlite3.Error,
+        ValidationError,
+        ValueError,
+    ):
         _write_report(args.output_dir, "blocked", ("trial lineage 또는 입력 계약을 확인하지 못했습니다",))
         return 1
     _write_report(args.output_dir, "ready", details)
@@ -84,6 +104,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _paths(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--database", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+
+
+def _calendar_snapshot(path: Path, registered_at: dt.datetime) -> KrSessionCalendarSnapshot:
+    if registered_at.tzinfo is None or registered_at.utcoffset() is None:
+        raise InvalidKrThemeDayTrialError
+    matches = tuple(
+        snapshot
+        for snapshot in KisKrSessionCalendarStore(path).snapshots()
+        if snapshot.payload.base_date == registered_at.astimezone(KST).date()
+    )
+    if len(matches) != 1:
+        raise InvalidKrThemeDayTrialError
+    return matches[0]
 
 
 def _created_reused(label: str, created: bool) -> str:
