@@ -16,10 +16,22 @@ from trading_agent.kr_theme_day_session_audit import (
 )
 from trading_agent.kr_theme_day_session_audit_store import KrThemeDaySessionAuditStore
 from trading_agent.kr_theme_day_session_commands import kr_theme_day_session_child_command
+from trading_agent.kr_theme_day_session_evidence import (
+    InvalidKrThemeDaySessionEvidenceError,
+    KrThemeDaySessionSourceAttestation,
+    KrThemeDaySessionSourceState,
+    build_kr_theme_day_session_source_attestation,
+)
+from trading_agent.kr_theme_day_session_evidence_store import KrThemeDaySessionEvidenceStore
 from trading_agent.kr_theme_day_session_manifest import KrThemeDaySessionManifest
+from trading_agent.kr_theme_day_session_source_state import resolve_kr_theme_day_session_source_state
 
 CommandRunner = Callable[[tuple[str, ...]], int]
 Clock = Callable[[], dt.datetime]
+SourceStateResolver = Callable[
+    [KrThemeDaySessionManifest, KrThemeDaySessionPhase, str],
+    KrThemeDaySessionSourceState,
+]
 KST: Final = ZoneInfo("Asia/Seoul")
 
 
@@ -35,28 +47,73 @@ class KrThemeDaySessionTickResult:
     blocked_phase: KrThemeDaySessionPhase | None
 
 
+@dataclass(frozen=True, slots=True)
+class KrThemeDaySessionRuntime:
+    runner: CommandRunner
+    clock: Clock
+    source_state: SourceStateResolver
+
+    @classmethod
+    def production(
+        cls,
+        *,
+        runner: CommandRunner = lambda command: subprocess.run(command, check=False).returncode,
+        clock: Clock = lambda: dt.datetime.now(dt.UTC),
+    ) -> KrThemeDaySessionRuntime:
+        return cls(runner, clock, resolve_kr_theme_day_session_source_state)
+
+
+@dataclass(frozen=True, slots=True)
+class _CompletionEvidence:
+    manifest: KrThemeDaySessionManifest
+    events: tuple[KrThemeDaySessionPhaseEvent, ...]
+    attestations: tuple[KrThemeDaySessionSourceAttestation, ...]
+    resolver: SourceStateResolver
+
+    def completed(self, phase: KrThemeDaySessionPhase, cycle_key: str) -> bool:
+        candidates = tuple(
+            event
+            for event in self.events
+            if event.phase is phase
+            and event.cycle_key == cycle_key
+            and event.status is KrThemeDaySessionPhaseStatus.COMPLETED
+        )
+        if not candidates:
+            return False
+        try:
+            state = self.resolver(self.manifest, phase, cycle_key)
+        except InvalidKrThemeDaySessionEvidenceError:
+            return False
+        return any(_attests(event, state, self.attestations) for event in candidates)
+
+    def completed_any_cycle(self, phase: KrThemeDaySessionPhase) -> bool:
+        cycles = tuple(sorted({event.cycle_key for event in self.events if event.phase is phase}))
+        return any(self.completed(phase, cycle) for cycle in cycles)
+
+
 def run_kr_theme_day_session_tick(
     manifest: KrThemeDaySessionManifest,
     observed_at: dt.datetime,
-    *,
-    runner: CommandRunner = lambda command: subprocess.run(command, check=False).returncode,
-    clock: Clock | None = None,
+    runtime: KrThemeDaySessionRuntime | None = None,
 ) -> KrThemeDaySessionTickResult:
     local = _local_session_time(manifest, observed_at)
-    current_time = (lambda: observed_at) if clock is None else clock
-    store = KrThemeDaySessionAuditStore(manifest.paths.audit_store)
-    history = store.events(manifest.session_id)
-    desired = _desired_phases(local, history)
+    active = KrThemeDaySessionRuntime.production(clock=lambda: observed_at) if runtime is None else runtime
+    audit_store = KrThemeDaySessionAuditStore(manifest.paths.audit_store)
+    evidence_store = KrThemeDaySessionEvidenceStore(manifest.paths.audit_store)
+    history = audit_store.events(manifest.session_id)
+    attestations = evidence_store.attestations(manifest.session_id)
+    completion = _CompletionEvidence(manifest, history, attestations, active.source_state)
+    desired = _desired_phases(local, completion)
     completed: list[KrThemeDaySessionPhase] = []
     for index, phase in enumerate(desired):
-        phase_observed_at = observed_at if index == 0 else current_time()
+        phase_observed_at = observed_at if index == 0 else active.clock()
         phase_local = _local_session_time(manifest, phase_observed_at)
         _require_same_cycle(local, phase_local, phase)
         cycle_key = _cycle_key(phase, local)
-        if _completed(history, phase, cycle_key):
+        if completion.completed(phase, cycle_key):
             continue
         try:
-            exit_code = runner(kr_theme_day_session_child_command(manifest, phase, phase_observed_at))
+            exit_code = active.runner(kr_theme_day_session_child_command(manifest, phase, phase_observed_at))
         except OSError:
             exit_code = 1
         status = KrThemeDaySessionPhaseStatus.COMPLETED if exit_code == 0 else KrThemeDaySessionPhaseStatus.BLOCKED
@@ -70,18 +127,27 @@ def run_kr_theme_day_session_tick(
             exit_code,
         )
         event = build_kr_theme_day_session_phase_event(request, len(history) + 1, previous)
-        if not store.append(event):
+        if not audit_store.append(event):
             raise InvalidKrThemeDaySessionSupervisorError
         history += (event,)
         if exit_code != 0:
             return KrThemeDaySessionTickResult(tuple(completed), phase)
+        try:
+            source_state = active.source_state(manifest, phase, cycle_key)
+            attestation = build_kr_theme_day_session_source_attestation(event, source_state)
+            if not evidence_store.append(attestation):
+                raise InvalidKrThemeDaySessionSupervisorError
+        except InvalidKrThemeDaySessionEvidenceError:
+            raise InvalidKrThemeDaySessionSupervisorError from None
+        attestations += (attestation,)
+        completion = _CompletionEvidence(manifest, history, attestations, active.source_state)
         completed.append(phase)
     return KrThemeDaySessionTickResult(tuple(completed), None)
 
 
 def _desired_phases(
     local: dt.datetime,
-    history: tuple[KrThemeDaySessionPhaseEvent, ...],
+    completion: _CompletionEvidence,
 ) -> tuple[KrThemeDaySessionPhase, ...]:
     time = local.time()
     if time < dt.time(9):
@@ -99,7 +165,7 @@ def _desired_phases(
     if time < dt.time(15, 31):
         return (KrThemeDaySessionPhase.EOD_COLLECT, KrThemeDaySessionPhase.EOD_EXIT)
     required = (KrThemeDaySessionPhase.REGISTER, KrThemeDaySessionPhase.START, KrThemeDaySessionPhase.EOD_COLLECT)
-    if any(not _completed_any_cycle(history, phase) for phase in required):
+    if any(not completion.completed_any_cycle(phase) for phase in required):
         raise InvalidKrThemeDaySessionSupervisorError
     return (KrThemeDaySessionPhase.EOD_EXIT, KrThemeDaySessionPhase.POST_SESSION)
 
@@ -120,22 +186,17 @@ def _cycle_key(phase: KrThemeDaySessionPhase, local: dt.datetime) -> str:
             return "post_session"
 
 
-def _completed(
-    history: tuple[KrThemeDaySessionPhaseEvent, ...],
-    phase: KrThemeDaySessionPhase,
-    cycle_key: str,
+def _attests(
+    event: KrThemeDaySessionPhaseEvent,
+    state: KrThemeDaySessionSourceState,
+    attestations: tuple[KrThemeDaySessionSourceAttestation, ...],
 ) -> bool:
-    return any(
-        event.phase is phase and event.cycle_key == cycle_key and event.status is KrThemeDaySessionPhaseStatus.COMPLETED
-        for event in history
+    matches = tuple(attestation for attestation in attestations if attestation.event_id == event.event_id)
+    return (
+        len(matches) == 1
+        and matches[0].source_state_sha256 == state.source_state_sha256
+        and matches[0].reference_count == state.reference_count
     )
-
-
-def _completed_any_cycle(
-    history: tuple[KrThemeDaySessionPhaseEvent, ...],
-    phase: KrThemeDaySessionPhase,
-) -> bool:
-    return any(event.phase is phase and event.status is KrThemeDaySessionPhaseStatus.COMPLETED for event in history)
 
 
 def _local_session_time(manifest: KrThemeDaySessionManifest, observed_at: dt.datetime) -> dt.datetime:

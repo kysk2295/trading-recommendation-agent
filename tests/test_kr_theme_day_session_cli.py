@@ -7,6 +7,7 @@ from pathlib import Path
 
 import run_kr_theme_day_session as session_cli
 from tests.test_kr_theme_day_session_manifest import _identity
+from tests.test_kr_theme_day_shadow_entry import CODE, VERSION, _ledger
 from tests.test_kr_theme_day_trial import _calendar_evidence
 from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStore
 
@@ -29,9 +30,10 @@ def test_help_has_manifest_tick_without_authority_inputs() -> None:
 
 def test_init_and_preopen_tick_write_private_manifest_audit_and_report(tmp_path: Path) -> None:
     # Given
-    identity = _identity(tmp_path)
+    identity = _identity(tmp_path).model_copy(update={"strategy_version": VERSION, "code_version": CODE})
     receipt, snapshot = _calendar_evidence()
     assert KisKrSessionCalendarStore(identity.paths.calendar_store).append(receipt, snapshot) is True
+    _ = _ledger(identity.paths.experiment_ledger, started=False)
     manifest_path = tmp_path / "session.json"
     commands: list[tuple[str, ...]] = []
 

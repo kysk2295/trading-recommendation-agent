@@ -19,6 +19,7 @@ from trading_agent.kis_kr_session_calendar_store import (
     KisKrSessionCalendarStore,
 )
 from trading_agent.kr_theme_day_session_audit import InvalidKrThemeDaySessionAuditError
+from trading_agent.kr_theme_day_session_evidence import InvalidKrThemeDaySessionEvidenceError
 from trading_agent.kr_theme_day_session_manifest import (
     InvalidKrThemeDaySessionManifestError,
     KrThemeDaySessionIdentity,
@@ -30,6 +31,7 @@ from trading_agent.kr_theme_day_session_manifest import (
 from trading_agent.kr_theme_day_session_supervisor import (
     CommandRunner,
     InvalidKrThemeDaySessionSupervisorError,
+    KrThemeDaySessionRuntime,
     KrThemeDaySessionTickResult,
     run_kr_theme_day_session_tick,
 )
@@ -76,14 +78,16 @@ def main(
         manifest = load_kr_theme_day_session_manifest(args.manifest)
         _require_calendar(manifest.paths.calendar_store, manifest.calendar_snapshot_id, manifest.session_date)
         now = clock()
-        result = (
-            run_kr_theme_day_session_tick(manifest, now, clock=clock)
+        runtime = (
+            KrThemeDaySessionRuntime.production(clock=clock)
             if runner is None
-            else run_kr_theme_day_session_tick(manifest, now, runner=runner, clock=clock)
+            else KrThemeDaySessionRuntime.production(runner=runner, clock=clock)
         )
+        result = run_kr_theme_day_session_tick(manifest, now, runtime)
     except (
         InvalidKisKrSessionCalendarStoreError,
         InvalidKrThemeDaySessionAuditError,
+        InvalidKrThemeDaySessionEvidenceError,
         InvalidKrThemeDaySessionManifestError,
         InvalidKrThemeDaySessionSupervisorError,
         OSError,
