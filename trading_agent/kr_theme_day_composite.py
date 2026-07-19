@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final, Self, override
 
@@ -15,6 +16,7 @@ from trading_agent.experiment_ledger_store import (
     InvalidExperimentLedgerSourceError,
 )
 from trading_agent.experiment_scope_models import ExperimentScopeKind
+from trading_agent.kr_preopen_registration_time import require_current_kr_preopen_registration
 from trading_agent.kr_theme_lane import (
     KR_THEME_LEADER_VWAP_RECLAIM_LANE,
     KR_THEME_OPPORTUNITY_LANE,
@@ -36,6 +38,7 @@ from trading_agent.research_identity_models import AgentOperatingMode
 
 _HYPOTHESIS_PREFIX: Final = "H-KR-THEME-DAY-COMPOSITE-"
 _RULE_PREFIX: Final = "rank_one_opportunity_then_vwap_reclaim"
+Clock = Callable[[], dt.datetime]
 
 
 class InvalidKrThemeDayCompositeError(ValueError):
@@ -99,6 +102,8 @@ def kr_theme_day_composite_hypothesis_id(day_strategy_version: str, opportunity_
 def register_kr_theme_day_composite(
     ledger: ExperimentLedgerStore,
     request: KrThemeDayCompositeRegistrationRequest,
+    *,
+    clock: Clock = lambda: dt.datetime.now(dt.UTC),
 ) -> KrThemeDayCompositeRegistrationResult:
     try:
         request = KrThemeDayCompositeRegistrationRequest.model_validate(request.model_dump(mode="python"))
@@ -108,6 +113,8 @@ def register_kr_theme_day_composite(
             request.opportunity_strategy_version,
         )
         registration = _registration(request, day, opportunity)
+        if not any(item.registration == registration for item in ledger.multi_market_hypotheses()):
+            require_current_kr_preopen_registration(request.registered_at, clock())
         with ledger.writer() as writer:
             created = writer.register_multi_market_hypothesis(registration)
         authority = _authority(registration)

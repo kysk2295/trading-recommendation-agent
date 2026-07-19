@@ -36,6 +36,21 @@ def test_help_has_manifest_tick_without_authority_inputs() -> None:
         assert forbidden not in result.stdout.lower()
 
 
+def test_onboard_help_has_no_fixture_time_override() -> None:
+    # Given / When
+    result = subprocess.run(
+        (str(SCRIPT), "onboard", "--help"),
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    # Then
+    assert result.returncode == 0
+    assert "fixture-onboarded-at" not in result.stdout
+
+
 def test_onboard_writes_private_manifest_receipt_and_report(tmp_path: Path) -> None:
     # Given
     identity = _identity(tmp_path).model_copy(
@@ -55,21 +70,26 @@ def test_onboard_writes_private_manifest_receipt_and_report(tmp_path: Path) -> N
     identity.paths.opportunity_outbox.chmod(0o600)
 
     # When
-    completed = subprocess.run(
-        (str(SCRIPT), *_onboard_args(identity, manifest_path, tmp_path / "report")),
-        cwd=ROOT,
-        check=False,
+    first = session_cli.main(
+        _onboard_args(identity, manifest_path, tmp_path / "first-report"),
+        clock=lambda: ONBOARDED_AT,
+    )
+    replay = session_cli.main(
+        _onboard_args(identity, manifest_path, tmp_path / "replay-report"),
+        clock=lambda: ONBOARDED_AT.replace(hour=15),
     )
 
     # Then
-    assert completed.returncode == 0
+    assert (first, replay) == (0, 0)
     assert stat.S_IMODE(manifest_path.stat().st_mode) == 0o600
     assert stat.S_IMODE(onboarding_receipt_path(manifest_path).stat().st_mode) == 0o600
-    report = tmp_path / "report" / session_cli.REPORT_NAME
+    report = tmp_path / "first-report" / session_cli.REPORT_NAME
     assert "result: complete" in report.read_text(encoding="utf-8")
     assert "manifest created/reused: 1/0" in report.read_text(encoding="utf-8")
     assert "external account/order mutation: 0" in report.read_text(encoding="utf-8")
     assert stat.S_IMODE(report.stat().st_mode) == 0o600
+    replay_report = tmp_path / "replay-report" / session_cli.REPORT_NAME
+    assert "manifest created/reused: 0/1" in replay_report.read_text(encoding="utf-8")
 
 
 def test_tick_rejects_manifest_without_onboarding_receipt(tmp_path: Path) -> None:
@@ -128,8 +148,6 @@ def _onboard_args(
     )
     path_args = tuple(item for name, value in values for item in (f"--{name}", str(value)))
     fixture_args = (
-        "--fixture-onboarded-at",
-        ONBOARDED_AT.isoformat(),
         "--intraday-fixture-manifest",
         str(paths.intraday_fixture_manifest),
         "--eod-fixture-manifest",

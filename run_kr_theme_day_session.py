@@ -24,6 +24,10 @@ from trading_agent.kr_theme_day_onboarding import (
     onboard_kr_theme_day_opportunity,
     require_exact_kr_theme_day_onboarding,
 )
+from trading_agent.kr_theme_day_onboarding_models import (
+    load_kr_theme_day_onboarding_receipt,
+    onboarding_receipt_path,
+)
 from trading_agent.kr_theme_day_session_audit import InvalidKrThemeDaySessionAuditError
 from trading_agent.kr_theme_day_session_evidence import InvalidKrThemeDaySessionEvidenceError
 from trading_agent.kr_theme_day_session_manifest import (
@@ -52,7 +56,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     onboard.add_argument("--trial-id", required=True)
     onboard.add_argument("--opportunity-id", required=True)
     onboard.add_argument("--output-dir", type=Path, required=True)
-    onboard.add_argument("--fixture-onboarded-at", type=dt.datetime.fromisoformat)
     _path_arguments(onboard)
     tick = commands.add_parser("tick")
     tick.add_argument("--manifest", type=Path, required=True)
@@ -70,15 +73,13 @@ def main(
     try:
         if args.command == "onboard":
             paths = _paths(args)
-            if (args.fixture_onboarded_at is None) != (paths.intraday_fixture_manifest is None):
-                raise InvalidKrThemeDayOpportunityOnboardingError
             result = onboard_kr_theme_day_opportunity(
                 KrThemeDayOpportunityOnboardingRequest(
                     manifest_path=args.manifest.absolute(),
                     paths=paths,
                     trial_id=args.trial_id,
                     opportunity_id=args.opportunity_id,
-                    onboarded_at=clock() if args.fixture_onboarded_at is None else args.fixture_onboarded_at,
+                    onboarded_at=_onboarded_at(args.manifest, clock),
                 )
             )
             _write_onboarding_report(args.output_dir, result.created)
@@ -165,6 +166,13 @@ def _require_calendar(path: Path, snapshot_id: str, session_date: dt.date) -> No
 
 def _absolute(path: Path | None) -> Path | None:
     return None if path is None else path.absolute()
+
+
+def _onboarded_at(manifest_path: Path, clock: Clock) -> dt.datetime:
+    receipt_path = onboarding_receipt_path(manifest_path)
+    if receipt_path.exists() or receipt_path.is_symlink():
+        return load_kr_theme_day_onboarding_receipt(receipt_path).onboarded_at
+    return clock()
 
 
 def _write_report(output_dir: Path, result: KrThemeDaySessionTickResult | None) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from pydantic import ValidationError
@@ -13,6 +14,7 @@ from trading_agent.experiment_ledger_store import (
     ExperimentLedgerWriterLeaseUnavailableError,
     InvalidExperimentLedgerSourceError,
 )
+from trading_agent.kr_preopen_registration_time import require_current_kr_preopen_registration
 from trading_agent.kr_theme_day_composite import (
     KrThemeDayCompositeAuthorityRequest,
     require_exact_kr_theme_day_composite,
@@ -45,6 +47,7 @@ __all__ = (
     "KrThemeDayTrialRegistrationRequest",
     "kr_theme_day_trial_id",
 )
+Clock = Callable[[], dt.datetime]
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +65,8 @@ class KrThemeDayTrialEventResult:
 def register_kr_theme_day_shadow_trial(
     ledger: ExperimentLedgerStore,
     request: KrThemeDayTrialRegistrationRequest,
+    *,
+    clock: Clock = lambda: dt.datetime.now(dt.UTC),
 ) -> KrThemeDayTrialRegistrationResult:
     try:
         request = KrThemeDayTrialRegistrationRequest.model_validate(request.model_dump(mode="python"))
@@ -86,6 +91,8 @@ def register_kr_theme_day_shadow_trial(
             kr_theme_day_trial_identity(request, composite),
             hypothesis,
         )
+        if not any(item.registration == registration for item in ledger.multi_market_trials()):
+            require_current_kr_preopen_registration(request.registered_at, clock())
         with ledger.writer() as writer:
             created = writer.register_multi_market_trial(registration)
     except (

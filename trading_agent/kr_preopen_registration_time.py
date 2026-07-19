@@ -17,7 +17,12 @@ def require_current_kr_preopen_registration(recorded_at: dt.datetime, now: dt.da
     if not _aware(recorded_at) or not _aware(now):
         raise InvalidKrPreopenRegistrationTimeError
     age = now - recorded_at
-    if age < dt.timedelta() or age > _MAX_AGE or recorded_at.astimezone(_KST).time() >= dt.time(9):
+    if (
+        age < dt.timedelta()
+        or age > _MAX_AGE
+        or recorded_at.astimezone(_KST).time() >= dt.time(9)
+        or now.astimezone(_KST).time() >= dt.time(9)
+    ):
         raise InvalidKrPreopenRegistrationTimeError
 
 

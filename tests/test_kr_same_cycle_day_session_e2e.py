@@ -136,6 +136,7 @@ def _register_trial(tmp_path: Path, ledger_path: Path, calendar_path: Path) -> s
             opportunity_strategy_version=OPPORTUNITY_VERSION,
             registered_at=REGISTERED_AT - dt.timedelta(seconds=30),
         ),
+        clock=lambda: REGISTERED_AT - dt.timedelta(seconds=30),
     )
     receipt, snapshot = _calendar_evidence()
     assert KisKrSessionCalendarStore(calendar_path).append(receipt, snapshot) is True
@@ -149,6 +150,7 @@ def _register_trial(tmp_path: Path, ledger_path: Path, calendar_path: Path) -> s
             calendar_snapshot=snapshot,
             opportunity_strategy_version=OPPORTUNITY_VERSION,
         ),
+        clock=lambda: REGISTERED_AT,
     ).registration.trial_id
 
 

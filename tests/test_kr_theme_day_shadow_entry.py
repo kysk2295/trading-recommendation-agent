@@ -57,6 +57,7 @@ def _ledger(path: Path, *, started: bool = True) -> ExperimentLedgerStore:
             calendar_snapshot=_calendar_evidence()[1],
             opportunity_strategy_version=OPPORTUNITY_VERSION,
         ),
+        clock=lambda: REGISTERED,
     )
     if started:
         _ = start_kr_theme_day_shadow_trial(ledger, result.registration.trial_id, STARTED)

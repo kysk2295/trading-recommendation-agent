@@ -38,8 +38,12 @@ def test_composite_registration_is_exact_append_only_replay(tmp_path: Path) -> N
     request = _request()
 
     # When
-    first = register_kr_theme_day_composite(ledger, request)
-    second = register_kr_theme_day_composite(ledger, request)
+    first = register_kr_theme_day_composite(ledger, request, clock=lambda: REGISTERED_AT)
+    second = register_kr_theme_day_composite(
+        ledger,
+        request,
+        clock=lambda: REGISTERED_AT + dt.timedelta(hours=1),
+    )
     authority = require_exact_kr_theme_day_composite(
         ledger,
         KrThemeDayCompositeAuthorityRequest(
@@ -66,10 +70,10 @@ def test_composite_rejects_unregistered_or_mismatched_component(tmp_path: Path) 
 
     # When / Then
     with pytest.raises(InvalidKrThemeDayCompositeError):
-        _ = register_kr_theme_day_composite(ledger, _request())
+        _ = register_kr_theme_day_composite(ledger, _request(), clock=lambda: REGISTERED_AT)
 
     registered = _component_ledger(tmp_path / "registered")
-    _ = register_kr_theme_day_composite(registered, _request())
+    _ = register_kr_theme_day_composite(registered, _request(), clock=lambda: REGISTERED_AT)
     with pytest.raises(InvalidKrThemeDayCompositeError):
         _ = require_exact_kr_theme_day_composite(
             registered,
@@ -79,6 +83,21 @@ def test_composite_rejects_unregistered_or_mismatched_component(tmp_path: Path) 
                 as_of=REGISTERED_AT,
             ),
         )
+
+
+def test_composite_rejects_first_append_at_or_after_open(tmp_path: Path) -> None:
+    # Given
+    ledger = _component_ledger(tmp_path)
+    registered_at = REGISTERED_AT.replace(hour=8, minute=59)
+
+    # When / Then
+    with pytest.raises(InvalidKrThemeDayCompositeError):
+        _ = register_kr_theme_day_composite(
+            ledger,
+            _request().model_copy(update={"registered_at": registered_at}),
+            clock=lambda: registered_at.replace(hour=9, minute=0),
+        )
+    assert len(ledger.multi_market_hypotheses()) == 2
 
 
 def _request() -> KrThemeDayCompositeRegistrationRequest:

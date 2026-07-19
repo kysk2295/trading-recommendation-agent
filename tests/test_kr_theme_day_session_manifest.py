@@ -3,7 +3,6 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
-import os
 import stat
 from pathlib import Path
 
@@ -146,23 +145,27 @@ def test_manifest_reader_keeps_opened_file_during_path_swap(
     )
     write_kr_theme_day_session_manifest(replacement, replacement_manifest)
     replacement.chmod(0o644)
-    original_lstat = Path.lstat
-    target_checks = 0
+    original_open = private_file.os.open
+    swapped = False
 
-    def swap_after_metadata_check(target: Path) -> os.stat_result:
-        nonlocal target_checks
-        metadata = original_lstat(target)
-        if target == path:
-            target_checks += 1
-            if target_checks == 2:
-                target.unlink()
-                target.symlink_to(replacement)
-        return metadata
+    def swap_after_open(
+        target: str | Path,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal swapped
+        descriptor = original_open(target, flags, mode, dir_fd=dir_fd)
+        if target == path.name and dir_fd is not None and not swapped:
+            path.unlink()
+            path.symlink_to(replacement)
+            swapped = True
+        return descriptor
 
-    monkeypatch.setattr(Path, "lstat", swap_after_metadata_check)
+    monkeypatch.setattr(private_file.os, "open", swap_after_open)
 
-    # When
-    loaded = load_kr_theme_day_session_manifest(path)
-
-    # Then
-    assert loaded == manifest
+    # When / Then
+    with pytest.raises(InvalidKrThemeDaySessionManifestError):
+        _ = load_kr_theme_day_session_manifest(path)
+    assert swapped is True

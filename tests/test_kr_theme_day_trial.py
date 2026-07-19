@@ -77,6 +77,7 @@ def _register_authority(ledger: ExperimentLedgerStore) -> KrThemeDayCompositeAut
             opportunity_strategy_version=OPPORTUNITY_VERSION,
             registered_at=REGISTERED_AT - dt.timedelta(seconds=30),
         ),
+        clock=lambda: REGISTERED_AT - dt.timedelta(seconds=30),
     )
     return result.authority
 
@@ -85,8 +86,12 @@ def test_kr_theme_day_trial_registers_and_starts_exact_replay(tmp_path: Path) ->
     ledger = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
     authority = _register_authority(ledger)
 
-    first = register_kr_theme_day_shadow_trial(ledger, _request())
-    second = register_kr_theme_day_shadow_trial(ledger, _request())
+    first = register_kr_theme_day_shadow_trial(ledger, _request(), clock=lambda: REGISTERED_AT)
+    second = register_kr_theme_day_shadow_trial(
+        ledger,
+        _request(),
+        clock=lambda: REGISTERED_AT + dt.timedelta(hours=1),
+    )
     started = start_kr_theme_day_shadow_trial(ledger, first.registration.trial_id, STARTED_AT)
     replay = start_kr_theme_day_shadow_trial(ledger, first.registration.trial_id, STARTED_AT)
 
@@ -122,11 +127,13 @@ def test_kr_theme_day_trial_rejects_closed_or_stale_calendar_evidence(tmp_path: 
         _ = register_kr_theme_day_shadow_trial(
             ledger,
             _request().model_copy(update={"session_date": dt.date(2026, 7, 19)}),
+            clock=lambda: REGISTERED_AT,
         )
     with pytest.raises(InvalidKrThemeDayTrialError):
         _ = register_kr_theme_day_shadow_trial(
             ledger,
             _request().model_copy(update={"registered_at": REGISTERED_AT + dt.timedelta(minutes=5)}),
+            clock=lambda: REGISTERED_AT + dt.timedelta(minutes=5),
         )
     assert ledger.multi_market_trials() == ()
 
@@ -135,7 +142,7 @@ def test_kr_theme_day_trial_rejects_noncanonical_start_time(tmp_path: Path) -> N
     # Given
     ledger = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
     _register_authority(ledger)
-    registration = register_kr_theme_day_shadow_trial(ledger, _request())
+    registration = register_kr_theme_day_shadow_trial(ledger, _request(), clock=lambda: REGISTERED_AT)
 
     # When / Then
     with pytest.raises(InvalidKrThemeDayTrialError):
@@ -146,11 +153,26 @@ def test_kr_theme_day_trial_rejects_noncanonical_start_time(tmp_path: Path) -> N
         )
 
 
+def test_kr_theme_day_trial_rejects_stale_direct_first_append(tmp_path: Path) -> None:
+    # Given
+    ledger = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    _register_authority(ledger)
+
+    # When / Then
+    with pytest.raises(InvalidKrThemeDayTrialError):
+        _ = register_kr_theme_day_shadow_trial(
+            ledger,
+            _request(),
+            clock=lambda: REGISTERED_AT + dt.timedelta(minutes=6),
+        )
+    assert ledger.multi_market_trials() == ()
+
+
 def test_kr_theme_day_trial_rejects_unregistered_strategy(tmp_path: Path) -> None:
     ledger = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
 
     with pytest.raises(InvalidKrThemeDayTrialError):
-        _ = register_kr_theme_day_shadow_trial(ledger, _request())
+        _ = register_kr_theme_day_shadow_trial(ledger, _request(), clock=lambda: REGISTERED_AT)
 
 
 def test_kr_theme_day_trial_rejects_unknown_start(tmp_path: Path) -> None:
@@ -163,7 +185,7 @@ def test_kr_theme_day_trial_rejects_unknown_start(tmp_path: Path) -> None:
 def test_kr_theme_day_trial_rejects_generic_changed_budget(tmp_path: Path) -> None:
     source = ExperimentLedgerStore(tmp_path / "source.sqlite3")
     _register_authority(source)
-    exact = register_kr_theme_day_shadow_trial(source, _request()).registration
+    exact = register_kr_theme_day_shadow_trial(source, _request(), clock=lambda: REGISTERED_AT).registration
     changed = type(exact).model_validate(
         exact.model_dump(mode="python")
         | {

@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import fcntl
 import os
 import secrets
 import stat
 from contextlib import suppress
 from pathlib import Path
+from threading import Lock
 from typing import Final, override
 
 _FILE_MODE: Final = 0o600
 _DIRECTORY_MODE: Final = 0o700
 _MAX_TEXT_BYTES: Final = 64 * 1024 * 1024
 _STAGING_SUFFIX: Final = ".staging"
+_LOCK_SUFFIX: Final = ".publication.lock"
+_PROCESS_PUBLICATION_LOCK: Final = Lock()
 
 
 class InvalidPrivateImmutableFileError(ValueError):
@@ -30,7 +34,8 @@ def publish_private_immutable_text(path: Path, payload: str) -> bool:
             if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
                 raise InvalidPrivateImmutableFileError
             os.fchmod(parent_descriptor, _DIRECTORY_MODE)
-            return _publish(parent_descriptor, target.name, payload)
+            with _PROCESS_PUBLICATION_LOCK:
+                return _publish(parent_descriptor, target.name, payload)
         finally:
             os.close(parent_descriptor)
     except (OSError, TypeError, ValueError):
@@ -157,9 +162,28 @@ def _repair_staging_alias(parent_descriptor: int, descriptor: int, name: str) ->
 
 
 def _publish(parent_descriptor: int, name: str, payload: str) -> bool:
+    lock_descriptor = os.open(
+        f".{name}{_LOCK_SUFFIX}",
+        os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
+        _FILE_MODE,
+        dir_fd=parent_descriptor,
+    )
+    try:
+        metadata = os.fstat(lock_descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_nlink != 1:
+            raise InvalidPrivateImmutableFileError
+        os.fchmod(lock_descriptor, _FILE_MODE)
+        fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+        return _publish_locked(parent_descriptor, name, payload)
+    finally:
+        os.close(lock_descriptor)
+
+
+def _publish_locked(parent_descriptor: int, name: str, payload: str) -> bool:
     existing = _require_existing(parent_descriptor, name, payload)
     if existing is not None:
         return existing
+    _remove_orphan_staging(parent_descriptor, name)
     stage = f".{name}.{secrets.token_hex(12)}{_STAGING_SUFFIX}"
     descriptor = os.open(
         stage,
@@ -168,15 +192,10 @@ def _publish(parent_descriptor: int, name: str, payload: str) -> bool:
         dir_fd=parent_descriptor,
     )
     try:
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                descriptor = -1
-                _ = handle.write(payload)
-                handle.flush()
-                os.fsync(handle.fileno())
-        finally:
-            if descriptor >= 0:
-                os.close(descriptor)
+        with os.fdopen(os.dup(descriptor), "w", encoding="utf-8") as handle:
+            _ = handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.link(
             stage,
             name,
@@ -184,9 +203,22 @@ def _publish(parent_descriptor: int, name: str, payload: str) -> bool:
             dst_dir_fd=parent_descriptor,
             follow_symlinks=False,
         )
+        published = _open_private_file(parent_descriptor, name, (1, 2))
+        try:
+            source_metadata = os.fstat(descriptor)
+            published_metadata = os.fstat(published)
+            if (source_metadata.st_dev, source_metadata.st_ino) != (
+                published_metadata.st_dev,
+                published_metadata.st_ino,
+            ):
+                raise InvalidPrivateImmutableFileError
+        finally:
+            os.close(published)
         os.fsync(parent_descriptor)
         os.unlink(stage, dir_fd=parent_descriptor)
         os.fsync(parent_descriptor)
+        if os.fstat(descriptor).st_nlink != 1:
+            raise InvalidPrivateImmutableFileError
         return True
     except FileExistsError:
         existing = _require_existing(parent_descriptor, name, payload)
@@ -194,6 +226,26 @@ def _publish(parent_descriptor: int, name: str, payload: str) -> bool:
             raise InvalidPrivateImmutableFileError from None
         return existing
     finally:
+        os.close(descriptor)
         with suppress(FileNotFoundError):
             os.unlink(stage, dir_fd=parent_descriptor)
+        os.fsync(parent_descriptor)
+
+
+def _remove_orphan_staging(parent_descriptor: int, name: str) -> None:
+    prefix = f".{name}."
+    removed = False
+    for candidate in os.listdir(parent_descriptor):
+        if candidate.startswith(prefix) and candidate.endswith(_STAGING_SUFFIX):
+            metadata = os.stat(candidate, dir_fd=parent_descriptor, follow_symlinks=False)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) != _FILE_MODE
+                or metadata.st_nlink != 1
+            ):
+                raise InvalidPrivateImmutableFileError
+            os.unlink(candidate, dir_fd=parent_descriptor)
+            removed = True
+    if removed:
         os.fsync(parent_descriptor)
