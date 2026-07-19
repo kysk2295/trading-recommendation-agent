@@ -32,6 +32,7 @@ def test_correction_replaces_active_values_and_preserves_provider_aliases(tmp_pa
 
     assert state.validated_trade_message_count == 2
     assert state.observed_trade_message_count == 2
+    assert state.duplicate_trade_message_count == 0
     assert len(state.active_trades) == 1
     active = state.active_trades[0]
     assert active.provider_root_trade_id == 101
@@ -140,5 +141,7 @@ def _invalid_messages(case: str):
         cancel["i"] = 101
         cancel["p"] = 10.0
         cancel["s"] = 100
-        return (fixtures._trade("AAA"), cancel, fixtures._trade("AAA"))
+        conflict = fixtures._trade("AAA")
+        conflict["p"] = 11.0
+        return (fixtures._trade("AAA"), cancel, conflict)
     raise AssertionError

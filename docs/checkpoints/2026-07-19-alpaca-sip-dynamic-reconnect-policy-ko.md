@@ -21,5 +21,5 @@
 
 - READY decision을 한 번의 owner invocation에 연결하는 fixture supervisor
 - retryable/non-retryable failure 분류와 backoff
-- reconnect epoch gap/duplicate provider message soak
+- reconnect epoch gap/duplicate provider message soak는 `2026-07-19-alpaca-sip-dynamic-trade-history-ko.md`에서 완료
 - 열린 NYSE 정규장 bounded read-only smoke

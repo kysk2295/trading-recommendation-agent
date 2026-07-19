@@ -170,9 +170,21 @@ instrument. IDs bind the raw receipt, frame-local index, and canonical content
 hash. Unbound symbols, future/wrong-session timestamps, and control messages in
 data frames fail closed. A verified as-of read model now replays provider trade
 aliases through exact-value corrections and cancel tombstones, rejects missing,
-reused, post-cancel, or clock-regressing chains, and excludes receipts not yet
-received at the requested causal time. Terminal session attestation remains a
+conflicting, post-cancel, or clock-regressing chains, treats exact provider
+payload duplicates as count-only no-ops, and excludes receipts not yet
+received at the requested causal time. Open-session provider smoke remains a
 separate boundary.
+
+**Dynamic SIP reconnect history checkpoint (2026-07-19): Feature gate
+complete.** Verified terminal order and exact receipt ownership bind every
+projected message to one epoch. Failed-to-complete epoch chains can be replayed
+for diagnosis, including cross-epoch corrections and cancel tombstones, but
+any epoch gap remains continuity-unattested without provider backfill evidence
+and fails the complete-history requirement. Exact duplicate payloads are
+idempotent; conflicting provider IDs, overlapping epoch receipt times,
+post-completion epochs, and histories beyond the connection budget fail closed.
+A single bounded-complete epoch is eligible only after its terminal is observed
+at the requested as-of time.
 
 **Dynamic SIP terminal checkpoint (2026-07-19): Restart evidence complete.**
 Schema v2 adds one append-only terminal row per epoch without rewriting v1

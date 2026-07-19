@@ -20,6 +20,6 @@
 ## 남은 경계
 
 - retry attempt 사이 bounded interruptible backoff
-- reconnect epoch gap과 duplicate provider message soak
+- reconnect epoch gap과 duplicate provider message soak는 `2026-07-19-alpaca-sip-dynamic-trade-history-ko.md`에서 완료
 - original/correction/cancel active-state canonicalization
 - 열린 NYSE 정규장 bounded read-only smoke
