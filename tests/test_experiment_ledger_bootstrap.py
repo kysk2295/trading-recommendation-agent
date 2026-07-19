@@ -138,6 +138,14 @@ def test_bootstrap_v2_authority_backfill_binds_at_current_request_time(
     with sqlite3.connect(experiment_ledger.path) as connection:
         connection.executescript(
             """
+            DROP TRIGGER multi_market_trial_events_no_delete;
+            DROP TRIGGER multi_market_trial_events_no_update;
+            DROP TRIGGER multi_market_trials_no_delete;
+            DROP TRIGGER multi_market_trials_no_update;
+            DROP INDEX multi_market_trial_events_by_trial;
+            DROP INDEX multi_market_trials_by_lane;
+            DROP TABLE multi_market_trial_events;
+            DROP TABLE multi_market_trials;
             DROP TRIGGER multi_market_strategy_versions_no_delete;
             DROP TRIGGER multi_market_strategy_versions_no_update;
             DROP TRIGGER multi_market_hypotheses_no_delete;
@@ -228,6 +236,14 @@ def test_bootstrap_migrates_v1_ledger_before_appending_code_rollover(
     with sqlite3.connect(experiment_ledger.path) as connection:
         connection.executescript(
             """
+            DROP TRIGGER multi_market_trial_events_no_delete;
+            DROP TRIGGER multi_market_trial_events_no_update;
+            DROP TRIGGER multi_market_trials_no_delete;
+            DROP TRIGGER multi_market_trials_no_update;
+            DROP INDEX multi_market_trial_events_by_trial;
+            DROP INDEX multi_market_trials_by_lane;
+            DROP TABLE multi_market_trial_events;
+            DROP TABLE multi_market_trials;
             DROP TRIGGER multi_market_strategy_versions_no_delete;
             DROP TRIGGER multi_market_strategy_versions_no_update;
             DROP TRIGGER multi_market_hypotheses_no_delete;

@@ -39,9 +39,9 @@ from trading_agent.experiment_ledger_models import (
     TrialKind,
 )
 from trading_agent.experiment_ledger_schema import (
-    CREATE_EXPERIMENT_LEDGER_SCHEMA,
     CREATE_EXPERIMENT_LEDGER_SCHEMA_V1,
     CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2,
+    CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3,
     EXPERIMENT_LEDGER_SCHEMA_VERSION,
 )
 from trading_agent.experiment_ledger_store import (
@@ -383,7 +383,7 @@ def test_writer_migrates_v1_without_rewriting_existing_rows(tmp_path: Path) -> N
         version = connection.execute("PRAGMA user_version").fetchone()
 
     assert migrated_row == original_row
-    assert version == (4,)
+    assert version == (5,)
 
 
 def test_writer_migrates_v2_without_rewriting_existing_rows(tmp_path: Path) -> None:
@@ -412,7 +412,7 @@ def test_writer_migrates_v2_without_rewriting_existing_rows(tmp_path: Path) -> N
         version = connection.execute("PRAGMA user_version").fetchone()
 
     assert migrated_row == original_row
-    assert version == (4,)
+    assert version == (5,)
 
 
 def test_writer_migrates_v3_without_rewriting_existing_rows(tmp_path: Path) -> None:
@@ -426,19 +426,12 @@ def test_writer_migrates_v3_without_rewriting_existing_rows(tmp_path: Path) -> N
         hypothesis.model_dump_json(),
     )
     with sqlite3.connect(database) as connection:
-        connection.executescript(CREATE_EXPERIMENT_LEDGER_SCHEMA)
         connection.executescript(
-            """
-            DROP TRIGGER multi_market_strategy_versions_no_delete;
-            DROP TRIGGER multi_market_strategy_versions_no_update;
-            DROP TRIGGER multi_market_hypotheses_no_delete;
-            DROP TRIGGER multi_market_hypotheses_no_update;
-            DROP INDEX multi_market_strategy_versions_by_lane;
-            DROP TABLE multi_market_strategy_versions;
-            DROP TABLE multi_market_hypotheses;
-            PRAGMA user_version = 3;
-            """
+            CREATE_EXPERIMENT_LEDGER_SCHEMA_V1
+            + CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2
+            + CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3
         )
+        _ = connection.execute("PRAGMA user_version = 3")
         _ = connection.execute("INSERT INTO hypotheses VALUES (?, ?, ?, ?, ?)", original_row)
         connection.commit()
 
@@ -452,11 +445,11 @@ def test_writer_migrates_v3_without_rewriting_existing_rows(tmp_path: Path) -> N
         version = connection.execute("PRAGMA user_version").fetchone()
 
     assert migrated_row == original_row
-    assert version == (4,)
+    assert version == (5,)
 
 
-def test_current_experiment_ledger_schema_is_v4() -> None:
-    assert EXPERIMENT_LEDGER_SCHEMA_VERSION == 4
+def test_current_experiment_ledger_schema_is_v5() -> None:
+    assert EXPERIMENT_LEDGER_SCHEMA_VERSION == 5
 
 
 def test_writer_rolls_back_v1_migration_when_v2_ddl_fails(
@@ -881,6 +874,7 @@ def test_missing_reader_is_empty_and_does_not_create_paths(tmp_path: Path) -> No
     assert reader.strategy_authority_bindings() == ()
     assert reader.multi_market_hypotheses() == ()
     assert reader.multi_market_strategy_versions() == ()
+    assert reader.multi_market_trials() == ()
     assert reader.trials() == ()
     assert not database.exists()
     assert not database.parent.exists()

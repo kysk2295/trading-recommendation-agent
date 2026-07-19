@@ -758,3 +758,11 @@
 - 수정: 기존 등록 CLI와 append-only schema를 유지하면서 허용 계약을 Opportunity와 day 가설 두 개로 제한했다. day 계약은 `H-KR-THEME-LEADER-VWAP-001`, exact `kr_equities/day_trading/theme_leader_vwap_reclaim` lane, 코드 SHA-256 다이제스트가 포함된 version과 `shadow` mode를 함께 고정한다. 전용 verifier는 등록 행이 정확히 하나이고 code, lane, mode와 투영시각 인과성이 모두 일치해야 반환한다.
 - 경계: 사전등록은 trial, fill, lifecycle, champion 또는 주문 권한을 만들지 않는다. fixture manifest는 local replay용이며 실제 forward trial은 clean checkpoint commit SHA로 별도 사전등록한 뒤에만 시작한다.
 - 결과: Opportunity 등록/replay 호환성, exact day 등록/replay와 lane report를 검증했다. 관련 7개와 전체 2652 tests, Ruff, basedpyright 0/0, compileall, no-excuse 및 actual help/missing/happy/replay CLI QA가 통과했다. provider, credential, account와 broker mutation은 0건이다.
+
+## H107: legacy US trial 원장에 KR day 전략을 넣으면 lane 계보가 거짓이 된다
+
+- 결함: 기존 `experiment_trials`는 legacy `strategy_versions` 외래키와 US `LaneId` scope를 요구한다. KR day trial을 여기에 기록하면 intraday US lane으로 위장하거나 전역 전략 등록과 분리된 별도 기록이 된다.
+- 수정: schema v5에 exact multi-market strategy parent, scope, `StrategyLaneRef`, market/family와 `shadow_forward`만 보존하는 trial 및 event table을 추가했다. v1~v4 migration은 기존 행을 재작성하지 않고 두 table, 두 index와 네 append-only trigger만 원자적으로 더한다. current Reader/Writer는 schema object exact-set도 검증한다.
+- KR 연결: code-coupled `theme_leader_vwap_reclaim` version만 다음 평일 KST 09:00 전에 daily trial을 등록할 수 있다. no-entry baseline, entry ask+20bp, 결측 0, 최소 20 sessions·30 signals와 fillability/drawdown/stability/multiple-testing Reviewer gate는 고정되어 generic writer의 변형 trial을 전용 start API가 거부한다.
+- 권한: CLI는 local `register`와 `start`만 append한다. fill, terminal, lifecycle, champion, 계좌 binding과 주문 권한은 만들지 않으며 provider, credential, broker mutation은 0건이다.
+- 결과: focused 99개와 전체 2669 tests, actual help/missing/register/replay/start/replay CLI QA가 통과했다. schema 5, private database/report mode 600과 external mutation 0을 확인했다. v1은 평일·KST 09:00만 검사하며 authoritative KRX 휴장일 calendar는 후속 운영 gate다.
