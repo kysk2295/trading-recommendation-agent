@@ -802,3 +802,11 @@
 - 수정: 공식 KIS sample commit `885dd4e2f5c37e4f7e23dd63c15555a9967bc7bc`의 `GET /uapi/domestic-stock/v1/quotations/chk-holiday`, TR `CTCA0903R` 응답을 raw-first receipt로 보존한다. base date별 mode-600 append-only SQLite snapshot은 `bzdy_yn`·`tr_day_yn`·`opnd_yn`이 모두 참인 session만 연다. KR day registration은 등록일 KST와 같은 base date, 관측 후 5분 이내인 exact snapshot을 요구하고 ID를 evidence budget과 data version에 결합한다.
 - 판별 기준: 휴장 row, 5분 초과 evidence, missing/public/tampered store는 global trial append 0이어야 한다. exact raw/store/trial replay는 새 행을 만들지 않아야 한다.
 - 결과: 관련 KR day 44개와 전체 2698 tests가 통과했다. 실제 CLI는 missing store를 exit 1로 닫고 fixture-backed register/replay를 exit 0, mode 600, external mutation 0으로 재현했다. 계좌·잔고·포지션·주문 API는 import하거나 호출하지 않았다.
+
+## H113: frozen KIS receipt를 메모리에서만 계산하면 장중 판단을 재시작할 수 없다
+
+- 결함: KIS market adapter가 raw bytes를 frozen receipt로 반환해도 durable source가 없었고, setup·signal·shadow entry는 단위 테스트에서만 직접 결합됐다. 프로세스가 종료되면 어떤 provider 원문과 exact Opportunity가 started trial의 entry를 만들었는지 운영 표면에서 재생할 수 없었다.
+- 저장: kind/symbol/수신시각 logical key와 status/content type/payload SHA/raw bytes를 mode-600 append-only SQLite에 보존한다. exact replay는 no-op이며 같은 logical key의 다른 bytes, UPDATE/DELETE trigger·schema·owner·mode·single-link 위반은 read/write 모두 차단한다.
+- 장중 child: private Opportunity outbox에서 exact ID 하나를 읽고 같은 종목·KST session·평가시각 이전 receipt만 선택한다. 완료 분봉→VWAP setup→latest current status/quote gate→current-quote signal을 기존 pure kernel로 재생하고, exact started daily trial이 있을 때만 고정 20bp 그림자 entry를 append한다. no-setup과 market-blocked는 entry를 만들지 않는다.
+- 경계: CLI는 credential, provider endpoint, account, order, arm이나 가변 slippage를 받지 않으며 report에서 종목·가격·ID·path를 제거한다. 실제 KIS GET collector와 scheduler, exit polling 및 일일 supervisor는 후속 단계다.
+- 결과: store conflict/tamper, raw→entry/replay/no-setup, actual CLI help/missing/happy/replay를 focused 8개와 전체 2726 tests로 확인했다. Ruff, basedpyright 0/0, compileall, changed-production no-excuse가 통과했고 provider network와 국내 broker mutation은 0건이다.
