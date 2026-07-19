@@ -233,3 +233,9 @@ After this checkpoint:
 2. add a persistent KIS quote stream only if REST latency/coverage evidence justifies it
 3. compare KIS actionability against independently licensed Alpaca SIP evidence
 4. run the already-armed Alpaca Paper entry/OCO/EOD smoke as a separate explicit operational checkpoint
+
+## 12. 2026-07-19 Implementation Note
+
+The original KIS-specific actionability implementation was split behind its unchanged public facade into identity, frozen model, common rule, KIS projection, policy orchestration, and artifact-verification modules. Schema v2, identity material, evidence namespace, terminal evaluation order, and append-only behavior remain unchanged. Each module is at most 166 pure lines.
+
+This split does not authorize representing Alpaca SIP evidence as `provider="kis"` or as one KIS exchange. A follow-on provider-neutral evidence contract must retain the Alpaca plan, complete connection epoch, instrument, and independent bid/ask venue lineage before the shared terminal policy can consume it.

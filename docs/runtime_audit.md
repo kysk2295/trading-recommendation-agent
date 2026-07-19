@@ -587,3 +587,10 @@
 - 최초 관찰: trade와 quote bridge는 각각 complete-history와 snapshot binding을 검증했지만 호출자가 두 결과를 별도 읽으면 서로 다른 complete session의 값을 함께 사용할 수 있었다.
 - 수정: 두 confirmation의 research identity, plan, epoch, market date, instrument/symbol, observed/bar-end와 VWAP가 모두 같은 경우에만 immutable bundle을 만든다. bundle ID는 두 confirmation ID, last-trade-vs-midpoint bps와 displayed quote 내부 여부를 고정한다.
 - 결과: 같은 epoch fixture는 midpoint distance 0과 inside quote를 확인했고, 서로 독립적으로 complete인 두 epoch는 결합 전에 차단됐다. quote 밖 trade는 feature로 기록되지만 actionability나 signal로 승격되지 않는다. provider·credential·account/order endpoint와 mutation은 0건이다.
+
+## H83: KIS 전용 quote 모델을 두 번째 provider의 공통 정책 입력으로 재사용한다
+
+- 판별 기준: Alpaca SIP bid/ask를 `provider="kis"` 또는 단일 KIS exchange로 직렬화하지 않고도 같은 freshness·spread·stop·slippage 정책을 재사용할 수 있는지 확인한다.
+- 최초 관찰: 기존 actionability는 698 pure LOC 한 파일에서 KIS schema v2, ID, projection, terminal policy와 artifact 검증을 함께 소유했다. 이 모델을 그대로 Alpaca에 사용하면 provider와 bid/ask venue lineage를 위조하게 되고, 복제 구현은 정책 순서가 갈라질 위험이 있었다.
+- 수정: 공개 facade와 KIS v2 외부 계약을 유지한 채 identity, frozen models, common rules, KIS projection, policy orchestration, artifact verification을 7개 모듈로 분리했다. 기존 ID material과 base/session/future/stale/spread/stop/slippage/waiting 순서는 변경하지 않았다.
+- 결과: 공개 facade 36 pure LOC, 내부 모듈 최대 166 pure LOC이며 focused 66개와 전체 2484 tests, 정적 게이트가 통과했다. provider-neutral evidence와 Alpaca adapter는 다음 checkpoint에서 추가하며 이 리팩터링은 provider·credential·network·account/order endpoint나 mutation을 열지 않는다.
