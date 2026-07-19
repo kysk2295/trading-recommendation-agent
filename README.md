@@ -951,6 +951,19 @@ supervisor parent/live child 감사 원장을 ID·가격 없이 집계하려면 
   --output-dir outputs/runtime/us-sip-fleet/live-audit-report
 ```
 
+completed live child의 selected/new/replay를 manifest, bounded receipt terminal과 actionability artifact까지 query-only로 대사하려면 cross-store verifier를 실행한다. credential·provider·account/order 인자는 없고 보고서에는 aggregate만 쓴다.
+
+```bash
+./run_us_runtime_live_evidence_verify.py \
+  --supervisor-store outputs/runtime/us-sip-fleet/supervisor.sqlite3 \
+  --manifest-root outputs/runtime/us-sip-fleet/actionability-manifests \
+  --receipt-root outputs/runtime/us-sip-fleet/live-receipts \
+  --actionability-store outputs/runtime/us-sip-fleet/live-actionability.sqlite3 \
+  --output-dir outputs/runtime/us-sip-fleet/live-evidence-report
+```
+
+verifier는 parent 시작시각의 exact manifest, 원래 terminal을 만든 source manifest identity, manifest digest receipt, bounded-complete plan/epoch/terminal과 artifact bundle을 모두 재생한다. created receipt 누락·public mode·중복 terminal key·child aggregate 불일치는 `blocked`다. terminal이 이전 crash 시도에서 만들어지고 artifact append만 현재 재시작에서 일어난 경우는 기존 store에 append-attempt 시각이 없어 new/replay를 독립적으로 증명할 수 없으므로 성공으로 추정하지 않는다.
+
 supervisor가 만든 manifest 하나를 같은 completed-minute 안에서 read-only dynamic quote/trade와 결합해 즉시 actionability로 확정하는 bounded lifecycle은 다음처럼 실행한다. manifest의 base signal, policy state 또는 minute window가 만료되면 실제 WebSocket 전에 차단한다.
 
 ```bash
@@ -1126,6 +1139,7 @@ trading-recommendation-agent/
 ├── run_alpaca_paper_preflight.py
 ├── run_alpaca_paper_readiness.py
 ├── run_alpaca_paper_recovery.py
+├── run_us_runtime_live_evidence_verify.py
 ├── run_lane_control_plane_bootstrap.py
 ├── run_experiment_ledger_bootstrap.py
 ├── run_research_hypothesis_register.py

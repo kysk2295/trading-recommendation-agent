@@ -682,3 +682,11 @@
 - 수정: dispatcher가 receipt root 생성과 connector 호출 전에 기존 private actionability store를 query-only로 완전 재생한다. 저장된 terminal과 current manifest의 `(base signal ID, scan_started_at)`을 대사하고 이미 확정된 key는 connector·receipt 생성 없이 replay로 집계한다. 저장 원장이나 current batch에 중복 terminal key가 있으면 fail-closed한다.
 - 경계: 새 signal ID는 과거 terminal에 의해 skip되지 않는다. 다음 minute wire timestamp를 사용한 fixture에서 새 manifest digest receipt와 actionability artifact가 각각 하나 추가되는 것을 확인했다.
 - 결과: 2분 armed supervisor fixture soak는 manifest 2개를 만들었지만 WebSocket, receipt DB와 terminal artifact는 각각 1개만 만들었다. live child는 `selected/new/replay=1/1/0` 뒤 `1/0/1`이고 두 parent는 READY였다. 전체 2563 tests와 정적 게이트가 통과했으며 실제 provider WebSocket과 account/order mutation은 0건이다.
+
+## H96: supervisor child aggregate가 raw terminal과 artifact 계보 없이 참일 수 있다
+
+- 결함: child의 selected/new/replay는 cycle 구조체에서 durable하게 남지만 manifest, receipt terminal과 actionability artifact를 독립적으로 다시 읽어 대사하지 않았다. receipt 삭제, 다른 minute dataset과 잘못 결합된 replay 또는 count 불일치가 있어도 child table만 보면 완료처럼 보일 수 있었다.
+- 수정: query-only verifier가 parent/child suffix history와 모든 private content-addressed manifest를 재생한다. completed parent 시작시각의 exact manifest를 선택하고 base+scan artifact를 원래 source manifest identity와 manifest digest receipt에 연결한 뒤 bounded-complete plan, epoch, terminal 시각과 bundle을 대사한다. 다음 minute snapshot identity가 달라도 artifact는 원래 source identity를 보존해야 한다.
+- 차단: created receipt 누락·mode 0644, unknown/invalid lock, 중복 terminal key, selected 또는 new/replay 분할 mismatch는 sanitized verification error다. report에는 completed/selected와 created/replay/artifact aggregate만 있고 ID, symbol, price, path와 raw exception은 없다.
+- 한계: terminal이 이전 crash 시도에서 완료됐지만 artifact append만 현재 재시작에서 처음 성공한 경우, schema v1 artifact store에는 append-attempt 시각이 없어 child `new`를 독립적으로 증명할 수 없다. verifier는 이를 성공으로 추정하지 않고 차단하며 다음 계약은 projection attempt binding을 append-only로 보존하는 것이다.
+- 결과: actual CLI help exit 0, missing input exit 1/input create 0, 2분 fixture happy `completed/selected=2/2`, `created/replay/artifact=1/1/1`을 확인했다. 관련 31개와 전체 2570 tests, 정적 게이트가 통과했고 provider·credential·account/order mutation은 0건이다.
