@@ -601,3 +601,10 @@
 - 최초 관찰: 모듈 책임은 분리됐지만 terminal rule과 derived publication은 여전히 `UsQuoteSnapshot` 타입에 결합돼 있었다. 두 번째 adapter가 snapshot을 흉내 내거나 정책을 복제할 여지가 남았다.
 - 수정: exact quote ID와 source `EvidenceRef`, symbol, provider/receipt 시각, bid/ask·size·spread만 가진 frozen provider-neutral evidence를 도입했다. 공통 terminal policy·derived publication·artifact matcher가 이를 소비하고 KIS v2 snapshot은 기존 `quote/snapshot` reference로 투영한다.
 - 결과: source/provider 시각 mismatch와 invalid identity는 차단되고 기존 KIS assessment·publication·outbox가 같은 결과로 재생됐다. focused 69개, 전체 2487 tests와 정적 게이트가 통과했으며 이 계약 자체는 provider completeness를 선언하거나 network·account/order 권한을 열지 않는다.
+
+## H85: Alpaca latest quote만으로 complete current-entry claim을 만든다
+
+- 판별 기준: reconnect gap이나 terminal 미관측 quote, 다른 plan/epoch의 trade와 결합한 quote 또는 호출자가 임의로 넓힌 평가시각이 actionability policy에 들어가는지 확인한다.
+- 최초 관찰: provider-neutral policy는 생겼지만 어떤 adapter가 trusted evidence를 만들 수 있는지 제한하지 않았다. latest quote state만 직접 투영하면 dynamic complete-history와 microstructure bundle 검증을 우회할 수 있었다.
+- 수정: exact `AlpacaSipDynamicFeatureBundle`만 받는 adapter가 bundle observation을 평가시각으로 고정하고 bundle ID를 quote identity와 source reference에 결합한다. decision은 bundle 전체를 보존하고 artifact matcher가 같은 base·scan cycle로 deterministic 재평가한다.
+- 결과: complete same-epoch bundle은 waiting/trigger signal을 만들고 wide spread·stop·slippage·symbol mismatch는 terminal block으로 닫혔다. KIS provider/snapshot evidence는 생성되지 않았고 related 84개, 전체 2493 tests와 정적 게이트가 통과했다. durable append와 account/order 권한은 아직 없다.
