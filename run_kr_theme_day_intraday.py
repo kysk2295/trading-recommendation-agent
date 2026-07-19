@@ -27,6 +27,7 @@ from trading_agent.kr_theme_day_intraday import (
 )
 from trading_agent.kr_theme_day_intraday_io import (
     InvalidKrThemeDayOpportunitySourceError,
+    kr_theme_day_opportunity_sha256,
     load_exact_kr_theme_opportunity,
 )
 from trading_agent.kr_theme_day_shadow_entry_store import (
@@ -42,6 +43,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="KR theme day read-only evidence shadow projection")
     parser.add_argument("--opportunity-outbox", type=Path, required=True)
     parser.add_argument("--opportunity-id", required=True)
+    parser.add_argument("--opportunity-sha256", required=True)
     parser.add_argument("--strategy-version", required=True)
     parser.add_argument("--evaluated-at", required=True)
     parser.add_argument("--filled-at", required=True)
@@ -56,6 +58,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         opportunity = load_exact_kr_theme_opportunity(args.opportunity_outbox, args.opportunity_id)
+        if kr_theme_day_opportunity_sha256(opportunity) != args.opportunity_sha256:
+            raise InvalidKrThemeDayOpportunitySourceError
         outcome = run_kr_theme_day_intraday_entry(
             ExperimentLedgerStore(args.database),
             KisKrMarketReceiptStore(args.receipt_store),

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
-import json
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -22,6 +20,7 @@ from trading_agent.kr_theme_day_composite_evidence import (
 )
 from trading_agent.kr_theme_day_intraday_io import (
     InvalidKrThemeDayOpportunitySourceError,
+    kr_theme_day_opportunity_sha256,
     load_exact_kr_theme_opportunity,
 )
 from trading_agent.kr_theme_day_onboarding_models import (
@@ -83,6 +82,7 @@ def onboard_kr_theme_day_opportunity(
                 calendar_snapshot_id=calendar_snapshot_id,
                 opportunity_id=opportunity.opportunity_id,
                 opportunity_strategy_version=opportunity.producer_strategy_version,
+                opportunity_sha256=kr_theme_day_opportunity_sha256(opportunity),
                 symbol=opportunity.candidates[0].symbol,
                 paths=request.paths,
             )
@@ -96,7 +96,7 @@ def onboard_kr_theme_day_opportunity(
                 day_strategy_version=trial.strategy_version,
                 opportunity_strategy_version=opportunity.producer_strategy_version,
                 opportunity_id=opportunity.opportunity_id,
-                opportunity_sha256=_opportunity_sha256(opportunity),
+                opportunity_sha256=kr_theme_day_opportunity_sha256(opportunity),
                 source_cycle_id=source_cycle_id,
                 symbol=opportunity.candidates[0].symbol,
                 session_date=trial.planned_start,
@@ -136,6 +136,7 @@ def require_exact_kr_theme_day_onboarding(
         receipt.session_id != manifest.session_id
         or receipt.opportunity_id != manifest.opportunity_id
         or receipt.opportunity_strategy_version != manifest.opportunity_strategy_version
+        or receipt.opportunity_sha256 != manifest.opportunity_sha256
         or receipt.symbol != manifest.symbol
     ):
         raise InvalidKrThemeDayOpportunityOnboardingError
@@ -162,8 +163,15 @@ def _exact_trial(
     stored = matches[0]
     require_exact_kr_theme_day_trial(ledger, stored.registration)
     events = ledger.multi_market_trial_events(request.trial_id)
+    expected_start = dt.datetime.combine(
+        stored.registration.planned_start,
+        dt.time(9),
+        tzinfo=dt.timezone(dt.timedelta(hours=9)),
+    )
     if len(events) > 1 or any(
-        item.event.event_kind is not TrialEventKind.STARTED or item.event.occurred_at > request.onboarded_at
+        item.event.event_kind is not TrialEventKind.STARTED
+        or item.event.occurred_at != expected_start
+        or item.event.occurred_at > request.onboarded_at
         for item in events
     ):
         raise InvalidKrThemeDayOpportunityOnboardingError
@@ -231,8 +239,3 @@ def _write_or_require_manifest(
         return False
     write_kr_theme_day_session_manifest(request.manifest_path, manifest)
     return True
-
-
-def _opportunity_sha256(opportunity: OpportunitySnapshot) -> str:
-    payload = json.dumps(opportunity.model_dump(mode="json"), ensure_ascii=True, separators=(",", ":"), sort_keys=True)
-    return hashlib.sha256(payload.encode()).hexdigest()

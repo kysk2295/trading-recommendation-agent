@@ -62,6 +62,8 @@ def kr_theme_day_session_child_command(
                 str(manifest.paths.opportunity_outbox),
                 "--opportunity-id",
                 manifest.opportunity_id,
+                "--opportunity-sha256",
+                manifest.opportunity_sha256,
                 "--strategy-version",
                 manifest.strategy_version,
                 "--evaluated-at",

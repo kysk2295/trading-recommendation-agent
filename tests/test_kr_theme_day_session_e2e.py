@@ -110,6 +110,26 @@ def test_later_entry_does_not_change_prior_cycle_source_state(tmp_path: Path) ->
     assert after == before
 
 
+def test_tick_blocks_opportunity_payload_changed_after_manifest_binding(tmp_path: Path) -> None:
+    # Given
+    manifest = _manifest(tmp_path)
+    changed = _opportunity().model_copy(update={"valid_until": _opportunity().valid_until + dt.timedelta(seconds=1)})
+    manifest.paths.opportunity_outbox.write_text(changed.model_dump_json() + "\n", encoding="utf-8")
+    manifest.paths.opportunity_outbox.chmod(0o600)
+    observed = dt.datetime(2026, 7, 20, 9, 4, 4, tzinfo=KST)
+
+    # When
+    result = run_kr_theme_day_session_tick(
+        manifest,
+        observed,
+        KrThemeDaySessionRuntime.production(clock=lambda: observed),
+    )
+
+    # Then
+    assert result.blocked_phase is KrThemeDaySessionPhase.INTRADAY_ENTRY
+    assert KrThemeDayShadowEntryStore(manifest.paths.entry_store).entries() == ()
+
+
 def test_restartable_fixture_day_reaches_censored_review_and_lifecycle(tmp_path: Path) -> None:
     # Given
     manifest = _manifest(tmp_path)

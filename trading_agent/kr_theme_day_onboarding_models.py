@@ -17,6 +17,10 @@ from trading_agent.kr_theme_day_session_manifest import (
     KrThemeDaySessionManifest,
     KrThemeDaySessionPaths,
 )
+from trading_agent.private_immutable_file import (
+    InvalidPrivateImmutableFileError,
+    publish_private_immutable_text,
+)
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
@@ -148,15 +152,11 @@ def write_kr_theme_day_onboarding_receipt(
             return False
         if target.is_symlink():
             raise InvalidKrThemeDayOpportunityOnboardingError
-        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(target.parent, 0o700)
-        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            _ = handle.write(_canonical(validated) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        return True
-    except (OSError, TypeError, ValidationError, ValueError):
+        created = publish_private_immutable_text(target, _canonical(validated) + "\n")
+        if not created and load_kr_theme_day_onboarding_receipt(target) != validated:
+            raise InvalidKrThemeDayOpportunityOnboardingError
+        return created
+    except (InvalidPrivateImmutableFileError, OSError, TypeError, ValidationError, ValueError):
         raise InvalidKrThemeDayOpportunityOnboardingError from None
 
 

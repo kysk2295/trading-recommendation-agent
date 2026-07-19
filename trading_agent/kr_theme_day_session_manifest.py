@@ -12,6 +12,10 @@ from typing import Literal, Self, override
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from trading_agent.kr_instrument import is_kr_instrument_symbol_v2
+from trading_agent.private_immutable_file import (
+    InvalidPrivateImmutableFileError,
+    publish_private_immutable_text,
+)
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -64,6 +68,7 @@ class KrThemeDaySessionIdentity(BaseModel):
     calendar_snapshot_id: str
     opportunity_id: str
     opportunity_strategy_version: str
+    opportunity_sha256: str
     symbol: str
     paths: KrThemeDaySessionPaths
 
@@ -83,6 +88,7 @@ class KrThemeDaySessionIdentity(BaseModel):
             or local.time() >= dt.time(9)
             or any(not value or value != value.strip() for value in values)
             or _HEX64.fullmatch(self.calendar_snapshot_id) is None
+            or _HEX64.fullmatch(self.opportunity_sha256) is None
             or not is_kr_instrument_symbol_v2(self.symbol)
         ):
             raise InvalidKrThemeDaySessionManifestError
@@ -112,6 +118,7 @@ def build_kr_theme_day_session_manifest(identity: KrThemeDaySessionIdentity) -> 
         calendar_snapshot_id=validated.calendar_snapshot_id,
         opportunity_id=validated.opportunity_id,
         opportunity_strategy_version=validated.opportunity_strategy_version,
+        opportunity_sha256=validated.opportunity_sha256,
         symbol=validated.symbol,
         paths=validated.paths,
     )
@@ -126,12 +133,9 @@ def write_kr_theme_day_session_manifest(path: Path, manifest: KrThemeDaySessionM
         target = path.expanduser().absolute()
         if target.is_symlink() or target.exists():
             raise InvalidKrThemeDaySessionManifestError
-        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(target.parent, 0o700)
-        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            _ = handle.write(_canonical(validated) + "\n")
-    except (OSError, TypeError, ValidationError, ValueError):
+        if not publish_private_immutable_text(target, _canonical(validated) + "\n"):
+            raise InvalidKrThemeDaySessionManifestError
+    except (InvalidPrivateImmutableFileError, OSError, TypeError, ValidationError, ValueError):
         raise InvalidKrThemeDaySessionManifestError from None
 
 

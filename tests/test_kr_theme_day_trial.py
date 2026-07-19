@@ -18,7 +18,6 @@ from trading_agent.kr_theme_day_composite import (
     KrThemeDayCompositeRegistrationRequest,
     register_kr_theme_day_composite,
 )
-from trading_agent.kr_theme_day_composite_evidence import kr_theme_day_composite_evidence
 from trading_agent.kr_theme_day_trial import (
     InvalidKrThemeDayTrialError,
     KrThemeDayTrialRegistrationRequest,
@@ -104,7 +103,9 @@ def test_kr_theme_day_trial_registers_and_starts_exact_replay(tmp_path: Path) ->
                 "minimum_completed_signals:30",
                 "minimum_forward_sessions:20",
                 "review_gates:fillability_drawdown_stability_multiple_testing",
-                *kr_theme_day_composite_evidence(authority),
+                f"composite_hypothesis:{authority.hypothesis_id}",
+                f"composite_registration:{authority.registration_key}",
+                f"opportunity_strategy:{authority.opportunity_strategy_version}",
             )
         )
     )

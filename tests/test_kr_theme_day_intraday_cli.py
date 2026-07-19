@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import stat
 import subprocess
 from pathlib import Path
@@ -70,6 +72,26 @@ def test_intraday_cli_blocks_missing_opportunity_without_entry(tmp_path: Path) -
     assert not entry_store.exists()
 
 
+def test_intraday_cli_blocks_opportunity_changed_after_onboarding(tmp_path: Path) -> None:
+    # Given
+    database = tmp_path / "experiment.sqlite3"
+    _ = _ledger(database)
+    receipt_store = _receipt_store(tmp_path)
+    entry_store = tmp_path / "entries.sqlite3"
+    outbox = tmp_path / "opportunities.jsonl"
+    assert append_opportunity_snapshot(outbox, _opportunity()) is True
+    outbox.chmod(0o600)
+    args = list(_args(database, receipt_store.path, entry_store, outbox, tmp_path / "report"))
+    args[args.index("--opportunity-sha256") + 1] = "0" * 64
+
+    # When
+    result = intraday_cli.main(tuple(args))
+
+    # Then
+    assert result == 1
+    assert not entry_store.exists()
+
+
 def _args(
     database: Path,
     receipt_store: Path,
@@ -82,6 +104,8 @@ def _args(
         str(outbox),
         "--opportunity-id",
         "KR-THEME-OPPORTUNITY-001",
+        "--opportunity-sha256",
+        _opportunity_sha256(),
         "--strategy-version",
         VERSION,
         "--evaluated-at",
@@ -97,3 +121,13 @@ def _args(
         "--output-dir",
         str(output),
     )
+
+
+def _opportunity_sha256() -> str:
+    payload = json.dumps(
+        _opportunity().model_dump(mode="json"),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()

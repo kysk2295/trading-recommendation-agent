@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
 import stat
 from pathlib import Path
 
 import pytest
 
+import trading_agent.kr_theme_day_session_manifest as manifest_module
+from tests.test_kis_kr_market_projection import _opportunity
 from trading_agent.kr_theme_day_session_manifest import (
     InvalidKrThemeDaySessionManifestError,
     KrThemeDaySessionIdentity,
@@ -26,6 +30,7 @@ def _identity(tmp_path: Path) -> KrThemeDaySessionIdentity:
         calendar_snapshot_id="a" * 64,
         opportunity_id="KR-THEME-OPPORTUNITY-001",
         opportunity_strategy_version=kr_theme_strategy_version("kr-theme-fixture-code-v1"),
+        opportunity_sha256=_opportunity_sha256(),
         symbol="005930",
         paths=KrThemeDaySessionPaths(
             experiment_ledger=tmp_path / "experiment.sqlite3",
@@ -40,6 +45,16 @@ def _identity(tmp_path: Path) -> KrThemeDaySessionIdentity:
             output_root=tmp_path / "reports",
         ),
     )
+
+
+def _opportunity_sha256() -> str:
+    payload = json.dumps(
+        _opportunity().model_dump(mode="json"),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def test_manifest_round_trip_is_content_addressed_and_private(tmp_path: Path) -> None:
@@ -71,3 +86,42 @@ def test_manifest_reader_rejects_tamper_and_non_private_mode(tmp_path: Path) -> 
     path.chmod(0o644)
     with pytest.raises(InvalidKrThemeDaySessionManifestError):
         _ = load_kr_theme_day_session_manifest(path)
+
+
+def test_manifest_interrupted_write_leaves_no_final_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    path = tmp_path / "session.json"
+    manifest = build_kr_theme_day_session_manifest(_identity(tmp_path))
+    original = manifest_module.os.fdopen
+
+    def interrupt(_descriptor: int, _mode: str, *, encoding: str) -> None:
+        del encoding
+        raise OSError("fixture write interruption")
+
+    monkeypatch.setattr(manifest_module.os, "fdopen", interrupt)
+
+    # When
+    with pytest.raises(InvalidKrThemeDaySessionManifestError):
+        write_kr_theme_day_session_manifest(path, manifest)
+    monkeypatch.setattr(manifest_module.os, "fdopen", original)
+    write_kr_theme_day_session_manifest(path, manifest)
+
+    # Then
+    assert load_kr_theme_day_session_manifest(path) == manifest
+
+
+def test_manifest_rejects_symlinked_parent(tmp_path: Path) -> None:
+    # Given
+    target = tmp_path / "target"
+    target.mkdir()
+    linked_parent = tmp_path / "linked"
+    linked_parent.symlink_to(target, target_is_directory=True)
+    path = linked_parent / "session.json"
+
+    # When / Then
+    with pytest.raises(InvalidKrThemeDaySessionManifestError):
+        write_kr_theme_day_session_manifest(path, build_kr_theme_day_session_manifest(_identity(tmp_path)))
+    assert not (target / "session.json").exists()

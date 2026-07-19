@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import stat
 from pathlib import Path
@@ -27,6 +29,20 @@ def load_exact_kr_theme_opportunity(path: Path, opportunity_id: str) -> Opportun
             raise InvalidKrThemeDayOpportunitySourceError
         return matches[0]
     except (OSError, TypeError, UnicodeError, ValidationError, ValueError):
+        raise InvalidKrThemeDayOpportunitySourceError from None
+
+
+def kr_theme_day_opportunity_sha256(opportunity: OpportunitySnapshot) -> str:
+    try:
+        validated = OpportunitySnapshot.model_validate(opportunity.model_dump(mode="python"))
+        payload = json.dumps(
+            validated.model_dump(mode="json"),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        return hashlib.sha256(payload.encode()).hexdigest()
+    except (AttributeError, TypeError, ValidationError, ValueError):
         raise InvalidKrThemeDayOpportunitySourceError from None
 
 

@@ -8,11 +8,13 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import trading_agent.kr_theme_day_onboarding as onboarding
+import trading_agent.kr_theme_day_onboarding_models as onboarding_models
 from tests.test_kis_kr_market_projection import _opportunity
 from tests.test_kr_theme_day_session_manifest import _identity
 from tests.test_kr_theme_day_shadow_entry import _ledger
 from tests.test_kr_theme_day_trial import OPPORTUNITY_VERSION, _calendar_evidence
 from trading_agent.contract_outbox import append_opportunity_snapshot
+from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStore
 from trading_agent.kr_theme_day_onboarding import (
     InvalidKrThemeDayOpportunityOnboardingError,
@@ -21,6 +23,7 @@ from trading_agent.kr_theme_day_onboarding import (
     onboarding_receipt_path,
 )
 from trading_agent.kr_theme_day_session_manifest import load_kr_theme_day_session_manifest
+from trading_agent.kr_theme_day_trial import start_kr_theme_day_shadow_trial
 from trading_agent.signal_contract_models import EvidenceRef, OpportunitySnapshot
 
 KST = ZoneInfo("Asia/Seoul")
@@ -100,6 +103,46 @@ def test_onboarding_recovers_receipt_first_manifest_write_failure(
     assert onboarding_receipt_path(request.manifest_path).is_file()
     assert recovered.created is True
     assert request.manifest_path.is_file()
+
+
+def test_onboarding_rejects_noncanonical_existing_start_event(tmp_path: Path) -> None:
+    # Given
+    request = _prepared_request(tmp_path)
+    _ = start_kr_theme_day_shadow_trial(
+        ExperimentLedgerStore(request.paths.experiment_ledger),
+        request.trial_id,
+        dt.datetime(2026, 7, 20, 9, 1, tzinfo=KST),
+    )
+
+    # When / Then
+    with pytest.raises(InvalidKrThemeDayOpportunityOnboardingError):
+        _ = onboard_kr_theme_day_opportunity(request)
+    assert not request.manifest_path.exists()
+
+
+def test_receipt_interrupted_write_leaves_no_final_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    request = _prepared_request(tmp_path)
+    original = onboarding_models.os.fdopen
+
+    def interrupt(_descriptor: int, _mode: str, *, encoding: str) -> None:
+        del encoding
+        raise OSError("fixture write interruption")
+
+    monkeypatch.setattr(onboarding_models.os, "fdopen", interrupt)
+
+    # When
+    with pytest.raises(InvalidKrThemeDayOpportunityOnboardingError):
+        _ = onboard_kr_theme_day_opportunity(request)
+    monkeypatch.setattr(onboarding_models.os, "fdopen", original)
+    recovered = onboard_kr_theme_day_opportunity(request)
+
+    # Then
+    assert recovered.created is True
+    assert onboarding_receipt_path(request.manifest_path).is_file()
 
 
 def _prepared_request(

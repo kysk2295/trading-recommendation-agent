@@ -22,9 +22,9 @@
 4. exact Opportunity producer version, 같은 KST session, 아직 유효한 관측시각
 5. 하나뿐인 `kr/collection_cycle` evidence와 rank-1 symbol
 
-검증 후 content-addressed onboarding receipt를 mode 600으로 먼저 fsync하고 session manifest를 쓴다. receipt 뒤 manifest write가 실패하면 exact replay가 기존 receipt를 검증하고 manifest만 복구한다. 기존 receipt·manifest의 payload, mode, owner, hard link 또는 source lineage가 달라지면 fail-closed한다.
+검증 후 content-addressed onboarding receipt를 mode 600으로 먼저 fsync하고 session manifest를 쓴다. 두 파일은 symlink component가 없는 private parent의 staging 파일을 먼저 fsync하고 atomic no-overwrite hard link로 final 이름을 게시하므로 중단 시 partial final 파일을 남기지 않는다. receipt 뒤 manifest 게시가 실패하면 exact replay가 기존 receipt를 검증하고 manifest만 복구한다. 기존 receipt·manifest의 payload, mode, owner, hard link 또는 source lineage가 달라지면 fail-closed한다.
 
-`tick`과 `run_kr_theme_day_session_verify.py`는 session을 열기 전에 receipt에서 trial과 Opportunity identity를 복원해 동일한 onboarding을 no-write replay한다. 따라서 legacy manifest만 있거나 이후 원천이 바뀐 경우 child·provider 실행 없이 차단된다.
+`tick`과 `run_kr_theme_day_session_verify.py`는 session을 열기 전에 receipt에서 trial과 Opportunity identity를 복원해 동일한 onboarding을 no-write replay한다. manifest는 Opportunity canonical SHA도 identity에 고정하고 intraday child가 outbox를 다시 읽은 직후 exact SHA를 대사하므로 replay gate 뒤 원문 교체도 entry 전에 차단된다. canonical 09:00이 아닌 기존 START event, legacy manifest 또는 이후 원천 변경도 child·provider 실행 전에 닫힌다.
 
 ## E2E와 검증
 
@@ -33,8 +33,8 @@
 - exact pre-open composite와 day trial이 그 Opportunity producer version을 고정했다.
 - onboarding이 immutable receipt와 manifest를 만들고 실제 supervisor subprocess의 첫 intraday tick이 5개 phase, raw receipt 3건, shadow entry 1건과 audit 5건을 남겼다.
 - exact replay는 receipt, manifest와 기존 append-only artifact를 늘리지 않는다.
-- 관련 KR theme/same-cycle selection: `112 passed`
-- 전체 pytest: `2777 passed`
+- 관련 KR theme/same-cycle selection: `118 passed`
+- 전체 pytest: `2783 passed`
 - Ruff, basedpyright `0 errors, 0 warnings`, changed-file format, compileall, JSON parse, diff/no-excuse gate: 통과
 - actual composite/onboard/trial/verifier help와 missing-input CLI: 기대 exit `0/2`, 권한 옵션 0건
 - provider credential/live network와 국내 account/order mutation: `0`
