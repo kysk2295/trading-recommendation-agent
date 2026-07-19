@@ -63,13 +63,19 @@ class KrThemeDaySessionIdentity(BaseModel):
     registered_at: dt.datetime
     calendar_snapshot_id: str
     opportunity_id: str
+    opportunity_strategy_version: str
     symbol: str
     paths: KrThemeDaySessionPaths
 
     @model_validator(mode="after")
     def validate_identity(self) -> Self:
         local = self.registered_at.astimezone(dt.timezone(dt.timedelta(hours=9)))
-        values = (self.strategy_version, self.code_version, self.opportunity_id)
+        values = (
+            self.strategy_version,
+            self.code_version,
+            self.opportunity_id,
+            self.opportunity_strategy_version,
+        )
         if (
             not _aware(self.registered_at)
             or local.date() > self.session_date
@@ -105,6 +111,7 @@ def build_kr_theme_day_session_manifest(identity: KrThemeDaySessionIdentity) -> 
         registered_at=validated.registered_at,
         calendar_snapshot_id=validated.calendar_snapshot_id,
         opportunity_id=validated.opportunity_id,
+        opportunity_strategy_version=validated.opportunity_strategy_version,
         symbol=validated.symbol,
         paths=validated.paths,
     )

@@ -9,8 +9,13 @@ import pytest
 
 import run_kr_theme_day_session_verify as verify_cli
 from tests.test_kis_kr_market_projection import _opportunity
+from tests.test_kr_theme_day_onboarding import ONBOARDED_AT, _same_cycle_opportunity
 from tests.test_kr_theme_day_session_e2e import _manifest
 from trading_agent.contract_outbox import append_opportunity_snapshot
+from trading_agent.kr_theme_day_onboarding import (
+    KrThemeDayOpportunityOnboardingRequest,
+    onboard_kr_theme_day_opportunity,
+)
 from trading_agent.kr_theme_day_session_audit import (
     KrThemeDaySessionPhase,
     KrThemeDaySessionPhaseEventRequest,
@@ -18,7 +23,6 @@ from trading_agent.kr_theme_day_session_audit import (
     build_kr_theme_day_session_phase_event,
 )
 from trading_agent.kr_theme_day_session_audit_store import KrThemeDaySessionAuditStore
-from trading_agent.kr_theme_day_session_manifest import write_kr_theme_day_session_manifest
 from trading_agent.kr_theme_day_session_supervisor import (
     KrThemeDaySessionRuntime,
     run_kr_theme_day_session_tick,
@@ -28,6 +32,7 @@ from trading_agent.kr_theme_day_session_verifier import (
     verify_kr_theme_day_session,
 )
 from trading_agent.kr_theme_day_shadow_entry_store import KrThemeDayShadowEntryStore
+from trading_agent.kr_theme_day_trial import kr_theme_day_trial_id
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "run_kr_theme_day_session_verify.py"
@@ -36,17 +41,29 @@ KST = dt.timezone(dt.timedelta(hours=9))
 
 def test_verifier_accepts_attested_intraday_fixture_and_cli_report(tmp_path: Path) -> None:
     # Given
-    manifest = _manifest(tmp_path)
-    assert append_opportunity_snapshot(manifest.paths.opportunity_outbox, _opportunity()) is True
-    manifest.paths.opportunity_outbox.chmod(0o600)
+    source_manifest = _manifest(tmp_path)
+    opportunity = _same_cycle_opportunity()
+    assert append_opportunity_snapshot(source_manifest.paths.opportunity_outbox, opportunity) is True
+    source_manifest.paths.opportunity_outbox.chmod(0o600)
+    manifest_path = tmp_path / "session.json"
+    manifest = onboard_kr_theme_day_opportunity(
+        KrThemeDayOpportunityOnboardingRequest(
+            manifest_path=manifest_path.absolute(),
+            paths=source_manifest.paths,
+            trial_id=kr_theme_day_trial_id(
+                source_manifest.session_date,
+                source_manifest.strategy_version,
+            ),
+            opportunity_id=opportunity.opportunity_id,
+            onboarded_at=ONBOARDED_AT,
+        )
+    ).manifest
     observed = dt.datetime(2026, 7, 20, 9, 4, 4, tzinfo=KST)
     _ = run_kr_theme_day_session_tick(
         manifest,
         observed,
         KrThemeDaySessionRuntime.production(clock=lambda: observed),
     )
-    manifest_path = tmp_path / "session.json"
-    write_kr_theme_day_session_manifest(manifest_path, manifest)
 
     # When
     result = verify_kr_theme_day_session(manifest)

@@ -13,6 +13,10 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from trading_agent.kr_theme_day_onboarding import (
+    InvalidKrThemeDayOpportunityOnboardingError,
+    require_exact_kr_theme_day_onboarding,
+)
 from trading_agent.kr_theme_day_session_manifest import (
     InvalidKrThemeDaySessionManifestError,
     load_kr_theme_day_session_manifest,
@@ -38,10 +42,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         manifest = load_kr_theme_day_session_manifest(args.manifest)
+        require_exact_kr_theme_day_onboarding(args.manifest, manifest)
         result = verify_kr_theme_day_session(manifest)
     except (
         InvalidKrThemeDaySessionManifestError,
         InvalidKrThemeDaySessionVerificationError,
+        InvalidKrThemeDayOpportunityOnboardingError,
         OSError,
         sqlite3.Error,
         TypeError,

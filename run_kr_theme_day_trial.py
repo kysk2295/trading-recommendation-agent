@@ -39,6 +39,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     register = commands.add_parser("register")
     register.add_argument("--strategy-version", required=True)
     register.add_argument("--code-version", required=True)
+    register.add_argument("--opportunity-strategy-version", required=True)
     register.add_argument("--session-date", required=True)
     register.add_argument("--registered-at", required=True)
     register.add_argument("--calendar-store", type=Path, required=True)
@@ -66,6 +67,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     session_date=dt.date.fromisoformat(args.session_date),
                     registered_at=registered_at,
                     calendar_snapshot=calendar_snapshot,
+                    opportunity_strategy_version=args.opportunity_strategy_version,
                 ),
             )
             details = (

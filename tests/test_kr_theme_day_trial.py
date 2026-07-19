@@ -13,6 +13,12 @@ from trading_agent.kis_kr_session_calendar_models import (
     KisKrSessionCalendarReceipt,
     KrSessionCalendarSnapshot,
 )
+from trading_agent.kr_theme_day_composite import (
+    KrThemeDayCompositeAuthority,
+    KrThemeDayCompositeRegistrationRequest,
+    register_kr_theme_day_composite,
+)
+from trading_agent.kr_theme_day_composite_evidence import kr_theme_day_composite_evidence
 from trading_agent.kr_theme_day_trial import (
     InvalidKrThemeDayTrialError,
     KrThemeDayTrialRegistrationRequest,
@@ -22,15 +28,18 @@ from trading_agent.kr_theme_day_trial import (
 )
 from trading_agent.kr_theme_research_registration import (
     kr_theme_day_strategy_version,
+    kr_theme_strategy_version,
     register_kr_theme_research_manifest,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
 DAY_MANIFEST = ROOT / "examples" / "kr_theme_projection" / "day-research-registration.json"
+OPPORTUNITY_MANIFEST = ROOT / "examples" / "kr_theme_projection" / "research-registration.json"
 CALENDAR_FIXTURE = ROOT / "tests" / "fixtures" / "kis_kr_session_calendar_20260719.json"
 KST = ZoneInfo("Asia/Seoul")
 CODE_VERSION = "kr-theme-day-fixture-code-v1"
 STRATEGY_VERSION = kr_theme_day_strategy_version(CODE_VERSION)
+OPPORTUNITY_VERSION = kr_theme_strategy_version("kr-theme-fixture-code-v1")
 SESSION_DATE = dt.date(2026, 7, 20)
 REGISTERED_AT = dt.datetime(2026, 7, 19, 8, 31, tzinfo=KST)
 CALENDAR_OBSERVED_AT = dt.datetime(2026, 7, 19, 8, 30, tzinfo=KST)
@@ -44,6 +53,7 @@ def _request() -> KrThemeDayTrialRegistrationRequest:
         session_date=SESSION_DATE,
         registered_at=REGISTERED_AT,
         calendar_snapshot=_calendar_evidence()[1],
+        opportunity_strategy_version=OPPORTUNITY_VERSION,
     )
 
 
@@ -58,9 +68,23 @@ def _calendar_evidence() -> tuple[KisKrSessionCalendarReceipt, KrSessionCalendar
     return receipt, project_kis_kr_session_calendar(receipt)
 
 
+def _register_authority(ledger: ExperimentLedgerStore) -> KrThemeDayCompositeAuthority:
+    _ = register_kr_theme_research_manifest(OPPORTUNITY_MANIFEST, ledger)
+    _ = register_kr_theme_research_manifest(DAY_MANIFEST, ledger)
+    result = register_kr_theme_day_composite(
+        ledger,
+        KrThemeDayCompositeRegistrationRequest(
+            day_strategy_version=STRATEGY_VERSION,
+            opportunity_strategy_version=OPPORTUNITY_VERSION,
+            registered_at=REGISTERED_AT - dt.timedelta(seconds=30),
+        ),
+    )
+    return result.authority
+
+
 def test_kr_theme_day_trial_registers_and_starts_exact_replay(tmp_path: Path) -> None:
     ledger = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
-    _ = register_kr_theme_research_manifest(DAY_MANIFEST, ledger)
+    authority = _register_authority(ledger)
 
     first = register_kr_theme_day_shadow_trial(ledger, _request())
     second = register_kr_theme_day_shadow_trial(ledger, _request())
@@ -70,14 +94,19 @@ def test_kr_theme_day_trial_registers_and_starts_exact_replay(tmp_path: Path) ->
     assert first.created is True
     assert second.created is False
     assert first.registration.trial_id == kr_theme_day_trial_id(SESSION_DATE, STRATEGY_VERSION)
-    assert first.registration.evidence_budget == (
-        f"calendar_snapshot:{_request().calendar_snapshot.snapshot_id}",
-        "cost_model:entry_ask_plus_20bps",
-        "counterfactual:no_entry",
-        "maximum_missing_evidence_rate:0",
-        "minimum_completed_signals:30",
-        "minimum_forward_sessions:20",
-        "review_gates:fillability_drawdown_stability_multiple_testing",
+    assert first.registration.evidence_budget == tuple(
+        sorted(
+            (
+                f"calendar_snapshot:{_request().calendar_snapshot.snapshot_id}",
+                "cost_model:entry_ask_plus_20bps",
+                "counterfactual:no_entry",
+                "maximum_missing_evidence_rate:0",
+                "minimum_completed_signals:30",
+                "minimum_forward_sessions:20",
+                "review_gates:fillability_drawdown_stability_multiple_testing",
+                *kr_theme_day_composite_evidence(authority),
+            )
+        )
     )
     assert started.created is True
     assert replay.created is False
@@ -86,7 +115,7 @@ def test_kr_theme_day_trial_registers_and_starts_exact_replay(tmp_path: Path) ->
 
 def test_kr_theme_day_trial_rejects_closed_or_stale_calendar_evidence(tmp_path: Path) -> None:
     ledger = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
-    _ = register_kr_theme_research_manifest(DAY_MANIFEST, ledger)
+    _register_authority(ledger)
 
     with pytest.raises(InvalidKrThemeDayTrialError):
         _ = register_kr_theme_day_shadow_trial(
@@ -117,7 +146,7 @@ def test_kr_theme_day_trial_rejects_unknown_start(tmp_path: Path) -> None:
 
 def test_kr_theme_day_trial_rejects_generic_changed_budget(tmp_path: Path) -> None:
     source = ExperimentLedgerStore(tmp_path / "source.sqlite3")
-    _ = register_kr_theme_research_manifest(DAY_MANIFEST, source)
+    _register_authority(source)
     exact = register_kr_theme_day_shadow_trial(source, _request()).registration
     changed = type(exact).model_validate(
         exact.model_dump(mode="python")
@@ -129,7 +158,7 @@ def test_kr_theme_day_trial_rejects_generic_changed_budget(tmp_path: Path) -> No
         }
     )
     target = ExperimentLedgerStore(tmp_path / "target.sqlite3")
-    _ = register_kr_theme_research_manifest(DAY_MANIFEST, target)
+    _register_authority(target)
     with target.writer() as writer:
         assert writer.register_multi_market_trial(changed) is True
 

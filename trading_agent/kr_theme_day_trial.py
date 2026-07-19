@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 from dataclasses import dataclass
-from typing import Final, Self, override
 
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import ValidationError
 
-from trading_agent.experiment_ledger_models import ExperimentTrialEvent, TrialEventKind, TrialKind
+from trading_agent.experiment_ledger_models import ExperimentTrialEvent, TrialEventKind
 from trading_agent.experiment_ledger_store import (
     ExperimentLedgerConflictError,
     ExperimentLedgerReader,
@@ -15,11 +13,22 @@ from trading_agent.experiment_ledger_store import (
     ExperimentLedgerWriterLeaseUnavailableError,
     InvalidExperimentLedgerSourceError,
 )
-from trading_agent.kis_kr_session_calendar_models import KrSessionCalendarSnapshot
-from trading_agent.kr_theme_day_trial_calendar import (
-    calendar_snapshot_id_from_evidence,
-    kr_theme_day_trial_evidence_budget,
-    require_kr_theme_day_trial_calendar,
+from trading_agent.kr_theme_day_composite import (
+    KrThemeDayCompositeAuthorityRequest,
+    require_exact_kr_theme_day_composite,
+)
+from trading_agent.kr_theme_day_composite_evidence import (
+    KrThemeDayCompositeEvidenceRequest,
+    require_exact_kr_theme_day_composite_evidence,
+)
+from trading_agent.kr_theme_day_trial_calendar import calendar_snapshot_id_from_evidence
+from trading_agent.kr_theme_day_trial_contract import (
+    InvalidKrThemeDayTrialError,
+    KrThemeDayTrialRegistrationIdentity,
+    KrThemeDayTrialRegistrationRequest,
+    build_kr_theme_day_trial_registration,
+    kr_theme_day_trial_id,
+    kr_theme_day_trial_identity,
 )
 from trading_agent.kr_theme_lane import KR_THEME_LEADER_VWAP_RECLAIM_LANE
 from trading_agent.kr_theme_research_registration import (
@@ -31,49 +40,11 @@ from trading_agent.kr_theme_research_registration import (
 from trading_agent.multi_market_experiment_models import MultiMarketHypothesisRegistration
 from trading_agent.multi_market_trial_models import MultiMarketExperimentTrialRegistration
 
-_EVALUATOR_VERSION: Final = "kr-theme-day-forward-v1"
-_FEED_ENTITLEMENT: Final = "KIS_read_only_domestic_quotes"
-_BASE_EVIDENCE_BUDGET: Final = (
-    "cost_model:entry_ask_plus_20bps",
-    "counterfactual:no_entry",
-    "maximum_missing_evidence_rate:0",
-    "minimum_completed_signals:30",
-    "minimum_forward_sessions:20",
-    "review_gates:fillability_drawdown_stability_multiple_testing",
+__all__ = (
+    "InvalidKrThemeDayTrialError",
+    "KrThemeDayTrialRegistrationRequest",
+    "kr_theme_day_trial_id",
 )
-
-
-class InvalidKrThemeDayTrialError(ValueError):
-    @override
-    def __str__(self) -> str:
-        return "KR theme day shadow trial input is invalid"
-
-
-class KrThemeDayTrialRegistrationRequest(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    strategy_version: str
-    code_version: str
-    session_date: dt.date
-    registered_at: dt.datetime
-    calendar_snapshot: KrSessionCalendarSnapshot
-
-    @model_validator(mode="after")
-    def validate_request(self) -> Self:
-        if (
-            not self.strategy_version
-            or not self.code_version
-            or self.strategy_version != self.strategy_version.strip()
-            or self.code_version != self.code_version.strip()
-            or not _aware(self.registered_at)
-        ):
-            raise InvalidKrThemeDayTrialError
-        _ = require_kr_theme_day_trial_calendar(
-            self.calendar_snapshot,
-            self.session_date,
-            self.registered_at,
-        )
-        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,22 +57,6 @@ class KrThemeDayTrialRegistrationResult:
 class KrThemeDayTrialEventResult:
     created: bool
     event: ExperimentTrialEvent
-
-
-@dataclass(frozen=True, slots=True)
-class _TrialRegistrationIdentity:
-    strategy_version: str
-    code_version: str
-    session_date: dt.date
-    registered_at: dt.datetime
-    calendar_snapshot_id: str
-
-
-def kr_theme_day_trial_id(session_date: dt.date, strategy_version: str) -> str:
-    if not strategy_version or strategy_version != strategy_version.strip():
-        raise InvalidKrThemeDayTrialError
-    digest = hashlib.sha256(strategy_version.encode()).hexdigest()[:16]
-    return f"trial-kr-theme-vwap-{session_date:%Y%m%d}-{digest}"
 
 
 def register_kr_theme_day_shadow_trial(
@@ -119,7 +74,18 @@ def register_kr_theme_day_shadow_trial(
             ),
         )
         hypothesis = _hypothesis(ledger, version.hypothesis_id, version.experiment_scope_key)
-        registration = _registration(request, hypothesis)
+        composite = require_exact_kr_theme_day_composite(
+            ledger,
+            KrThemeDayCompositeAuthorityRequest(
+                day_strategy_version=request.strategy_version,
+                opportunity_strategy_version=request.opportunity_strategy_version,
+                as_of=request.registered_at,
+            ),
+        )
+        registration = build_kr_theme_day_trial_registration(
+            kr_theme_day_trial_identity(request, composite),
+            hypothesis,
+        )
         with ledger.writer() as writer:
             created = writer.register_multi_market_trial(registration)
     except (
@@ -184,38 +150,6 @@ def _hypothesis(
     return matches[0]
 
 
-def _registration(
-    request: KrThemeDayTrialRegistrationRequest,
-    hypothesis: MultiMarketHypothesisRegistration,
-) -> MultiMarketExperimentTrialRegistration:
-    return _registration_from_identity(_identity(request), hypothesis)
-
-
-def _registration_from_identity(
-    identity: _TrialRegistrationIdentity,
-    hypothesis: MultiMarketHypothesisRegistration,
-) -> MultiMarketExperimentTrialRegistration:
-    evidence_budget = kr_theme_day_trial_evidence_budget(
-        _BASE_EVIDENCE_BUDGET,
-        identity.calendar_snapshot_id,
-    )
-    return MultiMarketExperimentTrialRegistration(
-        trial_id=kr_theme_day_trial_id(identity.session_date, identity.strategy_version),
-        strategy_version=identity.strategy_version,
-        trial_kind=TrialKind.SHADOW_FORWARD,
-        experiment_scope=hypothesis.experiment_scope,
-        experiment_scope_key=hypothesis.experiment_scope_key,
-        strategy_lane=KR_THEME_LEADER_VWAP_RECLAIM_LANE,
-        evaluator_version=_EVALUATOR_VERSION,
-        data_version=_data_version(identity, evidence_budget),
-        feed_entitlement=_FEED_ENTITLEMENT,
-        planned_start=identity.session_date,
-        planned_end=identity.session_date,
-        registered_at=identity.registered_at,
-        evidence_budget=evidence_budget,
-    )
-
-
 def require_exact_kr_theme_day_trial(
     ledger: ExperimentLedgerReader,
     trial: MultiMarketExperimentTrialRegistration,
@@ -235,51 +169,24 @@ def require_exact_kr_theme_day_trial(
     ):
         raise InvalidKrThemeDayTrialError
     hypothesis = _hypothesis(ledger, version.hypothesis_id, version.experiment_scope_key)
-    expected = _registration_from_identity(
-        _TrialRegistrationIdentity(
+    composite = require_exact_kr_theme_day_composite_evidence(
+        ledger,
+        KrThemeDayCompositeEvidenceRequest(
+            day_strategy_version=version.strategy_version,
+            evidence_budget=trial.evidence_budget,
+            as_of=trial.registered_at,
+        ),
+    )
+    expected = build_kr_theme_day_trial_registration(
+        KrThemeDayTrialRegistrationIdentity(
             strategy_version=version.strategy_version,
             code_version=version.code_version,
             session_date=trial.planned_start,
             registered_at=trial.registered_at,
             calendar_snapshot_id=calendar_snapshot_id_from_evidence(trial.evidence_budget),
+            composite_authority=composite,
         ),
         hypothesis,
     )
     if trial != expected:
         raise InvalidKrThemeDayTrialError
-
-
-def _identity(request: KrThemeDayTrialRegistrationRequest) -> _TrialRegistrationIdentity:
-    return _TrialRegistrationIdentity(
-        strategy_version=request.strategy_version,
-        code_version=request.code_version,
-        session_date=request.session_date,
-        registered_at=request.registered_at,
-        calendar_snapshot_id=require_kr_theme_day_trial_calendar(
-            request.calendar_snapshot,
-            request.session_date,
-            request.registered_at,
-        ),
-    )
-
-
-def _data_version(
-    identity: _TrialRegistrationIdentity,
-    evidence_budget: tuple[str, ...],
-) -> str:
-    material = "|".join(
-        (
-            _EVALUATOR_VERSION,
-            identity.strategy_version,
-            identity.code_version,
-            identity.session_date.isoformat(),
-            identity.calendar_snapshot_id,
-            _FEED_ENTITLEMENT,
-            *evidence_budget,
-        )
-    )
-    return hashlib.sha256(material.encode()).hexdigest()
-
-
-def _aware(value: dt.datetime) -> bool:
-    return value.tzinfo is not None and value.utcoffset() is not None

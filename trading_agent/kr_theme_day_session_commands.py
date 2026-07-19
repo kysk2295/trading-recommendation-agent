@@ -27,6 +27,8 @@ def kr_theme_day_session_child_command(
                 manifest.strategy_version,
                 "--code-version",
                 manifest.code_version,
+                "--opportunity-strategy-version",
+                manifest.opportunity_strategy_version,
                 "--session-date",
                 manifest.session_date.isoformat(),
                 "--registered-at",

@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from tests.test_kr_theme_day_trial import _calendar_evidence
+from tests.test_kr_theme_day_trial import OPPORTUNITY_VERSION, _calendar_evidence, _register_authority
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.kr_theme_day_shadow_entry import (
     project_kr_theme_day_shadow_entry,
@@ -24,10 +24,7 @@ from trading_agent.kr_theme_day_trial import (
     start_kr_theme_day_shadow_trial,
 )
 from trading_agent.kr_theme_lane import KR_THEME_LEADER_VWAP_RECLAIM_LANE
-from trading_agent.kr_theme_research_registration import (
-    kr_theme_day_strategy_version,
-    register_kr_theme_research_manifest,
-)
+from trading_agent.kr_theme_research_registration import kr_theme_day_strategy_version
 from trading_agent.signal_contract_models import (
     EvidenceRef,
     QuoteValidation,
@@ -38,8 +35,6 @@ from trading_agent.signal_contract_models import (
     TradeTarget,
 )
 
-ROOT = Path(__file__).resolve().parents[1]
-MANIFEST = ROOT / "examples" / "kr_theme_projection" / "day-research-registration.json"
 KST = ZoneInfo("Asia/Seoul")
 CODE = "kr-theme-day-fixture-code-v1"
 VERSION = kr_theme_day_strategy_version(CODE)
@@ -51,7 +46,7 @@ OBSERVED = dt.datetime(2026, 7, 20, 9, 5, tzinfo=KST)
 
 def _ledger(path: Path, *, started: bool = True) -> ExperimentLedgerStore:
     ledger = ExperimentLedgerStore(path)
-    _ = register_kr_theme_research_manifest(MANIFEST, ledger)
+    _register_authority(ledger)
     result = register_kr_theme_day_shadow_trial(
         ledger,
         KrThemeDayTrialRegistrationRequest(
@@ -60,6 +55,7 @@ def _ledger(path: Path, *, started: bool = True) -> ExperimentLedgerStore:
             session_date=SESSION,
             registered_at=REGISTERED,
             calendar_snapshot=_calendar_evidence()[1],
+            opportunity_strategy_version=OPPORTUNITY_VERSION,
         ),
     )
     if started:

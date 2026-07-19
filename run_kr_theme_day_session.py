@@ -18,15 +18,18 @@ from trading_agent.kis_kr_session_calendar_store import (
     InvalidKisKrSessionCalendarStoreError,
     KisKrSessionCalendarStore,
 )
+from trading_agent.kr_theme_day_onboarding import (
+    InvalidKrThemeDayOpportunityOnboardingError,
+    KrThemeDayOpportunityOnboardingRequest,
+    onboard_kr_theme_day_opportunity,
+    require_exact_kr_theme_day_onboarding,
+)
 from trading_agent.kr_theme_day_session_audit import InvalidKrThemeDaySessionAuditError
 from trading_agent.kr_theme_day_session_evidence import InvalidKrThemeDaySessionEvidenceError
 from trading_agent.kr_theme_day_session_manifest import (
     InvalidKrThemeDaySessionManifestError,
-    KrThemeDaySessionIdentity,
     KrThemeDaySessionPaths,
-    build_kr_theme_day_session_manifest,
     load_kr_theme_day_session_manifest,
-    write_kr_theme_day_session_manifest,
 )
 from trading_agent.kr_theme_day_session_supervisor import (
     CommandRunner,
@@ -44,16 +47,13 @@ Clock = Callable[[], dt.datetime]
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="KR theme day restartable read-only/shadow session tick")
     commands = parser.add_subparsers(dest="command", required=True)
-    init = commands.add_parser("init")
-    init.add_argument("--manifest", type=Path, required=True)
-    init.add_argument("--strategy-version", required=True)
-    init.add_argument("--code-version", required=True)
-    init.add_argument("--session-date", type=dt.date.fromisoformat, required=True)
-    init.add_argument("--registered-at", type=dt.datetime.fromisoformat, required=True)
-    init.add_argument("--calendar-snapshot-id", required=True)
-    init.add_argument("--opportunity-id", required=True)
-    init.add_argument("--symbol", required=True)
-    _path_arguments(init)
+    onboard = commands.add_parser("onboard")
+    onboard.add_argument("--manifest", type=Path, required=True)
+    onboard.add_argument("--trial-id", required=True)
+    onboard.add_argument("--opportunity-id", required=True)
+    onboard.add_argument("--output-dir", type=Path, required=True)
+    onboard.add_argument("--fixture-onboarded-at", type=dt.datetime.fromisoformat)
+    _path_arguments(onboard)
     tick = commands.add_parser("tick")
     tick.add_argument("--manifest", type=Path, required=True)
     tick.add_argument("--output-dir", type=Path, required=True)
@@ -68,14 +68,25 @@ def main(
 ) -> int:
     args = parse_args(argv)
     try:
-        if args.command == "init":
-            manifest = build_kr_theme_day_session_manifest(_identity(args))
-            _require_calendar(manifest.paths.calendar_store, manifest.calendar_snapshot_id, manifest.session_date)
-            write_kr_theme_day_session_manifest(args.manifest, manifest)
+        if args.command == "onboard":
+            paths = _paths(args)
+            if (args.fixture_onboarded_at is None) != (paths.intraday_fixture_manifest is None):
+                raise InvalidKrThemeDayOpportunityOnboardingError
+            result = onboard_kr_theme_day_opportunity(
+                KrThemeDayOpportunityOnboardingRequest(
+                    manifest_path=args.manifest.absolute(),
+                    paths=paths,
+                    trial_id=args.trial_id,
+                    opportunity_id=args.opportunity_id,
+                    onboarded_at=clock() if args.fixture_onboarded_at is None else args.fixture_onboarded_at,
+                )
+            )
+            _write_onboarding_report(args.output_dir, result.created)
             return 0
         if args.command != "tick":
             raise InvalidKrThemeDaySessionSupervisorError
         manifest = load_kr_theme_day_session_manifest(args.manifest)
+        require_exact_kr_theme_day_onboarding(args.manifest, manifest)
         _require_calendar(manifest.paths.calendar_store, manifest.calendar_snapshot_id, manifest.session_date)
         now = clock()
         runtime = (
@@ -89,6 +100,7 @@ def main(
         InvalidKrThemeDaySessionAuditError,
         InvalidKrThemeDaySessionEvidenceError,
         InvalidKrThemeDaySessionManifestError,
+        InvalidKrThemeDayOpportunityOnboardingError,
         InvalidKrThemeDaySessionSupervisorError,
         OSError,
         sqlite3.Error,
@@ -96,7 +108,9 @@ def main(
         ValidationError,
         ValueError,
     ):
-        if args.command == "tick":
+        if args.command == "onboard":
+            _write_onboarding_report(args.output_dir, None)
+        elif args.command == "tick":
             _write_report(args.output_dir, None)
         return 1
     _write_report(args.output_dir, result)
@@ -121,29 +135,20 @@ def _path_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--eod-fixture-manifest", type=Path)
 
 
-def _identity(args: argparse.Namespace) -> KrThemeDaySessionIdentity:
-    return KrThemeDaySessionIdentity(
-        strategy_version=args.strategy_version,
-        code_version=args.code_version,
-        session_date=args.session_date,
-        registered_at=args.registered_at,
-        calendar_snapshot_id=args.calendar_snapshot_id,
-        opportunity_id=args.opportunity_id,
-        symbol=args.symbol,
-        paths=KrThemeDaySessionPaths(
-            experiment_ledger=args.experiment_ledger.absolute(),
-            calendar_store=args.calendar_store.absolute(),
-            opportunity_outbox=args.opportunity_outbox.absolute(),
-            receipt_store=args.receipt_store.absolute(),
-            entry_store=args.entry_store.absolute(),
-            exit_store=args.exit_store.absolute(),
-            terminal_store=args.terminal_store.absolute(),
-            review_store=args.review_store.absolute(),
-            audit_store=args.audit_store.absolute(),
-            output_root=args.output_root.absolute(),
-            intraday_fixture_manifest=_absolute(args.intraday_fixture_manifest),
-            eod_fixture_manifest=_absolute(args.eod_fixture_manifest),
-        ),
+def _paths(args: argparse.Namespace) -> KrThemeDaySessionPaths:
+    return KrThemeDaySessionPaths(
+        experiment_ledger=args.experiment_ledger.absolute(),
+        calendar_store=args.calendar_store.absolute(),
+        opportunity_outbox=args.opportunity_outbox.absolute(),
+        receipt_store=args.receipt_store.absolute(),
+        entry_store=args.entry_store.absolute(),
+        exit_store=args.exit_store.absolute(),
+        terminal_store=args.terminal_store.absolute(),
+        review_store=args.review_store.absolute(),
+        audit_store=args.audit_store.absolute(),
+        output_root=args.output_root.absolute(),
+        intraday_fixture_manifest=_absolute(args.intraday_fixture_manifest),
+        eod_fixture_manifest=_absolute(args.eod_fixture_manifest),
     )
 
 
@@ -175,6 +180,29 @@ def _write_report(output_dir: Path, result: KrThemeDaySessionTickResult | None) 
                 "",
                 f"- result: {status}",
                 f"- completed phase count: {completed}",
+                "- order authority: false",
+                "- domestic account endpoint: false",
+                "- external account/order mutation: 0",
+                "",
+            )
+        ),
+    )
+
+
+def _write_onboarding_report(output_dir: Path, created: bool | None) -> None:
+    status = "blocked" if created is None else "complete"
+    created_count = 0 if created is None else int(created)
+    reused_count = 0 if created is None else int(not created)
+    write_private_report(
+        output_dir / REPORT_NAME,
+        "\n".join(
+            (
+                "# KR theme day Opportunity onboarding",
+                "",
+                "> pre-open trial과 fresh same-cycle Opportunity의 immutable local binding입니다.",
+                "",
+                f"- result: {status}",
+                f"- manifest created/reused: {created_count}/{reused_count}",
                 "- order authority: false",
                 "- domestic account endpoint: false",
                 "- external account/order mutation: 0",

@@ -5,14 +5,12 @@ import subprocess
 from pathlib import Path
 
 import run_kr_theme_day_trial as trial_cli
-from tests.test_kr_theme_day_trial import _calendar_evidence
+from tests.test_kr_theme_day_trial import OPPORTUNITY_VERSION, _calendar_evidence, _register_authority
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStore
-from trading_agent.kr_theme_research_registration import register_kr_theme_research_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "run_kr_theme_day_trial.py"
-MANIFEST = ROOT / "examples" / "kr_theme_projection" / "day-research-registration.json"
 VERSION = "kr-theme-leader-vwap-reclaim-v1-code-3a5b6542ec6b373b"
 CODE = "kr-theme-day-fixture-code-v1"
 REPORT = "kr_theme_day_trial_ko.md"
@@ -25,6 +23,8 @@ def _register_args(database: Path, output: Path, calendar_store: Path) -> tuple[
         VERSION,
         "--code-version",
         CODE,
+        "--opportunity-strategy-version",
+        OPPORTUNITY_VERSION,
         "--session-date",
         "2026-07-20",
         "--registered-at",
@@ -62,7 +62,7 @@ def test_kr_theme_day_trial_cli_registers_and_starts(tmp_path: Path) -> None:
     calendar_store = KisKrSessionCalendarStore(tmp_path / "calendar.sqlite3")
     receipt, snapshot = _calendar_evidence()
     assert calendar_store.append(receipt, snapshot) is True
-    _ = register_kr_theme_research_manifest(MANIFEST, ExperimentLedgerStore(database))
+    _register_authority(ExperimentLedgerStore(database))
 
     assert trial_cli.main(_register_args(database, output, calendar_store.path)) == 0
     registration_report = (output / REPORT).read_text(encoding="utf-8")
@@ -95,7 +95,7 @@ def test_kr_theme_day_trial_cli_registers_and_starts(tmp_path: Path) -> None:
 def test_kr_theme_day_trial_cli_blocks_missing_calendar_store(tmp_path: Path) -> None:
     database = tmp_path / "experiment.sqlite3"
     output = tmp_path / "report"
-    _ = register_kr_theme_research_manifest(MANIFEST, ExperimentLedgerStore(database))
+    _register_authority(ExperimentLedgerStore(database))
 
     result = trial_cli.main(_register_args(database, output, tmp_path / "missing.sqlite3"))
 

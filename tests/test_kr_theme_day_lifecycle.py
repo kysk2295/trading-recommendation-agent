@@ -73,8 +73,14 @@ def _reviewed_sources(tmp_path: Path, *, with_entry: bool = True):
 
 
 def _seed_registration(ledger: ExperimentLedgerStore) -> MultiMarketStrategyLifecycleEvent:
-    hypothesis = ledger.multi_market_hypotheses()[0]
-    version = ledger.multi_market_strategy_versions()[0]
+    version = next(
+        item for item in ledger.multi_market_strategy_versions() if item.registration.strategy_version == VERSION
+    )
+    hypothesis = next(
+        item
+        for item in ledger.multi_market_hypotheses()
+        if item.registration.hypothesis_id == version.registration.hypothesis_id
+    )
     calendar_id = "d" * 64
     event = MultiMarketStrategyLifecycleEvent(
         strategy_version=version.registration.strategy_version,

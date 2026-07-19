@@ -14,6 +14,7 @@ from trading_agent.kr_theme_day_session_manifest import (
     load_kr_theme_day_session_manifest,
     write_kr_theme_day_session_manifest,
 )
+from trading_agent.kr_theme_research_registration import kr_theme_strategy_version
 
 
 def _identity(tmp_path: Path) -> KrThemeDaySessionIdentity:
@@ -24,6 +25,7 @@ def _identity(tmp_path: Path) -> KrThemeDaySessionIdentity:
         registered_at=dt.datetime(2026, 7, 19, 8, 31, tzinfo=dt.timezone(dt.timedelta(hours=9))),
         calendar_snapshot_id="a" * 64,
         opportunity_id="KR-THEME-OPPORTUNITY-001",
+        opportunity_strategy_version=kr_theme_strategy_version("kr-theme-fixture-code-v1"),
         symbol="005930",
         paths=KrThemeDaySessionPaths(
             experiment_ledger=tmp_path / "experiment.sqlite3",

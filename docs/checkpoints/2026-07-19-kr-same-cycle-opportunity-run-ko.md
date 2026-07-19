@@ -47,7 +47,7 @@ committed same-cycle fixture와 synthetic policy를 실제 CLI로 두 번 실행
 
 1. 열린 KRX 세션에서 새 cycle ID로 bounded KIS/OpenDART/LS production read-only 전체 실행
 2. 실제 검토된 production theme rules와 clean checkpoint code version 사전등록
-3. 장중 생성 Opportunity을 기존 KR day shadow session에 안전하게 동적 onboarding하는 계약
+3. 열린 session에서 Opportunity onboarding receipt와 supervisor 첫 tick의 실제 KIS GET evidence 대사
 4. LS 기사 본문 `t3102`, 추가 수급·VI evidence와 별도 분류 품질/Human audit
 
 fixture 결과는 실시간 coverage, 분류 정확도, 추천 성과 또는 수익성 증거가 아니다.
