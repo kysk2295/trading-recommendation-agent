@@ -22,7 +22,9 @@
 4. exact Opportunity producer version, 같은 KST session, 아직 유효한 관측시각
 5. 하나뿐인 `kr/collection_cycle` evidence와 rank-1 symbol
 
-검증 후 content-addressed onboarding receipt를 mode 600으로 먼저 fsync하고 session manifest를 쓴다. 두 파일은 symlink component가 없는 private parent의 staging 파일을 먼저 fsync하고 atomic no-overwrite hard link로 final 이름을 게시하므로 중단 시 partial final 파일을 남기지 않는다. receipt 뒤 manifest 게시가 실패하면 exact replay가 기존 receipt를 검증하고 manifest만 복구한다. 기존 receipt·manifest의 payload, mode, owner, hard link 또는 source lineage가 달라지면 fail-closed한다.
+최초 composite·trial CLI append는 입력 등록시각이 실제 현재시각보다 0~5분 이내이고 KST 09:00 전일 때만 허용한다. 기존 exact registration replay는 장중 재시작을 위해 이 현재시점 gate를 다시 열지 않지만, 같은 ID의 다른 payload는 ledger에서 계속 차단된다.
+
+검증 후 content-addressed onboarding receipt를 mode 600으로 먼저 fsync하고 session manifest를 쓴다. root부터 no-follow로 연 directory descriptor를 끝까지 유지한 채 private staging을 fsync하고 no-overwrite hard link로 final 이름을 게시한다. final link 뒤 staging unlink 전에 중단돼 link count 2가 남으면 exact replay가 payload와 inode가 같은 단 하나의 staging alias만 제거해 single-link 상태를 복구한다. reader도 같은 descriptor에서 metadata와 bytes를 읽으므로 ancestor 또는 leaf path swap이 다른 파일로 우회되지 않는다. receipt 뒤 manifest 게시가 실패하면 exact replay가 기존 receipt를 검증하고 manifest만 복구한다. 기존 receipt·manifest의 payload, mode, owner, 외부 hard link 또는 source lineage가 달라지면 fail-closed한다.
 
 `tick`과 `run_kr_theme_day_session_verify.py`는 session을 열기 전에 receipt에서 trial과 Opportunity identity를 복원해 동일한 onboarding을 no-write replay한다. manifest는 Opportunity canonical SHA도 identity에 고정하고 intraday child가 outbox를 다시 읽은 직후 exact SHA를 대사하므로 replay gate 뒤 원문 교체도 entry 전에 차단된다. canonical 09:00이 아닌 기존 START event, legacy manifest 또는 이후 원천 변경도 child·provider 실행 전에 닫힌다.
 
@@ -33,8 +35,8 @@
 - exact pre-open composite와 day trial이 그 Opportunity producer version을 고정했다.
 - onboarding이 immutable receipt와 manifest를 만들고 실제 supervisor subprocess의 첫 intraday tick이 5개 phase, raw receipt 3건, shadow entry 1건과 audit 5건을 남겼다.
 - exact replay는 receipt, manifest와 기존 append-only artifact를 늘리지 않는다.
-- 관련 KR theme/same-cycle selection: `118 passed`
-- 전체 pytest: `2783 passed`
+- 관련 KR theme/same-cycle selection: `123 passed`
+- 전체 pytest: `2788 passed`
 - Ruff, basedpyright `0 errors, 0 warnings`, changed-file format, compileall, JSON parse, diff/no-excuse gate: 통과
 - actual composite/onboard/trial/verifier help와 missing-input CLI: 기대 exit `0/2`, 권한 옵션 0건
 - provider credential/live network와 국내 account/order mutation: `0`

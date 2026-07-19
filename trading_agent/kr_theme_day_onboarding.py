@@ -38,7 +38,6 @@ from trading_agent.kr_theme_day_session_manifest import (
     KrThemeDaySessionIdentity,
     KrThemeDaySessionManifest,
     build_kr_theme_day_session_manifest,
-    load_kr_theme_day_session_manifest,
     write_kr_theme_day_session_manifest,
 )
 from trading_agent.kr_theme_day_trial import (
@@ -71,6 +70,7 @@ def onboard_kr_theme_day_opportunity(
         version = _exact_day_version(ledger, trial.strategy_version)
         opportunity = load_exact_kr_theme_opportunity(request.paths.opportunity_outbox, request.opportunity_id)
         source_cycle_id = _require_opportunity(request, opportunity, composite.opportunity_strategy_version)
+        opportunity_sha256 = kr_theme_day_opportunity_sha256(opportunity)
         calendar_snapshot_id = calendar_snapshot_id_from_evidence(trial.evidence_budget)
         _require_calendar(request, calendar_snapshot_id, trial.planned_start)
         manifest = build_kr_theme_day_session_manifest(
@@ -82,7 +82,7 @@ def onboard_kr_theme_day_opportunity(
                 calendar_snapshot_id=calendar_snapshot_id,
                 opportunity_id=opportunity.opportunity_id,
                 opportunity_strategy_version=opportunity.producer_strategy_version,
-                opportunity_sha256=kr_theme_day_opportunity_sha256(opportunity),
+                opportunity_sha256=opportunity_sha256,
                 symbol=opportunity.candidates[0].symbol,
                 paths=request.paths,
             )
@@ -96,7 +96,7 @@ def onboard_kr_theme_day_opportunity(
                 day_strategy_version=trial.strategy_version,
                 opportunity_strategy_version=opportunity.producer_strategy_version,
                 opportunity_id=opportunity.opportunity_id,
-                opportunity_sha256=kr_theme_day_opportunity_sha256(opportunity),
+                opportunity_sha256=opportunity_sha256,
                 source_cycle_id=source_cycle_id,
                 symbol=opportunity.candidates[0].symbol,
                 session_date=trial.planned_start,
@@ -233,9 +233,4 @@ def _write_or_require_manifest(
     request: KrThemeDayOpportunityOnboardingRequest,
     manifest: KrThemeDaySessionManifest,
 ) -> bool:
-    if request.manifest_path.exists():
-        if load_kr_theme_day_session_manifest(request.manifest_path) != manifest:
-            raise InvalidKrThemeDayOpportunityOnboardingError
-        return False
-    write_kr_theme_day_session_manifest(request.manifest_path, manifest)
-    return True
+    return write_kr_theme_day_session_manifest(request.manifest_path, manifest)

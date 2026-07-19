@@ -113,6 +113,13 @@ def start_kr_theme_day_shadow_trial(
         if len(matches) != 1:
             raise InvalidKrThemeDayTrialError
         require_exact_kr_theme_day_trial(ledger, matches[0])
+        expected_start = dt.datetime.combine(
+            matches[0].planned_start,
+            dt.time(9),
+            tzinfo=dt.timezone(dt.timedelta(hours=9)),
+        )
+        if occurred_at != expected_start:
+            raise InvalidKrThemeDayTrialError
         event = ExperimentTrialEvent(
             trial_id=trial_id,
             sequence=1,

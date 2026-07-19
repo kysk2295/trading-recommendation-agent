@@ -3,9 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
-import os
 import re
-import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Self, override
@@ -20,6 +18,7 @@ from trading_agent.kr_theme_day_session_manifest import (
 from trading_agent.private_immutable_file import (
     InvalidPrivateImmutableFileError,
     publish_private_immutable_text,
+    read_private_text,
 )
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -146,12 +145,6 @@ def write_kr_theme_day_onboarding_receipt(
     try:
         validated = KrThemeDayOpportunityOnboardingReceipt.model_validate(receipt.model_dump(mode="python"))
         target = path.expanduser().absolute()
-        if target.exists():
-            if load_kr_theme_day_onboarding_receipt(target) != validated:
-                raise InvalidKrThemeDayOpportunityOnboardingError
-            return False
-        if target.is_symlink():
-            raise InvalidKrThemeDayOpportunityOnboardingError
         created = publish_private_immutable_text(target, _canonical(validated) + "\n")
         if not created and load_kr_theme_day_onboarding_receipt(target) != validated:
             raise InvalidKrThemeDayOpportunityOnboardingError
@@ -163,8 +156,7 @@ def write_kr_theme_day_onboarding_receipt(
 def load_kr_theme_day_onboarding_receipt(path: Path) -> KrThemeDayOpportunityOnboardingReceipt:
     try:
         target = path.expanduser().absolute()
-        _require_private(target)
-        payload = target.read_text(encoding="utf-8")
+        payload = read_private_text(target)
         receipt = KrThemeDayOpportunityOnboardingReceipt.model_validate_json(payload)
         if payload != _canonical(receipt) + "\n":
             raise InvalidKrThemeDayOpportunityOnboardingError
@@ -181,18 +173,6 @@ def _receipt_id(receipt: KrThemeDayOpportunityOnboardingReceipt) -> str:
 
 def _canonical(receipt: KrThemeDayOpportunityOnboardingReceipt) -> str:
     return json.dumps(receipt.model_dump(mode="json"), ensure_ascii=True, separators=(",", ":"), sort_keys=True)
-
-
-def _require_private(path: Path) -> None:
-    metadata = path.lstat()
-    if (
-        stat.S_ISLNK(metadata.st_mode)
-        or not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o600
-        or metadata.st_nlink != 1
-    ):
-        raise InvalidKrThemeDayOpportunityOnboardingError
 
 
 def _aware(value: dt.datetime) -> bool:

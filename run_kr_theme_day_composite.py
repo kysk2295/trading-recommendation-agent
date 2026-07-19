@@ -9,20 +9,27 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from pydantic import ValidationError
 
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
+from trading_agent.kr_preopen_registration_time import (
+    InvalidKrPreopenRegistrationTimeError,
+    require_current_kr_preopen_registration,
+)
 from trading_agent.kr_theme_day_composite import (
     InvalidKrThemeDayCompositeError,
+    KrThemeDayCompositeAuthorityRequest,
     KrThemeDayCompositeRegistrationRequest,
     register_kr_theme_day_composite,
+    require_exact_kr_theme_day_composite,
 )
 from trading_agent.private_report import write_private_report
 
 REPORT_NAME = "kr_theme_day_composite_ko.md"
+Clock = Callable[[], dt.datetime]
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -35,11 +42,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    clock: Clock = lambda: dt.datetime.now(dt.UTC),
+) -> int:
     args = parse_args(argv)
     try:
+        ledger = ExperimentLedgerStore(args.database)
+        if not _is_replay(ledger, args):
+            require_current_kr_preopen_registration(args.registered_at, clock())
         result = register_kr_theme_day_composite(
-            ExperimentLedgerStore(args.database),
+            ledger,
             KrThemeDayCompositeRegistrationRequest(
                 day_strategy_version=args.day_strategy_version,
                 opportunity_strategy_version=args.opportunity_strategy_version,
@@ -48,6 +62,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except (
         InvalidKrThemeDayCompositeError,
+        InvalidKrPreopenRegistrationTimeError,
         OSError,
         sqlite3.Error,
         ValidationError,
@@ -57,6 +72,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     _write_report(args.output_dir, result="ready", created=result.created)
     return 0
+
+
+def _is_replay(ledger: ExperimentLedgerStore, args: argparse.Namespace) -> bool:
+    try:
+        _ = require_exact_kr_theme_day_composite(
+            ledger,
+            KrThemeDayCompositeAuthorityRequest(
+                day_strategy_version=args.day_strategy_version,
+                opportunity_strategy_version=args.opportunity_strategy_version,
+                as_of=args.registered_at,
+            ),
+        )
+    except InvalidKrThemeDayCompositeError:
+        return False
+    return True
 
 
 def _write_report(output_dir: Path, *, result: str, created: bool) -> None:

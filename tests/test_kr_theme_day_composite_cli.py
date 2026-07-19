@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import stat
 import subprocess
 from pathlib import Path
@@ -23,16 +24,31 @@ def test_composite_cli_registers_and_replays_private_report(tmp_path: Path) -> N
     argv = _argv(ledger.path, output)
 
     # When
-    first = subprocess.run((str(SCRIPT), *argv), cwd=ROOT, check=False)
-    second = subprocess.run((str(SCRIPT), *argv), cwd=ROOT, check=False)
+    first = composite_cli.main(argv, clock=lambda: REGISTERED_AT)
+    second = composite_cli.main(argv, clock=lambda: REGISTERED_AT + dt.timedelta(hours=1))
 
     # Then
     report = output / composite_cli.REPORT_NAME
-    assert (first.returncode, second.returncode) == (0, 0)
+    assert (first, second) == (0, 0)
     assert len(ledger.multi_market_hypotheses()) == 3
     assert "hypothesis created/reused: 0/1" in report.read_text(encoding="utf-8")
     assert "external account/order mutation: 0" in report.read_text(encoding="utf-8")
     assert stat.S_IMODE(report.stat().st_mode) == 0o600
+
+
+def test_composite_cli_blocks_backdated_first_registration(tmp_path: Path) -> None:
+    # Given
+    ledger = _component_ledger(tmp_path)
+
+    # When
+    result = composite_cli.main(
+        _argv(ledger.path, tmp_path / "output"),
+        clock=lambda: REGISTERED_AT + dt.timedelta(hours=1),
+    )
+
+    # Then
+    assert result == 1
+    assert len(ledger.multi_market_hypotheses()) == 2
 
 
 def test_composite_cli_help_has_no_execution_authority_surface() -> None:

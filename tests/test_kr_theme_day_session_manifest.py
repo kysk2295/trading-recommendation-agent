@@ -3,12 +3,13 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import os
 import stat
 from pathlib import Path
 
 import pytest
 
-import trading_agent.kr_theme_day_session_manifest as manifest_module
+import trading_agent.private_immutable_file as private_file
 from tests.test_kis_kr_market_projection import _opportunity
 from trading_agent.kr_theme_day_session_manifest import (
     InvalidKrThemeDaySessionManifestError,
@@ -95,18 +96,18 @@ def test_manifest_interrupted_write_leaves_no_final_file(
     # Given
     path = tmp_path / "session.json"
     manifest = build_kr_theme_day_session_manifest(_identity(tmp_path))
-    original = manifest_module.os.fdopen
+    original = private_file.os.fdopen
 
     def interrupt(_descriptor: int, _mode: str, *, encoding: str) -> None:
         del encoding
         raise OSError("fixture write interruption")
 
-    monkeypatch.setattr(manifest_module.os, "fdopen", interrupt)
+    monkeypatch.setattr(private_file.os, "fdopen", interrupt)
 
     # When
     with pytest.raises(InvalidKrThemeDaySessionManifestError):
         write_kr_theme_day_session_manifest(path, manifest)
-    monkeypatch.setattr(manifest_module.os, "fdopen", original)
+    monkeypatch.setattr(private_file.os, "fdopen", original)
     write_kr_theme_day_session_manifest(path, manifest)
 
     # Then
@@ -125,3 +126,43 @@ def test_manifest_rejects_symlinked_parent(tmp_path: Path) -> None:
     with pytest.raises(InvalidKrThemeDaySessionManifestError):
         write_kr_theme_day_session_manifest(path, build_kr_theme_day_session_manifest(_identity(tmp_path)))
     assert not (target / "session.json").exists()
+    direct = target / "session.json"
+    write_kr_theme_day_session_manifest(direct, build_kr_theme_day_session_manifest(_identity(tmp_path)))
+    with pytest.raises(InvalidKrThemeDaySessionManifestError):
+        _ = load_kr_theme_day_session_manifest(path)
+
+
+def test_manifest_reader_keeps_opened_file_during_path_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    path = tmp_path / "session.json"
+    manifest = build_kr_theme_day_session_manifest(_identity(tmp_path))
+    write_kr_theme_day_session_manifest(path, manifest)
+    replacement = tmp_path / "replacement.json"
+    replacement_manifest = build_kr_theme_day_session_manifest(
+        _identity(tmp_path).model_copy(update={"opportunity_id": "KR-THEME-OPPORTUNITY-002"})
+    )
+    write_kr_theme_day_session_manifest(replacement, replacement_manifest)
+    replacement.chmod(0o644)
+    original_lstat = Path.lstat
+    target_checks = 0
+
+    def swap_after_metadata_check(target: Path) -> os.stat_result:
+        nonlocal target_checks
+        metadata = original_lstat(target)
+        if target == path:
+            target_checks += 1
+            if target_checks == 2:
+                target.unlink()
+                target.symlink_to(replacement)
+        return metadata
+
+    monkeypatch.setattr(Path, "lstat", swap_after_metadata_check)
+
+    # When
+    loaded = load_kr_theme_day_session_manifest(path)
+
+    # Then
+    assert loaded == manifest

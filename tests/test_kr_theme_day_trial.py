@@ -131,6 +131,21 @@ def test_kr_theme_day_trial_rejects_closed_or_stale_calendar_evidence(tmp_path: 
     assert ledger.multi_market_trials() == ()
 
 
+def test_kr_theme_day_trial_rejects_noncanonical_start_time(tmp_path: Path) -> None:
+    # Given
+    ledger = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    _register_authority(ledger)
+    registration = register_kr_theme_day_shadow_trial(ledger, _request())
+
+    # When / Then
+    with pytest.raises(InvalidKrThemeDayTrialError):
+        _ = start_kr_theme_day_shadow_trial(
+            ledger,
+            registration.registration.trial_id,
+            STARTED_AT + dt.timedelta(minutes=1),
+        )
+
+
 def test_kr_theme_day_trial_rejects_unregistered_strategy(tmp_path: Path) -> None:
     ledger = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
 

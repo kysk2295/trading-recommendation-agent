@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -21,9 +21,14 @@ from trading_agent.kis_kr_session_calendar_store import (
     InvalidKisKrSessionCalendarStoreError,
     KisKrSessionCalendarStore,
 )
+from trading_agent.kr_preopen_registration_time import (
+    InvalidKrPreopenRegistrationTimeError,
+    require_current_kr_preopen_registration,
+)
 from trading_agent.kr_theme_day_trial import (
     InvalidKrThemeDayTrialError,
     KrThemeDayTrialRegistrationRequest,
+    kr_theme_day_trial_id,
     register_kr_theme_day_shadow_trial,
     start_kr_theme_day_shadow_trial,
 )
@@ -31,6 +36,7 @@ from trading_agent.private_report import write_private_report
 
 REPORT_NAME = "kr_theme_day_trial_ko.md"
 KST = ZoneInfo("Asia/Seoul")
+Clock = Callable[[], dt.datetime]
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -51,13 +57,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    clock: Clock = lambda: dt.datetime.now(dt.UTC),
+) -> int:
     args = parse_args(argv)
     details: tuple[str, ...] = ()
     try:
         ledger = ExperimentLedgerStore(args.database)
         if args.command == "register":
             registered_at = dt.datetime.fromisoformat(args.registered_at)
+            if not _trial_exists(ledger, args.session_date, args.strategy_version):
+                require_current_kr_preopen_registration(registered_at, clock())
             calendar_snapshot = _calendar_snapshot(args.calendar_store, registered_at)
             result = register_kr_theme_day_shadow_trial(
                 ledger,
@@ -91,6 +103,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise InvalidKrThemeDayTrialError
     except (
         InvalidKisKrSessionCalendarStoreError,
+        InvalidKrPreopenRegistrationTimeError,
         InvalidKrThemeDayTrialError,
         OSError,
         sqlite3.Error,
@@ -101,6 +114,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     _write_report(args.output_dir, "ready", details)
     return 0
+
+
+def _trial_exists(ledger: ExperimentLedgerStore, session_date: str, strategy_version: str) -> bool:
+    expected = kr_theme_day_trial_id(dt.date.fromisoformat(session_date), strategy_version)
+    return any(item.registration.trial_id == expected for item in ledger.multi_market_trials())
 
 
 def _paths(parser: argparse.ArgumentParser) -> None:

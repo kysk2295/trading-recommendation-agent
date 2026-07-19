@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import stat
 import subprocess
 from pathlib import Path
@@ -64,7 +65,13 @@ def test_kr_theme_day_trial_cli_registers_and_starts(tmp_path: Path) -> None:
     assert calendar_store.append(receipt, snapshot) is True
     _register_authority(ExperimentLedgerStore(database))
 
-    assert trial_cli.main(_register_args(database, output, calendar_store.path)) == 0
+    assert (
+        trial_cli.main(
+            _register_args(database, output, calendar_store.path),
+            clock=lambda: dt.datetime(2026, 7, 19, 8, 31, tzinfo=dt.timezone(dt.timedelta(hours=9))),
+        )
+        == 0
+    )
     registration_report = (output / REPORT).read_text(encoding="utf-8")
     trial_id = ExperimentLedgerStore(database).multi_market_trials()[0].registration.trial_id
     assert (
@@ -79,7 +86,8 @@ def test_kr_theme_day_trial_cli_registers_and_starts(tmp_path: Path) -> None:
                 str(database),
                 "--output-dir",
                 str(output),
-            )
+            ),
+            clock=lambda: dt.datetime(2026, 7, 20, 9, 4, tzinfo=dt.timezone(dt.timedelta(hours=9))),
         )
         == 0
     )
@@ -90,6 +98,23 @@ def test_kr_theme_day_trial_cli_registers_and_starts(tmp_path: Path) -> None:
     assert "event 신규/재사용: 1/0" in started_report
     assert "order authority: false" in started_report
     assert stat.S_IMODE((output / REPORT).stat().st_mode) == 0o600
+
+
+def test_kr_theme_day_trial_cli_blocks_backdated_first_registration(tmp_path: Path) -> None:
+    database = tmp_path / "experiment.sqlite3"
+    output = tmp_path / "report"
+    calendar_store = KisKrSessionCalendarStore(tmp_path / "calendar.sqlite3")
+    receipt, snapshot = _calendar_evidence()
+    assert calendar_store.append(receipt, snapshot) is True
+    _register_authority(ExperimentLedgerStore(database))
+
+    result = trial_cli.main(
+        _register_args(database, output, calendar_store.path),
+        clock=lambda: dt.datetime(2026, 7, 19, 9, 1, tzinfo=dt.timezone(dt.timedelta(hours=9))),
+    )
+
+    assert result == 1
+    assert ExperimentLedgerStore(database).multi_market_trials() == ()
 
 
 def test_kr_theme_day_trial_cli_blocks_missing_calendar_store(tmp_path: Path) -> None:

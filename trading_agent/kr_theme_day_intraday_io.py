@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import stat
 from pathlib import Path
 from typing import override
 
 from pydantic import ValidationError
 
+from trading_agent.private_immutable_file import read_private_text
 from trading_agent.signal_contract_models import OpportunitySnapshot
 
 
@@ -20,8 +19,7 @@ class InvalidKrThemeDayOpportunitySourceError(ValueError):
 
 def load_exact_kr_theme_opportunity(path: Path, opportunity_id: str) -> OpportunitySnapshot:
     try:
-        _require_private_file(path)
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = read_private_text(path).splitlines()
         opportunities = tuple(OpportunitySnapshot.model_validate_json(line) for line in lines if line)
         ids = tuple(item.opportunity_id for item in opportunities)
         matches = tuple(item for item in opportunities if item.opportunity_id == opportunity_id)
@@ -34,26 +32,12 @@ def load_exact_kr_theme_opportunity(path: Path, opportunity_id: str) -> Opportun
 
 def kr_theme_day_opportunity_sha256(opportunity: OpportunitySnapshot) -> str:
     try:
-        validated = OpportunitySnapshot.model_validate(opportunity.model_dump(mode="python"))
         payload = json.dumps(
-            validated.model_dump(mode="json"),
+            opportunity.model_dump(mode="json"),
             ensure_ascii=True,
             separators=(",", ":"),
             sort_keys=True,
         )
         return hashlib.sha256(payload.encode()).hexdigest()
-    except (AttributeError, TypeError, ValidationError, ValueError):
+    except (AttributeError, TypeError, ValueError):
         raise InvalidKrThemeDayOpportunitySourceError from None
-
-
-def _require_private_file(path: Path) -> None:
-    if path.is_symlink():
-        raise InvalidKrThemeDayOpportunitySourceError
-    metadata = path.lstat()
-    if (
-        not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o600
-        or metadata.st_nlink != 1
-    ):
-        raise InvalidKrThemeDayOpportunitySourceError
