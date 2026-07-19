@@ -16,6 +16,9 @@ class AlpacaSipDynamicTradeStateError(ValueError):
 class AlpacaSipDynamicActiveTrade:
     root_event_id: str
     current_event_id: str
+    current_connection_epoch: str
+    source_sequence: int
+    source_message_index: int
     instrument_id: str
     symbol: str
     provider_root_trade_id: int
@@ -33,6 +36,9 @@ class AlpacaSipDynamicActiveTrade:
         if (
             len(self.root_event_id) != 64
             or len(self.current_event_id) != 64
+            or len(self.current_connection_epoch) != 32
+            or self.source_sequence < 4
+            or self.source_message_index < 0
             or not self.instrument_id
             or not self.symbol
             or self.provider_root_trade_id <= 0

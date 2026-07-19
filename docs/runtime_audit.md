@@ -566,3 +566,10 @@
 - 최초 관찰: bounded stream library는 endpoint와 protocol을 검증했지만 실제 운영용 진입점이 없었다. 직접 library를 호출하면 현재 session gate, frame/timeout 상한, private output과 canonical publication 순서를 운영자가 매번 재구성해야 했다.
 - 수정: smoke CLI가 arm과 current regular session/date를 credential 전에 평가하고 private credential file과 mode-700 state root를 검증한다. frame·timeout은 각각 최대 10으로 제한하며 매 수신 뒤 session/date를 다시 확인한다. 성공은 한 epoch의 exact attestation·canonical complete coverage·private JSON report를 요구한다.
 - 결과: arm 누락과 일요일은 credential·state·network 0으로 exit 1이다. fixture 장중 종료는 raw frame을 보존하고 failed terminal로 exit 2이며 report를 만들지 않는다. fixture success는 control 3개·data link 1개·canonical event 3개·broker mutation 0을 mode-600 report로 확정한다. 실제 provider WebSocket smoke는 아직 0건이다.
+
+## H80: complete 표시 없이 dynamic trade를 intraday feature에 섞는다
+
+- 판별 기준: 같은 instrument의 최신 trade처럼 보여도 multi-epoch gap, terminal 미관측, 마지막 완료 봉 이전 event 또는 관측시점 이후 receipt가 feature confirmation에 들어가는지 확인한다.
+- 최초 관찰: dynamic trade state와 complete-history gate는 있었지만 M4.1 snapshot에 연결하는 typed 경계가 없었다. 호출자가 active trade tuple을 직접 읽으면 reconnect 진단 state를 complete input처럼 사용하거나 frame 안의 source order를 잃을 수 있었다.
+- 수정: READY snapshot과 exact as-of·NY market date·instrument/profile binding을 검증하는 read-only bridge를 추가했다. complete single epoch만 허용하고 최신 active trade를 event/receipt/source sequence/frame index/event ID 순으로 선택하며, 마지막 완료 봉 이후와 2분 freshness를 강제한다. confirmation hash는 snapshot identity, plan/epoch, trade source order, 가격과 VWAP 관계를 고정한다.
+- 결과: multi-epoch, terminal 미관측, blocked snapshot, instrument mismatch, 오래된 event와 canceled-only state는 모두 fail-closed다. local library driver는 single epoch trade 103을 source order 4:1로 확인하고 two-epoch history를 차단했다. canonical minute dataset 검증과 claim extraction은 기존 typed extractor에 남아 있으며 provider·credential·account/order endpoint와 mutation은 0건이다.

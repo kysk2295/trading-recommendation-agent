@@ -186,6 +186,20 @@ post-completion epochs, and histories beyond the connection budget fail closed.
 A single bounded-complete epoch is eligible only after its terminal is observed
 at the requested as-of time.
 
+**Dynamic SIP feature confirmation checkpoint (2026-07-19): Causal bridge
+complete.** A READY completed-minute snapshot may consume only complete trade
+history from one terminal-observed epoch with the same as-of time, New York
+market date, and instrument binding. The latest active trade is selected by
+event time, receipt time, source sequence, frame index, and immutable event ID.
+Both event and receipt must be at or after the last completed bar, while the
+receipt must be no more than two minutes old and no later than observation.
+The deterministic confirmation binds the snapshot research identity,
+plan/epoch, exact trade source order, price, VWAP, and their basis-point
+relation. Multi-epoch, incomplete, blocked, mismatched, stale, or canceled-only
+state fails before feature use. This bridge neither recalculates indicators nor
+emits claims, recommendations, promotions, or orders. Canonical minute-dataset
+verification remains the existing typed feature extractor's responsibility.
+
 **Dynamic SIP terminal checkpoint (2026-07-19): Restart evidence complete.**
 Schema v2 adds one append-only terminal row per epoch without rewriting v1
 bindings or receipts. Bounded success requires at least the three controls and

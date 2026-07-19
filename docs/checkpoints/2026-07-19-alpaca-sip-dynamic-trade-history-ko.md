@@ -23,4 +23,6 @@
 
 - 열린 NYSE 정규장 bounded read-only dynamic SIP smoke
 - provider가 제공하는 reconnect backfill 또는 sequence continuity evidence 계약
-- complete dynamic state의 feature-kernel consumption 연결
+
+`complete dynamic state → feature confirmation` 연결은
+`2026-07-19-alpaca-sip-dynamic-feature-confirmation-ko.md`에서 완료했다.

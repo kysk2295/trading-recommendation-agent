@@ -64,6 +64,9 @@ class _TradeState:
         active = AlpacaSipDynamicActiveTrade(
             projected.event_id,
             projected.event_id,
+            projected.connection_epoch,
+            projected.sequence,
+            projected.message_index,
             projected.instrument_id,
             message.symbol,
             message.trade_id,
@@ -100,6 +103,9 @@ class _TradeState:
         active = AlpacaSipDynamicActiveTrade(
             target.root_event_id,
             projected.event_id,
+            projected.connection_epoch,
+            projected.sequence,
+            projected.message_index,
             target.instrument_id,
             target.symbol,
             target.provider_root_trade_id,
