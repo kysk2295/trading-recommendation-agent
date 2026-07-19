@@ -168,8 +168,11 @@ revalidates the three control receipts, strictly parses quote, trade,
 correction, and cancel wire messages, and binds each symbol to its exact plan
 instrument. IDs bind the raw receipt, frame-local index, and canonical content
 hash. Unbound symbols, future/wrong-session timestamps, and control messages in
-data frames fail closed. Correction-chain state semantics and terminal session
-attestation remain separate follow-up boundaries.
+data frames fail closed. A verified as-of read model now replays provider trade
+aliases through exact-value corrections and cancel tombstones, rejects missing,
+reused, post-cancel, or clock-regressing chains, and excludes receipts not yet
+received at the requested causal time. Terminal session attestation remains a
+separate boundary.
 
 **Dynamic SIP terminal checkpoint (2026-07-19): Restart evidence complete.**
 Schema v2 adds one append-only terminal row per epoch without rewriting v1
