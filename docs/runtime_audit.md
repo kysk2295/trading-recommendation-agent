@@ -675,3 +675,10 @@
 - 수정: query-only summary가 store의 parent와 child reader를 먼저 완전 재생하고 parent, legacy parent, child, disabled/not-attempted/completed/blocked와 selected/new/replay 합계만 frozen model로 반환한다. child attempt 순서는 parent history의 연속 suffix여야 한다.
 - CLI: required supervisor store와 output dir만 받으며 credential·provider·network 인자가 없다. missing/non-private/symlink/tamper는 input store를 만들지 않고 mode-600 `blocked`·mutation 0 보고서로 닫으며 raw exception, ID와 path를 기록하지 않는다.
 - 결과: actual help exit 0, missing store exit 1/store 0, completed `parent/child=1/1`, selected/new/replay `2/1/1` happy report exit 0을 확인했다. 전체 2560 tests와 정적 게이트가 통과했고 account/order mutation은 0건이다.
+
+## H95: 유효한 동일 신호가 다음 minute에 다시 나타날 때 terminal을 다시 수집한다
+
+- 결함: runtime은 매 minute 새 snapshot manifest를 만든다. base conditional이 여러 minute 유효하면 첫 minute terminal이 이미 actionability store에 있어도 다음 manifest digest용 WebSocket을 다시 열고, 같은 base signal과 scan 시작시각에 다른 terminal을 append하려다 supervisor cycle 전체가 차단될 수 있었다.
+- 수정: dispatcher가 receipt root 생성과 connector 호출 전에 기존 private actionability store를 query-only로 완전 재생한다. 저장된 terminal과 current manifest의 `(base signal ID, scan_started_at)`을 대사하고 이미 확정된 key는 connector·receipt 생성 없이 replay로 집계한다. 저장 원장이나 current batch에 중복 terminal key가 있으면 fail-closed한다.
+- 경계: 새 signal ID는 과거 terminal에 의해 skip되지 않는다. 다음 minute wire timestamp를 사용한 fixture에서 새 manifest digest receipt와 actionability artifact가 각각 하나 추가되는 것을 확인했다.
+- 결과: 2분 armed supervisor fixture soak는 manifest 2개를 만들었지만 WebSocket, receipt DB와 terminal artifact는 각각 1개만 만들었다. live child는 `selected/new/replay=1/1/0` 뒤 `1/0/1`이고 두 parent는 READY였다. 전체 2563 tests와 정적 게이트가 통과했으며 실제 provider WebSocket과 account/order mutation은 0건이다.

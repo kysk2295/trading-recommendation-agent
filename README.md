@@ -916,6 +916,8 @@ KIS 날짜별 paper 감시:
   --live-actionability-store outputs/runtime/us-sip-fleet/live-actionability.sqlite3
 ```
 
+armed dispatcher는 current manifest를 실행하기 전에 기존 actionability 원장을 query-only로 전부 재생한다. 같은 base signal ID와 scan 시작시각의 terminal이 이미 있으면 다음 minute에 새 manifest가 생겨도 receipt 경로나 WebSocket을 다시 열지 않고 replay로 감사한다. signal ID가 새로 바뀐 경우에는 기존 terminal과 혼동하지 않고 새 manifest digest receipt로 bounded lifecycle을 실행한다. 2분 fixture supervisor soak는 manifest 2개, WebSocket·receipt·terminal 1개와 live child `1/1/0 -> 1/0/1`을 확인했으며 두 fleet cycle 모두 READY였다. 이는 실제 SIP entitlement 또는 수익성 증거가 아니다.
+
 수동 profile 경로 대신 현재 desired 종목의 20일 history와 완료 분 profile을 자동 생성·재생하려면 `--profile`을 빼고 다음 옵션을 사용한다.
 
 ```bash

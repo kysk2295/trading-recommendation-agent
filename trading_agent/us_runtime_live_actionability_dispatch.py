@@ -62,9 +62,26 @@ def dispatch_us_runtime_live_actionability(
         selected = _current_manifests(request.manifest_root, request.evaluated_at)
         if not selected:
             return UsRuntimeLiveActionabilityDispatchResult(0, 0, 0)
+        actionability_store = AlpacaSipQuoteActionabilityStore(request.actionability_store)
+        terminal_keys = tuple(
+            (artifact.base_publication.signal.signal_id, artifact.assessment.scan_started_at)
+            for artifact in actionability_store.records()
+        )
+        selected_keys = tuple(
+            (manifest.base_publication.signal.signal_id, manifest.scan_started_at) for manifest in selected
+        )
+        terminal_key_set = set(terminal_keys)
+        selected_key_set = set(selected_keys)
+        if len(terminal_keys) != len(terminal_key_set) or len(selected_keys) != len(selected_key_set):
+            raise UsRuntimeLiveActionabilityDispatchError
+        pending = tuple(
+            manifest for manifest, key in zip(selected, selected_keys, strict=True) if key not in terminal_key_set
+        )
+        if not pending:
+            return UsRuntimeLiveActionabilityDispatchResult(len(selected), 0, len(selected))
         _prepare_receipt_root(request.receipt_root)
         created = 0
-        for manifest in selected:
+        for manifest in pending:
             result = run_alpaca_sip_live_actionability(
                 AlpacaSipLiveActionabilityRequest(
                     request.credentials,
@@ -73,7 +90,7 @@ def dispatch_us_runtime_live_actionability(
                         AlpacaSipDynamicPlanStore(request.plan_store),
                         SubscriptionPolicyStateStore(request.policy_state_store),
                         AlpacaSipDynamicReceiptStore(_receipt_path(request.receipt_root, manifest)),
-                        AlpacaSipQuoteActionabilityStore(request.actionability_store),
+                        actionability_store,
                     ),
                     request.config,
                 ),
