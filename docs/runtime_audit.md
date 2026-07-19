@@ -743,3 +743,11 @@
 - 수정: 장 시작 09:00 KST부터 이어진 exact 1분 완료봉만 받는 frozen contract와 pure extractor를 추가했다. 각 봉은 OHLC, 거래량, 실제 거래대금, 완료·최초 관측시각과 canonical evidence를 보존하며 평균 체결가가 봉 범위 밖이면 거부한다. 누적 거래대금/거래량 VWAP에서 1% 확장, VWAP ±20bp 첫 눌림, 최대 5봉 안의 5bp 재돌파와 1.2배 거래량을 순서대로 평가하고 최신 봉의 첫 성공만 setup으로 만든다.
 - 계보: exact KR theme Opportunity rank-1, strategy version, 30초 평가 freshness와 Opportunity 만료를 대사한다. setup ID는 Opportunity, version, symbol, trigger 종료시각과 evidence ID에 content-addressed하며 손절은 첫 눌림 저가, 목표는 trigger 종가 기준 1R/2R로 고정한다.
 - 결과: setup 성공→기존 KR gate/current-quote signal E2E, 장중 Opportunity, 재돌파 없음, non-leader, sequence gap, future observation과 exact replay를 focused 9개 및 전체 2639 tests로 검증했다. read-only LS/KIS minute/quote adapter, append-only shadow fill/trial은 아직 없고 provider·credential·network·국내 계좌·주문 mutation은 0건이다.
+
+## H105: KR setup과 market gate가 실제 provider raw response에서 분리되어 있다
+
+- 결함: 완료봉 setup과 시장제약 snapshot이 typed여도 이를 만드는 KIS endpoint·TR ID·원문 receipt 계약이 없었다. caller가 형성 중 봉, 미래 조회시각, 서로 다른 종목/시점의 현재가와 호가 또는 알 수 없는 상태를 정상값으로 주입할 수 있었다.
+- transport: 공식 KIS sample commit `885dd4e`에서 확인한 `inquire-time-itemchartprice/FHKST03010200`, `inquire-price/FHKST01010100`, `inquire-asking-price-exp-ccn/FHKST01010200` 세 GET만 공식 live origin에서 허용한다. 다른 origin, redirect, 2초 밖 요청시각과 미래 분봉은 첫 GET 전에 차단하며 오류는 provider 본문·credential 없이 고정 문구로 닫는다.
+- projection: raw bytes, 종류, symbol, HTTP metadata와 수신시각을 frozen receipt로 보존한다. 현재 형성 중인 첫 행은 완료시각으로 제외하고 09:00부터 연속된 누적 거래대금 차분만 분별 거래대금으로 만든다. 현재가·호가 receipt는 2초 이내이며 symbol/current/base/VI가 같고 provider 호가시각이 5초 이내여야 snapshot을 만든다.
+- 상태: 공식 응답의 명시적 `new_mkop_cls_code=20`, `vi_cls_code=N`, 정상 halt/designation 조합만 continuous/clear로 연다. 그 밖의 미등록 코드는 추정하지 않고 `UNKNOWN`으로 보내 기존 gate가 fail-closed한다.
+- 결과: exact HTTP GET 계약, unsafe origin/redirect/stale/future 차단, 완료봉 cumulative diff, forming bar 제외, gap/skew/symbol mismatch와 raw→setup→signal E2E를 관련 34개 및 전체 2650 tests로 검증했다. 2026-07-19은 일요일이어서 production GET은 0건이며 계좌·잔고·포지션·주문 endpoint와 mutation은 없다.
