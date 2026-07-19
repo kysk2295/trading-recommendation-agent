@@ -143,6 +143,16 @@ channels. Provider list order is not treated as guaranteed. This checkpoint
 does not open credentials or a WebSocket; raw-first multi-symbol control and
 data persistence is the next runtime boundary.
 
+**Dynamic SIP raw receipt checkpoint (2026-07-19): Persistence complete.**
+A separate private single-writer SQLite store binds each connection epoch to
+the exact dynamic plan and ordered instrument-symbol ownership before bytes can
+be appended. Control and data payloads are stored raw-first with contiguous
+sequence, UTC receive time, content hash, and deterministic receipt ID. Replay
+revalidates the exact schema, file ownership/mode/link count, plan binding,
+hashes, sequence, and bind-time causality. No WebSocket or provider credential
+is opened here; the active connection owner and per-symbol projection remain
+the next runtime boundary.
+
 ### M4.3: Read-Only Runtime Supervisor
 
 Introduce provider-neutral read-only adapter and supervisor contracts. The

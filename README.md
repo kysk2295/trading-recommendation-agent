@@ -219,6 +219,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-19 Alpaca SIP dynamic subscription plan 업데이트:** M4.2의 READY quote+trade desired set을 한 fresh provider connection의 deterministic subscribe request로 결합하는 계약을 추가했다. plan ID는 scanner replay identity, policy version, evaluated time, New York market date와 ordered instrument-symbol binding을 고정한다. request는 exact quote/trade symbol 목록만 보내고 ACK는 trades·quotes·자동 corrections·cancelErrors가 같은 중복 없는 symbol 집합이며 bars·status·LULD가 비어 있을 때만 허용한다. ACK 순서는 provider 비보장 목록이므로 집합으로 비교하지만 missing·extra·duplicate symbol, partial channel과 provider error, malformed nested policy config는 fail-closed한다. 전체 **2402 tests**가 통과했으며 실제 WebSocket·credential·account/order 호출은 0건이다.
 
+**2026-07-19 Alpaca SIP dynamic raw receipt 업데이트:** dynamic plan과 connection epoch를 먼저 append-only binding한 뒤 control/data payload 원문을 해석 전에 저장하는 private single-writer SQLite 경계를 추가했다. receipt는 plan ID, epoch, 연속 sequence, UTC received time, kind와 payload hash에 결합되고 exact retry만 idempotent하다. 미등록 epoch, sequence gap/conflict, 다른 plan, bind 이전 수신 시각, payload 변조, 스키마·mode·owner·symlink·hardlink 불일치는 fail-closed한다. 전체 **2412 tests**가 통과했으며 실제 WebSocket·credential·account/order 호출은 0건이다. 실제 connection owner와 symbol별 quote/trade projection은 다음 체크포인트다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \
