@@ -153,6 +153,15 @@ hashes, sequence, and bind-time causality. No WebSocket or provider credential
 is opened here; the active connection owner and per-symbol projection remain
 the next runtime boundary.
 
+**Dynamic SIP connection owner checkpoint (2026-07-19): Fixture lifecycle
+complete.** A bounded owner now holds a non-blocking store-specific lease for
+the complete connection lifetime, binds the plan before connecting, verifies
+both canonical and final SIP URLs before sending credentials, and persists
+each connected/authenticated/subscription/data frame before semantic control
+validation. Invalid control, ACK, and timeout paths retain prior raw receipts.
+Only injected fixture transports were exercised; terminal attestation,
+per-symbol projection, and a bounded open-session read-only smoke remain.
+
 ### M4.3: Read-Only Runtime Supervisor
 
 Introduce provider-neutral read-only adapter and supervisor contracts. The

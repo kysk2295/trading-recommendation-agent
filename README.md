@@ -221,6 +221,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-19 Alpaca SIP dynamic raw receipt 업데이트:** dynamic plan과 connection epoch를 먼저 append-only binding한 뒤 control/data payload 원문을 해석 전에 저장하는 private single-writer SQLite 경계를 추가했다. receipt는 plan ID, epoch, 연속 sequence, UTC received time, kind와 payload hash에 결합되고 exact retry만 idempotent하다. 미등록 epoch, sequence gap/conflict, 다른 plan, bind 이전 수신 시각, payload 변조, 스키마·mode·owner·symlink·hardlink 불일치는 fail-closed한다. 전체 **2412 tests**가 통과했으며 실제 WebSocket·credential·account/order 호출은 0건이다. 실제 connection owner와 symbol별 quote/trade projection은 다음 체크포인트다.
 
+**2026-07-19 Alpaca SIP dynamic connection owner 업데이트:** 한 invocation이 exact plan을 bind하고 store별 non-blocking lease를 연결 전체 수명 동안 잡아 두 번째 owner를 connector 이전에 차단한다. canonical 요청 URL과 handshake의 final URL을 모두 확인한 뒤에만 auth를 전송하고, connected/authenticated/exact multi-symbol subscription control과 설정된 수만큼의 data frame을 raw-first 저장한다. invalid auth·ACK와 data timeout도 이미 받은 receipt를 보존한다. 전체 **2418 tests**가 통과했으며 검증 connector는 fixture뿐이고 실제 WebSocket·credential file·account/order 호출은 0건이다. terminal attestation과 strict symbol projection은 다음 체크포인트다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \

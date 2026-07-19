@@ -85,6 +85,46 @@ class AlpacaSipDynamicReceiptWriter:
             self._handle.close()
 
 
+class AlpacaSipDynamicConnectionLease:
+    __slots__ = ("_handle", "_path")
+
+    def __init__(self, database_path: Path) -> None:
+        self._path = Path(f"{database_path}.owner.lock")
+        self._handle = None
+
+    def __enter__(self) -> None:
+        descriptor = -1
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            require_private_dynamic_receipt_file(self._path)
+            descriptor = os.open(
+                self._path,
+                os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            os.fchmod(descriptor, 0o600)
+            self._handle = os.fdopen(descriptor, "a+", encoding="utf-8")
+            fcntl.flock(self._handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (AlpacaSipDynamicReceiptError, OSError, ValueError):
+            if self._handle is None and descriptor >= 0:
+                os.close(descriptor)
+            elif self._handle is not None:
+                self._handle.close()
+                self._handle = None
+            raise AlpacaSipDynamicReceiptError from None
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        _ = exc_type, exc_value, traceback
+        if self._handle is not None:
+            fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+            self._handle.close()
+
+
 def require_dynamic_receipt_schema(connection: sqlite3.Connection) -> None:
     rows = connection.execute(
         "SELECT name FROM sqlite_master WHERE type IN ('table','trigger') AND name NOT LIKE 'sqlite_%'"
@@ -120,6 +160,7 @@ def _prepare(connection: sqlite3.Connection) -> None:
 
 
 __all__ = (
+    "AlpacaSipDynamicConnectionLease",
     "AlpacaSipDynamicReceiptWriter",
     "require_dynamic_receipt_schema",
     "require_private_dynamic_receipt_file",
