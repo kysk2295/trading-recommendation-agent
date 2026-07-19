@@ -49,11 +49,20 @@ def read_private_text(path: Path) -> str:
             raise InvalidPrivateImmutableFileError
         parent_descriptor = _open_parent(target.parent, create=False)
         try:
-            descriptor = _open_private_file(parent_descriptor, target.name, (1,))
-            try:
-                return _read_text(descriptor)
-            finally:
-                os.close(descriptor)
+            with _PROCESS_PUBLICATION_LOCK:
+                lock_descriptor = _lock_publication(parent_descriptor, target.name)
+                try:
+                    descriptor = _open_private_file(parent_descriptor, target.name, (1, 2))
+                    try:
+                        if os.fstat(descriptor).st_nlink == 2:
+                            _repair_staging_alias(parent_descriptor, descriptor, target.name)
+                        payload = _read_text(descriptor)
+                        _require_final_file(parent_descriptor, target.name, descriptor)
+                        return payload
+                    finally:
+                        os.close(descriptor)
+                finally:
+                    os.close(lock_descriptor)
         finally:
             os.close(parent_descriptor)
     except (OSError, TypeError, UnicodeError, ValueError):
@@ -139,6 +148,7 @@ def _require_existing(parent_descriptor: int, name: str, payload: str) -> bool |
             _repair_staging_alias(parent_descriptor, descriptor, name)
         if _read_text(descriptor) != payload:
             raise InvalidPrivateImmutableFileError
+        _require_final_file(parent_descriptor, name, descriptor)
         return False
     finally:
         os.close(descriptor)
@@ -162,27 +172,32 @@ def _repair_staging_alias(parent_descriptor: int, descriptor: int, name: str) ->
 
 
 def _publish(parent_descriptor: int, name: str, payload: str) -> bool:
-    lock_descriptor = _open_publication_lock(parent_descriptor, name)
+    lock_descriptor = _lock_publication(parent_descriptor, name)
     try:
-        metadata = os.fstat(lock_descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_nlink != 1:
-            raise InvalidPrivateImmutableFileError
-        os.fchmod(lock_descriptor, _FILE_MODE)
-        fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
         return _publish_locked(parent_descriptor, name, payload)
     finally:
         os.close(lock_descriptor)
 
 
+def _lock_publication(parent_descriptor: int, name: str) -> int:
+    descriptor = _open_publication_lock(parent_descriptor, name)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_nlink != 1:
+            raise InvalidPrivateImmutableFileError
+        os.fchmod(descriptor, _FILE_MODE)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        return descriptor
+    except (OSError, ValueError):
+        os.close(descriptor)
+        raise
+
+
 def _open_publication_lock(parent_descriptor: int, name: str) -> int:
     lock_name = f".{name}{_LOCK_SUFFIX}"
+    create_flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
     try:
-        return os.open(
-            lock_name,
-            os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-            _FILE_MODE,
-            dir_fd=parent_descriptor,
-        )
+        return os.open(lock_name, create_flags, _FILE_MODE, dir_fd=parent_descriptor)
     except FileExistsError:
         return os.open(lock_name, os.O_RDWR | os.O_NOFOLLOW, dir_fd=parent_descriptor)
 
@@ -219,12 +234,8 @@ def _publish_locked(parent_descriptor: int, name: str, payload: str) -> bool:
             os.fsync(parent_descriptor)
             if os.fstat(descriptor).st_nlink != 1:
                 raise InvalidPrivateImmutableFileError
-            final = _open_private_file(parent_descriptor, name, (1,))
-            try:
-                _require_same_file(descriptor, final)
-                return True
-            finally:
-                os.close(final)
+            _require_final_file(parent_descriptor, name, descriptor)
+            return True
         finally:
             os.close(published)
     except FileExistsError:
@@ -244,6 +255,14 @@ def _require_same_file(left_descriptor: int, right_descriptor: int) -> None:
     right = os.fstat(right_descriptor)
     if (left.st_dev, left.st_ino) != (right.st_dev, right.st_ino):
         raise InvalidPrivateImmutableFileError
+
+
+def _require_final_file(parent_descriptor: int, name: str, expected_descriptor: int) -> None:
+    final = _open_private_file(parent_descriptor, name, (1,))
+    try:
+        _require_same_file(expected_descriptor, final)
+    finally:
+        os.close(final)
 
 
 def _remove_orphan_staging(parent_descriptor: int, name: str) -> None:

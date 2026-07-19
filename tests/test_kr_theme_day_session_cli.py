@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import stat
 import subprocess
 from pathlib import Path
@@ -108,6 +109,47 @@ def test_tick_rejects_manifest_without_onboarding_receipt(tmp_path: Path) -> Non
     # Then
     assert result == 1
     assert "result: blocked" in (tmp_path / "blocked" / session_cli.REPORT_NAME).read_text(encoding="utf-8")
+
+
+def test_onboard_repairs_interrupted_receipt_before_time_replay(tmp_path: Path) -> None:
+    # Given
+    identity = _identity(tmp_path).model_copy(
+        update={
+            "strategy_version": VERSION,
+            "code_version": CODE,
+            "opportunity_strategy_version": OPPORTUNITY_VERSION,
+            "paths": _fixture_paths(_identity(tmp_path).paths, tmp_path),
+        }
+    )
+    receipt, snapshot = _calendar_evidence()
+    assert KisKrSessionCalendarStore(identity.paths.calendar_store).append(receipt, snapshot) is True
+    _ = _ledger(identity.paths.experiment_ledger, started=False)
+    assert append_opportunity_snapshot(identity.paths.opportunity_outbox, _same_cycle_opportunity()) is True
+    identity.paths.opportunity_outbox.chmod(0o600)
+    manifest_path = tmp_path / "session.json"
+    assert (
+        session_cli.main(
+            _onboard_args(identity, manifest_path, tmp_path / "first-report"),
+            clock=lambda: ONBOARDED_AT,
+        )
+        == 0
+    )
+    receipt_path = onboarding_receipt_path(manifest_path)
+    staging = tmp_path / f".{receipt_path.name}.interrupted.staging"
+    os.link(receipt_path, staging)
+    manifest_path.unlink()
+
+    # When
+    replay = session_cli.main(
+        _onboard_args(identity, manifest_path, tmp_path / "replay-report"),
+        clock=lambda: ONBOARDED_AT.replace(hour=15),
+    )
+
+    # Then
+    assert replay == 0
+    assert receipt_path.stat().st_nlink == 1
+    assert not staging.exists()
+    assert manifest_path.is_file()
 
 
 def test_onboard_failure_writes_onboarding_blocked_report(tmp_path: Path) -> None:

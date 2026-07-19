@@ -146,3 +146,49 @@ def test_publication_serializes_first_publishers_across_processes(tmp_path: Path
     assert sorted(code for code in exit_codes if code is not None) == [10, 11, 11, 11]
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert path.stat().st_nlink == 1
+
+
+def test_exact_replay_rejects_final_path_swap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given
+    path = tmp_path / "session.json"
+    displaced = tmp_path / "displaced.json"
+    payload = '{"session":"fixture"}\n'
+    assert publish_private_immutable_text(path, payload) is True
+    original_read = private_file._read_text
+
+    def replace_after_read(descriptor: int) -> str:
+        content = original_read(descriptor)
+        path.rename(displaced)
+        path.write_text('{"attacker":true}\n', encoding="utf-8")
+        path.chmod(0o600)
+        return content
+
+    monkeypatch.setattr(private_file, "_read_text", replace_after_read)
+
+    # When / Then
+    with pytest.raises(private_file.InvalidPrivateImmutableFileError):
+        _ = publish_private_immutable_text(path, payload)
+
+
+def test_interrupted_replay_rejects_final_path_swap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given
+    path = tmp_path / "session.json"
+    displaced = tmp_path / "displaced.json"
+    staging = tmp_path / ".session.json.interrupted.staging"
+    payload = '{"session":"fixture"}\n'
+    assert publish_private_immutable_text(path, payload) is True
+    os.link(path, staging)
+    original_read = private_file._read_text
+
+    def replace_after_read(descriptor: int) -> str:
+        content = original_read(descriptor)
+        path.rename(displaced)
+        path.write_text('{"attacker":true}\n', encoding="utf-8")
+        path.chmod(0o600)
+        return content
+
+    monkeypatch.setattr(private_file, "_read_text", replace_after_read)
+
+    # When / Then
+    with pytest.raises(private_file.InvalidPrivateImmutableFileError):
+        _ = publish_private_immutable_text(path, payload)
