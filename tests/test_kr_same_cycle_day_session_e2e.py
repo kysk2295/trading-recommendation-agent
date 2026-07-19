@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import json
 import stat
 from pathlib import Path
@@ -8,8 +9,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+import run_kis_kr_ranking_collect
 import run_kr_same_cycle_opportunity
 import run_kr_volume_surge_derive
+import run_ls_nws_collect
+import run_opendart_collect
 from tests.test_kis_kr_market_collect_cli import _eod_fixture, _fixture
 from tests.test_kr_same_cycle_opportunity_cli import CODE_VERSION as OPPORTUNITY_CODE
 from tests.test_kr_same_cycle_opportunity_cli import _write_policy
@@ -67,6 +71,34 @@ def test_same_cycle_opportunity_onboards_and_runs_first_shadow_tick(
     policy = _write_policy(tmp_path)
     projection = (tmp_path / "projection").absolute()
 
+    def fixture_clock() -> dt.datetime:
+        return dt.datetime(2026, 7, 20, 9, 3, 20, tzinfo=KST)
+
+    monkeypatch.setattr(
+        run_opendart_collect,
+        "collect_opendart_disclosures",
+        functools.partial(
+            run_opendart_collect.collect_opendart_disclosures,
+            _clock=fixture_clock,
+        ),
+    )
+    monkeypatch.setattr(
+        run_ls_nws_collect,
+        "collect_ls_nws_news",
+        functools.partial(
+            run_ls_nws_collect.collect_ls_nws_news,
+            _clock=fixture_clock,
+        ),
+    )
+    monkeypatch.setattr(
+        run_kis_kr_ranking_collect,
+        "collect_kis_kr_rankings",
+        functools.partial(
+            run_kis_kr_ranking_collect.collect_kis_kr_rankings,
+            _clock=fixture_clock,
+        ),
+    )
+
     def derive_fixture(
         store: KrThemeStore,
         *,
@@ -77,7 +109,7 @@ def test_same_cycle_opportunity_onboards_and_runs_first_shadow_tick(
             store,
             collection_cycle_id=collection_cycle_id,
             collection_date=collection_date,
-            _clock=lambda: dt.datetime(2026, 7, 20, 9, 3, 20, tzinfo=KST),
+            _clock=fixture_clock,
         )
 
     monkeypatch.setattr(run_kr_volume_surge_derive, "derive_kr_volume_surge", derive_fixture)

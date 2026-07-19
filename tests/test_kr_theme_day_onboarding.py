@@ -74,6 +74,28 @@ def test_onboarding_rejects_self_consistent_receipt_time_tamper(tmp_path: Path) 
         onboarding.require_exact_kr_theme_day_onboarding(request.manifest_path, first.manifest)
 
 
+def test_exact_onboarding_verification_does_not_call_artifact_writers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    request = _prepared_request(tmp_path)
+    first = onboard_kr_theme_day_opportunity(request)
+
+    def reject_write(_path: Path, _artifact: onboarding.KrThemeDaySessionManifest) -> bool:
+        raise AssertionError
+
+    def reject_lock(_parent_descriptor: int, _name: str) -> int:
+        raise AssertionError
+
+    monkeypatch.setattr(onboarding, "write_kr_theme_day_session_manifest", reject_write)
+    monkeypatch.setattr(onboarding, "write_kr_theme_day_onboarding_receipt", reject_write)
+    monkeypatch.setattr(private_file, "_lock_publication", reject_lock)
+
+    # When / Then
+    onboarding.require_exact_kr_theme_day_onboarding(request.manifest_path, first.manifest)
+
+
 def test_onboarding_rejects_wrong_producer_stale_or_non_cycle_opportunity(tmp_path: Path) -> None:
     # Given
     base = _prepared_request(tmp_path)

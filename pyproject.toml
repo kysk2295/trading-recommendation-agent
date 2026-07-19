@@ -79,6 +79,7 @@ include = [
   "run_raw_receipt_projection.py",
   "run_grok_task.py",
   "run_ls_nws_collect.py",
+  "run_kr_theme_day_open_smoke_verify.py",
   "trading_agent/alpaca_archive.py",
   "trading_agent/alpaca_daily_cache.py",
   "trading_agent/alpaca_daily_store.py",

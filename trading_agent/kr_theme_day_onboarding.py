@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -22,6 +23,7 @@ from trading_agent.kr_theme_day_intraday_io import (
     InvalidKrThemeDayOpportunitySourceError,
     kr_theme_day_opportunity_sha256,
     load_exact_kr_theme_opportunity,
+    load_exact_kr_theme_opportunity_query_only,
 )
 from trading_agent.kr_theme_day_onboarding_models import (
     InvalidKrThemeDayOpportunityOnboardingError,
@@ -29,7 +31,7 @@ from trading_agent.kr_theme_day_onboarding_models import (
     KrThemeDayOpportunityOnboardingRequest,
     KrThemeDayOpportunityOnboardingResult,
     build_kr_theme_day_onboarding_receipt,
-    load_kr_theme_day_onboarding_receipt,
+    load_kr_theme_day_onboarding_receipt_query_only,
     onboarding_receipt_path,
     write_kr_theme_day_onboarding_receipt,
 )
@@ -48,7 +50,10 @@ from trading_agent.kr_theme_day_trial_calendar import calendar_snapshot_id_from_
 from trading_agent.kr_theme_lane import KR_THEME_OPPORTUNITY_LANE
 from trading_agent.multi_market_experiment_models import MultiMarketStrategyVersionRegistration
 from trading_agent.multi_market_trial_store import StoredMultiMarketTrialRegistration
+from trading_agent.private_experiment_ledger_snapshot import open_private_experiment_ledger_snapshot
 from trading_agent.signal_contract_models import OpportunitySnapshot
+
+OpportunityLoader = Callable[[Path, str], OpportunitySnapshot]
 
 
 def onboard_kr_theme_day_opportunity(
@@ -56,62 +61,17 @@ def onboard_kr_theme_day_opportunity(
 ) -> KrThemeDayOpportunityOnboardingResult:
     try:
         request = KrThemeDayOpportunityOnboardingRequest.model_validate(request.model_dump(mode="python"))
-        ledger = ExperimentLedgerReader(request.paths.experiment_ledger)
-        stored_trial = _exact_trial(ledger, request)
-        trial = stored_trial.registration
-        composite = require_exact_kr_theme_day_composite_evidence(
-            ledger,
-            KrThemeDayCompositeEvidenceRequest(
-                day_strategy_version=trial.strategy_version,
-                evidence_budget=trial.evidence_budget,
-                as_of=request.onboarded_at,
-            ),
-        )
-        version = _exact_day_version(ledger, trial.strategy_version)
-        opportunity = load_exact_kr_theme_opportunity(request.paths.opportunity_outbox, request.opportunity_id)
-        source_cycle_id = _require_opportunity(request, opportunity, composite.opportunity_strategy_version)
-        opportunity_sha256 = kr_theme_day_opportunity_sha256(opportunity)
-        calendar_snapshot_id = calendar_snapshot_id_from_evidence(trial.evidence_budget)
-        _require_calendar(request, calendar_snapshot_id, trial.planned_start)
-        manifest = build_kr_theme_day_session_manifest(
-            KrThemeDaySessionIdentity(
-                strategy_version=trial.strategy_version,
-                code_version=version.code_version,
-                session_date=trial.planned_start,
-                registered_at=trial.registered_at,
-                onboarded_at=request.onboarded_at,
-                calendar_snapshot_id=calendar_snapshot_id,
-                opportunity_id=opportunity.opportunity_id,
-                opportunity_strategy_version=opportunity.producer_strategy_version,
-                opportunity_sha256=opportunity_sha256,
-                symbol=opportunity.candidates[0].symbol,
-                paths=request.paths,
-            )
-        )
-        receipt = build_kr_theme_day_onboarding_receipt(
-            KrThemeDayOpportunityOnboardingReceiptSource(
-                trial_id=trial.trial_id,
-                trial_registration_key=str(stored_trial.registration_key),
-                composite_registration_key=composite.registration_key,
-                session_id=manifest.session_id,
-                day_strategy_version=trial.strategy_version,
-                opportunity_strategy_version=opportunity.producer_strategy_version,
-                opportunity_id=opportunity.opportunity_id,
-                opportunity_sha256=opportunity_sha256,
-                source_cycle_id=source_cycle_id,
-                symbol=opportunity.candidates[0].symbol,
-                session_date=trial.planned_start,
-                registered_at=trial.registered_at,
-                onboarded_at=request.onboarded_at,
-                calendar_snapshot_id=calendar_snapshot_id,
-            )
-        )
+        projection = _project_kr_theme_day_onboarding(request, load_exact_kr_theme_opportunity)
         receipt_created = write_kr_theme_day_onboarding_receipt(
             onboarding_receipt_path(request.manifest_path),
-            receipt,
+            projection.receipt,
         )
-        manifest_created = _write_or_require_manifest(request, manifest)
-        return KrThemeDayOpportunityOnboardingResult(receipt_created or manifest_created, manifest, receipt)
+        manifest_created = _write_or_require_manifest(request, projection.manifest)
+        return KrThemeDayOpportunityOnboardingResult(
+            receipt_created or manifest_created,
+            projection.manifest,
+            projection.receipt,
+        )
     except (
         AttributeError,
         InvalidExperimentLedgerSourceError,
@@ -132,27 +92,91 @@ def require_exact_kr_theme_day_onboarding(
     manifest_path: Path,
     manifest: KrThemeDaySessionManifest,
 ) -> None:
-    receipt = load_kr_theme_day_onboarding_receipt(onboarding_receipt_path(manifest_path))
-    if (
-        receipt.session_id != manifest.session_id
-        or receipt.onboarded_at != manifest.onboarded_at
-        or receipt.opportunity_id != manifest.opportunity_id
-        or receipt.opportunity_strategy_version != manifest.opportunity_strategy_version
-        or receipt.opportunity_sha256 != manifest.opportunity_sha256
-        or receipt.symbol != manifest.symbol
+    try:
+        receipt = load_kr_theme_day_onboarding_receipt_query_only(onboarding_receipt_path(manifest_path))
+        projection = _project_kr_theme_day_onboarding(
+            KrThemeDayOpportunityOnboardingRequest(
+                manifest_path=manifest_path.absolute(),
+                paths=manifest.paths,
+                trial_id=receipt.trial_id,
+                opportunity_id=receipt.opportunity_id,
+                onboarded_at=receipt.onboarded_at,
+            ),
+            load_exact_kr_theme_opportunity_query_only,
+        )
+        if projection.manifest != manifest or projection.receipt != receipt:
+            raise InvalidKrThemeDayOpportunityOnboardingError
+    except (
+        AttributeError,
+        InvalidExperimentLedgerSourceError,
+        InvalidKisKrSessionCalendarStoreError,
+        InvalidKrThemeDayOpportunityOnboardingError,
+        InvalidKrThemeDayOpportunitySourceError,
+        InvalidKrThemeDaySessionManifestError,
+        InvalidKrThemeDayTrialError,
+        OSError,
+        TypeError,
+        ValidationError,
+        ValueError,
     ):
-        raise InvalidKrThemeDayOpportunityOnboardingError
-    replay = onboard_kr_theme_day_opportunity(
-        KrThemeDayOpportunityOnboardingRequest(
-            manifest_path=manifest_path.absolute(),
-            paths=manifest.paths,
-            trial_id=receipt.trial_id,
-            opportunity_id=receipt.opportunity_id,
-            onboarded_at=receipt.onboarded_at,
+        raise InvalidKrThemeDayOpportunityOnboardingError from None
+
+
+def _project_kr_theme_day_onboarding(
+    request: KrThemeDayOpportunityOnboardingRequest,
+    opportunity_loader: OpportunityLoader,
+) -> KrThemeDayOpportunityOnboardingResult:
+    with open_private_experiment_ledger_snapshot(request.paths.experiment_ledger) as ledger:
+        stored_trial = _exact_trial(ledger, request)
+        trial = stored_trial.registration
+        composite = require_exact_kr_theme_day_composite_evidence(
+            ledger,
+            KrThemeDayCompositeEvidenceRequest(
+                day_strategy_version=trial.strategy_version,
+                evidence_budget=trial.evidence_budget,
+                as_of=request.onboarded_at,
+            ),
+        )
+        version = _exact_day_version(ledger, trial.strategy_version)
+    opportunity = opportunity_loader(request.paths.opportunity_outbox, request.opportunity_id)
+    source_cycle_id = _require_opportunity(request, opportunity, composite.opportunity_strategy_version)
+    opportunity_sha256 = kr_theme_day_opportunity_sha256(opportunity)
+    calendar_snapshot_id = calendar_snapshot_id_from_evidence(trial.evidence_budget)
+    _require_calendar(request, calendar_snapshot_id, trial.planned_start)
+    manifest = build_kr_theme_day_session_manifest(
+        KrThemeDaySessionIdentity(
+            strategy_version=trial.strategy_version,
+            code_version=version.code_version,
+            session_date=trial.planned_start,
+            registered_at=trial.registered_at,
+            onboarded_at=request.onboarded_at,
+            calendar_snapshot_id=calendar_snapshot_id,
+            opportunity_id=opportunity.opportunity_id,
+            opportunity_strategy_version=opportunity.producer_strategy_version,
+            opportunity_sha256=opportunity_sha256,
+            symbol=opportunity.candidates[0].symbol,
+            paths=request.paths,
         )
     )
-    if replay.created or replay.manifest != manifest or replay.receipt != receipt:
-        raise InvalidKrThemeDayOpportunityOnboardingError
+    receipt = build_kr_theme_day_onboarding_receipt(
+        KrThemeDayOpportunityOnboardingReceiptSource(
+            trial_id=trial.trial_id,
+            trial_registration_key=str(stored_trial.registration_key),
+            composite_registration_key=composite.registration_key,
+            session_id=manifest.session_id,
+            day_strategy_version=trial.strategy_version,
+            opportunity_strategy_version=opportunity.producer_strategy_version,
+            opportunity_id=opportunity.opportunity_id,
+            opportunity_sha256=opportunity_sha256,
+            source_cycle_id=source_cycle_id,
+            symbol=opportunity.candidates[0].symbol,
+            session_date=trial.planned_start,
+            registered_at=trial.registered_at,
+            onboarded_at=request.onboarded_at,
+            calendar_snapshot_id=calendar_snapshot_id,
+        )
+    )
+    return KrThemeDayOpportunityOnboardingResult(False, manifest, receipt)
 
 
 def _exact_trial(

@@ -8,6 +8,7 @@ from typing import override
 from pydantic import ValidationError
 
 from trading_agent.private_immutable_file import read_private_text
+from trading_agent.private_query_file import read_private_text_query_only
 from trading_agent.signal_contract_models import OpportunitySnapshot
 
 
@@ -19,15 +20,25 @@ class InvalidKrThemeDayOpportunitySourceError(ValueError):
 
 def load_exact_kr_theme_opportunity(path: Path, opportunity_id: str) -> OpportunitySnapshot:
     try:
-        lines = read_private_text(path).splitlines()
-        opportunities = tuple(OpportunitySnapshot.model_validate_json(line) for line in lines if line)
-        ids = tuple(item.opportunity_id for item in opportunities)
-        matches = tuple(item for item in opportunities if item.opportunity_id == opportunity_id)
-        if len(ids) != len(set(ids)) or len(matches) != 1:
-            raise InvalidKrThemeDayOpportunitySourceError
-        return matches[0]
+        return _parse_exact_opportunity(read_private_text(path), opportunity_id)
     except (OSError, TypeError, UnicodeError, ValidationError, ValueError):
         raise InvalidKrThemeDayOpportunitySourceError from None
+
+
+def load_exact_kr_theme_opportunity_query_only(path: Path, opportunity_id: str) -> OpportunitySnapshot:
+    try:
+        return _parse_exact_opportunity(read_private_text_query_only(path), opportunity_id)
+    except (OSError, TypeError, UnicodeError, ValidationError, ValueError):
+        raise InvalidKrThemeDayOpportunitySourceError from None
+
+
+def _parse_exact_opportunity(payload: str, opportunity_id: str) -> OpportunitySnapshot:
+    opportunities = tuple(OpportunitySnapshot.model_validate_json(line) for line in payload.splitlines() if line)
+    ids = tuple(item.opportunity_id for item in opportunities)
+    matches = tuple(item for item in opportunities if item.opportunity_id == opportunity_id)
+    if len(ids) != len(set(ids)) or len(matches) != 1:
+        raise InvalidKrThemeDayOpportunitySourceError
+    return matches[0]
 
 
 def kr_theme_day_opportunity_sha256(opportunity: OpportunitySnapshot) -> str:

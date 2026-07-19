@@ -5,7 +5,7 @@ from typing import assert_never
 from zoneinfo import ZoneInfo
 
 from trading_agent.experiment_ledger_models import TrialEventKind
-from trading_agent.experiment_ledger_store import ExperimentLedgerReader
+from trading_agent.experiment_ledger_store import InvalidExperimentLedgerSourceError
 from trading_agent.kis_kr_market_models import KisKrMarketReceipt, KisKrMarketReceiptKind
 from trading_agent.kis_kr_market_receipt_store import KisKrMarketReceiptStore
 from trading_agent.kr_theme_day_review_store import (
@@ -26,6 +26,7 @@ from trading_agent.kr_theme_day_trial import (
     require_exact_kr_theme_day_trial,
 )
 from trading_agent.kr_theme_day_trial_terminal_store import KrThemeDayTrialTerminalStore
+from trading_agent.private_experiment_ledger_snapshot import open_private_experiment_ledger_snapshot
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -35,44 +36,64 @@ def resolve_kr_theme_day_session_source_state(
     phase: KrThemeDaySessionPhase,
     cycle_key: str,
 ) -> KrThemeDaySessionSourceState:
+    return _resolve_source_state(manifest, phase, cycle_key, None)
+
+
+def resolve_kr_theme_day_session_source_state_at(
+    manifest: KrThemeDaySessionManifest,
+    phase: KrThemeDaySessionPhase,
+    cycle_key: str,
+    observed_through: dt.datetime,
+) -> KrThemeDaySessionSourceState:
+    if observed_through.tzinfo is None or observed_through.utcoffset() is None:
+        raise InvalidKrThemeDaySessionEvidenceError
+    return _resolve_source_state(manifest, phase, cycle_key, observed_through)
+
+
+def _resolve_source_state(
+    manifest: KrThemeDaySessionManifest,
+    phase: KrThemeDaySessionPhase,
+    cycle_key: str,
+    observed_through: dt.datetime | None,
+) -> KrThemeDaySessionSourceState:
     try:
         trial_refs = _trial_references(manifest, require_started=phase is not KrThemeDaySessionPhase.REGISTER)
         match phase:
             case KrThemeDaySessionPhase.REGISTER | KrThemeDaySessionPhase.START:
                 references = trial_refs
             case KrThemeDaySessionPhase.INTRADAY_COLLECT:
-                references = (*trial_refs, *_receipt_references(manifest, phase, cycle_key))
+                references = (*trial_refs, *_receipt_references(manifest, phase, cycle_key, observed_through))
             case KrThemeDaySessionPhase.INTRADAY_ENTRY:
                 cutoff = _phase_cutoff(manifest, phase, cycle_key)
                 references = (
                     *trial_refs,
-                    *_receipt_references(manifest, phase, cycle_key),
-                    *_entry_references(manifest, cutoff),
+                    *_receipt_references(manifest, phase, cycle_key, observed_through),
+                    *_entry_references(manifest, cutoff, observed_through),
                 )
             case KrThemeDaySessionPhase.INTRADAY_EXIT:
                 cutoff = _phase_cutoff(manifest, phase, cycle_key)
                 references = (
                     *trial_refs,
-                    *_receipt_references(manifest, phase, cycle_key),
-                    *_entry_references(manifest, cutoff),
-                    *_exit_references(manifest, cutoff),
+                    *_receipt_references(manifest, phase, cycle_key, observed_through),
+                    *_entry_references(manifest, cutoff, observed_through),
+                    *_exit_references(manifest, cutoff, observed_through),
                 )
             case KrThemeDaySessionPhase.EOD_COLLECT:
-                references = (*trial_refs, *_receipt_references(manifest, phase, cycle_key))
+                references = (*trial_refs, *_receipt_references(manifest, phase, cycle_key, observed_through))
             case KrThemeDaySessionPhase.EOD_EXIT:
                 cutoff = _phase_cutoff(manifest, phase, cycle_key)
                 references = (
                     *trial_refs,
-                    *_receipt_references(manifest, phase, cycle_key),
-                    *_entry_references(manifest, cutoff),
-                    *_exit_references(manifest, cutoff),
+                    *_receipt_references(manifest, phase, cycle_key, observed_through),
+                    *_entry_references(manifest, cutoff, observed_through),
+                    *_exit_references(manifest, cutoff, observed_through),
                 )
             case KrThemeDaySessionPhase.POST_SESSION:
                 references = (*trial_refs, *_post_session_references(manifest))
             case unreachable:
                 assert_never(unreachable)
         return kr_theme_day_session_source_state(tuple(sorted(references)))
-    except (AttributeError, TypeError, ValueError):
+    except (AttributeError, InvalidExperimentLedgerSourceError, TypeError, ValueError):
         raise InvalidKrThemeDaySessionEvidenceError from None
 
 
@@ -81,14 +102,14 @@ def _trial_references(
     *,
     require_started: bool,
 ) -> tuple[str, ...]:
-    ledger = ExperimentLedgerReader(manifest.paths.experiment_ledger)
     trial_id = kr_theme_day_trial_id(manifest.session_date, manifest.strategy_version)
-    trials = tuple(item for item in ledger.multi_market_trials() if item.registration.trial_id == trial_id)
-    if len(trials) != 1:
-        raise InvalidKrThemeDaySessionEvidenceError
-    require_exact_kr_theme_day_trial(ledger, trials[0].registration)
-    references = [f"trial:{trials[0].registration_key}"]
-    events = ledger.multi_market_trial_events(trial_id)
+    with open_private_experiment_ledger_snapshot(manifest.paths.experiment_ledger) as ledger:
+        trials = tuple(item for item in ledger.multi_market_trials() if item.registration.trial_id == trial_id)
+        if len(trials) != 1:
+            raise InvalidKrThemeDaySessionEvidenceError
+        require_exact_kr_theme_day_trial(ledger, trials[0].registration)
+        references = [f"trial:{trials[0].registration_key}"]
+        events = ledger.multi_market_trial_events(trial_id)
     if require_started:
         started = tuple(event for event in events if event.event.event_kind is TrialEventKind.STARTED)
         if len(started) != 1:
@@ -101,11 +122,14 @@ def _receipt_references(
     manifest: KrThemeDaySessionManifest,
     phase: KrThemeDaySessionPhase,
     cycle_key: str,
+    observed_through: dt.datetime | None,
 ) -> tuple[str, ...]:
     receipts = tuple(
         receipt
         for receipt in KisKrMarketReceiptStore(manifest.paths.receipt_store).receipts()
-        if receipt.symbol == manifest.symbol and _receipt_in_cycle(receipt, phase, cycle_key)
+        if receipt.symbol == manifest.symbol
+        and _receipt_in_cycle(receipt, phase, cycle_key)
+        and (observed_through is None or receipt.received_at <= observed_through)
     )
     expected = (
         {KisKrMarketReceiptKind.MINUTE_BARS}
@@ -142,13 +166,15 @@ def _receipt_in_cycle(
 def _entry_references(
     manifest: KrThemeDaySessionManifest,
     cutoff: dt.datetime,
+    observed_through: dt.datetime | None,
 ) -> tuple[str, ...]:
     trial_id = kr_theme_day_trial_id(manifest.session_date, manifest.strategy_version)
+    bounded = cutoff if observed_through is None else min(cutoff, observed_through)
     ids = tuple(
         sorted(
             entry.entry_id
             for entry in KrThemeDayShadowEntryStore(manifest.paths.entry_store).entries()
-            if entry.trial_id == trial_id and entry.filled_at.astimezone(KST) <= cutoff
+            if entry.trial_id == trial_id and entry.filled_at.astimezone(KST) <= bounded
         )
     )
     return (f"entry-count:{len(ids)}", *(f"entry:{value}" for value in ids))
@@ -157,13 +183,15 @@ def _entry_references(
 def _exit_references(
     manifest: KrThemeDaySessionManifest,
     cutoff: dt.datetime,
+    observed_through: dt.datetime | None,
 ) -> tuple[str, ...]:
     trial_id = kr_theme_day_trial_id(manifest.session_date, manifest.strategy_version)
+    bounded = cutoff if observed_through is None else min(cutoff, observed_through)
     ids = tuple(
         sorted(
             exit.exit_id
             for exit in KrThemeDayShadowExitStore(manifest.paths.exit_store).exits()
-            if exit.trial_id == trial_id and exit.evaluated_at.astimezone(KST) <= cutoff
+            if exit.trial_id == trial_id and exit.evaluated_at.astimezone(KST) <= bounded
         )
     )
     return (f"exit-count:{len(ids)}", *(f"exit:{value}" for value in ids))
@@ -182,8 +210,13 @@ def _phase_cutoff(
 
 def _post_session_references(manifest: KrThemeDaySessionManifest) -> tuple[str, ...]:
     trial_id = kr_theme_day_trial_id(manifest.session_date, manifest.strategy_version)
-    ledger = ExperimentLedgerReader(manifest.paths.experiment_ledger)
-    events = ledger.multi_market_trial_events(trial_id)
+    with open_private_experiment_ledger_snapshot(manifest.paths.experiment_ledger) as ledger:
+        events = ledger.multi_market_trial_events(trial_id)
+        lifecycle = tuple(
+            item
+            for item in ledger.multi_market_lifecycle_events(manifest.strategy_version)
+            if item.event.decision_session_date == manifest.session_date
+        )
     artifacts = tuple(
         item
         for item in KrThemeDayTrialTerminalStore(manifest.paths.terminal_store).artifacts()
@@ -193,11 +226,6 @@ def _post_session_references(manifest: KrThemeDaySessionManifest) -> tuple[str, 
         event
         for event in KrThemeDayReviewStore(manifest.paths.review_store).events()
         if event.strategy_version == manifest.strategy_version and event.as_of_session == manifest.session_date
-    )
-    lifecycle = tuple(
-        item
-        for item in ledger.multi_market_lifecycle_events(manifest.strategy_version)
-        if item.event.decision_session_date == manifest.session_date
     )
     if len(events) != 2 or len(artifacts) != 1 or len(reviews) != 1 or not lifecycle:
         raise InvalidKrThemeDaySessionEvidenceError

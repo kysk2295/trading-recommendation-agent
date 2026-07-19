@@ -15,6 +15,7 @@ from trading_agent.private_immutable_file import (
     publish_private_immutable_text,
     read_private_text,
 )
+from trading_agent.private_query_file import read_private_text_query_only
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -148,13 +149,24 @@ def write_kr_theme_day_session_manifest(path: Path, manifest: KrThemeDaySessionM
 def load_kr_theme_day_session_manifest(path: Path) -> KrThemeDaySessionManifest:
     try:
         target = path.expanduser().absolute()
-        payload = read_private_text(target)
-        manifest = KrThemeDaySessionManifest.model_validate_json(payload)
-        if payload != _canonical(manifest) + "\n":
-            raise InvalidKrThemeDaySessionManifestError
-        return manifest
+        return _parse_manifest(read_private_text(target))
     except (OSError, TypeError, UnicodeError, ValidationError, ValueError):
         raise InvalidKrThemeDaySessionManifestError from None
+
+
+def load_kr_theme_day_session_manifest_query_only(path: Path) -> KrThemeDaySessionManifest:
+    try:
+        target = path.expanduser().absolute()
+        return _parse_manifest(read_private_text_query_only(target))
+    except (OSError, TypeError, UnicodeError, ValidationError, ValueError):
+        raise InvalidKrThemeDaySessionManifestError from None
+
+
+def _parse_manifest(payload: str) -> KrThemeDaySessionManifest:
+    manifest = KrThemeDaySessionManifest.model_validate_json(payload)
+    if payload != _canonical(manifest) + "\n":
+        raise InvalidKrThemeDaySessionManifestError
+    return manifest
 
 
 def _session_id(manifest: KrThemeDaySessionManifest) -> str:

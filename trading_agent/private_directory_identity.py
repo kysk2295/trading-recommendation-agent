@@ -59,5 +59,15 @@ def require_private_directory(descriptor: int) -> None:
     os.fchmod(descriptor, _DIRECTORY_MODE)
 
 
+def require_private_directory_query_only(descriptor: int) -> None:
+    metadata = os.fstat(descriptor)
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != _DIRECTORY_MODE
+    ):
+        raise InvalidPrivateDirectoryIdentityError
+
+
 def _directory_open_flags() -> int:
     return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
