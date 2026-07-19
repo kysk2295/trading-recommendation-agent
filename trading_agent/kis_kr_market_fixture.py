@@ -4,11 +4,12 @@ import datetime as dt
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Self, final, override
+from typing import Literal, Self, assert_never, final, override
 
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from trading_agent.kis_kr_market_client import KisKrMarketFetchRequest
+from trading_agent.kis_kr_market_collection import KisKrMarketCollectionPhase
 from trading_agent.kis_kr_market_models import (
     KisKrMarketReceipt,
     KisKrMarketReceiptKind,
@@ -45,6 +46,7 @@ class KisKrMarketFixtureManifest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     schema_version: Literal[1] = 1
+    phase: KisKrMarketCollectionPhase
     symbol: str
     requested_at: dt.datetime
     receipts: tuple[KisKrMarketFixtureReceipt, ...]
@@ -52,10 +54,17 @@ class KisKrMarketFixtureManifest(BaseModel):
     @model_validator(mode="after")
     def validate_manifest(self) -> Self:
         kinds = tuple(item.kind for item in self.receipts)
+        match self.phase:
+            case KisKrMarketCollectionPhase.INTRADAY:
+                expected = set(KisKrMarketReceiptKind)
+            case KisKrMarketCollectionPhase.EOD_MINUTE:
+                expected = {KisKrMarketReceiptKind.MINUTE_BARS}
+            case unreachable:
+                assert_never(unreachable)
         if (
             not is_kr_instrument_symbol_v2(self.symbol)
             or not _aware(self.requested_at)
-            or set(kinds) != set(KisKrMarketReceiptKind)
+            or set(kinds) != expected
             or len(kinds) != len(set(kinds))
             or any(item.received_at < self.requested_at for item in self.receipts)
         ):

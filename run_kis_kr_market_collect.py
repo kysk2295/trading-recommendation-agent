@@ -10,7 +10,9 @@ import argparse
 import datetime as dt
 import sqlite3
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
+from typing import assert_never
 
 import httpx2
 from pydantic import ValidationError
@@ -31,6 +33,7 @@ from trading_agent.kis_kr_market_client import (
 )
 from trading_agent.kis_kr_market_collection import (
     InvalidKisKrMarketCollectionError,
+    KisKrMarketCollectionPhase,
     KisKrMarketCollectionRequest,
     KisKrMarketCollectionResult,
     collect_kis_kr_market_receipts,
@@ -49,11 +52,20 @@ from trading_agent.kis_kr_session_calendar_store import (
 )
 from trading_agent.kr_session_runtime_gate import (
     InvalidKrSessionRuntimeError,
+    require_open_kr_eod_session,
     require_open_kr_runtime_session,
 )
 from trading_agent.private_report import write_private_report
 
 REPORT_NAME = "kis_kr_market_collection_ko.md"
+
+
+@dataclass(frozen=True, slots=True)
+class _CollectionReport:
+    status: str
+    provider_mode: str
+    phase: KisKrMarketCollectionPhase
+    result: KisKrMarketCollectionResult | None
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -64,24 +76,26 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--receipt-store", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--fixture-manifest", type=Path)
+    parser.add_argument("--eod-minute", action="store_true")
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     provider_mode = "production"
+    phase = KisKrMarketCollectionPhase.EOD_MINUTE if args.eod_minute else KisKrMarketCollectionPhase.INTRADAY
     try:
         if args.fixture_manifest is not None:
             provider_mode = "fixture"
             loaded = load_kis_kr_market_fixture(args.fixture_manifest)
-            if loaded.manifest.symbol != args.symbol:
+            if loaded.manifest.symbol != args.symbol or loaded.manifest.phase is not phase:
                 raise InvalidKisKrMarketFixtureError
             observed_at = loaded.manifest.requested_at
             session_date = _session_date(args, observed_at)
             result = collect_kis_kr_market_receipts(
                 loaded.fetcher,
                 KisKrMarketReceiptStore(args.receipt_store),
-                KisKrMarketCollectionRequest(args.symbol, session_date, lambda: observed_at),
+                KisKrMarketCollectionRequest(args.symbol, session_date, lambda: observed_at, phase),
             )
         else:
             observed_at = _current_time()
@@ -92,7 +106,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 result = collect_kis_kr_market_receipts(
                     KisKrMarketClient(http_client, credentials, token),
                     KisKrMarketReceiptStore(args.receipt_store),
-                    KisKrMarketCollectionRequest(args.symbol, session_date, _current_time),
+                    KisKrMarketCollectionRequest(args.symbol, session_date, _current_time, phase),
                 )
     except (
         FileNotFoundError,
@@ -115,9 +129,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         ValidationError,
         ValueError,
     ):
-        _write_report(args.output_dir, "blocked", provider_mode, None)
+        _write_report(args.output_dir, _CollectionReport("blocked", provider_mode, phase, None))
         return 1
-    _write_report(args.output_dir, "complete", provider_mode, result)
+    _write_report(args.output_dir, _CollectionReport("complete", provider_mode, phase, result))
     return 0
 
 
@@ -129,7 +143,14 @@ def _session_date(args: argparse.Namespace, observed_at: dt.datetime) -> dt.date
     )
     if len(matches) != 1:
         raise InvalidKrSessionRuntimeError
-    return require_open_kr_runtime_session(matches[0], observed_at)
+    phase = KisKrMarketCollectionPhase.EOD_MINUTE if args.eod_minute else KisKrMarketCollectionPhase.INTRADAY
+    match phase:
+        case KisKrMarketCollectionPhase.INTRADAY:
+            return require_open_kr_runtime_session(matches[0], observed_at)
+        case KisKrMarketCollectionPhase.EOD_MINUTE:
+            return require_open_kr_eod_session(matches[0], observed_at)
+        case unreachable:
+            assert_never(unreachable)
 
 
 def _current_time() -> dt.datetime:
@@ -138,14 +159,15 @@ def _current_time() -> dt.datetime:
 
 def _write_report(
     output_dir: Path,
-    status: str,
-    provider_mode: str,
-    result: KisKrMarketCollectionResult | None,
+    report: _CollectionReport,
 ) -> None:
     counts = (
         ()
-        if result is None
-        else (f"receipt 신규/재사용: {result.created_count}/{result.receipt_count - result.created_count}",)
+        if report.result is None
+        else (
+            "receipt 신규/재사용: "
+            f"{report.result.created_count}/{report.result.receipt_count - report.result.created_count}",
+        )
     )
     write_private_report(
         output_dir / REPORT_NAME,
@@ -155,8 +177,9 @@ def _write_report(
                 "",
                 "> current-session GET-only raw evidence; account와 주문 endpoint를 호출하지 않습니다.",
                 "",
-                f"- 결과: {status}",
-                f"- provider mode: {provider_mode}",
+                f"- 결과: {report.status}",
+                f"- provider mode: {report.provider_mode}",
+                f"- collection phase: {report.phase.value}",
                 *(f"- {item}" for item in counts),
                 "- order authority: false",
                 "- external mutation: 0",

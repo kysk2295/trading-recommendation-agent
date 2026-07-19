@@ -12,6 +12,8 @@ production adapter는 기존 exact live origin, no redirect 정책 아래 다음
 
 국내 account, balance, position, order endpoint와 mutation은 없다.
 
+`--eod-minute`는 같은 official open day의 KST 15:30 이상 15:31 미만에만 15:29 마지막 완료 분봉 GET 하나를 허용한다. 이 phase에서는 현재가와 호가를 요청하지 않으며 응답에 exact 15:29 row가 없으면 raw 보존 뒤 차단한다.
+
 ## raw-first 부분 실패
 
 각 provider response는 status/body parsing보다 먼저 `KisKrMarketReceiptStore`에 append한다. 이후 kind/symbol/time binding, HTTP 200, provider `rt_cd=0` 또는 payload shape 검증이 실패해도 이미 받은 raw bytes를 삭제하지 않는다. exact 재시작은 같은 logical receipt를 재사용하고 다른 payload는 conflict다.

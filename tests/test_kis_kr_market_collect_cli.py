@@ -11,7 +11,9 @@ import pytest
 
 import run_kis_kr_market_collect as collect_cli
 from tests.test_kis_kr_market_projection import (
+    _json_body,
     _minute_body,
+    _minute_row,
     _price_body,
     _quote_body,
 )
@@ -108,6 +110,26 @@ def test_collect_cli_blocks_closed_session_before_credentials(
     assert not receipt_store.exists()
 
 
+def test_collect_cli_eod_fixture_fetches_minute_only(tmp_path: Path) -> None:
+    fixture = _eod_fixture(tmp_path)
+    calendar_store, snapshot_id = _calendar_store(tmp_path)
+    receipt_store = tmp_path / "eod.sqlite3"
+    output = tmp_path / "eod-report"
+
+    result = collect_cli.main(
+        (
+            *_args(fixture, calendar_store, snapshot_id, receipt_store, output),
+            "--eod-minute",
+        )
+    )
+
+    report = (output / "kis_kr_market_collection_ko.md").read_text(encoding="utf-8")
+    assert result == 0
+    assert len(KisKrMarketReceiptStore(receipt_store).receipts()) == 1
+    assert "receipt 신규/재사용: 1/0" in report
+    assert "collection phase: eod_minute" in report
+
+
 def _fixture(tmp_path: Path) -> Path:
     payloads = {
         "minute.json": _minute_body(),
@@ -121,6 +143,7 @@ def _fixture(tmp_path: Path) -> Path:
         json.dumps(
             {
                 "schema_version": 1,
+                "phase": "intraday",
                 "symbol": "005930",
                 "requested_at": "2026-07-20T09:04:01+09:00",
                 "receipts": [
@@ -153,6 +176,38 @@ def _calendar_store(tmp_path: Path) -> tuple[Path, str]:
     receipt, snapshot = _calendar_evidence()
     assert store.append(receipt, snapshot) is True
     return store.path, snapshot.snapshot_id
+
+
+def _eod_fixture(tmp_path: Path) -> Path:
+    (tmp_path / "eod-minute.json").write_bytes(
+        _json_body(
+            {
+                "output1": {},
+                "output2": [_minute_row("152900", "100", "101", "99", "100", "100", "10000")],
+            }
+        )
+    )
+    manifest = tmp_path / "eod-fixture.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "phase": "eod_minute",
+                "symbol": "005930",
+                "requested_at": "2026-07-20T15:30:05+09:00",
+                "receipts": [
+                    {
+                        "kind": "minute_bars",
+                        "received_at": "2026-07-20T15:30:06+09:00",
+                        "payload_path": "eod-minute.json",
+                    }
+                ],
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return manifest
 
 
 def _args(

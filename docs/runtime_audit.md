@@ -818,3 +818,11 @@
 - 운영 gate: root CLI는 명시한 official calendar snapshot ID에서 현재 session row를 다시 검증하고 KST 09:01 이상 15:30 미만일 때만 credential/token/client로 진행한다. kernel도 매 GET 전에 session date/time을 다시 확인해 장중 시작 후 close를 넘긴 다음 요청을 차단한다.
 - fixture와 권한: fixture manifest는 exact 세 kind, symbol, requested/received time과 repository 밖 탈출 없는 relative raw file을 요구한다. production은 기존 official live-origin/no-redirect KIS client만 사용하며 account, balance, position, order endpoint를 import하거나 호출하지 않는다.
 - 결과: 정상/replay, 두 번째 transport failure의 첫 raw 보존, 폐장 전 fetch 0, wrong-calendar store 0, credential loader fault injection과 actual fixture CLI를 focused 7개로 확인했다. 전체 2733 tests와 정적 게이트가 통과했다. 일요일 actual production 실행은 credential·network·receipt 0으로 blocked 됐다.
+
+## H115: 15:30 전에 collector를 닫으면 마지막 봉과 time exit를 확정할 수 없다
+
+- 결함: intraday collection window가 15:30 미만이고 분봉 요청은 직전 완료 minute를 사용하므로 마지막 15:29~15:30 봉은 어떤 정상 cycle에서도 수집되지 않았다. 이 상태에서 장후 terminal을 실행하면 열린 entry가 항상 censored가 되거나 불완전 마지막 close를 time exit로 오인할 수 있었다.
+- EOD 수집: 별도 `eod_minute` phase는 official open day의 15:30 이상 15:31 미만에 minute-bars kind 하나만 요청하고 minute end를 15:29로 고정한다. 현재가·호가 request는 만들지 않는다. raw bytes를 먼저 append한 뒤 provider rows 중 exact requested minute가 없으면 blocked로 닫는다.
+- exit child: trial의 entry와 기존 exit를 먼저 완전 재생하고 terminal entry는 skip한다. open entry마다 같은 symbol/session/evaluated time 이전 minute receipts를 projection하고 filled time의 minute ceiling부터 잘라 기존 stop-first, first target, 15:30 time-exit kernel에 전달한다. terminal이 없는 경로는 pending이며 exit store를 만들지 않는다.
+- 재시작: 이미 exit가 있는 entry는 새 evaluated time이나 이후 bars로 재계산하지 않으므로 immutable evaluated-at conflict가 생기지 않는다. exit store에 trial entry와 연결되지 않은 terminal이 있으면 전체 cycle을 차단한다.
+- 결과: EOD minute-only/wrong-minute raw 보존, target exit, pending path, terminal skip replay와 actual child CLI를 focused 7개 및 관련 26개로 확인했다. 전체 2740 tests와 정적 게이트가 통과했고 production provider network·credential과 국내 broker mutation은 0건이다.
