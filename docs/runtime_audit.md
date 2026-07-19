@@ -704,3 +704,9 @@
 - 수정: projector 입력을 exact manifest와 허용된 reobserved snapshot의 frozen 요청으로 묶고 atomic `append_for_manifest()`를 호출한다. creation builder는 artifact 평가시각이 manifest snapshot과 같은 completed-minute reobservation인지 검증하며 dispatcher는 connector 전에 artifact와 creation history를 모두 재생한다.
 - verifier: creation이 있으면 exact manifest ID와 digest receipt를 source로 고정한다. current parent manifest binding만 `new`, 더 이른 binding만 `replay`이며 같은 minute의 다른 manifest, 미래 binding과 receipt 결손은 차단한다. creation 없는 legacy v1 artifact는 backfill하지 않고 기존 보수적 terminal-time 분류를 유지한다.
 - 결과: same-minute wrong-manifest creation fault injection이 수정 전 통과하고 수정 후 차단됨을 확인했다. 관련 41개와 전체 2578 tests, Ruff, basedpyright 0/0, compileall, no-excuse가 통과했으며 실제 provider·credential·account/order mutation은 0건이다.
+
+## H99: KR theme Opportunity 뒤의 시장제약이 unknown을 정상으로 간주할 수 있다
+
+- 결함: KR catalyst와 Opportunity projection은 구현됐지만 day shadow 진입 전에 상한가·VI·단일가·거래정지·투자지정과 현재 호가를 하나의 시점 고정 계약으로 요구하는 gate가 없었다. adapter 결손을 기본 정상값으로 채우면 체결 불가능 후보가 신호로 올라갈 수 있었다.
+- 수정: raw price/limit/quote와 canonical evidence reference, session·VI·trading mode·halt·designation의 explicit unknown 상태를 가진 frozen snapshot을 추가했다. pure gate가 5초 freshness, future evidence, +27% 근접, 상·하한가와 unusable quote까지 deterministic reason으로 평가한다.
+- 결과: clear evidence만 `eligible`이며 각 active/unknown 상태는 fail-closed다. focused 14개와 전체 2592 tests, 정적 게이트 및 최소 드라이버가 통과했다. 아직 provider adapter·TradeSignal·shadow fill은 없고 국내 주문·계좌 및 외부 network mutation은 0건이다.

@@ -8,6 +8,7 @@
 
 - KIS 읽기 전용 인증·랭킹·분봉 연결 완료
 - KIS 국내 KRX 등락률·거래량 순위의 current-date raw-first `kis_ranking` source run과 restart no-network CLI 구현
+- KR day shadow 앞의 provider-neutral market gate가 session·VI·단일가·거래정지·투자지정, 가격제한과 5초 quote evidence를 모두 요구하며 unknown을 fail-closed한다. LS/KIS 실시간 adapter와 TradeSignal/shadow fill 연결은 아직 남아 있다.
 - OpenDART `opendart-list-v2` date-bound terminal replay preflight 구현. 정확한 terminal source run이면 fixture·자격증명·HTTP를 열지 않고, 날짜나 adapter 계약이 다르면 fetch 전에 차단
 - 숫자 전용 `volume_surge` v1 replay를 유지하면서 실제 KIS 단축코드 `[0-9A-Z]{6}`와 행별 upstream catalyst ID를 보존하는 v2 계약 구현
 - 저장된 같은-cycle KIS 거래량 evidence만 읽어 canonical `volume_surge` v2 catalyst·observation·receipt-free derived terminal run을 append하는 DB-only 상태기계와 CLI 구현
