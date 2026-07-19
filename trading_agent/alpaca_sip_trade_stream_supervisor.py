@@ -27,9 +27,11 @@ class AlpacaSipTradeStreamSupervisorError(RuntimeError):
 class AlpacaSipSupervisorStatus(StrEnum):
     READY = "ready"
     BLOCKED = "blocked"
+    STOPPED = "stopped"
 
 
 class AlpacaSipSupervisorStopReason(StrEnum):
+    GRACEFUL_SHUTDOWN = "graceful_shutdown"
     NON_RETRYABLE_FAILURE = "non_retryable_failure"
     RETRY_BUDGET_EXHAUSTED = "retry_budget_exhausted"
 
@@ -78,6 +80,7 @@ def run_alpaca_sip_trade_stream_supervisor(
     policy: AlpacaSipReconnectPolicy,
     *,
     sleeper: Callable[[float], None],
+    shutdown_requested: Callable[[], bool] = lambda: False,
 ) -> AlpacaSipSupervisorResult:
     if (
         not callable(operation)
@@ -85,6 +88,7 @@ def run_alpaca_sip_trade_stream_supervisor(
         or type(controls) is not AlpacaSipTradeStreamStore
         or type(policy) is not AlpacaSipReconnectPolicy
         or not callable(sleeper)
+        or not callable(shutdown_requested)
     ):
         raise AlpacaSipTradeStreamSupervisorError
     operation_count = 0
@@ -92,6 +96,8 @@ def run_alpaca_sip_trade_stream_supervisor(
         attempts = controls.load_connection_attempts(config)
         sessions = controls.load_session_history(config)
         total = len(attempts) + len(sessions)
+        if shutdown_requested():
+            return _stopped(operation_count, total)
         completed_epoch = _latest_completed_epoch(attempts, sessions)
         if completed_epoch is not None:
             return _ready(operation_count, total, completed_epoch)
@@ -106,6 +112,8 @@ def run_alpaca_sip_trade_stream_supervisor(
                 return _blocked(operation_count, total, AlpacaSipSupervisorStopReason.NON_RETRYABLE_FAILURE)
             if total >= policy.max_connections_per_market_date:
                 return _blocked(operation_count, total, AlpacaSipSupervisorStopReason.RETRY_BUDGET_EXHAUSTED)
+            if shutdown_requested():
+                return _stopped(operation_count, total)
             sleeper(policy.base_backoff_seconds * 2 ** (operation_count - 1))
             continue
         current_attempts = controls.load_connection_attempts(config)
@@ -200,6 +208,17 @@ def _blocked(
     )
 
 
+def _stopped(operation_count: int, total: int) -> AlpacaSipSupervisorResult:
+    return AlpacaSipSupervisorResult(
+        AlpacaSipSupervisorStatus.STOPPED,
+        AlpacaSipSupervisorStopReason.GRACEFUL_SHUTDOWN,
+        operation_count,
+        total,
+        None,
+        False,
+    )
+
+
 def _valid_result(result: AlpacaSipSupervisorResult) -> bool:
     match result.status:
         case AlpacaSipSupervisorStatus.READY:
@@ -211,6 +230,12 @@ def _valid_result(result: AlpacaSipSupervisorResult) -> bool:
         case AlpacaSipSupervisorStatus.BLOCKED:
             return (
                 type(result.stop_reason) is AlpacaSipSupervisorStopReason
+                and result.final_connection_epoch is None
+                and not result.continuity_attested
+            )
+        case AlpacaSipSupervisorStatus.STOPPED:
+            return (
+                result.stop_reason is AlpacaSipSupervisorStopReason.GRACEFUL_SHUTDOWN
                 and result.final_connection_epoch is None
                 and not result.continuity_attested
             )

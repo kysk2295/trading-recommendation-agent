@@ -31,7 +31,12 @@ from trading_agent.alpaca_sip_trade_stream_store import AlpacaSipTradeStreamStor
 from trading_agent.alpaca_sip_trade_stream_supervisor import (
     AlpacaSipReconnectPolicy,
     AlpacaSipTradeStreamSupervisorError,
-    run_alpaca_sip_trade_stream_supervisor,
+)
+from trading_agent.alpaca_sip_trade_stream_supervisor_audit import (
+    run_audited_alpaca_sip_trade_stream_supervisor,
+)
+from trading_agent.alpaca_sip_trade_stream_supervisor_audit_store import (
+    AlpacaSipSupervisorAuditStore,
 )
 
 _DATE = dt.date(2026, 7, 17)
@@ -59,6 +64,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         description="Run a local bounded Alpaca SIP reconnect supervisor without network or credentials."
     )
     parser.add_argument("--state-dir", required=True, type=Path)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--shutdown-before-operation", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -72,6 +79,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             controls,
             AlpacaSipTradeHistoryStore(state_dir / "trades.sqlite3"),
         )
+        audit = AlpacaSipSupervisorAuditStore(state_dir / "supervisor-audit.sqlite3")
         calls = 0
 
         def operation() -> str:
@@ -89,15 +97,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return stream.connection_epoch
 
         sleeps: list[float] = []
-        result = run_alpaca_sip_trade_stream_supervisor(
+        result = run_audited_alpaca_sip_trade_stream_supervisor(
             operation,
             config,
             controls,
             AlpacaSipReconnectPolicy(3, 1.0),
+            run_id=args.run_id,
+            audit_store=audit,
+            clock=iter(_times(8, offset=dt.timedelta(0))).__next__,
             sleeper=sleeps.append,
+            shutdown_requested=lambda: args.shutdown_before_operation,
         )
+        audit_events = audit.events(args.run_id)
         summary = {
             "attempt_count": len(controls.load_connection_attempts(config)),
+            "audit_event_count": len(audit_events),
+            "audit_terminal_kind": audit_events[-1].kind.value,
             "continuity_attested": result.continuity_attested,
             "network_request_count": 0,
             "operation_count": result.operation_count,

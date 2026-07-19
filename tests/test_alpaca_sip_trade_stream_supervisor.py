@@ -202,6 +202,37 @@ def test_supervisor_when_provider_internal_error_recovers_retries_once(tmp_path:
     assert controls.load_connection_attempts(_CONFIG)[0].failure_code.value == "provider_internal_error"
 
 
+def test_supervisor_when_shutdown_is_requested_stops_before_operation(tmp_path: Path) -> None:
+    # Given
+    controls = AlpacaSipTradeStreamStore(tmp_path / "stream.sqlite3")
+    calls = 0
+    sleeps: list[float] = []
+
+    def operation() -> str:
+        nonlocal calls
+        calls += 1
+        raise AssertionError
+
+    # When
+    result = supervisor_module.run_alpaca_sip_trade_stream_supervisor(
+        operation,
+        _CONFIG,
+        controls,
+        supervisor_module.AlpacaSipReconnectPolicy(3, 1.0),
+        sleeper=sleeps.append,
+        shutdown_requested=lambda: True,
+    )
+
+    # Then
+    assert result.status.value == "stopped"
+    assert result.stop_reason is not None
+    assert result.stop_reason.value == "graceful_shutdown"
+    assert result.operation_count == 0
+    assert result.total_connection_count == 0
+    assert calls == 0
+    assert sleeps == []
+
+
 class _ConnectionLimitConnection:
     __slots__ = ("final_url",)
 

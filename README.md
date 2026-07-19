@@ -116,6 +116,8 @@ flowchart LR
 
 **2026-07-19 Alpaca SIP bounded reconnect supervisor 업데이트:** 같은 symbol/date의 failed attempt와 terminal session을 합친 durable connection budget을 최대 3회로 제한한다. transport·handshake·provider 500 internal error와 준비된 session의 transport disconnect만 1초·2초 bounded backoff로 새 epoch에서 재시도하고, 402·406·409·endpoint·protocol/provider rejection은 즉시 중단한다. 프로세스 재시작도 기존 원장의 connection 수를 다시 읽으므로 budget을 초기화하지 않으며, 최신 evidence가 bounded complete면 operation 0회로 재사용한다. 실패 뒤 성공해도 epoch 사이 continuity는 false다. local CLI E2E는 handshake→새 epoch 성공과 재실행 no-op을 network 0건으로 확인했으며 전체 **2381 tests**가 통과했다.
 
+**2026-07-19 Alpaca SIP supervisor lifecycle audit 업데이트:** supervisor 실행마다 명시적 64자리 `run_id` 아래 `started → connecting → retry_scheduled → ready|blocked|stopped` 상태를 별도 mode-600 append-only SQLite에 기록한다. 각 이벤트는 실행 내 sequence와 이전 event ID를 포함한 content hash chain이며 payload·row hash·schema·소유자·mode·symlink를 읽을 때 다시 검증한다. shutdown 요청은 새 연결 또는 backoff 전에 `graceful_shutdown`으로 종료하고 terminal audit을 남긴다. local fixture는 handshake 복구, 완료 세션 재실행 no-op, 연결 전 정상 종료와 payload 변조 차단을 모두 network 0건으로 확인했으며 전체 **2386 tests**가 통과했다.
+
 ```bash
 uv run python run_alpaca_sip_trade_stream_smoke.py \
   --instrument-id us-equity-aapl \
