@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import signal
+import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
+from types import FrameType
 
 import httpx2
 
@@ -55,6 +59,7 @@ def main(
     clock: Callable[[], dt.datetime] | None = None,
     sleeper: Callable[[float], None] = time.sleep,
     client_factory: Callable[[], httpx2.Client] = cycle_cli.create_data_client,
+    shutdown_requested: Callable[[], bool] = lambda: False,
 ) -> int:
     args = parse_args(argv)
     selected_clock = (lambda: dt.datetime.now(dt.UTC)) if clock is None else clock
@@ -84,11 +89,24 @@ def main(
             clock=selected_clock,
             sleeper=sleeper,
             writer=RuntimeMinuteSupervisorStore(args.supervisor_store),
+            shutdown_requested=shutdown_requested,
         )
     except (OSError, RuntimeMinuteSupervisorError, TypeError, ValueError):
         _report(args.output_dir, ("result: blocked", "account/order mutation: 0"))
         return 1
     ready_count = sum(item.status is RuntimeSupervisorStatus.READY for item in records)
+    if shutdown_requested():
+        _report(
+            args.output_dir,
+            (
+                "result: stopped",
+                f"attempt count: {len(records)}",
+                f"ready count: {ready_count}",
+                f"blocked count: {len(records) - ready_count}",
+                "account/order mutation: 0",
+            ),
+        )
+        return 0
     all_ready = bool(records) and ready_count == len(records)
     _report(
         args.output_dir,
@@ -146,5 +164,38 @@ def _report(output_dir: Path, details: tuple[str, ...]) -> None:
     write_private_report(output_dir / REPORT_NAME, content)
 
 
+class _ShutdownController:
+    __slots__ = ("_event",)
+
+    def __init__(self) -> None:
+        self._event = threading.Event()
+
+    def request(self, _signum: int, _frame: FrameType | None) -> None:
+        self._event.set()
+
+    def requested(self) -> bool:
+        return self._event.is_set()
+
+    def sleep(self, seconds: float) -> None:
+        _ = self._event.wait(seconds)
+
+
+@contextmanager
+def _shutdown_signals() -> Iterator[_ShutdownController]:
+    controller = _ShutdownController()
+    previous_interrupt = signal.signal(signal.SIGINT, controller.request)
+    previous_terminate = signal.signal(signal.SIGTERM, controller.request)
+    try:
+        yield controller
+    finally:
+        _ = signal.signal(signal.SIGINT, previous_interrupt)
+        _ = signal.signal(signal.SIGTERM, previous_terminate)
+
+
+def _main_with_signals() -> int:
+    with _shutdown_signals() as shutdown:
+        return main(sleeper=shutdown.sleep, shutdown_requested=shutdown.requested)
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_main_with_signals())

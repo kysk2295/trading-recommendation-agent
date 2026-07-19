@@ -80,6 +80,32 @@ def test_session_close_stops_before_another_operation(tmp_path: Path) -> None:
     assert calls == [dt.datetime(2026, 7, 17, 15, 59, tzinfo=NY)]
 
 
+def test_shutdown_after_cycle_stops_before_wait_or_next_operation(tmp_path: Path) -> None:
+    requested = False
+    calls: list[dt.datetime] = []
+    waits: list[float] = []
+    times = iter((START, START + dt.timedelta(seconds=1)))
+
+    def operation(value: dt.datetime) -> RuntimeSupervisorOperationResult:
+        nonlocal requested
+        calls.append(value)
+        requested = True
+        return RuntimeSupervisorOperationResult("e" * 64, True)
+
+    records = run_runtime_minute_supervisor(
+        operation,
+        RuntimeMinuteSupervisorConfig(3, 60.0),
+        clock=lambda: next(times),
+        sleeper=waits.append,
+        writer=RuntimeMinuteSupervisorStore(tmp_path / "supervisor.sqlite3"),
+        shutdown_requested=lambda: requested,
+    )
+
+    assert len(records) == 1
+    assert calls == [START]
+    assert waits == []
+
+
 def test_tampered_supervisor_payload_fails_replay(tmp_path: Path) -> None:
     store = RuntimeMinuteSupervisorStore(tmp_path / "supervisor.sqlite3")
     times = iter((START, START + dt.timedelta(seconds=1)))

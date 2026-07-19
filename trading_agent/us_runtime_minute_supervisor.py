@@ -75,10 +75,13 @@ def run_runtime_minute_supervisor(
     clock: Callable[[], dt.datetime],
     sleeper: Callable[[float], None],
     writer: RuntimeSupervisorRecordWriter,
+    shutdown_requested: Callable[[], bool] = lambda: False,
 ) -> tuple[RuntimeMinuteSupervisorRecord, ...]:
-    _validate_runtime(operation, config, clock, sleeper, writer)
+    _validate_runtime(operation, config, clock, sleeper, writer, shutdown_requested)
     records: list[RuntimeMinuteSupervisorRecord] = []
     for offset in range(config.cycles):
+        if shutdown_requested():
+            break
         started_at = clock()
         if not _in_regular_session(started_at):
             break
@@ -105,6 +108,8 @@ def run_runtime_minute_supervisor(
         _ = writer.append(record)
         records.append(record)
         if offset + 1 < config.cycles:
+            if shutdown_requested():
+                break
             sleeper(config.interval_seconds)
     return tuple(records)
 
@@ -174,7 +179,7 @@ def record_from_bytes(value: bytes) -> RuntimeMinuteSupervisorRecord:
         raise RuntimeMinuteSupervisorError from None
 
 
-def _validate_runtime(operation, config, clock, sleeper, writer) -> None:
+def _validate_runtime(operation, config, clock, sleeper, writer, shutdown_requested) -> None:
     if (
         not callable(operation)
         or type(config) is not RuntimeMinuteSupervisorConfig
@@ -185,6 +190,7 @@ def _validate_runtime(operation, config, clock, sleeper, writer) -> None:
         or not callable(clock)
         or not callable(sleeper)
         or not callable(getattr(writer, "append", None))
+        or not callable(shutdown_requested)
     ):
         raise RuntimeMinuteSupervisorError
 

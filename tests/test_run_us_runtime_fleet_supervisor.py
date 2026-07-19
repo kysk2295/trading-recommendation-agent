@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import signal
 from pathlib import Path
 
 import httpx2
@@ -71,6 +72,33 @@ def test_closed_session_stops_before_secret_or_cycle_io(tmp_path: Path) -> None:
     assert code == 1
     assert not (tmp_path / "supervisor.sqlite3").exists()
     assert not (tmp_path / "audit.sqlite3").exists()
+
+
+def test_shutdown_request_stops_before_secret_or_cycle_io(tmp_path: Path) -> None:
+    code = cli.main(
+        _arguments(tmp_path, tmp_path / "missing.sqlite3", tmp_path / "missing.env"),
+        clock=lambda: NOW,
+        sleeper=lambda _seconds: (_ for _ in ()).throw(AssertionError),
+        shutdown_requested=lambda: True,
+    )
+
+    assert code == 0
+    assert not (tmp_path / "supervisor.sqlite3").exists()
+    assert not (tmp_path / "audit.sqlite3").exists()
+    report = (tmp_path / "report" / cli.REPORT_NAME).read_text(encoding="utf-8")
+    assert "result: stopped" in report
+    assert "account/order mutation: 0" in report
+
+
+def test_shutdown_signal_marks_controller_requested() -> None:
+    previous = signal.getsignal(signal.SIGTERM)
+
+    with cli._shutdown_signals() as shutdown:
+        signal.raise_signal(signal.SIGTERM)
+        assert shutdown.requested() is True
+        shutdown.sleep(60.0)
+
+    assert signal.getsignal(signal.SIGTERM) == previous
 
 
 def test_two_cycle_soak_reloads_scanner_and_reuses_historical_cache(tmp_path: Path) -> None:
