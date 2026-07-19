@@ -86,7 +86,9 @@ flowchart LR
 
 **2026-07-19 multi-market research ledger 업데이트:** global experiment ledger schema v4에 exact `StrategyLaneRef`를 사용하는 append-only multi-market hypothesis와 strategy version을 추가했다. v1~v3 행은 재작성하지 않고 다음 Writer에서 v4 객체만 원자적으로 더한다. 첫 연결은 `kr_equities/opportunity_manager/theme_momentum`이며 code-coupled version과 `shadow` 운영모드를 사전등록해야만 KR keyword projection이 Opportunity을 만들 수 있다. 이 권한은 ranked Opportunity까지만 허용하고 KR TradeSignal, shadow fill, lifecycle promotion, 국내 계좌·주문은 열지 않는다.
 
-**2026-07-19 KR day shadow signal 업데이트:** `kr_equities/day_trading/theme_leader_vwap_reclaim` 순수 신호 커널을 추가했다. exact KR theme Opportunity의 rank-1 대장주와 별도 완료봉 규칙 setup, 5초 이내 session·VI·단일가·거래정지·투자지정·가격제한·호가 snapshot을 모두 대사한다. blocked gate는 이유만 보존하고, spread와 손절·목표까지 통과할 때만 현재 ask 기반 `CURRENT_QUOTE_VALIDATED` TradeSignal을 만든다. setup extractor, live LS/KIS adapter, shadow fill/trial과 국내 주문은 아직 없다.
+**2026-07-19 KR day shadow signal 업데이트:** `kr_equities/day_trading/theme_leader_vwap_reclaim` 순수 신호 커널을 추가했다. exact KR theme Opportunity의 rank-1 대장주와 별도 완료봉 규칙 setup, 5초 이내 session·VI·단일가·거래정지·투자지정·가격제한·호가 snapshot을 모두 대사한다. blocked gate는 이유만 보존하고, spread와 손절·목표까지 통과할 때만 현재 ask 기반 `CURRENT_QUOTE_VALIDATED` TradeSignal을 만든다. live LS/KIS adapter, shadow fill/trial과 국내 주문은 아직 없다.
+
+**2026-07-19 KR 완료봉 VWAP setup 업데이트:** 장 시작부터 연속된 KR 1분 완료봉의 실제 거래대금과 거래량으로 point-in-time session VWAP을 계산하는 순수 extractor를 추가했다. exact Opportunity rank-1 종목이 1% 확장한 뒤 VWAP ±20bp의 첫 눌림을 만들고, 5bp 이상 재돌파와 눌림 대비 1.2배 거래량을 최신 완료봉에서 함께 충족할 때만 30초 유효 `KrThemeDaySetup`을 발행한다. 분봉 공백·미래 관측·비대장주·늦은 평가와 중복 evidence는 fail-closed하며 동일 입력은 같은 setup ID·손절·1R/2R 목표를 재생한다. fixture에서 setup→KR market gate→current-quote shadow signal을 연결했고 전체 **2639 tests**와 정적 게이트가 통과했다. provider·credential·network·국내 주문 mutation은 0건이다.
 
 **2026-07-19 lifecycle v2 업데이트:** `SHADOW_CHAMPION`을 추가해 shadow와 Paper 경로를 분리했다. 신규 champion event는 exact authority key가 필요하고, shadow mode는 Shadow Champion만, Alpaca Paper mode는 `EXPERIMENTAL_PAPER`를 거친 Paper Champion만 허용한다. intraday bootstrap은 네 strategy를 Paper-capable authority로, swing trial은 shadow authority로 등록한다. 이는 상태 타입과 수동 append 검증 경계이며 자동 promotion, allocation, 위험 확대나 주문 권한을 열지 않는다.
 

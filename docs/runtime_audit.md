@@ -736,3 +736,10 @@
 - 결함: Opportunity과 KR market gate는 있었지만 규칙 setup과 day-agent 경계가 없었다. Opportunity rank나 현재 ask만으로 신호를 만들면 VWAP reclaim 조건과 손절·목표의 출처를 사후에 끼워 넣을 수 있었다.
 - 수정: 별도 `theme_leader_vwap_reclaim` day lane과 frozen setup 계약을 추가했다. pure projector가 exact Opportunity rank-1, setup Opportunity ID, symbol, 관측/만료시각과 current KR gate를 대사하고 spread·directional stop/targets까지 통과할 때만 typed current-quote signal을 만든다.
 - 결과: eligible signal, VI block reason 보존, non-leader/expired setup 차단을 focused 28개와 전체 2633 tests 및 최소 driver로 검증했다. setup extractor·provider adapter·trial/fill은 아직 없고 network·credential·국내 주문·broker mutation은 0건이다.
+
+## H104: KR VWAP setup의 완료봉 인과성과 첫 눌림을 증명할 수 없다
+
+- 결함: typed setup이 있어도 누가 어떤 분봉으로 만들었는지, 장중 누락 봉이나 아직 형성 중인 봉을 사용했는지, 이미 지난 재돌파를 최신 신호처럼 재사용했는지 증명할 수 없었다.
+- 수정: 장 시작 09:00 KST부터 이어진 exact 1분 완료봉만 받는 frozen contract와 pure extractor를 추가했다. 각 봉은 OHLC, 거래량, 실제 거래대금, 완료·최초 관측시각과 canonical evidence를 보존하며 평균 체결가가 봉 범위 밖이면 거부한다. 누적 거래대금/거래량 VWAP에서 1% 확장, VWAP ±20bp 첫 눌림, 최대 5봉 안의 5bp 재돌파와 1.2배 거래량을 순서대로 평가하고 최신 봉의 첫 성공만 setup으로 만든다.
+- 계보: exact KR theme Opportunity rank-1, strategy version, 30초 평가 freshness와 Opportunity 만료를 대사한다. setup ID는 Opportunity, version, symbol, trigger 종료시각과 evidence ID에 content-addressed하며 손절은 첫 눌림 저가, 목표는 trigger 종가 기준 1R/2R로 고정한다.
+- 결과: setup 성공→기존 KR gate/current-quote signal E2E, 장중 Opportunity, 재돌파 없음, non-leader, sequence gap, future observation과 exact replay를 focused 9개 및 전체 2639 tests로 검증했다. read-only LS/KIS minute/quote adapter, append-only shadow fill/trial은 아직 없고 provider·credential·network·국내 계좌·주문 mutation은 0건이다.
