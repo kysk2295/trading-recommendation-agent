@@ -24,7 +24,7 @@
 
 최초 composite·trial append는 CLI wrapper가 아니라 실제 registration service에서 입력 등록시각과 실제 현재시각이 모두 KST 09:00 전이고 그 차이가 0~5분일 때만 허용한다. 기존 exact registration replay는 장중 재시작을 위해 이 현재시점 gate를 다시 열지 않지만, 같은 ID의 다른 payload는 ledger에서 계속 차단된다. 운영 `onboard` CLI에는 fixture onboarding 시각 override가 없다.
 
-검증 후 content-addressed onboarding receipt를 mode 600으로 먼저 fsync하고 session manifest를 쓴다. root부터 no-follow로 연 directory descriptor를 끝까지 유지한 채 race-safe per-target lock을 획득하고 private staging을 fsync한 뒤 no-overwrite hard link로 final 이름을 게시한다. reader와 exact replay도 같은 잠금 아래 interrupted two-link alias를 복구하고 final 이름을 다시 열어 retained inode와 대사하므로 경로가 바뀌면 성공으로 인정하지 않는다. pre-link 중단의 고아 staging은 다음 잠금 보유 replay가 정리한다. receipt 뒤 manifest 게시가 실패하거나 receipt timestamp read 전에 중단돼도 exact replay가 기존 receipt를 복구·검증하고 manifest만 다시 만든다. 기존 receipt·manifest의 payload, mode, owner, 외부 hard link 또는 source lineage가 달라지면 fail-closed한다.
+검증 후 content-addressed onboarding receipt를 mode 600으로 먼저 fsync하고 session manifest를 쓴다. root부터 no-follow로 연 directory descriptor를 끝까지 유지한 채 race-safe per-target lock을 획득하고 private staging을 fsync한 뒤 no-overwrite hard link로 final 이름을 게시한다. reader와 exact replay도 같은 잠금 아래 interrupted two-link alias를 복구하고 final 이름을 다시 열어 retained inode와 대사하므로 경로가 바뀌면 성공으로 인정하지 않는다. missing read는 lock 파일을 남기지 않고, pre-link 중단의 고아 staging은 다음 잠금 보유 replay가 정리한다. receipt 뒤 manifest 게시가 실패하거나 receipt timestamp read 전에 중단돼도 exact replay가 기존 receipt를 복구·검증하고 manifest만 다시 만든다. 보장 범위는 잠금에 참여하는 writer와 operation의 final descriptor 검증까지이며, 검증 완료 뒤 같은 OS 사용자가 임의로 경로를 다시 쓰는 행위는 trust boundary 밖이고 다음 read가 fail-closed한다.
 
 `tick`과 `run_kr_theme_day_session_verify.py`는 session을 열기 전에 receipt에서 trial과 Opportunity identity를 복원해 동일한 onboarding을 no-write replay한다. manifest는 Opportunity canonical SHA도 identity에 고정하고 intraday child가 outbox를 다시 읽은 직후 exact SHA를 대사하므로 replay gate 뒤 원문 교체도 entry 전에 차단된다. canonical 09:00이 아닌 기존 START event, legacy manifest 또는 이후 원천 변경도 child·provider 실행 전에 닫힌다.
 
@@ -36,7 +36,7 @@
 - onboarding이 immutable receipt와 manifest를 만들고 실제 supervisor subprocess의 첫 intraday tick이 5개 phase, raw receipt 3건, shadow entry 1건과 audit 5건을 남겼다.
 - exact replay는 receipt, manifest와 기존 append-only artifact를 늘리지 않는다.
 - 관련 KR theme/same-cycle selection: `127 passed`
-- 전체 pytest: `2799 passed`
+- 전체 pytest: `2800 passed`
 - Ruff, basedpyright `0 errors, 0 warnings`, changed-file format, compileall, JSON parse, diff/no-excuse gate: 통과
 - actual composite/onboard/trial/verifier help와 missing-input CLI: 기대 exit `0/2`, 권한 옵션 0건
 - provider credential/live network와 국내 account/order mutation: `0`

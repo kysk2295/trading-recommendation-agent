@@ -192,3 +192,13 @@ def test_interrupted_replay_rejects_final_path_swap(tmp_path: Path, monkeypatch:
     # When / Then
     with pytest.raises(private_file.InvalidPrivateImmutableFileError):
         _ = publish_private_immutable_text(path, payload)
+
+
+def test_missing_read_does_not_create_publication_lock(tmp_path: Path) -> None:
+    # Given
+    path = tmp_path / "missing.json"
+
+    # When / Then
+    with pytest.raises(private_file.InvalidPrivateImmutableFileError):
+        _ = private_file.read_private_text(path)
+    assert tuple(tmp_path.iterdir()) == ()

@@ -49,10 +49,10 @@ def read_private_text(path: Path) -> str:
             raise InvalidPrivateImmutableFileError
         parent_descriptor = _open_parent(target.parent, create=False)
         try:
-            with _PROCESS_PUBLICATION_LOCK:
-                lock_descriptor = _lock_publication(parent_descriptor, target.name)
-                try:
-                    descriptor = _open_private_file(parent_descriptor, target.name, (1, 2))
+            descriptor = _open_private_file(parent_descriptor, target.name, (1, 2))
+            try:
+                with _PROCESS_PUBLICATION_LOCK:
+                    lock_descriptor = _lock_publication(parent_descriptor, target.name)
                     try:
                         if os.fstat(descriptor).st_nlink == 2:
                             _repair_staging_alias(parent_descriptor, descriptor, target.name)
@@ -60,9 +60,9 @@ def read_private_text(path: Path) -> str:
                         _require_final_file(parent_descriptor, target.name, descriptor)
                         return payload
                     finally:
-                        os.close(descriptor)
-                finally:
-                    os.close(lock_descriptor)
+                        os.close(lock_descriptor)
+            finally:
+                os.close(descriptor)
         finally:
             os.close(parent_descriptor)
     except (OSError, TypeError, UnicodeError, ValueError):
