@@ -44,6 +44,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--supervisor-store", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--secret-path", type=Path, required=True)
+    parser.add_argument("--conditional-signal-outbox", type=Path)
+    parser.add_argument("--actionability-manifest-root", type=Path)
     parser.add_argument("--cycles", type=int, default=390)
     parser.add_argument("--interval-seconds", type=float, default=60.0)
     parser.add_argument("--capacity", type=int, default=2)
@@ -62,6 +64,9 @@ def main(
     shutdown_requested: Callable[[], bool] = lambda: False,
 ) -> int:
     args = parse_args(argv)
+    if (args.conditional_signal_outbox is None) != (args.actionability_manifest_root is None):
+        _report(args.output_dir, ("result: blocked", "account/order mutation: 0"))
+        return 1
     selected_clock = (lambda: dt.datetime.now(dt.UTC)) if clock is None else clock
     fleet_audit = RuntimeFleetAuditStore(args.audit_store)
 
@@ -122,6 +127,16 @@ def main(
 
 
 def _cycle_arguments(args: argparse.Namespace) -> list[str]:
+    actionability_arguments = (
+        []
+        if args.conditional_signal_outbox is None and args.actionability_manifest_root is None
+        else [
+            "--conditional-signal-outbox",
+            str(args.conditional_signal_outbox),
+            "--actionability-manifest-root",
+            str(args.actionability_manifest_root),
+        ]
+    )
     return [
         "--scanner-store",
         str(args.scanner_store),
@@ -147,6 +162,7 @@ def _cycle_arguments(args: argparse.Namespace) -> list[str]:
         str(args.minimum_residency_seconds),
         "--eviction-cooldown-seconds",
         str(args.eviction_cooldown_seconds),
+        *actionability_arguments,
     ]
 
 

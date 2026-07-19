@@ -36,6 +36,10 @@ from trading_agent.us_market_data_fleet import UsMarketDataFleet
 from trading_agent.us_market_data_fleet_audit_store import RuntimeFleetAuditStore
 from trading_agent.us_opportunity_scanner_models import UsOpportunityScannerProjectionError
 from trading_agent.us_opportunity_scanner_store import UsOpportunityScannerStore
+from trading_agent.us_runtime_actionability_manifest_dispatch import (
+    UsRuntimeActionabilityManifestDispatchError,
+    dispatch_us_runtime_actionability_outbox_counts,
+)
 from trading_agent.us_runtime_fleet_cycle import (
     ProfileArtifactBinding,
     RuntimeFleetCycleError,
@@ -51,7 +55,9 @@ from trading_agent.us_sip_research_evidence_projection import (
     UsSipResearchEvidenceProjectionError,
     project_us_sip_research_evidence,
 )
-from trading_agent.us_subscription_models import SubscriptionPolicyConfig
+from trading_agent.us_subscription_models import (
+    SubscriptionPolicyConfig,
+)
 from trading_agent.us_subscription_policy_state import (
     SubscriptionPolicyStateError,
     advance_subscription_policy_state,
@@ -75,6 +81,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--policy-state-store", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--research-artifact-root", type=Path)
+    parser.add_argument("--conditional-signal-outbox", type=Path)
+    parser.add_argument("--actionability-manifest-root", type=Path)
     parser.add_argument("--minimum-rvol-bps", type=int, default=15_000)
     parser.add_argument("--secret-path", type=Path, default=DEFAULT_ALPACA_SECRET_PATH)
     parser.add_argument("--capacity", type=int, default=2)
@@ -148,6 +156,12 @@ def main(
                 RuntimeFleetAuditStore(args.audit_store),
             )
         research_counts = _write_research_artifacts(args, result.fleet.bindings)
+        actionability_counts = dispatch_us_runtime_actionability_outbox_counts(
+            args.conditional_signal_outbox,
+            args.actionability_manifest_root,
+            result.fleet.bindings,
+            scope.decision,
+        )
     except (
         AlpacaSecretFileError,
         AlpacaSipProfileMaterializerError,
@@ -160,6 +174,7 @@ def main(
         TypeError,
         UsSipResearchEvidenceProjectionError,
         UsOpportunityScannerProjectionError,
+        UsRuntimeActionabilityManifestDispatchError,
         ValueError,
     ):
         _report(args.output_dir, ("result: blocked", "account/order mutation: 0"))
@@ -169,6 +184,11 @@ def main(
         "research evidence artifact: disabled"
         if research_counts is None
         else f"research evidence artifact: {research_counts[0]} new, {research_counts[1]} replay"
+    )
+    actionability_detail = (
+        "actionability manifests: disabled"
+        if actionability_counts is None
+        else f"actionability manifests: {actionability_counts[0]} new, {actionability_counts[1]} replay"
     )
     _report(
         args.output_dir,
@@ -180,6 +200,7 @@ def main(
             f"audit append: {'new' if result.audit_appended else 'replay'}",
             f"policy state append: {'new' if state_appended else 'replay'}",
             research_detail,
+            actionability_detail,
             "account/order mutation: 0",
         ),
     )
@@ -207,6 +228,8 @@ def _policy_config(args: argparse.Namespace) -> SubscriptionPolicyConfig:
 
 def _validate_research_options(args: argparse.Namespace) -> None:
     if type(args.minimum_rvol_bps) is not int or not 1 <= args.minimum_rvol_bps <= 100_000:
+        raise RuntimeFleetCycleError
+    if (args.conditional_signal_outbox is None) != (args.actionability_manifest_root is None):
         raise RuntimeFleetCycleError
 
 

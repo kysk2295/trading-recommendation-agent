@@ -629,3 +629,10 @@
 - 최초 관찰: projector API는 원자적이지만 operational process contract가 없었다. 개별 객체를 ad hoc loader로 조립하면 exact pairing identity가 없고 오류 redaction도 호출자마다 달라진다.
 - 수정: base conditional, READY snapshot, dynamic plan과 scan start 전체를 content-addressed canonical manifest로 묶고 mode 600/current owner/single hard link를 강제했다. CLI는 manifest를 먼저 검증한 뒤 receipt/output 경로만 projector에 전달하며 safe report에는 aggregate status만 쓴다.
 - 결과: actual CLI first/replay는 모두 exit 0이고 non-private receipt는 traceback 없이 blocked/write 0으로 닫혔다. `--help`, missing args와 full 2507 tests, 정적 게이트가 통과했으며 provider credential·network·account/order endpoint를 열지 않는다. runtime owner의 automatic manifest dispatch는 아직 없다.
+
+## H89: READY runtime snapshot과 conditional signal을 운영자가 수동 pairing한다
+
+- 판별 기준: 다른 symbol/instrument/cycle의 signal이 manifest로 결합되거나, 같은 symbol의 current conditional 두 개 중 하나를 임의 선택하는지, supervisor 옵션 한쪽만 있어도 provider cycle을 여는지 확인한다.
+- 최초 관찰: manifest와 projection CLI는 있었지만 생성 주체가 수동이었다. runtime fleet은 exact subscription decision과 READY binding을 이미 소유했지만 signal outbox와 연결되지 않았다.
+- 수정: strict signal outbox reader와 dispatcher가 plan-owned READY binding별 current conditional을 계산한다. 0개는 no-op, 1개만 content-addressed manifest, 2개 이상은 write 전 block이며 cycle/supervisor optional pair가 이를 자동 호출한다.
+- 결과: one-cycle supervisor는 READY와 manifest 1개를 만들고 exact replay는 no-op다. partial option은 provider/state DB 전에 차단됐으며 manual cycle은 GET 1/manifest 1/mutation 0을 확인했다. full 2515 tests와 정적 게이트가 통과했고 dynamic connection/projection 자동 실행은 다음 단계다.

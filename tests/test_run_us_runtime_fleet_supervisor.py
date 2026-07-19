@@ -9,7 +9,14 @@ import pytest
 
 import run_us_runtime_fleet_supervisor as cli
 from tests.alpaca_sip_runtime_fleet_fixtures import wire_bars
-from tests.test_run_us_runtime_fleet_cycle import FOUNDATION, NOW, _historical_response, _inputs
+from tests.test_run_us_runtime_fleet_cycle import (
+    FOUNDATION,
+    NOW,
+    _fixture_conditional,
+    _historical_response,
+    _inputs,
+)
+from trading_agent.contract_outbox import append_trade_signal_publication
 from trading_agent.data_foundation_manifest import load_data_foundation_manifest
 from trading_agent.us_opportunity_scanner_projection import UsOpportunityScannerProjector
 from trading_agent.us_opportunity_scanner_store import UsOpportunityScannerStore
@@ -29,6 +36,14 @@ def test_one_cycle_auto_profile_supervisor_reaches_ready(tmp_path: Path) -> None
     secret.write_text("APCA_API_KEY_ID=fixture\nAPCA_API_SECRET_KEY=fixture\n", encoding="utf-8")
     secret.chmod(0o600)
     requests: list[httpx2.Request] = []
+    assert (
+        append_trade_signal_publication(
+            tmp_path / "trade-signals.v1.jsonl",
+            tmp_path / "cards",
+            _fixture_conditional(),
+        )
+        is True
+    )
 
     def client_factory() -> httpx2.Client:
         def respond(request: httpx2.Request) -> httpx2.Response:
@@ -47,8 +62,17 @@ def test_one_cycle_auto_profile_supervisor_reaches_ready(tmp_path: Path) -> None
         )
 
     times = iter((NOW, NOW + dt.timedelta(seconds=1)))
+    arguments = _arguments(tmp_path, scanner, secret)
+    arguments.extend(
+        [
+            "--conditional-signal-outbox",
+            str(tmp_path / "trade-signals.v1.jsonl"),
+            "--actionability-manifest-root",
+            str(tmp_path / "actionability-manifests"),
+        ]
+    )
     code = cli.main(
-        _arguments(tmp_path, scanner, secret),
+        arguments,
         clock=lambda: next(times),
         sleeper=lambda _seconds: None,
         client_factory=client_factory,
@@ -59,6 +83,7 @@ def test_one_cycle_auto_profile_supervisor_reaches_ready(tmp_path: Path) -> None
     records = RuntimeMinuteSupervisorStore(tmp_path / "supervisor.sqlite3").records()
     assert len(records) == 1
     assert records[0].status is RuntimeSupervisorStatus.READY
+    assert len(tuple((tmp_path / "actionability-manifests").glob("*.json"))) == 1
 
 
 def test_closed_session_stops_before_secret_or_cycle_io(tmp_path: Path) -> None:
@@ -70,6 +95,19 @@ def test_closed_session_stops_before_secret_or_cycle_io(tmp_path: Path) -> None:
     )
 
     assert code == 1
+    assert not (tmp_path / "supervisor.sqlite3").exists()
+    assert not (tmp_path / "audit.sqlite3").exists()
+
+
+def test_partial_actionability_options_block_before_cycle_io(tmp_path: Path) -> None:
+    arguments = _arguments(
+        tmp_path,
+        tmp_path / "missing.sqlite3",
+        tmp_path / "missing.env",
+    )
+    arguments.extend(["--conditional-signal-outbox", str(tmp_path / "signals.jsonl")])
+
+    assert cli.main(arguments, clock=lambda: NOW) == 1
     assert not (tmp_path / "supervisor.sqlite3").exists()
     assert not (tmp_path / "audit.sqlite3").exists()
 
