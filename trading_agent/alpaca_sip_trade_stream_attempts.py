@@ -40,6 +40,7 @@ class AlpacaSipConnectionFailureCode(StrEnum):
     AUTHENTICATION_FAILED = "authentication_failed"
     CONNECTION_LIMIT = "connection_limit"
     INSUFFICIENT_SUBSCRIPTION = "insufficient_subscription"
+    PROVIDER_INTERNAL_ERROR = "provider_internal_error"
     PROVIDER_REJECTED = "provider_rejected"
     PROTOCOL_INVALID = "protocol_invalid"
 
@@ -168,6 +169,7 @@ def _failure_code(error: BaseException) -> AlpacaSipConnectionFailureCode:
             402: AlpacaSipConnectionFailureCode.AUTHENTICATION_FAILED,
             406: AlpacaSipConnectionFailureCode.CONNECTION_LIMIT,
             409: AlpacaSipConnectionFailureCode.INSUFFICIENT_SUBSCRIPTION,
+            500: AlpacaSipConnectionFailureCode.PROVIDER_INTERNAL_ERROR,
         }.get(error.code, AlpacaSipConnectionFailureCode.PROVIDER_REJECTED)
     if isinstance(error, AlpacaSipTradeStreamProtocolError):
         return AlpacaSipConnectionFailureCode.PROTOCOL_INVALID

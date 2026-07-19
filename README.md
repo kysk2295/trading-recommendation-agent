@@ -114,6 +114,8 @@ flowchart LR
 
 **2026-07-19 Alpaca SIP failed connection attempt 업데이트:** 인증·구독 전 handshake, endpoint, control protocol과 provider rejection도 terminal session으로 가장하지 않고 별도 append-only `connection_attempts`에 남긴다. schema v1 state는 query-only로 그대로 읽고 다음 Writer 진입에서만 v2 table·trigger를 추가하며 기존 control/data/terminal row를 재작성하지 않는다. attempt는 connection epoch, symbol/date, failed time, 도달 stage와 정규화된 failure code만 보존하고 exception text나 credential을 저장하지 않는다. 공식 Alpaca code 402·406·409는 각각 `authentication_failed`·`connection_limit`·`insufficient_subscription`으로 분류한다. local fixture CLI에서 406은 control 1개, handshake failure는 control 0개와 terminal 0개로 재현했으며 network request와 broker mutation은 0건, 전체 **2376 tests**가 통과했다.
 
+**2026-07-19 Alpaca SIP bounded reconnect supervisor 업데이트:** 같은 symbol/date의 failed attempt와 terminal session을 합친 durable connection budget을 최대 3회로 제한한다. transport·handshake·provider 500 internal error와 준비된 session의 transport disconnect만 1초·2초 bounded backoff로 새 epoch에서 재시도하고, 402·406·409·endpoint·protocol/provider rejection은 즉시 중단한다. 프로세스 재시작도 기존 원장의 connection 수를 다시 읽으므로 budget을 초기화하지 않으며, 최신 evidence가 bounded complete면 operation 0회로 재사용한다. 실패 뒤 성공해도 epoch 사이 continuity는 false다. local CLI E2E는 handshake→새 epoch 성공과 재실행 no-op을 network 0건으로 확인했으며 전체 **2381 tests**가 통과했다.
+
 ```bash
 uv run python run_alpaca_sip_trade_stream_smoke.py \
   --instrument-id us-equity-aapl \
@@ -145,6 +147,11 @@ uv run python run_alpaca_sip_trade_history_fixture.py \
 uv run python run_alpaca_sip_trade_stream_attempt_fixture.py \
   --scenario connection-limit \
   --stream-store outputs/alpaca-sip-attempt/stream.sqlite3
+```
+
+```bash
+uv run python run_alpaca_sip_trade_stream_supervisor_fixture.py \
+  --state-dir outputs/alpaca-sip-supervisor-fixture
 ```
 
 **2026-07-19 Research evidence read model 업데이트:** entity/claim extraction 결과를 exact active canonical event의 source, content hash, raw receipt reference와 entity set에 결합하는 공통 계약을 추가했다. deterministic extractor는 version·output hash를, LLM extractor는 model·prompt version까지 필수로 남긴다. 순수 read model은 current/baseline window에서 독립 source corroboration, supporting/disputing conflict, novelty와 rate-normalized burst를 계산한다. content-addressed derived artifact는 evidence ID와 집계만 mode 600으로 보존하고 원문·raw receipt reference를 복제하지 않는다. 이 단계는 extractor나 provider 수집을 가장하지 않으며 다음 adapter가 검증된 extraction을 공급해야 한다.
