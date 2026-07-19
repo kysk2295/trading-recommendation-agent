@@ -164,6 +164,75 @@ def test_two_cycle_soak_reloads_scanner_and_reuses_historical_cache(tmp_path: Pa
     )
 
 
+def test_two_cycle_soak_recovers_after_current_provider_failure(tmp_path: Path) -> None:
+    scanner, _profile = _inputs(tmp_path)
+    secret = tmp_path / "alpaca.env"
+    secret.write_text("APCA_API_KEY_ID=fixture\nAPCA_API_SECRET_KEY=fixture\n", encoding="utf-8")
+    secret.chmod(0o600)
+    requests: list[httpx2.Request] = []
+    current_calls = 0
+
+    def client_factory() -> httpx2.Client:
+        def respond(request: httpx2.Request) -> httpx2.Response:
+            nonlocal current_calls
+            requests.append(request)
+            if request.url.params["asof"] != NOW.date().isoformat():
+                return _historical_response(request)
+            current_calls += 1
+            if current_calls == 1:
+                return httpx2.Response(503, content=b"provider unavailable")
+            opened = dt.datetime.fromisoformat(request.url.params["start"])
+            closed = dt.datetime.fromisoformat(request.url.params["end"])
+            count = int((closed - opened) / dt.timedelta(minutes=1)) + 1
+            return httpx2.Response(
+                200,
+                json={"bars": {"FIXT": wire_bars("FIXT", count)}, "next_page_token": None},
+            )
+
+        return httpx2.Client(
+            base_url="https://data.alpaca.markets",
+            transport=httpx2.MockTransport(respond),
+            follow_redirects=False,
+        )
+
+    second = NOW + dt.timedelta(minutes=1)
+    times = iter((NOW, NOW + dt.timedelta(seconds=1), second, second + dt.timedelta(seconds=1)))
+
+    def refresh(_seconds: float) -> None:
+        store = UsOpportunityScannerStore(scanner)
+        bundle = store.latest_bundle()
+        assert bundle is not None
+        refreshed = bundle.opportunity.model_copy(
+            update={
+                "opportunity_id": "us-opportunity-fix-20260717t140629z",
+                "observed_at": second - dt.timedelta(seconds=1),
+                "valid_until": second + dt.timedelta(minutes=1),
+            },
+        )
+        _ = UsOpportunityScannerProjector(store, tmp_path / "scanner-canonical").project(
+            refreshed,
+            load_data_foundation_manifest(FOUNDATION),
+        )
+
+    arguments = _arguments(tmp_path, scanner, secret)
+    arguments[arguments.index("--cycles") + 1] = "2"
+    code = cli.main(
+        arguments,
+        clock=lambda: next(times),
+        sleeper=refresh,
+        client_factory=client_factory,
+    )
+
+    assert code == 1
+    assert len(requests) == 22
+    assert current_calls == 2
+    records = RuntimeMinuteSupervisorStore(tmp_path / "supervisor.sqlite3").records()
+    assert tuple(item.status for item in records) == (
+        RuntimeSupervisorStatus.BLOCKED,
+        RuntimeSupervisorStatus.READY,
+    )
+
+
 def _arguments(tmp_path: Path, scanner: Path, secret: Path) -> list[str]:
     return [
         "--scanner-store",

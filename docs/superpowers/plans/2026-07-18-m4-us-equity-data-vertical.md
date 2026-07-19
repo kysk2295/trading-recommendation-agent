@@ -300,6 +300,10 @@ contiguous New York market-date cycle indexes, and runs only the remaining
 configured daily budget. Duplicate or regressing history fails closed.
 The store also requires one hard link and the exact table plus both
 append-only triggers on every read and write connection.
+In a two-cycle provider fault fixture, the first current-minute GET returned
+503 and was durably BLOCKED. The next minute reused all historical profile
+data, made one new current GET, and became READY without erasing the failed
+attempt; the overall command remained nonzero.
 Actual regular-session smoke and longer soak observation remain pending.
 
 ### M4.4: Evidence-Gated US Opportunity Projection

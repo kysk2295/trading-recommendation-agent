@@ -215,6 +215,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-19 US runtime supervisor store hardening 업데이트:** 재시작 budget의 권위인 SQLite는 `runtime_minute_supervisor` table과 두 append-only trigger의 exact schema object 집합을 read/write 연결마다 확인한다. current-user mode 600 regular file이어도 hard-link가 하나라도 있거나 trigger가 삭제되면 payload가 아직 유효해도 fail-closed한다. 정상 mode-600 replay와 trigger/hard-link fault injection, 전체 **2393 tests**가 통과했다.
 
+**2026-07-19 US runtime provider fault soak 업데이트:** 2-cycle CLI fixture에서 20일 historical profile을 만든 뒤 첫 current SIP minute GET에 503을 주입했다. 첫 attempt는 `BLOCKED`로 보존되고 즉시 retry하지 않으며, fresh scanner가 공급된 다음 minute cycle은 historical GET 0건·current GET 1건만 추가해 `READY`로 회복했다. 전체 기록은 `BLOCKED → READY`, 요청은 historical 20 + current 2로 재생되며 이전 실패가 있으므로 process exit는 1을 유지한다. 전체 **2394 tests**가 통과했고 account/order mutation은 0건이다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \
