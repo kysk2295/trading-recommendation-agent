@@ -217,6 +217,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-19 US runtime provider fault soak 업데이트:** 2-cycle CLI fixture에서 20일 historical profile을 만든 뒤 첫 current SIP minute GET에 503을 주입했다. 첫 attempt는 `BLOCKED`로 보존되고 즉시 retry하지 않으며, fresh scanner가 공급된 다음 minute cycle은 historical GET 0건·current GET 1건만 추가해 `READY`로 회복했다. 전체 기록은 `BLOCKED → READY`, 요청은 historical 20 + current 2로 재생되며 이전 실패가 있으므로 process exit는 1을 유지한다. 전체 **2394 tests**가 통과했고 account/order mutation은 0건이다.
 
+**2026-07-19 Alpaca SIP dynamic subscription plan 업데이트:** M4.2의 READY quote+trade desired set을 한 fresh provider connection의 deterministic subscribe request로 결합하는 계약을 추가했다. plan ID는 scanner replay identity, policy version, evaluated time, New York market date와 ordered instrument-symbol binding을 고정한다. request는 exact quote/trade symbol 목록만 보내고 ACK는 trades·quotes·자동 corrections·cancelErrors가 같은 중복 없는 symbol 집합이며 bars·status·LULD가 비어 있을 때만 허용한다. ACK 순서는 provider 비보장 목록이므로 집합으로 비교하지만 missing·extra·duplicate symbol, partial channel과 provider error, malformed nested policy config는 fail-closed한다. 전체 **2402 tests**가 통과했으며 실제 WebSocket·credential·account/order 호출은 0건이다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \

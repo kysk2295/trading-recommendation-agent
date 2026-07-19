@@ -222,6 +222,30 @@ def parse_alpaca_sip_control_frame(
         raise AlpacaSipTradeStreamProtocolError from None
 
 
+def parse_alpaca_sip_dynamic_subscription_frame(
+    payload: bytes,
+    symbols: tuple[str, ...],
+) -> None:
+    try:
+        if (
+            type(symbols) is not tuple
+            or not symbols
+            or symbols != tuple(dict.fromkeys(symbols))
+            or any(_SYMBOL.fullmatch(symbol) is None for symbol in symbols)
+        ):
+            raise AlpacaSipTradeStreamProtocolError
+        messages = _CONTROL_ADAPTER.validate_json(payload)
+        if len(messages) != 1:
+            raise AlpacaSipTradeStreamProtocolError
+        message = messages[0]
+        if type(message) is _ErrorMessage:
+            raise AlpacaSipProviderStreamError(message.code)
+        if type(message) is not _SubscriptionMessage or not _dynamic_subscription_is_exact(message, symbols):
+            raise AlpacaSipTradeStreamProtocolError
+    except (TypeError, ValidationError, ValueError):
+        raise AlpacaSipTradeStreamProtocolError from None
+
+
 def _subscription_is_exact(message: _SubscriptionMessage, symbol: str) -> bool:
     return (
         message.trades == (symbol,)
@@ -240,6 +264,28 @@ def _subscription_is_exact(message: _SubscriptionMessage, symbol: str) -> bool:
     )
 
 
+def _dynamic_subscription_is_exact(message: _SubscriptionMessage, symbols: tuple[str, ...]) -> bool:
+    return (
+        _same_symbols(message.trades, symbols)
+        and _same_symbols(message.quotes, symbols)
+        and _same_symbols(message.corrections, symbols)
+        and _same_symbols(message.cancel_errors, symbols)
+        and not any(
+            (
+                message.bars,
+                message.updated_bars,
+                message.daily_bars,
+                message.statuses,
+                message.lulds,
+            )
+        )
+    )
+
+
+def _same_symbols(actual: tuple[str, ...], expected: tuple[str, ...]) -> bool:
+    return len(actual) == len(expected) and set(actual) == set(expected)
+
+
 __all__ = (
     "AlpacaSipBoundedTradeHistoryAttestation",
     "AlpacaSipControlStage",
@@ -253,4 +299,5 @@ __all__ = (
     "AlpacaSipTradeStreamProtocolError",
     "AlpacaSipTradeStreamSessionEvidence",
     "parse_alpaca_sip_control_frame",
+    "parse_alpaca_sip_dynamic_subscription_frame",
 )

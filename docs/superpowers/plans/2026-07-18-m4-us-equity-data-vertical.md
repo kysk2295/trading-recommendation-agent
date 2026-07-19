@@ -133,6 +133,16 @@ flags. A local E2E used the actual 13,011-instrument snapshot to produce one
 canonical candidate and a ready three-source foundation without external I/O.
 SIP remains downstream bounded feature evidence for selected candidates.
 
+**Dynamic SIP subscription plan checkpoint (2026-07-19): Contract complete.**
+The exact READY M4.2 quote/trade desired set now becomes one deterministic
+fresh-connection Alpaca SIP subscribe request. Its content ID binds policy
+replay identity, evaluated time, New York market date, and ordered
+instrument-symbol ownership. The ACK must contain the same duplicate-free
+trade, quote, automatic correction, and cancel/error symbol sets and no extra
+channels. Provider list order is not treated as guaranteed. This checkpoint
+does not open credentials or a WebSocket; raw-first multi-symbol control and
+data persistence is the next runtime boundary.
+
 ### M4.3: Read-Only Runtime Supervisor
 
 Introduce provider-neutral read-only adapter and supervisor contracts. The
