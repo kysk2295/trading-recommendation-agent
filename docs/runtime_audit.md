@@ -615,3 +615,10 @@
 - 최초 관찰: Alpaca adapter decision은 full bundle을 보존했지만 process memory 밖 durable 경계가 없었다. 기존 KIS snapshot JSONL에 넣으면 provider schema를 위조하고 signal만 쓰면 complete-history provenance를 잃는다.
 - 수정: base conditional, full bundle, policy evidence, assessment와 derived publication을 하나의 frozen envelope로 묶었다. assessment ID를 artifact identity로 사용하고 canonical bytes/hash, exact SQLite schema·append-only triggers, private file와 single hard link를 read마다 검증한다.
 - 결과: exact replay는 no-op, 같은 base+scan의 다른 terminal과 forged assessment는 write 전에 차단됐다. SQL update, mode 0644, hard link와 trigger 삭제 fault injection도 fail-closed다. manual restart replay는 plan/epoch와 current-quote signal을 복원했으며 network·account/order mutation은 0건이다.
+
+## H87: 운영자가 history와 bundle을 수동 조립한 뒤 actionability를 저장한다
+
+- 판별 기준: 같은 receipt store와 snapshot이라도 trade/quote as-of나 plan을 서로 다르게 넘겨 bundle을 만들거나, 검증 실패 전에 partial output을 쓰는지 확인한다.
+- 최초 관찰: history, bundle, policy와 store는 각각 구현됐지만 end-to-end 호출은 테스트 helper의 수동 조립에 남아 있었다. 운영 연결이 각 단계를 다르게 구성하면 complete gate 우회 또는 partial artifact가 가능했다.
+- 수정: READY snapshot의 observed time을 단일 as-of로 고정해 stored trade/quote history를 materialize하고 same-epoch bundle, policy decision, durable append를 순서대로 실행하는 query-only projector를 추가했다. output write는 모든 검증 뒤 마지막 단계다.
+- 결과: exact replay는 append 0이고 multi-epoch 및 snapshot/plan mismatch는 output DB 생성 없이 차단됐다. manual QA는 complete trade/quote와 current-quote signal을 record 하나로 복원했으며 full 2502 tests와 정적 게이트가 통과했다. runtime owner/CLI 자동 binding은 다음 단계다.
