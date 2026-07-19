@@ -93,6 +93,7 @@ def finalize_kr_theme_day_shadow_trial(
         events = ledger.multi_market_trial_events(request.trial_id)
         if len(events) not in (1, 2) or events[0].event.event_kind is not TrialEventKind.STARTED:
             raise InvalidKrThemeDayTrialTerminalError
+        terminal_at = request.occurred_at if len(events) == 1 else events[1].event.occurred_at
         expected = _ExpectedLineage(
             trial,
             str(multi_market_trial_registration_key(trial)),
@@ -110,7 +111,7 @@ def finalize_kr_theme_day_shadow_trial(
             entry_payload_sha256s=tuple(_payload_sha256(entry) for entry in evidence.entries),
             exit_ids=tuple(exit.exit_id for exit in evidence.exits),
             exit_payload_sha256s=tuple(_payload_sha256(exit) for exit in evidence.exits),
-            terminal_at=request.occurred_at,
+            terminal_at=terminal_at,
         )
         artifact = kr_theme_day_trial_terminal_artifact(payload)
         artifact_created = stores.terminal_store.append(artifact)
@@ -118,7 +119,7 @@ def finalize_kr_theme_day_shadow_trial(
             trial_id=trial.trial_id,
             sequence=2,
             event_kind=evidence.kind,
-            occurred_at=request.occurred_at,
+            occurred_at=terminal_at,
             artifact_sha256s=(artifact.artifact_id,),
             reason_codes=evidence.reasons,
             previous_event_key=events[0].event_key,
