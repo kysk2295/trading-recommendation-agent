@@ -124,7 +124,7 @@ def start_kr_theme_day_shadow_trial(
         )
         if len(matches) != 1:
             raise InvalidKrThemeDayTrialError
-        _require_exact_day_trial(ledger, matches[0])
+        require_exact_kr_theme_day_trial(ledger, matches[0])
         event = ExperimentTrialEvent(
             trial_id=trial_id,
             sequence=1,
@@ -183,7 +183,7 @@ def _registration(
     )
 
 
-def _require_exact_day_trial(
+def require_exact_kr_theme_day_trial(
     ledger: ExperimentLedgerStore,
     trial: MultiMarketExperimentTrialRegistration,
 ) -> None:

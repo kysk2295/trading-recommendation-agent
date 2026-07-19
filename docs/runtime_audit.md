@@ -766,3 +766,11 @@
 - KR 연결: code-coupled `theme_leader_vwap_reclaim` version만 다음 평일 KST 09:00 전에 daily trial을 등록할 수 있다. no-entry baseline, entry ask+20bp, 결측 0, 최소 20 sessions·30 signals와 fillability/drawdown/stability/multiple-testing Reviewer gate는 고정되어 generic writer의 변형 trial을 전용 start API가 거부한다.
 - 권한: CLI는 local `register`와 `start`만 append한다. fill, terminal, lifecycle, champion, 계좌 binding과 주문 권한은 만들지 않으며 provider, credential, broker mutation은 0건이다.
 - 결과: focused 99개와 전체 2669 tests, actual help/missing/register/replay/start/replay CLI QA가 통과했다. schema 5, private database/report mode 600과 external mutation 0을 확인했다. v1은 평일·KST 09:00만 검사하며 authoritative KRX 휴장일 calendar는 후속 운영 gate다.
+
+## H108: KR current signal을 즉시 체결로 간주하면 비용과 trial 계보가 사라진다
+
+- 결함: current ask가 있는 TradeSignal을 그대로 entry로 사용하면 20bp 비용 preregistration이 성과에 반영되지 않고, started daily trial이 없는 signal도 forward 표본처럼 저장될 수 있다.
+- 수정: exact day trial registration key와 started event key, canonical signal SHA를 결합한 conservative entry artifact를 추가했다. signal observed/validity와 quote validity 안에서만 ask에 고정 20bp adverse slippage를 적용하며, resulting fill이 stop과 첫 target 사이가 아니면 차단한다.
+- 저장: 별도 schema v1 SQLite는 signal당 하나의 content-addressed entry만 허용하고 UPDATE/DELETE trigger, payload hash, exact schema object, current owner·mode 600·single hard link를 매번 검증한다. exact replay는 행을 늘리지 않는다.
+- 경계: quantity, notional, account, broker ID와 주문 API는 없으며 exit/PnL과 trial terminal도 만들지 않는다. provider, credential, account/order mutation은 0건이다.
+- 결과: focused 21개와 전체 2673 tests가 통과했다. minimal driver는 ask `10000`을 fill `10020.000`으로 append하고 exact replay 0행, private mode 600, account field와 external mutation 0을 확인했다.
