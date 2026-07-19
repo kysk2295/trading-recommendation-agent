@@ -44,16 +44,32 @@ from trading_agent.experiment_ledger_models import (
 )
 from trading_agent.experiment_ledger_schema import (
     CREATE_EXPERIMENT_LEDGER_SCHEMA,
+    CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4,
     CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2,
     CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3,
     EXPERIMENT_LEDGER_SCHEMA_VERSION,
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V1,
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V2,
+    EXPERIMENT_LEDGER_SCHEMA_VERSION_V3,
 )
 from trading_agent.lifecycle_authority_policy import (
     InvalidLifecycleAuthorityError,
     require_new_champion_authority,
     require_persisted_champion_authority,
+)
+from trading_agent.multi_market_experiment_models import (
+    MultiMarketHypothesisRegistration,
+    MultiMarketStrategyVersionRegistration,
+)
+from trading_agent.multi_market_experiment_store import (
+    InvalidMultiMarketExperimentSourceError,
+    MultiMarketExperimentConflictError,
+    StoredMultiMarketHypothesisRegistration,
+    StoredMultiMarketStrategyVersionRegistration,
+    read_multi_market_hypotheses,
+    read_multi_market_strategy_versions,
+    register_multi_market_hypothesis,
+    register_multi_market_strategy_version,
 )
 from trading_agent.strategy_authority_models import StrategyAuthorityBinding
 
@@ -88,6 +104,15 @@ _V2_SCHEMA_OBJECTS = _V1_SCHEMA_OBJECTS | frozenset(
         "research_sources_no_delete",
         "research_hypothesis_cards_no_update",
         "research_hypothesis_cards_no_delete",
+    }
+)
+
+_V3_SCHEMA_OBJECTS = _V2_SCHEMA_OBJECTS | frozenset(
+    {
+        "strategy_authority_bindings",
+        "strategy_authority_bindings_by_lane",
+        "strategy_authority_bindings_no_update",
+        "strategy_authority_bindings_no_delete",
     }
 )
 
@@ -230,6 +255,28 @@ class ExperimentLedgerReader:
                 FROM strategy_versions ORDER BY rowid"""
             ).fetchall()
         return tuple(_stored_strategy_version(row) for row in rows)
+
+    def multi_market_hypotheses(
+        self,
+    ) -> tuple[StoredMultiMarketHypothesisRegistration, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            try:
+                return read_multi_market_hypotheses(connection)
+            except InvalidMultiMarketExperimentSourceError:
+                raise InvalidExperimentLedgerSourceError from None
+
+    def multi_market_strategy_versions(
+        self,
+    ) -> tuple[StoredMultiMarketStrategyVersionRegistration, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            try:
+                return read_multi_market_strategy_versions(connection)
+            except InvalidMultiMarketExperimentSourceError:
+                raise InvalidExperimentLedgerSourceError from None
 
     def strategy_authority_bindings(self) -> tuple[StoredStrategyAuthorityBinding, ...]:
         if not self.path.is_file():
@@ -445,6 +492,30 @@ class ExperimentLedgerWriter:
                 canonical_experiment_ledger_json(registration),
             ),
         )
+
+    def register_multi_market_hypothesis(
+        self,
+        registration: MultiMarketHypothesisRegistration,
+    ) -> bool:
+        self._require_active()
+        try:
+            return register_multi_market_hypothesis(self._connection, registration)
+        except MultiMarketExperimentConflictError:
+            raise ExperimentLedgerConflictError from None
+        except InvalidMultiMarketExperimentSourceError:
+            raise InvalidExperimentLedgerSourceError from None
+
+    def register_multi_market_strategy_version(
+        self,
+        registration: MultiMarketStrategyVersionRegistration,
+    ) -> bool:
+        self._require_active()
+        try:
+            return register_multi_market_strategy_version(self._connection, registration)
+        except MultiMarketExperimentConflictError:
+            raise ExperimentLedgerConflictError from None
+        except InvalidMultiMarketExperimentSourceError:
+            raise InvalidExperimentLedgerSourceError from None
 
     def register_strategy_authority_binding(self, binding: StrategyAuthorityBinding) -> bool:
         self._require_active()
@@ -1220,7 +1291,9 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
         _require_v1_schema(connection)
         _apply_schema_transaction(
             connection,
-            ddl=CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2 + CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3,
+            ddl=CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2
+            + CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3
+            + CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1228,7 +1301,15 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
         _require_v2_schema(connection)
         _apply_schema_transaction(
             connection,
-            ddl=CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3,
+            ddl=CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3 + CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4,
+            version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
+        )
+        return
+    if current == EXPERIMENT_LEDGER_SCHEMA_VERSION_V3:
+        _require_v3_schema(connection)
+        _apply_schema_transaction(
+            connection,
+            ddl=CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1268,4 +1349,15 @@ def _require_v2_schema(connection: sqlite3.Connection) -> None:
         row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
     )
     if actual_objects != _V2_SCHEMA_OBJECTS:
+        raise UnsupportedExperimentLedgerSchemaError
+
+
+def _require_v3_schema(connection: sqlite3.Connection) -> None:
+    version: tuple[int] | None = connection.execute("PRAGMA user_version").fetchone()
+    if version != (EXPERIMENT_LEDGER_SCHEMA_VERSION_V3,):
+        raise UnsupportedExperimentLedgerSchemaError
+    actual_objects = frozenset(
+        row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
+    )
+    if actual_objects != _V3_SCHEMA_OBJECTS:
         raise UnsupportedExperimentLedgerSchemaError

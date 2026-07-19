@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import Final
 
-EXPERIMENT_LEDGER_SCHEMA_VERSION: Final = 3
+EXPERIMENT_LEDGER_SCHEMA_VERSION: Final = 4
 EXPERIMENT_LEDGER_SCHEMA_VERSION_V1: Final = 1
 EXPERIMENT_LEDGER_SCHEMA_VERSION_V2: Final = 2
+EXPERIMENT_LEDGER_SCHEMA_VERSION_V3: Final = 3
 
 CREATE_EXPERIMENT_LEDGER_SCHEMA_V1: Final = """
 CREATE TABLE hypotheses (
@@ -163,8 +164,59 @@ CREATE TRIGGER strategy_authority_bindings_no_delete
 BEFORE DELETE ON strategy_authority_bindings BEGIN SELECT RAISE(ABORT, 'append-only'); END;
 """
 
+CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4: Final = """
+CREATE TABLE multi_market_hypotheses (
+  registration_key TEXT PRIMARY KEY
+    CHECK(length(registration_key) = 64 AND registration_key NOT GLOB '*[^0-9a-f]*'),
+  hypothesis_id TEXT NOT NULL UNIQUE,
+  experiment_scope_key TEXT NOT NULL
+    CHECK(length(experiment_scope_key) = 64
+      AND experiment_scope_key NOT GLOB '*[^0-9a-f]*'),
+  primary_lane_id TEXT NOT NULL,
+  market_id TEXT NOT NULL CHECK(market_id IN ('us_equities', 'kr_equities')),
+  agent_family TEXT NOT NULL
+    CHECK(agent_family IN (
+      'opportunity_manager', 'day_trading', 'swing_trading',
+      'systematic_quant', 'market_context', 'allocation_manager'
+    )),
+  payload_json TEXT NOT NULL
+);
+CREATE TABLE multi_market_strategy_versions (
+  registration_key TEXT PRIMARY KEY
+    CHECK(length(registration_key) = 64 AND registration_key NOT GLOB '*[^0-9a-f]*'),
+  strategy_version TEXT NOT NULL UNIQUE,
+  strategy_id TEXT NOT NULL,
+  hypothesis_id TEXT NOT NULL,
+  experiment_scope_key TEXT NOT NULL
+    CHECK(length(experiment_scope_key) = 64
+      AND experiment_scope_key NOT GLOB '*[^0-9a-f]*'),
+  strategy_lane_id TEXT NOT NULL,
+  market_id TEXT NOT NULL CHECK(market_id IN ('us_equities', 'kr_equities')),
+  agent_family TEXT NOT NULL
+    CHECK(agent_family IN (
+      'opportunity_manager', 'day_trading', 'swing_trading',
+      'systematic_quant', 'market_context', 'allocation_manager'
+    )),
+  operating_mode TEXT NOT NULL
+    CHECK(operating_mode IN ('contract_only', 'shadow', 'alpaca_paper')),
+  payload_json TEXT NOT NULL,
+  FOREIGN KEY(hypothesis_id) REFERENCES multi_market_hypotheses(hypothesis_id)
+);
+CREATE INDEX multi_market_strategy_versions_by_lane
+ON multi_market_strategy_versions(strategy_lane_id, strategy_version);
+CREATE TRIGGER multi_market_hypotheses_no_update
+BEFORE UPDATE ON multi_market_hypotheses BEGIN SELECT RAISE(ABORT, 'append-only'); END;
+CREATE TRIGGER multi_market_hypotheses_no_delete
+BEFORE DELETE ON multi_market_hypotheses BEGIN SELECT RAISE(ABORT, 'append-only'); END;
+CREATE TRIGGER multi_market_strategy_versions_no_update
+BEFORE UPDATE ON multi_market_strategy_versions BEGIN SELECT RAISE(ABORT, 'append-only'); END;
+CREATE TRIGGER multi_market_strategy_versions_no_delete
+BEFORE DELETE ON multi_market_strategy_versions BEGIN SELECT RAISE(ABORT, 'append-only'); END;
+"""
+
 CREATE_EXPERIMENT_LEDGER_SCHEMA: Final = (
     CREATE_EXPERIMENT_LEDGER_SCHEMA_V1
     + CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2
     + CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3
+    + CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4
 )

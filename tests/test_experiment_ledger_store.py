@@ -41,6 +41,7 @@ from trading_agent.experiment_ledger_models import (
 from trading_agent.experiment_ledger_schema import (
     CREATE_EXPERIMENT_LEDGER_SCHEMA,
     CREATE_EXPERIMENT_LEDGER_SCHEMA_V1,
+    CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2,
     EXPERIMENT_LEDGER_SCHEMA_VERSION,
 )
 from trading_agent.experiment_ledger_store import (
@@ -52,9 +53,16 @@ from trading_agent.experiment_ledger_store import (
     InvalidExperimentLedgerSourceError,
     UnsupportedExperimentLedgerSchemaError,
 )
+from trading_agent.experiment_scope_models import ExperimentScopeKind
 from trading_agent.lane_contract_keys import experiment_scope_key
 from trading_agent.lane_defaults import current_intraday_experiment_scope
 from trading_agent.lane_policy_models import LaneId
+from trading_agent.multi_market_experiment_models import (
+    MultiMarketExperimentScope,
+    MultiMarketHypothesisRegistration,
+    MultiMarketStrategyVersionRegistration,
+    multi_market_experiment_scope_key,
+)
 from trading_agent.research_identity_models import (
     AgentFamily,
     AgentOperatingMode,
@@ -141,6 +149,49 @@ def _strategy_authority_binding(
         operating_mode=operating_mode,
         legacy_lane_id=LaneId.INTRADAY_MOMENTUM,
         bound_at=LEDGER_RECORDED_AT,
+    )
+
+
+def _kr_multi_market_hypothesis() -> MultiMarketHypothesisRegistration:
+    registered_at = dt.datetime(2026, 7, 19, 8, tzinfo=dt.UTC)
+    lane = StrategyLaneRef(
+        market_id=MarketId.KR_EQUITIES,
+        agent_family=AgentFamily.OPPORTUNITY_MANAGER,
+        strategy_id="theme_momentum",
+    )
+    scope = MultiMarketExperimentScope(
+        scope_kind=ExperimentScopeKind.SINGLE_LANE,
+        hypothesis_id="H-KR-THEME-MOMENTUM-001",
+        primary_lane=lane,
+        lanes=(lane,),
+        registered_at=registered_at,
+    )
+    return MultiMarketHypothesisRegistration(
+        hypothesis_id=scope.hypothesis_id,
+        experiment_scope=scope,
+        experiment_scope_key=multi_market_experiment_scope_key(scope),
+        hypothesis="Fresh corroborated KR themes may produce ranked opportunities.",
+        falsification_rule="Reject when forward ranking has no net-cost information.",
+        source_registered_at=registered_at,
+        ledger_recorded_at=registered_at,
+    )
+
+
+def _kr_multi_market_version() -> MultiMarketStrategyVersionRegistration:
+    hypothesis = _kr_multi_market_hypothesis()
+    return MultiMarketStrategyVersionRegistration(
+        strategy_version="kr_theme_momentum_v1",
+        hypothesis_id=hypothesis.hypothesis_id,
+        experiment_scope_key=hypothesis.experiment_scope_key,
+        strategy_lane=hypothesis.experiment_scope.primary_lane,
+        operating_mode=AgentOperatingMode.SHADOW,
+        code_version="kr-theme-code-v1",
+        parameter_set=("freshness_seconds:900",),
+        data_contract=("kr_theme_evidence_v1",),
+        cost_model=("opportunity_only",),
+        portfolio_policy=("no_order_authority",),
+        source_registered_at=hypothesis.source_registered_at,
+        ledger_recorded_at=hypothesis.ledger_recorded_at,
     )
 
 
@@ -332,7 +383,7 @@ def test_writer_migrates_v1_without_rewriting_existing_rows(tmp_path: Path) -> N
         version = connection.execute("PRAGMA user_version").fetchone()
 
     assert migrated_row == original_row
-    assert version == (3,)
+    assert version == (4,)
 
 
 def test_writer_migrates_v2_without_rewriting_existing_rows(tmp_path: Path) -> None:
@@ -346,8 +397,7 @@ def test_writer_migrates_v2_without_rewriting_existing_rows(tmp_path: Path) -> N
         hypothesis.model_dump_json(),
     )
     with sqlite3.connect(database) as connection:
-        connection.executescript(CREATE_EXPERIMENT_LEDGER_SCHEMA)
-        _ = connection.execute("DROP TABLE strategy_authority_bindings")
+        connection.executescript(CREATE_EXPERIMENT_LEDGER_SCHEMA_V1 + CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2)
         _ = connection.execute("PRAGMA user_version = 2")
         _ = connection.execute("INSERT INTO hypotheses VALUES (?, ?, ?, ?, ?)", original_row)
         connection.commit()
@@ -362,11 +412,51 @@ def test_writer_migrates_v2_without_rewriting_existing_rows(tmp_path: Path) -> N
         version = connection.execute("PRAGMA user_version").fetchone()
 
     assert migrated_row == original_row
-    assert version == (3,)
+    assert version == (4,)
 
 
-def test_current_experiment_ledger_schema_is_v3() -> None:
-    assert EXPERIMENT_LEDGER_SCHEMA_VERSION == 3
+def test_writer_migrates_v3_without_rewriting_existing_rows(tmp_path: Path) -> None:
+    database = tmp_path / "experiment.sqlite3"
+    hypothesis = _hypothesis()
+    original_row = (
+        str(hypothesis_registration_key(hypothesis)),
+        hypothesis.hypothesis_id,
+        hypothesis.experiment_scope_key,
+        hypothesis.primary_lane.value,
+        hypothesis.model_dump_json(),
+    )
+    with sqlite3.connect(database) as connection:
+        connection.executescript(CREATE_EXPERIMENT_LEDGER_SCHEMA)
+        connection.executescript(
+            """
+            DROP TRIGGER multi_market_strategy_versions_no_delete;
+            DROP TRIGGER multi_market_strategy_versions_no_update;
+            DROP TRIGGER multi_market_hypotheses_no_delete;
+            DROP TRIGGER multi_market_hypotheses_no_update;
+            DROP INDEX multi_market_strategy_versions_by_lane;
+            DROP TABLE multi_market_strategy_versions;
+            DROP TABLE multi_market_hypotheses;
+            PRAGMA user_version = 3;
+            """
+        )
+        _ = connection.execute("INSERT INTO hypotheses VALUES (?, ?, ?, ?, ?)", original_row)
+        connection.commit()
+
+    with ExperimentLedgerStore(database).writer():
+        pass
+
+    with sqlite3.connect(database) as connection:
+        migrated_row = connection.execute(
+            "SELECT registration_key, hypothesis_id, experiment_scope_key, lane_id, payload_json FROM hypotheses"
+        ).fetchone()
+        version = connection.execute("PRAGMA user_version").fetchone()
+
+    assert migrated_row == original_row
+    assert version == (4,)
+
+
+def test_current_experiment_ledger_schema_is_v4() -> None:
+    assert EXPERIMENT_LEDGER_SCHEMA_VERSION == 4
 
 
 def test_writer_rolls_back_v1_migration_when_v2_ddl_fails(
@@ -446,6 +536,26 @@ def test_writer_registers_strategy_authority_binding(tmp_path: Path) -> None:
 
     assert stored[0].binding_key == strategy_authority_binding_key(_strategy_authority_binding())
     assert stored[0].binding == _strategy_authority_binding()
+
+
+def test_writer_registers_multi_market_hypothesis(tmp_path: Path) -> None:
+    store = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+
+    with store.writer() as writer:
+        assert writer.register_multi_market_hypothesis(_kr_multi_market_hypothesis()) is True
+        assert writer.register_multi_market_hypothesis(_kr_multi_market_hypothesis()) is False
+        assert writer.register_multi_market_strategy_version(_kr_multi_market_version()) is True
+        assert writer.register_multi_market_strategy_version(_kr_multi_market_version()) is False
+
+    assert store.multi_market_hypotheses()[0].registration == _kr_multi_market_hypothesis()
+    assert store.multi_market_strategy_versions()[0].registration == _kr_multi_market_version()
+
+
+def test_multi_market_version_rejects_unknown_parent(tmp_path: Path) -> None:
+    store = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+
+    with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
+        _ = writer.register_multi_market_strategy_version(_kr_multi_market_version())
 
 
 def test_strategy_authority_binding_rejects_conflicting_mode(tmp_path: Path) -> None:
@@ -769,6 +879,8 @@ def test_missing_reader_is_empty_and_does_not_create_paths(tmp_path: Path) -> No
     assert reader.hypotheses() == ()
     assert reader.strategy_versions() == ()
     assert reader.strategy_authority_bindings() == ()
+    assert reader.multi_market_hypotheses() == ()
+    assert reader.multi_market_strategy_versions() == ()
     assert reader.trials() == ()
     assert not database.exists()
     assert not database.parent.exists()
@@ -832,6 +944,8 @@ def test_reader_connection_closes_after_context(tmp_path: Path) -> None:
         "research_sources",
         "research_hypothesis_cards",
         "strategy_authority_bindings",
+        "multi_market_hypotheses",
+        "multi_market_strategy_versions",
     ),
 )
 def test_registration_tables_are_append_only(tmp_path: Path, operation: str, table: str) -> None:
@@ -842,6 +956,8 @@ def test_registration_tables_are_append_only(tmp_path: Path, operation: str, tab
         assert writer.register_research_source(_research_source()) is True
         assert writer.register_research_hypothesis(_research_card()) is True
         assert writer.register_strategy_authority_binding(_strategy_authority_binding()) is True
+        assert writer.register_multi_market_hypothesis(_kr_multi_market_hypothesis()) is True
+        assert writer.register_multi_market_strategy_version(_kr_multi_market_version()) is True
 
     with (
         sqlite3.connect(database) as connection,
