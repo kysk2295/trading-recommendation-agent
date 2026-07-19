@@ -59,6 +59,7 @@ class AlpacaSipQuoteMessage(BaseModel):
             or _VENUE.fullmatch(self.bid_exchange) is None
             or self.ask_price <= 0
             or self.bid_price <= 0
+            or self.bid_price > self.ask_price
             or self.ask_size < 0
             or self.bid_size < 0
             or self.tape not in {"A", "B", "C"}

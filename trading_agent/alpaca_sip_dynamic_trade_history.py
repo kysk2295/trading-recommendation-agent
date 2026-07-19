@@ -4,14 +4,12 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import override
 
-from trading_agent.alpaca_sip_dynamic_projection import project_alpaca_sip_dynamic_receipts
-from trading_agent.alpaca_sip_dynamic_receipt_models import (
-    AlpacaSipDynamicReceiptKind,
-    AlpacaSipDynamicTerminalStatus,
+from trading_agent.alpaca_sip_dynamic_history_coverage import (
+    verify_alpaca_sip_dynamic_history_as_of,
 )
+from trading_agent.alpaca_sip_dynamic_receipt_models import AlpacaSipDynamicTerminalStatus
 from trading_agent.alpaca_sip_dynamic_receipt_store import AlpacaSipDynamicReceiptStore
 from trading_agent.alpaca_sip_dynamic_subscription import AlpacaSipDynamicSubscriptionPlan
-from trading_agent.alpaca_sip_dynamic_terminal_store import AlpacaSipDynamicTerminalStore
 from trading_agent.alpaca_sip_dynamic_trade_state import _materialize_projected_trades_as_of
 from trading_agent.alpaca_sip_dynamic_trade_state_models import AlpacaSipDynamicTradeState
 
@@ -76,48 +74,23 @@ def materialize_alpaca_sip_dynamic_trade_history_as_of(
     try:
         if type(store) is not AlpacaSipDynamicReceiptStore or type(plan) is not AlpacaSipDynamicSubscriptionPlan:
             raise AlpacaSipDynamicTradeHistoryError
-        terminals = AlpacaSipDynamicTerminalStore(store.path).load_history(plan)
-        if not terminals:
-            raise AlpacaSipDynamicTradeHistoryError
-        completed = tuple(item for item in terminals if item.status is AlpacaSipDynamicTerminalStatus.BOUNDED_COMPLETE)
-        last_terminal = terminals[len(terminals) - 1]
-        if len(terminals) > 10 or len(completed) > 1 or (completed and last_terminal != completed[0]):
-            raise AlpacaSipDynamicTradeHistoryError
-        projected = []
-        previous_terminal_at: dt.datetime | None = None
-        for terminal in terminals:
-            replay = store.load_replay(plan, terminal.connection_epoch)
-            if previous_terminal_at is not None and replay and replay[0].received_at < previous_terminal_at:
-                raise AlpacaSipDynamicTradeHistoryError
-            has_data = any(item.kind is AlpacaSipDynamicReceiptKind.DATA for item in replay)
-            if has_data:
-                if len(replay) < 4:
-                    raise AlpacaSipDynamicTradeHistoryError
-                projected.extend(project_alpaca_sip_dynamic_receipts(store, plan, terminal.connection_epoch))
-            elif len(replay) > 3:
-                raise AlpacaSipDynamicTradeHistoryError
-            previous_terminal_at = terminal.terminal_at
+        coverage = verify_alpaca_sip_dynamic_history_as_of(store, plan, as_of=as_of)
         state = _materialize_projected_trades_as_of(
-            tuple(projected),
-            plan.plan_id,
-            plan.market_date,
-            tuple(item.connection_epoch for item in terminals),
-            as_of,
-        )
-        statuses = tuple(item.status for item in terminals)
-        terminal_observed = all(item.terminal_at <= as_of for item in terminals)
-        continuity = (
-            terminal_observed and len(statuses) == 1 and statuses[0] is AlpacaSipDynamicTerminalStatus.BOUNDED_COMPLETE
+            coverage.projected_messages,
+            coverage.plan_id,
+            coverage.market_date,
+            coverage.connection_epochs,
+            coverage.as_of,
         )
         return AlpacaSipDynamicTradeHistory(
             state,
-            statuses,
-            len(statuses) - 1,
-            True,
-            terminal_observed,
-            continuity,
-            continuity,
-            () if continuity else ("continuity_unattested",),
+            coverage.terminal_statuses,
+            coverage.gap_count,
+            coverage.raw_first_verified,
+            coverage.terminal_observed,
+            coverage.continuity_attested,
+            coverage.complete_history,
+            coverage.reason_codes,
         )
     except (AttributeError, KeyError, TypeError, ValueError):
         raise AlpacaSipDynamicTradeHistoryError from None
