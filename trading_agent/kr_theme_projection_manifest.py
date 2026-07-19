@@ -30,6 +30,7 @@ class KrThemeProjectionRunManifest(BaseModel):
     projected_at: dt.datetime
     validity_seconds: int
     producer_strategy_version: str
+    runtime_code_version: str | None = None
 
     @model_validator(mode="after")
     def validate_run(self) -> Self:
@@ -45,6 +46,7 @@ class KrThemeProjectionRunManifest(BaseModel):
             or self.projected_at < self.classified_at
             or not 1 <= self.validity_seconds <= 3600
             or _SAFE_ID.fullmatch(self.producer_strategy_version) is None
+            or (self.runtime_code_version is not None and _SAFE_ID.fullmatch(self.runtime_code_version) is None)
         ):
             raise ValueError("invalid KR theme projection run")
         return self
@@ -61,9 +63,7 @@ def load_kr_theme_projection_run(path: Path) -> LoadedKrThemeProjectionRun:
         manifest_path = path.resolve(strict=True)
         if not manifest_path.is_file():
             raise OSError
-        run = KrThemeProjectionRunManifest.model_validate_json(
-            manifest_path.read_bytes()
-        )
+        run = KrThemeProjectionRunManifest.model_validate_json(manifest_path.read_bytes())
         base = manifest_path.parent
         rules_path = (base / run.rules_path).resolve(strict=True)
         if not rules_path.is_relative_to(base) or not rules_path.is_file():

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "hypothesis_id": "H-KR-THEME-MOMENTUM-001",
+  "strategy_version": "kr-theme-keyword-projection-v1-code-c80f7023e84a6369",
+  "code_version": "kr-theme-fixture-code-v1",
+  "hypothesis": "Point-in-time KR themes corroborated by independent disclosure or news evidence and same-cycle volume participation may produce useful ranked opportunities for subsequent shadow evaluation.",
+  "falsification_rule": "Reject this version when preregistered forward ranking evaluation does not outperform its fixed eligible-universe baseline after declared costs and coverage requirements.",
+  "parameter_set": [
+    "classification:exact_registered_keyword",
+    "ranking:trading_value_then_volume_ratio",
+    "validity_seconds:900"
+  ],
+  "data_contract": [
+    "same_cycle_sources:dart_news_kis_ranking_volume_surge",
+    "point_in_time_only:true",
+    "source_failure_policy:fail_closed"
+  ],
+  "cost_model": [
+    "opportunity_stage:no_fill_assumption",
+    "trade_cost_evaluation:deferred_to_downstream_shadow_trial"
+  ],
+  "portfolio_policy": [
+    "output:ranked_opportunity_only",
+    "order_authority:false",
+    "position_authority:false"
+  ],
+  "source_registered_at": "2026-07-19T08:00:00+09:00",
+  "ledger_recorded_at": "2026-07-19T08:00:00+09:00"
+}

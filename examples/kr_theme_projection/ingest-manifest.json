@@ -3,8 +3,8 @@
   "cycle": {
     "schema_version": 1,
     "collection_cycle_id": "kr-theme-projection-001",
-    "started_at": "2026-07-15T09:00:00+09:00",
-    "completed_at": "2026-07-15T09:02:00+09:00",
+    "started_at": "2026-07-19T09:00:00+09:00",
+    "completed_at": "2026-07-19T09:02:00+09:00",
     "coverage": [
       {
         "schema_version": 1,
@@ -43,7 +43,7 @@
       "source_record_id": "kis-ranking://synthetic/projection/001",
       "publisher_id": "kis_synthetic",
       "published_at": null,
-      "observed_at": "2026-07-15T09:01:00+09:00",
+      "observed_at": "2026-07-19T09:01:00+09:00",
       "content_type": "application/json",
       "payload_path": "kis-ranking-synthetic.json"
     },
@@ -52,8 +52,8 @@
       "source": "news",
       "source_record_id": "news://synthetic/projection/001",
       "publisher_id": "synthetic_news",
-      "published_at": "2026-07-15T09:00:00+09:00",
-      "observed_at": "2026-07-15T09:00:30+09:00",
+      "published_at": "2026-07-19T09:00:00+09:00",
+      "observed_at": "2026-07-19T09:00:30+09:00",
       "content_type": "application/json",
       "payload_path": "news-synthetic.json"
     },
@@ -63,7 +63,7 @@
       "source_record_id": "volume-surge://synthetic/projection/001",
       "publisher_id": "derived_volume_surge",
       "published_at": null,
-      "observed_at": "2026-07-15T09:01:30+09:00",
+      "observed_at": "2026-07-19T09:01:30+09:00",
       "content_type": "application/json",
       "payload_path": "volume-surge-synthetic.json"
     }

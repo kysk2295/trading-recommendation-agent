@@ -14,11 +14,42 @@ import typer
 import run_kr_theme_ingest
 import run_kr_theme_projection
 from trading_agent.contract_outbox import ContractOutboxFormatError
+from trading_agent.experiment_ledger_store import ExperimentLedgerStore
+from trading_agent.kr_theme_research_registration import (
+    register_kr_theme_research_manifest,
+)
 from trading_agent.kr_theme_store import KrThemeStore
 from trading_agent.signal_contract_models import OpportunitySnapshot
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "kr_theme_projection"
+
+
+def test_projection_cli_rejects_unregistered_strategy_before_theme_store_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    experiment_ledger = tmp_path / "experiment-ledger.sqlite3"
+    with ExperimentLedgerStore(experiment_ledger).writer():
+        pass
+    store_opened = False
+
+    def unexpected_store_open(_: Path) -> object:
+        nonlocal store_opened
+        store_opened = True
+        raise AssertionError("research authority must be checked first")
+
+    monkeypatch.setattr(run_kr_theme_projection, "KrThemeStore", unexpected_store_open)
+
+    with pytest.raises(typer.BadParameter):
+        run_kr_theme_projection.main(
+            str(EXAMPLE / "projection-run.json"),
+            str(tmp_path / "kr-theme.sqlite3"),
+            str(tmp_path / "projection"),
+            str(experiment_ledger),
+        )
+
+    assert store_opened is False
 
 
 def test_projection_cli_publishes_one_kr_opportunity_and_restart_is_idempotent(
@@ -33,39 +64,31 @@ def test_projection_cli_publishes_one_kr_opportunity_and_restart_is_idempotent(
         str(ingest_output),
     )
 
-    run_kr_theme_projection.main(
+    _run_projection(
         str(EXAMPLE / "projection-run.json"),
         str(database),
         str(projection_output),
     )
-    first_report = (projection_output / "kr_theme_projection_summary_ko.md").read_text(
-        encoding="utf-8"
-    )
+    first_report = (projection_output / "kr_theme_projection_summary_ko.md").read_text(encoding="utf-8")
     outbox = projection_output / "opportunities.v1.jsonl"
     summary = projection_output / "kr_theme_projection_summary_ko.md"
     assert stat.S_IMODE(outbox.stat().st_mode) == 0o600
     assert stat.S_IMODE(summary.stat().st_mode) == 0o600
     outbox.chmod(0o644)
     summary.chmod(0o644)
-    run_kr_theme_projection.main(
+    _run_projection(
         str(EXAMPLE / "projection-run.json"),
         str(database),
         str(projection_output),
     )
-    second_report = (projection_output / "kr_theme_projection_summary_ko.md").read_text(
-        encoding="utf-8"
-    )
+    second_report = (projection_output / "kr_theme_projection_summary_ko.md").read_text(encoding="utf-8")
 
     store = KrThemeStore(database)
     assert len(store.classifications()) == 1
-    lines = (projection_output / "opportunities.v1.jsonl").read_text(
-        encoding="utf-8"
-    ).splitlines()
+    lines = (projection_output / "opportunities.v1.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     opportunity = OpportunitySnapshot.model_validate_json(lines[0])
-    assert opportunity.strategy_lane.canonical_id == (
-        "kr_equities/opportunity_manager/theme_momentum"
-    )
+    assert opportunity.strategy_lane.canonical_id == ("kr_equities/opportunity_manager/theme_momentum")
     assert opportunity.candidates[0].symbol == "005930"
     assert opportunity.candidates[0].rank == 1
     assert "테마 수: 1" in first_report
@@ -98,7 +121,7 @@ def test_projection_cli_rejects_database_collision_before_classification_append(
     )
 
     with pytest.raises(typer.BadParameter):
-        run_kr_theme_projection.main(
+        _run_projection(
             str(EXAMPLE / "projection-run.json"),
             str(database),
             str(output),
@@ -154,7 +177,7 @@ def test_projection_cli_rejects_artifact_filesystem_alias_before_store_open(
     monkeypatch.setattr(run_kr_theme_projection, "KrThemeStore", unexpected_store_open)
 
     with pytest.raises(typer.BadParameter):
-        run_kr_theme_projection.main(
+        _run_projection(
             str(EXAMPLE / "projection-run.json"),
             str(database),
             str(output),
@@ -202,7 +225,7 @@ def test_projection_cli_rejects_resolved_database_sidecar_hardlink_before_store_
     monkeypatch.setattr(run_kr_theme_projection, "KrThemeStore", unexpected_store_open)
 
     with pytest.raises(typer.BadParameter):
-        run_kr_theme_projection.main(
+        _run_projection(
             str(EXAMPLE / "projection-run.json"),
             str(database_alias),
             str(output),
@@ -236,7 +259,7 @@ def test_projection_cli_prepares_new_outbox_private_before_append(
     )
 
     with pytest.raises(typer.BadParameter):
-        run_kr_theme_projection.main(
+        _run_projection(
             str(EXAMPLE / "projection-run.json"),
             str(database),
             str(output),
@@ -270,7 +293,7 @@ def test_projection_cli_handles_outbox_privacy_with_zero_projections(
         lambda *_args, **_kwargs: (),
     )
 
-    run_kr_theme_projection.main(
+    _run_projection(
         str(EXAMPLE / "projection-run.json"),
         str(database),
         str(output),
@@ -338,7 +361,7 @@ def test_projection_cli_fails_closed_before_classification_append(
     output = tmp_path / "projection"
 
     with pytest.raises(typer.BadParameter):
-        run_kr_theme_projection.main(
+        _run_projection(
             str(fixture / "projection-run.json"),
             str(database),
             str(output),
@@ -363,7 +386,7 @@ def test_projection_cli_corrupt_outbox_is_safe_and_restart_recoverable(
     outbox.write_text("private-corrupt-outbox\n", encoding="utf-8")
 
     with pytest.raises(typer.BadParameter) as captured:
-        run_kr_theme_projection.main(
+        _run_projection(
             str(EXAMPLE / "projection-run.json"),
             str(database),
             str(output),
@@ -373,7 +396,7 @@ def test_projection_cli_corrupt_outbox_is_safe_and_restart_recoverable(
     assert stat.S_IMODE(outbox.stat().st_mode) == 0o600
     assert len(KrThemeStore(database).classifications()) == 1
     outbox.unlink()
-    run_kr_theme_projection.main(
+    _run_projection(
         str(EXAMPLE / "projection-run.json"),
         str(database),
         str(output),
@@ -388,7 +411,7 @@ def test_projection_cli_invalid_manifest_fails_before_database_creation(
     output = tmp_path / "should-not-exist"
 
     with pytest.raises(typer.BadParameter):
-        run_kr_theme_projection.main(
+        _run_projection(
             str(tmp_path / "missing-run.json"),
             str(database),
             str(output),
@@ -401,6 +424,20 @@ def test_projection_cli_invalid_manifest_fails_before_database_creation(
 def _copy_fixture(destination: Path) -> Path:
     _ = shutil.copytree(EXAMPLE, destination)
     return destination
+
+
+def _run_projection(run_manifest: str, database: str, output_dir: str) -> None:
+    experiment_ledger = Path(database).parent / "experiment-ledger.sqlite3"
+    _ = register_kr_theme_research_manifest(
+        EXAMPLE / "research-registration.json",
+        ExperimentLedgerStore(experiment_ledger),
+    )
+    run_kr_theme_projection.main(
+        run_manifest,
+        database,
+        output_dir,
+        str(experiment_ledger),
+    )
 
 
 def _json_object(path: Path) -> dict[str, object]:

@@ -64,8 +64,9 @@
 - ORB watch의 기존 metrics→daily record→adaptive 체인에 opt-in scheduled lane 단계를 연결. 네 경로 all-or-none·ORB-only이며 upstream 성공 뒤에만 snapshot→Reviewer runner를 호출하고 실패는 watch에 전파
 - lane registry·review ledger·execution ledger와 분리된 global experiment ledger schema v1 구현. hypothesis/version/trial 등록과 trial/lifecycle event는 append-only이며 single Writer·query-only Reader·canonical key·전체 chain 검증을 사용
 - global experiment ledger schema v2에 immutable `ResearchSource` catalog와 기존 hypothesis에 연결되는 `ResearchHypothesisCard`를 추가. local-only JSON preregistration CLI는 공개 근거의 주장·한계·반증 기준을 보존하고 exact v1 ledger에는 table 추가 외 기존 행 재작성이 없으며, strategy version·trial·Reviewer·lifecycle·Paper 권한은 변경하지 않음
-- global experiment ledger schema v3에 전략 버전별 immutable `StrategyAuthorityBinding`을 추가. exact `StrategyLaneRef`·최대 운영모드·승인된 US legacy execution lane을 결합하며, 부모 identity/time mismatch와 mode 변경은 fail-closed. KR lane은 multi-market experiment scope v2 전까지 legacy lane으로 위장하지 않고 champion 전이는 아직 닫혀 있음
+- global experiment ledger schema v3의 `StrategyAuthorityBinding`은 legacy US 전략 버전에 exact `StrategyLaneRef`·최대 운영모드·승인된 execution lane을 결합하며 부모 identity/time mismatch와 mode 변경을 fail-closed. KR lane에는 거짓 legacy binding을 만들지 않고 champion 전이는 아직 닫혀 있음
 - lifecycle v2는 `SHADOW_CHAMPION`과 `PAPER_CHAMPION`을 분리하고 exact authority key·운영모드·Paper phase를 검증. intraday bootstrap은 네 US day version을 Alpaca Paper authority로, swing trial은 US swing shadow authority로 등록하지만 자동 promotion·allocation·risk·주문 권한은 계속 닫혀 있음
+- global experiment ledger schema v4는 기존 v1~v3 행을 재작성하지 않고 exact `StrategyLaneRef` 기반 multi-market hypothesis/version을 추가. KR theme Opportunity Manager는 code-coupled `shadow` version을 사전등록하고 projection manifest가 그 exact 원장 행을 검증해야만 Opportunity을 만들며, KR TradeSignal·shadow fill·trial/lifecycle·국내 주문 권한은 아직 없음
 - intraday strategy version은 사람이 읽는 parameter-set base와 exact code version SHA-256 digest를 함께 사용한다. 새 clean commit은 기존 hypothesis를 재작성하지 않고 별도 append-only strategy version·lifecycle registration을 남기며, daily record·Reviewer·snapshot·ORB trial·Lifecycle Controller는 같은 code-coupled identity를 다시 검증한다
 - trial의 completed·failed·censored terminal 결과를 모두 보존하고, lifecycle은 `idea→historical→experimental_shadow→experimental_paper→challenger→paper_champion` 및 suspended/rejected 닫힌 전이표와 next-session as-of projection을 구현
 - local-only `run_experiment_ledger_bootstrap.py`가 exact intraday manifest·네 scope를 먼저 검증한 뒤 현재 네 전략을 `experimental_shadow`로 이관. v1 ledger는 Reader 조회 전 Writer lease에서 v2로 올린다. 2026-07-16 runtime ledger에서 새 code version/lifecycle 4/4 append와 exact 0/0 replay, mode 600 report를 확인했으며 broker mutation은 없음
@@ -137,14 +138,15 @@
 4. 현재 NYSE post-close와 mode-600 data credential·정렬된 bounded universe가 동시에 맞을 때만 US swing 일봉 source를 read-only로 한 번 수집한다. 그 뒤에만 동일 CLI로 signal/shadow forward evidence를 누적하며, Paper 계좌·주문은 열지 않는다.
 5. current NYSE post-close source가 안전하게 축적된 뒤에만 새 US swing signal을 다음 정규장 전 local trial로 등록하고 terminal evidence를 누적한다. 표본·동일 위험 비교·승격 근거가 쌓이기 전에는 lane 권한을 바꾸지 않는다.
 6. fixture E2E가 끝난 KR same-cycle orchestrator를 전체 품질 게이트와 수동 CLI QA로 확정한다. 현재 KST·자격증명·정상 endpoint 조건이 모두 맞을 때만 별도 bounded production same-cycle을 read-only로 실행하고, 아니면 provider를 억지로 열지 않는다.
-7. 동일-cycle production coverage가 immutable evidence로 확정된 뒤에만 별도 manifest로 KR keyword Opportunity projection을 실행한다. source 실패를 성공이나 부분 complete로 축소하지 않으며, projection도 TradeSignal·국내 주문을 열지 않는다.
-8. 새 코드 commit이 생긴 경우 다음 NYSE 개장 전에 clean checkout의 local-only experiment ledger bootstrap을 실행해 code-coupled strategy version을 append한다. 정규장 뒤 누락된 preregistration은 소급 생성하지 않고 read-only 관찰만 보존한다.
-9. 열린 뉴욕 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증
-10. 실제 적격 ORB 세션마다 preregistered daily trial을 누적하고 terminal replay·실패·검열 운영 결과를 대사하되 열린 trial을 임의 terminal로 추정하지 않음
-11. 추가 부분체결이 실제 발생할 때 staged 보호 OCO cancel → terminal 대사 → 다음 호출 replacement를 같은 축소 한도에서 검증하되 체결을 억지로 만들지 않음
-12. equal-risk terminal trial·broker/shadow·DSR/PBO·parameter plateau·SIP 증거 계약이 모두 생긴 뒤에만 comparison·promotion Controller 단계를 별도 구현
-13. 최소 두 executable Paper champion 전에는 Portfolio Manager를 구현하지 않음
-14. generic correction/tombstone replay 위에 extraction invalidation과 provider별 deletion cursor·retention 이행을 추가하되 기존 immutable event를 덮어쓰지 않음
+7. 동일-cycle production coverage가 immutable evidence로 확정된 뒤 exact code-coupled KR theme shadow version을 global experiment ledger에 먼저 등록하고, 그 원장을 요구하는 별도 manifest로 KR keyword Opportunity projection을 실행한다. source 실패를 성공이나 부분 complete로 축소하지 않으며, projection도 TradeSignal·국내 주문을 열지 않는다.
+8. KR theme Opportunity의 exact producer version을 유지한 채 provider-neutral market gate를 통과한 후보만 KR day `TradeSignal` shadow trial로 변환하는 계약을 구현한다. LS/KIS current quote adapter, 비용 모델, shadow fill과 terminal outcome을 분리하고 국내 주문 권한은 만들지 않는다.
+9. 새 코드 commit이 생긴 경우 다음 NYSE 개장 전에 clean checkout의 local-only experiment ledger bootstrap을 실행해 code-coupled strategy version을 append한다. 정규장 뒤 누락된 preregistration은 소급 생성하지 않고 read-only 관찰만 보존한다.
+10. 열린 뉴욕 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증
+11. 실제 적격 ORB 세션마다 preregistered daily trial을 누적하고 terminal replay·실패·검열 운영 결과를 대사하되 열린 trial을 임의 terminal로 추정하지 않음
+12. 추가 부분체결이 실제 발생할 때 staged 보호 OCO cancel → terminal 대사 → 다음 호출 replacement를 같은 축소 한도에서 검증하되 체결을 억지로 만들지 않음
+13. equal-risk terminal trial·broker/shadow·DSR/PBO·parameter plateau·SIP 증거 계약이 모두 생긴 뒤에만 comparison·promotion Controller 단계를 별도 구현
+14. 최소 두 executable Paper champion 전에는 Portfolio Manager를 구현하지 않음
+15. generic correction/tombstone replay 위에 extraction invalidation과 provider별 deletion cursor·retention 이행을 추가하되 기존 immutable event를 덮어쓰지 않음
 
 ## 시작 전 확인
 

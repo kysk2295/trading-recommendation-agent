@@ -137,5 +137,6 @@ def _run_document() -> dict[str, object]:
         "classified_at": "2026-07-15T09:02:10+09:00",
         "projected_at": "2026-07-15T09:03:00+09:00",
         "validity_seconds": 600,
-        "producer_strategy_version": "kr-theme-keyword-projection-v1",
+        "producer_strategy_version": "kr-theme-keyword-projection-v1-code-c80f7023e84a6369",
+        "runtime_code_version": "kr-theme-fixture-code-v1",
     }

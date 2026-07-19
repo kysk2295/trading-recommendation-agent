@@ -6,11 +6,12 @@ import json
 import re
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Final, Literal, Self, override
+from typing import Literal, Self, override
 
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from trading_agent.kis_kr_ranking import KisKrRankingItem, KisKrRankingKind
+from trading_agent.kr_theme_lane import KR_THEME_OPPORTUNITY_LANE
 from trading_agent.kr_theme_models import (
     KrCatalystCollectionCycle,
     KrCatalystObservation,
@@ -34,11 +35,6 @@ from trading_agent.kr_volume_surge_models import (
 from trading_agent.kr_volume_surge_models import (
     KrVolumeSurgeSymbol as KrVolumeSurgeSymbol,
 )
-from trading_agent.research_identity_models import (
-    AgentFamily,
-    MarketId,
-    StrategyLaneRef,
-)
 from trading_agent.signal_contract_models import (
     EvidenceRef,
     FeatureValue,
@@ -47,11 +43,6 @@ from trading_agent.signal_contract_models import (
     SourceCoverage,
 )
 
-KR_THEME_OPPORTUNITY_LANE: Final = StrategyLaneRef(
-    market_id=MarketId.KR_EQUITIES,
-    agent_family=AgentFamily.OPPORTUNITY_MANAGER,
-    strategy_id="theme_momentum",
-)
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _KR_SYMBOL = re.compile(r"^[0-9]{6}$")
@@ -111,9 +102,7 @@ class KrThemeState(BaseModel):
                 key=lambda item: (-item.trading_value_krw, item.symbol),
             )
         )
-        expected_freshness = int(
-            (self.projected_at - self.first_observed_at).total_seconds()
-        )
+        expected_freshness = int((self.projected_at - self.first_observed_at).total_seconds())
         if (
             _SAFE_ID.fullmatch(self.state_id) is None
             or _SAFE_ID.fullmatch(self.collection_cycle_id) is None
@@ -279,11 +268,7 @@ def _exact_cycle_evidence(
         len(catalyst_by_id) != len(catalysts)
         or len(observation_by_id) != len(observations)
         or set(catalyst_by_id) != set(observation_by_id)
-        or any(
-            hashlib.sha256(item.raw_payload).hexdigest()
-            != item.record.payload_sha256
-            for item in catalysts
-        )
+        or any(hashlib.sha256(item.raw_payload).hexdigest() != item.record.payload_sha256 for item in catalysts)
         or any(item.collection_cycle_id != cycle.collection_cycle_id for item in observations)
         or any(
             item.observed_at > projected_at
@@ -293,10 +278,7 @@ def _exact_cycle_evidence(
         )
     ):
         raise InvalidKrThemeProjectionError
-    actual = {
-        source: sum(item.record.source is source for item in catalysts)
-        for source in KrCatalystSource
-    }
+    actual = {source: sum(item.record.source is source for item in catalysts) for source in KrCatalystSource}
     declared = {item.source: item.record_count for item in cycle.coverage}
     if any(actual[source] != declared[source] for source in KrCatalystSource):
         raise InvalidKrThemeProjectionError
@@ -335,8 +317,7 @@ def _selected_classifications(
         classification = rows[0]
         if (
             classification.classified_at > projected_at
-            or classification.classified_at
-            < catalyst_by_id[catalyst_id].record.first_observed_at
+            or classification.classified_at < catalyst_by_id[catalyst_id].record.first_observed_at
         ):
             raise InvalidKrThemeProjectionError
         selected.append(classification)
@@ -469,12 +450,8 @@ def _project_theme(
         )
     )
     classification_ids = tuple(sorted(item.classification_id for item in classifications))
-    market_catalyst_ids = tuple(
-        sorted({metrics[symbol].catalyst_id for symbol in related})
-    )
-    catalyst_records = tuple(
-        catalyst_by_id[item.catalyst_id].record for item in classifications
-    )
+    market_catalyst_ids = tuple(sorted({metrics[symbol].catalyst_id for symbol in related}))
+    catalyst_records = tuple(catalyst_by_id[item.catalyst_id].record for item in classifications)
     first_observed_at = min(item.first_observed_at for item in catalyst_records)
     latest_observed_at = max(item.first_observed_at for item in catalyst_records)
     publishers = {item.publisher_id for item in catalyst_records if item.publisher_id is not None}
@@ -569,11 +546,7 @@ def _evidence_refs(
         )
         for item in classifications
     )
-    market_observed = {
-        item.catalyst_id: item.observed_at
-        for symbol, item in metrics.items()
-        if symbol in related
-    }
+    market_observed = {item.catalyst_id: item.observed_at for symbol, item in metrics.items() if symbol in related}
     evidence.extend(
         EvidenceRef(
             namespace="kr/catalyst/volume_surge",

@@ -723,3 +723,10 @@
 - 수정: `SHADOW_CHAMPION`을 같은 성숙도 rank의 별도 상태로 추가했다. 신규 champion Writer는 exact authority key, binding 시각과 mode를 검증하고 Paper Champion에는 이전 `EXPERIMENTAL_PAPER` phase를 요구한다. Reader도 새 shadow 행과 authority 이후 champion을 재검증하며 legacy Paper history는 읽는다.
 - 운영 연결: intraday bootstrap은 네 US day strategy에 Paper authority를, swing shadow trial은 US swing strategy에 shadow authority를 append한다. v2 backfill의 bound 시각은 현재 요청시각이며 과거 version 시각으로 소급하지 않는다.
 - 결과: focused 126개와 전체 2614 tests, CLI·public Writer 수동 QA와 정적 게이트가 통과했다. 자동 promotion, risk/allocation/order 변경과 network·broker mutation은 0건이다.
+
+## H102: legacy LaneId experiment ledger에 KR 전략을 사실대로 등록할 수 없다
+
+- 결함: 기존 global hypothesis/version은 `intraday_momentum`, `swing_momentum`, `market_regime`만 허용했다. KR theme Opportunity의 producer version은 manifest 문자열에만 있어 원장에 등록하려면 US legacy lane으로 위장하거나 계보 없이 projection해야 했다.
+- 수정: schema v4에 exact market/family/strategy `StrategyLaneRef`를 보존하는 multi-market hypothesis/version append-only table을 추가했다. v1~v3는 무재작성 migration하고 legacy/multi-market identity 충돌, 부모 scope/lane/time, normalized column과 content key를 Reader/Writer 모두 검증한다.
+- 운영 연결: KR theme Opportunity Manager의 code-coupled `shadow` version을 local CLI로 사전등록한다. projection은 exact experiment ledger, producer/runtime version과 등록 전후 인과성을 확인하고 source·experiment SQLite가 output과 filesystem alias면 classification append 전에 차단한다.
+- 결과: schema v1/v2/v3 migration, KR 등록/replay와 등록 없는 projection 차단, synthetic ingest→projection replay가 focused 124개와 전체 2630 tests를 통과했다. 직접 격리 CLI 실행도 검증했으며 KR TradeSignal·shadow fill·trial/lifecycle과 국내 주문은 열지 않았고 provider·credential·network·broker mutation은 0건이다.

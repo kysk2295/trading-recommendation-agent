@@ -16,6 +16,11 @@ from trading_agent.contract_outbox import (
     ContractOutboxFormatError,
     append_opportunity_snapshot,
 )
+from trading_agent.experiment_ledger_store import (
+    ExperimentLedgerReader,
+    InvalidExperimentLedgerSourceError,
+    UnsupportedExperimentLedgerSchemaError,
+)
 from trading_agent.kr_theme_keyword import (
     ELIGIBLE_SOURCES,
     InvalidKrKeywordClassificationError,
@@ -31,6 +36,11 @@ from trading_agent.kr_theme_projection_manifest import (
     KrThemeProjectionManifestError,
     LoadedKrThemeProjectionRun,
     load_kr_theme_projection_run,
+)
+from trading_agent.kr_theme_research_registration import (
+    InvalidKrThemeResearchRegistrationError,
+    KrThemeProjectionAuthorityRequest,
+    require_registered_kr_theme_strategy,
 )
 from trading_agent.kr_theme_store import (
     InvalidKrThemeSourceError,
@@ -59,37 +69,43 @@ def main(
     run_manifest: str | None = None,
     database: str = "outputs/kr_theme/kr_theme.sqlite3",
     output_dir: str = "outputs/kr_theme/projection/latest",
+    experiment_ledger: str | None = None,
 ) -> None:
-    if run_manifest is None:
+    if run_manifest is None or experiment_ledger is None:
         raise typer.BadParameter("run manifest 경로가 필요합니다")
     try:
         loaded = load_kr_theme_projection_run(Path(run_manifest))
         database_path = Path(database).expanduser().resolve(strict=False)
+        experiment_ledger_path = Path(experiment_ledger).expanduser().resolve(strict=False)
         output = Path(output_dir)
-        _validate_projection_targets(database_path, output)
+        _validate_projection_targets(
+            (database_path, experiment_ledger_path),
+            output,
+        )
+        if loaded.run.runtime_code_version is None:
+            raise KrThemeProjectionRunError
+        _ = require_registered_kr_theme_strategy(
+            ExperimentLedgerReader(experiment_ledger_path),
+            KrThemeProjectionAuthorityRequest(
+                strategy_version=loaded.run.producer_strategy_version,
+                code_version=loaded.run.runtime_code_version,
+                projected_at=loaded.run.projected_at,
+            ),
+        )
         store = KrThemeStore(database_path)
         if not store.is_initialized():
             raise KrThemeProjectionRunError
-        cycles = tuple(
-            item
-            for item in store.cycles()
-            if item.collection_cycle_id == loaded.run.collection_cycle_id
-        )
+        cycles = tuple(item for item in store.cycles() if item.collection_cycle_id == loaded.run.collection_cycle_id)
         if len(cycles) != 1:
             raise KrThemeProjectionRunError
         cycle = cycles[0]
         observations = tuple(
-            item
-            for item in store.observations()
-            if item.collection_cycle_id == cycle.collection_cycle_id
+            item for item in store.observations() if item.collection_cycle_id == cycle.collection_cycle_id
         )
-        catalyst_by_id = {
-            item.record.catalyst_id: item for item in store.catalysts()
-        }
+        catalyst_by_id = {item.record.catalyst_id: item for item in store.catalysts()}
         try:
             catalysts = tuple(
-                catalyst_by_id[item.catalyst_id]
-                for item in sorted(observations, key=lambda value: value.catalyst_id)
+                catalyst_by_id[item.catalyst_id] for item in sorted(observations, key=lambda value: value.catalyst_id)
             )
         except KeyError:
             raise KrThemeProjectionRunError from None
@@ -111,19 +127,14 @@ def main(
         new_classifications = 0
         with store.writer() as writer:
             for classification in generated:
-                new_classifications += int(
-                    writer.append_classification(classification)
-                )
+                new_classifications += int(writer.append_classification(classification))
 
         outbox = output / "opportunities.v1.jsonl"
         new_opportunities = 0
         if projections or outbox.exists():
             _prepare_private_outbox(outbox)
         if projections:
-            new_opportunities = sum(
-                append_opportunity_snapshot(outbox, item.opportunity)
-                for item in projections
-            )
+            new_opportunities = sum(append_opportunity_snapshot(outbox, item.opportunity) for item in projections)
         report = _report(
             loaded,
             projections,
@@ -138,7 +149,9 @@ def main(
         ContractOutboxConflictError,
         ContractOutboxFormatError,
         InvalidKrKeywordClassificationError,
+        InvalidExperimentLedgerSourceError,
         InvalidKrThemeProjectionError,
+        InvalidKrThemeResearchRegistrationError,
         InvalidKrThemeSourceError,
         KrThemeConflictError,
         KrThemeProjectionManifestError,
@@ -147,6 +160,7 @@ def main(
         OSError,
         sqlite3.Error,
         UnicodeError,
+        UnsupportedExperimentLedgerSchemaError,
         UnsupportedKrThemeSchemaError,
     ):
         raise typer.BadParameter(str(KrThemeProjectionRunError())) from None
@@ -158,28 +172,26 @@ def main(
     )
 
 
-def _validate_projection_targets(database: Path, output_dir: Path) -> None:
-    resolved_database = database.expanduser().resolve(strict=False)
-    ledger_candidates = (
-        resolved_database,
-        Path(f"{resolved_database}.writer.lock"),
-        Path(f"{resolved_database}-journal"),
-        Path(f"{resolved_database}-shm"),
-        Path(f"{resolved_database}-wal"),
+def _validate_projection_targets(
+    databases: tuple[Path, ...],
+    output_dir: Path,
+) -> None:
+    ledger_candidates = tuple(
+        candidate
+        for database in databases
+        for candidate in (
+            database.expanduser().resolve(strict=False),
+            Path(f"{database.expanduser().resolve(strict=False)}.writer.lock"),
+            Path(f"{database.expanduser().resolve(strict=False)}-journal"),
+            Path(f"{database.expanduser().resolve(strict=False)}-shm"),
+            Path(f"{database.expanduser().resolve(strict=False)}-wal"),
+        )
     )
-    ledger_targets = {
-        candidate.expanduser().resolve(strict=False) for candidate in ledger_candidates
-    }
-    ledger_identities = {
-        _file_identity(candidate)
-        for candidate in ledger_candidates
-        if candidate.exists()
-    }
+    ledger_targets = {candidate.expanduser().resolve(strict=False) for candidate in ledger_candidates}
+    ledger_identities = {_file_identity(candidate) for candidate in ledger_candidates if candidate.exists()}
     for relative in _PROJECTION_ARTIFACTS:
         target = output_dir / relative
-        if target.is_symlink() or (
-            target.expanduser().resolve(strict=False) in ledger_targets
-        ):
+        if target.is_symlink() or (target.expanduser().resolve(strict=False) in ledger_targets):
             raise KrThemeProjectionRunError
         if target.exists() and _file_identity(target) in ledger_identities:
             raise KrThemeProjectionRunError
