@@ -710,3 +710,9 @@
 - 결함: KR catalyst와 Opportunity projection은 구현됐지만 day shadow 진입 전에 상한가·VI·단일가·거래정지·투자지정과 현재 호가를 하나의 시점 고정 계약으로 요구하는 gate가 없었다. adapter 결손을 기본 정상값으로 채우면 체결 불가능 후보가 신호로 올라갈 수 있었다.
 - 수정: raw price/limit/quote와 canonical evidence reference, session·VI·trading mode·halt·designation의 explicit unknown 상태를 가진 frozen snapshot을 추가했다. pure gate가 5초 freshness, future evidence, +27% 근접, 상·하한가와 unusable quote까지 deterministic reason으로 평가한다.
 - 결과: clear evidence만 `eligible`이며 각 active/unknown 상태는 fail-closed다. focused 14개와 전체 2592 tests, 정적 게이트 및 최소 드라이버가 통과했다. 아직 provider adapter·TradeSignal·shadow fill은 없고 국내 주문·계좌 및 외부 network mutation은 0건이다.
+
+## H100: challenger가 연구 운영모드 없이 champion 종류를 선택할 수 있다
+
+- 결함: global strategy version은 legacy `LaneId`만 저장해 exact `StrategyLaneRef`와 shadow/Paper 운영권한을 구분하지 못했다. 이 상태에서 `SHADOW_CHAMPION` enum만 추가하면 어떤 challenger도 champion 종류를 임의로 선택할 수 있다.
+- 수정: schema v3 `strategy_authority_bindings`가 전략 버전, 연구 lane, 최대 운영모드, 승인된 legacy execution lane과 binding 시각을 content-addressed append-only 행으로 고정한다. 부모 strategy ID·lane·시간 불일치, mode 변경과 KR의 거짓 legacy mapping은 차단한다.
+- 결과: v1/v2 무재작성 migration, exact append/replay, conflict, parent/tamper와 append-only 경계를 focused 50개 및 전체 2603 tests로 검증했다. lifecycle 전이표와 주문 권한은 아직 바뀌지 않았고 network·broker mutation은 0건이다.

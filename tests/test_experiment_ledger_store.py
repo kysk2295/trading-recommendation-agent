@@ -19,6 +19,7 @@ from trading_agent.experiment_ledger_keys import (
     hypothesis_registration_key,
     research_hypothesis_card_key,
     research_source_key,
+    strategy_authority_binding_key,
     strategy_lifecycle_event_key,
     strategy_version_registration_key,
 )
@@ -36,7 +37,11 @@ from trading_agent.experiment_ledger_models import (
     TrialEventKind,
     TrialKind,
 )
-from trading_agent.experiment_ledger_schema import CREATE_EXPERIMENT_LEDGER_SCHEMA_V1
+from trading_agent.experiment_ledger_schema import (
+    CREATE_EXPERIMENT_LEDGER_SCHEMA,
+    CREATE_EXPERIMENT_LEDGER_SCHEMA_V1,
+    EXPERIMENT_LEDGER_SCHEMA_VERSION,
+)
 from trading_agent.experiment_ledger_store import (
     ExperimentLedgerConflictError,
     ExperimentLedgerReader,
@@ -49,6 +54,13 @@ from trading_agent.experiment_ledger_store import (
 from trading_agent.lane_contract_keys import experiment_scope_key
 from trading_agent.lane_defaults import current_intraday_experiment_scope
 from trading_agent.lane_policy_models import LaneId
+from trading_agent.research_identity_models import (
+    AgentFamily,
+    AgentOperatingMode,
+    MarketId,
+    StrategyLaneRef,
+)
+from trading_agent.strategy_authority_models import StrategyAuthorityBinding
 from trading_agent.strategy_factory import StrategyMode
 
 ORB_CONTRACT = strategy_contract(StrategyMode.ORB)
@@ -112,6 +124,20 @@ def _version() -> StrategyVersionRegistration:
         portfolio_policy=SHADOW_PORTFOLIO_POLICY,
         source_registered_at=SOURCE_REGISTERED_AT,
         ledger_recorded_at=LEDGER_RECORDED_AT,
+    )
+
+
+def _strategy_authority_binding() -> StrategyAuthorityBinding:
+    return StrategyAuthorityBinding(
+        strategy_version=ORB_CONTRACT.strategy_version,
+        strategy_lane=StrategyLaneRef(
+            market_id=MarketId.US_EQUITIES,
+            agent_family=AgentFamily.DAY_TRADING,
+            strategy_id=StrategyMode.ORB.value,
+        ),
+        operating_mode=AgentOperatingMode.ALPACA_PAPER,
+        legacy_lane_id=LaneId.INTRADAY_MOMENTUM,
+        bound_at=LEDGER_RECORDED_AT,
     )
 
 
@@ -303,7 +329,41 @@ def test_writer_migrates_v1_without_rewriting_existing_rows(tmp_path: Path) -> N
         version = connection.execute("PRAGMA user_version").fetchone()
 
     assert migrated_row == original_row
-    assert version == (2,)
+    assert version == (3,)
+
+
+def test_writer_migrates_v2_without_rewriting_existing_rows(tmp_path: Path) -> None:
+    database = tmp_path / "experiment.sqlite3"
+    hypothesis = _hypothesis()
+    original_row = (
+        str(hypothesis_registration_key(hypothesis)),
+        hypothesis.hypothesis_id,
+        hypothesis.experiment_scope_key,
+        hypothesis.primary_lane.value,
+        hypothesis.model_dump_json(),
+    )
+    with sqlite3.connect(database) as connection:
+        connection.executescript(CREATE_EXPERIMENT_LEDGER_SCHEMA)
+        _ = connection.execute("DROP TABLE strategy_authority_bindings")
+        _ = connection.execute("PRAGMA user_version = 2")
+        _ = connection.execute("INSERT INTO hypotheses VALUES (?, ?, ?, ?, ?)", original_row)
+        connection.commit()
+
+    with ExperimentLedgerStore(database).writer():
+        pass
+
+    with sqlite3.connect(database) as connection:
+        migrated_row = connection.execute(
+            "SELECT registration_key, hypothesis_id, experiment_scope_key, lane_id, payload_json FROM hypotheses"
+        ).fetchone()
+        version = connection.execute("PRAGMA user_version").fetchone()
+
+    assert migrated_row == original_row
+    assert version == (3,)
+
+
+def test_current_experiment_ledger_schema_is_v3() -> None:
+    assert EXPERIMENT_LEDGER_SCHEMA_VERSION == 3
 
 
 def test_writer_rolls_back_v1_migration_when_v2_ddl_fails(
@@ -337,9 +397,7 @@ def test_writer_rolls_back_v1_migration_when_v2_ddl_fails(
     with sqlite3.connect(database) as connection:
         objects = frozenset(
             row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
-            ).fetchall()
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
         )
         migrated_row = connection.execute(
             "SELECT registration_key, hypothesis_id, experiment_scope_key, lane_id, payload_json FROM hypotheses"
@@ -373,6 +431,59 @@ def test_registers_exact_lineage_and_replays_without_duplicate_rows(tmp_path: Pa
     assert stat.S_IMODE(Path(f"{database}.writer.lock").stat().st_mode) == 0o600
 
 
+def test_writer_registers_strategy_authority_binding(tmp_path: Path) -> None:
+    store = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    _register_lineage(store)
+
+    with store.writer() as writer:
+        assert writer.register_strategy_authority_binding(_strategy_authority_binding()) is True
+        assert writer.register_strategy_authority_binding(_strategy_authority_binding()) is False
+
+    stored = ExperimentLedgerReader(store.path).strategy_authority_bindings()
+
+    assert stored[0].binding_key == strategy_authority_binding_key(_strategy_authority_binding())
+    assert stored[0].binding == _strategy_authority_binding()
+
+
+def test_strategy_authority_binding_rejects_conflicting_mode(tmp_path: Path) -> None:
+    store = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    _register_lineage(store)
+    shadow = StrategyAuthorityBinding.model_validate(
+        _strategy_authority_binding().model_dump(mode="python") | {"operating_mode": AgentOperatingMode.SHADOW}
+    )
+
+    with store.writer() as writer:
+        assert writer.register_strategy_authority_binding(_strategy_authority_binding()) is True
+
+    with pytest.raises(ExperimentLedgerConflictError), store.writer() as writer:
+        _ = writer.register_strategy_authority_binding(shadow)
+
+
+@pytest.mark.parametrize(
+    "change",
+    (
+        {
+            "strategy_lane": StrategyLaneRef(
+                market_id=MarketId.US_EQUITIES,
+                agent_family=AgentFamily.DAY_TRADING,
+                strategy_id="different_strategy",
+            )
+        },
+        {"bound_at": LEDGER_RECORDED_AT - dt.timedelta(microseconds=1)},
+    ),
+)
+def test_strategy_authority_binding_rejects_invalid_parent(
+    tmp_path: Path,
+    change: dict[str, StrategyLaneRef | dt.datetime],
+) -> None:
+    store = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    _register_lineage(store)
+    binding = StrategyAuthorityBinding.model_validate(_strategy_authority_binding().model_dump(mode="python") | change)
+
+    with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
+        _ = writer.register_strategy_authority_binding(binding)
+
+
 def test_missing_reader_is_empty_and_does_not_create_paths(tmp_path: Path) -> None:
     database = tmp_path / "missing" / "experiment.sqlite3"
     reader = ExperimentLedgerReader(database)
@@ -380,6 +491,7 @@ def test_missing_reader_is_empty_and_does_not_create_paths(tmp_path: Path) -> No
     assert reader.is_initialized() is False
     assert reader.hypotheses() == ()
     assert reader.strategy_versions() == ()
+    assert reader.strategy_authority_bindings() == ()
     assert reader.trials() == ()
     assert not database.exists()
     assert not database.parent.exists()
@@ -436,7 +548,15 @@ def test_reader_connection_closes_after_context(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("operation", ("UPDATE", "DELETE"))
-@pytest.mark.parametrize("table", ("hypotheses", "research_sources", "research_hypothesis_cards"))
+@pytest.mark.parametrize(
+    "table",
+    (
+        "hypotheses",
+        "research_sources",
+        "research_hypothesis_cards",
+        "strategy_authority_bindings",
+    ),
+)
 def test_registration_tables_are_append_only(tmp_path: Path, operation: str, table: str) -> None:
     database = tmp_path / "experiment.sqlite3"
     store = ExperimentLedgerStore(database)
@@ -444,6 +564,7 @@ def test_registration_tables_are_append_only(tmp_path: Path, operation: str, tab
     with store.writer() as writer:
         assert writer.register_research_source(_research_source()) is True
         assert writer.register_research_hypothesis(_research_card()) is True
+        assert writer.register_strategy_authority_binding(_strategy_authority_binding()) is True
 
     with (
         sqlite3.connect(database) as connection,

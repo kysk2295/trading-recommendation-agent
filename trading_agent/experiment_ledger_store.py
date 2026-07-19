@@ -16,6 +16,7 @@ from trading_agent.experiment_ledger_keys import (
     HypothesisRegistrationKey,
     ResearchHypothesisCardKey,
     ResearchSourceKey,
+    StrategyAuthorityBindingKey,
     StrategyLifecycleEventKey,
     StrategyVersionRegistrationKey,
     canonical_experiment_ledger_json,
@@ -24,6 +25,7 @@ from trading_agent.experiment_ledger_keys import (
     hypothesis_registration_key,
     research_hypothesis_card_key,
     research_source_key,
+    strategy_authority_binding_key,
     strategy_lifecycle_event_key,
     strategy_version_registration_key,
 )
@@ -43,9 +45,12 @@ from trading_agent.experiment_ledger_models import (
 from trading_agent.experiment_ledger_schema import (
     CREATE_EXPERIMENT_LEDGER_SCHEMA,
     CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2,
+    CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3,
     EXPERIMENT_LEDGER_SCHEMA_VERSION,
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V1,
+    EXPERIMENT_LEDGER_SCHEMA_VERSION_V2,
 )
+from trading_agent.strategy_authority_models import StrategyAuthorityBinding
 
 _V1_SCHEMA_OBJECTS = frozenset(
     {
@@ -67,6 +72,17 @@ _V1_SCHEMA_OBJECTS = frozenset(
         "experiment_trial_events_no_delete",
         "strategy_lifecycle_events_no_update",
         "strategy_lifecycle_events_no_delete",
+    }
+)
+
+_V2_SCHEMA_OBJECTS = _V1_SCHEMA_OBJECTS | frozenset(
+    {
+        "research_sources",
+        "research_hypothesis_cards",
+        "research_sources_no_update",
+        "research_sources_no_delete",
+        "research_hypothesis_cards_no_update",
+        "research_hypothesis_cards_no_delete",
     }
 )
 
@@ -123,6 +139,12 @@ class StoredResearchHypothesisCard:
 class StoredStrategyVersionRegistration:
     registration_key: StrategyVersionRegistrationKey
     registration: StrategyVersionRegistration
+
+
+@dataclass(frozen=True, slots=True)
+class StoredStrategyAuthorityBinding:
+    binding_key: StrategyAuthorityBindingKey
+    binding: StrategyAuthorityBinding
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +225,20 @@ class ExperimentLedgerReader:
                 FROM strategy_versions ORDER BY rowid"""
             ).fetchall()
         return tuple(_stored_strategy_version(row) for row in rows)
+
+    def strategy_authority_bindings(self) -> tuple[StoredStrategyAuthorityBinding, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            rows: list[tuple[str, str, str, str, str, str, str, str, str]] = connection.execute(
+                """SELECT binding_key, strategy_version, strategy_lane_id, market_id,
+                agent_family, operating_mode, legacy_lane_id, bound_at, payload_json
+                FROM strategy_authority_bindings ORDER BY rowid"""
+            ).fetchall()
+            bindings = tuple(_stored_strategy_authority_binding(row) for row in rows)
+            for binding in bindings:
+                _require_strategy_authority_parent(connection, binding)
+        return bindings
 
     def trials(self) -> tuple[StoredExperimentTrialRegistration, ...]:
         if not self.path.is_file():
@@ -403,6 +439,35 @@ class ExperimentLedgerWriter:
             ),
         )
 
+    def register_strategy_authority_binding(self, binding: StrategyAuthorityBinding) -> bool:
+        self._require_active()
+        binding = _validated_strategy_authority_binding(binding)
+        parent = _strategy_version_by_id(self._connection, binding.strategy_version)
+        stored = StoredStrategyAuthorityBinding(strategy_authority_binding_key(binding), binding)
+        _require_strategy_authority_parent_for_binding(parent, stored)
+        existing = _strategy_authority_by_version(self._connection, binding.strategy_version)
+        if existing is not None:
+            if existing == stored:
+                return False
+            raise ExperimentLedgerConflictError
+        return self._insert_immutable(
+            table="strategy_authority_bindings",
+            key_column="binding_key",
+            key=stored.binding_key,
+            insert_sql="INSERT INTO strategy_authority_bindings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            insert_values=(
+                stored.binding_key,
+                binding.strategy_version,
+                binding.strategy_lane.canonical_id,
+                binding.strategy_lane.market_id.value,
+                binding.strategy_lane.agent_family.value,
+                binding.operating_mode.value,
+                binding.legacy_lane_id.value,
+                binding.bound_at.isoformat(),
+                canonical_experiment_ledger_json(binding),
+            ),
+        )
+
     def register_trial(self, registration: ExperimentTrialRegistration) -> bool:
         self._require_active()
         registration = _validated_trial(registration)
@@ -547,6 +612,13 @@ def _validated_strategy_version(registration: StrategyVersionRegistration) -> St
         raise InvalidExperimentLedgerSourceError from None
 
 
+def _validated_strategy_authority_binding(binding: StrategyAuthorityBinding) -> StrategyAuthorityBinding:
+    try:
+        return StrategyAuthorityBinding.model_validate(binding.model_dump(mode="python"))
+    except ValueError:
+        raise InvalidExperimentLedgerSourceError from None
+
+
 def _validated_trial(registration: ExperimentTrialRegistration) -> ExperimentTrialRegistration:
     try:
         return ExperimentTrialRegistration.model_validate(registration.model_dump(mode="python"))
@@ -652,6 +724,41 @@ def _strategy_version_by_id(
         (strategy_version,),
     ).fetchone()
     return None if row is None else _stored_strategy_version(row)
+
+
+def _strategy_authority_by_version(
+    connection: sqlite3.Connection,
+    strategy_version: str,
+) -> StoredStrategyAuthorityBinding | None:
+    row: tuple[str, str, str, str, str, str, str, str, str] | None = connection.execute(
+        """SELECT binding_key, strategy_version, strategy_lane_id, market_id,
+        agent_family, operating_mode, legacy_lane_id, bound_at, payload_json
+        FROM strategy_authority_bindings WHERE strategy_version = ?""",
+        (strategy_version,),
+    ).fetchone()
+    return None if row is None else _stored_strategy_authority_binding(row)
+
+
+def _require_strategy_authority_parent(
+    connection: sqlite3.Connection,
+    stored: StoredStrategyAuthorityBinding,
+) -> None:
+    parent = _strategy_version_by_id(connection, stored.binding.strategy_version)
+    _require_strategy_authority_parent_for_binding(parent, stored)
+
+
+def _require_strategy_authority_parent_for_binding(
+    parent: StoredStrategyVersionRegistration | None,
+    stored: StoredStrategyAuthorityBinding,
+) -> None:
+    binding = stored.binding
+    if (
+        parent is None
+        or binding.strategy_lane.strategy_id != parent.registration.strategy_id
+        or binding.legacy_lane_id is not parent.registration.lane_id
+        or binding.bound_at < parent.registration.ledger_recorded_at
+    ):
+        raise InvalidExperimentLedgerSourceError
 
 
 def _trial_by_id(
@@ -963,6 +1070,29 @@ def _stored_strategy_version(
     return StoredStrategyVersionRegistration(typed_key, registration)
 
 
+def _stored_strategy_authority_binding(
+    row: tuple[str, str, str, str, str, str, str, str, str],
+) -> StoredStrategyAuthorityBinding:
+    key, strategy_version, lane_id, market_id, family, mode, legacy_lane, bound_at, payload = row
+    try:
+        binding = StrategyAuthorityBinding.model_validate_json(payload)
+    except ValueError:
+        raise InvalidExperimentLedgerSourceError from None
+    typed_key = StrategyAuthorityBindingKey(key)
+    if (
+        typed_key != strategy_authority_binding_key(binding)
+        or strategy_version != binding.strategy_version
+        or lane_id != binding.strategy_lane.canonical_id
+        or market_id != binding.strategy_lane.market_id.value
+        or family != binding.strategy_lane.agent_family.value
+        or mode != binding.operating_mode.value
+        or legacy_lane != binding.legacy_lane_id.value
+        or bound_at != binding.bound_at.isoformat()
+    ):
+        raise InvalidExperimentLedgerSourceError
+    return StoredStrategyAuthorityBinding(typed_key, binding)
+
+
 def _stored_trial(row: tuple[str, str, str, str, str, str]) -> StoredExperimentTrialRegistration:
     key, trial_id, strategy_version, scope_key, trial_kind, payload = row
     try:
@@ -1052,7 +1182,15 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
         _require_v1_schema(connection)
         _apply_schema_transaction(
             connection,
-            ddl=CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2,
+            ddl=CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2 + CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3,
+            version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
+        )
+        return
+    if current == EXPERIMENT_LEDGER_SCHEMA_VERSION_V2:
+        _require_v2_schema(connection)
+        _apply_schema_transaction(
+            connection,
+            ddl=CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1061,12 +1199,7 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
 
 def _apply_schema_transaction(connection: sqlite3.Connection, *, ddl: str, version: int) -> None:
     try:
-        connection.executescript(
-            "BEGIN IMMEDIATE;\n"
-            f"{ddl}\n"
-            f"PRAGMA user_version = {version};\n"
-            "COMMIT;"
-        )
+        connection.executescript(f"BEGIN IMMEDIATE;\n{ddl}\nPRAGMA user_version = {version};\nCOMMIT;")
     except sqlite3.Error:
         connection.rollback()
         raise
@@ -1083,10 +1216,18 @@ def _require_v1_schema(connection: sqlite3.Connection) -> None:
     if version != (EXPERIMENT_LEDGER_SCHEMA_VERSION_V1,):
         raise UnsupportedExperimentLedgerSchemaError
     actual_objects = frozenset(
-        row[0]
-        for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
-        ).fetchall()
+        row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
     )
     if actual_objects != _V1_SCHEMA_OBJECTS:
+        raise UnsupportedExperimentLedgerSchemaError
+
+
+def _require_v2_schema(connection: sqlite3.Connection) -> None:
+    version: tuple[int] | None = connection.execute("PRAGMA user_version").fetchone()
+    if version != (EXPERIMENT_LEDGER_SCHEMA_VERSION_V2,):
+        raise UnsupportedExperimentLedgerSchemaError
+    actual_objects = frozenset(
+        row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
+    )
+    if actual_objects != _V2_SCHEMA_OBJECTS:
         raise UnsupportedExperimentLedgerSchemaError

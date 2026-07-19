@@ -181,6 +181,10 @@ def test_bootstrap_migrates_v1_ledger_before_appending_code_rollover(
     with sqlite3.connect(experiment_ledger.path) as connection:
         connection.executescript(
             """
+            DROP TRIGGER strategy_authority_bindings_no_delete;
+            DROP TRIGGER strategy_authority_bindings_no_update;
+            DROP INDEX strategy_authority_bindings_by_lane;
+            DROP TABLE strategy_authority_bindings;
             DROP TRIGGER research_hypothesis_cards_no_delete;
             DROP TRIGGER research_hypothesis_cards_no_update;
             DROP TRIGGER research_sources_no_delete;

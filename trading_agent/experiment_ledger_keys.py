@@ -15,6 +15,7 @@ from trading_agent.experiment_ledger_models import (
     StrategyLifecycleEvent,
     StrategyVersionRegistration,
 )
+from trading_agent.strategy_authority_models import StrategyAuthorityBinding
 
 HypothesisRegistrationKey = NewType("HypothesisRegistrationKey", str)
 StrategyVersionRegistrationKey = NewType("StrategyVersionRegistrationKey", str)
@@ -23,6 +24,7 @@ ExperimentTrialEventKey = NewType("ExperimentTrialEventKey", str)
 StrategyLifecycleEventKey = NewType("StrategyLifecycleEventKey", str)
 ResearchSourceKey = NewType("ResearchSourceKey", str)
 ResearchHypothesisCardKey = NewType("ResearchHypothesisCardKey", str)
+StrategyAuthorityBindingKey = NewType("StrategyAuthorityBindingKey", str)
 
 
 def hypothesis_registration_key(registration: HypothesisRegistration) -> HypothesisRegistrationKey:
@@ -55,6 +57,12 @@ def research_source_key(source: ResearchSource) -> ResearchSourceKey:
 
 def research_hypothesis_card_key(card: ResearchHypothesisCard) -> ResearchHypothesisCardKey:
     return ResearchHypothesisCardKey(_model_sha256(card))
+
+
+def strategy_authority_binding_key(
+    binding: StrategyAuthorityBinding,
+) -> StrategyAuthorityBindingKey:
+    return StrategyAuthorityBindingKey(_model_sha256(binding))
 
 
 def canonical_experiment_ledger_json(model: BaseModel) -> str:
