@@ -223,6 +223,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-19 Alpaca SIP dynamic connection owner 업데이트:** 한 invocation이 exact plan을 bind하고 store별 non-blocking lease를 연결 전체 수명 동안 잡아 두 번째 owner를 connector 이전에 차단한다. canonical 요청 URL과 handshake의 final URL을 모두 확인한 뒤에만 auth를 전송하고, connected/authenticated/exact multi-symbol subscription control과 설정된 수만큼의 data frame을 raw-first 저장한다. invalid auth·ACK와 data timeout도 이미 받은 receipt를 보존한다. 전체 **2418 tests**가 통과했으며 검증 connector는 fixture뿐이고 실제 WebSocket·credential file·account/order 호출은 0건이다. terminal attestation과 strict symbol projection은 다음 체크포인트다.
 
+**2026-07-19 Alpaca SIP dynamic symbol projection 업데이트:** private store가 재검증한 replay만 입력으로 받아 connected/authenticated/exact ACK를 다시 확인하고, quote·trade·correction·cancel data message를 strict Pydantic wire contract로 파싱해 plan의 instrument ID에 귀속한다. 각 immutable message ID는 raw receipt, frame 내 index와 canonical content hash에 결합된다. unbound symbol, 미래·다른 NY market-date event, control-in-data는 fail-closed한다. 전체 **2424 tests**가 통과했으며 correction chain의 상태 전이·terminal attestation·실제 provider smoke는 아직 완료되지 않았다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \

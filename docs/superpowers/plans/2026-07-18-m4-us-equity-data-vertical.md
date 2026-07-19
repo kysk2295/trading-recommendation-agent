@@ -162,6 +162,15 @@ validation. Invalid control, ACK, and timeout paths retain prior raw receipts.
 Only injected fixture transports were exercised; terminal attestation,
 per-symbol projection, and a bounded open-session read-only smoke remain.
 
+**Dynamic SIP symbol projection checkpoint (2026-07-19): Immutable message
+projection complete.** Projection accepts only a store-verified replay,
+revalidates the three control receipts, strictly parses quote, trade,
+correction, and cancel wire messages, and binds each symbol to its exact plan
+instrument. IDs bind the raw receipt, frame-local index, and canonical content
+hash. Unbound symbols, future/wrong-session timestamps, and control messages in
+data frames fail closed. Correction-chain state semantics and terminal session
+attestation remain separate follow-up boundaries.
+
 ### M4.3: Read-Only Runtime Supervisor
 
 Introduce provider-neutral read-only adapter and supervisor contracts. The
