@@ -253,6 +253,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-19 Alpaca SIP live actionability lifecycle 업데이트:** `run_alpaca_sip_live_actionability.py`가 runtime manifest의 durable active plan과 90초 이내 policy state를 대사한 뒤 explicit `--arm-read-only`에서만 bounded SIP quote/trade epoch를 연다. raw control/data와 terminal을 먼저 저장하고, terminal이 original READY snapshot과 같은 completed-minute이며 base signal이 여전히 current일 때만 그 terminal 시각으로 feature를 재관측해 stored projector를 즉시 실행한다. 미래 receipt를 과거 snapshot에 넣지 않으며 minute rollover, quote/trade 불완전, public credential, stale/mismatched plan은 actionability write 0이다. exact restart는 complete terminal을 재생해 connector 0건·append replay로 끝나고 계좌·주문 endpoint는 import하지 않는다. 전체 **2537 tests**, Ruff, basedpyright 0/0, compileall과 changed-file no-excuse가 통과했다.
 
+**2026-07-19 US runtime live actionability 자동 dispatch 업데이트:** fleet cycle과 bounded supervisor에 별도 `--arm-live-actionability`, receipt root, actionability store의 all-or-none 계약을 추가했다. 이번 cycle의 exact READY 관측시각과 일치하는 content-addressed manifest만 먼저 전부 검증하고, 종목별 mode-600 receipt SQLite를 mode-700 root에서 순차 single-writer로 실행한다. stale manifest는 연결하지 않고 malformed/public/중복 instrument batch와 부분 옵션은 credential·policy/provider 전에 차단한다. fixture cycle과 supervisor는 current manifest 1개를 bounded quote/trade WebSocket lifecycle에 연결했고 exact retry는 기존 terminal을 재생해 connector 0건·actionability append replay로 끝났다. 전체 **2545 tests**, Ruff, basedpyright 0/0, compileall과 changed-file no-excuse가 통과했으며 실제 Alpaca SIP provider WebSocket과 account/order mutation은 0건이다.
+
 **2026-07-19 Alpaca SIP dynamic terminal 업데이트:** receipt DB를 기존 v1 행을 다시 쓰지 않는 v2로 확장해 epoch별 append-only terminal evidence를 추가했다. bounded owner 성공은 최소 control 3 + data 1의 receipt IDs를 `BOUNDED_COMPLETE`로 고정하고, final URL·auth·ACK·timeout 실패는 당시 0개 이상의 receipt를 `FAILED`로 보존한다. terminal content hash는 plan/epoch/UTC time/status/receipt IDs를 결합하며 후속 receipt 추가, row 변조, naive time과 schema 불일치는 fail-closed한다. 전체 **2427 tests**가 통과했으며 실제 provider·credential file·account/order 요청은 0건이다.
 
 **2026-07-19 Alpaca SIP dynamic reconnect policy 업데이트:** plan별 terminal history를 각 epoch의 binding·receipt·content hash와 함께 시간순 재검증하고, 재시작 후에도 configured `max_attempts`에서 완료된 terminal 수를 차감한다. complete가 있으면 `BLOCKED_COMPLETE`, failed 수가 budget에 닿으면 `BLOCKED_BUDGET`, 그 외에는 exact next attempt와 remaining budget을 가진 `READY`만 반환한다. complete 뒤 추가 terminal, unordered·mixed-plan·중복 epoch history는 fail-closed한다. 전체 **2433 tests**가 통과했으며 아직 connector retry loop나 실제 provider 요청은 열지 않았다.
@@ -367,6 +369,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [Alpaca SIP profile 자동 materialization 체크포인트](docs/checkpoints/2026-07-19-alpaca-sip-profile-materializer-ko.md)
 - [US bounded minute supervisor 계약 체크포인트](docs/checkpoints/2026-07-19-us-runtime-minute-supervisor-ko.md)
 - [US runtime fleet supervisor CLI 체크포인트](docs/checkpoints/2026-07-19-us-runtime-fleet-supervisor-cli-ko.md)
+- [US runtime live actionability dispatch 체크포인트](docs/checkpoints/2026-07-19-us-runtime-live-actionability-dispatch-ko.md)
 - [US feature evidence projection 체크포인트](docs/checkpoints/2026-07-18-us-feature-evidence-projection-ko.md)
 - [Grok 개발 하네스 설계](docs/superpowers/specs/2026-07-18-grok-development-harness-design.md)
 - [Grok 개발 하네스 체크포인트](docs/checkpoints/2026-07-18-grok-development-harness-ko.md)
@@ -898,6 +901,14 @@ KIS 날짜별 paper 감시:
 ```
 
 이 명령은 정규장·fresh scanner·만료 전 opportunity·exact candidate/profile coverage를 먼저 확인한 뒤에만 Alpaca data credential을 읽는다. actionability 세 옵션을 모두 생략하면 dynamic plan과 manifest dispatch도 비활성화된다. outbox/root만 주면 plan store는 policy-state 파일 옆 `<stem>.dynamic-plans.sqlite3`으로 정해지며, `--dynamic-plan-store`만 단독으로 주거나 outbox/root 중 하나만 주면 provider와 state write 전에 차단한다. research artifact 옵션을 주면 owner별 breakout·RVOL evidence를 별도 read model로 만들며 서로 다른 종목을 하나의 corroborated claim으로 혼합하지 않는다. trading origin, account, position, order API는 사용하지 않는다.
+
+같은 cycle의 manifest를 bounded Alpaca SIP quote/trade lifecycle에 자동 연결하는 옵션은 기본적으로 비활성화한다. 열린 NYSE 정규장, mode-600 current-owner/single-hard-link market-data credential과 SIP entitlement를 별도로 확인한 실행에서만 다음 세 옵션을 함께 추가한다. 하나라도 빠지거나 arm만 주면 policy state와 provider 접근 전에 차단한다.
+
+```bash
+  --arm-live-actionability \
+  --live-actionability-receipt-root outputs/runtime/us-sip-fleet/live-receipts \
+  --live-actionability-store outputs/runtime/us-sip-fleet/live-actionability.sqlite3
+```
 
 수동 profile 경로 대신 현재 desired 종목의 20일 history와 완료 분 profile을 자동 생성·재생하려면 `--profile`을 빼고 다음 옵션을 사용한다.
 

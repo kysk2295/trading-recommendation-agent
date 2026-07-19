@@ -12,9 +12,6 @@ import httpx2
 from trading_agent.alpaca_http import (
     ALPACA_DATA_URL,
     DEFAULT_ALPACA_SECRET_PATH,
-    AlpacaSecretFileError,
-    MissingAlpacaCredentialsError,
-    load_alpaca_credentials,
 )
 from trading_agent.alpaca_sip_dynamic_plan_store import AlpacaSipDynamicPlanStoreError
 from trading_agent.alpaca_sip_profile_materializer import (
@@ -42,7 +39,6 @@ from trading_agent.us_runtime_actionability_manifest_dispatch import (
 )
 from trading_agent.us_runtime_actionability_plan import (
     RuntimeActionabilityPlanConfig,
-    dynamic_plan_report_detail,
 )
 from trading_agent.us_runtime_fleet_cycle import (
     ProfileArtifactBinding,
@@ -50,7 +46,15 @@ from trading_agent.us_runtime_fleet_cycle import (
     bind_runtime_profiles,
     execute_runtime_fleet_cycle,
 )
-from trading_agent.us_runtime_fleet_cycle_report import write_runtime_fleet_cycle_report
+from trading_agent.us_runtime_fleet_cycle_report import (
+    RuntimeFleetCycleReportFields,
+    write_runtime_fleet_cycle_ready_report,
+    write_runtime_fleet_cycle_report,
+)
+from trading_agent.us_runtime_live_actionability_config import (
+    RuntimeLiveActionabilityConfig,
+    RuntimeLiveActionabilityConfigError,
+)
 from trading_agent.us_runtime_policy_scope import (
     RuntimePolicyScopeError,
     RuntimePolicyScopeRequest,
@@ -89,6 +93,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--conditional-signal-outbox", type=Path)
     parser.add_argument("--actionability-manifest-root", type=Path)
     parser.add_argument("--dynamic-plan-store", type=Path)
+    parser.add_argument("--live-actionability-receipt-root", type=Path)
+    parser.add_argument("--live-actionability-store", type=Path)
+    parser.add_argument("--arm-live-actionability", action="store_true")
     parser.add_argument("--minimum-rvol-bps", type=int, default=15_000)
     parser.add_argument("--secret-path", type=Path, default=DEFAULT_ALPACA_SECRET_PATH)
     parser.add_argument("--capacity", type=int, default=2)
@@ -121,6 +128,12 @@ def main(
             args.dynamic_plan_store,
             args.policy_state_store,
         )
+        live_actionability = RuntimeLiveActionabilityConfig(
+            args.live_actionability_receipt_root,
+            args.live_actionability_store,
+            args.arm_live_actionability,
+            actionability,
+        )
         _validate_research_options(args)
         state_store = SubscriptionPolicyStateStore(args.policy_state_store)
         prior_state = state_store.latest()
@@ -138,7 +151,7 @@ def main(
         state_appended = state_store.append(next_state)
         plan_roll = actionability.roll(next_state)
         prepared = None if manual_profiles is None else bind_runtime_profiles(scope, manual_profiles)
-        credentials = load_alpaca_credentials(args.secret_path)
+        credentials = live_actionability.load_credentials(args.secret_path)
         with client_factory() as client:
             page_client = AlpacaSipMinutePageClient(
                 client,
@@ -174,14 +187,14 @@ def main(
             result.fleet.bindings,
             None if plan_roll is None else plan_roll.plan,
         )
+        live_actionability_result = live_actionability.dispatch(evaluated_at, credentials)
     except (
-        AlpacaSecretFileError,
         AlpacaSipDynamicPlanStoreError,
         AlpacaSipProfileMaterializerError,
-        MissingAlpacaCredentialsError,
         OSError,
         ResearchEvidenceArtifactError,
         RuntimeFleetCycleError,
+        RuntimeLiveActionabilityConfigError,
         RuntimePolicyScopeError,
         SubscriptionPolicyStateError,
         TypeError,
@@ -193,30 +206,20 @@ def main(
         _report(args.output_dir, ("result: blocked", "account/order mutation: 0"))
         return 1
     ready = result.audit.fleet_status == "ready" and result.audit.gate_status == "ready"
-    research_detail = (
-        "research evidence artifact: disabled"
-        if research_counts is None
-        else f"research evidence artifact: {research_counts[0]} new, {research_counts[1]} replay"
-    )
-    actionability_detail = (
-        "actionability manifests: disabled"
-        if actionability_counts is None
-        else f"actionability manifests: {actionability_counts[0]} new, {actionability_counts[1]} replay"
-    )
-    dynamic_plan_detail = dynamic_plan_report_detail(plan_roll)
-    _report(
+    write_runtime_fleet_cycle_ready_report(
         args.output_dir,
-        (
-            f"result: {'ready' if ready else 'blocked'}",
-            f"fleet: {result.audit.fleet_status}",
-            f"gate: {result.audit.gate_status}",
-            f"owner count: {len(result.audit.owners)}",
-            f"audit append: {'new' if result.audit_appended else 'replay'}",
-            f"policy state append: {'new' if state_appended else 'replay'}",
-            dynamic_plan_detail,
-            research_detail,
-            actionability_detail,
-            "account/order mutation: 0",
+        REPORT_NAME,
+        RuntimeFleetCycleReportFields(
+            ready,
+            result.audit.fleet_status,
+            result.audit.gate_status,
+            len(result.audit.owners),
+            result.audit_appended,
+            state_appended,
+            plan_roll,
+            research_counts,
+            actionability_counts,
+            live_actionability_result,
         ),
     )
     return 0 if ready else 1

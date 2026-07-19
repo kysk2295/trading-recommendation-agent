@@ -22,6 +22,10 @@ from trading_agent.us_runtime_actionability_plan import (
     RuntimeActionabilityPlanConfig,
     RuntimeActionabilityPlanConfigError,
 )
+from trading_agent.us_runtime_live_actionability_config import (
+    RuntimeLiveActionabilityConfig,
+    RuntimeLiveActionabilityConfigError,
+)
 from trading_agent.us_runtime_minute_supervisor import (
     RuntimeMinuteSupervisorConfig,
     RuntimeMinuteSupervisorError,
@@ -51,6 +55,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--conditional-signal-outbox", type=Path)
     parser.add_argument("--actionability-manifest-root", type=Path)
     parser.add_argument("--dynamic-plan-store", type=Path)
+    parser.add_argument("--live-actionability-receipt-root", type=Path)
+    parser.add_argument("--live-actionability-store", type=Path)
+    parser.add_argument("--arm-live-actionability", action="store_true")
     parser.add_argument("--cycles", type=int, default=390)
     parser.add_argument("--interval-seconds", type=float, default=60.0)
     parser.add_argument("--capacity", type=int, default=2)
@@ -70,13 +77,19 @@ def main(
 ) -> int:
     args = parse_args(argv)
     try:
-        _ = RuntimeActionabilityPlanConfig(
+        actionability = RuntimeActionabilityPlanConfig(
             args.conditional_signal_outbox,
             args.actionability_manifest_root,
             args.dynamic_plan_store,
             args.policy_state_store,
         )
-    except RuntimeActionabilityPlanConfigError:
+        _ = RuntimeLiveActionabilityConfig(
+            args.live_actionability_receipt_root,
+            args.live_actionability_store,
+            args.arm_live_actionability,
+            actionability,
+        )
+    except (RuntimeActionabilityPlanConfigError, RuntimeLiveActionabilityConfigError):
         _report(args.output_dir, ("result: blocked", "account/order mutation: 0"))
         return 1
     selected_clock = (lambda: dt.datetime.now(dt.UTC)) if clock is None else clock
@@ -152,6 +165,17 @@ def _cycle_arguments(args: argparse.Namespace) -> list[str]:
     dynamic_plan_arguments = (
         [] if args.dynamic_plan_store is None else ["--dynamic-plan-store", str(args.dynamic_plan_store)]
     )
+    live_actionability_arguments = (
+        []
+        if not args.arm_live_actionability
+        else [
+            "--arm-live-actionability",
+            "--live-actionability-receipt-root",
+            str(args.live_actionability_receipt_root),
+            "--live-actionability-store",
+            str(args.live_actionability_store),
+        ]
+    )
     return [
         "--scanner-store",
         str(args.scanner_store),
@@ -179,6 +203,7 @@ def _cycle_arguments(args: argparse.Namespace) -> list[str]:
         str(args.eviction_cooldown_seconds),
         *actionability_arguments,
         *dynamic_plan_arguments,
+        *live_actionability_arguments,
     ]
 
 

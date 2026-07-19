@@ -652,3 +652,11 @@
 - lifecycle: explicit read-only arm과 정규장 gate 뒤 manifest, latest durable plan, 90초 이내 policy state, private credential을 대사한다. exact plan으로 control/auth/subscription/data raw receipt와 terminal을 저장한 뒤 reobserved snapshot으로 existing query-only projector와 durable actionability store를 호출한다.
 - 재시작: 이미 complete terminal이 있으면 connector를 열지 않고 같은 terminal 시각과 output identity를 재생한다. quote/trade 중 하나가 없는 complete epoch, minute rollover, stale/mismatched state와 public credential은 actionability write 0이다.
 - 권한: data WebSocket 외 account/order/position endpoint와 broker mutation import/call은 0건이다. full 2537 tests와 정적 게이트가 통과했다. runtime supervisor automatic child dispatch와 실제 열린 정규장 smoke는 다음 단계다.
+
+## H92: runtime이 만든 current manifest를 운영자가 별도 CLI로 골라 실행한다
+
+- 결함: fleet cycle이 READY manifest를 만든 뒤 live lifecycle은 별도 CLI 호출에 남아 있었다. 운영자가 과거 manifest를 선택하거나 receipt DB를 공유하면 future/stale evidence와 다중 writer가 다시 생기고, supervisor 재시작에서 complete terminal을 놓칠 수 있었다.
+- 수정: cycle/supervisor에 arm·receipt root·actionability store의 all-or-none 설정을 추가했다. 전용 dispatcher는 root의 모든 private content-addressed manifest를 검증한 뒤 exact `snapshot.observed_at == evaluated_at`인 항목만 instrument 순서로 선택하고 manifest digest별 receipt DB와 하나의 append-only actionability store를 순차 실행한다.
+- 차단: stale manifest 0개면 receipt root를 만들지 않는다. malformed/public/digest mismatch/중복 instrument batch, symlink 또는 public receipt root와 partial 옵션은 첫 WebSocket 전에 fail-closed하며 arm이 켜진 cycle은 private credential의 owner·mode 600·single hard link까지 요구한다.
+- 재시작: complete terminal이 있는 exact cycle retry는 connector 0건, actionability append replay다. 동일 fleet GET 자체는 새 분봉이 없으면 기존 계약대로 `no_new_data/degraded`지만 live stage의 replay evidence는 private cycle report에 별도로 남는다.
+- 결과: fixture cycle/supervisor current manifest 1개가 bounded quote/trade lifecycle과 durable projection으로 연결됐고 전체 2545 tests와 정적 게이트가 통과했다. 실제 provider WebSocket, account/order/position endpoint와 broker mutation은 0건이다.

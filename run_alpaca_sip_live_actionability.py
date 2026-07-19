@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import uuid
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -35,6 +34,9 @@ from trading_agent.alpaca_sip_live_actionability import (
     AlpacaSipLiveActionabilityStores,
     run_alpaca_sip_live_actionability,
 )
+from trading_agent.alpaca_sip_live_actionability_dependencies import (
+    default_alpaca_sip_live_actionability_dependencies,
+)
 from trading_agent.alpaca_sip_quote_actionability_manifest import (
     AlpacaSipQuoteActionabilityManifestError,
     read_alpaca_sip_quote_actionability_manifest,
@@ -46,7 +48,6 @@ from trading_agent.alpaca_sip_quote_actionability_store import (
     AlpacaSipQuoteActionabilityStore,
     AlpacaSipQuoteActionabilityStoreError,
 )
-from trading_agent.alpaca_sip_trade_stream import connect_alpaca_sip_trade_stream
 from trading_agent.kis_live import regular_session_is_open
 from trading_agent.private_report import write_private_report
 from trading_agent.us_subscription_policy_state import SubscriptionPolicyStateError
@@ -77,12 +78,7 @@ def default_dependencies(
     *,
     clock: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
 ) -> AlpacaSipLiveActionabilityDependencies:
-    return AlpacaSipLiveActionabilityDependencies(
-        connect_alpaca_sip_trade_stream,
-        clock,
-        lambda: uuid.uuid4().hex,
-        lambda event, seconds: event.wait(seconds),
-    )
+    return default_alpaca_sip_live_actionability_dependencies(clock=clock)
 
 
 def main(
