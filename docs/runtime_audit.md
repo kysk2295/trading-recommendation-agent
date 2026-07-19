@@ -668,3 +668,10 @@
 - 수정: cycle orchestration이 frozen structured outcome을 반환하고 기존 `main()`은 정수 exit code facade를 유지한다. supervisor는 parent를 만든 뒤 disabled/not-attempted/completed/blocked child를 content-addressed payload로 만들고 두 행을 하나의 `BEGIN IMMEDIATE` transaction에서 append한다.
 - 재생: v1 query는 파일을 migration하지 않고 child history를 빈 tuple로 반환한다. 다음 Writer만 v2 schema를 추가하며 기존 parent bytes를 바꾸지 않는다. child reader는 parent 전체 payload/hash/history를 먼저 검증한 뒤 child hash, aggregate count, parent binding과 parent 순서를 검증한다.
 - 결과: completed `selected/new/replay=1/1/0`, blocked parent-child, v1→v2 무재작성과 child payload/trigger tamper를 fixture로 확인했다. 전체 2553 tests와 정적 게이트가 통과했고 child에는 symbol·price·credential·account/order 필드가 없으며 broker mutation은 0건이다.
+
+## H94: live child audit을 보려면 운영자가 SQLite를 직접 조회한다
+
+- 결함: parent/child 계약은 durable했지만 운영자가 SQL로 table을 조회하면 schema·payload hash·parent binding 검증을 건너뛰거나 attempt ID와 내부 경로를 외부 보고서에 노출할 수 있었다.
+- 수정: query-only summary가 store의 parent와 child reader를 먼저 완전 재생하고 parent, legacy parent, child, disabled/not-attempted/completed/blocked와 selected/new/replay 합계만 frozen model로 반환한다. child attempt 순서는 parent history의 연속 suffix여야 한다.
+- CLI: required supervisor store와 output dir만 받으며 credential·provider·network 인자가 없다. missing/non-private/symlink/tamper는 input store를 만들지 않고 mode-600 `blocked`·mutation 0 보고서로 닫으며 raw exception, ID와 path를 기록하지 않는다.
+- 결과: actual help exit 0, missing store exit 1/store 0, completed `parent/child=1/1`, selected/new/replay `2/1/1` happy report exit 0을 확인했다. 전체 2560 tests와 정적 게이트가 통과했고 account/order mutation은 0건이다.

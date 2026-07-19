@@ -257,6 +257,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-19 runtime supervisor live child audit 업데이트:** 기존 supervisor attempt payload와 SHA identity는 재작성하지 않고 store schema v2에 attempt ID 1:1 child table을 추가했다. cycle은 Markdown을 역파싱하지 않는 frozen structured outcome으로 live 단계의 `disabled`, `not_attempted`, `completed`, `blocked`와 selected/new/replay aggregate만 반환한다. supervisor는 parent attempt와 content-addressed child를 같은 `BEGIN IMMEDIATE` 트랜잭션에서 append하고 query-only replay가 parent 전체 history, child payload/hash/order와 exact parent binding을 다시 검증한다. v1 파일은 읽을 때 바꾸지 않고 다음 Writer에서만 v2로 이관되며 기존 parent bytes는 그대로다. fixture supervisor는 completed `1/1/0`, blocked child와 tamper 차단을 확인했다. 전체 **2553 tests**와 정적 게이트가 통과했고 symbol·price·credential·account/order 필드와 broker mutation은 0건이다.
 
+**2026-07-19 runtime supervisor live audit 조회 CLI 업데이트:** `run_us_runtime_supervisor_live_audit.py`가 private supervisor store의 parent와 child를 query-only로 완전 재생한 뒤 parent/legacy/child, 네 live status와 selected/new/replay 합계만 mode-600 보고서에 기록한다. child attempt ID가 parent history의 연속 suffix가 아니면 중간 누락으로 차단하고, missing/public/symlink/schema/trigger/payload 변조는 store 생성이나 원문 오류 노출 없이 exit 1이다. actual CLI help, missing-store와 completed `2/1/1` happy path를 확인했고 전체 **2560 tests**, Ruff, basedpyright 0/0, compileall, changed-file no-excuse가 통과했다. credential·provider·account/order import와 mutation은 0건이다.
+
 **2026-07-19 Alpaca SIP dynamic terminal 업데이트:** receipt DB를 기존 v1 행을 다시 쓰지 않는 v2로 확장해 epoch별 append-only terminal evidence를 추가했다. bounded owner 성공은 최소 control 3 + data 1의 receipt IDs를 `BOUNDED_COMPLETE`로 고정하고, final URL·auth·ACK·timeout 실패는 당시 0개 이상의 receipt를 `FAILED`로 보존한다. terminal content hash는 plan/epoch/UTC time/status/receipt IDs를 결합하며 후속 receipt 추가, row 변조, naive time과 schema 불일치는 fail-closed한다. 전체 **2427 tests**가 통과했으며 실제 provider·credential file·account/order 요청은 0건이다.
 
 **2026-07-19 Alpaca SIP dynamic reconnect policy 업데이트:** plan별 terminal history를 각 epoch의 binding·receipt·content hash와 함께 시간순 재검증하고, 재시작 후에도 configured `max_attempts`에서 완료된 terminal 수를 차감한다. complete가 있으면 `BLOCKED_COMPLETE`, failed 수가 budget에 닿으면 `BLOCKED_BUDGET`, 그 외에는 exact next attempt와 remaining budget을 가진 `READY`만 반환한다. complete 뒤 추가 terminal, unordered·mixed-plan·중복 epoch history는 fail-closed한다. 전체 **2433 tests**가 통과했으며 아직 connector retry loop나 실제 provider 요청은 열지 않았다.
@@ -373,6 +375,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [US runtime fleet supervisor CLI 체크포인트](docs/checkpoints/2026-07-19-us-runtime-fleet-supervisor-cli-ko.md)
 - [US runtime live actionability dispatch 체크포인트](docs/checkpoints/2026-07-19-us-runtime-live-actionability-dispatch-ko.md)
 - [Runtime supervisor live child audit 체크포인트](docs/checkpoints/2026-07-19-runtime-supervisor-live-child-audit-ko.md)
+- [Runtime supervisor live audit 조회 CLI 체크포인트](docs/checkpoints/2026-07-19-runtime-supervisor-live-audit-cli-ko.md)
 - [US feature evidence projection 체크포인트](docs/checkpoints/2026-07-18-us-feature-evidence-projection-ko.md)
 - [Grok 개발 하네스 설계](docs/superpowers/specs/2026-07-18-grok-development-harness-design.md)
 - [Grok 개발 하네스 체크포인트](docs/checkpoints/2026-07-18-grok-development-harness-ko.md)
@@ -936,6 +939,14 @@ fresh scanner를 외부 KIS watch가 계속 갱신하는 동안 bounded supervis
   --output-dir outputs/runtime/us-sip-fleet/report \
   --secret-path ~/.config/trading-agent/alpaca.env \
   --cycles 390 --interval-seconds 60
+```
+
+supervisor parent/live child 감사 원장을 ID·가격 없이 집계하려면 query-only 조회 CLI를 사용한다.
+
+```bash
+./run_us_runtime_supervisor_live_audit.py \
+  --supervisor-store outputs/runtime/us-sip-fleet/supervisor.sqlite3 \
+  --output-dir outputs/runtime/us-sip-fleet/live-audit-report
 ```
 
 supervisor가 만든 manifest 하나를 같은 completed-minute 안에서 read-only dynamic quote/trade와 결합해 즉시 actionability로 확정하는 bounded lifecycle은 다음처럼 실행한다. manifest의 base signal, policy state 또는 minute window가 만료되면 실제 WebSocket 전에 차단한다.
