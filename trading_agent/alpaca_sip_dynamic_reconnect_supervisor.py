@@ -5,11 +5,17 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from threading import Event
 from typing import assert_never, override
 
 from websockets.exceptions import ConnectionClosed, InvalidHandshake
 
 from trading_agent.alpaca_http import AlpacaCredentials
+from trading_agent.alpaca_sip_dynamic_backoff import (
+    AlpacaSipDynamicBackoffConfig,
+    AlpacaSipDynamicBackoffStatus,
+    decide_alpaca_sip_dynamic_backoff,
+)
 from trading_agent.alpaca_sip_dynamic_connection_owner import (
     AlpacaSipDynamicConnectionEvidence,
     run_alpaca_sip_dynamic_connection,
@@ -43,6 +49,8 @@ class AlpacaSipDynamicReconnectRunStatus(StrEnum):
     BLOCKED_COMPLETE = "blocked_complete"
     BLOCKED_BUDGET = "blocked_budget"
     BLOCKED_NON_RETRYABLE = "blocked_non_retryable"
+    BLOCKED_CLOCK_REGRESSION = "blocked_clock_regression"
+    STOPPED = "stopped"
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +76,8 @@ class AlpacaSipDynamicReconnectRunReport:
                 AlpacaSipDynamicReconnectRunStatus.BLOCKED_COMPLETE
                 | AlpacaSipDynamicReconnectRunStatus.BLOCKED_BUDGET
                 | AlpacaSipDynamicReconnectRunStatus.BLOCKED_NON_RETRYABLE
+                | AlpacaSipDynamicReconnectRunStatus.BLOCKED_CLOCK_REGRESSION
+                | AlpacaSipDynamicReconnectRunStatus.STOPPED
             ):
                 valid = self.connection_evidence is None
             case unreachable:
@@ -82,27 +92,56 @@ def run_alpaca_sip_dynamic_reconnect_supervisor(
     store: AlpacaSipDynamicReceiptStore,
     *,
     max_attempts: int,
+    backoff: AlpacaSipDynamicBackoffConfig,
     max_data_frames: int,
     timeout_seconds: float,
     connector: AlpacaSipTradeStreamConnector = connect_alpaca_sip_trade_stream,
+    stop_event: Event | None = None,
     _clock: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
     _epoch_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
+    _wait: Callable[[Event, float], bool] = lambda event, seconds: event.wait(seconds),
 ) -> AlpacaSipDynamicReconnectRunReport:
     if (
         type(credentials) is not AlpacaCredentials
         or not credentials.key_id
         or not credentials.secret_key
         or type(store) is not AlpacaSipDynamicReceiptStore
+        or type(backoff) is not AlpacaSipDynamicBackoffConfig
         or type(max_data_frames) is not int
         or max_data_frames <= 0
         or type(timeout_seconds) is not float
         or timeout_seconds <= 0
+        or (stop_event is not None and type(stop_event) is not Event)
+        or not callable(_wait)
     ):
         raise AlpacaSipDynamicReconnectSupervisorError
     terminals = AlpacaSipDynamicTerminalStore(store.path)
-    decision = decide_alpaca_sip_dynamic_reconnect(terminals.load_history(plan), max_attempts=max_attempts)
+    history = terminals.load_history(plan)
+    decision = decide_alpaca_sip_dynamic_reconnect(history, max_attempts=max_attempts)
+    stop = Event() if stop_event is None else stop_event
     attempted = 0
     while decision.status is AlpacaSipDynamicReconnectStatus.READY:
+        if stop.is_set():
+            return _report(AlpacaSipDynamicReconnectRunStatus.STOPPED, attempted, decision, None)
+        backoff_decision = decide_alpaca_sip_dynamic_backoff(history, now=_clock(), config=backoff)
+        match backoff_decision.status:
+            case AlpacaSipDynamicBackoffStatus.WAIT:
+                if _wait(stop, backoff_decision.remaining_seconds):
+                    return _report(AlpacaSipDynamicReconnectRunStatus.STOPPED, attempted, decision, None)
+                history = terminals.load_history(plan)
+                decision = decide_alpaca_sip_dynamic_reconnect(history, max_attempts=max_attempts)
+                continue
+            case AlpacaSipDynamicBackoffStatus.BLOCKED_CLOCK_REGRESSION:
+                return _report(
+                    AlpacaSipDynamicReconnectRunStatus.BLOCKED_CLOCK_REGRESSION,
+                    attempted,
+                    decision,
+                    None,
+                )
+            case AlpacaSipDynamicBackoffStatus.READY:
+                pass
+            case unreachable:
+                assert_never(unreachable)
         try:
             evidence = run_alpaca_sip_dynamic_connection(
                 credentials,
@@ -116,15 +155,17 @@ def run_alpaca_sip_dynamic_reconnect_supervisor(
             )
         except (ConnectionClosed, InvalidHandshake, OSError, TimeoutError):
             attempted += 1
+            history = terminals.load_history(plan)
             decision = decide_alpaca_sip_dynamic_reconnect(
-                terminals.load_history(plan),
+                history,
                 max_attempts=max_attempts,
             )
             continue
         except (AlpacaSipDynamicSubscriptionError, AlpacaSipTradeStreamError):
             attempted += 1
+            history = terminals.load_history(plan)
             decision = decide_alpaca_sip_dynamic_reconnect(
-                terminals.load_history(plan),
+                history,
                 max_attempts=max_attempts,
             )
             return _report(
@@ -134,8 +175,9 @@ def run_alpaca_sip_dynamic_reconnect_supervisor(
                 None,
             )
         attempted += 1
+        history = terminals.load_history(plan)
         decision = decide_alpaca_sip_dynamic_reconnect(
-            terminals.load_history(plan),
+            history,
             max_attempts=max_attempts,
         )
         return _report(

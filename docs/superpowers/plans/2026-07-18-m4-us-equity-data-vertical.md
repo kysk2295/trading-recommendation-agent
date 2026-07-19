@@ -196,8 +196,10 @@ attempt. Timeout, socket, and handshake failures retry only while persisted
 budget remains; endpoint, protocol, and subscription ACK failures retain their
 failed terminal and stop before another connector. Existing complete or
 exhausted history performs zero connector calls, and local receipt-integrity
-errors propagate instead of becoming retry reports. The fixture loop is
-immediate by design; bounded backoff and open-session provider smoke remain.
+errors propagate instead of becoming retry reports. Failed terminal time and
+attempt count determine a bounded exponential eligible time; restart waits only
+the remaining interval. The wait is interruptible, and clock regression blocks
+before a new connector. Open-session provider smoke remains.
 
 ### M4.3: Read-Only Runtime Supervisor
 
