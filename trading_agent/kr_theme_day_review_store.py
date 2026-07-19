@@ -121,7 +121,7 @@ class KrThemeDayReviewStore:
 
 def _row(event: KrThemeDayReviewEvent) -> tuple[str, str, str, str, str, str]:
     payload = canonical_experiment_ledger_json(event)
-    event_key = hashlib.sha256(payload.encode()).hexdigest()
+    event_key = kr_theme_day_review_event_key(event)
     return (
         event_key,
         event.strategy_version,
@@ -130,6 +130,10 @@ def _row(event: KrThemeDayReviewEvent) -> tuple[str, str, str, str, str, str]:
         hashlib.sha256(payload.encode()).hexdigest(),
         payload,
     )
+
+
+def kr_theme_day_review_event_key(event: KrThemeDayReviewEvent) -> str:
+    return hashlib.sha256(canonical_experiment_ledger_json(event).encode()).hexdigest()
 
 
 def _event_from_row(row: tuple[str, str, str, str, str, str]) -> KrThemeDayReviewEvent:

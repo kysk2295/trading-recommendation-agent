@@ -44,6 +44,7 @@ from trading_agent.experiment_ledger_models import (
 )
 from trading_agent.experiment_ledger_schema import (
     CREATE_EXPERIMENT_LEDGER_SCHEMA,
+    CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6,
     CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4,
     CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5,
     CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2,
@@ -53,6 +54,7 @@ from trading_agent.experiment_ledger_schema import (
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V2,
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V3,
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V4,
+    EXPERIMENT_LEDGER_SCHEMA_VERSION_V5,
 )
 from trading_agent.lifecycle_authority_policy import (
     InvalidLifecycleAuthorityError,
@@ -72,6 +74,14 @@ from trading_agent.multi_market_experiment_store import (
     read_multi_market_strategy_versions,
     register_multi_market_hypothesis,
     register_multi_market_strategy_version,
+)
+from trading_agent.multi_market_lifecycle_models import MultiMarketStrategyLifecycleEvent
+from trading_agent.multi_market_lifecycle_store import (
+    InvalidMultiMarketLifecycleSourceError,
+    MultiMarketLifecycleConflictError,
+    StoredMultiMarketLifecycleEvent,
+    append_multi_market_lifecycle_event,
+    read_multi_market_lifecycle_events,
 )
 from trading_agent.multi_market_trial_models import MultiMarketExperimentTrialRegistration
 from trading_agent.multi_market_trial_store import (
@@ -149,6 +159,15 @@ _V5_SCHEMA_OBJECTS = _V4_SCHEMA_OBJECTS | frozenset(
         "multi_market_trials_no_delete",
         "multi_market_trial_events_no_update",
         "multi_market_trial_events_no_delete",
+    }
+)
+
+_V6_SCHEMA_OBJECTS = _V5_SCHEMA_OBJECTS | frozenset(
+    {
+        "multi_market_lifecycle_events",
+        "multi_market_lifecycle_by_version_date",
+        "multi_market_lifecycle_events_no_update",
+        "multi_market_lifecycle_events_no_delete",
     }
 )
 
@@ -333,6 +352,30 @@ class ExperimentLedgerReader:
                 return read_multi_market_trial_events(connection, trial_id)
             except InvalidMultiMarketExperimentSourceError:
                 raise InvalidExperimentLedgerSourceError from None
+
+    def multi_market_lifecycle_events(
+        self,
+        strategy_version: str,
+    ) -> tuple[StoredMultiMarketLifecycleEvent, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            try:
+                return read_multi_market_lifecycle_events(connection, strategy_version)
+            except InvalidMultiMarketLifecycleSourceError:
+                raise InvalidExperimentLedgerSourceError from None
+
+    def multi_market_lifecycle_state(
+        self,
+        strategy_version: str,
+        as_of_session_date: dt.date,
+    ) -> StoredMultiMarketLifecycleEvent | None:
+        effective = tuple(
+            stored
+            for stored in self.multi_market_lifecycle_events(strategy_version)
+            if stored.event.effective_session_date <= as_of_session_date
+        )
+        return None if not effective else effective[-1]
 
     def strategy_authority_bindings(self) -> tuple[StoredStrategyAuthorityBinding, ...]:
         if not self.path.is_file():
@@ -589,6 +632,15 @@ class ExperimentLedgerWriter:
         except MultiMarketExperimentConflictError:
             raise ExperimentLedgerConflictError from None
         except InvalidMultiMarketExperimentSourceError:
+            raise InvalidExperimentLedgerSourceError from None
+
+    def append_multi_market_lifecycle_event(self, event: MultiMarketStrategyLifecycleEvent) -> bool:
+        self._require_active()
+        try:
+            return append_multi_market_lifecycle_event(self._connection, event)
+        except MultiMarketLifecycleConflictError:
+            raise ExperimentLedgerConflictError from None
+        except InvalidMultiMarketLifecycleSourceError:
             raise InvalidExperimentLedgerSourceError from None
 
     def register_strategy_authority_binding(self, binding: StrategyAuthorityBinding) -> bool:
@@ -1368,7 +1420,8 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
             ddl=CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2
             + CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3
             + CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4
-            + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5,
+            + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5
+            + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1378,7 +1431,8 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
             connection,
             ddl=CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3
             + CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4
-            + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5,
+            + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5
+            + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1386,7 +1440,9 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
         _require_v3_schema(connection)
         _apply_schema_transaction(
             connection,
-            ddl=CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4 + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5,
+            ddl=CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4
+            + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5
+            + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1394,7 +1450,15 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
         _require_v4_schema(connection)
         _apply_schema_transaction(
             connection,
-            ddl=CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5,
+            ddl=CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5 + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6,
+            version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
+        )
+        return
+    if current == EXPERIMENT_LEDGER_SCHEMA_VERSION_V5:
+        _require_v5_schema(connection)
+        _apply_schema_transaction(
+            connection,
+            ddl=CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1416,7 +1480,7 @@ def _require_current_schema(connection: sqlite3.Connection) -> None:
     actual_objects = frozenset(
         row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
     )
-    if actual_objects != _V5_SCHEMA_OBJECTS:
+    if actual_objects != _V6_SCHEMA_OBJECTS:
         raise InvalidExperimentLedgerSourceError
 
 
@@ -1461,4 +1525,15 @@ def _require_v4_schema(connection: sqlite3.Connection) -> None:
         row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
     )
     if actual_objects != _V4_SCHEMA_OBJECTS:
+        raise UnsupportedExperimentLedgerSchemaError
+
+
+def _require_v5_schema(connection: sqlite3.Connection) -> None:
+    version: tuple[int] | None = connection.execute("PRAGMA user_version").fetchone()
+    if version != (EXPERIMENT_LEDGER_SCHEMA_VERSION_V5,):
+        raise UnsupportedExperimentLedgerSchemaError
+    actual_objects = frozenset(
+        row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
+    )
+    if actual_objects != _V5_SCHEMA_OBJECTS:
         raise UnsupportedExperimentLedgerSchemaError

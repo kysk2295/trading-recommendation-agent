@@ -103,6 +103,8 @@ Reviewer는 Alpaca, credential, HTTP, execution store 또는 mutation 모듈을 
 
 이 원장은 mode 600 SQLite, WAL, 외래키, 비차단 single Writer lease, UPDATE/DELETE 금지 trigger와 query-only Reader를 사용한다. Writer context 하나가 transaction 하나이며 중간 충돌은 해당 묶음 전체를 rollback한다. Reader와 Writer 모두 canonical SHA-256 key, parent lineage, sequence와 previous key, 시간 단조성, terminal 뒤 추가 event 금지, 아직 효력이 오지 않은 lifecycle event 뒤 추가 전이 금지를 다시 검증한다. 날짜 기준 projection은 조회 세션까지 유효해진 마지막 event만 반환한다.
 
+schema v4부터 `StrategyLaneRef` 기반 multi-market hypothesis와 strategy version을, v5부터 multi-market shadow trial을 같은 원장에 추가했다. schema v6의 `multi_market_lifecycle_events`는 multi-market strategy version을 부모로 market-local decision/effective session, 공식 calendar snapshot, previous event와 evidence key를 보존한다. 기존 v1~v5 행은 migration 때 재작성하지 않으며 shadow 운영모드에는 `EXPERIMENTAL_PAPER`와 `PAPER_CHAMPION`을 허용하지 않는다.
+
 ```text
 exact lane manifest + exact intraday experiment scopes
   + canonical ORB/VWAP/HOD/Gap-and-Go research contracts
@@ -117,6 +119,8 @@ query-only lane snapshot + daily/adaptive evidence
 ```
 
 현재 bootstrap·ledger projection과 Lifecycle Controller v1까지 구현됐다. Controller는 exact intraday manifest/ORB scope, finalized flat snapshot, 같은 snapshot에 결합된 Reviewer event와 현재 lifecycle chain을 query-only로 다시 검증한다. `suspend` 권고 중 `five_day_clear_degradation` 근거와 완전한 데이터 품질이 모두 확인된 경우에만 다음 NYSE 정규 세션부터 `suspended` event를 append한다. 같은 evidence replay는 기존 event를 반환하며 future-effective pending event, source 불일치와 시간 역행은 fail-closed한다.
+
+KR day Controller도 별도 multi-market lifecycle 정책으로 구현됐다. `kr_equities/day_trading/theme_leader_vwap_reclaim`의 exact code-coupled shadow version, persisted Reviewer event와 Reviewer가 참조한 global trial chain·private entry/exit/terminal artifact를 다시 재생하고, decision session의 공식 KIS calendar snapshot에서 다음 open session을 계산한다. version 최초 관측은 `experimental_shadow`, censored/failed data-quality review는 `suspended`, 최소 20 forward sessions·30 completed signals는 `challenger`까지만 append한다. 비교기와 multiple-testing evidence가 없으므로 `SHADOW_CHAMPION`은 항상 blocker이며 lifecycle 상태만으로 Paper, allocation, risk 또는 주문 권한은 생기지 않는다.
 
 ORB daily shadow trial도 구현됐다. 한 NYSE 세션마다 `shadow_forward` trial 하나를 open 전에 사전등록하고 정규장 안에서 started event를 append한다. 장후 finalizer는 exact daily record와 parent JSONL, adaptive bytes, finalized flat snapshot, Reviewer event, code·parameter·data·cost·portfolio 계약과 artifact checksum을 다시 계산해 `completed` 또는 `censored`로 닫는다. 네 장후 phase 중 하나가 nonzero이면 같은 세션의 audit 행이 검증될 때만 `failed` terminal을 허용한다. terminal kind는 재분류할 수 없고 검열은 수익 0으로 바꾸지 않는다.
 

@@ -383,7 +383,7 @@ def test_writer_migrates_v1_without_rewriting_existing_rows(tmp_path: Path) -> N
         version = connection.execute("PRAGMA user_version").fetchone()
 
     assert migrated_row == original_row
-    assert version == (5,)
+    assert version == (6,)
 
 
 def test_writer_migrates_v2_without_rewriting_existing_rows(tmp_path: Path) -> None:
@@ -412,7 +412,7 @@ def test_writer_migrates_v2_without_rewriting_existing_rows(tmp_path: Path) -> N
         version = connection.execute("PRAGMA user_version").fetchone()
 
     assert migrated_row == original_row
-    assert version == (5,)
+    assert version == (6,)
 
 
 def test_writer_migrates_v3_without_rewriting_existing_rows(tmp_path: Path) -> None:
@@ -445,11 +445,11 @@ def test_writer_migrates_v3_without_rewriting_existing_rows(tmp_path: Path) -> N
         version = connection.execute("PRAGMA user_version").fetchone()
 
     assert migrated_row == original_row
-    assert version == (5,)
+    assert version == (6,)
 
 
-def test_current_experiment_ledger_schema_is_v5() -> None:
-    assert EXPERIMENT_LEDGER_SCHEMA_VERSION == 5
+def test_current_experiment_ledger_schema_is_v6() -> None:
+    assert EXPERIMENT_LEDGER_SCHEMA_VERSION == 6
 
 
 def test_writer_rolls_back_v1_migration_when_v2_ddl_fails(
