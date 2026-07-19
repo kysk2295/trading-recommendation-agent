@@ -41,6 +41,7 @@
 - 전체 pytest: `uv run pytest -q` -> `2803 passed`
 - `uv run ruff check .`, `uv run basedpyright`, `uv run python -m compileall -q trading_agent tests`와 `git diff --check`: 통과
 - 변경 production Python의 금지 type escape(`Any`, `object`, `cast`, ignore/noqa) 0건, 최대 pure LOC `227`
+- `uv run pytest -q tests/test_kr_theme_day_session_cli.py::test_onboard_rejects_fixture_time_override` -> 모든 필수 인자를 가진 actual subprocess CLI가 금지 시각 옵션에서 exit `2`, artifact `0`
 - actual composite/onboard/trial/verifier help와 missing-input CLI: 기대 exit `0/2`, 권한 옵션 0건
 - provider credential/live network와 국내 account/order mutation: `0`
 
