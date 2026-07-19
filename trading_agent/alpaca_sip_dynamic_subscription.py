@@ -20,6 +20,10 @@ from trading_agent.us_subscription_models import (
     SubscriptionPolicyDecision,
     SubscriptionPolicyStatus,
 )
+from trading_agent.us_subscription_policy_state import (
+    SubscriptionPolicyRuntimeState,
+    validate_subscription_policy_state,
+)
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _SYMBOL = re.compile(r"^[A-Z][A-Z0-9.-]{0,14}$")
@@ -75,13 +79,46 @@ def build_alpaca_sip_dynamic_subscription_plan(
 ) -> AlpacaSipDynamicSubscriptionPlan:
     if not _valid_decision(decision):
         raise AlpacaSipDynamicSubscriptionError
+    return _build_plan(
+        decision.identity.identity_sha256,
+        decision.evaluated_at,
+        tuple(AlpacaSipDynamicBinding(item.instrument_id, item.symbol) for item in decision.desired),
+    )
+
+
+def roll_alpaca_sip_dynamic_subscription_plan(
+    prior: AlpacaSipDynamicSubscriptionPlan | None,
+    state: SubscriptionPolicyRuntimeState,
+) -> AlpacaSipDynamicSubscriptionPlan:
+    try:
+        validate_subscription_policy_state(state)
+        bindings = tuple(AlpacaSipDynamicBinding(item.instrument_id, item.symbol) for item in state.active)
+        if not bindings:
+            raise AlpacaSipDynamicSubscriptionError
+        market_date = state.evaluated_at.astimezone(NEW_YORK).date()
+        if prior is not None:
+            _validate_plan(prior)
+            if prior.evaluated_at > state.evaluated_at:
+                raise AlpacaSipDynamicSubscriptionError
+            if prior.market_date == market_date and _binding_set(prior.bindings) == _binding_set(bindings):
+                return prior
+        return _build_plan(state.state_id, state.evaluated_at, bindings)
+    except (AttributeError, TypeError, ValueError):
+        raise AlpacaSipDynamicSubscriptionError from None
+
+
+def _build_plan(
+    policy_identity_sha256: str,
+    evaluated_at: dt.datetime,
+    bindings: tuple[AlpacaSipDynamicBinding, ...],
+) -> AlpacaSipDynamicSubscriptionPlan:
     provisional = AlpacaSipDynamicSubscriptionPlan(
         "0" * 64,
-        decision.identity.identity_sha256,
-        decision.policy_semantic_version,
-        decision.evaluated_at,
-        decision.evaluated_at.astimezone(NEW_YORK).date(),
-        tuple(AlpacaSipDynamicBinding(item.instrument_id, item.symbol) for item in decision.desired),
+        policy_identity_sha256,
+        _POLICY_VERSION,
+        evaluated_at,
+        evaluated_at.astimezone(NEW_YORK).date(),
+        bindings,
     )
     plan = replace(provisional, plan_id=_plan_id(provisional))
     _validate_plan(plan)
@@ -172,11 +209,16 @@ def _aware(value: dt.datetime) -> bool:
     return type(value) is dt.datetime and value.tzinfo is not None and value.utcoffset() is not None
 
 
+def _binding_set(bindings: tuple[AlpacaSipDynamicBinding, ...]) -> frozenset[tuple[str, str]]:
+    return frozenset((item.instrument_id, item.symbol) for item in bindings)
+
+
 __all__ = (
     "AlpacaSipDynamicBinding",
     "AlpacaSipDynamicSubscriptionError",
     "AlpacaSipDynamicSubscriptionPlan",
     "build_alpaca_sip_dynamic_subscription_plan",
     "dynamic_subscription_request_bytes",
+    "roll_alpaca_sip_dynamic_subscription_plan",
     "validate_dynamic_subscription_ack",
 )

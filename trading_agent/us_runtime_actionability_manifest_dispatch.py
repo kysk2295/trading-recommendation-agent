@@ -6,7 +6,6 @@ from typing import override
 
 from trading_agent.alpaca_sip_dynamic_subscription import (
     AlpacaSipDynamicSubscriptionPlan,
-    build_alpaca_sip_dynamic_subscription_plan,
     dynamic_subscription_request_bytes,
 )
 from trading_agent.alpaca_sip_quote_actionability_manifest import (
@@ -18,7 +17,6 @@ from trading_agent.trade_signal_outbox_reader import read_trade_signal_publicati
 from trading_agent.trade_signal_publication import TradeSignalPublication
 from trading_agent.us_feature_evidence_models import UsFeatureEvidenceBinding
 from trading_agent.us_quote_actionability_rules import base_is_current
-from trading_agent.us_subscription_models import SubscriptionPolicyDecision
 
 
 class UsRuntimeActionabilityManifestDispatchError(ValueError):
@@ -100,14 +98,14 @@ def dispatch_us_runtime_actionability_manifests(
 def dispatch_us_runtime_actionability_outbox(
     signal_outbox: Path,
     bindings: tuple[UsFeatureEvidenceBinding, ...],
-    decision: SubscriptionPolicyDecision,
+    plan: AlpacaSipDynamicSubscriptionPlan,
     output_root: Path,
 ) -> UsRuntimeActionabilityManifestDispatchResult:
     try:
         return dispatch_us_runtime_actionability_manifests(
             read_trade_signal_publications(signal_outbox),
             bindings,
-            build_alpaca_sip_dynamic_subscription_plan(decision),
+            plan,
             output_root,
         )
     except (AttributeError, OSError, TypeError, ValueError):
@@ -118,16 +116,16 @@ def dispatch_us_runtime_actionability_outbox_counts(
     signal_outbox: Path | None,
     output_root: Path | None,
     bindings: tuple[UsFeatureEvidenceBinding, ...],
-    decision: SubscriptionPolicyDecision,
+    plan: AlpacaSipDynamicSubscriptionPlan | None,
 ) -> tuple[int, int] | None:
-    if signal_outbox is None and output_root is None:
+    if signal_outbox is None and output_root is None and plan is None:
         return None
-    if signal_outbox is None or output_root is None:
+    if signal_outbox is None or output_root is None or plan is None:
         raise UsRuntimeActionabilityManifestDispatchError
     result = dispatch_us_runtime_actionability_outbox(
         signal_outbox,
         bindings,
-        decision,
+        plan,
         output_root,
     )
     return result.created_count, result.replay_count

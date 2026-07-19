@@ -636,3 +636,11 @@
 - 최초 관찰: manifest와 projection CLI는 있었지만 생성 주체가 수동이었다. runtime fleet은 exact subscription decision과 READY binding을 이미 소유했지만 signal outbox와 연결되지 않았다.
 - 수정: strict signal outbox reader와 dispatcher가 plan-owned READY binding별 current conditional을 계산한다. 0개는 no-op, 1개만 content-addressed manifest, 2개 이상은 write 전 block이며 cycle/supervisor optional pair가 이를 자동 호출한다.
 - 결과: one-cycle supervisor는 READY와 manifest 1개를 만들고 exact replay는 no-op다. partial option은 provider/state DB 전에 차단됐으며 manual cycle은 GET 1/manifest 1/mutation 0을 확인했다. full 2515 tests와 정적 게이트가 통과했고 dynamic connection/projection 자동 실행은 다음 단계다.
+
+## H90: 매 minute 생성한 dynamic plan은 이전 stream receipt를 소유할 수 없다
+
+- 결함: runtime manifest dispatcher가 현재 minute policy decision의 `evaluated_at`을 포함한 새 plan ID를 매번 만들었다. manifest 생성 뒤 같은 plan으로 WebSocket을 열면 receipt 시각은 이미 snapshot보다 늦고, 다음 minute에는 다시 다른 plan ID가 생겨 선행 receipt를 재사용할 수 없었다.
+- 수정: policy runtime state와 prior durable plan을 함께 roll한다. 동일 NY 거래일에 instrument/symbol topology가 같으면 prior plan 전체를 exact replay하고, topology 또는 거래일이 바뀔 때만 현재 policy state identity로 새 plan을 만든다.
+- 영속성: 별도 mode-600, owner-only, single-hard-link SQLite v1에 canonical plan payload/hash를 append하고 UPDATE/DELETE trigger로 rewrite를 차단한다. exact replay는 row를 추가하지 않으며 payload/hash/metadata 변조는 query-only replay에서 차단한다.
+- runtime: cycle과 supervisor는 optional outbox/root가 활성화될 때 durable plan을 먼저 roll하고 그 exact plan으로 manifest를 만든다. explicit plan path가 없으면 policy-state sibling 경로를 사용하며 partial option은 provider/state write 전에 차단한다.
+- 결과: 두 연속 minute fixture에서 READY manifest 2개와 dynamic plan row 1개를 확인했다. 전체 2525 tests와 변경 파일 정적 게이트가 통과했다. 이로써 첫 cycle plan 배포, read-only receipt 선행 수집, 다음 minute snapshot projection 순서가 가능해졌고 account/order mutation은 0건이다.

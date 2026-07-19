@@ -249,6 +249,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-19 US runtime actionability manifest dispatch 업데이트:** strict signal outbox reader와 deterministic dispatcher를 추가해 runtime fleet의 exact READY binding마다 snapshot 시점에 current인 conditional signal이 하나일 때만 content-addressed actionability manifest를 만든다. 0개는 no-op, 2개 이상과 plan/instrument/symbol mismatch는 write 전에 차단하고 scan identity는 base observed time으로 고정한다. fleet cycle과 bounded supervisor의 optional outbox/root pair가 이를 매 cycle 자동 실행하며 한쪽만 주면 provider와 state DB 전에 차단한다. focused 6개, integration 20개, related 40개와 전체 **2515 tests**, Ruff, basedpyright 0/0, compileall, no-excuse가 통과했다. dynamic WebSocket owner와 projection CLI 자동 dispatch는 다음 단계다.
 
+**2026-07-19 US dynamic plan epoch 업데이트:** 매 minute policy decision마다 새 WebSocket plan을 만들던 인과성 오류를 제거했다. mode-600 append-only dynamic plan store는 같은 NY 거래일의 동일 instrument/symbol topology 동안 첫 plan을 exact replay하고 topology 또는 거래일이 바뀔 때만 새 epoch를 append한다. runtime manifest는 이 durable active plan을 참조하므로 첫 cycle에서 plan을 배포하고 read-only stream receipt를 누적한 뒤 다음 minute snapshot이 같은 plan의 선행 quote/trade를 소비할 수 있다. `--dynamic-plan-store`를 생략하면 policy-state 파일 옆 deterministic private 경로를 사용하며, 명시 경로는 signal outbox/root pair와 함께만 허용한다. 두 minute fixture에서 manifest 2개와 plan row 1개, account/order mutation 0건을 확인했다. 전체 **2525 tests**, Ruff, changed-file format, basedpyright 0/0, compileall, no-excuse가 통과했다.
+
 **2026-07-19 Alpaca SIP dynamic terminal 업데이트:** receipt DB를 기존 v1 행을 다시 쓰지 않는 v2로 확장해 epoch별 append-only terminal evidence를 추가했다. bounded owner 성공은 최소 control 3 + data 1의 receipt IDs를 `BOUNDED_COMPLETE`로 고정하고, final URL·auth·ACK·timeout 실패는 당시 0개 이상의 receipt를 `FAILED`로 보존한다. terminal content hash는 plan/epoch/UTC time/status/receipt IDs를 결합하며 후속 receipt 추가, row 변조, naive time과 schema 불일치는 fail-closed한다. 전체 **2427 tests**가 통과했으며 실제 provider·credential file·account/order 요청은 0건이다.
 
 **2026-07-19 Alpaca SIP dynamic reconnect policy 업데이트:** plan별 terminal history를 각 epoch의 binding·receipt·content hash와 함께 시간순 재검증하고, 재시작 후에도 configured `max_attempts`에서 완료된 terminal 수를 차감한다. complete가 있으면 `BLOCKED_COMPLETE`, failed 수가 budget에 닿으면 `BLOCKED_BUDGET`, 그 외에는 exact next attempt와 remaining budget을 가진 `READY`만 반환한다. complete 뒤 추가 terminal, unordered·mixed-plan·중복 epoch history는 fail-closed한다. 전체 **2433 tests**가 통과했으며 아직 connector retry loop나 실제 provider 요청은 열지 않았다.
@@ -885,12 +887,15 @@ KIS 날짜별 paper 감시:
   --canonical-root outputs/runtime/us-sip-fleet/canonical \
   --audit-store outputs/runtime/us-sip-fleet/fleet-audit.sqlite3 \
   --policy-state-store outputs/runtime/us-sip-fleet/policy-state.sqlite3 \
+  --conditional-signal-outbox outputs/runtime/us-signals/trade-signals.v1.jsonl \
+  --actionability-manifest-root outputs/runtime/us-sip-fleet/actionability-manifests \
+  --dynamic-plan-store outputs/runtime/us-sip-fleet/dynamic-plans.sqlite3 \
   --research-artifact-root outputs/runtime/us-sip-fleet/research-evidence \
   --minimum-rvol-bps 15000 \
   --output-dir outputs/runtime/us-sip-fleet/report
 ```
 
-이 명령은 정규장·fresh scanner·만료 전 opportunity·exact candidate/profile coverage를 먼저 확인한 뒤에만 Alpaca data credential을 읽는다. research artifact 옵션을 주면 owner별 breakout·RVOL evidence를 별도 read model로 만들며 서로 다른 종목을 하나의 corroborated claim으로 혼합하지 않는다. trading origin, account, position, order API는 사용하지 않는다.
+이 명령은 정규장·fresh scanner·만료 전 opportunity·exact candidate/profile coverage를 먼저 확인한 뒤에만 Alpaca data credential을 읽는다. actionability 세 옵션을 모두 생략하면 dynamic plan과 manifest dispatch도 비활성화된다. outbox/root만 주면 plan store는 policy-state 파일 옆 `<stem>.dynamic-plans.sqlite3`으로 정해지며, `--dynamic-plan-store`만 단독으로 주거나 outbox/root 중 하나만 주면 provider와 state write 전에 차단한다. research artifact 옵션을 주면 owner별 breakout·RVOL evidence를 별도 read model로 만들며 서로 다른 종목을 하나의 corroborated claim으로 혼합하지 않는다. trading origin, account, position, order API는 사용하지 않는다.
 
 수동 profile 경로 대신 현재 desired 종목의 20일 history와 완료 분 profile을 자동 생성·재생하려면 `--profile`을 빼고 다음 옵션을 사용한다.
 
@@ -908,6 +913,9 @@ fresh scanner를 외부 KIS watch가 계속 갱신하는 동안 bounded supervis
   --canonical-root outputs/runtime/us-sip-fleet/canonical \
   --audit-store outputs/runtime/us-sip-fleet/fleet-audit.sqlite3 \
   --policy-state-store outputs/runtime/us-sip-fleet/policy-state.sqlite3 \
+  --conditional-signal-outbox outputs/runtime/us-signals/trade-signals.v1.jsonl \
+  --actionability-manifest-root outputs/runtime/us-sip-fleet/actionability-manifests \
+  --dynamic-plan-store outputs/runtime/us-sip-fleet/dynamic-plans.sqlite3 \
   --supervisor-store outputs/runtime/us-sip-fleet/supervisor.sqlite3 \
   --output-dir outputs/runtime/us-sip-fleet/report \
   --secret-path ~/.config/trading-agent/alpaca.env \

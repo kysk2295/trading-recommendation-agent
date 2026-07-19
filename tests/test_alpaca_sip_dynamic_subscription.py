@@ -11,6 +11,7 @@ from trading_agent.alpaca_sip_dynamic_subscription import (
     AlpacaSipDynamicSubscriptionError,
     build_alpaca_sip_dynamic_subscription_plan,
     dynamic_subscription_request_bytes,
+    roll_alpaca_sip_dynamic_subscription_plan,
     validate_dynamic_subscription_ack,
 )
 from trading_agent.canonical_duckdb_replay import CanonicalDatasetReplay
@@ -21,6 +22,7 @@ from trading_agent.us_subscription_models import (
     BroadScannerSnapshot,
     SubscriptionPolicyConfig,
 )
+from trading_agent.us_subscription_policy_state import advance_subscription_policy_state
 
 _NOW = dt.datetime(2026, 7, 17, 14, 0, tzinfo=dt.UTC)
 
@@ -55,6 +57,76 @@ def test_ready_policy_builds_exact_quote_trade_wire_plan() -> None:
     )
     validate_dynamic_subscription_ack(_ack(("BBB", "AAA")), plan)
     validate_dynamic_subscription_ack(_ack(("AAA", "BBB")), plan)
+
+
+def test_runtime_state_reuses_plan_while_active_topology_is_unchanged() -> None:
+    first_decision = _decision(_NOW)
+    first_state = advance_subscription_policy_state(None, first_decision)
+    first_plan = roll_alpaca_sip_dynamic_subscription_plan(None, first_state)
+    later = _NOW + dt.timedelta(minutes=1)
+    next_decision = build_subscription_policy_decision(
+        BroadScannerSnapshot(_identity(), later - dt.timedelta(seconds=10), _candidates()),
+        evaluated_at=later,
+        active=first_state.active,
+        cooldowns=first_state.cooldowns,
+        config=first_decision.config,
+    )
+    next_state = advance_subscription_policy_state(first_state, next_decision)
+
+    next_plan = roll_alpaca_sip_dynamic_subscription_plan(first_plan, next_state)
+
+    assert next_plan == first_plan
+    assert next_plan.evaluated_at == _NOW
+
+
+def test_runtime_state_rolls_plan_when_active_topology_changes() -> None:
+    first_decision = _decision(_NOW)
+    first_state = advance_subscription_policy_state(None, first_decision)
+    first_plan = roll_alpaca_sip_dynamic_subscription_plan(None, first_state)
+    later = _NOW + dt.timedelta(minutes=3)
+    changed_decision = build_subscription_policy_decision(
+        BroadScannerSnapshot(
+            _identity(),
+            later - dt.timedelta(seconds=10),
+            (BroadScannerCandidate("us-eq-c", "CCC", Decimal("100"), 1),),
+        ),
+        evaluated_at=later,
+        active=first_state.active,
+        cooldowns=first_state.cooldowns,
+        config=SubscriptionPolicyConfig(
+            1,
+            dt.timedelta(seconds=30),
+            dt.timedelta(minutes=2),
+            dt.timedelta(minutes=5),
+        ),
+    )
+    changed_state = advance_subscription_policy_state(first_state, changed_decision)
+
+    changed_plan = roll_alpaca_sip_dynamic_subscription_plan(first_plan, changed_state)
+
+    assert changed_plan.plan_id != first_plan.plan_id
+    assert changed_plan.symbols == ("CCC",)
+    assert changed_plan.evaluated_at == later
+
+
+def test_runtime_state_rolls_plan_at_new_market_date() -> None:
+    first_state = advance_subscription_policy_state(None, _decision(_NOW))
+    first_plan = roll_alpaca_sip_dynamic_subscription_plan(None, first_state)
+    next_session = _NOW + dt.timedelta(days=3)
+    next_decision = build_subscription_policy_decision(
+        BroadScannerSnapshot(_identity(), next_session - dt.timedelta(seconds=10), _candidates()),
+        evaluated_at=next_session,
+        active=first_state.active,
+        cooldowns=first_state.cooldowns,
+        config=_decision(_NOW).config,
+    )
+    next_state = advance_subscription_policy_state(first_state, next_decision)
+
+    next_plan = roll_alpaca_sip_dynamic_subscription_plan(first_plan, next_state)
+
+    assert next_plan.plan_id != first_plan.plan_id
+    assert next_plan.market_date == dt.date(2026, 7, 20)
+    assert next_plan.evaluated_at == next_session
 
 
 @pytest.mark.parametrize(
@@ -99,10 +171,7 @@ def _decision(evaluated_at: dt.datetime):
     snapshot = BroadScannerSnapshot(
         _identity(),
         evaluated_at - dt.timedelta(seconds=10),
-        (
-            BroadScannerCandidate("us-eq-a", "AAA", Decimal("9.5"), 2),
-            BroadScannerCandidate("us-eq-b", "BBB", Decimal("10"), 4),
-        ),
+        _candidates(),
     )
     return build_subscription_policy_decision(
         snapshot,
@@ -115,6 +184,13 @@ def _decision(evaluated_at: dt.datetime):
             dt.timedelta(minutes=2),
             dt.timedelta(minutes=5),
         ),
+    )
+
+
+def _candidates() -> tuple[BroadScannerCandidate, ...]:
+    return (
+        BroadScannerCandidate("us-eq-a", "AAA", Decimal("9.5"), 2),
+        BroadScannerCandidate("us-eq-b", "BBB", Decimal("10"), 4),
     )
 
 

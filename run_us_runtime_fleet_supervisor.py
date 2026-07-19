@@ -18,6 +18,10 @@ import run_us_runtime_fleet_cycle as cycle_cli
 from trading_agent.private_report import write_private_report
 from trading_agent.us_market_data_fleet_audit import RuntimeFleetAuditError
 from trading_agent.us_market_data_fleet_audit_store import RuntimeFleetAuditStore
+from trading_agent.us_runtime_actionability_plan import (
+    RuntimeActionabilityPlanConfig,
+    RuntimeActionabilityPlanConfigError,
+)
 from trading_agent.us_runtime_minute_supervisor import (
     RuntimeMinuteSupervisorConfig,
     RuntimeMinuteSupervisorError,
@@ -46,6 +50,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--secret-path", type=Path, required=True)
     parser.add_argument("--conditional-signal-outbox", type=Path)
     parser.add_argument("--actionability-manifest-root", type=Path)
+    parser.add_argument("--dynamic-plan-store", type=Path)
     parser.add_argument("--cycles", type=int, default=390)
     parser.add_argument("--interval-seconds", type=float, default=60.0)
     parser.add_argument("--capacity", type=int, default=2)
@@ -64,7 +69,14 @@ def main(
     shutdown_requested: Callable[[], bool] = lambda: False,
 ) -> int:
     args = parse_args(argv)
-    if (args.conditional_signal_outbox is None) != (args.actionability_manifest_root is None):
+    try:
+        _ = RuntimeActionabilityPlanConfig(
+            args.conditional_signal_outbox,
+            args.actionability_manifest_root,
+            args.dynamic_plan_store,
+            args.policy_state_store,
+        )
+    except RuntimeActionabilityPlanConfigError:
         _report(args.output_dir, ("result: blocked", "account/order mutation: 0"))
         return 1
     selected_clock = (lambda: dt.datetime.now(dt.UTC)) if clock is None else clock
@@ -129,13 +141,16 @@ def main(
 def _cycle_arguments(args: argparse.Namespace) -> list[str]:
     actionability_arguments = (
         []
-        if args.conditional_signal_outbox is None and args.actionability_manifest_root is None
+        if args.conditional_signal_outbox is None
         else [
             "--conditional-signal-outbox",
             str(args.conditional_signal_outbox),
             "--actionability-manifest-root",
             str(args.actionability_manifest_root),
         ]
+    )
+    dynamic_plan_arguments = (
+        [] if args.dynamic_plan_store is None else ["--dynamic-plan-store", str(args.dynamic_plan_store)]
     )
     return [
         "--scanner-store",
@@ -163,6 +178,7 @@ def _cycle_arguments(args: argparse.Namespace) -> list[str]:
         "--eviction-cooldown-seconds",
         str(args.eviction_cooldown_seconds),
         *actionability_arguments,
+        *dynamic_plan_arguments,
     ]
 
 
