@@ -50,6 +50,11 @@ from trading_agent.experiment_ledger_schema import (
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V1,
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V2,
 )
+from trading_agent.lifecycle_authority_policy import (
+    InvalidLifecycleAuthorityError,
+    require_new_champion_authority,
+    require_persisted_champion_authority,
+)
 from trading_agent.strategy_authority_models import StrategyAuthorityBinding
 
 _V1_SCHEMA_OBJECTS = frozenset(
@@ -269,7 +274,9 @@ class ExperimentLedgerReader:
         with self._reader_connection() as connection:
             version, hypothesis = _verified_lifecycle_parent(connection, strategy_version)
             events = _lifecycle_events_by_version(connection, strategy_version)
+            authority = _strategy_authority_by_version(connection, strategy_version)
         _require_valid_lifecycle_chain(version, hypothesis, events)
+        _require_persisted_lifecycle_authority(authority, events)
         return events
 
     def lifecycle_state(
@@ -532,6 +539,8 @@ class ExperimentLedgerWriter:
         )
         events = _lifecycle_events_by_version(self._connection, event.strategy_version)
         _require_valid_lifecycle_chain(version, hypothesis, events)
+        authority = _strategy_authority_by_version(self._connection, event.strategy_version)
+        _require_persisted_lifecycle_authority(authority, events)
         key = strategy_lifecycle_event_key(event)
         existing = _lifecycle_event_at_sequence(events, event.sequence)
         if existing is not None:
@@ -539,6 +548,7 @@ class ExperimentLedgerWriter:
                 return False
             raise ExperimentLedgerConflictError
         _require_valid_lifecycle_candidate(version, hypothesis, events, event)
+        _require_new_lifecycle_authority(authority, events, event)
         return self._insert_immutable(
             table="strategy_lifecycle_events",
             key_column="event_key",
@@ -924,6 +934,34 @@ def _require_valid_lifecycle_candidate(
         hypothesis,
         (*events, StoredStrategyLifecycleEvent(strategy_lifecycle_event_key(event), event)),
     )
+
+
+def _require_new_lifecycle_authority(
+    authority: StoredStrategyAuthorityBinding | None,
+    events: tuple[StoredStrategyLifecycleEvent, ...],
+    event: StrategyLifecycleEvent,
+) -> None:
+    try:
+        require_new_champion_authority(
+            None if authority is None else authority.binding,
+            tuple(stored.event for stored in events),
+            event,
+        )
+    except InvalidLifecycleAuthorityError:
+        raise InvalidExperimentLedgerSourceError from None
+
+
+def _require_persisted_lifecycle_authority(
+    authority: StoredStrategyAuthorityBinding | None,
+    events: tuple[StoredStrategyLifecycleEvent, ...],
+) -> None:
+    try:
+        require_persisted_champion_authority(
+            None if authority is None else authority.binding,
+            tuple(stored.event for stored in events),
+        )
+    except InvalidLifecycleAuthorityError:
+        raise InvalidExperimentLedgerSourceError from None
 
 
 def _require_valid_lifecycle_chain(

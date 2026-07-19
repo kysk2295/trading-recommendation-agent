@@ -17,6 +17,7 @@ from trading_agent.experiment_ledger_models import (
 )
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.research_hypothesis_registration import register_research_hypothesis_manifest
+from trading_agent.research_identity_models import AgentOperatingMode
 from trading_agent.signal_contract_models import TradeSignalEnvelope
 from trading_agent.swing_new_high_rvol import project_new_high_rvol_signals
 from trading_agent.swing_shadow_engine import advance_swing_shadow_session
@@ -74,6 +75,7 @@ def test_registers_one_prospective_trial_and_lifecycle_for_a_shadow_signal(tmp_p
     assert experiments.lifecycle_events(result.registration.strategy_version)[0].event.to_state is (
         StrategyLifecycleState.EXPERIMENTAL_SHADOW
     )
+    assert experiments.strategy_authority_bindings()[0].binding.operating_mode is (AgentOperatingMode.SHADOW)
     assert len(experiments.trials()) == 1
 
 
@@ -225,9 +227,7 @@ print(json.dumps(sorted(name for name in sys.modules if name.startswith('trading
         "portfolio_manager",
     )
 
-    assert not {
-        module for module in loaded_modules if any(marker in module for marker in forbidden)
-    }
+    assert not {module for module in loaded_modules if any(marker in module for marker in forbidden)}
 
 
 def _seed_signal(tmp_path: Path) -> tuple[ExperimentLedgerStore, SwingShadowStore, TradeSignalEnvelope]:

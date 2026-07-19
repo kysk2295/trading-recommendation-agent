@@ -40,6 +40,13 @@ from trading_agent.lane_registry_store import (
     LaneRegistryReader,
     UnsupportedLaneRegistrySchemaError,
 )
+from trading_agent.research_identity_models import (
+    AgentFamily,
+    AgentOperatingMode,
+    MarketId,
+    StrategyLaneRef,
+)
+from trading_agent.strategy_authority_models import StrategyAuthorityBinding
 from trading_agent.strategy_factory import StrategyMode
 from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
 
@@ -54,6 +61,7 @@ class InvalidExperimentLedgerBootstrapSourceError(RuntimeError):
 class ExperimentLedgerBootstrapResult:
     hypotheses_created: int
     versions_created: int
+    authority_bindings_created: int
     lifecycle_events_created: int
     effective_session_date: dt.date
 
@@ -62,6 +70,7 @@ class ExperimentLedgerBootstrapResult:
 class _BootstrapRegistration:
     hypothesis: HypothesisRegistration
     version: StrategyVersionRegistration
+    authority: StrategyAuthorityBinding
     lifecycle_event: StrategyLifecycleEvent
 
 
@@ -69,6 +78,7 @@ class _BootstrapRegistration:
 class _BootstrapTimeline:
     hypothesis_recorded_at: dt.datetime
     version_recorded_at: dt.datetime
+    authority_bound_at: dt.datetime
     effective_session_date: dt.date
     code_version_rollover: bool
 
@@ -101,12 +111,16 @@ def bootstrap_current_intraday_experiments(
     with experiment_ledger.writer() as writer:
         hypotheses_created = sum(writer.register_hypothesis(registration.hypothesis) for registration in registrations)
         versions_created = sum(writer.register_strategy_version(registration.version) for registration in registrations)
+        authority_bindings_created = sum(
+            writer.register_strategy_authority_binding(registration.authority) for registration in registrations
+        )
         lifecycle_events_created = sum(
             writer.append_lifecycle_event(registration.lifecycle_event) for registration in registrations
         )
     return ExperimentLedgerBootstrapResult(
         hypotheses_created=hypotheses_created,
         versions_created=versions_created,
+        authority_bindings_created=authority_bindings_created,
         lifecycle_events_created=lifecycle_events_created,
         effective_session_date=timeline.effective_session_date,
     )
@@ -177,6 +191,7 @@ def _verify_bootstrap_input(
         timeline=_BootstrapTimeline(
             hypothesis_recorded_at=recorded_at,
             version_recorded_at=recorded_at,
+            authority_bound_at=recorded_at,
             effective_session_date=_next_regular_session(recorded_at),
             code_version_rollover=False,
         ),
@@ -190,10 +205,7 @@ def _bootstrap_timeline(
     requested_at: dt.datetime,
 ) -> _BootstrapTimeline:
     hypothesis_ids = {contract.hypothesis_id for _, contract in contracts}
-    expected_versions = {
-        strategy_version_identity(mode, code_version)
-        for mode, _ in contracts
-    }
+    expected_versions = {strategy_version_identity(mode, code_version) for mode, _ in contracts}
     hypothesis_times = {
         stored.registration.ledger_recorded_at
         for stored in experiment_ledger.hypotheses()
@@ -219,6 +231,7 @@ def _bootstrap_timeline(
         return _BootstrapTimeline(
             hypothesis_recorded_at=hypothesis_recorded_at,
             version_recorded_at=requested_at,
+            authority_bound_at=requested_at,
             effective_session_date=_next_regular_session(requested_at),
             code_version_rollover=bool(hypothesis_times),
         )
@@ -229,9 +242,24 @@ def _bootstrap_timeline(
     version_recorded_at = next(iter(version_times))
     if requested_at < version_recorded_at:
         raise InvalidExperimentLedgerBootstrapSourceError
+    authority_times = tuple(
+        stored.binding.bound_at
+        for stored in experiment_ledger.strategy_authority_bindings()
+        if stored.binding.strategy_version in expected_versions
+    )
+    if len(authority_times) not in (0, len(expected_versions)):
+        raise InvalidExperimentLedgerBootstrapSourceError
+    if authority_times:
+        distinct_authority_times = set(authority_times)
+        if len(distinct_authority_times) != 1:
+            raise InvalidExperimentLedgerBootstrapSourceError
+        authority_bound_at = next(iter(distinct_authority_times))
+        if requested_at < authority_bound_at:
+            raise InvalidExperimentLedgerBootstrapSourceError
+    else:
+        authority_bound_at = requested_at
     lifecycle_events = tuple(
-        experiment_ledger.lifecycle_events(strategy_version)
-        for strategy_version in expected_versions
+        experiment_ledger.lifecycle_events(strategy_version) for strategy_version in expected_versions
     )
     if not all(len(events) == 1 for events in lifecycle_events):
         raise InvalidExperimentLedgerBootstrapSourceError
@@ -247,8 +275,7 @@ def _bootstrap_timeline(
         or len(reason_sets) != 1
         or not reason_sets <= supported_reason_sets
         or any(
-            event.event_kind is not StrategyLifecycleEventKind.REGISTRATION
-            or event.decided_at != version_recorded_at
+            event.event_kind is not StrategyLifecycleEventKind.REGISTRATION or event.decided_at != version_recorded_at
             for event in events
         )
     ):
@@ -256,6 +283,7 @@ def _bootstrap_timeline(
     return _BootstrapTimeline(
         hypothesis_recorded_at=hypothesis_recorded_at,
         version_recorded_at=version_recorded_at,
+        authority_bound_at=authority_bound_at,
         effective_session_date=next(iter(effective_dates)),
         code_version_rollover=("code_version_rollover", "existing_contract_import") in reason_sets,
     )
@@ -295,6 +323,17 @@ def _build_registrations(
                 source_registered_at=scope.registered_at,
                 ledger_recorded_at=timeline.version_recorded_at,
             )
+            authority = StrategyAuthorityBinding(
+                strategy_version=version.strategy_version,
+                strategy_lane=StrategyLaneRef(
+                    market_id=MarketId.US_EQUITIES,
+                    agent_family=AgentFamily.DAY_TRADING,
+                    strategy_id=version.strategy_id,
+                ),
+                operating_mode=AgentOperatingMode.ALPACA_PAPER,
+                legacy_lane_id=version.lane_id,
+                bound_at=timeline.authority_bound_at,
+            )
             evidence_keys = tuple(
                 sorted(
                     (
@@ -322,7 +361,7 @@ def _build_registrations(
                 ),
                 previous_event_key=None,
             )
-            registrations.append(_BootstrapRegistration(hypothesis, version, lifecycle_event))
+            registrations.append(_BootstrapRegistration(hypothesis, version, authority, lifecycle_event))
     except (ValidationError, ValueError) as error:
         raise InvalidExperimentLedgerBootstrapSourceError from error
     return tuple(registrations)

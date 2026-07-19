@@ -28,6 +28,7 @@ from trading_agent.lane_defaults import (
     INTRADAY_MANIFEST,
 )
 from trading_agent.lane_registry_store import LaneRegistryStore
+from trading_agent.research_identity_models import AgentOperatingMode
 from trading_agent.strategy_factory import StrategyMode
 
 RECORDED_AT = dt.datetime(2026, 7, 15, 20, tzinfo=dt.UTC)
@@ -64,12 +65,14 @@ def test_bootstrap_registers_four_current_intraday_contracts(tmp_path: Path) -> 
 
     assert result.hypotheses_created == 4
     assert result.versions_created == 4
+    assert result.authority_bindings_created == 4
     assert result.lifecycle_events_created == 4
     assert result.effective_session_date == EFFECTIVE_DATE
 
     reader = ExperimentLedgerReader(experiment_ledger.path)
     hypotheses = reader.hypotheses()
     versions = reader.strategy_versions()
+    authorities = reader.strategy_authority_bindings()
     expected_contracts = tuple(strategy_contract(mode) for mode in StrategyMode)
     assert {stored.registration.hypothesis_id for stored in hypotheses} == {
         contract.hypothesis_id for contract in expected_contracts
@@ -78,6 +81,7 @@ def test_bootstrap_registers_four_current_intraday_contracts(tmp_path: Path) -> 
         strategy_version_identity(mode, CODE_VERSION) for mode in StrategyMode
     }
     assert {stored.registration.code_version for stored in versions} == {CODE_VERSION}
+    assert {stored.binding.operating_mode for stored in authorities} == {AgentOperatingMode.ALPACA_PAPER}
     assert reader.trials() == ()
     for mode, _contract in zip(StrategyMode, expected_contracts, strict=True):
         strategy_version = strategy_version_identity(mode, CODE_VERSION)
@@ -109,6 +113,7 @@ def test_bootstrap_replay_reuses_original_recording_time(tmp_path: Path) -> None
     assert first.hypotheses_created == 4
     assert replay.hypotheses_created == 0
     assert replay.versions_created == 0
+    assert replay.authority_bindings_created == 0
     assert replay.lifecycle_events_created == 0
     assert replay.effective_session_date == EFFECTIVE_DATE
     reader = ExperimentLedgerReader(experiment_ledger.path)
@@ -117,6 +122,41 @@ def test_bootstrap_replay_reuses_original_recording_time(tmp_path: Path) -> None
         reader.lifecycle_events(strategy_version_identity(mode, CODE_VERSION))[0].event.decided_at
         for mode in StrategyMode
     } == {RECORDED_AT}
+
+
+def test_bootstrap_v2_authority_backfill_binds_at_current_request_time(
+    tmp_path: Path,
+) -> None:
+    lane_registry = _seed_lane_registry(tmp_path / "lane.sqlite3")
+    experiment_ledger = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    _ = bootstrap_current_intraday_experiments(
+        lane_registry=lane_registry,
+        experiment_ledger=experiment_ledger,
+        code_version=CODE_VERSION,
+        recorded_at=RECORDED_AT,
+    )
+    with sqlite3.connect(experiment_ledger.path) as connection:
+        connection.executescript(
+            """
+            DROP TRIGGER strategy_authority_bindings_no_delete;
+            DROP TRIGGER strategy_authority_bindings_no_update;
+            DROP INDEX strategy_authority_bindings_by_lane;
+            DROP TABLE strategy_authority_bindings;
+            PRAGMA user_version = 2;
+            """
+        )
+        connection.commit()
+    backfilled_at = RECORDED_AT + dt.timedelta(days=1)
+
+    result = bootstrap_current_intraday_experiments(
+        lane_registry=lane_registry,
+        experiment_ledger=experiment_ledger,
+        code_version=CODE_VERSION,
+        recorded_at=backfilled_at,
+    )
+
+    assert result.authority_bindings_created == 4
+    assert {stored.binding.bound_at for stored in experiment_ledger.strategy_authority_bindings()} == {backfilled_at}
 
 
 def test_bootstrap_appends_a_new_complete_version_batch_for_new_code(

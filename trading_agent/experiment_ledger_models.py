@@ -38,6 +38,7 @@ class StrategyLifecycleState(StrEnum):
     EXPERIMENTAL_SHADOW = "experimental_shadow"
     EXPERIMENTAL_PAPER = "experimental_paper"
     CHALLENGER = "challenger"
+    SHADOW_CHAMPION = "shadow_champion"
     PAPER_CHAMPION = "paper_champion"
     SUSPENDED = "suspended"
     REJECTED = "rejected"
@@ -352,15 +353,18 @@ def lifecycle_transition_allowed(
             StrategyLifecycleState.REJECTED,
         },
         StrategyLifecycleState.CHALLENGER: {
+            StrategyLifecycleState.SHADOW_CHAMPION,
             StrategyLifecycleState.PAPER_CHAMPION,
             StrategyLifecycleState.SUSPENDED,
             StrategyLifecycleState.REJECTED,
         },
+        StrategyLifecycleState.SHADOW_CHAMPION: {StrategyLifecycleState.SUSPENDED},
         StrategyLifecycleState.PAPER_CHAMPION: {StrategyLifecycleState.SUSPENDED},
         StrategyLifecycleState.SUSPENDED: {
             StrategyLifecycleState.EXPERIMENTAL_SHADOW,
             StrategyLifecycleState.EXPERIMENTAL_PAPER,
             StrategyLifecycleState.CHALLENGER,
+            StrategyLifecycleState.SHADOW_CHAMPION,
             StrategyLifecycleState.PAPER_CHAMPION,
             StrategyLifecycleState.REJECTED,
         },
@@ -376,6 +380,7 @@ def lifecycle_state_rank(state: StrategyLifecycleState) -> int:
         StrategyLifecycleState.EXPERIMENTAL_SHADOW: 2,
         StrategyLifecycleState.EXPERIMENTAL_PAPER: 3,
         StrategyLifecycleState.CHALLENGER: 4,
+        StrategyLifecycleState.SHADOW_CHAMPION: 5,
         StrategyLifecycleState.PAPER_CHAMPION: 5,
         StrategyLifecycleState.SUSPENDED: 6,
         StrategyLifecycleState.REJECTED: 7,

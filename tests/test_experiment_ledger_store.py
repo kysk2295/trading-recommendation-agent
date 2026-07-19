@@ -15,6 +15,7 @@ from trading_agent.daily_research_contract import (
     strategy_contract,
 )
 from trading_agent.experiment_ledger_keys import (
+    canonical_experiment_ledger_json,
     experiment_trial_event_key,
     hypothesis_registration_key,
     research_hypothesis_card_key,
@@ -127,7 +128,9 @@ def _version() -> StrategyVersionRegistration:
     )
 
 
-def _strategy_authority_binding() -> StrategyAuthorityBinding:
+def _strategy_authority_binding(
+    operating_mode: AgentOperatingMode = AgentOperatingMode.ALPACA_PAPER,
+) -> StrategyAuthorityBinding:
     return StrategyAuthorityBinding(
         strategy_version=ORB_CONTRACT.strategy_version,
         strategy_lane=StrategyLaneRef(
@@ -135,7 +138,7 @@ def _strategy_authority_binding() -> StrategyAuthorityBinding:
             agent_family=AgentFamily.DAY_TRADING,
             strategy_id=StrategyMode.ORB.value,
         ),
-        operating_mode=AgentOperatingMode.ALPACA_PAPER,
+        operating_mode=operating_mode,
         legacy_lane_id=LaneId.INTRADAY_MOMENTUM,
         bound_at=LEDGER_RECORDED_AT,
     )
@@ -482,6 +485,280 @@ def test_strategy_authority_binding_rejects_invalid_parent(
 
     with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
         _ = writer.register_strategy_authority_binding(binding)
+
+
+def test_shadow_authority_rejects_paper_champion(tmp_path: Path) -> None:
+    store = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    _register_lineage(store)
+    binding = _strategy_authority_binding(AgentOperatingMode.SHADOW)
+    registration = _lifecycle_registration()
+    paper = _lifecycle_transition(
+        registration,
+        to_state=StrategyLifecycleState.EXPERIMENTAL_PAPER,
+        decision_session_date=EFFECTIVE_DATE,
+        effective_session_date=dt.date(2026, 7, 17),
+        decided_at=dt.datetime(2026, 7, 16, 20, tzinfo=dt.UTC),
+    )
+    challenger = _lifecycle_transition(
+        paper,
+        to_state=StrategyLifecycleState.CHALLENGER,
+        decision_session_date=dt.date(2026, 7, 17),
+        effective_session_date=dt.date(2026, 7, 20),
+        decided_at=dt.datetime(2026, 7, 17, 20, tzinfo=dt.UTC),
+    )
+    champion = _authorized_champion_transition(
+        challenger,
+        binding,
+        StrategyLifecycleState.PAPER_CHAMPION,
+    )
+
+    with store.writer() as writer:
+        assert writer.register_strategy_authority_binding(binding) is True
+        assert writer.append_lifecycle_event(registration) is True
+        assert writer.append_lifecycle_event(paper) is True
+        assert writer.append_lifecycle_event(challenger) is True
+        with pytest.raises(InvalidExperimentLedgerSourceError):
+            _ = writer.append_lifecycle_event(champion)
+
+
+def test_paper_authority_rejects_shadow_champion(tmp_path: Path) -> None:
+    store = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    _register_lineage(store)
+    binding = _strategy_authority_binding()
+    registration = _lifecycle_registration()
+    challenger = _lifecycle_transition(
+        registration,
+        to_state=StrategyLifecycleState.CHALLENGER,
+        decision_session_date=EFFECTIVE_DATE,
+        effective_session_date=dt.date(2026, 7, 17),
+        decided_at=dt.datetime(2026, 7, 16, 20, tzinfo=dt.UTC),
+    )
+    champion = _authorized_champion_transition(
+        challenger,
+        binding,
+        StrategyLifecycleState.SHADOW_CHAMPION,
+    )
+
+    with store.writer() as writer:
+        assert writer.register_strategy_authority_binding(binding) is True
+        assert writer.append_lifecycle_event(registration) is True
+        assert writer.append_lifecycle_event(challenger) is True
+        with pytest.raises(InvalidExperimentLedgerSourceError):
+            _ = writer.append_lifecycle_event(champion)
+
+
+def test_shadow_authority_appends_and_reads_shadow_champion(tmp_path: Path) -> None:
+    store = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    _register_lineage(store)
+    binding = _strategy_authority_binding(AgentOperatingMode.SHADOW)
+    registration = _lifecycle_registration()
+    challenger = _lifecycle_transition(
+        registration,
+        to_state=StrategyLifecycleState.CHALLENGER,
+        decision_session_date=EFFECTIVE_DATE,
+        effective_session_date=dt.date(2026, 7, 17),
+        decided_at=dt.datetime(2026, 7, 16, 20, tzinfo=dt.UTC),
+    )
+    champion = _authorized_champion_transition(
+        challenger,
+        binding,
+        StrategyLifecycleState.SHADOW_CHAMPION,
+    )
+
+    with store.writer() as writer:
+        assert writer.register_strategy_authority_binding(binding) is True
+        assert writer.append_lifecycle_event(registration) is True
+        assert writer.append_lifecycle_event(challenger) is True
+        assert writer.append_lifecycle_event(champion) is True
+
+    assert store.lifecycle_events(champion.strategy_version)[-1].event == champion
+
+
+def test_paper_authority_requires_paper_phase_before_paper_champion(tmp_path: Path) -> None:
+    store = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    _register_lineage(store)
+    binding = _strategy_authority_binding()
+    registration = _lifecycle_registration()
+    challenger = _lifecycle_transition(
+        registration,
+        to_state=StrategyLifecycleState.CHALLENGER,
+        decision_session_date=EFFECTIVE_DATE,
+        effective_session_date=dt.date(2026, 7, 17),
+        decided_at=dt.datetime(2026, 7, 16, 20, tzinfo=dt.UTC),
+    )
+    champion = _authorized_champion_transition(
+        challenger,
+        binding,
+        StrategyLifecycleState.PAPER_CHAMPION,
+    )
+
+    with store.writer() as writer:
+        assert writer.register_strategy_authority_binding(binding) is True
+        assert writer.append_lifecycle_event(registration) is True
+        assert writer.append_lifecycle_event(challenger) is True
+        with pytest.raises(InvalidExperimentLedgerSourceError):
+            _ = writer.append_lifecycle_event(champion)
+
+
+def test_paper_authority_appends_paper_champion_after_paper_phase(tmp_path: Path) -> None:
+    store = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    _register_lineage(store)
+    binding = _strategy_authority_binding()
+    registration = _lifecycle_registration()
+    paper = _lifecycle_transition(
+        registration,
+        to_state=StrategyLifecycleState.EXPERIMENTAL_PAPER,
+        decision_session_date=EFFECTIVE_DATE,
+        effective_session_date=dt.date(2026, 7, 17),
+        decided_at=dt.datetime(2026, 7, 16, 20, tzinfo=dt.UTC),
+    )
+    challenger = _lifecycle_transition(
+        paper,
+        to_state=StrategyLifecycleState.CHALLENGER,
+        decision_session_date=dt.date(2026, 7, 17),
+        effective_session_date=dt.date(2026, 7, 20),
+        decided_at=dt.datetime(2026, 7, 17, 20, tzinfo=dt.UTC),
+    )
+    champion = _authorized_champion_transition(
+        challenger,
+        binding,
+        StrategyLifecycleState.PAPER_CHAMPION,
+    )
+
+    with store.writer() as writer:
+        assert writer.register_strategy_authority_binding(binding) is True
+        assert writer.append_lifecycle_event(registration) is True
+        assert writer.append_lifecycle_event(paper) is True
+        assert writer.append_lifecycle_event(challenger) is True
+        assert writer.append_lifecycle_event(champion) is True
+
+    assert store.lifecycle_events(champion.strategy_version)[-1].event == champion
+
+
+@pytest.mark.parametrize("register_binding", (False, True))
+def test_champion_requires_registered_binding_and_exact_evidence_key(
+    tmp_path: Path,
+    register_binding: bool,
+) -> None:
+    store = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    _register_lineage(store)
+    binding = _strategy_authority_binding(AgentOperatingMode.SHADOW)
+    registration = _lifecycle_registration()
+    challenger = _lifecycle_transition(
+        registration,
+        to_state=StrategyLifecycleState.CHALLENGER,
+        decision_session_date=EFFECTIVE_DATE,
+        effective_session_date=dt.date(2026, 7, 17),
+        decided_at=dt.datetime(2026, 7, 16, 20, tzinfo=dt.UTC),
+    )
+    champion = _authorized_champion_transition(
+        challenger,
+        binding,
+        StrategyLifecycleState.SHADOW_CHAMPION,
+    )
+    if register_binding:
+        champion = StrategyLifecycleEvent.model_validate(
+            champion.model_dump(mode="python") | {"evidence_keys": ("e" * 64,)}
+        )
+
+    with store.writer() as writer:
+        if register_binding:
+            assert writer.register_strategy_authority_binding(binding) is True
+        assert writer.append_lifecycle_event(registration) is True
+        assert writer.append_lifecycle_event(challenger) is True
+        with pytest.raises(InvalidExperimentLedgerSourceError):
+            _ = writer.append_lifecycle_event(champion)
+
+
+def test_reader_preserves_legacy_paper_champion_without_authority_binding(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "experiment.sqlite3"
+    store = ExperimentLedgerStore(database)
+    _register_lineage(store)
+    registration = _lifecycle_registration()
+    challenger = _lifecycle_transition(
+        registration,
+        to_state=StrategyLifecycleState.CHALLENGER,
+        decision_session_date=EFFECTIVE_DATE,
+        effective_session_date=dt.date(2026, 7, 17),
+        decided_at=dt.datetime(2026, 7, 16, 20, tzinfo=dt.UTC),
+    )
+    legacy = _authorized_champion_transition(
+        challenger,
+        _strategy_authority_binding(),
+        StrategyLifecycleState.PAPER_CHAMPION,
+    )
+    with store.writer() as writer:
+        assert writer.append_lifecycle_event(registration) is True
+        assert writer.append_lifecycle_event(challenger) is True
+    _insert_lifecycle_event(database, legacy)
+
+    assert store.lifecycle_events(legacy.strategy_version)[-1].event == legacy
+
+
+def test_reader_rejects_shadow_champion_without_authority_binding(tmp_path: Path) -> None:
+    database = tmp_path / "experiment.sqlite3"
+    store = ExperimentLedgerStore(database)
+    _register_lineage(store)
+    registration = _lifecycle_registration()
+    challenger = _lifecycle_transition(
+        registration,
+        to_state=StrategyLifecycleState.CHALLENGER,
+        decision_session_date=EFFECTIVE_DATE,
+        effective_session_date=dt.date(2026, 7, 17),
+        decided_at=dt.datetime(2026, 7, 16, 20, tzinfo=dt.UTC),
+    )
+    invalid = _authorized_champion_transition(
+        challenger,
+        _strategy_authority_binding(AgentOperatingMode.SHADOW),
+        StrategyLifecycleState.SHADOW_CHAMPION,
+    )
+    with store.writer() as writer:
+        assert writer.append_lifecycle_event(registration) is True
+        assert writer.append_lifecycle_event(challenger) is True
+    _insert_lifecycle_event(database, invalid)
+
+    with pytest.raises(InvalidExperimentLedgerSourceError):
+        _ = store.lifecycle_events(invalid.strategy_version)
+
+
+def _insert_lifecycle_event(database: Path, event: StrategyLifecycleEvent) -> None:
+    key = strategy_lifecycle_event_key(event)
+    with sqlite3.connect(database) as connection:
+        _ = connection.execute(
+            "INSERT INTO strategy_lifecycle_events VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                key,
+                event.strategy_version,
+                event.sequence,
+                event.event_kind.value,
+                event.effective_session_date.isoformat(),
+                event.previous_event_key,
+                canonical_experiment_ledger_json(event),
+            ),
+        )
+        connection.commit()
+
+
+def _authorized_champion_transition(
+    challenger: StrategyLifecycleEvent,
+    binding: StrategyAuthorityBinding,
+    champion: StrategyLifecycleState,
+) -> StrategyLifecycleEvent:
+    decision_date = challenger.effective_session_date
+    days_to_next_session = 3 if decision_date.weekday() == 4 else 1
+    transition = _lifecycle_transition(
+        challenger,
+        to_state=champion,
+        decision_session_date=decision_date,
+        effective_session_date=decision_date + dt.timedelta(days=days_to_next_session),
+        decided_at=dt.datetime.combine(decision_date, dt.time(20), dt.UTC),
+    )
+    return StrategyLifecycleEvent.model_validate(
+        transition.model_dump(mode="python")
+        | {"evidence_keys": tuple(sorted((*transition.evidence_keys, str(strategy_authority_binding_key(binding)))))}
+    )
 
 
 def test_missing_reader_is_empty_and_does_not_create_paths(tmp_path: Path) -> None:

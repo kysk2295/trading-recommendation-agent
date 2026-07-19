@@ -31,12 +31,18 @@ from trading_agent.experiment_ledger_store import (
     StoredExperimentTrialRegistration,
 )
 from trading_agent.lane_contract_keys import experiment_scope_key
-from trading_agent.research_identity_models import AgentFamily, MarketId
+from trading_agent.research_identity_models import (
+    AgentFamily,
+    AgentOperatingMode,
+    MarketId,
+    StrategyLaneRef,
+)
 from trading_agent.signal_contract_models import (
     SignalActionability,
     SignalEntryType,
     TradeSignalEnvelope,
 )
+from trading_agent.strategy_authority_models import StrategyAuthorityBinding
 from trading_agent.swing_new_high_rvol import NewHighRvolConfig
 from trading_agent.swing_research_contract import SWING_RESEARCH_CONTRACT
 from trading_agent.swing_shadow_store import (
@@ -84,9 +90,7 @@ class SwingTrialEventResult:
 
 def swing_shadow_trial_id(signal: TradeSignalEnvelope) -> str:
     _require_canonical_signal_shape(signal)
-    digest = hashlib.sha256(
-        f"{signal.signal_id}|{signal.producer_strategy_version}".encode()
-    ).hexdigest()[:16]
+    digest = hashlib.sha256(f"{signal.signal_id}|{signal.producer_strategy_version}".encode()).hexdigest()[:16]
     return f"swing-shadow-{signal.observed_at.astimezone(NEW_YORK):%Y%m%d}-{digest}"
 
 
@@ -171,6 +175,7 @@ def register_swing_shadow_trial(
     try:
         with experiment_ledger.writer() as writer:
             _ = writer.register_strategy_version(version)
+            _ = writer.register_strategy_authority_binding(_expected_authority(version))
             _ = writer.append_lifecycle_event(lifecycle)
             created_trial = writer.register_trial(registration)
     except (ExperimentLedgerConflictError, InvalidExperimentLedgerSourceError, sqlite3.Error, ValueError) as error:
@@ -349,7 +354,28 @@ def _verified_version(
     )
     if versions[0].registration != expected:
         raise InvalidSwingShadowTrialSourceError
+    authorities = tuple(
+        stored
+        for stored in experiment_ledger.strategy_authority_bindings()
+        if stored.binding.strategy_version == expected.strategy_version
+    )
+    if len(authorities) != 1 or authorities[0].binding != _expected_authority(expected):
+        raise InvalidSwingShadowTrialSourceError
     return expected
+
+
+def _expected_authority(version: StrategyVersionRegistration) -> StrategyAuthorityBinding:
+    return StrategyAuthorityBinding(
+        strategy_version=version.strategy_version,
+        strategy_lane=StrategyLaneRef(
+            market_id=MarketId.US_EQUITIES,
+            agent_family=AgentFamily.SWING_TRADING,
+            strategy_id=version.strategy_id,
+        ),
+        operating_mode=AgentOperatingMode.SHADOW,
+        legacy_lane_id=version.lane_id,
+        bound_at=version.ledger_recorded_at,
+    )
 
 
 def _lifecycle_registration(

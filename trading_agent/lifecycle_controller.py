@@ -74,6 +74,7 @@ _SUSPENDIBLE_STATES: Final = frozenset(
         StrategyLifecycleState.EXPERIMENTAL_SHADOW,
         StrategyLifecycleState.EXPERIMENTAL_PAPER,
         StrategyLifecycleState.CHALLENGER,
+        StrategyLifecycleState.SHADOW_CHAMPION,
         StrategyLifecycleState.PAPER_CHAMPION,
     }
 )
@@ -302,8 +303,7 @@ def _require_exact_experiment_lineage(
         or version.strategy_version != expected_strategy_version
         or (
             version.strategy_version != _ORB_CONTRACT.strategy_version
-            and version.strategy_version
-            != strategy_version_identity(StrategyMode.ORB, version.code_version)
+            and version.strategy_version != strategy_version_identity(StrategyMode.ORB, version.code_version)
         )
         or version.hypothesis_id != _ORB_CONTRACT.hypothesis_id
         or version.experiment_scope_key != _ORB_SCOPE_KEY

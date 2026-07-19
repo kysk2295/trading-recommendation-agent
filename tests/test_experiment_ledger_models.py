@@ -34,6 +34,7 @@ from trading_agent.experiment_ledger_models import (
     StrategyVersionRegistration,
     TrialEventKind,
     TrialKind,
+    lifecycle_state_rank,
     lifecycle_transition_allowed,
 )
 from trading_agent.lane_contract_keys import experiment_scope_key
@@ -371,3 +372,23 @@ def test_lifecycle_transition_uses_closed_state_table_and_next_session() -> None
         _ = StrategyLifecycleEvent.model_validate(data | {"effective_session_date": EFFECTIVE_DATE})
     with pytest.raises(ValidationError):
         _ = StrategyLifecycleEvent.model_validate(data | {"effective_session_date": dt.date(2026, 7, 18)})
+
+
+def test_lifecycle_transition_has_distinct_shadow_champion_path() -> None:
+    assert (
+        lifecycle_transition_allowed(
+            StrategyLifecycleState.CHALLENGER,
+            StrategyLifecycleState.SHADOW_CHAMPION,
+        )
+        is True
+    )
+    assert (
+        lifecycle_transition_allowed(
+            StrategyLifecycleState.EXPERIMENTAL_PAPER,
+            StrategyLifecycleState.SHADOW_CHAMPION,
+        )
+        is False
+    )
+    assert lifecycle_state_rank(StrategyLifecycleState.SHADOW_CHAMPION) == lifecycle_state_rank(
+        StrategyLifecycleState.PAPER_CHAMPION
+    )

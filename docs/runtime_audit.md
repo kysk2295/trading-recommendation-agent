@@ -716,3 +716,10 @@
 - 결함: global strategy version은 legacy `LaneId`만 저장해 exact `StrategyLaneRef`와 shadow/Paper 운영권한을 구분하지 못했다. 이 상태에서 `SHADOW_CHAMPION` enum만 추가하면 어떤 challenger도 champion 종류를 임의로 선택할 수 있다.
 - 수정: schema v3 `strategy_authority_bindings`가 전략 버전, 연구 lane, 최대 운영모드, 승인된 legacy execution lane과 binding 시각을 content-addressed append-only 행으로 고정한다. 부모 strategy ID·lane·시간 불일치, mode 변경과 KR의 거짓 legacy mapping은 차단한다.
 - 결과: v1/v2 무재작성 migration, exact append/replay, conflict, parent/tamper와 append-only 경계를 focused 50개 및 전체 2603 tests로 검증했다. lifecycle 전이표와 주문 권한은 아직 바뀌지 않았고 network·broker mutation은 0건이다.
+
+## H101: authority가 있어도 shadow와 Paper champion 경로가 같은 상태였다
+
+- 결함: strategy authority row를 추가한 뒤에도 lifecycle enum과 전이표에는 `PAPER_CHAMPION`만 있었다. shadow-only swing agent를 champion으로 표현하려면 잘못 Paper로 부르거나 영원히 challenger에 남겨야 했다.
+- 수정: `SHADOW_CHAMPION`을 같은 성숙도 rank의 별도 상태로 추가했다. 신규 champion Writer는 exact authority key, binding 시각과 mode를 검증하고 Paper Champion에는 이전 `EXPERIMENTAL_PAPER` phase를 요구한다. Reader도 새 shadow 행과 authority 이후 champion을 재검증하며 legacy Paper history는 읽는다.
+- 운영 연결: intraday bootstrap은 네 US day strategy에 Paper authority를, swing shadow trial은 US swing strategy에 shadow authority를 append한다. v2 backfill의 bound 시각은 현재 요청시각이며 과거 version 시각으로 소급하지 않는다.
+- 결과: focused 126개와 전체 2614 tests, CLI·public Writer 수동 QA와 정적 게이트가 통과했다. 자동 promotion, risk/allocation/order 변경과 network·broker mutation은 0건이다.

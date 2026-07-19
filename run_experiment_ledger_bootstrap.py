@@ -82,6 +82,7 @@ def main(
         details=(
             _created_reused("hypothesis", result.hypotheses_created),
             _created_reused("strategy version", result.versions_created),
+            _created_reused("strategy authority", result.authority_bindings_created),
             _created_reused("lifecycle event", result.lifecycle_events_created),
             "state: experimental_shadow",
             "외부 broker mutation: 0건",
