@@ -5,57 +5,37 @@ import hashlib
 import json
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, replace
-from enum import StrEnum
-from typing import Protocol, TypedDict, assert_never, override
+from dataclasses import replace
+from typing import Protocol, TypedDict
 
-from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
+from trading_agent.us_equity_calendar import NEW_YORK
+from trading_agent.us_runtime_minute_supervisor_models import (
+    RuntimeMinuteSupervisorConfig,
+    RuntimeMinuteSupervisorError,
+    RuntimeMinuteSupervisorRecord,
+    RuntimeSupervisorOperationBlockedError,
+    RuntimeSupervisorOperationResult,
+    RuntimeSupervisorStatus,
+)
+from trading_agent.us_runtime_supervisor_live_audit import (
+    RuntimeSupervisorLiveAudit,
+    build_runtime_supervisor_live_audit,
+)
+from trading_agent.us_runtime_supervisor_outcome import (
+    runtime_supervisor_operation_is_valid,
+    runtime_supervisor_outcome_is_valid,
+)
+from trading_agent.us_runtime_supervisor_session import runtime_supervisor_session_is_open
 
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 
 
-class RuntimeMinuteSupervisorError(ValueError):
-    @override
-    def __str__(self) -> str:
-        return "runtime minute supervisor input is invalid"
-
-
-class RuntimeSupervisorOperationBlockedError(RuntimeError):
-    @override
-    def __str__(self) -> str:
-        return "runtime supervisor operation is blocked"
-
-
-class RuntimeSupervisorStatus(StrEnum):
-    READY = "ready"
-    BLOCKED = "blocked"
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeMinuteSupervisorConfig:
-    cycles: int
-    interval_seconds: float
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeSupervisorOperationResult:
-    fleet_cycle_id: str
-    ready: bool
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeMinuteSupervisorRecord:
-    attempt_id: str
-    cycle_index: int
-    started_at: dt.datetime
-    finished_at: dt.datetime
-    status: RuntimeSupervisorStatus
-    reason: str | None
-    fleet_cycle_id: str | None
-
-
 class RuntimeSupervisorRecordWriter(Protocol):
-    def append(self, record: RuntimeMinuteSupervisorRecord) -> bool: ...
+    def append_attempt(
+        self,
+        record: RuntimeMinuteSupervisorRecord,
+        live_audit: RuntimeSupervisorLiveAudit,
+    ) -> bool: ...
 
     def records(self) -> tuple[RuntimeMinuteSupervisorRecord, ...]: ...
 
@@ -86,22 +66,29 @@ def run_runtime_minute_supervisor(
         if shutdown_requested():
             break
         started_at = clock()
-        if not _in_regular_session(started_at):
+        session_is_open = runtime_supervisor_session_is_open(started_at)
+        if session_is_open is None:
+            raise RuntimeMinuteSupervisorError
+        if not session_is_open:
             break
         used_cycles = _used_cycles(history, started_at)
         if used_cycles >= config.cycles:
             break
         try:
             result = operation(started_at)
-            if type(result) is not RuntimeSupervisorOperationResult or _HEX.fullmatch(result.fleet_cycle_id) is None:
+            if type(result) is not RuntimeSupervisorOperationResult or not runtime_supervisor_operation_is_valid(
+                result.fleet_cycle_id, result.live_outcome
+            ):
                 raise RuntimeMinuteSupervisorError
             status = RuntimeSupervisorStatus.READY if result.ready else RuntimeSupervisorStatus.BLOCKED
             reason = None if result.ready else "fleet_gate_blocked"
             fleet_cycle_id = result.fleet_cycle_id
-        except RuntimeSupervisorOperationBlockedError:
+            live_outcome = result.live_outcome
+        except RuntimeSupervisorOperationBlockedError as blocked:
             status = RuntimeSupervisorStatus.BLOCKED
             reason = "runtime_cycle_blocked"
             fleet_cycle_id = None
+            live_outcome = blocked.live_outcome
         finished_at = clock()
         record = build_runtime_minute_supervisor_record(
             used_cycles + 1,
@@ -111,7 +98,8 @@ def run_runtime_minute_supervisor(
             reason,
             fleet_cycle_id,
         )
-        if not writer.append(record):
+        live_audit = build_runtime_supervisor_live_audit(record.attempt_id, live_outcome)
+        if not writer.append_attempt(record, live_audit):
             raise RuntimeMinuteSupervisorError
         records.append(record)
         history += (record,)
@@ -196,7 +184,7 @@ def _validate_runtime(operation, config, clock, sleeper, writer, shutdown_reques
         or not 1.0 <= config.interval_seconds <= 3600.0
         or not callable(clock)
         or not callable(sleeper)
-        or not callable(getattr(writer, "append", None))
+        or not callable(getattr(writer, "append_attempt", None))
         or not callable(getattr(writer, "records", None))
         or not callable(shutdown_requested)
     ):
@@ -228,27 +216,11 @@ def _used_cycles(records: tuple[RuntimeMinuteSupervisorRecord, ...], started_at:
 
 
 def _valid_outcome(record: RuntimeMinuteSupervisorRecord) -> bool:
-    match record.status:
-        case RuntimeSupervisorStatus.READY:
-            return record.reason is None and _valid_cycle_id(record.fleet_cycle_id)
-        case RuntimeSupervisorStatus.BLOCKED:
-            return record.reason in {"runtime_cycle_blocked", "fleet_gate_blocked"} and (
-                record.fleet_cycle_id is None or _valid_cycle_id(record.fleet_cycle_id)
-            )
-        case unreachable:
-            assert_never(unreachable)
-
-
-def _valid_cycle_id(value: str | None) -> bool:
-    return type(value) is str and _HEX.fullmatch(value) is not None
-
-
-def _in_regular_session(value: dt.datetime) -> bool:
-    if not _aware(value):
-        raise RuntimeMinuteSupervisorError
-    current = value.astimezone(NEW_YORK)
-    bounds = regular_session_bounds(current.date())
-    return bounds is not None and bounds[0] <= current < bounds[1]
+    return runtime_supervisor_outcome_is_valid(
+        record.status.value,
+        record.reason,
+        record.fleet_cycle_id,
+    )
 
 
 def _payload(record: RuntimeMinuteSupervisorRecord) -> _RecordPayload:

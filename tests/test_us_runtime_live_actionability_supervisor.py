@@ -19,6 +19,8 @@ from tests.test_run_us_runtime_fleet_cycle import (
 from tests.test_run_us_runtime_fleet_supervisor import _arguments
 from tests.test_us_runtime_live_actionability_cycle import _connection
 from trading_agent.contract_outbox import append_trade_signal_publication
+from trading_agent.us_runtime_minute_supervisor_store import RuntimeMinuteSupervisorStore
+from trading_agent.us_runtime_supervisor_live_audit import RuntimeSupervisorLiveStatus
 
 
 def test_partial_live_options_block_before_supervisor_or_cycle_io(tmp_path: Path) -> None:
@@ -96,6 +98,16 @@ def test_armed_supervisor_forwards_fixture_websocket_lifecycle(
     assert len(requests) == 21
     cycle_report = (tmp_path / "report" / "us_runtime_fleet_cycle_ko.md").read_text(encoding="utf-8")
     assert "live actionability: 1 selected, 1 new, 0 replay" in cycle_report
+    store = RuntimeMinuteSupervisorStore(tmp_path / "supervisor.sqlite3")
+    live_records = store.live_records()
+    assert len(live_records) == 1
+    assert live_records[0].attempt_id == store.records()[0].attempt_id
+    assert live_records[0].status is RuntimeSupervisorLiveStatus.COMPLETED
+    assert (
+        live_records[0].selected_count,
+        live_records[0].created_count,
+        live_records[0].replay_count,
+    ) == (1, 1, 0)
 
 
 def _actionability_arguments(tmp_path: Path) -> list[str]:

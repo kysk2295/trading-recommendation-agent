@@ -660,3 +660,11 @@
 - 차단: stale manifest 0개면 receipt root를 만들지 않는다. malformed/public/digest mismatch/중복 instrument batch, symlink 또는 public receipt root와 partial 옵션은 첫 WebSocket 전에 fail-closed하며 arm이 켜진 cycle은 private credential의 owner·mode 600·single hard link까지 요구한다.
 - 재시작: complete terminal이 있는 exact cycle retry는 connector 0건, actionability append replay다. 동일 fleet GET 자체는 새 분봉이 없으면 기존 계약대로 `no_new_data/degraded`지만 live stage의 replay evidence는 private cycle report에 별도로 남는다.
 - 결과: fixture cycle/supervisor current manifest 1개가 bounded quote/trade lifecycle과 durable projection으로 연결됐고 전체 2545 tests와 정적 게이트가 통과했다. 실제 provider WebSocket, account/order/position endpoint와 broker mutation은 0건이다.
+
+## H93: supervisor READY만 보면 live child가 실행됐는지 알 수 없다
+
+- 결함: cycle private Markdown에는 live aggregate가 있었지만 supervisor append-only attempt는 fleet cycle ID와 gate만 보존했다. fleet READY가 live disabled, 미시도, 완료 또는 실패 중 무엇인지 재시작 후 구조적으로 구분할 수 없었다.
+- 호환성: 기존 attempt payload에 필드를 추가하면 과거 attempt SHA와 exact replay가 모두 바뀐다. 그래서 schema v1 parent table과 canonical bytes는 그대로 두고 schema v2에 attempt ID unique child table과 UPDATE/DELETE 차단 trigger만 추가했다.
+- 수정: cycle orchestration이 frozen structured outcome을 반환하고 기존 `main()`은 정수 exit code facade를 유지한다. supervisor는 parent를 만든 뒤 disabled/not-attempted/completed/blocked child를 content-addressed payload로 만들고 두 행을 하나의 `BEGIN IMMEDIATE` transaction에서 append한다.
+- 재생: v1 query는 파일을 migration하지 않고 child history를 빈 tuple로 반환한다. 다음 Writer만 v2 schema를 추가하며 기존 parent bytes를 바꾸지 않는다. child reader는 parent 전체 payload/hash/history를 먼저 검증한 뒤 child hash, aggregate count, parent binding과 parent 순서를 검증한다.
+- 결과: completed `selected/new/replay=1/1/0`, blocked parent-child, v1→v2 무재작성과 child payload/trigger tamper를 fixture로 확인했다. 전체 2553 tests와 정적 게이트가 통과했고 child에는 symbol·price·credential·account/order 필드가 없으며 broker mutation은 0건이다.

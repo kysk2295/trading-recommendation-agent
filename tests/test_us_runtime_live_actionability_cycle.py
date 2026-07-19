@@ -24,6 +24,7 @@ from tests.test_run_us_runtime_fleet_cycle import (
     _inputs,
 )
 from trading_agent.contract_outbox import append_trade_signal_publication
+from trading_agent.us_runtime_supervisor_live_audit import RuntimeSupervisorLiveStatus
 
 
 def test_partial_live_options_block_before_policy_or_provider(tmp_path: Path) -> None:
@@ -35,7 +36,9 @@ def test_partial_live_options_block_before_policy_or_provider(tmp_path: Path) ->
     )
     arguments.extend(["--live-actionability-receipt-root", str(tmp_path / "receipts")])
 
-    assert cli.main(arguments, now=NOW) == 1
+    result = cli.run_cycle(arguments, now=NOW)
+    assert result.exit_code == 1
+    assert result.live_outcome.status is RuntimeSupervisorLiveStatus.NOT_ATTEMPTED
     assert not (tmp_path / "policy-state.sqlite3").exists()
     assert not (tmp_path / "receipts").exists()
 
@@ -92,7 +95,10 @@ def test_armed_cycle_captures_and_live_stage_replays_on_cycle_retry(
         ]
     )
 
-    assert cli.main(arguments, now=NOW, client_factory=client_factory) == 0
+    first = cli.run_cycle(arguments, now=NOW, client_factory=client_factory)
+    assert first.exit_code == 0
+    assert first.live_outcome.status is RuntimeSupervisorLiveStatus.COMPLETED
+    assert (first.live_outcome.selected_count, first.live_outcome.created_count) == (1, 1)
     assert queue.calls == 1
     report = (tmp_path / "report" / cli.REPORT_NAME).read_text(encoding="utf-8")
     assert "live actionability: 1 selected, 1 new, 0 replay" in report
@@ -108,7 +114,10 @@ def test_armed_cycle_captures_and_live_stage_replays_on_cycle_retry(
         lambda: replay_dependencies,
     )
 
-    assert cli.main(arguments, now=NOW, client_factory=client_factory) == 1
+    replay = cli.run_cycle(arguments, now=NOW, client_factory=client_factory)
+    assert replay.exit_code == 1
+    assert replay.live_outcome.status is RuntimeSupervisorLiveStatus.COMPLETED
+    assert (replay.live_outcome.selected_count, replay.live_outcome.replay_count) == (1, 1)
     assert replay_queue.calls == 0
     replay_report = (tmp_path / "report" / cli.REPORT_NAME).read_text(encoding="utf-8")
     assert "fleet: degraded" in replay_report

@@ -96,21 +96,21 @@ def main(
     fleet_audit = RuntimeFleetAuditStore(args.audit_store)
 
     def operation(evaluated_at: dt.datetime) -> RuntimeSupervisorOperationResult:
-        code = cycle_cli.main(
+        cycle_result = cycle_cli.run_cycle(
             _cycle_arguments(args),
             now=evaluated_at,
             client_factory=client_factory,
         )
-        if code != 0:
-            raise RuntimeSupervisorOperationBlockedError
+        if cycle_result.exit_code != 0:
+            raise RuntimeSupervisorOperationBlockedError(cycle_result.live_outcome)
         try:
             audit = fleet_audit.latest()
         except RuntimeFleetAuditError:
-            raise RuntimeSupervisorOperationBlockedError from None
+            raise RuntimeSupervisorOperationBlockedError(cycle_result.live_outcome) from None
         if audit is None or audit.evaluated_at != evaluated_at:
-            raise RuntimeSupervisorOperationBlockedError
+            raise RuntimeSupervisorOperationBlockedError(cycle_result.live_outcome)
         ready = audit.fleet_status == "ready" and audit.gate_status == "ready"
-        return RuntimeSupervisorOperationResult(audit.cycle_id, ready)
+        return RuntimeSupervisorOperationResult(audit.cycle_id, ready, cycle_result.live_outcome)
 
     try:
         records = run_runtime_minute_supervisor(

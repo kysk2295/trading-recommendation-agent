@@ -11,7 +11,6 @@ import httpx2
 
 from trading_agent.alpaca_http import (
     ALPACA_DATA_URL,
-    DEFAULT_ALPACA_SECRET_PATH,
 )
 from trading_agent.alpaca_sip_dynamic_plan_store import AlpacaSipDynamicPlanStoreError
 from trading_agent.alpaca_sip_profile_materializer import (
@@ -46,6 +45,14 @@ from trading_agent.us_runtime_fleet_cycle import (
     bind_runtime_profiles,
     execute_runtime_fleet_cycle,
 )
+from trading_agent.us_runtime_fleet_cycle_args import parse_runtime_fleet_cycle_args as parse_args
+from trading_agent.us_runtime_fleet_cycle_cli_result import (
+    LIVE_BLOCKED,
+    LIVE_DISABLED,
+    LIVE_NOT_ATTEMPTED,
+    RuntimeFleetCycleCliResult,
+    completed_live_outcome,
+)
 from trading_agent.us_runtime_fleet_cycle_report import (
     RuntimeFleetCycleReportFields,
     write_runtime_fleet_cycle_ready_report,
@@ -76,35 +83,6 @@ from trading_agent.us_subscription_policy_state_store import SubscriptionPolicyS
 REPORT_NAME = "us_runtime_fleet_cycle_ko.md"
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="US scanner/profile을 Alpaca SIP GET-only runtime fleet와 M4.4 gate에 연결",
-    )
-    parser.add_argument("--scanner-store", type=Path, required=True)
-    profile_source = parser.add_mutually_exclusive_group(required=True)
-    profile_source.add_argument("--profile", action="append", metavar="INSTRUMENT_ID=PATH")
-    profile_source.add_argument("--auto-profile-root", type=Path)
-    parser.add_argument("--runtime-root", type=Path, required=True)
-    parser.add_argument("--canonical-root", type=Path, required=True)
-    parser.add_argument("--audit-store", type=Path, required=True)
-    parser.add_argument("--policy-state-store", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--research-artifact-root", type=Path)
-    parser.add_argument("--conditional-signal-outbox", type=Path)
-    parser.add_argument("--actionability-manifest-root", type=Path)
-    parser.add_argument("--dynamic-plan-store", type=Path)
-    parser.add_argument("--live-actionability-receipt-root", type=Path)
-    parser.add_argument("--live-actionability-store", type=Path)
-    parser.add_argument("--arm-live-actionability", action="store_true")
-    parser.add_argument("--minimum-rvol-bps", type=int, default=15_000)
-    parser.add_argument("--secret-path", type=Path, default=DEFAULT_ALPACA_SECRET_PATH)
-    parser.add_argument("--capacity", type=int, default=2)
-    parser.add_argument("--max-candidate-age-seconds", type=int, default=30)
-    parser.add_argument("--minimum-residency-seconds", type=int, default=120)
-    parser.add_argument("--eviction-cooldown-seconds", type=int, default=300)
-    return parser.parse_args(argv)
-
-
 def create_data_client() -> httpx2.Client:
     return httpx2.Client(
         base_url=ALPACA_DATA_URL,
@@ -119,8 +97,19 @@ def main(
     now: dt.datetime | None = None,
     client_factory: Callable[[], httpx2.Client] = create_data_client,
 ) -> int:
+    return run_cycle(argv, now=now, client_factory=client_factory).exit_code
+
+
+def run_cycle(
+    argv: Sequence[str] | None = None,
+    *,
+    now: dt.datetime | None = None,
+    client_factory: Callable[[], httpx2.Client] = create_data_client,
+) -> RuntimeFleetCycleCliResult:
     args = parse_args(argv)
     evaluated_at = dt.datetime.now(dt.UTC) if now is None else now
+    live_outcome = LIVE_NOT_ATTEMPTED
+    live_invoked = False
     try:
         actionability = RuntimeActionabilityPlanConfig(
             args.conditional_signal_outbox,
@@ -134,6 +123,8 @@ def main(
             args.arm_live_actionability,
             actionability,
         )
+        if not live_actionability.armed:
+            live_outcome = LIVE_DISABLED
         _validate_research_options(args)
         state_store = SubscriptionPolicyStateStore(args.policy_state_store)
         prior_state = state_store.latest()
@@ -187,7 +178,10 @@ def main(
             result.fleet.bindings,
             None if plan_roll is None else plan_roll.plan,
         )
+        live_invoked = live_actionability.armed
         live_actionability_result = live_actionability.dispatch(evaluated_at, credentials)
+        if live_actionability_result is not None:
+            live_outcome = completed_live_outcome(live_actionability_result)
     except (
         AlpacaSipDynamicPlanStoreError,
         AlpacaSipProfileMaterializerError,
@@ -203,8 +197,10 @@ def main(
         UsRuntimeActionabilityManifestDispatchError,
         ValueError,
     ):
+        if live_invoked:
+            live_outcome = LIVE_BLOCKED
         _report(args.output_dir, ("result: blocked", "account/order mutation: 0"))
-        return 1
+        return RuntimeFleetCycleCliResult(1, live_outcome)
     ready = result.audit.fleet_status == "ready" and result.audit.gate_status == "ready"
     write_runtime_fleet_cycle_ready_report(
         args.output_dir,
@@ -222,7 +218,7 @@ def main(
             live_actionability_result,
         ),
     )
-    return 0 if ready else 1
+    return RuntimeFleetCycleCliResult(0 if ready else 1, live_outcome)
 
 
 def _profile_bindings(values: list[str]) -> tuple[ProfileArtifactBinding, ...]:
