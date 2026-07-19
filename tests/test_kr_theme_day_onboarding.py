@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import stat
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -8,6 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import trading_agent.kr_theme_day_onboarding as onboarding
+import trading_agent.kr_theme_day_onboarding_models as onboarding_models
 import trading_agent.private_immutable_file as private_file
 from tests.test_kis_kr_market_projection import _opportunity
 from tests.test_kr_theme_day_session_manifest import _identity
@@ -50,6 +52,26 @@ def test_onboarding_binds_fresh_same_cycle_opportunity_to_preopen_trial(tmp_path
     assert first.receipt.session_id == manifest.session_id
     assert stat.S_IMODE(request.manifest_path.stat().st_mode) == 0o600
     assert stat.S_IMODE(onboarding_receipt_path(request.manifest_path).stat().st_mode) == 0o600
+
+
+def test_onboarding_rejects_self_consistent_receipt_time_tamper(tmp_path: Path) -> None:
+    # Given
+    request = _prepared_request(tmp_path)
+    first = onboard_kr_theme_day_opportunity(request)
+    receipt_path = onboarding_receipt_path(request.manifest_path)
+    source = onboarding_models.KrThemeDayOpportunityOnboardingReceiptSource.model_validate(
+        first.receipt.model_dump(mode="python", exclude={"schema_version", "receipt_id"})
+    ).model_copy(update={"onboarded_at": ONBOARDED_AT + dt.timedelta(minutes=1)})
+    changed = onboarding_models.build_kr_theme_day_onboarding_receipt(source)
+    receipt_path.write_text(
+        json.dumps(changed.model_dump(mode="json"), ensure_ascii=True, separators=(",", ":"), sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    receipt_path.chmod(0o600)
+
+    # When / Then
+    with pytest.raises(InvalidKrThemeDayOpportunityOnboardingError):
+        onboarding.require_exact_kr_theme_day_onboarding(request.manifest_path, first.manifest)
 
 
 def test_onboarding_rejects_wrong_producer_stale_or_non_cycle_opportunity(tmp_path: Path) -> None:

@@ -202,3 +202,63 @@ def test_missing_read_does_not_create_publication_lock(tmp_path: Path) -> None:
     with pytest.raises(private_file.InvalidPrivateImmutableFileError):
         _ = private_file.read_private_text(path)
     assert tuple(tmp_path.iterdir()) == ()
+
+
+def test_publication_rejects_parent_directory_swap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given
+    parent = tmp_path / "target"
+    parent.mkdir()
+    displaced = tmp_path / "displaced"
+    path = parent / "session.json"
+    original_link = private_file.os.link
+
+    def replace_parent_after_link(
+        source: str,
+        destination: str,
+        *,
+        src_dir_fd: int,
+        dst_dir_fd: int,
+        follow_symlinks: bool,
+    ) -> None:
+        original_link(
+            source,
+            destination,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+            follow_symlinks=follow_symlinks,
+        )
+        parent.rename(displaced)
+        parent.mkdir(mode=0o700)
+        path.write_text('{"attacker":true}\n', encoding="utf-8")
+        path.chmod(0o600)
+
+    monkeypatch.setattr(private_file.os, "link", replace_parent_after_link)
+
+    # When / Then
+    with pytest.raises(private_file.InvalidPrivateImmutableFileError):
+        _ = publish_private_immutable_text(path, '{"session":"fixture"}\n')
+
+
+def test_read_rejects_parent_directory_swap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given
+    parent = tmp_path / "target"
+    parent.mkdir()
+    displaced = tmp_path / "displaced"
+    path = parent / "session.json"
+    payload = '{"session":"fixture"}\n'
+    assert publish_private_immutable_text(path, payload) is True
+    original_read = private_file._read_text
+
+    def replace_parent_after_read(descriptor: int) -> str:
+        content = original_read(descriptor)
+        parent.rename(displaced)
+        parent.mkdir(mode=0o700)
+        path.write_text('{"attacker":true}\n', encoding="utf-8")
+        path.chmod(0o600)
+        return content
+
+    monkeypatch.setattr(private_file, "_read_text", replace_parent_after_read)
+
+    # When / Then
+    with pytest.raises(private_file.InvalidPrivateImmutableFileError):
+        _ = private_file.read_private_text(path)

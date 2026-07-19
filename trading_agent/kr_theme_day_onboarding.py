@@ -79,6 +79,7 @@ def onboard_kr_theme_day_opportunity(
                 code_version=version.code_version,
                 session_date=trial.planned_start,
                 registered_at=trial.registered_at,
+                onboarded_at=request.onboarded_at,
                 calendar_snapshot_id=calendar_snapshot_id,
                 opportunity_id=opportunity.opportunity_id,
                 opportunity_strategy_version=opportunity.producer_strategy_version,
@@ -134,6 +135,7 @@ def require_exact_kr_theme_day_onboarding(
     receipt = load_kr_theme_day_onboarding_receipt(onboarding_receipt_path(manifest_path))
     if (
         receipt.session_id != manifest.session_id
+        or receipt.onboarded_at != manifest.onboarded_at
         or receipt.opportunity_id != manifest.opportunity_id
         or receipt.opportunity_strategy_version != manifest.opportunity_strategy_version
         or receipt.opportunity_sha256 != manifest.opportunity_sha256

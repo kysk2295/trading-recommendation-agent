@@ -9,8 +9,15 @@ from pathlib import Path
 from threading import Lock
 from typing import Final, override
 
+from trading_agent.private_directory_identity import (
+    absolute_private_path,
+    open_private_parent,
+    require_open_directory_path,
+    require_private_directory,
+    require_same_file,
+)
+
 _FILE_MODE: Final = 0o600
-_DIRECTORY_MODE: Final = 0o700
 _MAX_TEXT_BYTES: Final = 64 * 1024 * 1024
 _STAGING_SUFFIX: Final = ".staging"
 _LOCK_SUFFIX: Final = ".publication.lock"
@@ -25,17 +32,16 @@ class InvalidPrivateImmutableFileError(ValueError):
 
 def publish_private_immutable_text(path: Path, payload: str) -> bool:
     try:
-        target = _absolute(path)
+        target = absolute_private_path(path)
         if not target.name or not payload:
             raise InvalidPrivateImmutableFileError
-        parent_descriptor = _open_parent(target.parent, create=True)
+        parent_descriptor = open_private_parent(target.parent, create=True)
         try:
-            metadata = os.fstat(parent_descriptor)
-            if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
-                raise InvalidPrivateImmutableFileError
-            os.fchmod(parent_descriptor, _DIRECTORY_MODE)
+            require_private_directory(parent_descriptor)
             with _PROCESS_PUBLICATION_LOCK:
-                return _publish(parent_descriptor, target.name, payload)
+                created = _publish(parent_descriptor, target.name, payload)
+                require_open_directory_path(target.parent, parent_descriptor)
+                return created
         finally:
             os.close(parent_descriptor)
     except (OSError, TypeError, ValueError):
@@ -44,10 +50,10 @@ def publish_private_immutable_text(path: Path, payload: str) -> bool:
 
 def read_private_text(path: Path) -> str:
     try:
-        target = _absolute(path)
+        target = absolute_private_path(path)
         if not target.name:
             raise InvalidPrivateImmutableFileError
-        parent_descriptor = _open_parent(target.parent, create=False)
+        parent_descriptor = open_private_parent(target.parent, create=False)
         try:
             descriptor = _open_private_file(parent_descriptor, target.name, (1, 2))
             try:
@@ -58,6 +64,7 @@ def read_private_text(path: Path) -> str:
                             _repair_staging_alias(parent_descriptor, descriptor, target.name)
                         payload = _read_text(descriptor)
                         _require_final_file(parent_descriptor, target.name, descriptor)
+                        require_open_directory_path(target.parent, parent_descriptor)
                         return payload
                     finally:
                         os.close(lock_descriptor)
@@ -67,34 +74,6 @@ def read_private_text(path: Path) -> str:
             os.close(parent_descriptor)
     except (OSError, TypeError, UnicodeError, ValueError):
         raise InvalidPrivateImmutableFileError from None
-
-
-def _absolute(path: Path) -> Path:
-    return Path(os.path.abspath(path.expanduser()))
-
-
-def _open_parent(path: Path, *, create: bool) -> int:
-    absolute = _absolute(path)
-    descriptor = os.open(absolute.anchor, _directory_open_flags())
-    try:
-        for component in absolute.parts[1:]:
-            if create:
-                try:
-                    os.mkdir(component, _DIRECTORY_MODE, dir_fd=descriptor)
-                    os.fsync(descriptor)
-                except FileExistsError:
-                    pass
-            next_descriptor = os.open(component, _directory_open_flags(), dir_fd=descriptor)
-            os.close(descriptor)
-            descriptor = next_descriptor
-        return descriptor
-    except (OSError, TypeError, ValueError):
-        os.close(descriptor)
-        raise
-
-
-def _directory_open_flags() -> int:
-    return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
 
 def _open_private_file(parent_descriptor: int, name: str, links: tuple[int, ...]) -> int:
@@ -251,10 +230,7 @@ def _publish_locked(parent_descriptor: int, name: str, payload: str) -> bool:
 
 
 def _require_same_file(left_descriptor: int, right_descriptor: int) -> None:
-    left = os.fstat(left_descriptor)
-    right = os.fstat(right_descriptor)
-    if (left.st_dev, left.st_ino) != (right.st_dev, right.st_ino):
-        raise InvalidPrivateImmutableFileError
+    require_same_file(left_descriptor, right_descriptor)
 
 
 def _require_final_file(parent_descriptor: int, name: str, expected_descriptor: int) -> None:

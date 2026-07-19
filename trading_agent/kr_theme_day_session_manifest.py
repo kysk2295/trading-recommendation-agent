@@ -64,6 +64,7 @@ class KrThemeDaySessionIdentity(BaseModel):
     code_version: str
     session_date: dt.date
     registered_at: dt.datetime
+    onboarded_at: dt.datetime
     calendar_snapshot_id: str
     opportunity_id: str
     opportunity_strategy_version: str
@@ -74,6 +75,7 @@ class KrThemeDaySessionIdentity(BaseModel):
     @model_validator(mode="after")
     def validate_identity(self) -> Self:
         local = self.registered_at.astimezone(dt.timezone(dt.timedelta(hours=9)))
+        onboarded_local = self.onboarded_at.astimezone(dt.timezone(dt.timedelta(hours=9)))
         values = (
             self.strategy_version,
             self.code_version,
@@ -82,9 +84,13 @@ class KrThemeDaySessionIdentity(BaseModel):
         )
         if (
             not _aware(self.registered_at)
+            or not _aware(self.onboarded_at)
+            or self.registered_at >= self.onboarded_at
             or local.date() > self.session_date
             or (self.session_date - local.date()).days > 7
             or local.time() >= dt.time(9)
+            or onboarded_local.date() != self.session_date
+            or not dt.time(9) <= onboarded_local.time() < dt.time(15, 30)
             or any(not value or value != value.strip() for value in values)
             or _HEX64.fullmatch(self.calendar_snapshot_id) is None
             or _HEX64.fullmatch(self.opportunity_sha256) is None
@@ -95,7 +101,7 @@ class KrThemeDaySessionIdentity(BaseModel):
 
 
 class KrThemeDaySessionManifest(KrThemeDaySessionIdentity):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     session_id: str
 
     @model_validator(mode="after")
@@ -108,12 +114,13 @@ class KrThemeDaySessionManifest(KrThemeDaySessionIdentity):
 def build_kr_theme_day_session_manifest(identity: KrThemeDaySessionIdentity) -> KrThemeDaySessionManifest:
     validated = KrThemeDaySessionIdentity.model_validate(identity.model_dump(mode="python"))
     provisional = KrThemeDaySessionManifest.model_construct(
-        schema_version=1,
+        schema_version=2,
         session_id="0" * 64,
         strategy_version=validated.strategy_version,
         code_version=validated.code_version,
         session_date=validated.session_date,
         registered_at=validated.registered_at,
+        onboarded_at=validated.onboarded_at,
         calendar_snapshot_id=validated.calendar_snapshot_id,
         opportunity_id=validated.opportunity_id,
         opportunity_strategy_version=validated.opportunity_strategy_version,

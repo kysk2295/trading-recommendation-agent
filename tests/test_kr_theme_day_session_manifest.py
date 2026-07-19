@@ -27,6 +27,7 @@ def _identity(tmp_path: Path) -> KrThemeDaySessionIdentity:
         code_version="code-v1",
         session_date=dt.date(2026, 7, 20),
         registered_at=dt.datetime(2026, 7, 19, 8, 31, tzinfo=dt.timezone(dt.timedelta(hours=9))),
+        onboarded_at=dt.datetime(2026, 7, 20, 9, 3, 45, tzinfo=dt.timezone(dt.timedelta(hours=9))),
         calendar_snapshot_id="a" * 64,
         opportunity_id="KR-THEME-OPPORTUNITY-001",
         opportunity_strategy_version=kr_theme_strategy_version("kr-theme-fixture-code-v1"),
