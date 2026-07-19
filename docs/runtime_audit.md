@@ -594,3 +594,10 @@
 - 최초 관찰: 기존 actionability는 698 pure LOC 한 파일에서 KIS schema v2, ID, projection, terminal policy와 artifact 검증을 함께 소유했다. 이 모델을 그대로 Alpaca에 사용하면 provider와 bid/ask venue lineage를 위조하게 되고, 복제 구현은 정책 순서가 갈라질 위험이 있었다.
 - 수정: 공개 facade와 KIS v2 외부 계약을 유지한 채 identity, frozen models, common rules, KIS projection, policy orchestration, artifact verification을 7개 모듈로 분리했다. 기존 ID material과 base/session/future/stale/spread/stop/slippage/waiting 순서는 변경하지 않았다.
 - 결과: 공개 facade 36 pure LOC, 내부 모듈 최대 166 pure LOC이며 focused 66개와 전체 2484 tests, 정적 게이트가 통과했다. provider-neutral evidence와 Alpaca adapter는 다음 checkpoint에서 추가하며 이 리팩터링은 provider·credential·network·account/order endpoint나 mutation을 열지 않는다.
+
+## H84: 공통 quote policy가 provider completeness를 암묵적으로 신뢰한다
+
+- 판별 기준: 공통 정책 입력이 provider-specific model이나 임의 quote 객체를 직접 받아 source identity와 관측시각을 잃는지, KIS facade 결과가 계약 분리 전과 달라지는지 확인한다.
+- 최초 관찰: 모듈 책임은 분리됐지만 terminal rule과 derived publication은 여전히 `UsQuoteSnapshot` 타입에 결합돼 있었다. 두 번째 adapter가 snapshot을 흉내 내거나 정책을 복제할 여지가 남았다.
+- 수정: exact quote ID와 source `EvidenceRef`, symbol, provider/receipt 시각, bid/ask·size·spread만 가진 frozen provider-neutral evidence를 도입했다. 공통 terminal policy·derived publication·artifact matcher가 이를 소비하고 KIS v2 snapshot은 기존 `quote/snapshot` reference로 투영한다.
+- 결과: source/provider 시각 mismatch와 invalid identity는 차단되고 기존 KIS assessment·publication·outbox가 같은 결과로 재생됐다. focused 69개, 전체 2487 tests와 정적 게이트가 통과했으며 이 계약 자체는 provider completeness를 선언하거나 network·account/order 권한을 열지 않는다.

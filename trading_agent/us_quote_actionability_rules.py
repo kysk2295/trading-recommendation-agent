@@ -7,6 +7,10 @@ from trading_agent.research_identity_models import MarketId
 from trading_agent.signal_contract_models import SignalActionability, SignalEntryType, SignalSide
 from trading_agent.trade_signal_publication import TradeSignalPublication
 from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
+from trading_agent.us_quote_actionability_evidence import (
+    UsQuotePolicyEvidence,
+    evidence_from_kis_snapshot,
+)
 from trading_agent.us_quote_actionability_models import (
     BASIS_POINTS,
     MAX_ENTRY_SLIPPAGE_BPS,
@@ -24,8 +28,21 @@ def snapshot_terminal_status(
     *,
     evaluated_at: dt.datetime,
 ) -> QuoteAssessmentStatus:
-    provider_at = snapshot.provider_observed_at.astimezone(NEW_YORK)
-    received_at = snapshot.received_at.astimezone(NEW_YORK)
+    return quote_terminal_status(
+        base,
+        evidence_from_kis_snapshot(snapshot),
+        evaluated_at=evaluated_at,
+    )
+
+
+def quote_terminal_status(
+    base: TradeSignalPublication,
+    evidence: UsQuotePolicyEvidence,
+    *,
+    evaluated_at: dt.datetime,
+) -> QuoteAssessmentStatus:
+    provider_at = evidence.provider_observed_at.astimezone(NEW_YORK)
+    received_at = evidence.received_at.astimezone(NEW_YORK)
     evaluated = evaluated_at.astimezone(NEW_YORK)
     if provider_at > evaluated or provider_at > received_at or received_at > evaluated:
         return QuoteAssessmentStatus.FUTURE_QUOTE
@@ -33,14 +50,14 @@ def snapshot_terminal_status(
         return QuoteAssessmentStatus.STALE_QUOTE
     if evaluated - provider_at >= QUOTE_FRESHNESS:
         return QuoteAssessmentStatus.STALE_QUOTE
-    if snapshot.spread_bps > MAX_QUOTE_SPREAD_BPS:
+    if evidence.spread_bps > MAX_QUOTE_SPREAD_BPS:
         return QuoteAssessmentStatus.SPREAD_TOO_WIDE
-    if snapshot.bid <= base.signal.stop_price:
+    if evidence.bid <= base.signal.stop_price:
         return QuoteAssessmentStatus.SETUP_INVALIDATED
     maximum_entry = base.signal.entry_price * (Decimal(1) + MAX_ENTRY_SLIPPAGE_BPS / BASIS_POINTS)
-    if snapshot.ask > maximum_entry:
+    if evidence.ask > maximum_entry:
         return QuoteAssessmentStatus.ENTRY_SLIPPAGE_EXCEEDED
-    if snapshot.ask >= base.signal.entry_price:
+    if evidence.ask >= base.signal.entry_price:
         return QuoteAssessmentStatus.VALIDATED_TRIGGER_REACHED
     return QuoteAssessmentStatus.VALIDATED_WAITING
 
@@ -81,6 +98,7 @@ def _aware(value: dt.datetime) -> bool:
 __all__ = (
     "base_is_current",
     "in_regular_session",
+    "quote_terminal_status",
     "snapshot_terminal_status",
     "validate_control_times",
 )

@@ -7,6 +7,11 @@ from pydantic import ValidationError
 
 from trading_agent.kis_us_quote import KisUsLevelOneQuote
 from trading_agent.trade_signal_publication import TradeSignalPublication
+from trading_agent.us_quote_actionability_evidence import (
+    UsQuotePolicyDecision,
+    UsQuotePolicyEvidence,
+    evidence_from_kis_snapshot,
+)
 from trading_agent.us_quote_actionability_identity import assessment_identity
 from trading_agent.us_quote_actionability_models import (
     QuoteActionabilityAssessment,
@@ -14,11 +19,14 @@ from trading_agent.us_quote_actionability_models import (
     UsQuoteActionabilityDecision,
     UsQuoteSnapshot,
 )
-from trading_agent.us_quote_actionability_projection import derived_publication, snapshot_from_kis
+from trading_agent.us_quote_actionability_projection import (
+    derived_publication_from_evidence,
+    snapshot_from_kis,
+)
 from trading_agent.us_quote_actionability_rules import (
     base_is_current,
     in_regular_session,
-    snapshot_terminal_status,
+    quote_terminal_status,
     validate_control_times,
 )
 
@@ -54,9 +62,43 @@ def assess_us_quote(
             evaluated_at=evaluated_at,
             status=QuoteAssessmentStatus.PROVIDER_FAILED,
         )
-    status = snapshot_terminal_status(base, snapshot, evaluated_at=evaluated_at)
+    generic = assess_us_quote_evidence(
+        base,
+        evidence_from_kis_snapshot(snapshot),
+        scan_started_at=scan_started_at,
+        evaluated_at=evaluated_at,
+    )
+    return UsQuoteActionabilityDecision(
+        snapshot if generic.evidence is not None else None,
+        generic.assessment,
+        generic.derived_publication,
+    )
+
+
+def assess_us_quote_evidence(
+    base: TradeSignalPublication,
+    evidence: UsQuotePolicyEvidence,
+    *,
+    scan_started_at: dt.datetime,
+    evaluated_at: dt.datetime,
+) -> UsQuotePolicyDecision:
+    preflight = preflight_quote_assessment(
+        base,
+        scan_started_at=scan_started_at,
+        evaluated_at=evaluated_at,
+    )
+    if preflight is not None:
+        return UsQuotePolicyDecision(None, preflight, None)
+    if evidence.symbol != base.signal.symbol:
+        return _policy_decision(
+            base,
+            scan_started_at=scan_started_at,
+            evaluated_at=evaluated_at,
+            status=QuoteAssessmentStatus.PROVIDER_FAILED,
+        )
+    status = quote_terminal_status(base, evidence, evaluated_at=evaluated_at)
     derived = (
-        derived_publication(base, snapshot, evaluated_at=evaluated_at)
+        derived_publication_from_evidence(base, evidence, evaluated_at=evaluated_at)
         if status
         in {
             QuoteAssessmentStatus.VALIDATED_WAITING,
@@ -64,12 +106,12 @@ def assess_us_quote(
         }
         else None
     )
-    return _decision(
+    return _policy_decision(
         base,
         scan_started_at=scan_started_at,
         evaluated_at=evaluated_at,
         status=status,
-        snapshot=snapshot,
+        evidence=evidence,
         derived=derived,
     )
 
@@ -142,6 +184,29 @@ def _decision(
     )
 
 
+def _policy_decision(
+    base: TradeSignalPublication,
+    *,
+    scan_started_at: dt.datetime,
+    evaluated_at: dt.datetime,
+    status: QuoteAssessmentStatus,
+    evidence: UsQuotePolicyEvidence | None = None,
+    derived: TradeSignalPublication | None = None,
+) -> UsQuotePolicyDecision:
+    return UsQuotePolicyDecision(
+        evidence,
+        _assessment(
+            base,
+            scan_started_at=scan_started_at,
+            evaluated_at=evaluated_at,
+            status=status,
+            quote_id=None if evidence is None else evidence.quote_id,
+            derived=derived,
+        ),
+        derived,
+    )
+
+
 def _assessment(
     base: TradeSignalPublication,
     *,
@@ -149,6 +214,7 @@ def _assessment(
     evaluated_at: dt.datetime,
     status: QuoteAssessmentStatus,
     snapshot: UsQuoteSnapshot | None = None,
+    quote_id: str | None = None,
     derived: TradeSignalPublication | None = None,
 ) -> QuoteActionabilityAssessment:
     return QuoteActionabilityAssessment(
@@ -160,13 +226,14 @@ def _assessment(
         scan_started_at=scan_started_at,
         evaluated_at=evaluated_at,
         status=status,
-        quote_id=None if snapshot is None else snapshot.quote_id,
+        quote_id=snapshot.quote_id if snapshot is not None else quote_id,
         derived_signal_id=None if derived is None else derived.signal.signal_id,
     )
 
 
 __all__ = (
     "assess_us_quote",
+    "assess_us_quote_evidence",
     "preflight_quote_assessment",
     "provider_failed_assessment",
 )
