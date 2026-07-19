@@ -12,6 +12,7 @@ from trading_agent.us_runtime_minute_supervisor import (
     RuntimeSupervisorOperationBlockedError,
     RuntimeSupervisorOperationResult,
     RuntimeSupervisorStatus,
+    build_runtime_minute_supervisor_record,
     run_runtime_minute_supervisor,
 )
 from trading_agent.us_runtime_minute_supervisor_store import RuntimeMinuteSupervisorStore
@@ -104,6 +105,86 @@ def test_shutdown_after_cycle_stops_before_wait_or_next_operation(tmp_path: Path
     assert len(records) == 1
     assert calls == [START]
     assert waits == []
+
+
+def test_restart_resumes_market_date_cycle_index_and_budget(tmp_path: Path) -> None:
+    store = RuntimeMinuteSupervisorStore(tmp_path / "supervisor.sqlite3")
+    requested = False
+    first_times = iter((START, START + dt.timedelta(seconds=1)))
+
+    def first_operation(_value: dt.datetime) -> RuntimeSupervisorOperationResult:
+        nonlocal requested
+        requested = True
+        return RuntimeSupervisorOperationResult("f" * 64, True)
+
+    first = run_runtime_minute_supervisor(
+        first_operation,
+        RuntimeMinuteSupervisorConfig(2, 60.0),
+        clock=lambda: next(first_times),
+        sleeper=lambda _seconds: None,
+        writer=store,
+        shutdown_requested=lambda: requested,
+    )
+    second_times = iter((START + dt.timedelta(minutes=1), START + dt.timedelta(minutes=1, seconds=1)))
+    second = run_runtime_minute_supervisor(
+        lambda _value: RuntimeSupervisorOperationResult("1" * 64, True),
+        RuntimeMinuteSupervisorConfig(2, 60.0),
+        clock=lambda: next(second_times),
+        sleeper=lambda _seconds: None,
+        writer=store,
+    )
+    final_calls = 0
+
+    def final_clock() -> dt.datetime:
+        nonlocal final_calls
+        final_calls += 1
+        return START + dt.timedelta(minutes=2)
+
+    exhausted = run_runtime_minute_supervisor(
+        lambda _value: RuntimeSupervisorOperationResult("2" * 64, True),
+        RuntimeMinuteSupervisorConfig(2, 60.0),
+        clock=final_clock,
+        sleeper=lambda _seconds: None,
+        writer=store,
+    )
+
+    assert tuple(item.cycle_index for item in first + second) == (1, 2)
+    assert store.records() == first + second
+    assert exhausted == ()
+    assert final_calls == 1
+
+
+def test_restart_with_duplicate_market_date_cycle_index_fails_closed(tmp_path: Path) -> None:
+    store = RuntimeMinuteSupervisorStore(tmp_path / "supervisor.sqlite3")
+    assert store.append(
+        build_runtime_minute_supervisor_record(
+            1,
+            START,
+            START + dt.timedelta(seconds=1),
+            RuntimeSupervisorStatus.READY,
+            None,
+            "3" * 64,
+        )
+    )
+    assert store.append(
+        build_runtime_minute_supervisor_record(
+            1,
+            START + dt.timedelta(minutes=1),
+            START + dt.timedelta(minutes=1, seconds=1),
+            RuntimeSupervisorStatus.READY,
+            None,
+            "4" * 64,
+        )
+    )
+
+    with pytest.raises(ValueError, match="supervisor"):
+        _ = run_runtime_minute_supervisor(
+            lambda _value: RuntimeSupervisorOperationResult("5" * 64, True),
+            RuntimeMinuteSupervisorConfig(2, 60.0),
+            clock=lambda: START + dt.timedelta(minutes=2),
+            sleeper=lambda _seconds: None,
+            writer=store,
+        )
 
 
 def test_tampered_supervisor_payload_fails_replay(tmp_path: Path) -> None:

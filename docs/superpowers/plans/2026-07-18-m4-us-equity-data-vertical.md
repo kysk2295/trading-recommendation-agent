@@ -295,8 +295,10 @@ closed-session start touched neither credentials nor runtime audit stores.
 SIGINT and SIGTERM now set one process-local shutdown event, interrupt the
 bounded wait, and stop before another clock, credential, or provider cycle.
 The CLI writes a sanitized `stopped` private report and restores the prior
-signal handlers. Actual regular-session smoke and longer soak observation
-remain pending.
+signal handlers. A restarted process replays the supervisor store, validates
+contiguous New York market-date cycle indexes, and runs only the remaining
+configured daily budget. Duplicate or regressing history fails closed.
+Actual regular-session smoke and longer soak observation remain pending.
 
 ### M4.4: Evidence-Gated US Opportunity Projection
 

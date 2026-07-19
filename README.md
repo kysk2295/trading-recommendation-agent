@@ -211,6 +211,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-19 US runtime fleet supervisor CLI 업데이트:** `run_us_runtime_fleet_supervisor.py`가 매 attempt마다 scanner를 다시 읽고 자동 historical profile cycle을 실행한 뒤, 같은 evaluated time의 새 fleet audit만 READY 근거로 supervisor audit에 연결한다. 이전 fleet audit 재사용은 차단하며 cycle block은 다음 분으로 격리한다. 2-cycle fixture soak에서 첫 분 historical 20 + current 1 GET, fresh scanner 갱신 뒤 두 번째 분 current 1 GET만 추가되어 총 22건이었고 두 attempt 모두 READY였다. 폐장 시작은 credential, supervisor DB, fleet DB를 열기 전에 종료했다. SIGINT/SIGTERM은 interruptible wait를 즉시 깨우고 다음 clock·credential·provider cycle 전에 `stopped` private report로 정상 종료하며 기존 signal handler를 복원한다. 종료 전후 fixture는 secret·scanner·fleet/supervisor DB 접근 0건을 확인했고 전체 **2389 tests**가 통과했다. 실제 운영에서는 별도 KIS watch가 30초 이내 scanner snapshot을 계속 공급해야 한다.
 
+**2026-07-19 US runtime supervisor restart budget 업데이트:** 새 프로세스는 supervisor store의 전체 canonical history를 먼저 재생하고 뉴욕 거래일별 `cycle_index`가 1부터 연속인지 검증한다. 같은 거래일 재시작은 다음 index와 남은 configured daily budget만 실행하며 이미 소진됐으면 provider operation을 열지 않는다. 미래 clock, 역순 history, 중복·누락 index와 exact duplicate append는 fail-closed하고 다음 거래일에는 index를 1로 재설정한다. process restart fixture와 전체 **2391 tests**가 통과했으며 account/order mutation은 0건이다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \

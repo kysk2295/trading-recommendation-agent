@@ -57,6 +57,8 @@ class RuntimeMinuteSupervisorRecord:
 class RuntimeSupervisorRecordWriter(Protocol):
     def append(self, record: RuntimeMinuteSupervisorRecord) -> bool: ...
 
+    def records(self) -> tuple[RuntimeMinuteSupervisorRecord, ...]: ...
+
 
 class _RecordPayload(TypedDict):
     attempt_id: str
@@ -78,12 +80,16 @@ def run_runtime_minute_supervisor(
     shutdown_requested: Callable[[], bool] = lambda: False,
 ) -> tuple[RuntimeMinuteSupervisorRecord, ...]:
     _validate_runtime(operation, config, clock, sleeper, writer, shutdown_requested)
+    history = _validated_history(writer)
     records: list[RuntimeMinuteSupervisorRecord] = []
-    for offset in range(config.cycles):
+    for _offset in range(config.cycles):
         if shutdown_requested():
             break
         started_at = clock()
         if not _in_regular_session(started_at):
+            break
+        used_cycles = _used_cycles(history, started_at)
+        if used_cycles >= config.cycles:
             break
         try:
             result = operation(started_at)
@@ -98,19 +104,20 @@ def run_runtime_minute_supervisor(
             fleet_cycle_id = None
         finished_at = clock()
         record = build_runtime_minute_supervisor_record(
-            offset + 1,
+            used_cycles + 1,
             started_at,
             finished_at,
             status,
             reason,
             fleet_cycle_id,
         )
-        _ = writer.append(record)
+        if not writer.append(record):
+            raise RuntimeMinuteSupervisorError
         records.append(record)
-        if offset + 1 < config.cycles:
-            if shutdown_requested():
-                break
-            sleeper(config.interval_seconds)
+        history += (record,)
+        if record.cycle_index >= config.cycles or shutdown_requested():
+            break
+        sleeper(config.interval_seconds)
     return tuple(records)
 
 
@@ -190,9 +197,34 @@ def _validate_runtime(operation, config, clock, sleeper, writer, shutdown_reques
         or not callable(clock)
         or not callable(sleeper)
         or not callable(getattr(writer, "append", None))
+        or not callable(getattr(writer, "records", None))
         or not callable(shutdown_requested)
     ):
         raise RuntimeMinuteSupervisorError
+
+
+def _validated_history(writer: RuntimeSupervisorRecordWriter) -> tuple[RuntimeMinuteSupervisorRecord, ...]:
+    records = writer.records()
+    if type(records) is not tuple:
+        raise RuntimeMinuteSupervisorError
+    counts: dict[dt.date, int] = {}
+    previous: dt.datetime | None = None
+    for record in records:
+        validate_runtime_minute_supervisor_record(record)
+        market_date = record.started_at.astimezone(NEW_YORK).date()
+        expected = counts.get(market_date, 0) + 1
+        if record.cycle_index != expected or (previous is not None and record.started_at < previous):
+            raise RuntimeMinuteSupervisorError
+        counts[market_date] = expected
+        previous = record.started_at
+    return records
+
+
+def _used_cycles(records: tuple[RuntimeMinuteSupervisorRecord, ...], started_at: dt.datetime) -> int:
+    if records and records[-1].started_at > started_at:
+        raise RuntimeMinuteSupervisorError
+    market_date = started_at.astimezone(NEW_YORK).date()
+    return sum(record.started_at.astimezone(NEW_YORK).date() == market_date for record in records)
 
 
 def _valid_outcome(record: RuntimeMinuteSupervisorRecord) -> bool:

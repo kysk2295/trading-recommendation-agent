@@ -9,6 +9,7 @@
 - 정규장 종료와 최대 390회/interval 제한은 supervisor 계약을 따른다.
 - SIGINT/SIGTERM은 process-local event를 설정해 interval wait를 깨우고 다음 cycle 전에 종료한다.
 - 정상 signal 종료는 기존 handler를 복원하고 aggregate `stopped` private report를 남긴다.
+- 새 process는 supervisor history의 거래일별 연속 index를 검증하고 남은 일일 cycle budget만 사용한다.
 
 ## 검증
 
@@ -18,6 +19,7 @@
 - shutdown 시작: secret/scanner/fleet/supervisor DB 접근 0건, exit 0
 - 실제 SIGTERM handler 설정·event 전달·handler 복원
 - focused 11 passed, full 2389 passed, Ruff와 basedpyright 0/0
+- restart focused 13 passed, full 2391 passed
 - `--help`, bounded 인자, private report 확인
 - account/order endpoint와 mutation 0건
 
