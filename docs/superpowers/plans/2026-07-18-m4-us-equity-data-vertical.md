@@ -181,6 +181,15 @@ injection, trigger/content corruption, and naive time all fail closed or report
 no pre-migration terminal as appropriate. Reconnect policy and open-session
 provider smoke remain.
 
+**Dynamic SIP reconnect policy checkpoint (2026-07-19): Restart budget
+complete.** The terminal store replays plan-specific history in deterministic
+UTC terminal-time/epoch order and revalidates each epoch. A pure policy restores
+the exact next attempt and remaining configured budget after restart, blocks
+when a complete epoch exists or failed attempts exhaust the budget, and rejects
+unordered, mixed-plan, duplicate, or post-completion history. This checkpoint
+does not yet execute another connector; fixture reconnect orchestration remains
+the next boundary.
+
 ### M4.3: Read-Only Runtime Supervisor
 
 Introduce provider-neutral read-only adapter and supervisor contracts. The

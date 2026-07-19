@@ -116,6 +116,38 @@ class AlpacaSipDynamicTerminalStore:
         except (AttributeError, OSError, sqlite3.Error, TypeError, ValueError):
             raise AlpacaSipDynamicReceiptError from None
 
+    def load_history(
+        self,
+        plan: AlpacaSipDynamicSubscriptionPlan,
+    ) -> tuple[AlpacaSipDynamicTerminalEvidence, ...]:
+        try:
+            _ = dynamic_subscription_request_bytes(plan)
+            require_private_dynamic_receipt_file(self.path)
+            if not self.path.exists():
+                return ()
+            with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
+                require_dynamic_receipt_schema(connection)
+                if connection.execute("PRAGMA user_version").fetchone() == (1,):
+                    return ()
+                epochs = tuple(
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT connection_epoch FROM dynamic_terminals WHERE plan_id=? "
+                        "ORDER BY terminal_at,connection_epoch",
+                        (plan.plan_id,),
+                    ).fetchall()
+                )
+            loaded = tuple(self.load(plan, epoch) for epoch in epochs)
+            if any(item is None for item in loaded):
+                raise AlpacaSipDynamicReceiptError
+            history = tuple(item for item in loaded if item is not None)
+            ordered = tuple(sorted(history, key=lambda item: (item.terminal_at, item.connection_epoch)))
+            if history != ordered:
+                raise AlpacaSipDynamicReceiptError
+            return history
+        except (AttributeError, OSError, sqlite3.Error, TypeError, ValueError):
+            raise AlpacaSipDynamicReceiptError from None
+
 
 def _evidence(
     plan: AlpacaSipDynamicSubscriptionPlan,
