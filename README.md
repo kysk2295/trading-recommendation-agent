@@ -251,6 +251,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-19 US dynamic plan epoch 업데이트:** 매 minute policy decision마다 새 WebSocket plan을 만들던 인과성 오류를 제거했다. mode-600 append-only dynamic plan store는 같은 NY 거래일의 동일 instrument/symbol topology 동안 첫 plan을 exact replay하고 topology 또는 거래일이 바뀔 때만 새 epoch를 append한다. runtime manifest는 이 durable active plan을 참조하므로 첫 cycle에서 plan을 배포하고 read-only stream receipt를 누적한 뒤 다음 minute snapshot이 같은 plan의 선행 quote/trade를 소비할 수 있다. `--dynamic-plan-store`를 생략하면 policy-state 파일 옆 deterministic private 경로를 사용하며, 명시 경로는 signal outbox/root pair와 함께만 허용한다. 두 minute fixture에서 manifest 2개와 plan row 1개, account/order mutation 0건을 확인했다. 전체 **2525 tests**, Ruff, changed-file format, basedpyright 0/0, compileall, no-excuse가 통과했다.
 
+**2026-07-19 Alpaca SIP live actionability lifecycle 업데이트:** `run_alpaca_sip_live_actionability.py`가 runtime manifest의 durable active plan과 90초 이내 policy state를 대사한 뒤 explicit `--arm-read-only`에서만 bounded SIP quote/trade epoch를 연다. raw control/data와 terminal을 먼저 저장하고, terminal이 original READY snapshot과 같은 completed-minute이며 base signal이 여전히 current일 때만 그 terminal 시각으로 feature를 재관측해 stored projector를 즉시 실행한다. 미래 receipt를 과거 snapshot에 넣지 않으며 minute rollover, quote/trade 불완전, public credential, stale/mismatched plan은 actionability write 0이다. exact restart는 complete terminal을 재생해 connector 0건·append replay로 끝나고 계좌·주문 endpoint는 import하지 않는다. 전체 **2537 tests**, Ruff, basedpyright 0/0, compileall과 changed-file no-excuse가 통과했다.
+
 **2026-07-19 Alpaca SIP dynamic terminal 업데이트:** receipt DB를 기존 v1 행을 다시 쓰지 않는 v2로 확장해 epoch별 append-only terminal evidence를 추가했다. bounded owner 성공은 최소 control 3 + data 1의 receipt IDs를 `BOUNDED_COMPLETE`로 고정하고, final URL·auth·ACK·timeout 실패는 당시 0개 이상의 receipt를 `FAILED`로 보존한다. terminal content hash는 plan/epoch/UTC time/status/receipt IDs를 결합하며 후속 receipt 추가, row 변조, naive time과 schema 불일치는 fail-closed한다. 전체 **2427 tests**가 통과했으며 실제 provider·credential file·account/order 요청은 0건이다.
 
 **2026-07-19 Alpaca SIP dynamic reconnect policy 업데이트:** plan별 terminal history를 각 epoch의 binding·receipt·content hash와 함께 시간순 재검증하고, 재시작 후에도 configured `max_attempts`에서 완료된 terminal 수를 차감한다. complete가 있으면 `BLOCKED_COMPLETE`, failed 수가 budget에 닿으면 `BLOCKED_BUDGET`, 그 외에는 exact next attempt와 remaining budget을 가진 `READY`만 반환한다. complete 뒤 추가 terminal, unordered·mixed-plan·중복 epoch history는 fail-closed한다. 전체 **2433 tests**가 통과했으며 아직 connector retry loop나 실제 provider 요청은 열지 않았다.
@@ -921,6 +923,23 @@ fresh scanner를 외부 KIS watch가 계속 갱신하는 동안 bounded supervis
   --secret-path ~/.config/trading-agent/alpaca.env \
   --cycles 390 --interval-seconds 60
 ```
+
+supervisor가 만든 manifest 하나를 같은 completed-minute 안에서 read-only dynamic quote/trade와 결합해 즉시 actionability로 확정하는 bounded lifecycle은 다음처럼 실행한다. manifest의 base signal, policy state 또는 minute window가 만료되면 실제 WebSocket 전에 차단한다.
+
+```bash
+./run_alpaca_sip_live_actionability.py \
+  --manifest outputs/runtime/us-sip-fleet/actionability-manifests/<manifest-sha256>.json \
+  --plan-store outputs/runtime/us-sip-fleet/dynamic-plans.sqlite3 \
+  --policy-state-store outputs/runtime/us-sip-fleet/policy-state.sqlite3 \
+  --receipt-store outputs/runtime/us-sip-fleet/dynamic-receipts/<cycle>.sqlite3 \
+  --actionability-store outputs/runtime/us-sip-fleet/actionability.sqlite3 \
+  --output-dir outputs/runtime/us-sip-fleet/live-actionability-report \
+  --secret-path ~/.config/trading-agent/alpaca.env \
+  --max-attempts 1 --max-data-frames 10 --receive-timeout-seconds 5 \
+  --arm-read-only
+```
+
+한 bounded epoch 안에 target의 quote와 trade가 모두 없으면 receipt/terminal만 감사 증거로 남고 actionability는 생성되지 않는다. 실패 epoch를 complete history로 축소하거나 다음 minute snapshot에 소급 사용하지 않는다. 이 명령은 market-data WebSocket만 열며 Paper account/order/position과 broker mutation은 0건이다.
 
 첫 명령은 Paper assets endpoint를 GET-only로 한 번 읽어 pre-session 종목 마스터를 갱신한다. 최신 snapshot이 KIS Opportunity보다 미래이거나 1일을 넘으면 watch의 연구 투영은 fail-closed한다.
 

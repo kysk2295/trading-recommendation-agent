@@ -644,3 +644,11 @@
 - 영속성: 별도 mode-600, owner-only, single-hard-link SQLite v1에 canonical plan payload/hash를 append하고 UPDATE/DELETE trigger로 rewrite를 차단한다. exact replay는 row를 추가하지 않으며 payload/hash/metadata 변조는 query-only replay에서 차단한다.
 - runtime: cycle과 supervisor는 optional outbox/root가 활성화될 때 durable plan을 먼저 roll하고 그 exact plan으로 manifest를 만든다. explicit plan path가 없으면 policy-state sibling 경로를 사용하며 partial option은 provider/state write 전에 차단한다.
 - 결과: 두 연속 minute fixture에서 READY manifest 2개와 dynamic plan row 1개를 확인했다. 전체 2525 tests와 변경 파일 정적 게이트가 통과했다. 이로써 첫 cycle plan 배포, read-only receipt 선행 수집, 다음 minute snapshot projection 순서가 가능해졌고 account/order mutation은 0건이다.
+
+## H91: manifest 뒤 수집한 quote를 original snapshot 시각으로 투영할 수 없다
+
+- 결함: manifest snapshot은 runtime GET cycle에서 이미 관측시각이 확정된다. 그 뒤 WebSocket receipt를 같은 snapshot에 넣으면 future evidence이고, 다음 minute까지 기다리면 5초 quote freshness를 잃는다.
+- 수정: bounded connection terminal이 original snapshot과 같은 completed-minute에 있을 때만 immutable READY feature 값을 terminal 시각으로 다시 관측한다. completed-minute가 바뀌거나 terminal/base/session causality가 맞지 않으면 재관측 자체를 차단한다.
+- lifecycle: explicit read-only arm과 정규장 gate 뒤 manifest, latest durable plan, 90초 이내 policy state, private credential을 대사한다. exact plan으로 control/auth/subscription/data raw receipt와 terminal을 저장한 뒤 reobserved snapshot으로 existing query-only projector와 durable actionability store를 호출한다.
+- 재시작: 이미 complete terminal이 있으면 connector를 열지 않고 같은 terminal 시각과 output identity를 재생한다. quote/trade 중 하나가 없는 complete epoch, minute rollover, stale/mismatched state와 public credential은 actionability write 0이다.
+- 권한: data WebSocket 외 account/order/position endpoint와 broker mutation import/call은 0건이다. full 2537 tests와 정적 게이트가 통과했다. runtime supervisor automatic child dispatch와 실제 열린 정규장 smoke는 다음 단계다.
