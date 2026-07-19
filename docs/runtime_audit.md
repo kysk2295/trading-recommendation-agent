@@ -608,3 +608,10 @@
 - 최초 관찰: provider-neutral policy는 생겼지만 어떤 adapter가 trusted evidence를 만들 수 있는지 제한하지 않았다. latest quote state만 직접 투영하면 dynamic complete-history와 microstructure bundle 검증을 우회할 수 있었다.
 - 수정: exact `AlpacaSipDynamicFeatureBundle`만 받는 adapter가 bundle observation을 평가시각으로 고정하고 bundle ID를 quote identity와 source reference에 결합한다. decision은 bundle 전체를 보존하고 artifact matcher가 같은 base·scan cycle로 deterministic 재평가한다.
 - 결과: complete same-epoch bundle은 waiting/trigger signal을 만들고 wide spread·stop·slippage·symbol mismatch는 terminal block으로 닫혔다. KIS provider/snapshot evidence는 생성되지 않았고 related 84개, 전체 2493 tests와 정적 게이트가 통과했다. durable append와 account/order 권한은 아직 없다.
+
+## H86: actionability signal만 저장하고 원인 bundle을 재시작 후 잃는다
+
+- 판별 기준: derived signal 또는 assessment만 남아 exact base conditional, complete plan/epoch, quote/trade confirmation과 bid/ask venue를 재시작 뒤 재검증할 수 없는지, 같은 cycle의 다른 terminal이 덮어써지는지 확인한다.
+- 최초 관찰: Alpaca adapter decision은 full bundle을 보존했지만 process memory 밖 durable 경계가 없었다. 기존 KIS snapshot JSONL에 넣으면 provider schema를 위조하고 signal만 쓰면 complete-history provenance를 잃는다.
+- 수정: base conditional, full bundle, policy evidence, assessment와 derived publication을 하나의 frozen envelope로 묶었다. assessment ID를 artifact identity로 사용하고 canonical bytes/hash, exact SQLite schema·append-only triggers, private file와 single hard link를 read마다 검증한다.
+- 결과: exact replay는 no-op, 같은 base+scan의 다른 terminal과 forged assessment는 write 전에 차단됐다. SQL update, mode 0644, hard link와 trigger 삭제 fault injection도 fail-closed다. manual restart replay는 plan/epoch와 current-quote signal을 복원했으며 network·account/order mutation은 0건이다.
