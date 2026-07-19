@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import sqlite3
 from dataclasses import replace
 from pathlib import Path
 
@@ -13,10 +15,16 @@ from tests.test_us_runtime_live_actionability_dispatch import (
     _long_lived_request,
     _write_manifest,
 )
+from trading_agent.alpaca_sip_quote_actionability_creation import (
+    actionability_creation_bytes,
+    build_actionability_creation,
+)
 from trading_agent.alpaca_sip_quote_actionability_manifest import (
     build_alpaca_sip_quote_actionability_manifest,
+    read_alpaca_sip_quote_actionability_manifest,
     write_alpaca_sip_quote_actionability_manifest,
 )
+from trading_agent.alpaca_sip_quote_actionability_store import AlpacaSipQuoteActionabilityStore
 from trading_agent.us_runtime_live_actionability_dispatch import dispatch_us_runtime_live_actionability
 from trading_agent.us_runtime_live_evidence_verifier import (
     RuntimeLiveEvidenceVerificationError,
@@ -72,6 +80,46 @@ def test_child_created_replay_split_mismatch_fails_closed(tmp_path: Path) -> Non
         tmp_path,
         first_outcome=RuntimeSupervisorLiveOutcome(RuntimeSupervisorLiveStatus.COMPLETED, 1, 0, 1),
     )
+
+    with pytest.raises(RuntimeLiveEvidenceVerificationError):
+        _ = verify_runtime_live_evidence(request)
+
+
+def test_creation_bound_to_different_same_minute_manifest_fails_closed(tmp_path: Path) -> None:
+    request = _evidence(tmp_path)
+    manifests = tuple(
+        read_alpaca_sip_quote_actionability_manifest(path) for path in sorted(request.manifest_root.glob("*.json"))
+    )
+    source = min(manifests, key=lambda item: item.snapshot.observed_at)
+    shifted = build_alpaca_sip_quote_actionability_manifest(
+        source.base_publication,
+        replace(source.snapshot, observed_at=source.snapshot.observed_at + dt.timedelta(milliseconds=100)),
+        source.plan,
+        scan_started_at=source.scan_started_at,
+    )
+    shifted_path = request.manifest_root / f"{shifted.manifest_id.rpartition(':')[2]}.json"
+    assert write_alpaca_sip_quote_actionability_manifest(shifted_path, shifted)
+    store = AlpacaSipQuoteActionabilityStore(request.actionability_store)
+    creation = build_actionability_creation(shifted, store.records()[0])
+    payload = actionability_creation_bytes(creation)
+    with sqlite3.connect(store.path) as connection:
+        connection.execute("DROP TRIGGER alpaca_sip_quote_actionability_creation_no_update")
+        connection.execute(
+            "UPDATE alpaca_sip_quote_actionability_creation SET "
+            "creation_id=?,manifest_id=?,evaluated_at=?,payload_sha256=?,payload_json=?",
+            (
+                creation.creation_id,
+                creation.manifest_id,
+                creation.evaluated_at.isoformat(),
+                hashlib.sha256(payload).hexdigest(),
+                payload,
+            ),
+        )
+        connection.execute(
+            "CREATE TRIGGER alpaca_sip_quote_actionability_creation_no_update "
+            "BEFORE UPDATE ON alpaca_sip_quote_actionability_creation "
+            "BEGIN SELECT RAISE(ABORT, 'append only'); END"
+        )
 
     with pytest.raises(RuntimeLiveEvidenceVerificationError):
         _ = verify_runtime_live_evidence(request)

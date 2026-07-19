@@ -9,6 +9,7 @@ from typing import TypedDict, override
 
 from trading_agent.alpaca_sip_quote_actionability_artifact import AlpacaSipQuoteActionabilityArtifact
 from trading_agent.alpaca_sip_quote_actionability_manifest import AlpacaSipQuoteActionabilityManifest
+from trading_agent.intraday_feature_reobservation import reobserve_ready_intraday_feature
 
 _HEX = re.compile(r"^[0-9a-f]{64}$", flags=re.ASCII)
 _ARTIFACT_ID = re.compile(r"^us-quote-assessment:[0-9a-f]{64}$", flags=re.ASCII)
@@ -49,7 +50,17 @@ def build_actionability_creation(
     if (
         type(manifest) is not AlpacaSipQuoteActionabilityManifest
         or type(artifact) is not AlpacaSipQuoteActionabilityArtifact
-        or artifact.base_publication != manifest.base_publication
+    ):
+        raise AlpacaSipQuoteActionabilityCreationError
+    try:
+        _ = reobserve_ready_intraday_feature(
+            manifest.snapshot,
+            artifact.assessment.evaluated_at,
+        )
+    except (AttributeError, TypeError, ValueError):
+        raise AlpacaSipQuoteActionabilityCreationError from None
+    if (
+        artifact.base_publication != manifest.base_publication
         or artifact.assessment.scan_started_at != manifest.scan_started_at
         or artifact.bundle.trade_confirmation.dynamic_plan_id != manifest.plan.plan_id
         or artifact.bundle.trade_confirmation.research_input_identity_sha256

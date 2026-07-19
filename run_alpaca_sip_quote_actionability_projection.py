@@ -13,6 +13,7 @@ from trading_agent.alpaca_sip_quote_actionability_manifest import (
 )
 from trading_agent.alpaca_sip_quote_actionability_projection import (
     AlpacaSipQuoteActionabilityProjectionError,
+    AlpacaSipQuoteActionabilityProjectionRequest,
     project_alpaca_sip_quote_actionability,
 )
 from trading_agent.alpaca_sip_quote_actionability_store import AlpacaSipQuoteActionabilityStore
@@ -37,12 +38,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         manifest = read_alpaca_sip_quote_actionability_manifest(args.manifest)
         result = project_alpaca_sip_quote_actionability(
-            manifest.base_publication,
-            manifest.snapshot,
-            AlpacaSipDynamicReceiptStore(args.receipt_store),
-            manifest.plan,
-            AlpacaSipQuoteActionabilityStore(args.actionability_store),
-            scan_started_at=manifest.scan_started_at,
+            AlpacaSipQuoteActionabilityProjectionRequest(
+                manifest,
+                manifest.snapshot,
+                AlpacaSipDynamicReceiptStore(args.receipt_store),
+                AlpacaSipQuoteActionabilityStore(args.actionability_store),
+            )
         )
     except (
         AlpacaSipQuoteActionabilityManifestError,

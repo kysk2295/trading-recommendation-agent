@@ -962,9 +962,9 @@ completed live child의 selected/new/replay를 manifest, bounded receipt termina
   --output-dir outputs/runtime/us-sip-fleet/live-evidence-report
 ```
 
-verifier는 parent 시작시각의 exact manifest, 원래 terminal을 만든 source manifest identity, manifest digest receipt, bounded-complete plan/epoch/terminal과 artifact bundle을 모두 재생한다. created receipt 누락·public mode·중복 terminal key·child aggregate 불일치는 `blocked`다. terminal이 이전 crash 시도에서 만들어지고 artifact append만 현재 재시작에서 일어난 경우는 기존 store에 append-attempt 시각이 없어 new/replay를 독립적으로 증명할 수 없으므로 성공으로 추정하지 않는다.
+verifier는 parent 시작시각의 exact manifest, 원래 terminal을 만든 source manifest identity, manifest digest receipt, bounded-complete plan/epoch/terminal과 artifact bundle을 모두 재생한다. created receipt 누락·public mode·중복 terminal key·child aggregate 불일치는 `blocked`다. schema v2 creation이 있으면 exact source manifest를 우선 사용하고, legacy v1 artifact는 생성 시도를 추정하거나 backfill하지 않는다.
 
-actionability SQLite schema v2는 신규 artifact와 exact runtime manifest ID·snapshot 관측시각의 content-addressed creation row를 한 transaction에 append한다. v1 query는 무재작성이고 다음 v2 Writer만 migration하며 legacy artifact를 사후 backfill하지 않는다. 현재 live projector는 아직 v1 append 경로이므로 creation 자동 기록과 verifier 우선 대사는 다음 체크포인트다.
+actionability SQLite schema v2는 신규 artifact와 exact runtime manifest ID·snapshot 관측시각의 content-addressed creation row를 한 transaction에 append한다. live projector가 이 manifest-aware append를 사용하고 dispatcher가 connector 전에 creation history까지 재생하며 verifier가 child `new/replay`를 exact binding으로 대사한다. v1 query는 무재작성이고 legacy artifact를 사후 backfill하지 않는다.
 
 supervisor가 만든 manifest 하나를 같은 completed-minute 안에서 read-only dynamic quote/trade와 결합해 즉시 actionability로 확정하는 bounded lifecycle은 다음처럼 실행한다. manifest의 base signal, policy state 또는 minute window가 만료되면 실제 WebSocket 전에 차단한다.
 

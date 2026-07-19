@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import datetime as dt
 from dataclasses import dataclass
 from typing import override
 
@@ -12,11 +11,11 @@ from trading_agent.alpaca_sip_dynamic_quote_actionability import (
 from trading_agent.alpaca_sip_dynamic_quote_history import materialize_alpaca_sip_dynamic_quote_history_as_of
 from trading_agent.alpaca_sip_dynamic_receipt_models import AlpacaSipDynamicReceiptError
 from trading_agent.alpaca_sip_dynamic_receipt_store import AlpacaSipDynamicReceiptStore
-from trading_agent.alpaca_sip_dynamic_subscription import AlpacaSipDynamicSubscriptionPlan
 from trading_agent.alpaca_sip_dynamic_trade_history import materialize_alpaca_sip_dynamic_trade_history_as_of
+from trading_agent.alpaca_sip_quote_actionability_manifest import AlpacaSipQuoteActionabilityManifest
 from trading_agent.alpaca_sip_quote_actionability_store import AlpacaSipQuoteActionabilityStore
 from trading_agent.intraday_feature_kernel import IntradayFeatureSnapshot
-from trading_agent.trade_signal_publication import TradeSignalPublication
+from trading_agent.intraday_feature_reobservation import reobserve_ready_intraday_feature
 
 
 class AlpacaSipQuoteActionabilityProjectionError(ValueError):
@@ -31,39 +30,54 @@ class AlpacaSipQuoteActionabilityProjectionResult:
     appended: bool
 
 
+@dataclass(frozen=True, slots=True)
+class AlpacaSipQuoteActionabilityProjectionRequest:
+    manifest: AlpacaSipQuoteActionabilityManifest
+    snapshot: IntradayFeatureSnapshot
+    receipt_store: AlpacaSipDynamicReceiptStore
+    output_store: AlpacaSipQuoteActionabilityStore
+
+
 def project_alpaca_sip_quote_actionability(
-    base: TradeSignalPublication,
-    snapshot: IntradayFeatureSnapshot,
-    receipt_store: AlpacaSipDynamicReceiptStore,
-    plan: AlpacaSipDynamicSubscriptionPlan,
-    output_store: AlpacaSipQuoteActionabilityStore,
-    *,
-    scan_started_at: dt.datetime,
+    request: AlpacaSipQuoteActionabilityProjectionRequest,
 ) -> AlpacaSipQuoteActionabilityProjectionResult:
     try:
-        as_of = snapshot.observed_at
+        if (
+            type(request) is not AlpacaSipQuoteActionabilityProjectionRequest
+            or type(request.manifest) is not AlpacaSipQuoteActionabilityManifest
+            or type(request.snapshot) is not IntradayFeatureSnapshot
+            or type(request.receipt_store) is not AlpacaSipDynamicReceiptStore
+            or type(request.output_store) is not AlpacaSipQuoteActionabilityStore
+            or reobserve_ready_intraday_feature(
+                request.manifest.snapshot,
+                request.snapshot.observed_at,
+            )
+            != request.snapshot
+        ):
+            raise AlpacaSipQuoteActionabilityProjectionError
+        as_of = request.snapshot.observed_at
         trade_history = materialize_alpaca_sip_dynamic_trade_history_as_of(
-            receipt_store,
-            plan,
+            request.receipt_store,
+            request.manifest.plan,
             as_of=as_of,
         )
         quote_history = materialize_alpaca_sip_dynamic_quote_history_as_of(
-            receipt_store,
-            plan,
+            request.receipt_store,
+            request.manifest.plan,
             as_of=as_of,
         )
         bundle = build_alpaca_sip_dynamic_feature_bundle(
-            snapshot,
+            request.snapshot,
             trade_history,
             quote_history,
         )
         decision = assess_alpaca_sip_dynamic_quote(
-            base,
+            request.manifest.base_publication,
             bundle,
-            scan_started_at=scan_started_at,
+            scan_started_at=request.manifest.scan_started_at,
         )
-        appended = output_store.append(base, decision)
-        return AlpacaSipQuoteActionabilityProjectionResult(decision, appended)
+        result = request.output_store.append_for_manifest(request.manifest, decision)
+        return AlpacaSipQuoteActionabilityProjectionResult(decision, result.appended)
     except (
         AlpacaSipDynamicReceiptError,
         AttributeError,
@@ -76,6 +90,7 @@ def project_alpaca_sip_quote_actionability(
 
 __all__ = (
     "AlpacaSipQuoteActionabilityProjectionError",
+    "AlpacaSipQuoteActionabilityProjectionRequest",
     "AlpacaSipQuoteActionabilityProjectionResult",
     "project_alpaca_sip_quote_actionability",
 )

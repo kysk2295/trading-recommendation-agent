@@ -49,7 +49,10 @@ def test_dispatches_only_current_cycle_manifest_to_private_receipt(tmp_path: Pat
     assert receipt.is_file()
     assert stat.S_IMODE(receipt.stat().st_mode) == 0o600
     assert stat.S_IMODE(receipt.parent.stat().st_mode) == 0o700
-    assert len(AlpacaSipQuoteActionabilityStore(tmp_path / "actionability.sqlite3").records()) == 1
+    output = AlpacaSipQuoteActionabilityStore(tmp_path / "actionability.sqlite3")
+    assert len(output.records()) == 1
+    assert len(output.creations()) == 1
+    assert output.creations()[0].manifest_id == source.manifest.manifest_id
 
 
 def test_exact_restart_replays_without_websocket_connection(tmp_path: Path) -> None:

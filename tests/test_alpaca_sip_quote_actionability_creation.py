@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import datetime as dt
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -148,6 +150,34 @@ def test_legacy_writer_cannot_append_unbound_artifact_after_v2_migration(tmp_pat
 
     assert len(store.records()) == 1
     assert len(store.creations()) == 1
+
+
+def test_creation_rejects_prior_minute_artifact_for_later_manifest(tmp_path: Path) -> None:
+    original_base = _base(entry="100.10", stop="99.00")
+    next_snapshot = replace(
+        quote_fixtures._snapshot(),
+        observed_at=quote_fixtures._snapshot().observed_at + dt.timedelta(minutes=1),
+    )
+    payload = original_base.model_dump(mode="python")
+    payload["signal"]["valid_until"] = next_snapshot.observed_at + dt.timedelta(minutes=1)
+    base = TradeSignalPublication.model_validate(payload)
+    manifest = build_alpaca_sip_quote_actionability_manifest(
+        base,
+        next_snapshot,
+        dynamic_fixtures._plan(),
+        scan_started_at=_SCAN_STARTED_AT,
+    )
+    decision = assess_alpaca_sip_dynamic_quote(
+        base,
+        _bundle(tmp_path / "source", bid=100.01, ask=100.03),
+        scan_started_at=_SCAN_STARTED_AT,
+    )
+    store = AlpacaSipQuoteActionabilityStore(tmp_path / "actionability.sqlite3")
+
+    with pytest.raises(AlpacaSipQuoteActionabilityStoreError):
+        _ = store.append_for_manifest(manifest, decision)
+
+    assert not store.path.exists()
 
 
 def test_creation_trigger_tamper_blocks_query_replay(tmp_path: Path) -> None:

@@ -16,8 +16,12 @@ from tests.test_alpaca_sip_dynamic_quote_actionability import (
     _base,
 )
 from trading_agent.alpaca_sip_dynamic_receipt_store import AlpacaSipDynamicReceiptStore
+from trading_agent.alpaca_sip_quote_actionability_manifest import (
+    build_alpaca_sip_quote_actionability_manifest,
+)
 from trading_agent.alpaca_sip_quote_actionability_projection import (
     AlpacaSipQuoteActionabilityProjectionError,
+    AlpacaSipQuoteActionabilityProjectionRequest,
     project_alpaca_sip_quote_actionability,
 )
 from trading_agent.alpaca_sip_quote_actionability_store import AlpacaSipQuoteActionabilityStore
@@ -31,29 +35,26 @@ def test_projector_materializes_bundle_and_appends_exactly_once(tmp_path: Path) 
     receipts = _receipts(tmp_path / "source")
     output = AlpacaSipQuoteActionabilityStore(tmp_path / "actionability.sqlite3")
     base = _base(entry="100.10", stop="99.00")
+    snapshot = quote_fixtures._snapshot()
+    plan = dynamic_fixtures._plan()
+    manifest = build_alpaca_sip_quote_actionability_manifest(
+        base,
+        snapshot,
+        plan,
+        scan_started_at=_SCAN_STARTED_AT,
+    )
+    request = AlpacaSipQuoteActionabilityProjectionRequest(manifest, snapshot, receipts, output)
 
-    first = project_alpaca_sip_quote_actionability(
-        base,
-        quote_fixtures._snapshot(),
-        receipts,
-        dynamic_fixtures._plan(),
-        output,
-        scan_started_at=_SCAN_STARTED_AT,
-    )
-    second = project_alpaca_sip_quote_actionability(
-        base,
-        quote_fixtures._snapshot(),
-        receipts,
-        dynamic_fixtures._plan(),
-        output,
-        scan_started_at=_SCAN_STARTED_AT,
-    )
+    first = project_alpaca_sip_quote_actionability(request)
+    second = project_alpaca_sip_quote_actionability(request)
 
     assert first.appended is True
     assert second.appended is False
     assert second.decision == first.decision
     assert first.decision.assessment.status is QuoteAssessmentStatus.VALIDATED_WAITING
     assert len(output.records()) == 1
+    assert len(output.creations()) == 1
+    assert output.creations()[0].manifest_id == manifest.manifest_id
 
 
 def test_projector_rejects_multi_epoch_history_without_output(tmp_path: Path) -> None:
@@ -73,18 +74,26 @@ def test_projector_rejects_multi_epoch_history_without_output(tmp_path: Path) ->
         payload,
     )
     output_path = tmp_path / "actionability.sqlite3"
+    base = _base(entry="100.10", stop="99.00")
+    snapshot = dataclasses.replace(
+        quote_fixtures._snapshot(),
+        observed_at=_OBSERVED + dt.timedelta(milliseconds=20),
+    )
+    manifest = build_alpaca_sip_quote_actionability_manifest(
+        base,
+        snapshot,
+        dynamic_fixtures._plan(),
+        scan_started_at=_SCAN_STARTED_AT,
+    )
 
     with pytest.raises(AlpacaSipQuoteActionabilityProjectionError):
         _ = project_alpaca_sip_quote_actionability(
-            _base(entry="100.10", stop="99.00"),
-            dataclasses.replace(
-                quote_fixtures._snapshot(),
-                observed_at=_OBSERVED + dt.timedelta(milliseconds=20),
-            ),
-            receipts,
-            dynamic_fixtures._plan(),
-            AlpacaSipQuoteActionabilityStore(output_path),
-            scan_started_at=_SCAN_STARTED_AT,
+            AlpacaSipQuoteActionabilityProjectionRequest(
+                manifest,
+                snapshot,
+                receipts,
+                AlpacaSipQuoteActionabilityStore(output_path),
+            )
         )
 
     assert not output_path.exists()
@@ -93,15 +102,22 @@ def test_projector_rejects_multi_epoch_history_without_output(tmp_path: Path) ->
 def test_projector_rejects_snapshot_plan_mismatch_without_output(tmp_path: Path) -> None:
     output_path = tmp_path / "actionability.sqlite3"
     snapshot = dataclasses.replace(quote_fixtures._snapshot(), instrument_id="wrong")
+    base = _base(entry="100.10", stop="99.00")
+    manifest = build_alpaca_sip_quote_actionability_manifest(
+        base,
+        quote_fixtures._snapshot(),
+        dynamic_fixtures._plan(),
+        scan_started_at=_SCAN_STARTED_AT,
+    )
 
     with pytest.raises(AlpacaSipQuoteActionabilityProjectionError):
         _ = project_alpaca_sip_quote_actionability(
-            _base(entry="100.10", stop="99.00"),
-            snapshot,
-            _receipts(tmp_path / "source"),
-            dynamic_fixtures._plan(),
-            AlpacaSipQuoteActionabilityStore(output_path),
-            scan_started_at=_SCAN_STARTED_AT,
+            AlpacaSipQuoteActionabilityProjectionRequest(
+                manifest,
+                snapshot,
+                _receipts(tmp_path / "source"),
+                AlpacaSipQuoteActionabilityStore(output_path),
+            )
         )
 
     assert not output_path.exists()

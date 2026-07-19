@@ -63,6 +63,7 @@ def dispatch_us_runtime_live_actionability(
         if not selected:
             return UsRuntimeLiveActionabilityDispatchResult(0, 0, 0)
         actionability_store = AlpacaSipQuoteActionabilityStore(request.actionability_store)
+        _ = actionability_store.creations()
         terminal_keys = tuple(
             (artifact.base_publication.signal.signal_id, artifact.assessment.scan_started_at)
             for artifact in actionability_store.records()

@@ -697,3 +697,10 @@
 - 수정: schema v1 artifact payload를 유지하고 schema v2에 artifact별 단 하나의 content-addressed creation row를 추가했다. exact manifest ID와 snapshot 관측시각을 보존하며 신규 `append_for_manifest()`가 artifact와 creation을 같은 `BEGIN IMMEDIATE` transaction에 append한다.
 - 호환성: v1 query는 파일을 migration하지 않고 creation history를 빈 tuple로 반환한다. 다음 v2 Writer만 table과 append-only trigger를 추가하며, 이미 존재하는 legacy artifact에는 creation을 사후 backfill하지 않는다.
 - 결과: atomic append/replay, v1 무변경, 신규 artifact 시 migration, legacy backfill과 v2 legacy writer 거부, trigger tamper를 관련 25개와 전체 2576 tests 및 정적 게이트로 확인했다. 아직 live projector는 v1 append를 사용하므로 runtime 자동 생성과 verifier 소비는 다음 체크포인트에서 연결한다. provider·credential·network·account/order mutation은 0건이다.
+
+## H98: schema v2 creation이 live projector와 verifier에 연결되지 않았다
+
+- 결함: durable creation 계약이 있어도 projector가 base·snapshot·plan·scan 시각을 개별 인자로 받아 v1 `append()`를 호출했다. dispatcher는 artifact만 preflight했고 verifier는 creation을 읽지 않아 runtime `new/replay`가 여전히 terminal 시각 추정에 의존했다.
+- 수정: projector 입력을 exact manifest와 허용된 reobserved snapshot의 frozen 요청으로 묶고 atomic `append_for_manifest()`를 호출한다. creation builder는 artifact 평가시각이 manifest snapshot과 같은 completed-minute reobservation인지 검증하며 dispatcher는 connector 전에 artifact와 creation history를 모두 재생한다.
+- verifier: creation이 있으면 exact manifest ID와 digest receipt를 source로 고정한다. current parent manifest binding만 `new`, 더 이른 binding만 `replay`이며 같은 minute의 다른 manifest, 미래 binding과 receipt 결손은 차단한다. creation 없는 legacy v1 artifact는 backfill하지 않고 기존 보수적 terminal-time 분류를 유지한다.
+- 결과: same-minute wrong-manifest creation fault injection이 수정 전 통과하고 수정 후 차단됨을 확인했다. 관련 41개와 전체 2578 tests, Ruff, basedpyright 0/0, compileall, no-excuse가 통과했으며 실제 provider·credential·account/order mutation은 0건이다.

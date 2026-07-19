@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import os
-import re
-import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import override
@@ -14,11 +11,14 @@ from trading_agent.alpaca_sip_dynamic_receipt_models import (
 )
 from trading_agent.alpaca_sip_dynamic_terminal_store import AlpacaSipDynamicTerminalStore
 from trading_agent.alpaca_sip_quote_actionability_artifact import AlpacaSipQuoteActionabilityArtifact
+from trading_agent.alpaca_sip_quote_actionability_creation import AlpacaSipQuoteActionabilityCreation
 from trading_agent.alpaca_sip_quote_actionability_manifest import (
     AlpacaSipQuoteActionabilityManifest,
-    read_alpaca_sip_quote_actionability_manifest,
 )
-from trading_agent.alpaca_sip_quote_actionability_store import AlpacaSipQuoteActionabilityStore
+from trading_agent.us_runtime_live_evidence_inventory import (
+    RuntimeLiveEvidenceInventory,
+    load_runtime_live_evidence_inventory,
+)
 from trading_agent.us_runtime_minute_supervisor_models import RuntimeMinuteSupervisorRecord
 from trading_agent.us_runtime_minute_supervisor_store import RuntimeMinuteSupervisorStore
 from trading_agent.us_runtime_supervisor_live_audit import (
@@ -26,9 +26,6 @@ from trading_agent.us_runtime_supervisor_live_audit import (
     RuntimeSupervisorLiveStatus,
 )
 
-_MANIFEST_NAME = re.compile(r"^[0-9a-f]{64}\.json$", flags=re.ASCII)
-_RECEIPT_NAME = re.compile(r"^[0-9a-f]{64}\.sqlite3$", flags=re.ASCII)
-_RECEIPT_LOCK_NAME = re.compile(r"^([0-9a-f]{64})\.sqlite3\.(?:owner|writer)\.lock$", flags=re.ASCII)
 type _TerminalKey = tuple[str, dt.datetime]
 
 
@@ -55,13 +52,6 @@ class RuntimeLiveEvidenceVerificationResult:
     actionability_artifact_count: int
 
 
-@dataclass(frozen=True, slots=True)
-class _EvidenceInventory:
-    manifests: tuple[AlpacaSipQuoteActionabilityManifest, ...]
-    receipts: tuple[tuple[str, Path], ...]
-    artifacts: tuple[AlpacaSipQuoteActionabilityArtifact, ...]
-
-
 def verify_runtime_live_evidence(
     request: RuntimeLiveEvidenceVerificationRequest,
 ) -> RuntimeLiveEvidenceVerificationResult:
@@ -70,13 +60,19 @@ def verify_runtime_live_evidence(
         parents = RuntimeMinuteSupervisorStore(request.supervisor_store).records()
         children = RuntimeMinuteSupervisorStore(request.supervisor_store).live_records()
         paired = _paired_history(parents, children)
-        manifests = _read_manifests(request.manifest_root)
-        receipts = _read_receipts(request.receipt_root, manifests)
-        artifacts = AlpacaSipQuoteActionabilityStore(request.actionability_store).records()
-        artifact_keys = tuple(_artifact_key(artifact) for artifact in artifacts)
-        if len(artifact_keys) != len(set(artifact_keys)):
+        inventory = load_runtime_live_evidence_inventory(
+            request.manifest_root,
+            request.receipt_root,
+            request.actionability_store,
+        )
+        artifact_keys = tuple(_artifact_key(artifact) for artifact in inventory.artifacts)
+        creation_artifacts = tuple(creation.artifact_id for creation in inventory.creations)
+        if (
+            len(artifact_keys) != len(set(artifact_keys))
+            or len(creation_artifacts) != len(set(creation_artifacts))
+            or not set(creation_artifacts).issubset({artifact.artifact_id for artifact in inventory.artifacts})
+        ):
             raise RuntimeLiveEvidenceVerificationError
-        inventory = _EvidenceInventory(manifests, receipts, artifacts)
         completed = 0
         selected = 0
         created = 0
@@ -85,7 +81,9 @@ def verify_runtime_live_evidence(
         for parent, child in paired:
             if child.status is not RuntimeSupervisorLiveStatus.COMPLETED:
                 continue
-            current = tuple(manifest for manifest in manifests if manifest.snapshot.observed_at == parent.started_at)
+            current = tuple(
+                manifest for manifest in inventory.manifests if manifest.snapshot.observed_at == parent.started_at
+            )
             instruments = tuple(manifest.snapshot.instrument_id for manifest in current)
             keys = tuple(_manifest_key(manifest) for manifest in current)
             if (
@@ -111,7 +109,7 @@ def verify_runtime_live_evidence(
 def _verify_manifest(
     manifest: AlpacaSipQuoteActionabilityManifest,
     parent: RuntimeMinuteSupervisorRecord,
-    inventory: _EvidenceInventory,
+    inventory: RuntimeLiveEvidenceInventory,
 ) -> bool:
     key = _manifest_key(manifest)
     matches = tuple(artifact for artifact in inventory.artifacts if _artifact_key(artifact) == key)
@@ -127,15 +125,11 @@ def _verify_manifest(
         or trade.symbol != manifest.base_publication.signal.symbol
     ):
         raise RuntimeLiveEvidenceVerificationError
-    source_manifests = tuple(
-        source
-        for source in inventory.manifests
-        if _manifest_key(source) == key
-        and source.base_publication == artifact.base_publication
-        and source.plan.plan_id == trade.dynamic_plan_id
-        and source.snapshot.identity.identity_sha256 == trade.research_input_identity_sha256
-        and source.snapshot.instrument_id == trade.instrument_id
-    )
+    bindings = tuple(creation for creation in inventory.creations if creation.artifact_id == artifact.artifact_id)
+    if len(bindings) > 1:
+        raise RuntimeLiveEvidenceVerificationError
+    binding = bindings[0] if bindings else None
+    source_manifests = tuple(source for source in inventory.manifests if _source_matches(source, artifact, binding))
     source_receipts = tuple(
         path
         for source in source_manifests
@@ -155,11 +149,38 @@ def _verify_manifest(
         or terminal.terminal_at != trade.observed_at
     ):
         raise RuntimeLiveEvidenceVerificationError
+    if binding is not None:
+        source = source_manifests[0]
+        if binding.evaluated_at != source.snapshot.observed_at:
+            raise RuntimeLiveEvidenceVerificationError
+        if binding.manifest_id == manifest.manifest_id:
+            if parent.started_at <= terminal.terminal_at <= parent.finished_at:
+                return True
+            raise RuntimeLiveEvidenceVerificationError
+        if binding.evaluated_at < parent.started_at:
+            return False
+        raise RuntimeLiveEvidenceVerificationError
     if parent.started_at <= terminal.terminal_at <= parent.finished_at:
         return True
     if terminal.terminal_at < parent.started_at:
         return False
     raise RuntimeLiveEvidenceVerificationError
+
+
+def _source_matches(
+    source: AlpacaSipQuoteActionabilityManifest,
+    artifact: AlpacaSipQuoteActionabilityArtifact,
+    binding: AlpacaSipQuoteActionabilityCreation | None,
+) -> bool:
+    trade = artifact.bundle.trade_confirmation
+    return (
+        _manifest_key(source) == _artifact_key(artifact)
+        and source.base_publication == artifact.base_publication
+        and source.plan.plan_id == trade.dynamic_plan_id
+        and source.snapshot.identity.identity_sha256 == trade.research_input_identity_sha256
+        and source.snapshot.instrument_id == trade.instrument_id
+        and (binding is None or source.manifest_id == binding.manifest_id)
+    )
 
 
 def _paired_history(
@@ -172,73 +193,6 @@ def _paired_history(
     ):
         raise RuntimeLiveEvidenceVerificationError
     return tuple(zip(parents[offset:], children, strict=True))
-
-
-def _read_manifests(root: Path) -> tuple[AlpacaSipQuoteActionabilityManifest, ...]:
-    source = root.expanduser().absolute()
-    if not source.exists():
-        if source.is_symlink():
-            raise RuntimeLiveEvidenceVerificationError
-        return ()
-    _require_directory(source, private=False)
-    manifests: list[AlpacaSipQuoteActionabilityManifest] = []
-    for path in sorted(source.iterdir()):
-        if _MANIFEST_NAME.fullmatch(path.name) is None:
-            raise RuntimeLiveEvidenceVerificationError
-        manifest = read_alpaca_sip_quote_actionability_manifest(path)
-        if path.stem != _digest(manifest):
-            raise RuntimeLiveEvidenceVerificationError
-        manifests.append(manifest)
-    return tuple(manifests)
-
-
-def _read_receipts(
-    root: Path,
-    manifests: tuple[AlpacaSipQuoteActionabilityManifest, ...],
-) -> tuple[tuple[str, Path], ...]:
-    source = root.expanduser().absolute()
-    if not source.exists():
-        if source.is_symlink():
-            raise RuntimeLiveEvidenceVerificationError
-        return ()
-    _require_directory(source, private=True)
-    manifest_digests = {_digest(manifest) for manifest in manifests}
-    receipts: list[tuple[str, Path]] = []
-    for path in sorted(source.iterdir()):
-        receipt_match = _RECEIPT_NAME.fullmatch(path.name)
-        lock_match = _RECEIPT_LOCK_NAME.fullmatch(path.name)
-        if receipt_match is not None and path.stem in manifest_digests:
-            _require_private_file(path)
-            receipts.append((path.stem, path))
-            continue
-        if lock_match is not None and lock_match.group(1) in manifest_digests:
-            _require_private_file(path)
-            continue
-        raise RuntimeLiveEvidenceVerificationError
-    return tuple(receipts)
-
-
-def _require_directory(path: Path, *, private: bool) -> None:
-    metadata = path.lstat()
-    if (
-        stat.S_ISLNK(metadata.st_mode)
-        or not stat.S_ISDIR(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or (private and stat.S_IMODE(metadata.st_mode) != 0o700)
-    ):
-        raise RuntimeLiveEvidenceVerificationError
-
-
-def _require_private_file(path: Path) -> None:
-    metadata = path.lstat()
-    if (
-        stat.S_ISLNK(metadata.st_mode)
-        or not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o600
-        or metadata.st_nlink != 1
-    ):
-        raise RuntimeLiveEvidenceVerificationError
 
 
 def _manifest_key(manifest: AlpacaSipQuoteActionabilityManifest) -> _TerminalKey:

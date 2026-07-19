@@ -24,6 +24,7 @@ from trading_agent.alpaca_sip_dynamic_subscription import roll_alpaca_sip_dynami
 from trading_agent.alpaca_sip_dynamic_terminal_store import AlpacaSipDynamicTerminalStore
 from trading_agent.alpaca_sip_quote_actionability_manifest import AlpacaSipQuoteActionabilityManifest
 from trading_agent.alpaca_sip_quote_actionability_projection import (
+    AlpacaSipQuoteActionabilityProjectionRequest,
     AlpacaSipQuoteActionabilityProjectionResult,
     project_alpaca_sip_quote_actionability,
 )
@@ -131,12 +132,12 @@ def run_alpaca_sip_live_actionability(
         ):
             raise AlpacaSipLiveActionabilityError
         projection = project_alpaca_sip_quote_actionability(
-            request.manifest.base_publication,
-            snapshot,
-            request.stores.receipt,
-            request.manifest.plan,
-            request.stores.output,
-            scan_started_at=request.manifest.scan_started_at,
+            AlpacaSipQuoteActionabilityProjectionRequest(
+                request.manifest,
+                snapshot,
+                request.stores.receipt,
+                request.stores.output,
+            )
         )
         return AlpacaSipLiveActionabilityResult(report, terminal, snapshot, projection)
     except (AlpacaSipDynamicReceiptError, AttributeError, OSError, TypeError, ValueError):
