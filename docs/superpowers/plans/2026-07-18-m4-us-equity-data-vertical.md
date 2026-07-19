@@ -200,6 +200,22 @@ state fails before feature use. This bridge neither recalculates indicators nor
 emits claims, recommendations, promotions, or orders. Canonical minute-dataset
 verification remains the existing typed feature extractor's responsibility.
 
+**Dynamic SIP quote feature confirmation checkpoint (2026-07-19): Causal
+microstructure bridge complete.** Trade and quote histories now consume one
+shared terminal/epoch/raw-receipt coverage verifier. Quote state validates the
+full projection but materializes only the latest quote per instrument observed
+at the requested as-of time, ordered by provider event time, receipt time,
+source sequence, frame index, and event ID. A READY minute snapshot accepts a
+quote only from the same complete single epoch, as-of, New York market date,
+instrument/profile binding, and after the last completed bar. Provider event
+age must be strictly less than five seconds. The immutable confirmation binds
+bid/ask, displayed sizes, midpoint, size-weighted microprice, order-book
+imbalance, spread, VWAP relation, source order, and quote expiry. Crossed quotes
+and zero total displayed size fail closed. Wide spread remains a measured
+feature; the existing 25 bp actionability policy separately decides whether a
+signal may claim current-entry feasibility. This bridge emits no signal,
+promotion, recommendation, or order.
+
 **Dynamic SIP terminal checkpoint (2026-07-19): Restart evidence complete.**
 Schema v2 adds one append-only terminal row per epoch without rewriting v1
 bindings or receipts. Bounded success requires at least the three controls and

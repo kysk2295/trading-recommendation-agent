@@ -573,3 +573,10 @@
 - 최초 관찰: dynamic trade state와 complete-history gate는 있었지만 M4.1 snapshot에 연결하는 typed 경계가 없었다. 호출자가 active trade tuple을 직접 읽으면 reconnect 진단 state를 complete input처럼 사용하거나 frame 안의 source order를 잃을 수 있었다.
 - 수정: READY snapshot과 exact as-of·NY market date·instrument/profile binding을 검증하는 read-only bridge를 추가했다. complete single epoch만 허용하고 최신 active trade를 event/receipt/source sequence/frame index/event ID 순으로 선택하며, 마지막 완료 봉 이후와 2분 freshness를 강제한다. confirmation hash는 snapshot identity, plan/epoch, trade source order, 가격과 VWAP 관계를 고정한다.
 - 결과: multi-epoch, terminal 미관측, blocked snapshot, instrument mismatch, 오래된 event와 canceled-only state는 모두 fail-closed다. local library driver는 single epoch trade 103을 source order 4:1로 확인하고 two-epoch history를 차단했다. canonical minute dataset 검증과 claim extraction은 기존 typed extractor에 남아 있으며 provider·credential·account/order endpoint와 mutation은 0건이다.
+
+## H81: 최신 quote projection을 current-entry actionability로 바로 사용한다
+
+- 판별 기준: quote가 raw-first·terminal complete인지, requested as-of에 실제 관측됐는지, 마지막 완료 봉 이후 5초 미만인지 확인하지 않고 spread나 현재 진입 가능성을 만드는지 검증한다.
+- 최초 관찰: dynamic projection은 quote wire를 instrument에 귀속했지만 종목별 as-of latest state와 reconnect completeness 소비 경계가 없었다. trade history와 quote history가 terminal 검증을 따로 구현하면 같은 epoch를 서로 다르게 complete로 판정할 위험도 있었다.
+- 수정: terminal·epoch·receipt ownership을 shared coverage kernel로 추출하고 trade history도 이 kernel을 사용하도록 전환했다. quote state는 full projection을 검증한 뒤 as-of latest event를 선택하고, feature bridge는 exact snapshot binding·마지막 완료 봉·strict 5초 freshness·non-crossed·positive total size를 강제한다. confirmation은 midpoint, microprice, imbalance, spread와 VWAP 관계를 고정한다.
+- 결과: single epoch quote는 source order 4:1로 확인됐고 two-epoch reconnect는 complete-history gate에서 차단됐다. wide spread는 측정되지만 actionability가 아니며 기존 25bp policy, signal publication과 주문 경로는 호출하지 않는다. provider·credential·account/order endpoint와 mutation은 0건이다.
