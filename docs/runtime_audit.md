@@ -810,3 +810,11 @@
 - 장중 child: private Opportunity outbox에서 exact ID 하나를 읽고 같은 종목·KST session·평가시각 이전 receipt만 선택한다. 완료 분봉→VWAP setup→latest current status/quote gate→current-quote signal을 기존 pure kernel로 재생하고, exact started daily trial이 있을 때만 고정 20bp 그림자 entry를 append한다. no-setup과 market-blocked는 entry를 만들지 않는다.
 - 경계: CLI는 credential, provider endpoint, account, order, arm이나 가변 slippage를 받지 않으며 report에서 종목·가격·ID·path를 제거한다. 실제 KIS GET collector와 scheduler, exit polling 및 일일 supervisor는 후속 단계다.
 - 결과: store conflict/tamper, raw→entry/replay/no-setup, actual CLI help/missing/happy/replay를 focused 8개와 전체 2726 tests로 확인했다. Ruff, basedpyright 0/0, compileall, changed-production no-excuse가 통과했고 provider network와 국내 broker mutation은 0건이다.
+
+## H114: 장중 collector가 response parsing 뒤에만 raw를 저장하면 부분 실패 증거가 사라진다
+
+- 결함: KIS market client와 durable receipt store가 따로 존재해도 운영 수집 경로가 없었다. caller가 세 GET을 모두 메모리에서 성공한 뒤 한꺼번에 저장하면 두 번째 transport/parse 실패가 첫 번째 정상 raw receipt까지 잃게 만들고, 폐장일 credential 접근도 통제할 권위가 없었다.
+- 수집: provider-neutral collection kernel이 완료 분봉, 현재가 상태, 호가 예상체결을 고정 순서로 요청한다. 각 response는 kind/symbol/request-response 시각을 대사하기 전에 store에 즉시 append하고, 그 뒤 exact provider envelope와 `rt_cd=0`을 확인한다. 따라서 뒤 단계 실패에서도 앞선 raw bytes는 남고 다음 재시작은 logical key exact replay가 된다.
+- 운영 gate: root CLI는 명시한 official calendar snapshot ID에서 현재 session row를 다시 검증하고 KST 09:01 이상 15:30 미만일 때만 credential/token/client로 진행한다. kernel도 매 GET 전에 session date/time을 다시 확인해 장중 시작 후 close를 넘긴 다음 요청을 차단한다.
+- fixture와 권한: fixture manifest는 exact 세 kind, symbol, requested/received time과 repository 밖 탈출 없는 relative raw file을 요구한다. production은 기존 official live-origin/no-redirect KIS client만 사용하며 account, balance, position, order endpoint를 import하거나 호출하지 않는다.
+- 결과: 정상/replay, 두 번째 transport failure의 첫 raw 보존, 폐장 전 fetch 0, wrong-calendar store 0, credential loader fault injection과 actual fixture CLI를 focused 7개로 확인했다. 전체 2733 tests와 정적 게이트가 통과했다. 일요일 actual production 실행은 credential·network·receipt 0으로 blocked 됐다.
