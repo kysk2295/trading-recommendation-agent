@@ -10,6 +10,7 @@ from trading_agent.alpaca_sip_dynamic_quote_actionability import (
     assess_alpaca_sip_dynamic_quote,
 )
 from trading_agent.alpaca_sip_dynamic_quote_history import materialize_alpaca_sip_dynamic_quote_history_as_of
+from trading_agent.alpaca_sip_dynamic_receipt_models import AlpacaSipDynamicReceiptError
 from trading_agent.alpaca_sip_dynamic_receipt_store import AlpacaSipDynamicReceiptStore
 from trading_agent.alpaca_sip_dynamic_subscription import AlpacaSipDynamicSubscriptionPlan
 from trading_agent.alpaca_sip_dynamic_trade_history import materialize_alpaca_sip_dynamic_trade_history_as_of
@@ -63,7 +64,13 @@ def project_alpaca_sip_quote_actionability(
         )
         appended = output_store.append(base, decision)
         return AlpacaSipQuoteActionabilityProjectionResult(decision, appended)
-    except (AttributeError, OSError, TypeError, ValueError):
+    except (
+        AlpacaSipDynamicReceiptError,
+        AttributeError,
+        OSError,
+        TypeError,
+        ValueError,
+    ):
         raise AlpacaSipQuoteActionabilityProjectionError from None
 
 

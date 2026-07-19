@@ -622,3 +622,10 @@
 - 최초 관찰: history, bundle, policy와 store는 각각 구현됐지만 end-to-end 호출은 테스트 helper의 수동 조립에 남아 있었다. 운영 연결이 각 단계를 다르게 구성하면 complete gate 우회 또는 partial artifact가 가능했다.
 - 수정: READY snapshot의 observed time을 단일 as-of로 고정해 stored trade/quote history를 materialize하고 same-epoch bundle, policy decision, durable append를 순서대로 실행하는 query-only projector를 추가했다. output write는 모든 검증 뒤 마지막 단계다.
 - 결과: exact replay는 append 0이고 multi-epoch 및 snapshot/plan mismatch는 output DB 생성 없이 차단됐다. manual QA는 complete trade/quote와 current-quote signal을 record 하나로 복원했으며 full 2502 tests와 정적 게이트가 통과했다. runtime owner/CLI 자동 binding은 다음 단계다.
+
+## H88: projector CLI가 base/snapshot/plan을 느슨한 인자로 다시 조립한다
+
+- 판별 기준: 운영자가 symbol·instrument·평가시각·scan start를 서로 다른 cycle에서 골라 넘기거나 malformed/private-file failure가 traceback 또는 partial actionability DB를 남기는지 확인한다.
+- 최초 관찰: projector API는 원자적이지만 operational process contract가 없었다. 개별 객체를 ad hoc loader로 조립하면 exact pairing identity가 없고 오류 redaction도 호출자마다 달라진다.
+- 수정: base conditional, READY snapshot, dynamic plan과 scan start 전체를 content-addressed canonical manifest로 묶고 mode 600/current owner/single hard link를 강제했다. CLI는 manifest를 먼저 검증한 뒤 receipt/output 경로만 projector에 전달하며 safe report에는 aggregate status만 쓴다.
+- 결과: actual CLI first/replay는 모두 exit 0이고 non-private receipt는 traceback 없이 blocked/write 0으로 닫혔다. `--help`, missing args와 full 2507 tests, 정적 게이트가 통과했으며 provider credential·network·account/order endpoint를 열지 않는다. runtime owner의 automatic manifest dispatch는 아직 없다.
