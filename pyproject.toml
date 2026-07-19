@@ -53,6 +53,7 @@ include = [
   "run_orb_lane_forward_validation.py",
   "run_kis_kr_ranking_collect.py",
   "run_kr_volume_surge_derive.py",
+  "run_kr_same_cycle_opportunity.py",
   "run_orb_forward_metrics.py",
   "run_market_risk_sensitivity.py",
   "run_scanner_forward_metrics.py",

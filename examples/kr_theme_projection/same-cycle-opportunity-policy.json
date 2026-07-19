@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "producer_strategy_version": "kr-theme-keyword-projection-v1-code-c80f7023e84a6369",
+  "runtime_code_version": "kr-theme-fixture-code-v1",
+  "validity_seconds": 300,
+  "maximum_cycle_age_seconds": 300,
+  "rules": {
+    "schema_version": 1,
+    "classifier_version": "kr-keyword-synthetic-v1",
+    "prompt_version": "no-prompt-v1",
+    "rules": [
+      {
+        "schema_version": 1,
+        "theme_name": "반도체",
+        "keywords": [
+          "공급망",
+          "반도체"
+        ],
+        "related_symbols": [
+          {
+            "schema_version": 1,
+            "symbol": "005930",
+            "relation": "direct_business",
+            "rationale": "합성 keyword rule 직접 연결"
+          }
+        ]
+      }
+    ]
+  }
+}
