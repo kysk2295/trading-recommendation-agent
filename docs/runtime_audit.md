@@ -781,3 +781,10 @@
 - 수정: entry timestamp를 KST minute ceiling으로 올린 다음 완전한 봉부터 exact 1분 연속 path만 허용한다. 각 봉은 stop-first, first target 순서로 평가하고 trigger와 15:30 close 모두 매도 20bp adverse slippage를 적용한다. 15:30에 닿지 않은 non-terminal path는 artifact를 만들지 않는다.
 - 계보: exit는 entry ID와 consumed bar의 ordered evidence ID·canonical SHA를 content address에 포함한다. net return은 exit fill/entry fill, realized R은 entry fill과 original stop 사이 risk를 분모로 고정한다.
 - 저장·권한: 별도 private append-only store가 signal entry당 exit 하나만 허용하고 schema/trigger/payload/hash와 owner/mode 600/single-link를 검증한다. quantity, account, broker ID, order endpoint와 mutation은 0건이다.
+
+## H110: entry가 없거나 exit가 덜 끝난 날을 0% 성과로 넣으면 선택편향이 생긴다
+
+- 결함: 일일 trial을 entry 수나 장중 마지막 close만으로 완료하면 pipeline 누락과 진짜 무신호를 구분하지 못하고, 미완료 경로를 0% 수익으로 섞어 Reviewer 통계를 왜곡한다.
+- 수정: KST 15:30 이후 exact registration/start key와 entry·exit store 전체를 query-only 재생한다. 모든 entry가 exact exit와 1:1 대사될 때만 `completed`, 빈 entry와 missing exit는 `censored`, store invalid와 cross-artifact lineage mismatch는 `failed`다.
+- 계보: terminal artifact는 trial/strategy/session/start identity와 ordered entry·exit ID·canonical payload SHA를 content address에 포함한다. sequence 2 event는 이 artifact SHA와 sequence 1 key를 고정한다.
+- 저장·복구: 별도 private append-only store가 trial당 artifact 하나만 허용한다. artifact append 뒤 ledger writer가 실패한 crash window는 exact artifact replay 후 event append로 복구하며, 다른 terminal 재분류는 conflict다.
