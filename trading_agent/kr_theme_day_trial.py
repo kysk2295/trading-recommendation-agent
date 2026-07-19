@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 from trading_agent.experiment_ledger_models import ExperimentTrialEvent, TrialEventKind, TrialKind
 from trading_agent.experiment_ledger_store import (
     ExperimentLedgerConflictError,
+    ExperimentLedgerReader,
     ExperimentLedgerStore,
     ExperimentLedgerWriterLeaseUnavailableError,
     InvalidExperimentLedgerSourceError,
@@ -148,7 +149,7 @@ def start_kr_theme_day_shadow_trial(
 
 
 def _hypothesis(
-    ledger: ExperimentLedgerStore,
+    ledger: ExperimentLedgerReader,
     hypothesis_id: str,
     scope_key: str,
 ) -> MultiMarketHypothesisRegistration:
@@ -184,7 +185,7 @@ def _registration(
 
 
 def require_exact_kr_theme_day_trial(
-    ledger: ExperimentLedgerStore,
+    ledger: ExperimentLedgerReader,
     trial: MultiMarketExperimentTrialRegistration,
 ) -> None:
     versions = tuple(

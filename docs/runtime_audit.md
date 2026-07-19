@@ -788,3 +788,10 @@
 - 수정: KST 15:30 이후 exact registration/start key와 entry·exit store 전체를 query-only 재생한다. 모든 entry가 exact exit와 1:1 대사될 때만 `completed`, 빈 entry와 missing exit는 `censored`, store invalid와 cross-artifact lineage mismatch는 `failed`다.
 - 계보: terminal artifact는 trial/strategy/session/start identity와 ordered entry·exit ID·canonical payload SHA를 content address에 포함한다. sequence 2 event는 이 artifact SHA와 sequence 1 key를 고정한다.
 - 저장·복구: 별도 private append-only store가 trial당 artifact 하나만 허용한다. artifact append 뒤 ledger writer가 실패한 crash window는 exact artifact replay 후 event append로 복구하며, 다른 terminal 재분류는 conflict다.
+
+## H111: terminal 요약만 신뢰한 Reviewer는 누락 표본과 변조 계보를 성과로 승인할 수 있다
+
+- 결함: completed 수와 평균 수익만 읽으면 registered trial 누락, 다른 started key, censored/failed 혼입과 entry·exit payload 교체를 독립적으로 검출할 수 없다.
+- 수정: strategy/as-of에 해당하는 등록 trial 집합과 terminal artifact 집합이 정확히 같아야 한다. 각 sequence 1/2 key, artifact SHA/reason/time과 ordered entry·exit ID·canonical SHA를 원장에서 다시 계산한다.
+- 평가: completed exit만 `exit_at` 순서로 compounded return, mean realized R, win rate와 max drawdown을 계산한다. censored/failed가 하나라도 있으면 `data_quality_review`, 20 sessions·30 signals 전에는 `continue_collection`, 충족 후에도 `comparison_ready`다.
+- 권한·저장: review event는 정책을 counts에서 재계산해 action/reason/blocker 불일치를 거부하고 private append-only store에 `(strategy_version, as_of_session, reviewer_version)` 하나만 보존한다. lifecycle, Paper order와 allocation 변경 권한은 모두 false다.
