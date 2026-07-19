@@ -74,6 +74,14 @@ class AlpacaSipDynamicReceiptStore:
                 bound_at = _load_binding(connection, receipt.connection_epoch, plan)
                 if bound_at is None or receipt.received_at < bound_at:
                     raise AlpacaSipDynamicReceiptError
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM dynamic_terminals WHERE connection_epoch=?",
+                        (receipt.connection_epoch,),
+                    ).fetchone()
+                    is not None
+                ):
+                    raise AlpacaSipDynamicReceiptError
                 existing: _ReceiptRow | None = connection.execute(
                     "SELECT generation,receipt_id,connection_epoch,sequence,plan_id,kind,received_at,"
                     "payload_sha256,payload FROM dynamic_receipts "

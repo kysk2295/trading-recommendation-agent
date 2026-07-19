@@ -12,12 +12,14 @@ from trading_agent.alpaca_sip_dynamic_receipt_models import (
     AlpacaSipDynamicRawReceipt,
     AlpacaSipDynamicReceiptError,
     AlpacaSipDynamicReceiptKind,
+    AlpacaSipDynamicTerminalStatus,
 )
 from trading_agent.alpaca_sip_dynamic_receipt_store import AlpacaSipDynamicReceiptStore
 from trading_agent.alpaca_sip_dynamic_subscription import (
     AlpacaSipDynamicSubscriptionPlan,
     build_alpaca_sip_dynamic_subscription_plan,
 )
+from trading_agent.alpaca_sip_dynamic_terminal_store import AlpacaSipDynamicTerminalStore
 from trading_agent.canonical_duckdb_replay import CanonicalDatasetReplay
 from trading_agent.research_input_identity import ResearchInputIdentity
 from trading_agent.us_dynamic_subscription_policy import build_subscription_policy_decision
@@ -158,6 +160,73 @@ def test_unexpected_schema_object_fails_closed(tmp_path: Path) -> None:
 
     with pytest.raises(AlpacaSipDynamicReceiptError):
         _ = store.load_replay(_plan(_NOW), _EPOCH)
+
+
+def test_v1_receipts_migrate_to_terminal_schema_without_row_rewrite(tmp_path: Path) -> None:
+    store = _bound_store(tmp_path)
+    with sqlite3.connect(store.path) as database:
+        database.executescript(
+            "DROP TRIGGER dynamic_terminals_no_update;"
+            "DROP TRIGGER dynamic_terminals_no_delete;"
+            "DROP TABLE dynamic_terminals;"
+            "PRAGMA user_version=1;"
+        )
+    terminals = AlpacaSipDynamicTerminalStore(store.path)
+    assert terminals.load(_plan(_NOW), _EPOCH) is None
+
+    terminal = terminals.append(
+        _plan(_NOW),
+        _EPOCH,
+        _NOW + dt.timedelta(seconds=1),
+        AlpacaSipDynamicTerminalStatus.FAILED,
+    )
+
+    assert terminal.receipt_count == 0
+    with sqlite3.connect(store.path) as database:
+        assert database.execute("PRAGMA user_version").fetchone() == (2,)
+        assert database.execute("SELECT count(*) FROM dynamic_connections").fetchone() == (1,)
+        assert database.execute("SELECT count(*) FROM dynamic_terminals").fetchone() == (1,)
+
+
+def test_terminal_is_append_only_and_corruption_fails_replay(tmp_path: Path) -> None:
+    store = _bound_store(tmp_path)
+    terminals = AlpacaSipDynamicTerminalStore(store.path)
+    _ = terminals.append(
+        _plan(_NOW),
+        _EPOCH,
+        _NOW + dt.timedelta(seconds=1),
+        AlpacaSipDynamicTerminalStatus.FAILED,
+    )
+    with pytest.raises(AlpacaSipDynamicReceiptError):
+        _ = store.append_raw(
+            _plan(_NOW),
+            _receipt(1, AlpacaSipDynamicReceiptKind.CONTROL, _ack()),
+        )
+    with sqlite3.connect(store.path) as database, pytest.raises(sqlite3.IntegrityError):
+        _ = database.execute("UPDATE dynamic_terminals SET status='bounded_complete'")
+    with sqlite3.connect(store.path) as database:
+        database.executescript(
+            "DROP TRIGGER dynamic_terminals_no_update;"
+            "UPDATE dynamic_terminals SET content_sha256="
+            "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';"
+            "CREATE TRIGGER dynamic_terminals_no_update BEFORE UPDATE ON dynamic_terminals "
+            "BEGIN SELECT RAISE(ABORT,'append-only'); END;"
+        )
+
+    with pytest.raises(AlpacaSipDynamicReceiptError):
+        _ = terminals.load(_plan(_NOW), _EPOCH)
+
+
+def test_terminal_with_naive_time_fails_closed(tmp_path: Path) -> None:
+    store = _bound_store(tmp_path)
+
+    with pytest.raises(AlpacaSipDynamicReceiptError):
+        _ = AlpacaSipDynamicTerminalStore(store.path).append(
+            _plan(_NOW),
+            _EPOCH,
+            _NOW.replace(tzinfo=None),
+            AlpacaSipDynamicTerminalStatus.FAILED,
+        )
 
 
 def _bound_store(tmp_path: Path) -> AlpacaSipDynamicReceiptStore:

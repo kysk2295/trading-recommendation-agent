@@ -14,12 +14,14 @@ from trading_agent.alpaca_sip_dynamic_connection_owner import run_alpaca_sip_dyn
 from trading_agent.alpaca_sip_dynamic_receipt_models import (
     AlpacaSipDynamicReceiptError,
     AlpacaSipDynamicReceiptKind,
+    AlpacaSipDynamicTerminalStatus,
 )
 from trading_agent.alpaca_sip_dynamic_receipt_store import AlpacaSipDynamicReceiptStore
 from trading_agent.alpaca_sip_dynamic_subscription import (
     AlpacaSipDynamicSubscriptionError,
     build_alpaca_sip_dynamic_subscription_plan,
 )
+from trading_agent.alpaca_sip_dynamic_terminal_store import AlpacaSipDynamicTerminalStore
 from trading_agent.alpaca_sip_trade_stream import ALPACA_SIP_TRADE_STREAM_URL
 from trading_agent.alpaca_sip_trade_stream_models import (
     AlpacaSipTradeStreamEndpointError,
@@ -91,6 +93,10 @@ def test_owner_binds_plan_and_persists_bounded_raw_frames(tmp_path: Path) -> Non
     )
     assert evidence.receipt_ids == tuple(item.receipt_id for item in replay)
     assert evidence.completed_at == replay[-1].received_at
+    terminal = AlpacaSipDynamicTerminalStore(store.path).load(_plan(), _EPOCH)
+    assert terminal is not None
+    assert terminal.status is AlpacaSipDynamicTerminalStatus.BOUNDED_COMPLETE
+    assert terminal.receipt_count == 5
 
 
 def test_invalid_subscription_ack_is_preserved_before_failure(tmp_path: Path) -> None:
@@ -103,6 +109,10 @@ def test_invalid_subscription_ack_is_preserved_before_failure(tmp_path: Path) ->
     replay = store.load_replay(_plan(), _EPOCH)
     assert len(replay) == 3
     assert replay[-1].payload == b"[]"
+    terminal = AlpacaSipDynamicTerminalStore(store.path).load(_plan(), _EPOCH)
+    assert terminal is not None
+    assert terminal.status is AlpacaSipDynamicTerminalStatus.FAILED
+    assert terminal.receipt_count == 3
 
 
 def test_invalid_auth_control_is_preserved_before_failure(tmp_path: Path) -> None:
@@ -125,6 +135,10 @@ def test_changed_final_url_blocks_credentials_and_frames(tmp_path: Path) -> None
 
     assert connection.sent == []
     assert store.load_replay(_plan(), _EPOCH) == ()
+    terminal = AlpacaSipDynamicTerminalStore(store.path).load(_plan(), _EPOCH)
+    assert terminal is not None
+    assert terminal.status is AlpacaSipDynamicTerminalStatus.FAILED
+    assert terminal.receipt_count == 0
 
 
 def test_data_timeout_preserves_completed_handshake_receipts(tmp_path: Path) -> None:
@@ -135,6 +149,10 @@ def test_data_timeout_preserves_completed_handshake_receipts(tmp_path: Path) -> 
         _ = _run(connection, store)
 
     assert len(store.load_replay(_plan(), _EPOCH)) == 3
+    terminal = AlpacaSipDynamicTerminalStore(store.path).load(_plan(), _EPOCH)
+    assert terminal is not None
+    assert terminal.status is AlpacaSipDynamicTerminalStatus.FAILED
+    assert terminal.receipt_count == 3
 
 
 def test_owner_lease_blocks_second_connection_before_connector(tmp_path: Path) -> None:

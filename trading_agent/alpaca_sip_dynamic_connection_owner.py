@@ -8,20 +8,25 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import final
 
+from websockets.exceptions import ConnectionClosed, InvalidHandshake
+
 from trading_agent.alpaca_http import AlpacaCredentials
 from trading_agent.alpaca_sip_dynamic_receipt_models import (
     AlpacaSipDynamicRawReceipt,
     AlpacaSipDynamicReceiptError,
     AlpacaSipDynamicReceiptKind,
+    AlpacaSipDynamicTerminalStatus,
     StoredAlpacaSipDynamicReceipt,
 )
 from trading_agent.alpaca_sip_dynamic_receipt_sqlite import AlpacaSipDynamicConnectionLease
 from trading_agent.alpaca_sip_dynamic_receipt_store import AlpacaSipDynamicReceiptStore
 from trading_agent.alpaca_sip_dynamic_subscription import (
+    AlpacaSipDynamicSubscriptionError,
     AlpacaSipDynamicSubscriptionPlan,
     dynamic_subscription_request_bytes,
     validate_dynamic_subscription_ack,
 )
+from trading_agent.alpaca_sip_dynamic_terminal_store import AlpacaSipDynamicTerminalStore
 from trading_agent.alpaca_sip_trade_stream import (
     ALPACA_SIP_TRADE_STREAM_URL,
     AlpacaSipTradeStreamConnection,
@@ -31,6 +36,7 @@ from trading_agent.alpaca_sip_trade_stream import (
 from trading_agent.alpaca_sip_trade_stream_endpoint import require_alpaca_sip_trade_stream_url
 from trading_agent.alpaca_sip_trade_stream_models import (
     AlpacaSipControlStage,
+    AlpacaSipTradeStreamError,
     parse_alpaca_sip_control_frame,
 )
 
@@ -131,26 +137,45 @@ def run_alpaca_sip_dynamic_connection(
         epoch = _epoch_factory()
         bound_at = _clock()
         store.bind_connection(epoch, plan, bound_at)
-        with connector(url) as connection:
-            _ = require_alpaca_sip_trade_stream_url(connection.final_url)
-            session = _ReceiptSession(connection, plan, store, epoch, _clock)
-            connected = session.receive(AlpacaSipDynamicReceiptKind.CONTROL, _CONTROL_TIMEOUT_SECONDS)
-            parse_alpaca_sip_control_frame(connected, AlpacaSipControlStage.CONNECTED, plan.symbols[0])
-            connection.send(
-                json.dumps(
-                    {"action": "auth", "key": credentials.key_id, "secret": credentials.secret_key},
-                    separators=(",", ":"),
+        terminals = AlpacaSipDynamicTerminalStore(store.path)
+        try:
+            with connector(url) as connection:
+                _ = require_alpaca_sip_trade_stream_url(connection.final_url)
+                session = _ReceiptSession(connection, plan, store, epoch, _clock)
+                connected = session.receive(AlpacaSipDynamicReceiptKind.CONTROL, _CONTROL_TIMEOUT_SECONDS)
+                parse_alpaca_sip_control_frame(connected, AlpacaSipControlStage.CONNECTED, plan.symbols[0])
+                connection.send(
+                    json.dumps(
+                        {"action": "auth", "key": credentials.key_id, "secret": credentials.secret_key},
+                        separators=(",", ":"),
+                    )
                 )
-            )
-            authenticated = session.receive(AlpacaSipDynamicReceiptKind.CONTROL, _CONTROL_TIMEOUT_SECONDS)
-            parse_alpaca_sip_control_frame(authenticated, AlpacaSipControlStage.AUTHENTICATED, plan.symbols[0])
-            connection.send(dynamic_subscription_request_bytes(plan).decode())
-            subscribed = session.receive(AlpacaSipDynamicReceiptKind.CONTROL, _CONTROL_TIMEOUT_SECONDS)
-            validate_dynamic_subscription_ack(subscribed, plan)
-            subscribed_at = session.receipts[-1].received_at
-            for _ in range(max_data_frames):
-                _ = session.receive(AlpacaSipDynamicReceiptKind.DATA, timeout_seconds)
-        receipts = session.receipts
+                authenticated = session.receive(AlpacaSipDynamicReceiptKind.CONTROL, _CONTROL_TIMEOUT_SECONDS)
+                parse_alpaca_sip_control_frame(authenticated, AlpacaSipControlStage.AUTHENTICATED, plan.symbols[0])
+                connection.send(dynamic_subscription_request_bytes(plan).decode())
+                subscribed = session.receive(AlpacaSipDynamicReceiptKind.CONTROL, _CONTROL_TIMEOUT_SECONDS)
+                validate_dynamic_subscription_ack(subscribed, plan)
+                subscribed_at = session.receipts[-1].received_at
+                for _ in range(max_data_frames):
+                    _ = session.receive(AlpacaSipDynamicReceiptKind.DATA, timeout_seconds)
+            receipts = session.receipts
+        except (
+            AlpacaSipDynamicReceiptError,
+            AlpacaSipDynamicSubscriptionError,
+            AlpacaSipTradeStreamError,
+            ConnectionClosed,
+            InvalidHandshake,
+            OSError,
+            TimeoutError,
+        ):
+            _ = terminals.append(plan, epoch, _clock(), AlpacaSipDynamicTerminalStatus.FAILED)
+            raise
+        _ = terminals.append(
+            plan,
+            epoch,
+            receipts[-1].received_at,
+            AlpacaSipDynamicTerminalStatus.BOUNDED_COMPLETE,
+        )
     return AlpacaSipDynamicConnectionEvidence(
         plan.plan_id,
         epoch,

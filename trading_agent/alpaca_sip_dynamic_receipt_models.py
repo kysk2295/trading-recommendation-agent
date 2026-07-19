@@ -21,6 +21,11 @@ class AlpacaSipDynamicReceiptKind(StrEnum):
     DATA = "data"
 
 
+class AlpacaSipDynamicTerminalStatus(StrEnum):
+    BOUNDED_COMPLETE = "bounded_complete"
+    FAILED = "failed"
+
+
 @dataclass(frozen=True, slots=True)
 class AlpacaSipDynamicRawReceipt:
     connection_epoch: str
@@ -72,6 +77,32 @@ class StoredAlpacaSipDynamicReceipt:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class AlpacaSipDynamicTerminalEvidence:
+    plan_id: str
+    connection_epoch: str
+    terminal_at: dt.datetime
+    status: AlpacaSipDynamicTerminalStatus
+    receipt_ids: tuple[str, ...]
+    content_sha256: str
+
+    @property
+    def receipt_count(self) -> int:
+        return len(self.receipt_ids)
+
+    def __post_init__(self) -> None:
+        if (
+            _HEX64.fullmatch(self.plan_id) is None
+            or _EPOCH.fullmatch(self.connection_epoch) is None
+            or not _aware(self.terminal_at)
+            or type(self.status) is not AlpacaSipDynamicTerminalStatus
+            or self.receipt_ids != tuple(dict.fromkeys(self.receipt_ids))
+            or any(_HEX64.fullmatch(value) is None for value in (*self.receipt_ids, self.content_sha256))
+            or (self.status is AlpacaSipDynamicTerminalStatus.BOUNDED_COMPLETE and len(self.receipt_ids) < 4)
+        ):
+            raise AlpacaSipDynamicReceiptError
+
+
 def _aware(value: dt.datetime) -> bool:
     return type(value) is dt.datetime and value.tzinfo is not None and value.utcoffset() is not None
 
@@ -80,5 +111,7 @@ __all__ = (
     "AlpacaSipDynamicRawReceipt",
     "AlpacaSipDynamicReceiptError",
     "AlpacaSipDynamicReceiptKind",
+    "AlpacaSipDynamicTerminalEvidence",
+    "AlpacaSipDynamicTerminalStatus",
     "StoredAlpacaSipDynamicReceipt",
 )

@@ -225,6 +225,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-19 Alpaca SIP dynamic symbol projection 업데이트:** private store가 재검증한 replay만 입력으로 받아 connected/authenticated/exact ACK를 다시 확인하고, quote·trade·correction·cancel data message를 strict Pydantic wire contract로 파싱해 plan의 instrument ID에 귀속한다. 각 immutable message ID는 raw receipt, frame 내 index와 canonical content hash에 결합된다. unbound symbol, 미래·다른 NY market-date event, control-in-data는 fail-closed한다. 전체 **2424 tests**가 통과했으며 correction chain의 상태 전이·terminal attestation·실제 provider smoke는 아직 완료되지 않았다.
 
+**2026-07-19 Alpaca SIP dynamic terminal 업데이트:** receipt DB를 기존 v1 행을 다시 쓰지 않는 v2로 확장해 epoch별 append-only terminal evidence를 추가했다. bounded owner 성공은 최소 control 3 + data 1의 receipt IDs를 `BOUNDED_COMPLETE`로 고정하고, final URL·auth·ACK·timeout 실패는 당시 0개 이상의 receipt를 `FAILED`로 보존한다. terminal content hash는 plan/epoch/UTC time/status/receipt IDs를 결합하며 후속 receipt 추가, row 변조, naive time과 schema 불일치는 fail-closed한다. 전체 **2427 tests**가 통과했으며 실제 provider·credential file·account/order 요청은 0건이다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \

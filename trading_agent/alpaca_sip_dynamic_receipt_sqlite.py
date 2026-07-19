@@ -9,8 +9,8 @@ from types import TracebackType
 
 from trading_agent.alpaca_sip_dynamic_receipt_models import AlpacaSipDynamicReceiptError
 
-_SCHEMA_VERSION = 1
-_SCHEMA = (
+_SCHEMA_VERSION = 2
+_SCHEMA_V1 = (
     "CREATE TABLE dynamic_connections (connection_epoch TEXT PRIMARY KEY,plan_id TEXT NOT NULL,"
     "policy_identity_sha256 TEXT NOT NULL,policy_semantic_version TEXT NOT NULL,"
     "evaluated_at TEXT NOT NULL,market_date TEXT NOT NULL,bindings_json TEXT NOT NULL,"
@@ -28,13 +28,27 @@ _SCHEMA = (
     "CREATE TRIGGER dynamic_receipts_no_delete BEFORE DELETE ON dynamic_receipts "
     "BEGIN SELECT RAISE(ABORT,'append-only'); END;"
 )
-_OBJECTS = {
+_SCHEMA_V2 = (
+    "CREATE TABLE dynamic_terminals (connection_epoch TEXT PRIMARY KEY,plan_id TEXT NOT NULL,"
+    "terminal_at TEXT NOT NULL,status TEXT NOT NULL,receipt_count INTEGER NOT NULL,"
+    "content_sha256 TEXT NOT NULL);"
+    "CREATE TRIGGER dynamic_terminals_no_update BEFORE UPDATE ON dynamic_terminals "
+    "BEGIN SELECT RAISE(ABORT,'append-only'); END;"
+    "CREATE TRIGGER dynamic_terminals_no_delete BEFORE DELETE ON dynamic_terminals "
+    "BEGIN SELECT RAISE(ABORT,'append-only'); END;"
+)
+_OBJECTS_V1 = {
     "dynamic_connections",
     "dynamic_connections_no_delete",
     "dynamic_connections_no_update",
     "dynamic_receipts",
     "dynamic_receipts_no_delete",
     "dynamic_receipts_no_update",
+}
+_OBJECTS_V2 = _OBJECTS_V1 | {
+    "dynamic_terminals",
+    "dynamic_terminals_no_delete",
+    "dynamic_terminals_no_update",
 }
 
 
@@ -129,9 +143,12 @@ def require_dynamic_receipt_schema(connection: sqlite3.Connection) -> None:
     rows = connection.execute(
         "SELECT name FROM sqlite_master WHERE type IN ('table','trigger') AND name NOT LIKE 'sqlite_%'"
     ).fetchall()
+    version = connection.execute("PRAGMA user_version").fetchone()
+    objects = {row[0] for row in rows}
     if (
-        connection.execute("PRAGMA user_version").fetchone() != (_SCHEMA_VERSION,)
-        or {row[0] for row in rows} != _OBJECTS
+        (version == (1,) and objects != _OBJECTS_V1)
+        or (version == (_SCHEMA_VERSION,) and objects != _OBJECTS_V2)
+        or version not in {(1,), (_SCHEMA_VERSION,)}
     ):
         raise AlpacaSipDynamicReceiptError
 
@@ -152,8 +169,15 @@ def require_private_dynamic_receipt_file(path: Path) -> None:
 
 
 def _prepare(connection: sqlite3.Connection) -> None:
-    if connection.execute("PRAGMA user_version").fetchone() == (0,):
-        connection.executescript(_SCHEMA)
+    version = connection.execute("PRAGMA user_version").fetchone()
+    if version == (0,):
+        connection.executescript(_SCHEMA_V1)
+        _ = connection.execute("PRAGMA user_version=1")
+        connection.commit()
+        version = (1,)
+    if version == (1,):
+        require_dynamic_receipt_schema(connection)
+        connection.executescript(_SCHEMA_V2)
         _ = connection.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         connection.commit()
     require_dynamic_receipt_schema(connection)

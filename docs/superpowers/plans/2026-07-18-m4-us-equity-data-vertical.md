@@ -171,6 +171,16 @@ hash. Unbound symbols, future/wrong-session timestamps, and control messages in
 data frames fail closed. Correction-chain state semantics and terminal session
 attestation remain separate follow-up boundaries.
 
+**Dynamic SIP terminal checkpoint (2026-07-19): Restart evidence complete.**
+Schema v2 adds one append-only terminal row per epoch without rewriting v1
+bindings or receipts. Bounded success requires at least the three controls and
+one data receipt; endpoint, control, ACK, and timeout failures retain their
+zero-or-more partial receipts. The terminal hash binds plan, epoch, UTC time,
+status, and exact receipt IDs. Read-only v1 state, migration, later receipt
+injection, trigger/content corruption, and naive time all fail closed or report
+no pre-migration terminal as appropriate. Reconnect policy and open-session
+provider smoke remain.
+
 ### M4.3: Read-Only Runtime Supervisor
 
 Introduce provider-neutral read-only adapter and supervisor contracts. The
