@@ -298,6 +298,8 @@ The CLI writes a sanitized `stopped` private report and restores the prior
 signal handlers. A restarted process replays the supervisor store, validates
 contiguous New York market-date cycle indexes, and runs only the remaining
 configured daily budget. Duplicate or regressing history fails closed.
+The store also requires one hard link and the exact table plus both
+append-only triggers on every read and write connection.
 Actual regular-session smoke and longer soak observation remain pending.
 
 ### M4.4: Evidence-Gated US Opportunity Projection

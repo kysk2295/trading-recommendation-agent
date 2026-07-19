@@ -20,6 +20,7 @@
 - 실제 SIGTERM handler 설정·event 전달·handler 복원
 - focused 11 passed, full 2389 passed, Ruff와 basedpyright 0/0
 - restart focused 13 passed, full 2391 passed
+- store hardening focused 15 passed, full 2393 passed
 - `--help`, bounded 인자, private report 확인
 - account/order endpoint와 mutation 0건
 

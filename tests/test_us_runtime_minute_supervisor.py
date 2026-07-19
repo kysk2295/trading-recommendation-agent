@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import sqlite3
 import stat
 from pathlib import Path
@@ -201,6 +202,39 @@ def test_tampered_supervisor_payload_fails_replay(tmp_path: Path) -> None:
         connection.execute("DROP TRIGGER runtime_minute_supervisor_no_update")
         connection.execute("UPDATE runtime_minute_supervisor SET payload_json=X'7B7D'")
         connection.commit()
+
+    with pytest.raises(ValueError, match="supervisor"):
+        _ = store.records()
+
+
+def test_missing_append_only_trigger_fails_replay(tmp_path: Path) -> None:
+    store = RuntimeMinuteSupervisorStore(tmp_path / "supervisor.sqlite3")
+    times = iter((START, START + dt.timedelta(seconds=1)))
+    _ = run_runtime_minute_supervisor(
+        lambda _value: RuntimeSupervisorOperationResult("6" * 64, True),
+        RuntimeMinuteSupervisorConfig(1, 60.0),
+        clock=lambda: next(times),
+        sleeper=lambda _seconds: None,
+        writer=store,
+    )
+    with sqlite3.connect(store.path) as connection:
+        connection.execute("DROP TRIGGER runtime_minute_supervisor_no_update")
+
+    with pytest.raises(ValueError, match="supervisor"):
+        _ = store.records()
+
+
+def test_hardlinked_supervisor_store_fails_replay(tmp_path: Path) -> None:
+    store = RuntimeMinuteSupervisorStore(tmp_path / "supervisor.sqlite3")
+    times = iter((START, START + dt.timedelta(seconds=1)))
+    _ = run_runtime_minute_supervisor(
+        lambda _value: RuntimeSupervisorOperationResult("7" * 64, True),
+        RuntimeMinuteSupervisorConfig(1, 60.0),
+        clock=lambda: next(times),
+        sleeper=lambda _seconds: None,
+        writer=store,
+    )
+    os.link(store.path, tmp_path / "alias.sqlite3")
 
     with pytest.raises(ValueError, match="supervisor"):
         _ = store.records()

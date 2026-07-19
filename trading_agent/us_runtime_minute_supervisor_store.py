@@ -28,6 +28,11 @@ BEGIN SELECT RAISE(ABORT, 'append only'); END;
 CREATE TRIGGER runtime_minute_supervisor_no_delete BEFORE DELETE ON runtime_minute_supervisor
 BEGIN SELECT RAISE(ABORT, 'append only'); END;
 """
+_OBJECTS = {
+    "runtime_minute_supervisor",
+    "runtime_minute_supervisor_no_delete",
+    "runtime_minute_supervisor_no_update",
+}
 
 
 @final
@@ -110,7 +115,13 @@ class RuntimeMinuteSupervisorStore:
             _require_private_file(self.path)
             connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
             connection.execute("PRAGMA query_only=ON")
-        if connection.execute("PRAGMA user_version").fetchone() != (1,):
+        objects = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table','trigger') AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        if connection.execute("PRAGMA user_version").fetchone() != (1,) or objects != _OBJECTS:
             connection.close()
             raise RuntimeMinuteSupervisorError
         return connection
@@ -123,6 +134,7 @@ def _require_private_file(path: Path) -> None:
         or stat.S_ISLNK(metadata.st_mode)
         or metadata.st_uid != os.getuid()
         or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_nlink != 1
     ):
         raise RuntimeMinuteSupervisorError
 

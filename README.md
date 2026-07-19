@@ -213,6 +213,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-19 US runtime supervisor restart budget 업데이트:** 새 프로세스는 supervisor store의 전체 canonical history를 먼저 재생하고 뉴욕 거래일별 `cycle_index`가 1부터 연속인지 검증한다. 같은 거래일 재시작은 다음 index와 남은 configured daily budget만 실행하며 이미 소진됐으면 provider operation을 열지 않는다. 미래 clock, 역순 history, 중복·누락 index와 exact duplicate append는 fail-closed하고 다음 거래일에는 index를 1로 재설정한다. process restart fixture와 전체 **2391 tests**가 통과했으며 account/order mutation은 0건이다.
 
+**2026-07-19 US runtime supervisor store hardening 업데이트:** 재시작 budget의 권위인 SQLite는 `runtime_minute_supervisor` table과 두 append-only trigger의 exact schema object 집합을 read/write 연결마다 확인한다. current-user mode 600 regular file이어도 hard-link가 하나라도 있거나 trigger가 삭제되면 payload가 아직 유효해도 fail-closed한다. 정상 mode-600 replay와 trigger/hard-link fault injection, 전체 **2393 tests**가 통과했다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \
