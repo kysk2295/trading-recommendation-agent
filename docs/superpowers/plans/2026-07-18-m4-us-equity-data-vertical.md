@@ -216,6 +216,18 @@ feature; the existing 25 bp actionability policy separately decides whether a
 signal may claim current-entry feasibility. This bridge emits no signal,
 promotion, recommendation, or order.
 
+**Dynamic SIP microstructure feature bundle checkpoint (2026-07-19): Exact
+confirmation join complete.** Independently verified trade and quote
+confirmations may join only when research identity, dynamic plan, connection
+epoch, market date, instrument/symbol, requested as-of time, completed-bar end,
+and VWAP all match. The immutable bundle binds both confirmation IDs and
+derives the last trade's basis-point distance from quote midpoint plus whether
+that trade lies inside the displayed bid/ask. Independently complete but
+different epochs fail closed. A trade outside the quote remains a measured
+feature and is not promoted to current-entry actionability. This is a new data
+evidence contract, not post-hoc mixing of strategy-lane outcomes, and it emits
+no signal, recommendation, lifecycle decision, or order.
+
 **Dynamic SIP terminal checkpoint (2026-07-19): Restart evidence complete.**
 Schema v2 adds one append-only terminal row per epoch without rewriting v1
 bindings or receipts. Bounded success requires at least the three controls and

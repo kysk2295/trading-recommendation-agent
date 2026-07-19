@@ -580,3 +580,10 @@
 - 최초 관찰: dynamic projection은 quote wire를 instrument에 귀속했지만 종목별 as-of latest state와 reconnect completeness 소비 경계가 없었다. trade history와 quote history가 terminal 검증을 따로 구현하면 같은 epoch를 서로 다르게 complete로 판정할 위험도 있었다.
 - 수정: terminal·epoch·receipt ownership을 shared coverage kernel로 추출하고 trade history도 이 kernel을 사용하도록 전환했다. quote state는 full projection을 검증한 뒤 as-of latest event를 선택하고, feature bridge는 exact snapshot binding·마지막 완료 봉·strict 5초 freshness·non-crossed·positive total size를 강제한다. confirmation은 midpoint, microprice, imbalance, spread와 VWAP 관계를 고정한다.
 - 결과: single epoch quote는 source order 4:1로 확인됐고 two-epoch reconnect는 complete-history gate에서 차단됐다. wide spread는 측정되지만 actionability가 아니며 기존 25bp policy, signal publication과 주문 경로는 호출하지 않는다. provider·credential·account/order endpoint와 mutation은 0건이다.
+
+## H82: 서로 독립 검증된 trade와 quote를 epoch 확인 없이 결합한다
+
+- 판별 기준: 같은 symbol과 as-of처럼 보여도 서로 다른 dynamic plan, connection epoch, research identity 또는 bar/VWAP snapshot에서 나온 confirmation을 하나의 microstructure feature로 합치는지 확인한다.
+- 최초 관찰: trade와 quote bridge는 각각 complete-history와 snapshot binding을 검증했지만 호출자가 두 결과를 별도 읽으면 서로 다른 complete session의 값을 함께 사용할 수 있었다.
+- 수정: 두 confirmation의 research identity, plan, epoch, market date, instrument/symbol, observed/bar-end와 VWAP가 모두 같은 경우에만 immutable bundle을 만든다. bundle ID는 두 confirmation ID, last-trade-vs-midpoint bps와 displayed quote 내부 여부를 고정한다.
+- 결과: 같은 epoch fixture는 midpoint distance 0과 inside quote를 확인했고, 서로 독립적으로 complete인 두 epoch는 결합 전에 차단됐다. quote 밖 trade는 feature로 기록되지만 actionability나 signal로 승격되지 않는다. provider·credential·account/order endpoint와 mutation은 0건이다.

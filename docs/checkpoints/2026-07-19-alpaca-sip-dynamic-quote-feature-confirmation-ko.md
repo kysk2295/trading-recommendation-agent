@@ -28,3 +28,6 @@
 - 열린 NYSE 정규장에서 명시적 arm과 private market-data credential 아래 bounded read-only dynamic SIP quote/trade smoke
 - 실제 provider reconnect 관측 시 backfill 또는 sequence continuity evidence 확인
 - 충분한 forward evidence 전에는 quote confirmation을 체결 가능성, 수익성 또는 주문 권한으로 표현하지 않는다.
+
+동일 epoch의 trade·quote confirmation 결합은
+`2026-07-19-alpaca-sip-dynamic-feature-bundle-ko.md`에서 완료했다.
