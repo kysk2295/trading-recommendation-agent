@@ -229,6 +229,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-19 Alpaca SIP dynamic reconnect policy 업데이트:** plan별 terminal history를 각 epoch의 binding·receipt·content hash와 함께 시간순 재검증하고, 재시작 후에도 configured `max_attempts`에서 완료된 terminal 수를 차감한다. complete가 있으면 `BLOCKED_COMPLETE`, failed 수가 budget에 닿으면 `BLOCKED_BUDGET`, 그 외에는 exact next attempt와 remaining budget을 가진 `READY`만 반환한다. complete 뒤 추가 terminal, unordered·mixed-plan·중복 epoch history는 fail-closed한다. 전체 **2433 tests**가 통과했으며 아직 connector retry loop나 실제 provider 요청은 열지 않았다.
 
+**2026-07-19 Alpaca SIP dynamic reconnect supervisor 업데이트:** verified reconnect decision을 bounded owner loop에 연결했다. timeout·socket·handshake 오류만 terminal 기반 remaining budget 안에서 재시도하고, endpoint/protocol/ACK 오류는 `BLOCKED_NON_RETRYABLE`로 다음 connector 전에 중단한다. 기존 complete와 exhausted history는 connector를 열지 않으며 restart는 이전 failed terminal을 포함해 exact attempt count를 복원한다. 전체 **2437 tests**가 통과했으며 fixture loop에는 의도적으로 sleep/backoff가 없고 실제 provider·credential file·account/order 요청은 0건이다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \

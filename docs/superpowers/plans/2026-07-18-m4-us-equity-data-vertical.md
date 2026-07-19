@@ -190,6 +190,15 @@ unordered, mixed-plan, duplicate, or post-completion history. This checkpoint
 does not yet execute another connector; fixture reconnect orchestration remains
 the next boundary.
 
+**Dynamic SIP reconnect supervisor checkpoint (2026-07-19): Fixture loop
+complete.** The supervisor consumes verified restart history before every owner
+attempt. Timeout, socket, and handshake failures retry only while persisted
+budget remains; endpoint, protocol, and subscription ACK failures retain their
+failed terminal and stop before another connector. Existing complete or
+exhausted history performs zero connector calls, and local receipt-integrity
+errors propagate instead of becoming retry reports. The fixture loop is
+immediate by design; bounded backoff and open-session provider smoke remain.
+
 ### M4.3: Read-Only Runtime Supervisor
 
 Introduce provider-neutral read-only adapter and supervisor contracts. The
