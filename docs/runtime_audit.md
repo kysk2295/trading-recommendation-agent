@@ -774,3 +774,10 @@
 - 저장: 별도 schema v1 SQLite는 signal당 하나의 content-addressed entry만 허용하고 UPDATE/DELETE trigger, payload hash, exact schema object, current owner·mode 600·single hard link를 매번 검증한다. exact replay는 행을 늘리지 않는다.
 - 경계: quantity, notional, account, broker ID와 주문 API는 없으며 exit/PnL과 trial terminal도 만들지 않는다. provider, credential, account/order mutation은 0건이다.
 - 결과: focused 21개와 전체 2673 tests가 통과했다. minimal driver는 ask `10000`을 fill `10020.000`으로 append하고 exact replay 0행, private mode 600, account field와 external mutation 0을 확인했다.
+
+## H109: entry가 속한 분봉을 exit에 쓰면 진입 전 가격으로 손절·목표를 판정한다
+
+- 결함: 09:05:01 entry에 09:05~09:06 OHLC를 사용하면 첫 1초 이전의 high/low로 미래 경로를 사후 구성한다. 불완전 장중 경로의 마지막 close를 EOD exit로 간주하는 오류도 가능했다.
+- 수정: entry timestamp를 KST minute ceiling으로 올린 다음 완전한 봉부터 exact 1분 연속 path만 허용한다. 각 봉은 stop-first, first target 순서로 평가하고 trigger와 15:30 close 모두 매도 20bp adverse slippage를 적용한다. 15:30에 닿지 않은 non-terminal path는 artifact를 만들지 않는다.
+- 계보: exit는 entry ID와 consumed bar의 ordered evidence ID·canonical SHA를 content address에 포함한다. net return은 exit fill/entry fill, realized R은 entry fill과 original stop 사이 risk를 분모로 고정한다.
+- 저장·권한: 별도 private append-only store가 signal entry당 exit 하나만 허용하고 schema/trigger/payload/hash와 owner/mode 600/single-link를 검증한다. quantity, account, broker ID, order endpoint와 mutation은 0건이다.
