@@ -751,3 +751,10 @@
 - projection: raw bytes, 종류, symbol, HTTP metadata와 수신시각을 frozen receipt로 보존한다. 현재 형성 중인 첫 행은 완료시각으로 제외하고 09:00부터 연속된 누적 거래대금 차분만 분별 거래대금으로 만든다. 현재가·호가 receipt는 2초 이내이며 symbol/current/base/VI가 같고 provider 호가시각이 5초 이내여야 snapshot을 만든다.
 - 상태: 공식 응답의 명시적 `new_mkop_cls_code=20`, `vi_cls_code=N`, 정상 halt/designation 조합만 continuous/clear로 연다. 그 밖의 미등록 코드는 추정하지 않고 `UNKNOWN`으로 보내 기존 gate가 fail-closed한다.
 - 결과: exact HTTP GET 계약, unsafe origin/redirect/stale/future 차단, 완료봉 cumulative diff, forming bar 제외, gap/skew/symbol mismatch와 raw→setup→signal E2E를 관련 34개 및 전체 2650 tests로 검증했다. 2026-07-19은 일요일이어서 production GET은 0건이며 계좌·잔고·포지션·주문 endpoint와 mutation은 없다.
+
+## H106: KR day setup producer가 등록되지 않은 전략 버전으로 실행될 수 있다
+
+- 결함: KR Opportunity producer만 global multi-market ledger에 사전등록됐고, `theme_leader_vwap_reclaim` setup·signal은 caller가 넘긴 전략 버전을 그대로 보존했다. 같은 이름의 임의 code version이나 다른 lane의 등록을 day shadow 근거로 잘못 사용할 수 있었다.
+- 수정: 기존 등록 CLI와 append-only schema를 유지하면서 허용 계약을 Opportunity와 day 가설 두 개로 제한했다. day 계약은 `H-KR-THEME-LEADER-VWAP-001`, exact `kr_equities/day_trading/theme_leader_vwap_reclaim` lane, 코드 SHA-256 다이제스트가 포함된 version과 `shadow` mode를 함께 고정한다. 전용 verifier는 등록 행이 정확히 하나이고 code, lane, mode와 투영시각 인과성이 모두 일치해야 반환한다.
+- 경계: 사전등록은 trial, fill, lifecycle, champion 또는 주문 권한을 만들지 않는다. fixture manifest는 local replay용이며 실제 forward trial은 clean checkpoint commit SHA로 별도 사전등록한 뒤에만 시작한다.
+- 결과: Opportunity 등록/replay 호환성, exact day 등록/replay와 lane report를 검증했다. 관련 7개와 전체 2652 tests, Ruff, basedpyright 0/0, compileall, no-excuse 및 actual help/missing/happy/replay CLI QA가 통과했다. provider, credential, account와 broker mutation은 0건이다.

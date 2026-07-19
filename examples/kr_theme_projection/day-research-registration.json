@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "hypothesis_id": "H-KR-THEME-LEADER-VWAP-001",
+  "strategy_version": "kr-theme-leader-vwap-reclaim-v1-code-3a5b6542ec6b373b",
+  "code_version": "kr-theme-day-fixture-code-v1",
+  "hypothesis": "A fresh point-in-time KR theme rank-one leader may sustain a first completed-bar session VWAP reclaim with explicit volume confirmation for conservative shadow evaluation.",
+  "falsification_rule": "Reject this version when preregistered forward shadow trials fail declared cost, fillability, drawdown, stability, and multiple-testing gates against the fixed no-entry baseline.",
+  "parameter_set": [
+    "extension_pct:0.01",
+    "reclaim_buffer_bps:5",
+    "touch_tolerance_bps:20",
+    "volume_multiplier:1.2"
+  ],
+  "data_contract": [
+    "completed_minutes_from_session_open:true",
+    "opportunity_rank:1",
+    "provider_status_failure:fail_closed"
+  ],
+  "cost_model": [
+    "entry:max_current_ask_or_conservative_shadow_fill",
+    "same_bar_ambiguity:stop_first",
+    "slippage_bps:20"
+  ],
+  "portfolio_policy": [
+    "concurrent_positions:1",
+    "operating_mode:shadow",
+    "order_authority:false"
+  ],
+  "source_registered_at": "2026-07-19T08:30:00+09:00",
+  "ledger_recorded_at": "2026-07-19T08:30:00+09:00"
+}

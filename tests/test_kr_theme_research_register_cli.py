@@ -10,6 +10,7 @@ from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 PROJECT = Path(__file__).resolve().parents[1]
 SCRIPT = PROJECT / "run_kr_theme_research_register.py"
 EXAMPLE = PROJECT / "examples" / "kr_theme_projection" / "research-registration.json"
+DAY_EXAMPLE = PROJECT / "examples" / "kr_theme_projection" / "day-research-registration.json"
 REPORT_NAME = "kr_theme_research_registration_ko.md"
 
 
@@ -24,6 +25,7 @@ def test_kr_theme_research_register_direct_help_is_self_contained() -> None:
 
     assert completed.returncode == 0
     assert "--manifest" in completed.stdout
+    assert "Opportunity/day shadow" in completed.stdout
 
 
 def test_kr_theme_research_register_fixture_replays_privately(tmp_path: Path) -> None:
@@ -74,3 +76,24 @@ def test_kr_theme_research_register_missing_manifest_fails_without_database(
     assert result == 1
     assert not database.exists()
     assert "결과: blocked" in (output / REPORT_NAME).read_text(encoding="utf-8")
+
+
+def test_kr_theme_day_research_register_reports_exact_lane(tmp_path: Path) -> None:
+    database = tmp_path / "experiment-ledger.sqlite3"
+    output = tmp_path / "report"
+
+    result = registration_cli.main(
+        (
+            "--manifest",
+            str(DAY_EXAMPLE),
+            "--database",
+            str(database),
+            "--output-dir",
+            str(output),
+        )
+    )
+
+    report = (output / REPORT_NAME).read_text(encoding="utf-8")
+    assert result == 0
+    assert "lane: kr_equities/day_trading/theme_leader_vwap_reclaim" in report
+    assert "operating mode: shadow" in report

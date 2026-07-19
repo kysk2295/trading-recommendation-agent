@@ -30,7 +30,7 @@ REPORT_NAME = "kr_theme_research_registration_ko.md"
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="KR theme Opportunity 전략 계보를 전역 ledger에 사전등록")
+    parser = argparse.ArgumentParser(description="허용된 KR theme Opportunity/day shadow 계보를 사전등록")
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--database", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -68,6 +68,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         details=(
             _created_reused("hypothesis", result.hypotheses_created),
             _created_reused("strategy version", result.versions_created),
+            f"lane: {result.strategy_lane.canonical_id}",
             "operating mode: shadow",
         ),
     )
@@ -87,7 +88,7 @@ def _write_report(
     lines = (
         "# KR theme research preregistration",
         "",
-        "> KR Opportunity Manager의 shadow 연구 계보만 등록하며 TradeSignal이나 주문 권한을 만들지 않습니다.",
+        "> 허용된 KR theme Opportunity/day shadow 연구 계보만 등록하며 주문 권한을 만들지 않습니다.",
         "",
         f"- 결과: {result}",
         *(f"- {detail}" for detail in details),
