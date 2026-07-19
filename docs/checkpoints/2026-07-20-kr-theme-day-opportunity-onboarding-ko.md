@@ -37,9 +37,10 @@
 - exact pre-open composite와 day trial이 그 Opportunity producer version을 고정했다.
 - onboarding이 immutable receipt와 manifest를 만들고 실제 supervisor subprocess의 첫 intraday tick이 5개 phase, raw receipt 3건, shadow entry 1건과 audit 5건을 남겼다.
 - exact replay는 receipt, manifest와 기존 append-only artifact를 늘리지 않는다.
-- 관련 KR theme/same-cycle selection: `128 passed`
-- 전체 pytest: `2803 passed`
-- Ruff, basedpyright `0 errors, 0 warnings`, changed-file format, compileall, JSON parse, diff/no-excuse gate: 통과
+- 관련 KR theme/same-cycle selection: `uv run pytest -q -k 'kr_theme or same_cycle'` -> `242 passed`
+- 전체 pytest: `uv run pytest -q` -> `2803 passed`
+- `uv run ruff check .`, `uv run basedpyright`, `uv run python -m compileall -q trading_agent tests`와 `git diff --check`: 통과
+- 변경 production Python의 금지 type escape(`Any`, `object`, `cast`, ignore/noqa) 0건, 최대 pure LOC `227`
 - actual composite/onboard/trial/verifier help와 missing-input CLI: 기대 exit `0/2`, 권한 옵션 0건
 - provider credential/live network와 국내 account/order mutation: `0`
 

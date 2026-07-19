@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import stat
+from contextlib import suppress
 from pathlib import Path
 from typing import Final, override
 
@@ -24,11 +25,9 @@ def open_private_parent(path: Path, *, create: bool) -> int:
     try:
         for component in absolute.parts[1:]:
             if create:
-                try:
+                with suppress(FileExistsError):
                     os.mkdir(component, _DIRECTORY_MODE, dir_fd=descriptor)
                     os.fsync(descriptor)
-                except FileExistsError:
-                    pass
             next_descriptor = os.open(component, _directory_open_flags(), dir_fd=descriptor)
             os.close(descriptor)
             descriptor = next_descriptor

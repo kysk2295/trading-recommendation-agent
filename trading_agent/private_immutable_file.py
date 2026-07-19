@@ -207,7 +207,7 @@ def _publish_locked(parent_descriptor: int, name: str, payload: str) -> bool:
         )
         published = _open_private_file(parent_descriptor, name, (1, 2))
         try:
-            _require_same_file(descriptor, published)
+            require_same_file(descriptor, published)
             os.fsync(parent_descriptor)
             os.unlink(stage, dir_fd=parent_descriptor)
             os.fsync(parent_descriptor)
@@ -229,14 +229,10 @@ def _publish_locked(parent_descriptor: int, name: str, payload: str) -> bool:
         os.fsync(parent_descriptor)
 
 
-def _require_same_file(left_descriptor: int, right_descriptor: int) -> None:
-    require_same_file(left_descriptor, right_descriptor)
-
-
 def _require_final_file(parent_descriptor: int, name: str, expected_descriptor: int) -> None:
     final = _open_private_file(parent_descriptor, name, (1,))
     try:
-        _require_same_file(expected_descriptor, final)
+        require_same_file(expected_descriptor, final)
     finally:
         os.close(final)
 

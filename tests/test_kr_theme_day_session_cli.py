@@ -37,10 +37,20 @@ def test_help_has_manifest_tick_without_authority_inputs() -> None:
         assert forbidden not in result.stdout.lower()
 
 
-def test_onboard_help_has_no_fixture_time_override() -> None:
-    # Given / When
+def test_onboard_rejects_fixture_time_override(tmp_path: Path) -> None:
+    # Given
+    manifest_path = tmp_path / "session.json"
+
+    # When
     result = subprocess.run(
-        (str(SCRIPT), "onboard", "--help"),
+        (
+            str(SCRIPT),
+            "onboard",
+            "--fixture-onboarded-at",
+            ONBOARDED_AT.isoformat(),
+            "--manifest",
+            str(manifest_path),
+        ),
         cwd=ROOT,
         check=False,
         capture_output=True,
@@ -48,8 +58,8 @@ def test_onboard_help_has_no_fixture_time_override() -> None:
     )
 
     # Then
-    assert result.returncode == 0
-    assert "fixture-onboarded-at" not in result.stdout
+    assert result.returncode == 2
+    assert not manifest_path.exists()
 
 
 def test_onboard_writes_private_manifest_receipt_and_report(tmp_path: Path) -> None:
