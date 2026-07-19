@@ -730,3 +730,9 @@
 - 수정: schema v4에 exact market/family/strategy `StrategyLaneRef`를 보존하는 multi-market hypothesis/version append-only table을 추가했다. v1~v3는 무재작성 migration하고 legacy/multi-market identity 충돌, 부모 scope/lane/time, normalized column과 content key를 Reader/Writer 모두 검증한다.
 - 운영 연결: KR theme Opportunity Manager의 code-coupled `shadow` version을 local CLI로 사전등록한다. projection은 exact experiment ledger, producer/runtime version과 등록 전후 인과성을 확인하고 source·experiment SQLite가 output과 filesystem alias면 classification append 전에 차단한다.
 - 결과: schema v1/v2/v3 migration, KR 등록/replay와 등록 없는 projection 차단, synthetic ingest→projection replay가 focused 124개와 전체 2630 tests를 통과했다. 직접 격리 CLI 실행도 검증했으며 KR TradeSignal·shadow fill·trial/lifecycle과 국내 주문은 열지 않았고 provider·credential·network·broker mutation은 0건이다.
+
+## H103: KR theme Opportunity만으로 진입가를 임의 생성할 수 있다
+
+- 결함: Opportunity과 KR market gate는 있었지만 규칙 setup과 day-agent 경계가 없었다. Opportunity rank나 현재 ask만으로 신호를 만들면 VWAP reclaim 조건과 손절·목표의 출처를 사후에 끼워 넣을 수 있었다.
+- 수정: 별도 `theme_leader_vwap_reclaim` day lane과 frozen setup 계약을 추가했다. pure projector가 exact Opportunity rank-1, setup Opportunity ID, symbol, 관측/만료시각과 current KR gate를 대사하고 spread·directional stop/targets까지 통과할 때만 typed current-quote signal을 만든다.
+- 결과: eligible signal, VI block reason 보존, non-leader/expired setup 차단을 focused 28개와 전체 2633 tests 및 최소 driver로 검증했다. setup extractor·provider adapter·trial/fill은 아직 없고 network·credential·국내 주문·broker mutation은 0건이다.
