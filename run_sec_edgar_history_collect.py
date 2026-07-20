@@ -189,13 +189,13 @@ def _preflight_report(path: Path) -> None:
 
 
 def _paths_alias(left: Path, right: Path) -> bool:
-    left = absolute_private_path(left)
-    right = absolute_private_path(right)
-    if left == right:
-        return True
     try:
+        left = absolute_private_path(left)
+        right = absolute_private_path(right)
+        if left == right:
+            return True
         return left.exists() and right.exists() and os.path.samestat(left.stat(), right.stat())
-    except OSError:
+    except (OSError, RuntimeError, ValueError):
         raise typer.BadParameter("database or report path is invalid") from None
 
 

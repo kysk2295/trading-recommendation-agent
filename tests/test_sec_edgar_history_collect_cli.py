@@ -143,6 +143,22 @@ def test_sec_history_cli_redacts_user_agent_path_error(tmp_path: Path) -> None:
         )
 
 
+def test_sec_history_cli_redacts_unresolved_user_path(tmp_path: Path) -> None:
+    with pytest.raises(
+        typer.BadParameter,
+        match=r"^database or report path is invalid$",
+    ):
+        run_sec_edgar_history_collect.main(
+            parent_collection_id="sec-cycle-unresolved-user",
+            cik="0000320193",
+            database="~sec_history_user_that_does_not_exist/sec.sqlite3",
+            output_dir=str(tmp_path / "report"),
+            max_files=1,
+            fixture_manifest=None,
+            user_agent_path=None,
+        )
+
+
 def _manifest(directory: Path) -> Path:
     directory.mkdir()
     (directory / "history.json").write_bytes(HISTORY.read_bytes())
