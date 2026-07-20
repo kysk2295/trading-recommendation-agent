@@ -1,4 +1,8 @@
 #!/usr/bin/env -S uv run --python 3.12 --with httpx2 --with pydantic --with rich --with typer python
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["httpx2", "pydantic", "rich", "typer"]
+# ///
 
 from __future__ import annotations
 

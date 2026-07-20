@@ -40,12 +40,23 @@ class SecCollectionResult:
 def resume_sec_collection(store: SecEdgarStore, collection_id: str, cik: str) -> SecCollectionResult | None:
     cik = normalize_sec_cik(cik)
     existing = store.collection_run(collection_id, cik)
-    if existing is None:
+    if existing is not None:
+        filings = store.filings_for_run(existing.run_id)
+        if len(filings) != existing.filing_count:
+            raise InvalidSecEdgarCollectionError
+        return SecCollectionResult(existing, False, existing.filing_count, 0, True)
+    orphan = store.receipt_for_collection(collection_id, cik)
+    if orphan is None:
         return None
-    filings = store.filings_for_run(existing.run_id)
-    if len(filings) != existing.filing_count:
-        raise InvalidSecEdgarCollectionError
-    return SecCollectionResult(existing, False, existing.filing_count, 0, True)
+    observed_at = orphan.response.received_at
+    return _finish_response(
+        store,
+        orphan.response,
+        receipt_created=False,
+        started_at=observed_at,
+        clock=lambda: observed_at,
+        parser=parse_sec_submission_snapshot,
+    )
 
 
 def collect_sec_submissions(
@@ -61,16 +72,6 @@ def collect_sec_submissions(
     if resumed is not None:
         return resumed
     cik = normalize_sec_cik(cik)
-    orphan = store.receipt_for_collection(collection_id, cik)
-    if orphan is not None:
-        return _finish_response(
-            store,
-            orphan.response,
-            receipt_created=False,
-            started_at=orphan.response.received_at,
-            clock=_clock,
-            parser=_parser,
-        )
     store.preflight_write()
     started_at = _clock()
     try:

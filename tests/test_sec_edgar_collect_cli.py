@@ -8,6 +8,7 @@ import pytest
 import typer
 
 import run_sec_edgar_collect
+from trading_agent.sec_edgar_fixture import load_sec_edgar_fixture
 from trading_agent.sec_edgar_store import SecEdgarStore
 
 PRIVATE_NAME = "Example Public Corp"
@@ -137,6 +138,35 @@ def test_sec_cli_rejects_symlinked_output_directory_before_collection(tmp_path: 
         )
 
     assert not database.exists()
+
+
+@pytest.mark.parametrize("use_fixture", [True, False])
+def test_sec_cli_recovers_orphan_before_opening_external_source(
+    tmp_path: Path,
+    use_fixture: bool,
+) -> None:
+    collection_id = "sec-cycle-orphan"
+    cik = "0000320193"
+    database = tmp_path / "sec.sqlite3"
+    output = tmp_path / "report"
+    seed = load_sec_edgar_fixture(_manifest(tmp_path / "seed"))
+    response = seed.fetch_submissions(collection_id, cik)
+    _ = SecEdgarStore(database).append_receipt(response)
+    missing = tmp_path / "missing-source"
+
+    run_sec_edgar_collect.main(
+        collection_id=collection_id,
+        cik=cik,
+        database=str(database),
+        output_dir=str(output),
+        fixture_manifest=str(missing) if use_fixture else None,
+        user_agent_path=None if use_fixture else str(missing),
+    )
+
+    run = SecEdgarStore(database).collection_run(collection_id, cik)
+    assert run is not None
+    assert run.status.value == "success"
+    assert "new filing versions: 2" in _report(output)
 
 
 def _manifest(directory: Path) -> Path:

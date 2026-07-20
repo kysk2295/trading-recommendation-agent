@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import TypedDict
 
@@ -48,8 +49,12 @@ def test_sec_fixture_rejects_oversized_payload_before_read(
             raise AssertionError("oversized payload was read")
         return original_read(path)
 
+    def reject_descriptor_read(_descriptor: int, _count: int) -> bytes:
+        raise AssertionError("oversized payload descriptor was read")
+
     monkeypatch.setattr(fixture_module, "MAX_SEC_SUBMISSION_BYTES", 4)
     monkeypatch.setattr(Path, "read_bytes", reject_payload_read)
+    monkeypatch.setattr(os, "read", reject_descriptor_read)
 
     with pytest.raises(SecEdgarFixtureError):
         _ = load_sec_edgar_fixture(manifest)
