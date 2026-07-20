@@ -13,7 +13,7 @@
 - cohort status가 `ready`이고 treatment/control이 완전함
 - latest Alpaca security-master snapshot이 cohort 관측보다 미래가 아니며 age가 1일 이하임
 - 각 symbol이 cohort 시점에 exact provider alias 하나와 유효 instrument 하나로 해석됨
-- 평가시각이 cohort 관측 30분 뒤부터 2분 이내이고 해당 NYSE 정규장 안임
+- 평가시각이 cohort 관측 30분을 엄격히 초과한 뒤 2분 이내이고 해당 NYSE 정규장 안임
 - 이전 20개 적격 session의 volume profile이 같은 target session과 exact completed minute까지 존재함
 
 검증된 cohort ID, trial ID, session, cohort/evaluation time, completed minute, security snapshot ID와 정렬된 symbol/instrument/profile evidence hash를 content-addressed plan으로 동결한다. plan 파일명은 cohort ID에 고정되고 mode `600` immutable publication을 사용하므로 같은 cohort의 다른 계획은 덮어쓸 수 없다.
