@@ -233,22 +233,20 @@ def test_open_smoke_cli_rejects_casefolded_absent_store_alias(tmp_path: Path) ->
     assert not alias.exists()
 
 
-def test_open_smoke_cli_removes_final_after_final_publication_drift(
+def test_open_smoke_cli_preserves_final_when_publisher_raises_after_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given
-    manifest, _, _, _ = production_session(tmp_path)
+    _manifest, _, _, _ = production_session(tmp_path)
     destination = tmp_path / "open-smoke.json"
     original_publish = smoke_cli.publish_private_immutable_alias
 
-    def publish_with_drift(source: Path, destination: Path) -> bool:
-        created = original_publish(source, destination)
-        store = KisKrMarketReceiptStore(manifest.paths.receipt_store)
-        assert store.append(_receipt(KisKrMarketReceiptKind.ORDER_BOOK, _quote_body(), seconds=8)) is True
-        return created
+    def publish_then_raise(source: Path, destination: Path) -> bool:
+        assert original_publish(source, destination) is True
+        raise OSError
 
-    monkeypatch.setattr(smoke_cli, "publish_private_immutable_alias", publish_with_drift)
+    monkeypatch.setattr(smoke_cli, "publish_private_immutable_alias", publish_then_raise)
 
     # When
     result = smoke_cli.main(
@@ -258,10 +256,10 @@ def test_open_smoke_cli_removes_final_after_final_publication_drift(
 
     # Then
     assert result == 1
-    assert not destination.exists()
+    assert load_kr_theme_day_open_smoke(destination).verified_at == VERIFIED_AT
 
 
-def test_open_smoke_cli_removes_final_after_publication_validation_failure(
+def test_open_smoke_cli_blocks_pending_validation_failure_before_final_publication(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -303,7 +301,7 @@ def test_open_smoke_cli_rejects_protected_store_as_report_directory(tmp_path: Pa
     assert not manifest.paths.entry_store.exists()
 
 
-def test_open_smoke_cli_removes_new_evidence_when_success_report_fails(
+def test_open_smoke_cli_keeps_committed_evidence_when_success_report_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -323,8 +321,8 @@ def test_open_smoke_cli_removes_new_evidence_when_success_report_fails(
     )
 
     # Then
-    assert result == 1
-    assert not destination.exists()
+    assert result == 0
+    assert load_kr_theme_day_open_smoke(destination).verified_at == VERIFIED_AT
 
 
 def _args(manifest: Path, evidence: Path, output_dir: Path) -> tuple[str, ...]:

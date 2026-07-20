@@ -177,8 +177,9 @@ def test_open_smoke_cli_blocks_report_directory_swap_without_overwriting_manifes
     )
 
     # Then
-    assert result == 1
+    assert result == 0
     assert protected_manifest.read_bytes() == original
+    assert load_kr_theme_day_open_smoke(tmp_path / "evidence.json").verified_at == VERIFIED_AT
 
 
 def test_open_smoke_cli_rejects_hard_linked_experiment_ledger(tmp_path: Path) -> None:
@@ -408,7 +409,7 @@ def test_immutable_alias_makes_source_unlink_the_last_filesystem_operation(
     assert destination.stat().st_nlink == 1
 
 
-def test_open_smoke_cli_cleanup_preserves_foreign_file_after_parent_symlink_swap(
+def test_open_smoke_cli_report_failure_preserves_committed_and_foreign_files_after_parent_swap(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -438,9 +439,9 @@ def test_open_smoke_cli_cleanup_preserves_foreign_file_after_parent_symlink_swap
     )
 
     # Then
-    assert result == 1
+    assert result == 0
     assert foreign.read_text(encoding="utf-8") == "foreign\n"
-    assert (owned_dir / destination.name).exists()
+    assert load_kr_theme_day_open_smoke(owned_dir / destination.name).verified_at == VERIFIED_AT
 
 
 def _args(manifest: Path, evidence: Path, output_dir: Path) -> tuple[str, ...]:

@@ -25,12 +25,9 @@ from trading_agent.kr_theme_day_open_smoke import (
     publish_kr_theme_day_open_smoke,
 )
 from trading_agent.kr_theme_day_open_smoke_paths import (
-    PrivateFileIdentity,
     path_aliases,
     path_resolves,
     path_uses_protected_file,
-    private_file_identity,
-    unlink_matching_identity,
 )
 from trading_agent.kr_theme_day_session_audit_store import KrThemeDaySessionAuditStore
 from trading_agent.kr_theme_day_session_evidence_store import KrThemeDaySessionEvidenceStore
@@ -40,7 +37,12 @@ from trading_agent.kr_theme_day_session_manifest import (
 )
 from trading_agent.kr_theme_day_session_verifier import verify_kr_theme_day_session
 from trading_agent.private_immutable_alias import publish_private_immutable_alias
-from trading_agent.private_stable_report import write_private_stable_report as write_private_report
+from trading_agent.private_stable_report import (
+    InvalidPrivateStableReportError,
+)
+from trading_agent.private_stable_report import (
+    write_private_stable_report as write_private_report,
+)
 
 Clock = Callable[[], dt.datetime]
 REPORT_NAME = "kr_theme_day_open_smoke_verification_ko.md"
@@ -56,7 +58,6 @@ class _PublicationTarget:
 @dataclass(frozen=True, slots=True)
 class _EvidencePublication:
     created: bool
-    identity: PrivateFileIdentity | None
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -135,23 +136,23 @@ def main(
                 ),
             )
             if existing is None
-            else _EvidencePublication(False, None)
+            else _EvidencePublication(False)
         )
         if existing is not None and _current_evidence(manifest, verified_at) != evidence:
             raise ValueError
-        _write_report(args.output_dir, publication.created)
     except (OSError, sqlite3.Error, TypeError, ValidationError, ValueError):
-        if publication is not None and publication.identity is not None:
-            try:
-                _ = unlink_matching_identity(args.evidence, publication.identity)
-            except OSError:
-                return 1
         if report_allowed:
             try:
                 _write_report(args.output_dir, None)
             except OSError:
                 return 1
         return 1
+    if publication is None:
+        return 1
+    try:
+        _write_report(args.output_dir, publication.created)
+    except (OSError, InvalidPrivateStableReportError):
+        return 0
     return 0
 
 
@@ -191,29 +192,21 @@ def _publish_new_stable_evidence(
         raise ValueError
     pending_created = False
     final_created = False
-    complete = False
-    identity: PrivateFileIdentity | None = None
     try:
         pending_created = publish_kr_theme_day_open_smoke(pending, evidence)
         if not pending_created:
             raise ValueError
         if _current_evidence(manifest, evidence.verified_at) != evidence:
             raise ValueError
+        if load_kr_theme_day_open_smoke(pending) != evidence:
+            raise ValueError
         final_created = publish_private_immutable_alias(pending, destination)
-        identity = private_file_identity(destination)
-        if _current_evidence(manifest, evidence.verified_at) != evidence:
+        if not final_created:
             raise ValueError
-        if load_kr_theme_day_open_smoke(destination) != evidence:
-            raise ValueError
-        complete = True
-        return _EvidencePublication(final_created, identity if final_created else None)
+        return _EvidencePublication(True)
     finally:
-        try:
-            if pending_created:
-                pending.unlink(missing_ok=True)
-        finally:
-            if final_created and not complete and identity is not None:
-                _ = unlink_matching_identity(destination, identity)
+        if pending_created and not final_created:
+            pending.unlink(missing_ok=True)
 
 
 def _write_report(output_dir: Path, created: bool | None) -> None:
