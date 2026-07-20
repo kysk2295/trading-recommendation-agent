@@ -18,6 +18,7 @@ Institutional Multi-Market Quant Research OS Milestone 5의 첫 미국 공시 so
 
 - `SecSubmissionRawResponse`는 0-byte HTTP 오류, JSON 외 MIME와 gzip/deflate encoding도 원문으로 보존하고 parser가 `200 application/json`을 별도로 요구한다.
 - recent filing column 길이, document/response/accession CIK 일치, accession, 접수시각, XBRL flag와 문서 identity를 strict하게 검증한다.
+- recent parallel column과 additional-history 목록은 Pydantic JSON validation 단계에서 각각 최대 2,000개로 제한하고 unconsumed extra field는 materialize하지 않는다.
 - 같은 accession의 동일 canonical event는 기존 version을 재사용한다. payload가 달라지면 검증된 linear topology에서 자식이 없는 유일한 tip을 부모로 새 immutable version을 만들며 SQLite `rowid` 순서에 의존하지 않는다.
 - correction observation은 이전 version의 최신 관측시각보다 빠를 수 없으며 모든 저장시각은 UTC로 canonicalize한다.
 - receipt, filing version, run과 observation table은 update/delete trigger로 append-only이며 SQLite structural integrity, exact DDL signature, foreign key, raw payload hash, duplicated run columns, run/receipt/observation lineage와 전체 accession version ancestor chain을 매번 확인한다.
@@ -26,6 +27,8 @@ Institutional Multi-Market Quant Research OS Milestone 5의 첫 미국 공시 so
 - receiptless transport terminal로 끝난 collection key에는 늦은 receipt를 추가하지 않으며, 재시도는 새 collection ID를 사용한다.
 - database와 report alias, symlinked report 경로, broken database symlink, symlinked database parent, foreign version-0 SQLite와 invalid store는 fixture·User-Agent·provider fetch와 store mutation 전에 거부한다.
 - CLI lookup은 current-owner mode-700이 아닌 기존 database parent도 fixture·User-Agent·provider 구성 전에 거부한다. direct store writer는 기존 공통 private-directory 정책대로 owner parent를 mode `700`으로 강화한 뒤 로컬 write를 수행한다.
+- SQLite main file은 retained parent descriptor에서 `O_NOFOLLOW`로 먼저 열고 non-creating `mode=rw/ro` URI로만 연결한다. parent와 named file inode를 연결 직후, transaction commit 전후와 reader 반환 전에 다시 대사한다.
+- Python 표준 SQLite VFS는 journal/sidecar를 dirfd에 결박하지 못한다. 따라서 runtime은 mode-700 parent를 단독 소유하는 전용 OS identity와 untrusted same-UID code가 없는 writer 구간을 전제로 한다. 이 host trust boundary가 깨지면 runtime을 중지하고 trusted evidence에서 재구축한다.
 - fixture payload는 파일 크기를 먼저 확인하고 bounded read하며 issuer와 additional-history 내부 metadata는 이 checkpoint에서 소비하지 않으므로 rejection 조건으로 사용하지 않는다.
 - fixture와 production CLI는 raw body, CIK, accession, 회사명과 User-Agent를 보고서에 기록하지 않는다.
 
@@ -51,9 +54,9 @@ uv run python run_sec_edgar_collect.py \
 
 fixture는 raw-first success, correction version, HTTP 오류 raw 보존, transport terminal failure와 provider-free replay를 검증한다. 이 체크포인트에서는 유효한 실제 연락처 User-Agent를 임의 생성하지 않았으므로 production SEC GET은 0건이다.
 
-- focused SEC: `69 passed`
-- SEC + OpenDART related: `121 passed`
-- full suite: `2922 passed`
+- focused SEC: `83 passed`
+- SEC + OpenDART related: `135 passed`
+- full suite: `2936 passed`
 - Ruff: 통과
 - basedpyright: `0 errors, 0 warnings`
 - compileall과 `git diff --check`: 통과
