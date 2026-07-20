@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import sqlite3
+import stat
 from pathlib import Path
 from typing import final
 
 from pydantic import ValidationError
 
-from trading_agent.private_directory_identity import absolute_private_path
+from trading_agent.private_directory_identity import absolute_private_path, open_private_parent
 from trading_agent.sec_edgar_models import (
     SecCollectionStatus,
     SecSubmissionRawResponse,
@@ -166,9 +168,7 @@ class SecEdgarStore:
             raise InvalidSecEdgarStoreError from None
 
     def collection_run(self, collection_id: str, cik: str) -> SecSubmissionRun | None:
-        if self.path.is_symlink():
-            raise InvalidSecEdgarStoreError
-        if not self.path.exists():
+        if not self._lookup_path_exists():
             return None
         try:
             run_id = hashlib.sha256(f"{collection_id}|{cik}".encode()).hexdigest()
@@ -178,9 +178,7 @@ class SecEdgarStore:
             raise InvalidSecEdgarStoreError from None
 
     def receipt_for_collection(self, collection_id: str, cik: str) -> SecStoredReceipt | None:
-        if self.path.is_symlink():
-            raise InvalidSecEdgarStoreError
-        if not self.path.exists():
+        if not self._lookup_path_exists():
             return None
         try:
             with _reader(self.path) as connection:
@@ -189,12 +187,29 @@ class SecEdgarStore:
             raise InvalidSecEdgarStoreError from None
 
     def filings_for_run(self, run_id: str) -> tuple[SecStoredFilingVersion, ...]:
-        if self.path.is_symlink():
-            raise InvalidSecEdgarStoreError
-        if not self.path.exists():
+        if not self._lookup_path_exists():
             return ()
         try:
             with _reader(self.path) as connection:
                 return _filings_from_connection(connection, run_id)
         except (OSError, sqlite3.Error, TypeError, ValidationError, ValueError):
             raise InvalidSecEdgarStoreError from None
+
+    def _lookup_path_exists(self) -> bool:
+        try:
+            parent_descriptor = open_private_parent(self.path.parent, create=False)
+            try:
+                metadata = os.stat(
+                    self.path.name,
+                    dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+            finally:
+                os.close(parent_descriptor)
+        except FileNotFoundError:
+            return False
+        except (OSError, TypeError, ValueError):
+            raise InvalidSecEdgarStoreError from None
+        if stat.S_ISLNK(metadata.st_mode):
+            raise InvalidSecEdgarStoreError
+        return True

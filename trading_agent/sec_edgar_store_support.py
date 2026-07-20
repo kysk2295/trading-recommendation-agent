@@ -71,13 +71,18 @@ def append_filings(
     for item_index, event in enumerate(snapshot.filings):
         if event.cik != run.cik or event.accepted_at > observed_at:
             raise InvalidSecEdgarStoreError
-        previous = connection.execute(
+        previous_rows = connection.execute(
             "SELECT v.version_id,v.event_id,v.previous_version_id,"
             "(SELECT MAX(o.observed_at) FROM sec_filing_observations o "
             "WHERE o.version_id=v.version_id) FROM sec_filing_versions v "
-            "WHERE cik=? AND accession_number=? ORDER BY v.rowid DESC LIMIT 1",
+            "WHERE v.cik=? AND v.accession_number=? AND NOT EXISTS ("
+            "SELECT 1 FROM sec_filing_versions child "
+            "WHERE child.previous_version_id=v.version_id)",
             (event.cik, event.accession_number),
-        ).fetchone()
+        ).fetchall()
+        if len(previous_rows) > 1:
+            raise InvalidSecEdgarStoreError
+        previous = None if not previous_rows else previous_rows[0]
         if previous is not None and (
             previous[3] is None or dt.datetime.fromisoformat(previous[3]) > observed_at
         ):

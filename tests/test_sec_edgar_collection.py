@@ -37,6 +37,11 @@ class StubFetcher:
         return self.response
 
 
+class MisreportedBytes(bytes):
+    def __len__(self) -> int:
+        return 1
+
+
 def test_sec_collection_commits_raw_before_parse_and_replays_without_fetch(tmp_path: Path) -> None:
     store = SecEdgarStore(tmp_path / "sec.sqlite3")
     response = _response()
@@ -159,6 +164,49 @@ def test_sec_collection_rejects_oversized_typed_response_without_mutation(tmp_pa
 
     assert database.read_bytes() == before
     assert store.receipt_for_collection(response.collection_id, response.cik) is None
+
+
+def test_sec_collection_rejects_oversized_bytes_subclass_without_mutation(tmp_path: Path) -> None:
+    database = tmp_path / "sec.sqlite3"
+    store = SecEdgarStore(database)
+    store.preflight_write()
+    before = database.read_bytes()
+    response = SecSubmissionRawResponse(
+        collection_id="sec-cycle-subclass",
+        cik="0000320193",
+        received_at=RECEIVED_AT,
+        status_code=200,
+        content_type="application/json",
+        raw_payload=b"{}",
+    )
+    object.__setattr__(
+        response,
+        "raw_payload",
+        MisreportedBytes(b"x" * (64 * 1024 * 1024 + 1)),
+    )
+
+    with pytest.raises(ValueError):
+        _ = collect_sec_submissions(
+            StubFetcher(response),
+            store,
+            response.collection_id,
+            response.cik,
+        )
+
+    assert database.read_bytes() == before
+    assert store.receipt_for_collection(response.collection_id, response.cik) is None
+
+
+def test_sec_raw_response_rejects_oversized_bytes_subclass() -> None:
+    with pytest.raises(ValueError):
+        _ = SecSubmissionRawResponse(
+            collection_id="sec-cycle-subclass",
+            cik="0000320193",
+            received_at=RECEIVED_AT,
+            status_code=200,
+            content_type="application/json",
+            raw_payload=MisreportedBytes(b"x" * (64 * 1024 * 1024 + 1)),
+        )
 
 
 def _response() -> SecSubmissionRawResponse:

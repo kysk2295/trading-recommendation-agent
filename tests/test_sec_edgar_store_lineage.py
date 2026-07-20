@@ -159,6 +159,44 @@ def test_sec_store_rejects_receipt_after_receiptless_transport_terminal(tmp_path
     assert store.collection_run(terminal.collection_id, terminal.cik) == terminal
 
 
+def test_sec_store_selects_correction_parent_from_chain_not_rowid(tmp_path: Path) -> None:
+    store = SecEdgarStore(tmp_path / "sec.sqlite3")
+    first_response = _response("sec-cycle-001", FIRST_AT, FIXTURE.read_bytes())
+    first_snapshot = parse_sec_submission_snapshot(first_response)
+    _ = store.append_receipt(first_response)
+    first = store.append_collection(_run(first_response), first_snapshot)
+    second_response = _response(
+        "sec-cycle-002",
+        SECOND_AT,
+        _changed_payload("First correction"),
+    )
+    _ = store.append_receipt(second_response)
+    second = store.append_collection(_run(second_response), parse_sec_submission_snapshot(second_response))
+    with sqlite3.connect(store.path) as connection:
+        trigger_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name='sec_filing_versions_no_update'"
+        ).fetchone()[0]
+        _ = connection.execute("DROP TRIGGER sec_filing_versions_no_update")
+        _ = connection.execute(
+            "UPDATE sec_filing_versions SET rowid=(SELECT MAX(rowid)+100 "
+            "FROM sec_filing_versions) WHERE version_id=?",
+            (first.filings[0].version_id,),
+        )
+        _ = connection.execute(trigger_sql)
+    store.preflight_write()
+    third_response = _response(
+        "sec-cycle-003",
+        SECOND_AT + dt.timedelta(minutes=1),
+        _changed_payload("Second correction"),
+    )
+    _ = store.append_receipt(third_response)
+
+    third = store.append_collection(_run(third_response), parse_sec_submission_snapshot(third_response))
+
+    assert third.filings[0].previous_version_id == second.filings[0].version_id
+    store.preflight_write()
+
+
 def _changed_payload(description: str) -> bytes:
     changed = json.loads(FIXTURE.read_bytes())
     changed["filings"]["recent"]["primaryDocDescription"][0] = description

@@ -45,6 +45,9 @@ class SecSubmissionRawResponse:
     content_encoding: str = "identity"
 
     def __post_init__(self) -> None:
+        if not isinstance(self.raw_payload, bytes):
+            raise SecEdgarResponseError("raw_response")
+        payload_view = memoryview(self.raw_payload)
         if (
             _SAFE_ID.fullmatch(self.collection_id) is None
             or _CIK.fullmatch(self.cik) is None
@@ -52,9 +55,11 @@ class SecSubmissionRawResponse:
             or not 100 <= self.status_code <= 599
             or _CONTENT_TYPE.fullmatch(self.content_type) is None
             or _CONTENT_ENCODING.fullmatch(self.content_encoding) is None
-            or len(self.raw_payload) > SEC_EDGAR_MAX_RAW_BYTES
+            or payload_view.nbytes > SEC_EDGAR_MAX_RAW_BYTES
         ):
             raise SecEdgarResponseError("raw_response")
+        if type(self.raw_payload) is not bytes:
+            object.__setattr__(self, "raw_payload", payload_view.tobytes())
         object.__setattr__(self, "received_at", self.received_at.astimezone(dt.UTC))
 
     @property
