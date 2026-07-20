@@ -11,7 +11,10 @@ from trading_agent.sec_edgar_models import (
     SecSubmissionRun,
     SecSubmissionSnapshot,
 )
-from trading_agent.sec_edgar_store_projection import require_receipt_projection
+from trading_agent.sec_edgar_store_projection import (
+    receipt_bounds_valid,
+    require_receipt_projection,
+)
 from trading_agent.sec_edgar_store_types import (
     InvalidSecEdgarStoreError,
     SecStoredFilingVersion,
@@ -214,6 +217,7 @@ def run_from_connection(connection: sqlite3.Connection, run_id: str) -> SecSubmi
         or hashlib.sha256(row[9].encode()).hexdigest() != row[8]
         or (run.receipt_id is None) != (receipt is None)
         or (receipt is not None and receipt.response.receipt_id != run.receipt_id)
+        or (receipt is not None and not receipt_bounds_valid(receipt.response, run))
     ):
         raise InvalidSecEdgarStoreError
     return run
@@ -224,7 +228,7 @@ def require_receipt(connection: sqlite3.Connection, run: SecSubmissionRun) -> No
     if (
         receipt is None
         or receipt.response.receipt_id != run.receipt_id
-        or receipt.response.received_at > run.completed_at
+        or not receipt_bounds_valid(receipt.response, run)
     ):
         raise InvalidSecEdgarStoreError
 

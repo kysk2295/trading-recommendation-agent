@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import sqlite3
 from pathlib import Path
 
 import pytest
 
+from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.sec_edgar_models import (
     SecCollectionStatus,
     SecSubmissionRawResponse,
@@ -125,6 +127,35 @@ def test_sec_store_rejects_run_columns_inconsistent_with_payload(tmp_path: Path)
         ).fetchone()[0]
         _ = connection.execute("DROP TRIGGER sec_submission_runs_no_update")
         _ = connection.execute("UPDATE sec_submission_runs SET filing_count=99")
+        _ = connection.execute(trigger_sql)
+
+    with pytest.raises(ValueError):
+        _ = store.collection_run(response.collection_id, response.cik)
+
+
+def test_sec_store_rejects_run_starting_after_receipt_on_append_and_replay(tmp_path: Path) -> None:
+    store = SecEdgarStore(tmp_path / "sec.sqlite3")
+    response = _response("sec-cycle-001", FIRST_AT, FIXTURE.read_bytes())
+    snapshot = parse_sec_submission_snapshot(response)
+    _ = store.append_receipt(response)
+    noncausal = _run(response).model_copy(
+        update={"started_at": SECOND_AT, "completed_at": SECOND_AT}
+    )
+
+    with pytest.raises(ValueError):
+        _ = store.append_collection(noncausal, snapshot)
+
+    valid = store.append_collection(_run(response), snapshot).run
+    payload_json = canonical_experiment_ledger_json(noncausal)
+    with sqlite3.connect(store.path) as connection:
+        trigger_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name='sec_submission_runs_no_update'"
+        ).fetchone()[0]
+        _ = connection.execute("DROP TRIGGER sec_submission_runs_no_update")
+        _ = connection.execute(
+            "UPDATE sec_submission_runs SET payload_sha256=?,payload_json=? WHERE run_id=?",
+            (hashlib.sha256(payload_json.encode()).hexdigest(), payload_json, valid.run_id),
+        )
         _ = connection.execute(trigger_sql)
 
     with pytest.raises(ValueError):

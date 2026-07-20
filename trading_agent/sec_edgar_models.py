@@ -107,6 +107,10 @@ class SecSubmissionRun(BaseModel):
             or (self.receipt_id is not None and _HEX64.fullmatch(self.receipt_id) is None)
             or success != (self.failure_code is None)
             or (success and self.receipt_id is None)
+            or (
+                not success
+                and (self.receipt_id is None) != (self.failure_code == "transport")
+            )
             or (not success and self.filing_count != 0)
             or (not success and self.additional_history_file_count != 0)
             or (self.failure_code is not None and _SAFE_ID.fullmatch(self.failure_code) is None)

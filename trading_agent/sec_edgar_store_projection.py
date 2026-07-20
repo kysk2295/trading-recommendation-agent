@@ -14,6 +14,10 @@ from trading_agent.sec_edgar_parser import parse_sec_submission_snapshot
 from trading_agent.sec_edgar_store_types import InvalidSecEdgarStoreError
 
 
+def receipt_bounds_valid(response: SecSubmissionRawResponse, run: SecSubmissionRun) -> bool:
+    return run.started_at <= response.received_at <= run.completed_at
+
+
 def require_receipt_projection(
     response: SecSubmissionRawResponse,
     run: SecSubmissionRun,
@@ -37,6 +41,7 @@ def require_receipt_projection(
                 response.collection_id != run.collection_id
                 or response.cik != run.cik
                 or response.receipt_id != run.receipt_id
+                or not receipt_bounds_valid(response, run)
                 or expected.filings != tuple(events)
                 or expected.additional_history_file_count != run.additional_history_file_count
             ):

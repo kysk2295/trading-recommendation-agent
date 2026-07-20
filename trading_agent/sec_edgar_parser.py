@@ -113,11 +113,14 @@ def _filing(
     is_inline_xbrl = recent.is_inline_xbrl[index]
     if is_xbrl not in {0, 1} or is_inline_xbrl not in {0, 1}:
         raise SecEdgarResponseError("xbrl_flag")
+    accession_number = recent.accession_number[index]
+    if not accession_number.startswith(f"{cik}-"):
+        raise SecEdgarResponseError("accession_cik_mismatch")
     items = tuple(item.strip() for item in recent.items[index].split(",") if item.strip())
     try:
         return SecFilingEvent(
             cik=cik,
-            accession_number=recent.accession_number[index],
+            accession_number=accession_number,
             form=recent.form[index],
             filing_date=filing_date,
             report_date=report_date,

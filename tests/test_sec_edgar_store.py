@@ -138,6 +138,21 @@ def test_sec_failed_run_rejects_discovered_history_without_receipt() -> None:
         )
 
 
+def test_sec_failed_run_rejects_nontransport_failure_without_receipt() -> None:
+    with pytest.raises(ValueError):
+        _ = SecSubmissionRun(
+            collection_id="sec-cycle-001",
+            cik="0000320193",
+            started_at=FIRST_AT,
+            completed_at=FIRST_AT,
+            status=SecCollectionStatus.FAILED,
+            failure_code="http_403",
+            receipt_id=None,
+            filing_count=0,
+            additional_history_file_count=0,
+        )
+
+
 def test_sec_store_rejects_receiptless_failure_when_receipt_exists(tmp_path: Path) -> None:
     store = SecEdgarStore(tmp_path / "sec.sqlite3")
     response = _response("sec-cycle-001", FIRST_AT, FIXTURE.read_bytes())
