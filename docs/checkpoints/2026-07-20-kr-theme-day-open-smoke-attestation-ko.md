@@ -47,13 +47,14 @@ event `observed_at`은 기존 supervisor가 child를 호출한 시각이고 sour
 - success report 기록 실패: CLI success와 신규·replay evidence를 모두 보존; report는 비권위 projection
 - SQLite URI percent-escape 재해석과 manifest source symlink: evidence 생성 전 차단
 - optional source와 아직 생성되지 않은 부모: empty state로 first/replay 허용
+- protected source preflight 실패 전 report/evidence 경로 격리: blocked report가 source를 덮지 않음
 - blocked report의 wrapped publication 오류: traceback 없이 exit `1` 유지
 - content tamper: 차단
 - actual CLI help: fixture/provider/credential/account/order/endpoint/time override 옵션 `0`
 - missing manifest: exit `1`, evidence `0`, redacted blocked report
-- focused changed surface: `46 passed in 5.69s`
-- related KR theme/same-cycle: `287 passed, 2565 deselected in 17.71s`
-- full suite: `2852 passed in 150.60s`
+- focused changed surface: `47 passed in 4.67s`
+- related KR theme/same-cycle: `288 passed, 2565 deselected in 17.63s`
+- full suite: `2853 passed in 148.76s`
 - Ruff 통과, basedpyright `0 errors, 0 warnings`, compileall·diff check 통과
 - 실제 실행 시각: 2026-07-20 10시대 KST, KRX 장중이지만 작업공간에 당일 장 전 등록된 production manifest가 없어 actual smoke는 차단
 - 실제 provider GET, production open-smoke evidence와 국내 account/order mutation: `0`

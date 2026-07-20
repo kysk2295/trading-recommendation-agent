@@ -84,6 +84,7 @@ def main(
             return 1
         report_allowed = True
         manifest = load_kr_theme_day_session_manifest_query_only(args.manifest)
+        report_allowed = False
         protected_files = (
             manifest.paths.experiment_ledger,
             manifest.paths.calendar_store,
@@ -100,11 +101,9 @@ def main(
             *protected_files,
             manifest.paths.output_root,
         )
-        for protected_file in protected_files:
-            require_private_source_path(protected_file)
         if path_aliases(report_path, protected_aliases) or path_uses_protected_file(report_path, protected_files):
-            report_allowed = False
             return 1
+        report_allowed = True
         if not path_resolves(args.evidence):
             raise ValueError
         if path_uses_protected_file(report_path, (args.evidence,)) or path_uses_protected_file(
@@ -118,6 +117,8 @@ def main(
             (*immutable_inputs, *protected_files),
         ):
             return 1
+        for protected_file in protected_files:
+            require_private_source_path(protected_file)
         require_exact_kr_theme_day_onboarding(args.manifest, manifest)
         existing = _existing_evidence(args.evidence)
         verified_at = clock() if existing is None else existing.verified_at

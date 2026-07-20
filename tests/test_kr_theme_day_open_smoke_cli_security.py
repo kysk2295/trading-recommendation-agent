@@ -239,6 +239,32 @@ def test_open_smoke_cli_allows_absent_optional_store_parent(tmp_path: Path) -> N
     assert destination.exists()
 
 
+def test_open_smoke_cli_isolates_report_before_source_preflight(tmp_path: Path) -> None:
+    # Given
+    report_dir = tmp_path / "report"
+    entry_store = report_dir / smoke_cli.REPORT_NAME
+    manifest, _, _, _ = production_session(tmp_path, entry_store=entry_store)
+    report_dir.mkdir(mode=0o700)
+    protected = b"protected-entry-sentinel"
+    entry_store.write_bytes(protected)
+    entry_store.chmod(0o600)
+    displaced = manifest.paths.receipt_store.with_name("displaced-receipts.sqlite3")
+    manifest.paths.receipt_store.rename(displaced)
+    manifest.paths.receipt_store.symlink_to(displaced)
+    destination = tmp_path / "open-smoke.json"
+
+    # When
+    result = smoke_cli.main(
+        _args(tmp_path / "session.json", destination, report_dir),
+        clock=lambda: VERIFIED_AT,
+    )
+
+    # Then
+    assert result == 1
+    assert not destination.exists()
+    assert entry_store.read_bytes() == protected
+
+
 def test_open_smoke_cli_rejects_ledger_symlink_swap_after_onboarding_projection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
