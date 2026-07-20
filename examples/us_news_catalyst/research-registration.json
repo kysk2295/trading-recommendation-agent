@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "hypothesis_id": "H-US-NEWS-CATALYST-001",
+  "strategy_version": "us-news-catalyst-recency-v1-code-c68a346ef9a77f1a",
+  "code_version": "us-news-catalyst-baseline-fixture-v1",
+  "hypothesis": "Within a bounded declared US-equity universe, symbols with more provider-updated news observations in the latest five minutes warrant earlier downstream technical validation than peers with fewer recent observations; this discovery baseline makes no directional return claim.",
+  "falsification_rule": "Reject the hypothesis if preregistered shadow trials show no positive lift in downstream setup-confirmation rate versus same-universe zero-news controls after at least 20 sessions and 100 independent observations, or if any coverage or point-in-time causality defect is found.",
+  "parameter_set": [
+    "event_freshness_seconds=300",
+    "ranking=recent_article_count_desc,latest_provider_updated_at_desc,symbol_asc",
+    "top_n=20",
+    "validity_seconds=300"
+  ],
+  "data_contract": [
+    "alpaca_news_complete_coverage_v1",
+    "alpaca_news_opportunity_evidence_v1",
+    "bounded_declared_us_equity_universe",
+    "provider_updated_at_lte_coverage_cutoff"
+  ],
+  "cost_model": [
+    "opportunity_discovery_only",
+    "trading_cost_not_evaluated"
+  ],
+  "portfolio_policy": [
+    "downstream_validation_required",
+    "no_entry_or_direction",
+    "no_order_authority",
+    "no_position_sizing"
+  ],
+  "source_registered_at": "2026-07-21T12:00:00Z",
+  "ledger_recorded_at": "2026-07-21T12:00:00Z"
+}
