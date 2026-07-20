@@ -9,7 +9,7 @@ Institutional Multi-Market Quant Research OS Milestone 5의 첫 미국 공시 so
 - endpoint: `GET https://data.sec.gov/submissions/CIK##########.json`
 - 인증 토큰은 없지만 조직·애플리케이션과 연락처를 선언한 `User-Agent`가 필요하다.
 - client는 exact SEC origin과 no-redirect GET 하나만 제공한다.
-- 전체 HTTP 작업은 wall-clock 45초에 강제 중단하며 wire body와 압축 해제 body는 각각 64 MiB로 제한하고 원문 wire bytes와 content encoding을 파싱 전에 mode-600 append-only SQLite에 확정한다.
+- 전체 HTTP 작업은 wall-clock 45초에 강제 중단하며 wire body와 압축 해제 body는 각각 64 MiB로 제한하고 원문 wire bytes와 content encoding을 파싱 전에 mode-600 append-only SQLite에 확정한다. raw 상한은 built-in HTTP·fixture, typed response와 store public boundary에서 모두 적용된다.
 - SEC의 요청 한도는 source capability 계약에서 최대 10 requests/second를 넘지 않아야 한다.
 
 공식 근거는 SEC의 [EDGAR API 안내](https://www.sec.gov/search-filings/edgar-application-programming-interfaces), [Developer Resources](https://www.sec.gov/about/developer-resources), [Webmaster FAQ](https://www.sec.gov/about/webmaster-frequently-asked-questions)를 따른다.
@@ -24,7 +24,7 @@ Institutional Multi-Market Quant Research OS Milestone 5의 첫 미국 공시 so
 - caller snapshot, receipt-backed failure code와 저장된 ordered observation은 exact raw receipt를 다시 파싱한 deterministic projection과 같아야 한다. 모든 public store write는 기존 전체 receipt, run, ordered observation과 version chain을 먼저 재생하며, snapshot filing CIK, accepted-at 대 receipt observation, failed-run provenance/history count와 linear correction 순서가 모순되면 mutation 전과 replay에서 모두 거부한다.
 - terminal success·failure run과 terminal 이전에 남은 orphan receipt는 CLI가 provider, fixture, User-Agent file과 HTTP client를 열기 전에 exact replay 또는 deterministic terminal 복구한다.
 - receiptless transport terminal로 끝난 collection key에는 늦은 receipt를 추가하지 않으며, 재시도는 새 collection ID를 사용한다.
-- database와 report alias, symlinked report 경로, foreign version-0 SQLite와 invalid store는 provider fetch와 store mutation 전에 거부한다.
+- database와 report alias, symlinked report 경로, broken database symlink, foreign version-0 SQLite와 invalid store는 fixture·User-Agent·provider fetch와 store mutation 전에 거부한다.
 - fixture payload는 파일 크기를 먼저 확인하고 bounded read하며 issuer와 additional-history 내부 metadata는 이 checkpoint에서 소비하지 않으므로 rejection 조건으로 사용하지 않는다.
 - fixture와 production CLI는 raw body, CIK, accession, 회사명과 User-Agent를 보고서에 기록하지 않는다.
 
@@ -50,13 +50,13 @@ uv run python run_sec_edgar_collect.py \
 
 fixture는 raw-first success, correction version, HTTP 오류 raw 보존, transport terminal failure와 provider-free replay를 검증한다. 이 체크포인트에서는 유효한 실제 연락처 User-Agent를 임의 생성하지 않았으므로 production SEC GET은 0건이다.
 
-- focused SEC: `62 passed`
-- SEC + OpenDART related: `114 passed`
-- full suite: `2915 passed`
+- focused SEC: `64 passed`
+- SEC + OpenDART related: `116 passed`
+- full suite: `2917 passed`
 - Ruff: 통과
 - basedpyright: `0 errors, 0 warnings`
 - compileall과 `git diff --check`: 통과
-- manual CLI: `--help`, invalid CIK, fixture first run `2/2`, missing-User-Agent terminal replay `2/0`, missing fixture·User-Agent orphan 복구, DB/report alias 거부, DB/report mode `600`, directory mode `700`
+- manual CLI: `--help`, invalid input, fixture first run `2/2`, missing-User-Agent terminal replay `2/0`, missing fixture·User-Agent orphan 복구, broken DB symlink과 DB/report alias 거부, DB/report mode `600`, directory mode `700`
 
 최종 release gate의 redacted exact-SHA 리뷰 기록은 저장소 밖 `~/.codex/review-evidence/sec-edgar-<short-sha>.md`에 보존한다. Git commit 내부에서 자신의 SHA를 참조할 수 없으므로 Reviewer 입력에는 해당 absolute path를 별도로 제공한다.
 
