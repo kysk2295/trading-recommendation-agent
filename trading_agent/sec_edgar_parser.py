@@ -4,8 +4,11 @@ import datetime as dt
 import io
 import json
 import zlib
+from collections.abc import Iterator
+from typing import Protocol
 
-import ijson
+from ijson.backends import python as ijson_python
+from ijson.common import JSONError
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
 from trading_agent.sec_edgar_models import (
@@ -35,6 +38,13 @@ _BOUNDED_ARRAY_ITEMS = frozenset(
         "filings.recent.size.item",
     }
 )
+
+
+class _IjsonParse(Protocol):
+    def __call__(self, source: io.BytesIO) -> Iterator[tuple[str, str, object]]: ...
+
+
+_IJSON_PARSE: _IjsonParse = ijson_python.__dict__["parse"]
 
 
 class _SecRecentFilings(BaseModel):
@@ -125,7 +135,7 @@ def parse_sec_submission_snapshot(
 def _require_bounded_json_arrays(payload: bytes) -> None:
     counts: dict[str, int] = {}
     try:
-        for prefix, event, _value in ijson.parse(io.BytesIO(payload)):
+        for prefix, event, _value in _IJSON_PARSE(io.BytesIO(payload)):
             if prefix not in _BOUNDED_ARRAY_ITEMS or event not in _ARRAY_ITEM_EVENTS:
                 continue
             count = counts.get(prefix, 0) + 1
@@ -134,7 +144,7 @@ def _require_bounded_json_arrays(payload: bytes) -> None:
             counts[prefix] = count
     except SecEdgarResponseError:
         raise
-    except (ijson.JSONError, UnicodeError, ValueError):
+    except (JSONError, UnicodeError, ValueError):
         raise SecEdgarResponseError("response_structure") from None
 
 

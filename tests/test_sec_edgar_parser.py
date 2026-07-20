@@ -3,6 +3,8 @@ from __future__ import annotations
 import datetime as dt
 import gzip
 import json
+import subprocess
+import sys
 import tracemalloc
 from pathlib import Path
 
@@ -105,6 +107,41 @@ def test_sec_parser_bounds_decoded_payload(monkeypatch: pytest.MonkeyPatch) -> N
 
     with pytest.raises(SecEdgarResponseError, match="decoded_response_too_large"):
         _ = parse_sec_submission_snapshot(response)
+
+
+def test_sec_parser_huge_integer_returns_sanitized_error_without_signal() -> None:
+    script = """
+import datetime as dt
+from trading_agent.sec_edgar_models import SecEdgarResponseError, SecSubmissionRawResponse
+from trading_agent.sec_edgar_parser import parse_sec_submission_snapshot
+
+response = SecSubmissionRawResponse(
+    collection_id="sec-cycle-huge-integer",
+    cik="0000320193",
+    received_at=dt.datetime(2026, 7, 20, 14, tzinfo=dt.UTC),
+    status_code=200,
+    content_type="application/json",
+    raw_payload=b'{"ignored":' + b'9' * 4_500 + b'}',
+)
+try:
+    parse_sec_submission_snapshot(response)
+except SecEdgarResponseError as error:
+    print(error.failure_code)
+else:
+    raise SystemExit(3)
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "response_structure"
+    assert result.stderr == ""
 
 
 def test_sec_parser_rejects_naive_acceptance_time() -> None:
