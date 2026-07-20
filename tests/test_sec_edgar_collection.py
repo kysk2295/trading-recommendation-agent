@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass, field
 from pathlib import Path
+
+import pytest
 
 from trading_agent.sec_edgar_client import SecEdgarTransportError
 from trading_agent.sec_edgar_collection import collect_sec_submissions
@@ -14,11 +15,19 @@ FIXTURE = Path(__file__).parent / "fixtures/sec_edgar/submissions.json"
 RECEIVED_AT = dt.datetime(2026, 7, 20, 14, tzinfo=dt.UTC)
 
 
-@dataclass(slots=True)
 class StubFetcher:
-    response: SecSubmissionRawResponse | None = None
-    failure: Exception | None = None
-    calls: list[tuple[str, str]] = field(default_factory=list)
+    """Mutable in-memory provider fake that records boundary calls."""
+
+    __slots__ = ("calls", "failure", "response")
+
+    def __init__(
+        self,
+        response: SecSubmissionRawResponse | None = None,
+        failure: Exception | None = None,
+    ) -> None:
+        self.response = response
+        self.failure = failure
+        self.calls: list[tuple[str, str]] = []
 
     def fetch_submissions(self, collection_id: str, cik: str) -> SecSubmissionRawResponse:
         self.calls.append((collection_id, cik))
@@ -86,6 +95,31 @@ def test_sec_collection_persists_transport_failure_without_receipt(tmp_path: Pat
     assert result.run.failure_code == "transport"
     assert result.run.receipt_id is None
     assert store.receipt_for_collection("sec-cycle-001", "0000320193") is None
+
+
+def test_sec_collection_recovers_orphan_receipt_without_provider(tmp_path: Path) -> None:
+    store = SecEdgarStore(tmp_path / "sec.sqlite3")
+    response = _response()
+    _ = store.append_receipt(response)
+    reject = StubFetcher(failure=AssertionError("provider called for orphan receipt"))
+
+    result = collect_sec_submissions(reject, store, response.collection_id, response.cik)
+
+    assert reject.calls == []
+    assert result.run.status is SecCollectionStatus.SUCCESS
+    assert result.receipt_created is False
+    assert result.new_filing_version_count == 2
+
+
+def test_sec_collection_rejects_invalid_store_path_before_provider(tmp_path: Path) -> None:
+    link = tmp_path / "sec.sqlite3"
+    link.symlink_to(tmp_path / "missing-target.sqlite3")
+    fetcher = StubFetcher(_response())
+
+    with pytest.raises(ValueError):
+        _ = collect_sec_submissions(fetcher, SecEdgarStore(link), "sec-cycle-001", "0000320193")
+
+    assert fetcher.calls == []
 
 
 def _response() -> SecSubmissionRawResponse:

@@ -11,6 +11,7 @@ CREATE TABLE sec_submission_receipts (
   received_at TEXT NOT NULL,
   status_code INTEGER NOT NULL,
   content_type TEXT NOT NULL,
+  content_encoding TEXT NOT NULL,
   payload_sha256 TEXT NOT NULL,
   raw_payload BLOB NOT NULL,
   UNIQUE(collection_id, cik)

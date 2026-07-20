@@ -10,7 +10,7 @@ import typer
 import run_sec_edgar_collect
 from trading_agent.sec_edgar_store import SecEdgarStore
 
-PRIVATE_NAME = "Apple Inc."
+PRIVATE_NAME = "Example Public Corp"
 
 
 def test_sec_cli_fixture_happy_and_terminal_replay_are_redacted(tmp_path: Path) -> None:
@@ -100,6 +100,43 @@ def test_sec_cli_preserves_failed_raw_receipt_and_redacts_provider_body(tmp_path
     rendered = str(captured.value) + _report(output)
     assert private_body.decode() not in rendered
     assert "http_403" in rendered
+
+
+def test_sec_cli_rejects_database_report_alias_before_collection(tmp_path: Path) -> None:
+    output = tmp_path / "report"
+    database = output / "sec_edgar_collection_summary.md"
+
+    with pytest.raises(typer.BadParameter):
+        run_sec_edgar_collect.main(
+            collection_id="sec-cycle-001",
+            cik="0000320193",
+            database=str(database),
+            output_dir=str(output),
+            fixture_manifest=str(_manifest(tmp_path / "fixture")),
+            user_agent_path=None,
+        )
+
+    assert not database.exists()
+
+
+def test_sec_cli_rejects_symlinked_output_directory_before_collection(tmp_path: Path) -> None:
+    real_output = tmp_path / "real-output"
+    real_output.mkdir()
+    output = tmp_path / "output-link"
+    output.symlink_to(real_output, target_is_directory=True)
+    database = tmp_path / "sec.sqlite3"
+
+    with pytest.raises(typer.BadParameter):
+        run_sec_edgar_collect.main(
+            collection_id="sec-cycle-001",
+            cik="0000320193",
+            database=str(database),
+            output_dir=str(output),
+            fixture_manifest=str(_manifest(tmp_path / "fixture")),
+            user_agent_path=None,
+        )
+
+    assert not database.exists()
 
 
 def _manifest(directory: Path) -> Path:

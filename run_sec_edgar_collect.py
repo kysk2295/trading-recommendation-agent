@@ -10,12 +10,23 @@ from pathlib import Path
 import typer
 from rich import print as rprint
 
+from trading_agent.private_directory_identity import (
+    absolute_private_path,
+    open_private_parent,
+    require_open_directory_path,
+    require_private_directory,
+)
+from trading_agent.private_stable_report import (
+    InvalidPrivateStableReportError,
+    write_private_stable_report,
+)
 from trading_agent.sec_edgar_client import (
     SecEdgarClient,
     UnsafeSecEdgarEndpointError,
     UnsafeSecEdgarRedirectPolicyError,
 )
 from trading_agent.sec_edgar_collection import (
+    InvalidSecEdgarCollectionError,
     SecCollectionResult,
     collect_sec_submissions,
     resume_sec_collection,
@@ -28,7 +39,7 @@ from trading_agent.sec_edgar_config import (
     load_sec_user_agent,
 )
 from trading_agent.sec_edgar_fixture import SecEdgarFixtureError, load_sec_edgar_fixture
-from trading_agent.sec_edgar_models import SecCollectionStatus, normalize_sec_cik
+from trading_agent.sec_edgar_models import SecCollectionStatus, SecEdgarResponseError, normalize_sec_cik
 from trading_agent.sec_edgar_store import InvalidSecEdgarStoreError, SecEdgarStore
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
@@ -50,6 +61,13 @@ def main(
         raise typer.BadParameter("CIK must contain exactly 10 digits") from None
     if fixture_manifest is not None and user_agent_path is not None:
         raise typer.BadParameter("fixture mode cannot use a User-Agent file")
+    report_path = Path(output_dir) / "sec_edgar_collection_summary.md"
+    if _paths_alias(Path(database), report_path):
+        raise typer.BadParameter("database and report paths must be distinct")
+    try:
+        _preflight_report(report_path)
+    except (OSError, ValueError):
+        raise typer.BadParameter("SEC EDGAR report path is invalid") from None
     try:
         store = SecEdgarStore(Path(database))
         result = resume_sec_collection(store, collection_id, normalized_cik)
@@ -73,16 +91,19 @@ def main(
                 )
     except (
         InvalidSecEdgarStoreError,
+        InvalidSecEdgarCollectionError,
         InvalidSecUserAgentError,
+        SecEdgarResponseError,
         SecEdgarFixtureError,
         SecUserAgentFileError,
         UnsafeSecEdgarEndpointError,
         UnsafeSecEdgarRedirectPolicyError,
     ) as error:
         raise typer.BadParameter(str(error)) from None
-    except ValueError:
-        raise typer.BadParameter("SEC EDGAR input or source contract is invalid") from None
-    _write_report(Path(output_dir), _report(result))
+    try:
+        write_private_stable_report(report_path, _report(result))
+    except InvalidPrivateStableReportError:
+        raise typer.BadParameter("SEC EDGAR report path is invalid") from None
     if result.run.status is SecCollectionStatus.FAILED:
         raise typer.BadParameter(f"SEC EDGAR collection failed: {result.run.failure_code}")
     rprint(
@@ -112,20 +133,46 @@ def _report(result: SecCollectionResult) -> str:
     )
 
 
-def _write_report(directory: Path, content: str) -> None:
-    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    directory.chmod(0o700)
-    path = directory / "sec_edgar_collection_summary.md"
-    if path.is_symlink() or (path.exists() and path.stat().st_nlink != 1):
-        raise typer.BadParameter("SEC EDGAR report path is invalid")
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        os.fchmod(handle.fileno(), 0o600)
-        _ = handle.write(content)
-        handle.flush()
-        os.fsync(handle.fileno())
-    if stat.S_IMODE(path.stat().st_mode) != 0o600:
-        raise typer.BadParameter("SEC EDGAR report path is invalid")
+def _preflight_report(path: Path) -> None:
+    target = absolute_private_path(path)
+    if not target.name:
+        raise ValueError
+    parent_descriptor = open_private_parent(target.parent, create=True)
+    try:
+        require_private_directory(parent_descriptor)
+        require_open_directory_path(target.parent, parent_descriptor)
+        try:
+            descriptor = os.open(
+                target.name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                dir_fd=parent_descriptor,
+            )
+        except FileNotFoundError:
+            return
+        try:
+            metadata = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+                or metadata.st_nlink != 1
+            ):
+                raise ValueError
+        finally:
+            os.close(descriptor)
+    finally:
+        os.close(parent_descriptor)
+
+
+def _paths_alias(left: Path, right: Path) -> bool:
+    left = absolute_private_path(left)
+    right = absolute_private_path(right)
+    if left == right:
+        return True
+    try:
+        return left.exists() and right.exists() and os.path.samestat(left.stat(), right.stat())
+    except OSError:
+        raise typer.BadParameter("database or report path is invalid") from None
 
 
 if __name__ == "__main__":

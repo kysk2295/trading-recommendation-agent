@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import zlib
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
@@ -13,6 +14,7 @@ from trading_agent.sec_edgar_models import (
 )
 
 _MAX_RECENT_FILINGS = 2_000
+_MAX_DECODED_BYTES = 64 * 1024 * 1024
 
 
 class _SecRecentFilings(BaseModel):
@@ -64,8 +66,9 @@ def parse_sec_submission_snapshot(
         raise SecEdgarResponseError(f"http_{response.status_code}")
     if response.content_type != "application/json":
         raise SecEdgarResponseError("content_type")
+    payload = _decoded_payload(response)
     try:
-        document = _SecSubmissionDocument.model_validate_json(response.raw_payload)
+        document = _SecSubmissionDocument.model_validate_json(payload)
     except (UnicodeError, ValidationError, ValueError, json.JSONDecodeError):
         raise SecEdgarResponseError("response_structure") from None
     cik = f"{document.cik:010d}"
@@ -112,7 +115,10 @@ def _filing(
         accepted_at = dt.datetime.fromisoformat(recent.acceptance_datetime[index].replace("Z", "+00:00"))
     except (IndexError, ValueError):
         raise SecEdgarResponseError("filing_time") from None
-    if accepted_at.tzinfo is None or accepted_at.utcoffset() is None or accepted_at > received_at:
+    if accepted_at.tzinfo is None or accepted_at.utcoffset() is None:
+        raise SecEdgarResponseError("acceptance_time")
+    accepted_at = accepted_at.astimezone(dt.UTC)
+    if accepted_at > received_at:
         raise SecEdgarResponseError("acceptance_time")
     is_xbrl = recent.is_xbrl[index]
     is_inline_xbrl = recent.is_inline_xbrl[index]
@@ -136,3 +142,27 @@ def _filing(
         )
     except (SecEdgarResponseError, ValidationError, ValueError):
         raise SecEdgarResponseError("filing") from None
+
+
+def _decoded_payload(response: SecSubmissionRawResponse) -> bytes:
+    if response.content_encoding == "identity":
+        return response.raw_payload
+    if response.content_encoding not in {"gzip", "deflate"}:
+        raise SecEdgarResponseError("content_encoding")
+    window_bits = zlib.MAX_WBITS | 16 if response.content_encoding == "gzip" else zlib.MAX_WBITS
+    try:
+        decoder = zlib.decompressobj(window_bits)
+        payload = decoder.decompress(response.raw_payload, _MAX_DECODED_BYTES + 1)
+        if len(payload) > _MAX_DECODED_BYTES or decoder.unconsumed_tail:
+            raise SecEdgarResponseError("decoded_response_too_large")
+        payload += decoder.flush(_MAX_DECODED_BYTES + 1 - len(payload))
+    except zlib.error:
+        raise SecEdgarResponseError("content_encoding") from None
+    if (
+        len(payload) > _MAX_DECODED_BYTES
+        or not decoder.eof
+        or decoder.unused_data
+        or decoder.unconsumed_tail
+    ):
+        raise SecEdgarResponseError("content_encoding")
+    return payload

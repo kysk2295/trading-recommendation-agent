@@ -20,6 +20,12 @@ class SecEdgarFixtureError(SecEdgarTransportError):
         return "SEC EDGAR fixture manifest or payload is invalid"
 
 
+class _InvalidSecEdgarFixtureManifestError(ValueError):
+    @override
+    def __str__(self) -> str:
+        return "SEC EDGAR fixture manifest is invalid"
+
+
 class SecEdgarFixtureManifest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -27,6 +33,7 @@ class SecEdgarFixtureManifest(BaseModel):
     received_at: dt.datetime
     http_status: int
     content_type: str
+    content_encoding: str = "identity"
     payload_path: str
 
     @model_validator(mode="after")
@@ -37,11 +44,12 @@ class SecEdgarFixtureManifest(BaseModel):
             or self.received_at.utcoffset() is None
             or not 100 <= self.http_status <= 599
             or _CONTENT_TYPE.fullmatch(self.content_type) is None
+            or re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,31}", self.content_encoding) is None
             or path.is_absolute()
             or not path.parts
             or any(part in {".", ".."} for part in path.parts)
         ):
-            raise ValueError("invalid SEC EDGAR fixture")
+            raise _InvalidSecEdgarFixtureManifestError
         return self
 
 
@@ -58,6 +66,7 @@ class SecEdgarFixtureFetcher:
             status_code=self.manifest.http_status,
             content_type=self.manifest.content_type,
             raw_payload=self.raw_payload,
+            content_encoding=self.manifest.content_encoding,
         )
 
 

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Self, override
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 
@@ -18,6 +18,7 @@ _DOCUMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$")
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _CONTENT_TYPE = re.compile(r"^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$")
+_CONTENT_ENCODING = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}$")
 
 
 class SecEdgarResponseError(ValueError):
@@ -40,6 +41,7 @@ class SecSubmissionRawResponse:
     status_code: int
     content_type: str
     raw_payload: bytes = field(repr=False)
+    content_encoding: str = "identity"
 
     def __post_init__(self) -> None:
         if (
@@ -48,9 +50,11 @@ class SecSubmissionRawResponse:
             or not _aware(self.received_at)
             or not 100 <= self.status_code <= 599
             or _CONTENT_TYPE.fullmatch(self.content_type) is None
+            or _CONTENT_ENCODING.fullmatch(self.content_encoding) is None
             or not self.raw_payload
         ):
             raise SecEdgarResponseError("raw_response")
+        object.__setattr__(self, "received_at", self.received_at.astimezone(dt.UTC))
 
     @property
     def receipt_id(self) -> str:
@@ -61,6 +65,7 @@ class SecSubmissionRawResponse:
                 self.received_at.isoformat(),
                 str(self.status_code),
                 self.content_type,
+                self.content_encoding,
                 hashlib.sha256(self.raw_payload).hexdigest(),
             )
         )
@@ -85,6 +90,11 @@ class SecSubmissionRun(BaseModel):
     receipt_id: str | None
     filing_count: int = Field(ge=0)
     additional_history_file_count: int = Field(ge=0)
+
+    @field_validator("started_at", "completed_at")
+    @classmethod
+    def normalize_time(cls, value: dt.datetime) -> dt.datetime:
+        return value.astimezone(dt.UTC) if _aware(value) else value
 
     @model_validator(mode="after")
     def validate_run(self) -> Self:
@@ -125,6 +135,11 @@ class SecFilingEvent(BaseModel):
     size_bytes: int = Field(ge=0)
     is_xbrl: bool
     is_inline_xbrl: bool
+
+    @field_validator("accepted_at")
+    @classmethod
+    def normalize_time(cls, value: dt.datetime) -> dt.datetime:
+        return value.astimezone(dt.UTC) if _aware(value) else value
 
     @model_validator(mode="after")
     def validate_event(self) -> Self:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, override
 
 from trading_agent.sec_edgar_client import SecEdgarTransportError
 from trading_agent.sec_edgar_models import (
@@ -22,6 +22,12 @@ class SecSubmissionFetcher(Protocol):
     def fetch_submissions(self, collection_id: str, cik: str) -> SecSubmissionRawResponse: ...
 
 
+class InvalidSecEdgarCollectionError(ValueError):
+    @override
+    def __str__(self) -> str:
+        return "SEC EDGAR collection state is invalid"
+
+
 @dataclass(frozen=True, slots=True)
 class SecCollectionResult:
     run: SecSubmissionRun
@@ -38,7 +44,7 @@ def resume_sec_collection(store: SecEdgarStore, collection_id: str, cik: str) ->
         return None
     filings = store.filings_for_run(existing.run_id)
     if len(filings) != existing.filing_count:
-        raise ValueError("incomplete SEC EDGAR terminal run")
+        raise InvalidSecEdgarCollectionError
     return SecCollectionResult(existing, False, existing.filing_count, 0, True)
 
 
@@ -55,6 +61,17 @@ def collect_sec_submissions(
     if resumed is not None:
         return resumed
     cik = normalize_sec_cik(cik)
+    orphan = store.receipt_for_collection(collection_id, cik)
+    if orphan is not None:
+        return _finish_response(
+            store,
+            orphan.response,
+            receipt_created=False,
+            started_at=orphan.response.received_at,
+            clock=_clock,
+            parser=_parser,
+        )
+    store.preflight_write()
     started_at = _clock()
     try:
         response = fetcher.fetch_submissions(collection_id, cik)
@@ -62,24 +79,45 @@ def collect_sec_submissions(
         run = _failed_run(collection_id, cik, started_at, _clock(), "transport", None)
         _ = store.append_failed_run(run)
         return SecCollectionResult(run, False, 0, 0, False)
+    if response.collection_id != collection_id or response.cik != cik:
+        raise InvalidSecEdgarCollectionError
     receipt = store.append_receipt(response)
-    completed_at = max(started_at, response.received_at, _clock())
+    return _finish_response(
+        store,
+        response,
+        receipt_created=receipt.created,
+        started_at=started_at,
+        clock=_clock,
+        parser=_parser,
+    )
+
+
+def _finish_response(
+    store: SecEdgarStore,
+    response: SecSubmissionRawResponse,
+    *,
+    receipt_created: bool,
+    started_at: dt.datetime,
+    clock: Callable[[], dt.datetime],
+    parser: Callable[[SecSubmissionRawResponse], SecSubmissionSnapshot],
+) -> SecCollectionResult:
+    completed_at = max(started_at, response.received_at, clock())
     try:
-        snapshot = _parser(response)
+        snapshot = parser(response)
     except SecEdgarResponseError as error:
         run = _failed_run(
-            collection_id,
-            cik,
+            response.collection_id,
+            response.cik,
             min(started_at, response.received_at),
             completed_at,
             error.failure_code,
             response,
         )
         _ = store.append_failed_run(run)
-        return SecCollectionResult(run, receipt.created, 0, 0, False)
+        return SecCollectionResult(run, receipt_created, 0, 0, False)
     run = SecSubmissionRun(
-        collection_id=collection_id,
-        cik=cik,
+        collection_id=response.collection_id,
+        cik=response.cik,
         started_at=min(started_at, response.received_at),
         completed_at=completed_at,
         status=SecCollectionStatus.SUCCESS,
@@ -91,7 +129,7 @@ def collect_sec_submissions(
     appended = store.append_collection(run, snapshot)
     return SecCollectionResult(
         appended.run,
-        receipt.created,
+        receipt_created,
         len(appended.filings),
         appended.new_filing_version_count,
         False,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import gzip
 import json
 from pathlib import Path
 
@@ -50,6 +51,42 @@ def test_sec_parser_rejects_future_acceptance_time() -> None:
     document["filings"]["recent"]["acceptanceDateTime"][0] = "2026-07-20T15:00:00Z"
 
     # When / Then
+    with pytest.raises(SecEdgarResponseError, match="acceptance_time"):
+        _ = parse_sec_submission_snapshot(_response(json.dumps(document).encode()))
+
+
+def test_sec_parser_canonicalizes_equivalent_acceptance_offset_to_utc() -> None:
+    document = json.loads(FIXTURE.read_bytes())
+    document["filings"]["recent"]["acceptanceDateTime"][0] = "2026-07-20T09:30:00-04:00"
+
+    snapshot = parse_sec_submission_snapshot(_response(json.dumps(document).encode()))
+
+    assert snapshot.filings[0].accepted_at == dt.datetime(2026, 7, 20, 13, 30, tzinfo=dt.UTC)
+    assert snapshot.filings[0].accepted_at.isoformat() == "2026-07-20T13:30:00+00:00"
+
+
+def test_sec_parser_bounds_decoded_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    import trading_agent.sec_edgar_parser as parser_module
+
+    monkeypatch.setattr(parser_module, "_MAX_DECODED_BYTES", 512)
+    response = SecSubmissionRawResponse(
+        collection_id="sec-cycle-001",
+        cik="0000320193",
+        received_at=RECEIVED_AT,
+        status_code=200,
+        content_type="application/json",
+        raw_payload=gzip.compress(b"x" * 1_024),
+        content_encoding="gzip",
+    )
+
+    with pytest.raises(SecEdgarResponseError, match="decoded_response_too_large"):
+        _ = parse_sec_submission_snapshot(response)
+
+
+def test_sec_parser_rejects_naive_acceptance_time() -> None:
+    document = json.loads(FIXTURE.read_bytes())
+    document["filings"]["recent"]["acceptanceDateTime"][0] = "2026-07-20T13:30:00"
+
     with pytest.raises(SecEdgarResponseError, match="acceptance_time"):
         _ = parse_sec_submission_snapshot(_response(json.dumps(document).encode()))
 

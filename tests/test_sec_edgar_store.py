@@ -81,6 +81,39 @@ def test_sec_store_rejects_conflicting_receipt_and_sql_update(tmp_path: Path) ->
         )
 
 
+def test_sec_store_rejects_time_regressing_correction(tmp_path: Path) -> None:
+    store = SecEdgarStore(tmp_path / "sec.sqlite3")
+    first_response = _response("sec-cycle-001", SECOND_AT, FIXTURE.read_bytes())
+    first_snapshot = parse_sec_submission_snapshot(first_response)
+    _ = store.append_receipt(first_response)
+    _ = store.append_collection(_run(first_response, 2, 1), first_snapshot)
+    changed = json.loads(FIXTURE.read_bytes())
+    changed["filings"]["recent"]["primaryDocDescription"][0] = "Regressing correction"
+    regressing = _response("sec-cycle-002", FIRST_AT, json.dumps(changed).encode())
+    snapshot = parse_sec_submission_snapshot(regressing)
+    _ = store.append_receipt(regressing)
+
+    with pytest.raises(ValueError):
+        _ = store.append_collection(_run(regressing, 2, 1), snapshot)
+
+
+def test_sec_store_rejects_same_name_trigger_replacement(tmp_path: Path) -> None:
+    store = SecEdgarStore(tmp_path / "sec.sqlite3")
+    response = _response("sec-cycle-001", FIRST_AT, FIXTURE.read_bytes())
+    snapshot = parse_sec_submission_snapshot(response)
+    _ = store.append_receipt(response)
+    _ = store.append_collection(_run(response, 2, 1), snapshot)
+    with sqlite3.connect(store.path) as connection:
+        _ = connection.execute("DROP TRIGGER sec_submission_runs_no_update")
+        _ = connection.execute(
+            "CREATE TRIGGER sec_submission_runs_no_update BEFORE UPDATE "
+            "ON sec_submission_runs BEGIN SELECT 1; END"
+        )
+
+    with pytest.raises(ValueError):
+        _ = store.collection_run(response.collection_id, response.cik)
+
+
 def _response(collection_id: str, received_at: dt.datetime, payload: bytes) -> SecSubmissionRawResponse:
     return SecSubmissionRawResponse(
         collection_id=collection_id,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import gzip
 from pathlib import Path
 
 import httpx2
@@ -14,6 +15,7 @@ from trading_agent.sec_edgar_client import (
     UnsafeSecEdgarRedirectPolicyError,
 )
 from trading_agent.sec_edgar_config import SecUserAgent
+from trading_agent.sec_edgar_parser import parse_sec_submission_snapshot
 
 FIXTURE = Path(__file__).parent / "fixtures/sec_edgar/submissions.json"
 RECEIVED_AT = dt.datetime(2026, 7, 20, 14, tzinfo=dt.UTC)
@@ -29,7 +31,7 @@ def test_sec_client_sends_exact_get_with_declared_user_agent() -> None:
             200,
             request=request,
             headers={"content-type": "application/json; charset=utf-8"},
-            content=FIXTURE.read_bytes(),
+            stream=httpx2.ByteStream(FIXTURE.read_bytes()),
         )
 
     with httpx2.Client(
@@ -98,6 +100,53 @@ def test_sec_client_bounds_response_before_collection() -> None:
 
     assert "data.sec.gov" not in str(captured.value)
     assert USER_AGENT not in str(captured.value)
+
+
+def test_sec_client_preserves_gzip_wire_bytes_and_parser_decodes_bounded_payload() -> None:
+    compressed = gzip.compress(FIXTURE.read_bytes())
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            request=request,
+            headers={"content-type": "application/json", "content-encoding": "gzip"},
+            stream=httpx2.ByteStream(compressed),
+        )
+
+    with httpx2.Client(
+        base_url="https://data.sec.gov",
+        transport=httpx2.MockTransport(handle),
+        follow_redirects=False,
+    ) as http_client:
+        response = SecEdgarClient(
+            http_client,
+            SecUserAgent(USER_AGENT),
+            _clock=lambda: RECEIVED_AT,
+        ).fetch_submissions("sec-cycle-001", "0000320193")
+
+    assert response.content_encoding == "gzip"
+    assert response.raw_payload == compressed
+    assert len(parse_sec_submission_snapshot(response).filings) == 2
+
+
+def test_sec_client_enforces_whole_request_deadline() -> None:
+    moments = iter((0.0, 46.0))
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, request=request, stream=httpx2.ByteStream(b"{}"))
+
+    with httpx2.Client(
+        base_url="https://data.sec.gov",
+        transport=httpx2.MockTransport(handle),
+        follow_redirects=False,
+    ) as http_client:
+        client = SecEdgarClient(
+            http_client,
+            SecUserAgent(USER_AGENT),
+            _monotonic=lambda: next(moments),
+        )
+        with pytest.raises(SecEdgarTransportError):
+            _ = client.fetch_submissions("sec-cycle-001", "0000320193")
 
 
 def test_sec_client_exposes_read_only_surface() -> None:
