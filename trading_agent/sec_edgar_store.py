@@ -145,6 +145,10 @@ class SecEdgarStore:
             with _writer(self.path) as connection:
                 if run.receipt_id is not None:
                     _require_receipt(connection, run)
+                    receipt = _receipt_from_connection(connection, run.collection_id, run.cik)
+                    if receipt is None:
+                        raise InvalidSecEdgarStoreError
+                    _require_receipt_projection(receipt.response, run, ())
                 elif _receipt_from_connection(connection, run.collection_id, run.cik) is not None:
                     raise InvalidSecEdgarStoreError
                 existing = _run_from_connection(connection, run.run_id)

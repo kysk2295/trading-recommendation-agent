@@ -173,6 +173,50 @@ def test_sec_store_rejects_receiptless_failure_when_receipt_exists(tmp_path: Pat
         _ = store.append_failed_run(run)
 
 
+@pytest.mark.parametrize(
+    ("status_code", "content_type", "payload", "failure_code"),
+    [
+        (503, "text/plain", b"", "http_403"),
+        (200, "application/json", FIXTURE.read_bytes(), "response_structure"),
+    ],
+)
+def test_sec_store_rejects_failed_run_that_contradicts_receipt(
+    tmp_path: Path,
+    status_code: int,
+    content_type: str,
+    payload: bytes,
+    failure_code: str,
+) -> None:
+    store = SecEdgarStore(tmp_path / "sec.sqlite3")
+    response = SecSubmissionRawResponse(
+        collection_id="sec-cycle-001",
+        cik="0000320193",
+        received_at=FIRST_AT,
+        status_code=status_code,
+        content_type=content_type,
+        raw_payload=payload,
+    )
+    _ = store.append_receipt(response)
+    run = SecSubmissionRun(
+        collection_id=response.collection_id,
+        cik=response.cik,
+        started_at=FIRST_AT,
+        completed_at=FIRST_AT,
+        status=SecCollectionStatus.FAILED,
+        failure_code=failure_code,
+        receipt_id=response.receipt_id,
+        filing_count=0,
+        additional_history_file_count=0,
+    )
+    before = store.path.read_bytes()
+
+    with pytest.raises(ValueError):
+        _ = store.append_failed_run(run)
+
+    assert store.path.read_bytes() == before
+    assert store.collection_run(response.collection_id, response.cik) is None
+
+
 def _response(collection_id: str, received_at: dt.datetime, payload: bytes) -> SecSubmissionRawResponse:
     return SecSubmissionRawResponse(
         collection_id=collection_id,
