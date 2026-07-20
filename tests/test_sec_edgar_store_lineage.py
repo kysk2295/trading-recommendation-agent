@@ -135,6 +135,30 @@ def test_sec_store_rejects_tampered_version_ancestor_before_public_write(tmp_pat
         _ = store.filings_for_run(second.run.run_id)
 
 
+def test_sec_store_rejects_receipt_after_receiptless_transport_terminal(tmp_path: Path) -> None:
+    store = SecEdgarStore(tmp_path / "sec.sqlite3")
+    terminal = SecSubmissionRun(
+        collection_id="sec-cycle-terminal",
+        cik="0000320193",
+        started_at=FIRST_AT,
+        completed_at=FIRST_AT,
+        status=SecCollectionStatus.FAILED,
+        failure_code="transport",
+        receipt_id=None,
+        filing_count=0,
+        additional_history_file_count=0,
+    )
+    assert store.append_failed_run(terminal) is True
+    response = _response(terminal.collection_id, FIRST_AT, FIXTURE.read_bytes())
+    before = store.path.read_bytes()
+
+    with pytest.raises(ValueError):
+        _ = store.append_receipt(response)
+
+    assert store.path.read_bytes() == before
+    assert store.collection_run(terminal.collection_id, terminal.cik) == terminal
+
+
 def _changed_payload(description: str) -> bytes:
     changed = json.loads(FIXTURE.read_bytes())
     changed["filings"]["recent"]["primaryDocDescription"][0] = description

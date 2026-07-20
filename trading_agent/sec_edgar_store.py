@@ -82,6 +82,9 @@ class SecEdgarStore:
                     if tuple(existing) != row:
                         raise InvalidSecEdgarStoreError
                     return SecReceiptAppendResult(SecStoredReceipt(response), False)
+                run_id = hashlib.sha256(f"{response.collection_id}|{response.cik}".encode()).hexdigest()
+                if _run_from_connection(connection, run_id) is not None:
+                    raise InvalidSecEdgarStoreError
                 _ = connection.execute(
                     "INSERT INTO sec_submission_receipts VALUES (?,?,?,?,?,?,?,?,?)",
                     row,
