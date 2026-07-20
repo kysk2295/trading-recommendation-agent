@@ -158,15 +158,16 @@ def test_sec_parser_rejects_naive_acceptance_time() -> None:
         _ = parse_sec_submission_snapshot(_response(json.dumps(document).encode()))
 
 
-def test_sec_parser_rejects_raw_accession_from_another_cik() -> None:
+def test_sec_parser_preserves_filing_agent_accession_for_issuer() -> None:
     document = json.loads(FIXTURE.read_bytes())
     accession = document["filings"]["recent"]["accessionNumber"][0]
     document["filings"]["recent"]["accessionNumber"][0] = f"0000000001{accession[10:]}"
 
-    with pytest.raises(SecEdgarResponseError) as captured:
-        _ = parse_sec_submission_snapshot(_response(json.dumps(document).encode()))
+    snapshot = parse_sec_submission_snapshot(_response(json.dumps(document).encode()))
 
-    assert captured.value.failure_code == "accession_cik_mismatch"
+    assert snapshot.cik == "0000320193"
+    assert snapshot.filings[0].cik == "0000320193"
+    assert snapshot.filings[0].accession_number == "0000000001-26-000101"
 
 
 def test_sec_parser_ignores_unconsumed_issuer_and_history_metadata() -> None:

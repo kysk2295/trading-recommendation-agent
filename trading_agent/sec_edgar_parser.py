@@ -209,8 +209,6 @@ def _filing(
     if is_xbrl not in {0, 1} or is_inline_xbrl not in {0, 1}:
         raise SecEdgarResponseError("xbrl_flag")
     accession_number = recent.accession_number[index]
-    if not accession_number.startswith(f"{cik}-"):
-        raise SecEdgarResponseError("accession_cik_mismatch")
     items = tuple(item.strip() for item in recent.items[index].split(",") if item.strip())
     try:
         return SecFilingEvent(
