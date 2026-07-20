@@ -24,7 +24,7 @@ Institutional Multi-Market Quant Research OS Milestone 5의 첫 미국 공시 so
 - caller snapshot, receipt-backed failure code와 저장된 ordered observation은 exact raw receipt를 다시 파싱한 deterministic projection과 같아야 한다. 모든 public store write는 기존 전체 receipt, run, ordered observation과 version chain을 먼저 재생하며, snapshot filing CIK, accepted-at 대 receipt observation, failed-run provenance/history count와 linear correction 순서가 모순되면 mutation 전과 replay에서 모두 거부한다.
 - terminal success·failure run과 terminal 이전에 남은 orphan receipt는 CLI가 provider, fixture, User-Agent file과 HTTP client를 열기 전에 exact replay 또는 deterministic terminal 복구한다.
 - receiptless transport terminal로 끝난 collection key에는 늦은 receipt를 추가하지 않으며, 재시도는 새 collection ID를 사용한다.
-- database와 report alias, symlinked report 경로, broken database symlink, symlinked database parent, foreign version-0 SQLite와 invalid store는 fixture·User-Agent·provider fetch와 store mutation 전에 거부한다.
+- database와 report alias, symlinked report 경로, broken database symlink, symlinked 또는 current-owner mode-700이 아닌 database parent, foreign version-0 SQLite와 invalid store는 fixture·User-Agent·provider fetch와 store mutation 전에 거부한다.
 - fixture payload는 파일 크기를 먼저 확인하고 bounded read하며 issuer와 additional-history 내부 metadata는 이 checkpoint에서 소비하지 않으므로 rejection 조건으로 사용하지 않는다.
 - fixture와 production CLI는 raw body, CIK, accession, 회사명과 User-Agent를 보고서에 기록하지 않는다.
 
@@ -50,13 +50,13 @@ uv run python run_sec_edgar_collect.py \
 
 fixture는 raw-first success, correction version, HTTP 오류 raw 보존, transport terminal failure와 provider-free replay를 검증한다. 이 체크포인트에서는 유효한 실제 연락처 User-Agent를 임의 생성하지 않았으므로 production SEC GET은 0건이다.
 
-- focused SEC: `68 passed`
-- SEC + OpenDART related: `120 passed`
-- full suite: `2921 passed`
+- focused SEC: `69 passed`
+- SEC + OpenDART related: `121 passed`
+- full suite: `2922 passed`
 - Ruff: 통과
 - basedpyright: `0 errors, 0 warnings`
 - compileall과 `git diff --check`: 통과
-- manual CLI: `--help`, invalid input, fixture first run `2/2`, missing-User-Agent terminal replay `2/0`, missing fixture·User-Agent orphan 복구, broken DB symlink·symlinked DB parent·DB/report alias 거부, DB/report mode `600`, directory mode `700`
+- manual CLI: `--help`, invalid input, fixture first run `2/2`, missing-User-Agent terminal replay `2/0`, missing fixture·User-Agent orphan 복구, broken DB symlink·symlinked/non-private DB parent·DB/report alias 거부, DB/report mode `600`, directory mode `700`
 
 최종 release gate의 redacted exact-SHA 리뷰 기록은 저장소 밖 `~/.codex/review-evidence/sec-edgar-<short-sha>.md`에 보존한다. Git commit 내부에서 자신의 SHA를 참조할 수 없으므로 Reviewer 입력에는 해당 absolute path를 별도로 제공한다.
 
