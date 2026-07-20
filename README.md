@@ -323,6 +323,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-21 US news-catalyst Opportunity baseline 업데이트:** `us_equities/opportunity_manager/news_catalyst` 가설과 code-coupled immutable shadow version을 global experiment ledger에 먼저 등록한 뒤에만 complete Alpaca News evidence를 ranking하는 첫 baseline을 추가했다. cutoff 이전 300초의 `provider_updated_at` article만 사용하고 recent article 수 내림차순·최신 provider update·symbol 순으로 최대 20개를 결정론적으로 선별한다. 감성·방향·진입가·Trade Signal은 만들지 않으며 zero/stale-only universe는 `no_candidates` terminal artifact로 보존한다. 현재시각이 cutoff부터 5분인 유효구간 밖이면 발행 전에 차단한다. projection ID는 evidence bundle, exact ledger registration과 canonical `OpportunitySnapshot` 전체를 결박하며 mode-600 immutable artifact의 exact replay는 created `0`이다. focused **15 tests**, 전체 **3078 tests**, Ruff와 basedpyright 0/0가 통과했고 actual CLI에서 등록/replay `0/0`, ranked/replay `0/0`, no-candidates `2`, stale·missing `1`, provider·credential·account·order operation `0`을 확인했다. 상세 계약은 [체크포인트](docs/checkpoints/2026-07-21-us-news-catalyst-opportunity-ko.md)에 있다.
 
+**2026-07-21 US news-catalyst 일별 shadow trial·Reviewer 업데이트:** NYSE 장전 exact baseline version을 `shadow_forward` trial로 등록하고, 장중 ranked treatment와 same-universe zero-news equal-size control을 immutable cohort로 동결하는 일별 검증을 추가했다. 30분 뒤 `close > VWAP`, `RVOL >= 1.5`, prior-high breakout의 교집합을 양 arm에서 비교하며 incomplete control·observation은 0성과가 아니라 censored로 남긴다. terminal event는 cohort·setup manifest·outcome content hash를 결박하고 재시작은 exact artifact와 시각만 재사용한다. 장후 독립 Reviewer는 as-of session 전체 ledger/artifact를 다시 대사해 censored·failed·missing을 `data_quality_review`, clean 20 sessions·arm별 100 observations 이상을 `comparison_ready`, 그 전을 `continue_collection`으로 판정한다. 어떤 결과도 lifecycle·주문·allocation을 자동 변경하지 않는다. actual CLI에서 register/start/finalize replay `0/0`, immature Reviewer `2/2`, censored/data-quality `2`를 확인했고 focused **13 tests**, 전체 **3091 tests**, Ruff와 basedpyright 0/0가 통과했으며 provider·credential·account·order operation은 0건이다. 상세 계약은 [체크포인트](docs/checkpoints/2026-07-21-us-news-catalyst-shadow-trial-reviewer-ko.md)에 있다.
+
 ```bash
 ./run_data_foundation_check.py \
   --manifest examples/data/us-orb-data-foundation-v1.json \
@@ -492,6 +494,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [Alpaca paper-only 안전 기반 구현 계획](docs/superpowers/plans/2026-07-14-alpaca-paper-foundation.md)
 - [SEC EDGAR capability registry 체크포인트](docs/checkpoints/2026-07-21-sec-edgar-capability-registry-ko.md)
 - [SEC filing document raw-first 체크포인트](docs/checkpoints/2026-07-21-sec-filing-document-raw-first-ko.md)
+- [US news-catalyst shadow trial·Reviewer 체크포인트](docs/checkpoints/2026-07-21-us-news-catalyst-shadow-trial-reviewer-ko.md)
 - [현재 코드 아키텍처](docs/architecture_ko.md)
 - [KIS 실시간 연결 현황](docs/kis_live_integration_ko.md)
 - [런타임 인과성·안전 감사](docs/runtime_audit.md)
