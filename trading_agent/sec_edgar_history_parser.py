@@ -11,10 +11,10 @@ from trading_agent.sec_edgar_models import (
     SecSubmissionSnapshot,
 )
 from trading_agent.sec_edgar_parser import (
-    _decoded_payload,
-    _filings_from_columns,
-    _require_bounded_json_arrays,
-    _SecRecentFilings,
+    SecRecentFilingsColumns,
+    decoded_sec_payload,
+    filings_from_sec_columns,
+    require_bounded_sec_json_arrays,
 )
 
 
@@ -26,13 +26,13 @@ def parse_sec_additional_history_snapshot(
         raise SecEdgarResponseError(f"http_{response.status_code}")
     if response.content_type != "application/json":
         raise SecEdgarResponseError("content_type")
-    payload = _decoded_payload(response)
-    _require_bounded_json_arrays(payload)
+    payload = decoded_sec_payload(response)
+    require_bounded_sec_json_arrays(payload)
     try:
-        recent = _SecRecentFilings.model_validate_json(payload)
+        recent = SecRecentFilingsColumns.model_validate_json(payload)
     except (UnicodeError, ValidationError, ValueError, json.JSONDecodeError):
         raise SecEdgarResponseError("response_structure") from None
-    filings = _filings_from_columns(recent, response.cik, response.received_at)
+    filings = filings_from_sec_columns(recent, response.cik, response.received_at)
     if (
         manifest.cik != response.cik
         or len(filings) != manifest.filing_count

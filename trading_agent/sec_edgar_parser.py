@@ -59,7 +59,7 @@ class _IjsonParse(Protocol):
 _IJSON_PARSE: _IjsonParse = ijson_python.__dict__["parse"]
 
 
-class _SecRecentFilings(BaseModel):
+class SecRecentFilingsColumns(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     accession_number: tuple[StrictStr, ...] = Field(
@@ -97,7 +97,7 @@ class _SecAdditionalFile(BaseModel):
 class _SecFilings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    recent: _SecRecentFilings
+    recent: SecRecentFilingsColumns
     files: tuple[_SecAdditionalFile, ...] = Field(max_length=_MAX_ADDITIONAL_HISTORY_FILES)
 
 
@@ -115,8 +115,8 @@ def parse_sec_submission_snapshot(
         raise SecEdgarResponseError(f"http_{response.status_code}")
     if response.content_type != "application/json":
         raise SecEdgarResponseError("content_type")
-    payload = _decoded_payload(response)
-    _require_bounded_json_arrays(payload)
+    payload = decoded_sec_payload(response)
+    require_bounded_sec_json_arrays(payload)
     try:
         document = _SecSubmissionDocument.model_validate_json(payload)
     except (UnicodeError, ValidationError, ValueError, json.JSONDecodeError):
@@ -125,7 +125,7 @@ def parse_sec_submission_snapshot(
     if cik != response.cik:
         raise SecEdgarResponseError("cik_mismatch")
     recent = document.filings.recent
-    filings = _filings_from_columns(recent, cik, response.received_at)
+    filings = filings_from_sec_columns(recent, cik, response.received_at)
     try:
         history_files = tuple(
             SecAdditionalHistoryFile(
@@ -146,8 +146,8 @@ def parse_sec_submission_snapshot(
     )
 
 
-def _filings_from_columns(
-    recent: _SecRecentFilings,
+def filings_from_sec_columns(
+    recent: SecRecentFilingsColumns,
     cik: str,
     received_at: dt.datetime,
 ) -> tuple[SecFilingEvent, ...]:
@@ -170,7 +170,7 @@ def _filings_from_columns(
     return tuple(_filing(recent, index, cik, received_at) for index in range(row_count))
 
 
-def _require_bounded_json_arrays(payload: bytes) -> None:
+def require_bounded_sec_json_arrays(payload: bytes) -> None:
     counts: dict[str, int] = {}
     try:
         for prefix, event, _value in _IJSON_PARSE(io.BytesIO(payload)):
@@ -187,7 +187,7 @@ def _require_bounded_json_arrays(payload: bytes) -> None:
 
 
 def _filing(
-    recent: _SecRecentFilings,
+    recent: SecRecentFilingsColumns,
     index: int,
     cik: str,
     received_at: dt.datetime,
@@ -231,7 +231,7 @@ def _filing(
         raise SecEdgarResponseError("filing") from None
 
 
-def _decoded_payload(response: SecSubmissionRawResponse) -> bytes:
+def decoded_sec_payload(response: SecSubmissionRawResponse) -> bytes:
     if response.content_encoding == "identity":
         return response.raw_payload
     if response.content_encoding not in {"gzip", "deflate"}:

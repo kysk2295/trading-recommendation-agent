@@ -12,6 +12,7 @@ from trading_agent.sec_edgar_models import (
     SecEdgarResponseError,
     SecSubmissionRawResponse,
 )
+from trading_agent.sec_edgar_parser import SecRecentFilingsColumns
 
 FIXTURE = Path(__file__).parent / "fixtures/sec_edgar/additional-history-001.json"
 RECEIVED_AT = dt.datetime(2026, 7, 20, 14, 1, tzinfo=dt.UTC)
@@ -54,9 +55,20 @@ def test_sec_history_parser_rejects_filing_outside_manifest_range() -> None:
         )
 
 
-def test_sec_history_parser_rejects_root_column_item_2001_before_model_load() -> None:
+def test_sec_history_parser_rejects_root_column_item_2001_before_model_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     document = json.loads(FIXTURE.read_bytes())
     document["accessionNumber"] = [document["accessionNumber"][0] for _ in range(2_001)]
+
+    def reject_model_load(_cls: type[SecRecentFilingsColumns], _payload: bytes) -> None:
+        raise AssertionError("streaming preflight did not stop before model loading")
+
+    monkeypatch.setattr(
+        SecRecentFilingsColumns,
+        "model_validate_json",
+        classmethod(reject_model_load),
+    )
 
     with pytest.raises(SecEdgarResponseError, match="response_structure"):
         _ = parse_sec_additional_history_snapshot(

@@ -182,6 +182,14 @@ def test_sec_parser_ignores_unconsumed_issuer_and_history_metadata() -> None:
     assert len(snapshot.filings) == 2
 
 
+def test_sec_parser_rejects_opaque_history_manifest_for_new_collection() -> None:
+    document = json.loads(FIXTURE.read_bytes())
+    document["filings"]["files"] = [{"unrecognized": [1, 2, 3]}]
+
+    with pytest.raises(SecEdgarResponseError, match="response_structure"):
+        _ = parse_sec_submission_snapshot(_response(json.dumps(document).encode()))
+
+
 def test_sec_parser_rejects_excess_additional_history_files() -> None:
     document = json.loads(FIXTURE.read_bytes())
     document["filings"]["files"] = [{} for _ in range(2_001)]

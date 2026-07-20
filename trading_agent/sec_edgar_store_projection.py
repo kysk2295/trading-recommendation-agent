@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from typing import assert_never
 
 from trading_agent.sec_edgar_history_parser import parse_sec_additional_history_snapshot
+from trading_agent.sec_edgar_legacy_parser import parse_legacy_sec_submission_projection
 from trading_agent.sec_edgar_models import (
     SecCollectionStatus,
     SecEdgarResponseError,
@@ -28,7 +29,11 @@ def require_receipt_projection(
     try:
         match run.source_kind:
             case SecSubmissionSourceKind.RECENT:
-                expected = parse_sec_submission_snapshot(response)
+                expected = (
+                    parse_sec_submission_snapshot(response)
+                    if "source_kind" in run.model_fields_set
+                    else parse_legacy_sec_submission_projection(response)
+                )
             case SecSubmissionSourceKind.ADDITIONAL_HISTORY:
                 if run.history_file is None:
                     raise InvalidSecEdgarStoreError
