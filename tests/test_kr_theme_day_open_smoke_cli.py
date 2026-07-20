@@ -325,6 +325,27 @@ def test_open_smoke_cli_keeps_committed_evidence_when_success_report_fails(
     assert load_kr_theme_day_open_smoke(destination).verified_at == VERIFIED_AT
 
 
+def test_open_smoke_cli_keeps_blocked_result_when_report_error_is_wrapped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    def fail_report(_path: Path, _content: str) -> None:
+        raise smoke_cli.InvalidPrivateStableReportError
+
+    monkeypatch.setattr(smoke_cli, "write_private_report", fail_report)
+
+    # When
+    result = smoke_cli.main(
+        _args(tmp_path / "missing.json", tmp_path / "evidence.json", tmp_path / "report"),
+        clock=lambda: VERIFIED_AT,
+    )
+
+    # Then
+    assert result == 1
+    assert not (tmp_path / "evidence.json").exists()
+
+
 def _args(manifest: Path, evidence: Path, output_dir: Path) -> tuple[str, ...]:
     return (
         "--manifest",

@@ -27,3 +27,21 @@ def test_private_ledger_snapshot_rejects_wal_drift(tmp_path: Path) -> None:
         # Then
         with pytest.raises(InvalidExperimentLedgerSourceError):
             _ = snapshot.multi_market_trials()
+
+
+def test_private_ledger_snapshot_rejects_uri_reinterpreted_path(tmp_path: Path) -> None:
+    # Given
+    actual = tmp_path / "actual"
+    actual.mkdir(mode=0o700)
+    request = _prepared_request(actual)
+    decoy = tmp_path / "actual%2Fexperiment.sqlite3"
+    decoy.write_bytes(b"not the ledger")
+    decoy.chmod(0o600)
+    assert decoy.stat().st_ino != request.paths.experiment_ledger.stat().st_ino
+
+    # When / Then
+    with (
+        pytest.raises(InvalidExperimentLedgerSourceError),
+        open_private_experiment_ledger_snapshot(decoy),
+    ):
+        pass

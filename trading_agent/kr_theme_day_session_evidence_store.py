@@ -14,6 +14,8 @@ from trading_agent.kr_theme_day_session_evidence import (
     kr_theme_day_session_source_attestation_bytes,
     kr_theme_day_session_source_attestation_from_bytes,
 )
+from trading_agent.private_directory_identity import absolute_private_path
+from trading_agent.sqlite_uri import sqlite_read_only_uri
 
 _SCHEMA: Final = """
 CREATE TABLE kr_theme_day_session_source_attestations (
@@ -48,7 +50,7 @@ class KrThemeDaySessionEvidenceStore:
     __slots__ = ("path",)
 
     def __init__(self, audit_path: Path) -> None:
-        absolute = audit_path.expanduser().absolute()
+        absolute = absolute_private_path(audit_path)
         self.path = absolute.with_name(f"{absolute.stem}-evidence{absolute.suffix}")
 
     def append(self, attestation: KrThemeDaySessionSourceAttestation) -> bool:
@@ -131,7 +133,7 @@ class KrThemeDaySessionEvidenceStore:
                 connection.commit()
         else:
             _require_private(self.path)
-            connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
+            connection = sqlite3.connect(sqlite_read_only_uri(self.path), uri=True)
             _ = connection.execute("PRAGMA query_only=ON")
         objects = frozenset(
             row[0]

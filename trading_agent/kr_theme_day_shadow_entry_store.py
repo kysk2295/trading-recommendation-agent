@@ -12,6 +12,8 @@ from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_jso
 from trading_agent.kr_theme_day_shadow_entry_models import (
     KrThemeDayShadowEntry,
 )
+from trading_agent.private_directory_identity import absolute_private_path
+from trading_agent.sqlite_uri import sqlite_read_only_uri
 
 _SCHEMA_VERSION: Final = 1
 _SCHEMA: Final = """
@@ -52,7 +54,7 @@ class KrThemeDayShadowEntryStore:
     path: Path
 
     def __init__(self, path: Path) -> None:
-        self.path = path.resolve(strict=False)
+        self.path = absolute_private_path(path)
 
     def entries(self) -> tuple[KrThemeDayShadowEntry, ...]:
         if self.path.is_symlink():
@@ -61,7 +63,7 @@ class KrThemeDayShadowEntryStore:
             return ()
         try:
             _require_private_file(self.path)
-            with closing(sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)) as connection:
+            with closing(sqlite3.connect(sqlite_read_only_uri(self.path), uri=True)) as connection:
                 _require_schema(connection)
                 rows: list[tuple[str, str, str, str, str]] = connection.execute(
                     "SELECT entry_key,signal_id,trial_id,payload_sha256,payload_json "

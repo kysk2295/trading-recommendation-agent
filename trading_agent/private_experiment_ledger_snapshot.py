@@ -20,6 +20,7 @@ from trading_agent.private_directory_identity import (
     require_private_directory_query_only,
     require_same_file,
 )
+from trading_agent.sqlite_uri import sqlite_read_only_uri
 
 _FILE_MODE: Final = 0o600
 
@@ -46,7 +47,7 @@ class PrivateExperimentLedgerSnapshot(ExperimentLedgerReader):
             metadata = os.fstat(self._descriptor)
             self._metadata = _metadata_identity(metadata)
             self._connection = sqlite3.connect(":memory:")
-            source = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
+            source = sqlite3.connect(sqlite_read_only_uri(self.path), uri=True)
             try:
                 self._require_unchanged()
                 source.backup(self._connection)

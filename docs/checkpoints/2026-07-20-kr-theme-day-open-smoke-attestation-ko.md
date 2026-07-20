@@ -22,7 +22,7 @@
 
 schema v1 evidence는 session/date/minute, 세 phase event ID와 세 source attestation ID를 content-address하고 mode-600 immutable JSON으로 게시한다. 보고서에는 symbol, session/evidence ID, 가격과 경로를 기록하지 않는다.
 
-event `observed_at`은 기존 supervisor가 child를 호출한 시각이고 source attestation은 child 종료 뒤 생성한다. 따라서 receipt는 event보다 늦을 수 있지만 evidence 검증시각을 넘을 수 없다. 최초 생성은 CLI의 실제 clock만 사용하며 time override가 없다. final 경로 대신 private pending artifact를 먼저 게시하고 같은 source에서 evidence를 다시 계산하며 pending content를 다시 읽어 일치할 때만 final을 게시한다. alias 호출 직전에 caller가 pending cleanup 소유권을 publisher로 넘기고 이후 pending이나 final을 지우지 않는다. final은 publisher가 소유한 pending inode를 no-overwrite hard link로 승격한다. publisher는 자신이 link를 만든 뒤 실패한 경우에만 내부에서 final 제거를 시도하며, 그 cleanup도 실패하면 pending+final two-link barrier를 그대로 남긴다. final commit 뒤 report는 비권위 best-effort projection이므로 기록 실패가 evidence 성공을 뒤집지 않는다. cleanup ownership은 device/inode뿐 아니라 size·mtime·ctime·link count 전체와 no-follow parent dirfd를 요구하므로 같은 inode를 다시 연결하거나 parent를 symlink로 교체한 foreign final을 삭제하지 않는다. 이미 evidence가 있으면 publication lock이나 evidence writer를 만들거나 열지 않고 query-only evidence·manifest·receipt·Opportunity를 읽는다. experiment ledger는 mode-600/current-owner/single-link 파일과 mode-700 parent identity를 descriptor에 고정하고 한 번의 SQLite read-only backup으로 만든 메모리 snapshot에서 모든 onboarding 및 source-state 조회를 수행한다. main DB와 WAL/SHM identity drift를 모두 차단한다. 저장된 장중 검증시각으로 calendar, audit, attestation 및 현재 source를 다시 대사하므로 폐장 뒤 exact replay는 가능하지만 다른 payload나 같은 minute source drift는 기존 evidence로 덮지 못한다.
+event `observed_at`은 기존 supervisor가 child를 호출한 시각이고 source attestation은 child 종료 뒤 생성한다. 따라서 receipt는 event보다 늦을 수 있지만 evidence 검증시각을 넘을 수 없다. 최초 생성은 CLI의 실제 clock만 사용하며 time override가 없다. final 경로 대신 private pending artifact를 먼저 게시하고 같은 source에서 evidence를 다시 계산하며 pending content를 다시 읽어 일치할 때만 final을 게시한다. alias 호출 직전에 caller가 pending cleanup 소유권을 publisher로 넘기고 이후 pending이나 final을 지우지 않는다. final은 publisher가 소유한 pending inode를 no-overwrite hard link로 승격한다. publisher는 자신이 link를 만든 뒤 실패한 경우에만 내부에서 final 제거를 시도하며, 그 cleanup도 실패하면 pending+final two-link barrier를 그대로 남긴다. final commit 뒤 report는 비권위 best-effort projection이므로 기록 실패가 evidence 성공을 뒤집지 않는다. cleanup ownership은 device/inode뿐 아니라 size·mtime·ctime·link count 전체와 no-follow parent dirfd를 요구하므로 같은 inode를 다시 연결하거나 parent를 symlink로 교체한 foreign final을 삭제하지 않는다. 이미 evidence가 있으면 publication lock이나 evidence writer를 만들거나 열지 않고 query-only evidence·manifest·receipt·Opportunity를 읽는다. manifest가 지목한 ledger, calendar, Opportunity, receipt, entry, exit, terminal, review, audit와 파생 attestation source는 읽기 전에 no-follow descriptor로 current-owner regular mode-600 single-link 파일임을 확인하고, 없는 optional source만 허용한다. 모든 SQLite reader는 `Path.as_uri()`로 `%`, `?`, `#`를 인코딩한 read-only URI를 사용해 검증 경로가 SQLite URI 문법으로 다른 파일에 재해석되지 않게 한다. experiment ledger는 mode-600/current-owner/single-link 파일과 mode-700 parent identity를 descriptor에 고정하고 한 번의 SQLite read-only backup으로 만든 메모리 snapshot에서 모든 onboarding 및 source-state 조회를 수행한다. main DB와 WAL/SHM identity drift를 모두 차단한다. 저장된 장중 검증시각으로 calendar, audit, attestation 및 현재 source를 다시 대사하므로 폐장 뒤 exact replay는 가능하지만 다른 payload나 같은 minute source drift는 기존 evidence로 덮지 못한다.
 
 이 evidence는 전용 OS identity와 mode-700 root 신뢰경계 안에서 local source를 재생했다는 증거다. 원격 provider 서명이나 network 호출 증명은 아니며 동일 UID 임의 코드가 source와 attestation을 함께 위조하는 host compromise는 범위 밖이다. 따라서 실제 열린 KRX GET 운영 체크포인트의 요청 수·수신 시각 확인도 별도 필수이고, local evidence 하나만으로 scheduler를 승인하지 않는다.
 
@@ -45,12 +45,15 @@ event `observed_at`은 기존 supervisor가 child를 호출한 시각이고 sour
 - pre-commit cleanup 실패: source와 final을 two-link 상태로 유지해 정상 evidence reader가 차단; commit 뒤 descriptor close 실패는 성공 결과를 뒤집지 않음
 - publisher cleanup 실패: caller가 pending을 재삭제하지 않아 invalid two-link barrier를 유지
 - success report 기록 실패: CLI success와 신규·replay evidence를 모두 보존; report는 비권위 projection
+- SQLite URI percent-escape 재해석과 manifest source symlink: evidence 생성 전 차단
+- blocked report의 wrapped publication 오류: traceback 없이 exit `1` 유지
 - content tamper: 차단
 - actual CLI help: fixture/provider/credential/account/order/endpoint/time override 옵션 `0`
 - missing manifest: exit `1`, evidence `0`, redacted blocked report
-- focused open-smoke/session/query-only: `60 passed in 6.97s`
-- related KR theme/same-cycle: `284 passed, 2564 deselected in 17.26s`
-- full suite: `2848 passed in 150.06s`
+- focused changed surface: `45 passed in 4.48s`
+- related KR theme/same-cycle: `286 passed, 2565 deselected in 16.71s`
+- full suite: `2851 passed in 148.65s`
+- Ruff 통과, basedpyright `0 errors, 0 warnings`, compileall·diff check 통과
 - 실제 실행 시각: 2026-07-20 10시대 KST, KRX 장중이지만 작업공간에 당일 장 전 등록된 production manifest가 없어 actual smoke는 차단
 - 실제 provider GET, production open-smoke evidence와 국내 account/order mutation: `0`
 

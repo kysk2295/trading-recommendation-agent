@@ -10,6 +10,8 @@ from typing import Final, final, override
 
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.kr_theme_day_review_models import KrThemeDayReviewEvent
+from trading_agent.private_directory_identity import absolute_private_path
+from trading_agent.sqlite_uri import sqlite_read_only_uri
 
 _SCHEMA_VERSION: Final = 1
 _SCHEMA: Final = """
@@ -52,7 +54,7 @@ class KrThemeDayReviewStore:
     path: Path
 
     def __init__(self, path: Path) -> None:
-        self.path = path.resolve(strict=False)
+        self.path = absolute_private_path(path)
 
     def events(self) -> tuple[KrThemeDayReviewEvent, ...]:
         if self.path.is_symlink():
@@ -61,7 +63,7 @@ class KrThemeDayReviewStore:
             return ()
         try:
             _require_private_file(self.path)
-            with closing(sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)) as connection:
+            with closing(sqlite3.connect(sqlite_read_only_uri(self.path), uri=True)) as connection:
                 _ = connection.execute("PRAGMA query_only = ON")
                 _require_schema(connection)
                 rows: list[tuple[str, str, str, str, str, str]] = connection.execute(

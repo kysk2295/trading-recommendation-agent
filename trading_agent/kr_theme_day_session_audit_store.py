@@ -14,6 +14,8 @@ from trading_agent.kr_theme_day_session_audit import (
     kr_theme_day_session_phase_event_bytes,
     kr_theme_day_session_phase_event_from_bytes,
 )
+from trading_agent.private_directory_identity import absolute_private_path
+from trading_agent.sqlite_uri import sqlite_read_only_uri
 
 _SCHEMA: Final = """
 CREATE TABLE kr_theme_day_session_events (
@@ -46,7 +48,7 @@ class KrThemeDaySessionAuditStore:
     __slots__ = ("path",)
 
     def __init__(self, path: Path) -> None:
-        self.path = path.expanduser().absolute()
+        self.path = absolute_private_path(path)
 
     def append(self, event: KrThemeDaySessionPhaseEvent) -> bool:
         try:
@@ -139,7 +141,7 @@ class KrThemeDaySessionAuditStore:
                 connection.commit()
         else:
             _require_private(self.path)
-            connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
+            connection = sqlite3.connect(sqlite_read_only_uri(self.path), uri=True)
             _ = connection.execute("PRAGMA query_only=ON")
         _require_schema(connection)
         return connection

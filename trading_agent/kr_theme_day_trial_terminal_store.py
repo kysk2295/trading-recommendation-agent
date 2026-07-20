@@ -10,6 +10,8 @@ from typing import Final, final, override
 
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.kr_theme_day_trial_terminal_models import KrThemeDayTrialTerminalArtifact
+from trading_agent.private_directory_identity import absolute_private_path
+from trading_agent.sqlite_uri import sqlite_read_only_uri
 
 _SCHEMA_VERSION: Final = 1
 _SCHEMA: Final = """
@@ -50,7 +52,7 @@ class KrThemeDayTrialTerminalStore:
     path: Path
 
     def __init__(self, path: Path) -> None:
-        self.path = path.resolve(strict=False)
+        self.path = absolute_private_path(path)
 
     def artifacts(self) -> tuple[KrThemeDayTrialTerminalArtifact, ...]:
         if self.path.is_symlink():
@@ -59,7 +61,7 @@ class KrThemeDayTrialTerminalStore:
             return ()
         try:
             _require_private_file(self.path)
-            with closing(sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)) as connection:
+            with closing(sqlite3.connect(sqlite_read_only_uri(self.path), uri=True)) as connection:
                 _require_schema(connection)
                 rows: list[tuple[str, str, str, str, str]] = connection.execute(
                     "SELECT artifact_key,trial_id,terminal_kind,payload_sha256,payload_json "

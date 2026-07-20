@@ -203,6 +203,26 @@ def test_open_smoke_cli_rejects_hard_linked_experiment_ledger(tmp_path: Path) ->
     assert not destination.exists()
 
 
+def test_open_smoke_cli_rejects_symlinked_receipt_store(tmp_path: Path) -> None:
+    # Given
+    manifest, _, _, _ = production_session(tmp_path)
+    receipt_store = manifest.paths.receipt_store
+    displaced = receipt_store.with_name("displaced-receipts.sqlite3")
+    receipt_store.rename(displaced)
+    receipt_store.symlink_to(displaced)
+    destination = tmp_path / "open-smoke.json"
+
+    # When
+    result = smoke_cli.main(
+        _args(tmp_path / "session.json", destination, tmp_path / "report"),
+        clock=lambda: VERIFIED_AT,
+    )
+
+    # Then
+    assert result == 1
+    assert not destination.exists()
+
+
 def test_open_smoke_cli_rejects_ledger_symlink_swap_after_onboarding_projection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

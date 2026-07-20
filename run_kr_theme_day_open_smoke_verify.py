@@ -28,6 +28,7 @@ from trading_agent.kr_theme_day_open_smoke_paths import (
     path_aliases,
     path_resolves,
     path_uses_protected_file,
+    require_private_source_path,
 )
 from trading_agent.kr_theme_day_session_audit_store import KrThemeDaySessionAuditStore
 from trading_agent.kr_theme_day_session_evidence_store import KrThemeDaySessionEvidenceStore
@@ -99,6 +100,8 @@ def main(
             *protected_files,
             manifest.paths.output_root,
         )
+        for protected_file in protected_files:
+            require_private_source_path(protected_file)
         if path_aliases(report_path, protected_aliases) or path_uses_protected_file(report_path, protected_files):
             report_allowed = False
             return 1
@@ -144,7 +147,7 @@ def main(
         if report_allowed:
             try:
                 _write_report(args.output_dir, None)
-            except OSError:
+            except (OSError, InvalidPrivateStableReportError):
                 return 1
         return 1
     if publication is None:
