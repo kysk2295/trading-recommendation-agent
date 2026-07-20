@@ -95,7 +95,6 @@ class SecEdgarStore:
                     "INSERT INTO sec_submission_receipts VALUES (?,?,?,?,?,?,?,?,?)",
                     row,
                 )
-                connection.commit()
             return SecReceiptAppendResult(SecStoredReceipt(response), True)
         except (OSError, sqlite3.Error, TypeError, ValueError):
             raise InvalidSecEdgarStoreError from None
@@ -141,7 +140,6 @@ class SecEdgarStore:
                             item.observed_at.isoformat(),
                         ),
                     )
-                connection.commit()
             return SecCollectionAppendResult(run, filings, True, new_count)
         except (OSError, sqlite3.Error, TypeError, ValidationError, ValueError):
             raise InvalidSecEdgarStoreError from None
@@ -166,7 +164,6 @@ class SecEdgarStore:
                         raise InvalidSecEdgarStoreError
                     return False
                 _insert_run(connection, run)
-                connection.commit()
             return True
         except (OSError, sqlite3.Error, TypeError, ValidationError, ValueError):
             raise InvalidSecEdgarStoreError from None

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import trading_agent.sec_edgar_store_sql as store_sql
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.sec_edgar_models import (
     SecCollectionStatus,
@@ -72,6 +73,51 @@ def test_sec_store_preflight_rejects_structurally_corrupt_database(tmp_path: Pat
 
     with pytest.raises(ValueError):
         store.preflight_write()
+
+
+def test_sec_writer_rejects_final_path_swap_during_sqlite_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = SecEdgarStore(tmp_path / "sec.sqlite3")
+    redirected = tmp_path / "redirected.sqlite3"
+    real_connect = store_sql.sqlite3.connect
+
+    def racing_connect(database: object, *args: object, **kwargs: object):
+        if str(database) == str(store.path) or str(database).startswith(store.path.as_uri()):
+            if store.path.exists():
+                store.path.unlink()
+            store.path.symlink_to(redirected)
+        return real_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(store_sql.sqlite3, "connect", racing_connect)
+
+    with pytest.raises(ValueError):
+        store.preflight_write()
+
+    assert not redirected.exists()
+
+
+def test_sec_reader_rejects_final_path_swap_during_sqlite_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = SecEdgarStore(tmp_path / "sec.sqlite3")
+    redirected = SecEdgarStore(tmp_path / "redirected.sqlite3")
+    store.preflight_write()
+    redirected.preflight_write()
+    real_connect = store_sql.sqlite3.connect
+
+    def racing_connect(database: object, *args: object, **kwargs: object):
+        if str(database).startswith(store.path.as_uri()):
+            store.path.unlink()
+            store.path.symlink_to(redirected.path)
+        return real_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(store_sql.sqlite3, "connect", racing_connect)
+
+    with pytest.raises(ValueError):
+        _ = store.collection_run("sec-cycle-missing", "0000320193")
 
 
 def test_sec_store_rejects_receipt_payload_tampering_after_trigger_restore(tmp_path: Path) -> None:

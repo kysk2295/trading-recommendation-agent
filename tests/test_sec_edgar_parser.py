@@ -43,6 +43,31 @@ def test_sec_parser_rejects_column_length_mismatch() -> None:
         _ = parse_sec_submission_snapshot(_response(json.dumps(document).encode()))
 
 
+@pytest.mark.parametrize(
+    "column",
+    (
+        "accessionNumber",
+        "filingDate",
+        "reportDate",
+        "acceptanceDateTime",
+        "form",
+        "items",
+        "size",
+        "isXBRL",
+        "isInlineXBRL",
+        "primaryDocument",
+        "primaryDocDescription",
+    ),
+)
+def test_sec_parser_rejects_excess_recent_column_items(column: str) -> None:
+    document = json.loads(FIXTURE.read_bytes())
+    original = document["filings"]["recent"][column][0]
+    document["filings"]["recent"][column] = [original for _ in range(2_001)]
+
+    with pytest.raises(SecEdgarResponseError, match="response_structure"):
+        _ = parse_sec_submission_snapshot(_response(json.dumps(document).encode()))
+
+
 def test_sec_parser_rejects_future_acceptance_time() -> None:
     # Given
     document = json.loads(FIXTURE.read_bytes())
@@ -111,6 +136,14 @@ def test_sec_parser_ignores_unconsumed_issuer_and_history_metadata() -> None:
 
     assert snapshot.additional_history_file_count == 1
     assert len(snapshot.filings) == 2
+
+
+def test_sec_parser_rejects_excess_additional_history_files() -> None:
+    document = json.loads(FIXTURE.read_bytes())
+    document["filings"]["files"] = [{} for _ in range(2_001)]
+
+    with pytest.raises(SecEdgarResponseError, match="response_structure"):
+        _ = parse_sec_submission_snapshot(_response(json.dumps(document).encode()))
 
 
 def _response(payload: bytes) -> SecSubmissionRawResponse:

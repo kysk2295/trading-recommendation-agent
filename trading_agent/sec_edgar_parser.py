@@ -14,38 +14,49 @@ from trading_agent.sec_edgar_models import (
 )
 
 _MAX_RECENT_FILINGS = 2_000
+_MAX_ADDITIONAL_HISTORY_FILES = 2_000
 _MAX_DECODED_BYTES = 64 * 1024 * 1024
 
 
 class _SecRecentFilings(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="allow")
+    model_config = ConfigDict(frozen=True, extra="ignore")
 
-    accession_number: tuple[StrictStr, ...] = Field(alias="accessionNumber")
-    filing_date: tuple[StrictStr, ...] = Field(alias="filingDate")
-    report_date: tuple[StrictStr, ...] = Field(alias="reportDate")
-    acceptance_datetime: tuple[StrictStr, ...] = Field(alias="acceptanceDateTime")
-    form: tuple[StrictStr, ...]
-    items: tuple[StrictStr, ...]
-    size: tuple[StrictInt, ...]
-    is_xbrl: tuple[StrictInt, ...] = Field(alias="isXBRL")
-    is_inline_xbrl: tuple[StrictInt, ...] = Field(alias="isInlineXBRL")
-    primary_document: tuple[StrictStr, ...] = Field(alias="primaryDocument")
-    primary_document_description: tuple[StrictStr, ...] = Field(alias="primaryDocDescription")
+    accession_number: tuple[StrictStr, ...] = Field(
+        alias="accessionNumber", max_length=_MAX_RECENT_FILINGS
+    )
+    filing_date: tuple[StrictStr, ...] = Field(alias="filingDate", max_length=_MAX_RECENT_FILINGS)
+    report_date: tuple[StrictStr, ...] = Field(alias="reportDate", max_length=_MAX_RECENT_FILINGS)
+    acceptance_datetime: tuple[StrictStr, ...] = Field(
+        alias="acceptanceDateTime", max_length=_MAX_RECENT_FILINGS
+    )
+    form: tuple[StrictStr, ...] = Field(max_length=_MAX_RECENT_FILINGS)
+    items: tuple[StrictStr, ...] = Field(max_length=_MAX_RECENT_FILINGS)
+    size: tuple[StrictInt, ...] = Field(max_length=_MAX_RECENT_FILINGS)
+    is_xbrl: tuple[StrictInt, ...] = Field(alias="isXBRL", max_length=_MAX_RECENT_FILINGS)
+    is_inline_xbrl: tuple[StrictInt, ...] = Field(
+        alias="isInlineXBRL", max_length=_MAX_RECENT_FILINGS
+    )
+    primary_document: tuple[StrictStr, ...] = Field(
+        alias="primaryDocument", max_length=_MAX_RECENT_FILINGS
+    )
+    primary_document_description: tuple[StrictStr, ...] = Field(
+        alias="primaryDocDescription", max_length=_MAX_RECENT_FILINGS
+    )
 
 
 class _SecAdditionalFile(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="allow")
+    model_config = ConfigDict(frozen=True, extra="ignore")
 
 
 class _SecFilings(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="allow")
+    model_config = ConfigDict(frozen=True, extra="ignore")
 
     recent: _SecRecentFilings
-    files: tuple[_SecAdditionalFile, ...]
+    files: tuple[_SecAdditionalFile, ...] = Field(max_length=_MAX_ADDITIONAL_HISTORY_FILES)
 
 
 class _SecSubmissionDocument(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="allow")
+    model_config = ConfigDict(frozen=True, extra="ignore")
 
     cik: StrictInt = Field(ge=0, le=9_999_999_999)
     filings: _SecFilings

@@ -7,7 +7,12 @@ from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from pathlib import Path
 
-from trading_agent.private_directory_identity import open_private_parent, require_private_directory
+from trading_agent.private_directory_identity import (
+    open_private_parent,
+    require_open_directory_path,
+    require_private_directory,
+    require_private_directory_query_only,
+)
 from trading_agent.sec_edgar_schema import (
     SEC_EDGAR_SCHEMA,
     SEC_EDGAR_SCHEMA_OBJECTS,
@@ -16,7 +21,7 @@ from trading_agent.sec_edgar_schema import (
 from trading_agent.sec_edgar_store_semantics import require_store_semantics
 from trading_agent.sec_edgar_store_types import InvalidSecEdgarStoreError
 from trading_agent.sec_edgar_store_version_chain import require_all_version_chains
-from trading_agent.sqlite_uri import sqlite_read_only_uri
+from trading_agent.sqlite_uri import sqlite_read_only_uri, sqlite_read_write_uri
 
 
 def _schema_signature(connection: sqlite3.Connection) -> tuple[tuple[str, str, str, str], ...]:
@@ -39,36 +44,62 @@ _EXPECTED_SCHEMA_SIGNATURE = _expected_schema_signature()
 
 @contextmanager
 def sec_writer(path: Path) -> Iterator[sqlite3.Connection]:
-    if path.is_symlink():
-        raise InvalidSecEdgarStoreError
-    parent_descriptor = open_private_parent(path.parent, create=True)
+    try:
+        parent_descriptor = open_private_parent(path.parent, create=True)
+    except (OSError, TypeError, ValueError):
+        raise InvalidSecEdgarStoreError from None
     try:
         require_private_directory(parent_descriptor)
+        file_descriptor = _open_database_file(path, parent_descriptor, write=True)
+        try:
+            connection = sqlite3.connect(sqlite_read_write_uri(path), uri=True, timeout=0.0)
+            try:
+                _require_bound_database(path, parent_descriptor, file_descriptor)
+                _ = connection.execute("PRAGMA foreign_keys = ON")
+                _prepare(connection)
+                _require_bound_database(path, parent_descriptor, file_descriptor)
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    yield connection
+                    _require_bound_database(path, parent_descriptor, file_descriptor)
+                    connection.commit()
+                    _require_bound_database(path, parent_descriptor, file_descriptor)
+                except BaseException:
+                    connection.rollback()
+                    raise
+            finally:
+                connection.close()
+        finally:
+            os.close(file_descriptor)
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        raise InvalidSecEdgarStoreError from None
     finally:
         os.close(parent_descriptor)
-    if path.exists():
-        _require_private_file(path)
-    connection = sqlite3.connect(path, timeout=0.0)
-    try:
-        os.chmod(path, 0o600)
-        _ = connection.execute("PRAGMA foreign_keys = ON")
-        _prepare(connection)
-        connection.execute("BEGIN IMMEDIATE")
-        yield connection
-    finally:
-        connection.close()
 
 
 @contextmanager
 def sec_reader(path: Path) -> Iterator[sqlite3.Connection]:
-    if path.is_symlink():
-        raise InvalidSecEdgarStoreError
-    _require_private_file(path)
-    with closing(sqlite3.connect(sqlite_read_only_uri(path), uri=True)) as connection:
-        _ = connection.execute("PRAGMA query_only = ON")
-        _ = connection.execute("PRAGMA foreign_keys = ON")
-        _require_schema(connection)
-        yield connection
+    try:
+        parent_descriptor = open_private_parent(path.parent, create=False)
+    except (OSError, TypeError, ValueError):
+        raise InvalidSecEdgarStoreError from None
+    try:
+        require_private_directory_query_only(parent_descriptor)
+        file_descriptor = _open_database_file(path, parent_descriptor, write=False)
+        try:
+            with closing(sqlite3.connect(sqlite_read_only_uri(path), uri=True)) as connection:
+                _require_bound_database(path, parent_descriptor, file_descriptor)
+                _ = connection.execute("PRAGMA query_only = ON")
+                _ = connection.execute("PRAGMA foreign_keys = ON")
+                _require_schema(connection)
+                yield connection
+                _require_bound_database(path, parent_descriptor, file_descriptor)
+        finally:
+            os.close(file_descriptor)
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        raise InvalidSecEdgarStoreError from None
+    finally:
+        os.close(parent_descriptor)
 
 
 def _prepare(connection: sqlite3.Connection) -> None:
@@ -99,8 +130,39 @@ def _require_schema(connection: sqlite3.Connection) -> None:
     require_store_semantics(connection)
 
 
-def _require_private_file(path: Path) -> None:
-    metadata = path.lstat()
+def _open_database_file(path: Path, parent_descriptor: int, *, write: bool) -> int:
+    flags = os.O_CLOEXEC | os.O_NOFOLLOW | (os.O_RDWR if write else os.O_RDONLY)
+    try:
+        descriptor = os.open(path.name, flags, dir_fd=parent_descriptor)
+    except FileNotFoundError:
+        if not write:
+            raise
+        descriptor = os.open(
+            path.name,
+            flags | os.O_CREAT | os.O_EXCL,
+            0o600,
+            dir_fd=parent_descriptor,
+        )
+        os.fchmod(descriptor, 0o600)
+    try:
+        _require_private_file_descriptor(descriptor)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def _require_bound_database(path: Path, parent_descriptor: int, file_descriptor: int) -> None:
+    require_open_directory_path(path.parent, parent_descriptor)
+    named = os.stat(path.name, dir_fd=parent_descriptor, follow_symlinks=False)
+    opened = os.fstat(file_descriptor)
+    if (named.st_dev, named.st_ino) != (opened.st_dev, opened.st_ino):
+        raise InvalidSecEdgarStoreError
+    _require_private_file_descriptor(file_descriptor)
+
+
+def _require_private_file_descriptor(descriptor: int) -> None:
+    metadata = os.fstat(descriptor)
     if (
         not stat.S_ISREG(metadata.st_mode)
         or metadata.st_uid != os.getuid()
