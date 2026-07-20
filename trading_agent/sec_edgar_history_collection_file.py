@@ -10,6 +10,7 @@ from trading_agent.sec_edgar_history_collection_types import (
     InvalidSecEdgarHistoryCollectionError,
     SecAdditionalHistoryFetcher,
 )
+from trading_agent.sec_edgar_history_parser import parse_sec_additional_history_snapshot
 from trading_agent.sec_edgar_models import (
     SecAdditionalHistoryFile,
     SecCollectionStatus,
@@ -19,7 +20,6 @@ from trading_agent.sec_edgar_models import (
     SecSubmissionSourceKind,
     sec_additional_history_collection_id,
 )
-from trading_agent.sec_edgar_parser import parse_sec_additional_history_snapshot
 from trading_agent.sec_edgar_store import SecEdgarStore
 
 

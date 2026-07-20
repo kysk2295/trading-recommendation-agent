@@ -3,55 +3,30 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import sqlite3
-from typing import assert_never
 
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.sec_edgar_models import (
     SecFilingEvent,
-    SecSubmissionRawResponse,
     SecSubmissionRun,
     SecSubmissionSnapshot,
-    SecSubmissionSourceKind,
-    sec_additional_history_collection_id,
 )
-from trading_agent.sec_edgar_parser import parse_sec_submission_snapshot
+from trading_agent.sec_edgar_store_history_binding import (
+    SecHistoryBindingReaders,
+    require_history_parent_binding,
+)
 from trading_agent.sec_edgar_store_projection import (
     receipt_bounds_valid,
     require_receipt_projection,
 )
+from trading_agent.sec_edgar_store_receipts import (
+    receipt_by_id_from_connection,
+    receipt_from_connection,
+)
 from trading_agent.sec_edgar_store_types import (
     InvalidSecEdgarStoreError,
     SecStoredFilingVersion,
-    SecStoredReceipt,
 )
 from trading_agent.sec_edgar_store_version_chain import require_version_chain
-
-
-def receipt_from_connection(
-    connection: sqlite3.Connection,
-    collection_id: str,
-    cik: str,
-) -> SecStoredReceipt | None:
-    row = connection.execute(
-        "SELECT receipt_id,collection_id,cik,received_at,status_code,content_type,"
-        "content_encoding,payload_sha256,raw_payload FROM sec_submission_receipts "
-        "WHERE collection_id=? AND cik=?",
-        (collection_id, cik),
-    ).fetchone()
-    if row is None:
-        return None
-    response = SecSubmissionRawResponse(
-        collection_id=row[1],
-        cik=row[2],
-        received_at=dt.datetime.fromisoformat(row[3]),
-        status_code=row[4],
-        content_type=row[5],
-        content_encoding=row[6],
-        raw_payload=row[8],
-    )
-    if receipt_row(response) != tuple(row):
-        raise InvalidSecEdgarStoreError
-    return SecStoredReceipt(response)
 
 
 def append_filings(
@@ -237,106 +212,10 @@ def require_run_parent_binding(
     connection: sqlite3.Connection,
     run: SecSubmissionRun,
 ) -> None:
-    match run.source_kind:
-        case SecSubmissionSourceKind.RECENT:
-            return
-        case SecSubmissionSourceKind.ADDITIONAL_HISTORY:
-            if (
-                run.parent_receipt_id is None
-                or run.history_file is None
-                or run.parent_receipt_id == run.receipt_id
-            ):
-                raise InvalidSecEdgarStoreError
-            parent_row = connection.execute(
-                "SELECT run_id,payload_json FROM sec_submission_runs WHERE receipt_id=?",
-                (run.parent_receipt_id,),
-            ).fetchone()
-            if parent_row is None:
-                raise InvalidSecEdgarStoreError
-            parent_candidate = SecSubmissionRun.model_validate_json(parent_row[1])
-            if parent_candidate.source_kind is not SecSubmissionSourceKind.RECENT:
-                raise InvalidSecEdgarStoreError
-            parent = run_from_connection(connection, parent_row[0])
-            parent_receipt = receipt_by_id_from_connection(connection, run.parent_receipt_id)
-            child_receipt = (
-                None
-                if run.receipt_id is None
-                else receipt_by_id_from_connection(connection, run.receipt_id)
-            )
-            if (
-                parent is None
-                or parent.status.value != "success"
-                or parent.receipt_id != run.parent_receipt_id
-                or parent_receipt is None
-                or run.completed_at < parent.completed_at
-                or (
-                    child_receipt is not None
-                    and child_receipt.response.received_at
-                    < parent_receipt.response.received_at
-                )
-                or run.collection_id
-                != sec_additional_history_collection_id(run.parent_receipt_id, run.history_file)
-            ):
-                raise InvalidSecEdgarStoreError
-            try:
-                parent_snapshot = parse_sec_submission_snapshot(parent_receipt.response)
-            except ValueError:
-                raise InvalidSecEdgarStoreError from None
-            if run.history_file not in parent_snapshot.additional_history_files:
-                raise InvalidSecEdgarStoreError
-        case unreachable:
-            assert_never(unreachable)
-
-
-def receipt_by_id_from_connection(
-    connection: sqlite3.Connection,
-    receipt_id: str,
-) -> SecStoredReceipt | None:
-    row = connection.execute(
-        "SELECT collection_id,cik FROM sec_submission_receipts WHERE receipt_id=?",
-        (receipt_id,),
-    ).fetchone()
-    if row is None:
-        return None
-    receipt = receipt_from_connection(connection, row[0], row[1])
-    if receipt is None or receipt.response.receipt_id != receipt_id:
-        raise InvalidSecEdgarStoreError
-    return receipt
-
-
-def require_receipt(connection: sqlite3.Connection, run: SecSubmissionRun) -> None:
-    receipt = receipt_from_connection(connection, run.collection_id, run.cik)
-    if (
-        receipt is None
-        or receipt.response.receipt_id != run.receipt_id
-        or not receipt_bounds_valid(receipt.response, run)
-    ):
-        raise InvalidSecEdgarStoreError
-
-
-def receipt_row(response: SecSubmissionRawResponse) -> tuple[str | int | bytes, ...]:
-    return (
-        response.receipt_id,
-        response.collection_id,
-        response.cik,
-        response.received_at.isoformat(),
-        response.status_code,
-        response.content_type,
-        response.content_encoding,
-        hashlib.sha256(response.raw_payload).hexdigest(),
-        response.raw_payload,
-    )
-
-
-def validated_response(response: SecSubmissionRawResponse) -> SecSubmissionRawResponse:
-    return SecSubmissionRawResponse(
-        collection_id=response.collection_id,
-        cik=response.cik,
-        received_at=response.received_at,
-        status_code=response.status_code,
-        content_type=response.content_type,
-        raw_payload=response.raw_payload,
-        content_encoding=response.content_encoding,
+    require_history_parent_binding(
+        connection,
+        run,
+        SecHistoryBindingReaders(run_from_connection, receipt_by_id_from_connection),
     )
 
 

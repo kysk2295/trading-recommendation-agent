@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import assert_never
 
+from trading_agent.sec_edgar_history_parser import parse_sec_additional_history_snapshot
 from trading_agent.sec_edgar_models import (
     SecCollectionStatus,
     SecEdgarResponseError,
@@ -11,10 +12,7 @@ from trading_agent.sec_edgar_models import (
     SecSubmissionRun,
     SecSubmissionSourceKind,
 )
-from trading_agent.sec_edgar_parser import (
-    parse_sec_additional_history_snapshot,
-    parse_sec_submission_snapshot,
-)
+from trading_agent.sec_edgar_parser import parse_sec_submission_snapshot
 from trading_agent.sec_edgar_store_types import InvalidSecEdgarStoreError
 
 

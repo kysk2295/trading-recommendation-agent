@@ -234,6 +234,35 @@ def test_sec_store_rejects_history_parent_binding_tamper(tmp_path: Path) -> None
         _ = store.collection_run(history.collection_id, history.cik)
 
 
+def test_sec_store_replays_legacy_v1_run_payload_without_history_fields(tmp_path: Path) -> None:
+    store = SecEdgarStore(tmp_path / "sec.sqlite3")
+    response = _response("sec-cycle-legacy", FIRST_AT, FIXTURE.read_bytes())
+    snapshot = parse_sec_submission_snapshot(response)
+    _ = store.append_receipt(response)
+    run = store.append_collection(_run(response), snapshot).run
+    with sqlite3.connect(store.path) as connection:
+        row = connection.execute(
+            "SELECT payload_json FROM sec_submission_runs WHERE run_id=?",
+            (run.run_id,),
+        ).fetchone()
+        payload = json.loads(row[0])
+        del payload["source_kind"]
+        del payload["parent_receipt_id"]
+        del payload["history_file"]
+        payload_json = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        trigger_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name='sec_submission_runs_no_update'"
+        ).fetchone()[0]
+        _ = connection.execute("DROP TRIGGER sec_submission_runs_no_update")
+        _ = connection.execute(
+            "UPDATE sec_submission_runs SET payload_sha256=?,payload_json=? WHERE run_id=?",
+            (hashlib.sha256(payload_json.encode()).hexdigest(), payload_json, run.run_id),
+        )
+        _ = connection.execute(trigger_sql)
+
+    assert store.collection_run(run.collection_id, run.cik) == run
+
+
 def test_sec_store_rejects_run_starting_after_receipt_on_append_and_replay(tmp_path: Path) -> None:
     store = SecEdgarStore(tmp_path / "sec.sqlite3")
     response = _response("sec-cycle-001", FIRST_AT, FIXTURE.read_bytes())

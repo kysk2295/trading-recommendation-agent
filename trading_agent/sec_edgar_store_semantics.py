@@ -2,11 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from trading_agent.sec_edgar_store_support import (
-    filings_from_connection,
-    receipt_from_connection,
-    run_from_connection,
-)
+from trading_agent.sec_edgar_store_receipts import receipt_from_connection
+from trading_agent.sec_edgar_store_support import filings_from_connection, run_from_connection
 from trading_agent.sec_edgar_store_types import InvalidSecEdgarStoreError
 
 
