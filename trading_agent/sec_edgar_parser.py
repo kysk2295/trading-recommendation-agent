@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import io
 import json
 import zlib
 
+import ijson
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
 from trading_agent.sec_edgar_models import (
@@ -16,6 +18,23 @@ from trading_agent.sec_edgar_models import (
 _MAX_RECENT_FILINGS = 2_000
 _MAX_ADDITIONAL_HISTORY_FILES = 2_000
 _MAX_DECODED_BYTES = 64 * 1024 * 1024
+_ARRAY_ITEM_EVENTS = frozenset({"boolean", "null", "number", "start_array", "start_map", "string"})
+_BOUNDED_ARRAY_ITEMS = frozenset(
+    {
+        "filings.files.item",
+        "filings.recent.accessionNumber.item",
+        "filings.recent.acceptanceDateTime.item",
+        "filings.recent.filingDate.item",
+        "filings.recent.form.item",
+        "filings.recent.isInlineXBRL.item",
+        "filings.recent.isXBRL.item",
+        "filings.recent.items.item",
+        "filings.recent.primaryDocDescription.item",
+        "filings.recent.primaryDocument.item",
+        "filings.recent.reportDate.item",
+        "filings.recent.size.item",
+    }
+)
 
 
 class _SecRecentFilings(BaseModel):
@@ -70,6 +89,7 @@ def parse_sec_submission_snapshot(
     if response.content_type != "application/json":
         raise SecEdgarResponseError("content_type")
     payload = _decoded_payload(response)
+    _require_bounded_json_arrays(payload)
     try:
         document = _SecSubmissionDocument.model_validate_json(payload)
     except (UnicodeError, ValidationError, ValueError, json.JSONDecodeError):
@@ -100,6 +120,22 @@ def parse_sec_submission_snapshot(
         filings=filings,
         additional_history_file_count=len(document.filings.files),
     )
+
+
+def _require_bounded_json_arrays(payload: bytes) -> None:
+    counts: dict[str, int] = {}
+    try:
+        for prefix, event, _value in ijson.parse(io.BytesIO(payload)):
+            if prefix not in _BOUNDED_ARRAY_ITEMS or event not in _ARRAY_ITEM_EVENTS:
+                continue
+            count = counts.get(prefix, 0) + 1
+            if count > _MAX_RECENT_FILINGS:
+                raise SecEdgarResponseError("response_structure")
+            counts[prefix] = count
+    except SecEdgarResponseError:
+        raise
+    except (ijson.JSONError, UnicodeError, ValueError):
+        raise SecEdgarResponseError("response_structure") from None
 
 
 def _filing(

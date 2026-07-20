@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import gzip
 import json
+import tracemalloc
 from pathlib import Path
 
 import pytest
@@ -144,6 +145,26 @@ def test_sec_parser_rejects_excess_additional_history_files() -> None:
 
     with pytest.raises(SecEdgarResponseError, match="response_structure"):
         _ = parse_sec_submission_snapshot(_response(json.dumps(document).encode()))
+
+
+def test_sec_parser_oversized_history_peak_does_not_scale_with_rejected_suffix() -> None:
+    moderate = _oversized_history_peak(10_000)
+    substantial = _oversized_history_peak(100_000)
+
+    assert substantial < moderate * 2
+
+
+def _oversized_history_peak(count: int) -> int:
+    document = json.loads(FIXTURE.read_bytes())
+    document["filings"]["files"] = [{} for _ in range(count)]
+    response = _response(json.dumps(document).encode())
+    tracemalloc.start()
+    try:
+        with pytest.raises(SecEdgarResponseError, match="response_structure"):
+            _ = parse_sec_submission_snapshot(response)
+        return tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
 
 
 def _response(payload: bytes) -> SecSubmissionRawResponse:

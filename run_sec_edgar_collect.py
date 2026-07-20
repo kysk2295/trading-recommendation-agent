@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["httpx2[http2,brotli,zstd]", "pydantic", "rich", "typer"]
+# dependencies = ["httpx2[http2,brotli,zstd]", "ijson==3.5.0", "pydantic", "rich", "typer"]
 # ///
 # How to run:
 # 1. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh
