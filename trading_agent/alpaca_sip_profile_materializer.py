@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import stat
+from dataclasses import dataclass
 from pathlib import Path
 from typing import final, override
 
@@ -20,6 +21,7 @@ from trading_agent.us_intraday_volume_profile_artifact import (
     IntradayVolumeProfileArtifactError,
     IntradayVolumeProfileArtifactStore,
 )
+from trading_agent.us_intraday_volume_profile_models import IntradayVolumeProfileEvidence
 from trading_agent.us_runtime_fleet_cycle import ProfileArtifactBinding
 from trading_agent.us_runtime_policy_scope import PreparedRuntimePolicyScope
 from trading_agent.us_subscription_models import DesiredMarketDataSubscription
@@ -29,6 +31,13 @@ class AlpacaSipProfileMaterializerError(ValueError):
     @override
     def __str__(self) -> str:
         return "alpaca SIP profile materialization is blocked"
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileMaterializationRequest:
+    subscriptions: tuple[DesiredMarketDataSubscription, ...]
+    target_session_date: dt.date
+    through_minute: int
 
 
 @final
@@ -49,7 +58,49 @@ class AlpacaSipProfileMaterializer:
             if type(scope) is not PreparedRuntimePolicyScope:
                 raise AlpacaSipProfileMaterializerError
             target = scope.decision.evaluated_at.astimezone(NEW_YORK).date()
-            return tuple(self._binding(item, target, scope.completed_minute) for item in scope.decision.desired)
+            return self.materialize_request(
+                ProfileMaterializationRequest(
+                    scope.decision.desired,
+                    target,
+                    scope.completed_minute,
+                )
+            )
+        except (
+            AlpacaSipHistoricalProfileError,
+            AttributeError,
+            IntradayVolumeProfileArtifactError,
+            OSError,
+            TypeError,
+            ValueError,
+        ):
+            raise AlpacaSipProfileMaterializerError from None
+
+    def materialize_request(
+        self,
+        request: ProfileMaterializationRequest,
+    ) -> tuple[ProfileArtifactBinding, ...]:
+        try:
+            if (
+                type(request) is not ProfileMaterializationRequest
+                or type(request.subscriptions) is not tuple
+                or not request.subscriptions
+                or any(
+                    type(item) is not DesiredMarketDataSubscription
+                    for item in request.subscriptions
+                )
+                or type(request.target_session_date) is not dt.date
+                or type(request.through_minute) is not int
+                or request.through_minute <= 0
+            ):
+                raise AlpacaSipProfileMaterializerError
+            return tuple(
+                self._binding(
+                    item,
+                    request.target_session_date,
+                    request.through_minute,
+                )
+                for item in request.subscriptions
+            )
         except (
             AlpacaSipHistoricalProfileError,
             AttributeError,
@@ -95,6 +146,28 @@ def _owner_key(subscription: DesiredMarketDataSubscription) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def load_materialized_profile(
+    root: Path,
+    subscription: DesiredMarketDataSubscription,
+    evidence_sha256: str,
+) -> IntradayVolumeProfileEvidence:
+    try:
+        if (
+            type(subscription) is not DesiredMarketDataSubscription
+            or type(evidence_sha256) is not str
+            or len(evidence_sha256) != 64
+        ):
+            raise AlpacaSipProfileMaterializerError
+        owner = _private_directory(_private_directory(root) / _owner_key(subscription))
+        store = IntradayVolumeProfileArtifactStore(owner / "artifacts")
+        profile = store.load(owner / "artifacts" / f"profile_{evidence_sha256}.json")
+        if profile.evidence_sha256 != evidence_sha256:
+            raise AlpacaSipProfileMaterializerError
+        return profile
+    except (IntradayVolumeProfileArtifactError, OSError, TypeError, ValueError):
+        raise AlpacaSipProfileMaterializerError from None
+
+
 def _private_directory(path: Path) -> Path:
     candidate = path.expanduser().absolute()
     try:
@@ -117,4 +190,6 @@ def _private_directory(path: Path) -> Path:
 __all__ = (
     "AlpacaSipProfileMaterializer",
     "AlpacaSipProfileMaterializerError",
+    "ProfileMaterializationRequest",
+    "load_materialized_profile",
 )
