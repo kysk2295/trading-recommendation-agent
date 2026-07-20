@@ -104,12 +104,8 @@ class SecEdgarHistoryFixtureFetcher:
 
 def load_sec_edgar_history_fixture(path: Path) -> SecEdgarHistoryFixtureFetcher:
     try:
-        if path.is_symlink():
-            raise OSError
-        manifest_path = path.resolve(strict=True)
-        if not manifest_path.is_file() or manifest_path.stat().st_size > 65_536:
-            raise OSError
-        manifest = _FixtureManifest.model_validate_json(manifest_path.read_bytes())
+        manifest_path, manifest_payload = _read_manifest(path)
+        manifest = _FixtureManifest.model_validate_json(manifest_payload)
         payloads = tuple(
             _FixturePayload(item, _read_payload(manifest_path, item.payload_path))
             for item in manifest.responses
@@ -117,6 +113,32 @@ def load_sec_edgar_history_fixture(path: Path) -> SecEdgarHistoryFixtureFetcher:
         return SecEdgarHistoryFixtureFetcher(payloads)
     except (OSError, ValidationError, ValueError):
         raise SecEdgarHistoryFixtureError from None
+
+
+def _read_manifest(path: Path) -> tuple[Path, bytes]:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+    )
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 65_536:
+            raise OSError
+        payload = bytearray()
+        while len(payload) <= 65_536:
+            chunk = os.read(descriptor, 65_537 - len(payload))
+            if not chunk:
+                break
+            payload.extend(chunk)
+        manifest_path = path.resolve(strict=True)
+        current = manifest_path.stat()
+        if (metadata.st_dev, metadata.st_ino) != (current.st_dev, current.st_ino):
+            raise OSError
+    finally:
+        os.close(descriptor)
+    if len(payload) > 65_536:
+        raise OSError
+    return manifest_path, bytes(payload)
 
 
 def _read_payload(manifest_path: Path, relative_path: str) -> bytes:

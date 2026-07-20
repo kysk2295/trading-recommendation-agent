@@ -38,6 +38,30 @@ def test_sec_history_fixture_rejects_undeclared_file(tmp_path: Path) -> None:
         )
 
 
+def test_sec_history_fixture_does_not_use_unbounded_manifest_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = _manifest(tmp_path / "fixture")
+    original = Path.read_bytes
+
+    def reject_manifest_read(path: Path) -> bytes:
+        if path == manifest:
+            raise AssertionError("manifest must use a bounded descriptor read")
+        return original(path)
+
+    monkeypatch.setattr(Path, "read_bytes", reject_manifest_read)
+
+    fetcher = load_sec_edgar_history_fixture(manifest)
+
+    response = fetcher.fetch_additional_history(
+        "sec-history-cycle-001",
+        "0000320193",
+        "CIK0000320193-submissions-001.json",
+    )
+    assert response.raw_payload == HISTORY.read_bytes()
+
+
 def _manifest(directory: Path) -> Path:
     directory.mkdir()
     (directory / "history.json").write_bytes(HISTORY.read_bytes())
