@@ -177,6 +177,7 @@ def _validate_ready_snapshot(snapshot: IntradayFeatureSnapshot) -> None:
     except IntradayVolumeProfileError:
         raise InvalidUsFeatureEvidenceProjectionError from None
     values = (
+        snapshot.close,
         snapshot.vwap,
         snapshot.atr14,
         snapshot.rsi14,
@@ -214,6 +215,7 @@ def _feature_evidence_ref(snapshot: IntradayFeatureSnapshot) -> EvidenceRef:
         "atr14": str(snapshot.atr14),
         "bar_count": snapshot.bar_count,
         "breakout": snapshot.breakout_close_above_prior_high,
+        "close": str(snapshot.close),
         "identity_sha256": snapshot.identity.identity_sha256,
         "indicator_semantic_version": snapshot.indicator_semantic_version,
         "instrument_id": snapshot.instrument_id,

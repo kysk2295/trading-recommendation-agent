@@ -41,6 +41,7 @@ def reobserve_ready_intraday_feature(
 
 def _validate_snapshot(snapshot: IntradayFeatureSnapshot) -> None:
     values = (
+        snapshot.close,
         snapshot.vwap,
         snapshot.atr14,
         snapshot.rsi14,

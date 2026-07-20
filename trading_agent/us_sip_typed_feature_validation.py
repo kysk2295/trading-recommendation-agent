@@ -83,6 +83,7 @@ def _validate_snapshot(snapshot: IntradayFeatureSnapshot, minimum_rvol_bps: int)
     ):
         raise UsSipTypedFeatureValidationError
     indicators = (
+        snapshot.close,
         snapshot.vwap,
         snapshot.atr14,
         snapshot.rsi14,

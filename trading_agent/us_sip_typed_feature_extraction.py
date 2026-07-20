@@ -92,6 +92,7 @@ def _feature_payload(
         "source_start_at": _timestamp(snapshot.source_start_at),
         "typed_indicators": {
             "atr14": str(snapshot.atr14),
+            "close": str(snapshot.close),
             "macd_histogram": str(snapshot.macd_histogram),
             "macd_line": str(snapshot.macd_line),
             "macd_signal": str(snapshot.macd_signal),

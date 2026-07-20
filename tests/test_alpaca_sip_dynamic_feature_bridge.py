@@ -9,7 +9,7 @@ import pytest
 
 from tests import test_alpaca_sip_dynamic_projection as dynamic_fixtures
 from tests import test_alpaca_sip_dynamic_trade_history as history_fixtures
-from tests import test_intraday_feature_kernel as feature_fixtures
+from tests.intraday_feature_kernel_fixtures import bars, identity
 from tests.us_volume_profile_fixtures import volume_profile
 from trading_agent.alpaca_sip_dynamic_feature_bridge import (
     AlpacaSipDynamicFeatureBridgeError,
@@ -134,12 +134,12 @@ def test_canceled_latest_trade_leaves_no_feature_confirmation(tmp_path: Path) ->
 
 
 def _snapshot():
-    bars = feature_fixtures._bars(35, start=dynamic_fixtures._NOW)
+    completed_bars = bars(35, dynamic_fixtures._NOW)
     return build_intraday_feature_snapshot(
-        feature_fixtures._identity(),
+        identity(),
         _INSTRUMENT_ID,
         _OBSERVED,
-        bars,
+        completed_bars,
         volume_profile(_INSTRUMENT_ID, dynamic_fixtures._NOW.date(), expected_cumulative_volume=10_000),
     )
 
