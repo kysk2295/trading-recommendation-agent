@@ -62,4 +62,4 @@ uv run --script run_sec_edgar_capability_registry.py \
 - credential read: `0`
 - broker/account/position/order operation: `0`
 
-다음 M5 경계는 filing document 본문을 accession과 primary document에 exact binding하는 raw-first bounded source다. 그 뒤 issuer/company-announcement evidence를 독립 source로 추가한다.
+후속 filing document 본문 경계는 [SEC filing document raw-first 체크포인트](2026-07-21-sec-filing-document-raw-first-ko.md)에서 완료했다. 다음 M5 경계는 issuer/company-announcement evidence를 독립 source로 추가하는 것이다.

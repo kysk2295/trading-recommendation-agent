@@ -56,4 +56,4 @@ uv run --script run_sec_edgar_history_collect.py \
 - credential read: `0`
 - broker, account, position or order operation: `0`
 
-이 source의 실제 coverage와 health를 canonical capability registry에 투영하는 경계는 [SEC EDGAR capability registry 체크포인트](2026-07-21-sec-edgar-capability-registry-ko.md)에서 완료했다. 다음 M5 경계는 filing document 본문과 issuer/company-announcement evidence를 별도 bounded source로 추가하는 것이다.
+이 source의 실제 coverage와 health를 canonical capability registry에 투영하는 경계는 [SEC EDGAR capability registry 체크포인트](2026-07-21-sec-edgar-capability-registry-ko.md), filing document 본문은 [SEC filing document raw-first 체크포인트](2026-07-21-sec-filing-document-raw-first-ko.md)에서 완료했다. 다음 M5 경계는 issuer/company-announcement evidence를 별도 bounded source로 추가하는 것이다.

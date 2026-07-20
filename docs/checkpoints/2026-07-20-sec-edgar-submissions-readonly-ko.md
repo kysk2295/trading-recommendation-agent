@@ -17,7 +17,7 @@ Institutional Multi-Market Quant Research OS Milestone 5의 첫 미국 공시 so
 ## 구현
 
 - `SecSubmissionRawResponse`는 0-byte HTTP 오류, JSON 외 MIME와 gzip/deflate encoding도 원문으로 보존하고 parser가 `200 application/json`을 별도로 요구한다.
-- recent filing column 길이, document/response/accession CIK 일치, accession, 접수시각, XBRL flag와 문서 identity를 strict하게 검증한다.
+- recent filing column 길이, document/response issuer CIK, accession 형식, 접수시각, XBRL flag와 문서 identity를 strict하게 검증한다. accession 앞 10자리는 filing agent CIK일 수 있어 issuer CIK와의 일치를 강제하지 않는다.
 - pinned `ijson` pure-Python streaming preflight는 recent parallel column과 additional-history 목록을 item 2,001에서 Pydantic 전에 중단한다. Pydantic `max_length=2000`과 ignored extra를 2차 방어로 유지하며, rejected suffix가 10배 커져도 parser peak가 2배 미만인 allocation 회귀를 검증한다. 4,500자리 integer도 native signal 종료 없이 sanitized `response_structure`로 닫는다.
 - 같은 accession의 동일 canonical event는 기존 version을 재사용한다. payload가 달라지면 검증된 linear topology에서 자식이 없는 유일한 tip을 부모로 새 immutable version을 만들며 SQLite `rowid` 순서에 의존하지 않는다.
 - correction observation은 이전 version의 최신 관측시각보다 빠를 수 없으며 모든 저장시각은 UTC로 canonicalize한다.
