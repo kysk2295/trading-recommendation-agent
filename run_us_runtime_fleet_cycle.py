@@ -22,12 +22,7 @@ from trading_agent.alpaca_sip_runtime_owner import (
     AlpacaSipRuntimeOwnerFactory,
     AlpacaSipRuntimeOwnerFactoryConfig,
 )
-from trading_agent.research_evidence_artifact import (
-    ResearchEvidenceArtifactError,
-    write_research_evidence_artifact,
-)
 from trading_agent.us_equity_calendar import NEW_YORK
-from trading_agent.us_feature_evidence_models import UsFeatureEvidenceBinding
 from trading_agent.us_market_data_fleet import UsMarketDataFleet
 from trading_agent.us_market_data_fleet_audit_store import RuntimeFleetAuditStore
 from trading_agent.us_opportunity_scanner_models import UsOpportunityScannerProjectionError
@@ -46,6 +41,11 @@ from trading_agent.us_runtime_fleet_cycle import (
     execute_runtime_fleet_cycle,
 )
 from trading_agent.us_runtime_fleet_cycle_args import parse_runtime_fleet_cycle_args as parse_args
+from trading_agent.us_runtime_fleet_cycle_artifacts import (
+    RuntimeFleetArtifactProjectionError,
+    write_runtime_research_artifacts,
+    write_us_news_catalyst_feature_artifacts,
+)
 from trading_agent.us_runtime_fleet_cycle_cli_result import (
     LIVE_BLOCKED,
     LIVE_DISABLED,
@@ -66,10 +66,6 @@ from trading_agent.us_runtime_policy_scope import (
     RuntimePolicyScopeError,
     RuntimePolicyScopeRequest,
     prepare_runtime_policy_scope,
-)
-from trading_agent.us_sip_research_evidence_projection import (
-    UsSipResearchEvidenceProjectionError,
-    project_us_sip_research_evidence,
 )
 from trading_agent.us_subscription_models import (
     SubscriptionPolicyConfig,
@@ -171,7 +167,16 @@ def run_cycle(
                 UsMarketDataFleet(factory),
                 RuntimeFleetAuditStore(args.audit_store),
             )
-        research_counts = _write_research_artifacts(args, result.fleet.bindings)
+        research_counts = write_runtime_research_artifacts(
+            result.fleet.bindings,
+            args.canonical_root,
+            args.research_artifact_root,
+            args.minimum_rvol_bps,
+        )
+        news_feature_counts = write_us_news_catalyst_feature_artifacts(
+            result.fleet.bindings,
+            args.news_catalyst_feature_root,
+        )
         actionability_counts = dispatch_us_runtime_actionability_outbox_counts(
             actionability.signal_outbox,
             actionability.manifest_root,
@@ -186,13 +191,12 @@ def run_cycle(
         AlpacaSipDynamicPlanStoreError,
         AlpacaSipProfileMaterializerError,
         OSError,
-        ResearchEvidenceArtifactError,
+        RuntimeFleetArtifactProjectionError,
         RuntimeFleetCycleError,
         RuntimeLiveActionabilityConfigError,
         RuntimePolicyScopeError,
         SubscriptionPolicyStateError,
         TypeError,
-        UsSipResearchEvidenceProjectionError,
         UsOpportunityScannerProjectionError,
         UsRuntimeActionabilityManifestDispatchError,
         ValueError,
@@ -214,6 +218,7 @@ def run_cycle(
             state_appended,
             plan_roll,
             research_counts,
+            news_feature_counts,
             actionability_counts,
             live_actionability_result,
         ),
@@ -243,21 +248,6 @@ def _policy_config(args: argparse.Namespace) -> SubscriptionPolicyConfig:
 def _validate_research_options(args: argparse.Namespace) -> None:
     if type(args.minimum_rvol_bps) is not int or not 1 <= args.minimum_rvol_bps <= 100_000:
         raise RuntimeFleetCycleError
-
-
-def _write_research_artifacts(
-    args: argparse.Namespace,
-    bindings: tuple[UsFeatureEvidenceBinding, ...],
-) -> tuple[int, int] | None:
-    if args.research_artifact_root is None:
-        return None
-    models = project_us_sip_research_evidence(
-        bindings,
-        args.canonical_root,
-        minimum_rvol_bps=args.minimum_rvol_bps,
-    )
-    created = tuple(write_research_evidence_artifact(args.research_artifact_root, model)[1] for model in models)
-    return sum(created), len(created) - sum(created)
 
 
 def _report(output_dir: Path, details: tuple[str, ...]) -> None:

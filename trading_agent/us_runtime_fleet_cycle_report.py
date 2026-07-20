@@ -20,6 +20,7 @@ class RuntimeFleetCycleReportFields:
     state_appended: bool
     plan_roll: AlpacaSipDynamicPlanRollResult | None
     research_counts: tuple[int, int] | None
+    news_catalyst_feature_counts: tuple[int, int] | None
     actionability_counts: tuple[int, int] | None
     live_actionability: UsRuntimeLiveActionabilityDispatchResult | None
 
@@ -48,6 +49,10 @@ def write_runtime_fleet_cycle_ready_report(
     fields: RuntimeFleetCycleReportFields,
 ) -> None:
     research = _count_detail("research evidence artifact", fields.research_counts)
+    news_features = _count_detail(
+        "news catalyst feature artifact",
+        fields.news_catalyst_feature_counts,
+    )
     manifests = _count_detail("actionability manifests", fields.actionability_counts)
     write_runtime_fleet_cycle_report(
         output_dir,
@@ -61,6 +66,7 @@ def write_runtime_fleet_cycle_ready_report(
             f"policy state append: {'new' if fields.state_appended else 'replay'}",
             dynamic_plan_report_detail(fields.plan_roll),
             research,
+            news_features,
             manifests,
             live_actionability_report_detail(fields.live_actionability),
             "account/order mutation: 0",

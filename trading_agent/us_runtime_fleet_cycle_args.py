@@ -21,6 +21,7 @@ def parse_runtime_fleet_cycle_args(argv: Sequence[str] | None = None) -> argpars
     parser.add_argument("--policy-state-store", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--research-artifact-root", type=Path)
+    parser.add_argument("--news-catalyst-feature-root", type=Path)
     parser.add_argument("--conditional-signal-outbox", type=Path)
     parser.add_argument("--actionability-manifest-root", type=Path)
     parser.add_argument("--dynamic-plan-store", type=Path)
