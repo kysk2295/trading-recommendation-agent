@@ -118,8 +118,8 @@ def main(
         UnsafeSecEdgarRedirectPolicyError,
         OSError,
         ValueError,
-    ) as error:
-        raise typer.BadParameter(str(error)) from None
+    ):
+        raise typer.BadParameter("SEC EDGAR history collection state is invalid") from None
     try:
         write_private_stable_report(report_path, _report(result))
     except InvalidPrivateStableReportError:

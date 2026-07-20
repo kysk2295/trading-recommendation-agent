@@ -104,6 +104,45 @@ def test_sec_history_cli_rejects_missing_parent_before_fixture(
     assert source_opened is False
 
 
+def test_sec_history_cli_redacts_report_preflight_path_error(tmp_path: Path) -> None:
+    database = _database_with_parent(tmp_path, "sec-cycle-report-error")
+    private_component = tmp_path / "private-report-component"
+    private_component.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(
+        typer.BadParameter,
+        match=r"^SEC EDGAR history collection state is invalid$",
+    ):
+        run_sec_edgar_history_collect.main(
+            parent_collection_id="sec-cycle-report-error",
+            cik="0000320193",
+            database=str(database),
+            output_dir=str(private_component / "report"),
+            max_files=1,
+            fixture_manifest=None,
+            user_agent_path=None,
+        )
+
+
+def test_sec_history_cli_redacts_user_agent_path_error(tmp_path: Path) -> None:
+    database = _database_with_parent(tmp_path, "sec-cycle-user-agent-error")
+    private_user_agent = tmp_path / "private-user-agent.env"
+
+    with pytest.raises(
+        typer.BadParameter,
+        match=r"^SEC EDGAR history collection state is invalid$",
+    ):
+        run_sec_edgar_history_collect.main(
+            parent_collection_id="sec-cycle-user-agent-error",
+            cik="0000320193",
+            database=str(database),
+            output_dir=str(tmp_path / "report"),
+            max_files=1,
+            fixture_manifest=None,
+            user_agent_path=str(private_user_agent),
+        )
+
+
 def _manifest(directory: Path) -> Path:
     directory.mkdir()
     (directory / "history.json").write_bytes(HISTORY.read_bytes())
@@ -126,6 +165,18 @@ def _manifest(directory: Path) -> Path:
         encoding="utf-8",
     )
     return manifest
+
+
+def _database_with_parent(tmp_path: Path, collection_id: str) -> Path:
+    database = tmp_path / f"{collection_id}.sqlite3"
+    _ = collect_sec_submissions(
+        RecentFetcher(),
+        SecEdgarStore(database),
+        collection_id,
+        "0000320193",
+        _clock=lambda: PRIMARY_COMPLETED_AT,
+    )
+    return database
 
 
 def _report(output: Path) -> str:
