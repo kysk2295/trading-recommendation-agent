@@ -13,6 +13,7 @@ from trading_agent.sec_edgar_schema import (
     SEC_EDGAR_SCHEMA_OBJECTS,
     SEC_EDGAR_SCHEMA_VERSION,
 )
+from trading_agent.sec_edgar_store_semantics import require_store_semantics
 from trading_agent.sec_edgar_store_types import InvalidSecEdgarStoreError
 from trading_agent.sec_edgar_store_version_chain import require_all_version_chains
 from trading_agent.sqlite_uri import sqlite_read_only_uri
@@ -95,6 +96,7 @@ def _require_schema(connection: sqlite3.Connection) -> None:
     ):
         raise InvalidSecEdgarStoreError
     require_all_version_chains(connection)
+    require_store_semantics(connection)
 
 
 def _require_private_file(path: Path) -> None:

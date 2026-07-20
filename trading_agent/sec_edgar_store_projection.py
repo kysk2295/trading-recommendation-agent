@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import assert_never
 
 from trading_agent.sec_edgar_models import (
+    SecCollectionStatus,
     SecEdgarResponseError,
     SecFilingEvent,
     SecSubmissionRawResponse,
@@ -19,13 +21,27 @@ def require_receipt_projection(
 ) -> None:
     try:
         expected = parse_sec_submission_snapshot(response)
-    except SecEdgarResponseError:
-        raise InvalidSecEdgarStoreError from None
-    if (
-        response.collection_id != run.collection_id
-        or response.cik != run.cik
-        or response.receipt_id != run.receipt_id
-        or expected.filings != tuple(events)
-        or expected.additional_history_file_count != run.additional_history_file_count
-    ):
-        raise InvalidSecEdgarStoreError
+    except SecEdgarResponseError as error:
+        match run.status:
+            case SecCollectionStatus.FAILED:
+                if events or error.failure_code != run.failure_code:
+                    raise InvalidSecEdgarStoreError from None
+            case SecCollectionStatus.SUCCESS:
+                raise InvalidSecEdgarStoreError from None
+            case unreachable:
+                assert_never(unreachable)
+        return
+    match run.status:
+        case SecCollectionStatus.SUCCESS:
+            if (
+                response.collection_id != run.collection_id
+                or response.cik != run.cik
+                or response.receipt_id != run.receipt_id
+                or expected.filings != tuple(events)
+                or expected.additional_history_file_count != run.additional_history_file_count
+            ):
+                raise InvalidSecEdgarStoreError
+        case SecCollectionStatus.FAILED:
+            raise InvalidSecEdgarStoreError
+        case unreachable:
+            assert_never(unreachable)

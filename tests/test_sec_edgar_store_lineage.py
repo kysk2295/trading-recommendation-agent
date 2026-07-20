@@ -35,6 +35,13 @@ def test_sec_store_rejects_observation_substituted_from_same_filing_chain(tmp_pa
     repeated_snapshot = parse_sec_submission_snapshot(repeated_response)
     _ = store.append_receipt(repeated_response)
     _ = store.append_collection(_run(repeated_response), repeated_snapshot)
+    pending_response = _response(
+        "sec-cycle-pending",
+        SECOND_AT + dt.timedelta(minutes=2),
+        _changed_payload("Pending correction"),
+    )
+    pending_snapshot = parse_sec_submission_snapshot(pending_response)
+    _ = store.append_receipt(pending_response)
     with sqlite3.connect(store.path) as connection:
         trigger_sql = connection.execute(
             "SELECT sql FROM sqlite_master WHERE name='sec_filing_observations_no_update'"
@@ -46,6 +53,36 @@ def test_sec_store_rejects_observation_substituted_from_same_filing_chain(tmp_pa
         )
         _ = connection.execute(trigger_sql)
 
+    before = store.path.read_bytes()
+    new_response = _response(
+        "sec-cycle-new",
+        SECOND_AT + dt.timedelta(minutes=3),
+        corrected_payload,
+    )
+    failed_run = SecSubmissionRun(
+        collection_id="sec-cycle-failed",
+        cik=corrected_response.cik,
+        started_at=new_response.received_at,
+        completed_at=new_response.received_at,
+        status=SecCollectionStatus.FAILED,
+        failure_code="transport",
+        receipt_id=None,
+        filing_count=0,
+        additional_history_file_count=0,
+    )
+
+    with pytest.raises(ValueError):
+        store.preflight_write()
+    assert store.path.read_bytes() == before
+    with pytest.raises(ValueError):
+        _ = store.append_receipt(new_response)
+    assert store.path.read_bytes() == before
+    with pytest.raises(ValueError):
+        _ = store.append_collection(_run(pending_response), pending_snapshot)
+    assert store.path.read_bytes() == before
+    with pytest.raises(ValueError):
+        _ = store.append_failed_run(failed_run)
+    assert store.path.read_bytes() == before
     with pytest.raises(ValueError):
         _ = store.filings_for_run(corrected.run.run_id)
 
