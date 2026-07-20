@@ -201,6 +201,36 @@ def test_sec_cli_rejects_symlinked_database_parent_before_fixture(
     assert source_opened is False
 
 
+def test_sec_cli_rejects_public_database_parent_before_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    public_parent = tmp_path / "public-parent"
+    public_parent.mkdir()
+    public_parent.chmod(0o755)
+    source_opened = False
+
+    def reject_source(_path: Path) -> None:
+        nonlocal source_opened
+        source_opened = True
+        raise AssertionError("fixture opened before store validation")
+
+    monkeypatch.setattr(run_sec_edgar_collect, "load_sec_edgar_fixture", reject_source)
+
+    with pytest.raises(typer.BadParameter):
+        run_sec_edgar_collect.main(
+            collection_id="sec-cycle-001",
+            cik="0000320193",
+            database=str(public_parent / "sec.sqlite3"),
+            output_dir=str(tmp_path / "report"),
+            fixture_manifest=str(tmp_path / "fixture.json"),
+            user_agent_path=None,
+        )
+
+    assert source_opened is False
+    assert not (public_parent / "sec.sqlite3").exists()
+
+
 @pytest.mark.parametrize("use_fixture", [True, False])
 def test_sec_cli_recovers_orphan_before_opening_external_source(
     tmp_path: Path,

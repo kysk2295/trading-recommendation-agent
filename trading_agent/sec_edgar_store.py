@@ -9,7 +9,11 @@ from typing import final
 
 from pydantic import ValidationError
 
-from trading_agent.private_directory_identity import absolute_private_path, open_private_parent
+from trading_agent.private_directory_identity import (
+    absolute_private_path,
+    open_private_parent,
+    require_private_directory_query_only,
+)
 from trading_agent.sec_edgar_models import (
     SecCollectionStatus,
     SecSubmissionRawResponse,
@@ -199,6 +203,7 @@ class SecEdgarStore:
         try:
             parent_descriptor = open_private_parent(self.path.parent, create=False)
             try:
+                require_private_directory_query_only(parent_descriptor)
                 metadata = os.stat(
                     self.path.name,
                     dir_fd=parent_descriptor,
