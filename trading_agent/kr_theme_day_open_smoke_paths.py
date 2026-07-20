@@ -47,7 +47,10 @@ def path_uses_protected_file(target_path: Path, protected: tuple[Path, ...]) -> 
 
 def require_private_source_path(path: Path) -> None:
     target = absolute_private_path(path)
-    parent_descriptor = open_private_parent(target.parent, create=False)
+    try:
+        parent_descriptor = open_private_parent(target.parent, create=False)
+    except FileNotFoundError:
+        return
     try:
         require_private_directory_query_only(parent_descriptor)
         try:

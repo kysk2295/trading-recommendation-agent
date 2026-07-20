@@ -223,6 +223,22 @@ def test_open_smoke_cli_rejects_symlinked_receipt_store(tmp_path: Path) -> None:
     assert not destination.exists()
 
 
+def test_open_smoke_cli_allows_absent_optional_store_parent(tmp_path: Path) -> None:
+    # Given
+    production_session(tmp_path, entry_store=tmp_path / "not-created" / "entries.sqlite3")
+    destination = tmp_path / "open-smoke.json"
+
+    # When
+    result = smoke_cli.main(
+        _args(tmp_path / "session.json", destination, tmp_path / "report"),
+        clock=lambda: VERIFIED_AT,
+    )
+
+    # Then
+    assert result == 0
+    assert destination.exists()
+
+
 def test_open_smoke_cli_rejects_ledger_symlink_swap_after_onboarding_projection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

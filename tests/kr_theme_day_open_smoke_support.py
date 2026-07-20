@@ -45,6 +45,7 @@ def production_session(
     tmp_path: Path,
     *,
     receipt_seconds: tuple[int, int, int] = (1, 2, 3),
+    entry_store: Path | None = None,
 ) -> tuple[
     KrThemeDaySessionManifest,
     KrThemeDaySessionVerificationResult,
@@ -52,6 +53,10 @@ def production_session(
     tuple[KrThemeDaySessionSourceAttestation, ...],
 ]:
     request = _prepared_request(tmp_path)
+    if entry_store is not None:
+        request = request.model_copy(
+            update={"paths": request.paths.model_copy(update={"entry_store": entry_store})},
+        )
     manifest = onboard_kr_theme_day_opportunity(request).manifest
     _ = start_kr_theme_day_shadow_trial(
         ExperimentLedgerStore(manifest.paths.experiment_ledger),
