@@ -21,7 +21,7 @@ Institutional Multi-Market Quant Research OS Milestone 5의 첫 미국 공시 so
 - 같은 accession의 동일 canonical event는 기존 version을 재사용한다. payload가 달라지면 이전 version ID를 부모로 하는 새 immutable version을 만든다.
 - correction observation은 이전 version의 최신 관측시각보다 빠를 수 없으며 모든 저장시각은 UTC로 canonicalize한다.
 - receipt, filing version, run과 observation table은 update/delete trigger로 append-only이며 SQLite structural integrity, exact DDL signature, foreign key, raw payload hash, duplicated run columns, run/receipt/observation lineage와 전체 accession version ancestor chain을 매번 확인한다.
-- caller snapshot과 저장된 ordered observation은 exact raw receipt를 다시 파싱한 deterministic projection과 같아야 한다. snapshot filing CIK, accepted-at 대 receipt observation, failed-run history count와 linear correction 순서가 모순되면 public store write와 replay를 모두 거부한다.
+- caller snapshot과 저장된 ordered observation은 exact raw receipt를 다시 파싱한 deterministic projection과 같아야 한다. 모든 public store write는 기존 전체 receipt, run, ordered observation과 version chain을 먼저 재생하며, snapshot filing CIK, accepted-at 대 receipt observation, failed-run history count와 linear correction 순서가 모순되면 mutation 전과 replay에서 모두 거부한다.
 - terminal success·failure run과 terminal 이전에 남은 orphan receipt는 CLI가 provider, fixture, User-Agent file과 HTTP client를 열기 전에 exact replay 또는 deterministic terminal 복구한다.
 - database와 report alias, symlinked report 경로, foreign version-0 SQLite와 invalid store는 provider fetch와 store mutation 전에 거부한다.
 - fixture payload는 파일 크기를 먼저 확인하고 bounded read하며 issuer와 additional-history 내부 metadata는 이 checkpoint에서 소비하지 않으므로 rejection 조건으로 사용하지 않는다.
