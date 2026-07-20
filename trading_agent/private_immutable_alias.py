@@ -54,10 +54,10 @@ def publish_private_immutable_alias(source: Path, destination: Path) -> bool:
                     require_same_file(source_descriptor, destination_descriptor)
                     os.fsync(parent_descriptor)
                     os.unlink(source_target.name, dir_fd=parent_descriptor)
+                    published_state = _file_state(source_descriptor)
                     os.fsync(parent_descriptor)
                     if os.fstat(source_descriptor).st_nlink != 1:
                         raise InvalidPrivateImmutableAliasError
-                    published_state = _file_state(source_descriptor)
                     confirmation = _open_private_file(parent_descriptor, destination_target.name, (1,))
                     try:
                         require_same_file(source_descriptor, confirmation)

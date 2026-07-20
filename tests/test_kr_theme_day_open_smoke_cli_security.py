@@ -261,6 +261,36 @@ def test_open_smoke_cli_preserves_foreign_same_inode_final_on_publish_conflict(
     assert load_kr_theme_day_open_smoke(destination).verified_at == VERIFIED_AT
 
 
+def test_immutable_alias_rolls_back_when_post_unlink_parent_sync_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    source = tmp_path / "pending.json"
+    destination = tmp_path / "final.json"
+    source.write_text("evidence\n", encoding="utf-8")
+    source.chmod(0o600)
+    original_fsync = private_immutable_alias.os.fsync
+    failed = False
+
+    def fail_after_source_unlink(descriptor: int) -> None:
+        nonlocal failed
+        if not failed and not source.exists() and destination.exists():
+            failed = True
+            raise OSError
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(private_immutable_alias.os, "fsync", fail_after_source_unlink)
+
+    # When
+    with pytest.raises(private_immutable_alias.InvalidPrivateImmutableAliasError):
+        private_immutable_alias.publish_private_immutable_alias(source, destination)
+
+    # Then
+    assert failed is True
+    assert not destination.exists()
+
+
 def test_open_smoke_cli_cleanup_preserves_foreign_file_after_parent_symlink_swap(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
