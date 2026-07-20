@@ -64,4 +64,4 @@ fixture는 raw-first success, correction version, HTTP 오류 raw 보존, transp
 
 최종 release gate의 redacted exact-SHA 리뷰 기록은 저장소 밖 `~/.codex/review-evidence/sec-edgar-<short-sha>.md`에 보존한다. Git commit 내부에서 자신의 SHA를 참조할 수 없으므로 Reviewer 입력에는 해당 absolute path를 별도로 제공한다.
 
-`filings.recent`만 canonical event로 저장한다. 응답의 `filings.files`는 개수만 기록하며 추가 history 파일은 아직 가져오지 않는다. 다음 M5 경계는 additional history의 bounded raw-first 수집, SEC source capability registry projection과 issuer/company-announcement evidence다.
+이 체크포인트 당시에는 `filings.recent`만 canonical event로 저장했다. 후속 bounded history 수집은 [SEC EDGAR Additional-History Read-Only 체크포인트](2026-07-20-sec-edgar-additional-history-readonly-ko.md)에서 완료했다. 다음 M5 경계는 SEC source capability registry projection과 issuer/company-announcement evidence다.
