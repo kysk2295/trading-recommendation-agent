@@ -9,7 +9,10 @@ import run_kr_theme_day_open_smoke_verify as smoke_cli
 from tests.kr_theme_day_open_smoke_support import VERIFIED_AT, production_session
 from trading_agent import private_immutable_alias, private_immutable_file
 from trading_agent.kr_theme_day_onboarding_models import onboarding_receipt_path
-from trading_agent.kr_theme_day_open_smoke import load_kr_theme_day_open_smoke
+from trading_agent.kr_theme_day_open_smoke import (
+    attest_kr_theme_day_open_smoke,
+    load_kr_theme_day_open_smoke,
+)
 from trading_agent.private_immutable_file import publish_private_immutable_text
 
 
@@ -229,7 +232,7 @@ def test_open_smoke_cli_rejects_ledger_symlink_swap_after_onboarding_projection(
     assert not destination.exists()
 
 
-def test_open_smoke_cli_preserves_foreign_same_inode_final_on_publish_conflict(
+def test_open_smoke_cli_preserves_invalid_foreign_same_inode_final_on_publish_conflict(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -259,7 +262,7 @@ def test_open_smoke_cli_preserves_foreign_same_inode_final_on_publish_conflict(
 
     # Then
     assert result == 1
-    assert load_kr_theme_day_open_smoke(destination).verified_at == VERIFIED_AT
+    assert destination.stat().st_nlink == 2
 
 
 def test_immutable_alias_does_not_sync_parent_after_commit_unlink(
@@ -360,6 +363,44 @@ def test_immutable_alias_leaves_invalid_two_link_final_when_precommit_cleanup_fa
     assert path_check_failed is True
     assert cleanup_unlink_failed is True
     assert source.stat().st_nlink == 2
+    assert destination.stat().st_nlink == 2
+
+
+def test_open_smoke_cli_preserves_two_link_barrier_when_publisher_cleanup_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    manifest, verification, events, attestations = production_session(tmp_path)
+    evidence = attest_kr_theme_day_open_smoke(manifest, verification, events, attestations, VERIFIED_AT)
+    destination = tmp_path / "open-smoke.json"
+    pending = destination.with_name(f".{destination.name}.{evidence.evidence_id}.pending")
+    original_unlink = private_immutable_alias.os.unlink
+    cleanup_unlink_failed = False
+
+    def fail_path_check(_path: Path, _descriptor: int) -> None:
+        raise OSError
+
+    def fail_final_cleanup(name: str, *, dir_fd: int | None = None) -> None:
+        nonlocal cleanup_unlink_failed
+        if name == destination.name and pending.exists():
+            cleanup_unlink_failed = True
+            raise OSError
+        original_unlink(name, dir_fd=dir_fd)
+
+    monkeypatch.setattr(private_immutable_alias, "require_open_directory_path", fail_path_check)
+    monkeypatch.setattr(private_immutable_alias.os, "unlink", fail_final_cleanup)
+
+    # When
+    result = smoke_cli.main(
+        _args(tmp_path / "session.json", destination, tmp_path / "report"),
+        clock=lambda: VERIFIED_AT,
+    )
+
+    # Then
+    assert result == 1
+    assert cleanup_unlink_failed is True
+    assert pending.stat().st_nlink == 2
     assert destination.stat().st_nlink == 2
 
 

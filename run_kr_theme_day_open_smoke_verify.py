@@ -191,6 +191,7 @@ def _publish_new_stable_evidence(
     ):
         raise ValueError
     pending_created = False
+    cleanup_owned_by_caller = True
     final_created = False
     try:
         pending_created = publish_kr_theme_day_open_smoke(pending, evidence)
@@ -200,12 +201,13 @@ def _publish_new_stable_evidence(
             raise ValueError
         if load_kr_theme_day_open_smoke(pending) != evidence:
             raise ValueError
+        cleanup_owned_by_caller = False
         final_created = publish_private_immutable_alias(pending, destination)
         if not final_created:
             raise ValueError
         return _EvidencePublication(True)
     finally:
-        if pending_created and not final_created:
+        if pending_created and cleanup_owned_by_caller:
             pending.unlink(missing_ok=True)
 
 
