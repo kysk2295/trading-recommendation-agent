@@ -70,7 +70,7 @@ class UsNewsCatalystCollectionPlanContent(BaseModel):
             or self.cohort_observed_at.astimezone(NEW_YORK).date() != self.session_date
             or bounds is None
             or not bounds[0] < self.evaluated_at < bounds[1]
-            or not target <= self.evaluated_at <= target + _MAX_COLLECTION_DELAY
+            or not target < self.evaluated_at <= target + _MAX_COLLECTION_DELAY
             or self.completed_minute != _completed_minute(bounds[0], self.evaluated_at)
             or _HEX64.fullmatch(self.security_master_snapshot_id) is None
             or symbols != tuple(sorted(set(symbols)))

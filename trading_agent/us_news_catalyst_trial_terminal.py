@@ -35,6 +35,8 @@ from trading_agent.us_news_catalyst_trial_outcome_models import (
     trial_outcome_artifact,
 )
 
+_MAX_TERMINAL_RECOVERY_DELAY = dt.timedelta(days=1)
+
 
 def finalize_us_news_catalyst_trial(
     ledger: ExperimentLedgerStore,
@@ -100,7 +102,7 @@ def _require_terminal_time(
         cohort.payload.trial_id != trial.trial_id
         or bounds is None
         or terminal_at < cohort.payload.observed_at + US_NEWS_CATALYST_SETUP_HORIZON
-        or not bounds[0] <= terminal_at <= bounds[1]
+        or not bounds[0] <= terminal_at <= bounds[1] + _MAX_TERMINAL_RECOVERY_DELAY
     ):
         raise InvalidUsNewsCatalystTrialError
 

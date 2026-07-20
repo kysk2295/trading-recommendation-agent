@@ -70,7 +70,7 @@ def validate_collection_time(
         type(evaluated_at) is not dt.datetime
         or evaluated_at.tzinfo is None
         or evaluated_at.utcoffset() is None
-        or not target <= evaluated_at <= target + _MAX_COLLECTION_DELAY
+        or not target < evaluated_at <= target + _MAX_COLLECTION_DELAY
     ):
         raise InvalidUsNewsCatalystCollectionScopeError
 

@@ -164,6 +164,34 @@ def test_insufficient_zero_news_control_is_censored_not_zero_return(
     assert result.outcome.payload.confirmation_lift_bps is None
 
 
+def test_missing_setup_observations_can_terminalize_after_close_for_recovery(
+    tmp_path: Path,
+) -> None:
+    ledger = registered_ledger(tmp_path)
+    registered = register_us_news_catalyst_daily_trial(ledger, _registration_request())
+    projection, evidence = projected_evidence(ledger)
+    started = start_us_news_catalyst_trial(
+        ledger,
+        registered.registration.trial_id,
+        projection,
+        evidence,
+        tmp_path / "artifacts",
+        started_at=OBSERVED + dt.timedelta(seconds=1),
+    )
+
+    result = finalize_us_news_catalyst_trial(
+        ledger,
+        registered.registration.trial_id,
+        started.cohort,
+        None,
+        tmp_path / "artifacts",
+        finalized_at=dt.datetime(2026, 7, 21, 20, 10, tzinfo=dt.UTC),
+    )
+
+    assert result.outcome.payload.terminal_kind is TrialEventKind.CENSORED
+    assert result.outcome.payload.reason_codes == ("missing_setup_observations",)
+
+
 def test_finalize_fails_closed_when_frozen_cohort_artifact_is_missing(
     tmp_path: Path,
 ) -> None:

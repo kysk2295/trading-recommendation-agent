@@ -28,6 +28,10 @@ from trading_agent.us_news_catalyst_cohort_collection import (
     UsNewsCatalystCohortCollectionPaths,
     UsNewsCatalystCohortCollector,
 )
+from trading_agent.us_news_catalyst_collection_scope import (
+    InvalidUsNewsCatalystCollectionScopeError,
+    validate_collection_time,
+)
 from trading_agent.us_news_catalyst_feature_artifact import feature_artifacts_in
 
 
@@ -48,7 +52,6 @@ def test_complete_cohort_collects_all_features_and_replays_without_http(tmp_path
         _security_master(),
         evaluated_at=SETUP_AT + dt.timedelta(seconds=30),
     )
-
     assert second.receipt == first.receipt
     assert second.created is False
     assert request_count == 84
@@ -64,6 +67,16 @@ def test_complete_cohort_collects_all_features_and_replays_without_http(tmp_path
         stat.S_IMODE((tmp_path / name).stat().st_mode) == 0o700
         for name in ("profiles", "runtime", "canonical", "features", "receipts")
     )
+
+
+def test_exact_setup_horizon_is_not_yet_causally_collectable(tmp_path: Path) -> None:
+    cohort = _cohort(tmp_path)
+
+    with pytest.raises(InvalidUsNewsCatalystCollectionScopeError):
+        validate_collection_time(
+            cohort,
+            cohort.payload.observed_at + dt.timedelta(minutes=30),
+        )
 
 
 def test_missing_security_master_symbol_blocks_before_http(tmp_path: Path) -> None:
