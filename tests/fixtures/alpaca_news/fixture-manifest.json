@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "request_id": "9b4feaadd6cdaab5926efd7433c228f4a1487cbd97db0666875724d014380e72",
+  "responses": [
+    {
+      "page_index": 0,
+      "page_token": null,
+      "received_at": "2026-07-21T14:00:01Z",
+      "http_status": 200,
+      "content_type": "application/json",
+      "payload_path": "page-001.json"
+    }
+  ]
+}

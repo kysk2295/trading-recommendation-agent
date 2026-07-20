@@ -116,6 +116,26 @@ def create_alpaca_client(base_url: str = ALPACA_DATA_URL) -> httpx2.Client:
     )
 
 
+def create_alpaca_news_http_client() -> httpx2.Client:
+    limits = httpx2.Limits(
+        max_connections=50,
+        max_keepalive_connections=20,
+        keepalive_expiry=30.0,
+    )
+    transport = httpx2.HTTPTransport(
+        http2=True,
+        retries=0,
+        limits=limits,
+        socket_options=[(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)],
+    )
+    return httpx2.Client(
+        base_url=ALPACA_DATA_URL,
+        transport=transport,
+        timeout=httpx2.Timeout(connect=5.0, read=30.0, write=10.0, pool=10.0),
+        follow_redirects=False,
+    )
+
+
 def peak_rss_gib() -> float:
     peak = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     bytes_used = peak if sys.platform == "darwin" else peak * 1024.0
