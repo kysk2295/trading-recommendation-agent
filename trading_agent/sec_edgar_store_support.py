@@ -11,6 +11,7 @@ from trading_agent.sec_edgar_models import (
     SecSubmissionRun,
     SecSubmissionSnapshot,
 )
+from trading_agent.sec_edgar_store_projection import require_receipt_projection
 from trading_agent.sec_edgar_store_types import (
     InvalidSecEdgarStoreError,
     SecStoredFilingVersion,
@@ -164,6 +165,7 @@ def filings_from_connection(
                 item_index,
             )
         )
+    require_receipt_projection(receipt.response, run, tuple(item.event for item in result))
     return tuple(result)
 
 

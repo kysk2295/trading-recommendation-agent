@@ -38,7 +38,10 @@ def test_sec_cli_fixture_happy_and_terminal_replay_are_redacted(tmp_path: Path) 
     )
     second = _report(output)
 
-    assert len(SecEdgarStore(database).filings_for_run(_run_id())) == 2
+    store = SecEdgarStore(database)
+    run = store.collection_run("sec-cycle-001", "0000320193")
+    assert run is not None
+    assert len(store.filings_for_run(run.run_id)) == 2
     assert "new filing versions: 2" in first
     assert "replayed: no" in first
     assert "new filing versions: 0" in second
@@ -191,9 +194,3 @@ def _manifest(directory: Path) -> Path:
 
 def _report(output: Path) -> str:
     return (output / "sec_edgar_collection_summary.md").read_text(encoding="utf-8")
-
-
-def _run_id() -> str:
-    import hashlib
-
-    return hashlib.sha256(b"sec-cycle-001|0000320193").hexdigest()

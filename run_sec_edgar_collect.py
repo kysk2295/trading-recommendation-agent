@@ -1,9 +1,12 @@
-#!/usr/bin/env -S uv run --python 3.12 --with httpx2 --with pydantic --with rich --with typer python
+#!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12"
 # dependencies = ["httpx2[http2,brotli,zstd]", "pydantic", "rich", "typer"]
 # ///
-# Run: uv run --script run_sec_edgar_collect.py --help
+# How to run:
+# 1. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh
+# 2. Run: uv run --script run_sec_edgar_collect.py --help
+# 3. Or: chmod +x run_sec_edgar_collect.py && ./run_sec_edgar_collect.py --help
 
 from __future__ import annotations
 

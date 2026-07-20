@@ -8,6 +8,15 @@ from trading_agent.sec_edgar_models import SecFilingEvent
 from trading_agent.sec_edgar_store_types import InvalidSecEdgarStoreError
 
 
+def require_all_version_chains(connection: sqlite3.Connection) -> None:
+    accessions = connection.execute(
+        "SELECT cik,accession_number,MIN(version_id) FROM sec_filing_versions "
+        "GROUP BY cik,accession_number"
+    ).fetchall()
+    for cik, accession_number, target_version_id in accessions:
+        require_version_chain(connection, target_version_id, cik, accession_number)
+
+
 def require_version_chain(
     connection: sqlite3.Connection,
     target_version_id: str,

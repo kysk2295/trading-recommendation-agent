@@ -14,6 +14,7 @@ from trading_agent.sec_edgar_models import (
     SecSubmissionRun,
     SecSubmissionSnapshot,
 )
+from trading_agent.sec_edgar_store_projection import require_receipt_projection as _require_receipt_projection
 from trading_agent.sec_edgar_store_sql import sec_reader as _reader
 from trading_agent.sec_edgar_store_sql import sec_writer as _writer
 from trading_agent.sec_edgar_store_support import (
@@ -108,6 +109,10 @@ class SecEdgarStore:
                 raise InvalidSecEdgarStoreError
             with _writer(self.path) as connection:
                 _require_receipt(connection, run)
+                receipt = _receipt_from_connection(connection, run.collection_id, run.cik)
+                if receipt is None:
+                    raise InvalidSecEdgarStoreError
+                _require_receipt_projection(receipt.response, run, snapshot.filings)
                 existing = _run_from_connection(connection, run.run_id)
                 if existing is not None:
                     filings = _filings_from_connection(connection, run.run_id)

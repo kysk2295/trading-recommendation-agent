@@ -14,6 +14,7 @@ from trading_agent.sec_edgar_schema import (
     SEC_EDGAR_SCHEMA_VERSION,
 )
 from trading_agent.sec_edgar_store_types import InvalidSecEdgarStoreError
+from trading_agent.sec_edgar_store_version_chain import require_all_version_chains
 from trading_agent.sqlite_uri import sqlite_read_only_uri
 
 
@@ -90,8 +91,10 @@ def _require_schema(connection: sqlite3.Connection) -> None:
         or _schema_signature(connection) != _EXPECTED_SCHEMA_SIGNATURE
         or connection.execute("PRAGMA foreign_keys").fetchone() != (1,)
         or connection.execute("PRAGMA foreign_key_check").fetchone() is not None
+        or connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
     ):
         raise InvalidSecEdgarStoreError
+    require_all_version_chains(connection)
 
 
 def _require_private_file(path: Path) -> None:
