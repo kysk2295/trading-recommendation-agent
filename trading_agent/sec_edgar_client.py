@@ -12,9 +12,13 @@ from typing import Final, NoReturn, final, override
 import httpx2
 
 from trading_agent.sec_edgar_config import SEC_EDGAR_BASE_URL, SecUserAgent
-from trading_agent.sec_edgar_models import SecSubmissionRawResponse, normalize_sec_cik
+from trading_agent.sec_edgar_models import (
+    SEC_EDGAR_MAX_RAW_BYTES,
+    SecSubmissionRawResponse,
+    normalize_sec_cik,
+)
 
-MAX_SEC_SUBMISSION_BYTES: Final = 64 * 1024 * 1024
+MAX_SEC_SUBMISSION_BYTES: Final = SEC_EDGAR_MAX_RAW_BYTES
 MAX_SEC_REQUEST_SECONDS: Final = 45.0
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _CONTENT_TYPE = re.compile(r"^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$")

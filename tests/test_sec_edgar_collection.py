@@ -141,6 +141,26 @@ def test_sec_collection_rejects_invalid_store_path_before_provider(tmp_path: Pat
     assert fetcher.calls == []
 
 
+def test_sec_collection_rejects_oversized_typed_response_without_mutation(tmp_path: Path) -> None:
+    database = tmp_path / "sec.sqlite3"
+    store = SecEdgarStore(database)
+    store.preflight_write()
+    before = database.read_bytes()
+    response = _response()
+    object.__setattr__(response, "raw_payload", b"x" * (64 * 1024 * 1024 + 1))
+
+    with pytest.raises(ValueError):
+        _ = collect_sec_submissions(
+            StubFetcher(response),
+            store,
+            response.collection_id,
+            response.cik,
+        )
+
+    assert database.read_bytes() == before
+    assert store.receipt_for_collection(response.collection_id, response.cik) is None
+
+
 def _response() -> SecSubmissionRawResponse:
     return SecSubmissionRawResponse(
         collection_id="sec-cycle-001",

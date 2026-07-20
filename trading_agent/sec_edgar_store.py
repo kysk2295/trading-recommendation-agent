@@ -166,6 +166,8 @@ class SecEdgarStore:
             raise InvalidSecEdgarStoreError from None
 
     def collection_run(self, collection_id: str, cik: str) -> SecSubmissionRun | None:
+        if self.path.is_symlink():
+            raise InvalidSecEdgarStoreError
         if not self.path.exists():
             return None
         try:
@@ -176,6 +178,8 @@ class SecEdgarStore:
             raise InvalidSecEdgarStoreError from None
 
     def receipt_for_collection(self, collection_id: str, cik: str) -> SecStoredReceipt | None:
+        if self.path.is_symlink():
+            raise InvalidSecEdgarStoreError
         if not self.path.exists():
             return None
         try:
@@ -185,6 +189,8 @@ class SecEdgarStore:
             raise InvalidSecEdgarStoreError from None
 
     def filings_for_run(self, run_id: str) -> tuple[SecStoredFilingVersion, ...]:
+        if self.path.is_symlink():
+            raise InvalidSecEdgarStoreError
         if not self.path.exists():
             return ()
         try:

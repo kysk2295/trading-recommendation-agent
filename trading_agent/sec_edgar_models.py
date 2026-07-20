@@ -5,7 +5,7 @@ import hashlib
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Self, override
+from typing import Final, Self, override
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -19,6 +19,7 @@ _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _CONTENT_TYPE = re.compile(r"^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$")
 _CONTENT_ENCODING = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}$")
+SEC_EDGAR_MAX_RAW_BYTES: Final = 64 * 1024 * 1024
 
 
 class SecEdgarResponseError(ValueError):
@@ -51,6 +52,7 @@ class SecSubmissionRawResponse:
             or not 100 <= self.status_code <= 599
             or _CONTENT_TYPE.fullmatch(self.content_type) is None
             or _CONTENT_ENCODING.fullmatch(self.content_encoding) is None
+            or len(self.raw_payload) > SEC_EDGAR_MAX_RAW_BYTES
         ):
             raise SecEdgarResponseError("raw_response")
         object.__setattr__(self, "received_at", self.received_at.astimezone(dt.UTC))
