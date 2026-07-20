@@ -11,6 +11,7 @@ from typing import Final, override
 import httpx2
 
 SEC_EDGAR_BASE_URL: Final = "https://data.sec.gov"
+SEC_EDGAR_ARCHIVE_BASE_URL: Final = "https://www.sec.gov"
 DEFAULT_SEC_USER_AGENT_PATH: Final = Path.home() / ".config/trading-agent/sec.env"
 MAX_SEC_USER_AGENT_FILE_BYTES: Final = 1_024
 _USER_AGENT = re.compile(r"^[!-~]+(?: [!-~]+)+$")
@@ -94,15 +95,23 @@ def load_sec_user_agent(path: Path = DEFAULT_SEC_USER_AGENT_PATH) -> SecUserAgen
 
 
 def create_sec_edgar_http_client() -> httpx2.Client:
+    return _create_sec_http_client(SEC_EDGAR_BASE_URL, retries=2)
+
+
+def create_sec_edgar_archive_http_client() -> httpx2.Client:
+    return _create_sec_http_client(SEC_EDGAR_ARCHIVE_BASE_URL, retries=0)
+
+
+def _create_sec_http_client(base_url: str, *, retries: int) -> httpx2.Client:
     limits = httpx2.Limits(max_connections=2, max_keepalive_connections=1, keepalive_expiry=30.0)
     transport = httpx2.HTTPTransport(
         http2=True,
-        retries=2,
+        retries=retries,
         limits=limits,
         socket_options=[(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)],
     )
     return httpx2.Client(
-        base_url=SEC_EDGAR_BASE_URL,
+        base_url=base_url,
         transport=transport,
         timeout=httpx2.Timeout(connect=5.0, read=30.0, write=10.0, pool=10.0),
         follow_redirects=False,
