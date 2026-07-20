@@ -80,6 +80,25 @@ def test_sec_collection_preserves_http_error_raw_and_terminal_failure(tmp_path: 
     assert result.filing_count == 0
 
 
+def test_sec_collection_preserves_empty_http_error_raw_receipt(tmp_path: Path) -> None:
+    store = SecEdgarStore(tmp_path / "sec.sqlite3")
+    response = SecSubmissionRawResponse(
+        collection_id="sec-cycle-empty",
+        cik="0000320193",
+        received_at=RECEIVED_AT,
+        status_code=503,
+        content_type="text/plain",
+        raw_payload=b"",
+    )
+
+    result = collect_sec_submissions(StubFetcher(response), store, response.collection_id, response.cik)
+
+    stored = store.receipt_for_collection(response.collection_id, response.cik)
+    assert stored is not None
+    assert stored.response.raw_payload == b""
+    assert result.run.failure_code == "http_503"
+
+
 def test_sec_collection_persists_transport_failure_without_receipt(tmp_path: Path) -> None:
     store = SecEdgarStore(tmp_path / "sec.sqlite3")
 

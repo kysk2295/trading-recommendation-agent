@@ -89,8 +89,6 @@ class SecEdgarClient:
                 content_encoding = _response_content_encoding(response)
         except (httpx2.HTTPError, _SecEdgarDeadlineExpired):
             raise SecEdgarTransportError from None
-        if not payload:
-            raise SecEdgarTransportError
         return SecSubmissionRawResponse(
             collection_id=collection_id,
             cik=cik,

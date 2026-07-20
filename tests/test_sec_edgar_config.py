@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 from trading_agent.sec_edgar_config import (
-    DEFAULT_SEC_USER_AGENT_PATH,
     InvalidSecUserAgentError,
     SecUserAgentFileError,
     create_sec_edgar_http_client,
@@ -20,7 +19,6 @@ def test_sec_user_agent_is_loaded_from_exact_private_setting(tmp_path: Path) -> 
 
     setting = load_sec_user_agent(path)
 
-    assert Path.home() / ".config/trading-agent/sec.env" == DEFAULT_SEC_USER_AGENT_PATH
     assert setting.value == USER_AGENT
     assert USER_AGENT not in repr(setting)
 

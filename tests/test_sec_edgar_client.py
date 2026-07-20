@@ -103,6 +103,30 @@ def test_sec_client_bounds_response_before_collection() -> None:
     assert USER_AGENT not in str(captured.value)
 
 
+def test_sec_client_preserves_empty_http_error_response() -> None:
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            503,
+            request=request,
+            headers={"content-type": "text/plain"},
+            stream=httpx2.ByteStream(b""),
+        )
+
+    with httpx2.Client(
+        base_url="https://data.sec.gov",
+        transport=httpx2.MockTransport(handle),
+        follow_redirects=False,
+    ) as http_client:
+        response = SecEdgarClient(
+            http_client,
+            SecUserAgent(USER_AGENT),
+            _clock=lambda: RECEIVED_AT,
+        ).fetch_submissions("sec-cycle-empty", "0000320193")
+
+    assert response.status_code == 503
+    assert response.raw_payload == b""
+
+
 def test_sec_client_preserves_gzip_wire_bytes_and_parser_decodes_bounded_payload() -> None:
     compressed = gzip.compress(FIXTURE.read_bytes())
 

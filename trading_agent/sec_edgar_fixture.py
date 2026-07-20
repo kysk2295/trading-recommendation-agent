@@ -102,7 +102,7 @@ def load_sec_edgar_fixture(path: Path) -> SecEdgarFixtureFetcher:
                 payload.extend(chunk)
         finally:
             os.close(descriptor)
-        if not payload or len(payload) > MAX_SEC_SUBMISSION_BYTES:
+        if len(payload) > MAX_SEC_SUBMISSION_BYTES:
             raise OSError
         return SecEdgarFixtureFetcher(manifest, bytes(payload))
     except (OSError, ValidationError, ValueError):

@@ -51,7 +51,6 @@ class SecSubmissionRawResponse:
             or not 100 <= self.status_code <= 599
             or _CONTENT_TYPE.fullmatch(self.content_type) is None
             or _CONTENT_ENCODING.fullmatch(self.content_encoding) is None
-            or not self.raw_payload
         ):
             raise SecEdgarResponseError("raw_response")
         object.__setattr__(self, "received_at", self.received_at.astimezone(dt.UTC))
@@ -109,6 +108,7 @@ class SecSubmissionRun(BaseModel):
             or success != (self.failure_code is None)
             or (success and self.receipt_id is None)
             or (not success and self.filing_count != 0)
+            or (not success and self.additional_history_file_count != 0)
             or (self.failure_code is not None and _SAFE_ID.fullmatch(self.failure_code) is None)
         ):
             raise SecEdgarResponseError("run")
@@ -173,6 +173,7 @@ class SecSubmissionSnapshot(BaseModel):
     def validate_snapshot(self) -> Self:
         if (
             _CIK.fullmatch(self.cik) is None
+            or any(item.cik != self.cik for item in self.filings)
             or len(tuple(item.accession_number for item in self.filings))
             != len(set(item.accession_number for item in self.filings))
         ):

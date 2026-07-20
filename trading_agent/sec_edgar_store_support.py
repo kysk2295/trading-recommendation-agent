@@ -16,6 +16,7 @@ from trading_agent.sec_edgar_store_types import (
     SecStoredFilingVersion,
     SecStoredReceipt,
 )
+from trading_agent.sec_edgar_store_version_chain import require_version_chain
 
 
 def receipt_from_connection(
@@ -64,6 +65,8 @@ def append_filings(
     if observed_at > run.completed_at:
         raise InvalidSecEdgarStoreError
     for item_index, event in enumerate(snapshot.filings):
+        if event.cik != run.cik or event.accepted_at > observed_at:
+            raise InvalidSecEdgarStoreError
         previous = connection.execute(
             "SELECT v.version_id,v.event_id,v.previous_version_id,"
             "(SELECT MAX(o.observed_at) FROM sec_filing_observations o "
@@ -137,13 +140,15 @@ def filings_from_connection(
         receipt_id, observed_at, item_index, cik, accession_number = row[5:]
         observed = dt.datetime.fromisoformat(observed_at)
         event = SecFilingEvent.model_validate_json(payload_json)
+        require_version_chain(connection, version_id, cik, accession_number)
         if (
             event.event_id != event_id
             or event.cik != cik
             or event.accession_number != accession_number
             or hashlib.sha256(payload_json.encode()).hexdigest() != payload_sha
             or version_identity(previous_id, event_id) != version_id
-            or not _valid_previous(connection, previous_id, cik, accession_number)
+            or event.cik != run.cik
+            or event.accepted_at > observed
             or receipt_id != run.receipt_id
             or observed != receipt.response.received_at
             or item_index != len(result)
@@ -254,18 +259,3 @@ def validated_run(run: SecSubmissionRun) -> SecSubmissionRun:
 
 def version_identity(previous_id: str | None, event_id: str) -> str:
     return hashlib.sha256(f"sec-filing-version|{previous_id or 'root'}|{event_id}".encode()).hexdigest()
-
-
-def _valid_previous(
-    connection: sqlite3.Connection,
-    previous_id: str | None,
-    cik: str,
-    accession_number: str,
-) -> bool:
-    if previous_id is None:
-        return True
-    row = connection.execute(
-        "SELECT cik,accession_number FROM sec_filing_versions WHERE version_id=?",
-        (previous_id,),
-    ).fetchone()
-    return row == (cik, accession_number)

@@ -16,11 +16,12 @@ Institutional Multi-Market Quant Research OS Milestone 5의 첫 미국 공시 so
 
 ## 구현
 
-- `SecSubmissionRawResponse`는 HTTP 오류의 JSON 외 MIME와 gzip/deflate encoding도 원문으로 보존하고 parser가 `200 application/json`을 별도로 요구한다.
+- `SecSubmissionRawResponse`는 0-byte HTTP 오류, JSON 외 MIME와 gzip/deflate encoding도 원문으로 보존하고 parser가 `200 application/json`을 별도로 요구한다.
 - recent filing column 길이, CIK, accession, 접수시각, XBRL flag와 문서 identity를 strict하게 검증한다.
 - 같은 accession의 동일 canonical event는 기존 version을 재사용한다. payload가 달라지면 이전 version ID를 부모로 하는 새 immutable version을 만든다.
 - correction observation은 이전 version의 최신 관측시각보다 빠를 수 없으며 모든 저장시각은 UTC로 canonicalize한다.
-- receipt, filing version, run과 observation table은 update/delete trigger로 append-only이며 exact DDL signature, foreign key, raw payload hash, duplicated run columns와 run/receipt/observation lineage를 매번 확인한다.
+- receipt, filing version, run과 observation table은 update/delete trigger로 append-only이며 exact DDL signature, foreign key, raw payload hash, duplicated run columns, run/receipt/observation lineage와 전체 accession version ancestor chain을 매번 확인한다.
+- snapshot filing CIK, accepted-at 대 receipt observation, failed-run history count와 linear correction 순서가 모순되면 public store write와 replay를 모두 거부한다.
 - terminal success·failure run과 terminal 이전에 남은 orphan receipt는 CLI가 provider, fixture, User-Agent file과 HTTP client를 열기 전에 exact replay 또는 deterministic terminal 복구한다.
 - database와 report alias, symlinked report 경로, foreign version-0 SQLite와 invalid store는 provider fetch와 store mutation 전에 거부한다.
 - fixture payload는 파일 크기를 먼저 확인하고 bounded read하며 issuer와 additional-history 내부 metadata는 이 checkpoint에서 소비하지 않으므로 rejection 조건으로 사용하지 않는다.
@@ -48,12 +49,14 @@ uv run python run_sec_edgar_collect.py \
 
 fixture는 raw-first success, correction version, HTTP 오류 raw 보존, transport terminal failure와 provider-free replay를 검증한다. 이 체크포인트에서는 유효한 실제 연락처 User-Agent를 임의 생성하지 않았으므로 production SEC GET은 0건이다.
 
-- focused SEC: `46 passed`
-- SEC + OpenDART related: `90 passed`
-- full suite: `2899 passed`
+- focused SEC: `53 passed`
+- SEC + OpenDART related: `97 passed`
+- full suite: `2906 passed`
 - Ruff: 통과
 - basedpyright: `0 errors, 0 warnings`
 - compileall과 `git diff --check`: 통과
 - manual CLI: `--help`, invalid CIK, fixture first run `2/2`, missing-User-Agent terminal replay `2/0`, missing fixture·User-Agent orphan 복구, DB/report alias 거부, DB/report mode `600`, directory mode `700`
+
+최종 release gate의 redacted exact-SHA 리뷰 기록은 저장소 밖 `~/.codex/review-evidence/sec-edgar-<short-sha>.md`에 보존한다. Git commit 내부에서 자신의 SHA를 참조할 수 없으므로 Reviewer 입력에는 해당 absolute path를 별도로 제공한다.
 
 `filings.recent`만 canonical event로 저장한다. 응답의 `filings.files`는 개수만 기록하며 추가 history 파일은 아직 가져오지 않는다. 다음 M5 경계는 additional history의 bounded raw-first 수집, SEC source capability registry projection과 issuer/company-announcement evidence다.

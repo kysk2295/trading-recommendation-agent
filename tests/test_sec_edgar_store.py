@@ -12,6 +12,7 @@ from trading_agent.sec_edgar_models import (
     SecCollectionStatus,
     SecSubmissionRawResponse,
     SecSubmissionRun,
+    SecSubmissionSnapshot,
 )
 from trading_agent.sec_edgar_parser import parse_sec_submission_snapshot
 from trading_agent.sec_edgar_store import SecEdgarStore
@@ -189,6 +190,93 @@ def test_sec_store_rejects_run_columns_inconsistent_with_payload(tmp_path: Path)
 
     with pytest.raises(ValueError):
         _ = store.collection_run(response.collection_id, response.cik)
+
+
+def test_sec_snapshot_rejects_filing_from_another_cik() -> None:
+    response = _response("sec-cycle-001", FIRST_AT, FIXTURE.read_bytes())
+    snapshot = parse_sec_submission_snapshot(response)
+    foreign = snapshot.filings[0].model_copy(update={"cik": "0000000001"})
+
+    with pytest.raises(ValueError):
+        _ = SecSubmissionSnapshot(
+            cik=response.cik,
+            filings=(foreign, *snapshot.filings[1:]),
+            additional_history_file_count=1,
+        )
+
+
+def test_sec_store_rejects_filing_accepted_after_receipt(tmp_path: Path) -> None:
+    store = SecEdgarStore(tmp_path / "sec.sqlite3")
+    response = _response("sec-cycle-001", FIRST_AT, FIXTURE.read_bytes())
+    snapshot = parse_sec_submission_snapshot(response)
+    future = snapshot.filings[0].model_copy(update={"accepted_at": SECOND_AT})
+    impossible = snapshot.model_copy(update={"filings": (future, *snapshot.filings[1:])})
+    _ = store.append_receipt(response)
+
+    with pytest.raises(ValueError):
+        _ = store.append_collection(_run(response, 2, 1), impossible)
+
+
+def test_sec_failed_run_rejects_discovered_history_without_receipt() -> None:
+    with pytest.raises(ValueError):
+        _ = SecSubmissionRun(
+            collection_id="sec-cycle-001",
+            cik="0000320193",
+            started_at=FIRST_AT,
+            completed_at=FIRST_AT,
+            status=SecCollectionStatus.FAILED,
+            failure_code="transport",
+            receipt_id=None,
+            filing_count=0,
+            additional_history_file_count=3,
+        )
+
+
+def test_sec_store_rejects_receiptless_failure_when_receipt_exists(tmp_path: Path) -> None:
+    store = SecEdgarStore(tmp_path / "sec.sqlite3")
+    response = _response("sec-cycle-001", FIRST_AT, FIXTURE.read_bytes())
+    _ = store.append_receipt(response)
+    run = SecSubmissionRun(
+        collection_id=response.collection_id,
+        cik=response.cik,
+        started_at=FIRST_AT,
+        completed_at=FIRST_AT,
+        status=SecCollectionStatus.FAILED,
+        failure_code="transport",
+        receipt_id=None,
+        filing_count=0,
+        additional_history_file_count=0,
+    )
+
+    with pytest.raises(ValueError):
+        _ = store.append_failed_run(run)
+
+
+def test_sec_store_rejects_tampered_version_ancestor(tmp_path: Path) -> None:
+    store = SecEdgarStore(tmp_path / "sec.sqlite3")
+    first_response = _response("sec-cycle-001", FIRST_AT, FIXTURE.read_bytes())
+    first_snapshot = parse_sec_submission_snapshot(first_response)
+    _ = store.append_receipt(first_response)
+    first = store.append_collection(_run(first_response, 2, 1), first_snapshot)
+    changed = json.loads(FIXTURE.read_bytes())
+    changed["filings"]["recent"]["primaryDocDescription"][0] = "Corrected current report"
+    second_response = _response("sec-cycle-002", SECOND_AT, json.dumps(changed).encode())
+    second_snapshot = parse_sec_submission_snapshot(second_response)
+    _ = store.append_receipt(second_response)
+    second = store.append_collection(_run(second_response, 2, 1), second_snapshot)
+    with sqlite3.connect(store.path) as connection:
+        trigger_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name='sec_filing_versions_no_update'"
+        ).fetchone()[0]
+        _ = connection.execute("DROP TRIGGER sec_filing_versions_no_update")
+        _ = connection.execute(
+            "UPDATE sec_filing_versions SET payload_json='{}' WHERE version_id=?",
+            (first.filings[0].version_id,),
+        )
+        _ = connection.execute(trigger_sql)
+
+    with pytest.raises(ValueError):
+        _ = store.filings_for_run(second.run.run_id)
 
 
 def _response(collection_id: str, received_at: dt.datetime, payload: bytes) -> SecSubmissionRawResponse:

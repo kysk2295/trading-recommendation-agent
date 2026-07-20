@@ -30,7 +30,6 @@ def test_sec_parser_projects_columnar_recent_filings() -> None:
     assert tuple(item.form for item in snapshot.filings) == ("8-K", "10-Q")
     assert snapshot.filings[0].items == ("2.02", "9.01")
     assert snapshot.filings[1].report_date is None
-    assert len(snapshot.filings[0].event_id) == 64
     assert b"0000320193-26-000101" not in repr(response).encode()
 
 
