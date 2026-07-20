@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import stat
+from contextlib import suppress
 from pathlib import Path
 from typing import Final, override
 
@@ -34,12 +35,11 @@ def publish_private_immutable_alias(source: Path, destination: Path) -> bool:
         ):
             raise InvalidPrivateImmutableAliasError
         parent_descriptor = open_private_parent(destination_target.parent, create=False)
+        committed = False
         try:
             require_private_directory(parent_descriptor)
             source_descriptor = _open_private_file(parent_descriptor, source_target.name, (1,))
             linked = False
-            source_unlinked = False
-            state_refreshed_after_unlink = False
             published_state: tuple[int, int, int, int, int, int] | None = None
             try:
                 os.link(
@@ -55,44 +55,40 @@ def publish_private_immutable_alias(source: Path, destination: Path) -> bool:
                 try:
                     require_same_file(source_descriptor, destination_descriptor)
                     os.fsync(parent_descriptor)
-                    os.unlink(source_target.name, dir_fd=parent_descriptor)
-                    source_unlinked = True
-                    published_state = _file_state(source_descriptor)
-                    state_refreshed_after_unlink = True
-                    os.fsync(parent_descriptor)
-                    if os.fstat(source_descriptor).st_nlink != 1:
+                    if os.fstat(source_descriptor).st_nlink != 2:
                         raise InvalidPrivateImmutableAliasError
-                    confirmation = _open_private_file(parent_descriptor, destination_target.name, (1,))
+                    confirmation = _open_private_file(parent_descriptor, destination_target.name, (2,))
                     try:
                         require_same_file(source_descriptor, confirmation)
                     finally:
                         os.close(confirmation)
                     require_open_directory_path(destination_target.parent, parent_descriptor)
-                    return True
                 finally:
                     os.close(destination_descriptor)
+                os.unlink(source_target.name, dir_fd=parent_descriptor)
+                committed = True
+                return True
             except (OSError, ValueError):
                 if linked and published_state is not None:
-                    if source_unlinked:
-                        _rollback_unlinked_alias(
-                            parent_descriptor,
-                            source_descriptor,
-                            source_target.name,
-                            destination_target.name,
-                            published_state if state_refreshed_after_unlink else None,
-                        )
-                    else:
-                        _unlink_published_alias(
-                            parent_descriptor,
-                            source_descriptor,
-                            destination_target.name,
-                            published_state,
-                        )
+                    _unlink_published_alias(
+                        parent_descriptor,
+                        source_descriptor,
+                        destination_target.name,
+                        published_state,
+                    )
                 raise
             finally:
-                os.close(source_descriptor)
+                if committed:
+                    with suppress(OSError):
+                        os.close(source_descriptor)
+                else:
+                    os.close(source_descriptor)
         finally:
-            os.close(parent_descriptor)
+            if committed:
+                with suppress(OSError):
+                    os.close(parent_descriptor)
+            else:
+                os.close(parent_descriptor)
     except (OSError, TypeError, ValueError):
         raise InvalidPrivateImmutableAliasError from None
 
@@ -130,31 +126,6 @@ def _unlink_published_alias(
         if _file_state(destination_descriptor) != expected_state:
             return
         os.unlink(name, dir_fd=parent_descriptor)
-        os.fsync(parent_descriptor)
-    finally:
-        os.close(destination_descriptor)
-
-
-def _rollback_unlinked_alias(
-    parent_descriptor: int,
-    source_descriptor: int,
-    source_name: str,
-    destination_name: str,
-    expected_state: tuple[int, int, int, int, int, int] | None,
-) -> None:
-    destination_descriptor = _open_private_file(parent_descriptor, destination_name, (1,))
-    try:
-        require_same_file(source_descriptor, destination_descriptor)
-        if expected_state is not None and _file_state(destination_descriptor) != expected_state:
-            return
-        os.link(
-            destination_name,
-            source_name,
-            src_dir_fd=parent_descriptor,
-            dst_dir_fd=parent_descriptor,
-            follow_symlinks=False,
-        )
-        os.unlink(destination_name, dir_fd=parent_descriptor)
         os.fsync(parent_descriptor)
     finally:
         os.close(destination_descriptor)

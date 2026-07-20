@@ -41,15 +41,15 @@ event `observed_at`은 기존 supervisor가 child를 호출한 시각이고 sour
 - report directory swap: no-follow retained dirfd publication으로 protected manifest 보존
 - experiment ledger symlink/hard-link, main DB 또는 WAL/SHM snapshot drift와 onboarding 이후 source-state 전 ledger swap: 차단
 - final publisher post-link failure: publisher 내부에서 자신의 exact metadata final만 제거; 다른 inode, same-inode relink와 parent-swap foreign final 보존
-- pending unlink 뒤 parent `fsync` 또는 state refresh 실패: source link를 먼저 복원해 final을 invalid two-link 상태로 만든 뒤 현재 호출의 final만 rollback
-- rollback final unlink 실패: source와 final을 two-link 상태로 유지해 정상 evidence reader가 차단
+- commit ordering: final link·content/path/link-count 검증과 parent `fsync`를 source가 남은 invalid two-link 상태에서 모두 끝내고 source unlink를 마지막 결과 결정 syscall로 실행
+- pre-commit cleanup 실패: source와 final을 two-link 상태로 유지해 정상 evidence reader가 차단; commit 뒤 descriptor close 실패는 성공 결과를 뒤집지 않음
 - success report 기록 실패: 현재 호출이 만든 신규 evidence 제거, 기존 replay evidence 보존
 - content tamper: 차단
 - actual CLI help: fixture/provider/credential/account/order/endpoint/time override 옵션 `0`
 - missing manifest: exit `1`, evidence `0`, redacted blocked report
-- focused open-smoke/session/query-only: `58 passed in 7.12s`
-- related KR theme/same-cycle: `282 passed, 2564 deselected in 17.62s`
-- full suite: `2846 passed in 148.75s`
+- focused open-smoke/session/query-only: `59 passed in 6.98s`
+- related KR theme/same-cycle: `283 passed, 2564 deselected in 16.54s`
+- full suite: `2847 passed in 152.48s`
 - 실제 실행 시각: 2026-07-20 10시대 KST, KRX 장중이지만 작업공간에 당일 장 전 등록된 production manifest가 없어 actual smoke는 차단
 - 실제 provider GET, production open-smoke evidence와 국내 account/order mutation: `0`
 

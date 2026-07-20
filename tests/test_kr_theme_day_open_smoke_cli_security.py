@@ -261,7 +261,7 @@ def test_open_smoke_cli_preserves_foreign_same_inode_final_on_publish_conflict(
     assert load_kr_theme_day_open_smoke(destination).verified_at == VERIFIED_AT
 
 
-def test_immutable_alias_rolls_back_when_post_unlink_parent_sync_fails(
+def test_immutable_alias_does_not_sync_parent_after_commit_unlink(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -283,15 +283,16 @@ def test_immutable_alias_rolls_back_when_post_unlink_parent_sync_fails(
     monkeypatch.setattr(private_immutable_alias.os, "fsync", fail_after_source_unlink)
 
     # When
-    with pytest.raises(private_immutable_alias.InvalidPrivateImmutableAliasError):
-        private_immutable_alias.publish_private_immutable_alias(source, destination)
+    created = private_immutable_alias.publish_private_immutable_alias(source, destination)
 
     # Then
-    assert failed is True
-    assert not destination.exists()
+    assert created is True
+    assert failed is False
+    assert not source.exists()
+    assert destination.stat().st_nlink == 1
 
 
-def test_immutable_alias_rolls_back_when_post_unlink_state_refresh_fails(
+def test_immutable_alias_does_not_refresh_state_after_commit_unlink(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -313,15 +314,16 @@ def test_immutable_alias_rolls_back_when_post_unlink_state_refresh_fails(
     monkeypatch.setattr(private_immutable_alias, "_file_state", fail_after_source_unlink)
 
     # When
-    with pytest.raises(private_immutable_alias.InvalidPrivateImmutableAliasError):
-        private_immutable_alias.publish_private_immutable_alias(source, destination)
+    created = private_immutable_alias.publish_private_immutable_alias(source, destination)
 
     # Then
-    assert failed is True
-    assert not destination.exists()
+    assert created is True
+    assert failed is False
+    assert not source.exists()
+    assert destination.stat().st_nlink == 1
 
 
-def test_immutable_alias_leaves_invalid_two_link_final_when_rollback_unlink_fails(
+def test_immutable_alias_leaves_invalid_two_link_final_when_precommit_cleanup_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -330,37 +332,80 @@ def test_immutable_alias_leaves_invalid_two_link_final_when_rollback_unlink_fail
     destination = tmp_path / "final.json"
     source.write_text("evidence\n", encoding="utf-8")
     source.chmod(0o600)
-    original_fsync = private_immutable_alias.os.fsync
     original_unlink = private_immutable_alias.os.unlink
-    sync_failed = False
-    rollback_unlink_failed = False
+    path_check_failed = False
+    cleanup_unlink_failed = False
 
-    def fail_after_source_unlink(descriptor: int) -> None:
-        nonlocal sync_failed
-        if not sync_failed and not source.exists() and destination.exists():
-            sync_failed = True
-            raise OSError
-        original_fsync(descriptor)
+    def fail_path_check(_path: Path, _descriptor: int) -> None:
+        nonlocal path_check_failed
+        path_check_failed = True
+        raise OSError
 
-    def fail_final_rollback(name: str, *, dir_fd: int | None = None) -> None:
-        nonlocal rollback_unlink_failed
+    def fail_final_cleanup(name: str, *, dir_fd: int | None = None) -> None:
+        nonlocal cleanup_unlink_failed
         if name == destination.name and source.exists():
-            rollback_unlink_failed = True
+            cleanup_unlink_failed = True
             raise OSError
         original_unlink(name, dir_fd=dir_fd)
 
-    monkeypatch.setattr(private_immutable_alias.os, "fsync", fail_after_source_unlink)
-    monkeypatch.setattr(private_immutable_alias.os, "unlink", fail_final_rollback)
+    monkeypatch.setattr(private_immutable_alias, "require_open_directory_path", fail_path_check)
+    monkeypatch.setattr(private_immutable_alias.os, "unlink", fail_final_cleanup)
 
     # When
     with pytest.raises(private_immutable_alias.InvalidPrivateImmutableAliasError):
         private_immutable_alias.publish_private_immutable_alias(source, destination)
 
     # Then
-    assert sync_failed is True
-    assert rollback_unlink_failed is True
+    assert path_check_failed is True
+    assert cleanup_unlink_failed is True
     assert source.stat().st_nlink == 2
     assert destination.stat().st_nlink == 2
+
+
+def test_immutable_alias_makes_source_unlink_the_last_filesystem_operation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    source = tmp_path / "pending.json"
+    destination = tmp_path / "final.json"
+    source.write_text("evidence\n", encoding="utf-8")
+    source.chmod(0o600)
+    original_file_state = private_immutable_alias._file_state
+    original_fsync = private_immutable_alias.os.fsync
+    original_require_path = private_immutable_alias.require_open_directory_path
+    post_unlink_calls: list[str] = []
+
+    def file_state(descriptor: int) -> tuple[int, int, int, int, int, int]:
+        if not source.exists():
+            post_unlink_calls.append("file_state")
+            raise OSError
+        return original_file_state(descriptor)
+
+    def fsync(descriptor: int) -> None:
+        if not source.exists():
+            post_unlink_calls.append("fsync")
+            raise OSError
+        original_fsync(descriptor)
+
+    def require_path(path: Path, descriptor: int) -> None:
+        if not source.exists():
+            post_unlink_calls.append("require_path")
+            raise OSError
+        original_require_path(path, descriptor)
+
+    monkeypatch.setattr(private_immutable_alias, "_file_state", file_state)
+    monkeypatch.setattr(private_immutable_alias.os, "fsync", fsync)
+    monkeypatch.setattr(private_immutable_alias, "require_open_directory_path", require_path)
+
+    # When
+    created = private_immutable_alias.publish_private_immutable_alias(source, destination)
+
+    # Then
+    assert created is True
+    assert post_unlink_calls == []
+    assert not source.exists()
+    assert destination.stat().st_nlink == 1
 
 
 def test_open_smoke_cli_cleanup_preserves_foreign_file_after_parent_symlink_swap(
