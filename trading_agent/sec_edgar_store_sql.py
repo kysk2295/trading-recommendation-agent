@@ -71,6 +71,8 @@ def sec_reader(path: Path) -> Iterator[sqlite3.Connection]:
 
 def _prepare(connection: sqlite3.Connection) -> None:
     if connection.execute("PRAGMA user_version").fetchone() == (0,):
+        if _schema_signature(connection):
+            raise InvalidSecEdgarStoreError
         connection.executescript(
             f"BEGIN IMMEDIATE;{SEC_EDGAR_SCHEMA}PRAGMA user_version={SEC_EDGAR_SCHEMA_VERSION};COMMIT;"
         )

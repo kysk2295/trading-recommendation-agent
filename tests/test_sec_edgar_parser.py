@@ -26,7 +26,6 @@ def test_sec_parser_projects_columnar_recent_filings() -> None:
 
     # Then
     assert snapshot.cik == "0000320193"
-    assert snapshot.tickers == ("EXM",)
     assert snapshot.additional_history_file_count == 1
     assert tuple(item.form for item in snapshot.filings) == ("8-K", "10-Q")
     assert snapshot.filings[0].items == ("2.02", "9.01")
@@ -89,6 +88,19 @@ def test_sec_parser_rejects_naive_acceptance_time() -> None:
 
     with pytest.raises(SecEdgarResponseError, match="acceptance_time"):
         _ = parse_sec_submission_snapshot(_response(json.dumps(document).encode()))
+
+
+def test_sec_parser_ignores_unconsumed_issuer_and_history_metadata() -> None:
+    document = json.loads(FIXTURE.read_bytes())
+    document["name"] = {"not": "consumed"}
+    document["tickers"] = "not-consumed"
+    document["exchanges"] = None
+    document["filings"]["files"] = [{"unrecognized": [1, 2, 3]}]
+
+    snapshot = parse_sec_submission_snapshot(_response(json.dumps(document).encode()))
+
+    assert snapshot.additional_history_file_count == 1
+    assert len(snapshot.filings) == 2
 
 
 def _response(payload: bytes) -> SecSubmissionRawResponse:

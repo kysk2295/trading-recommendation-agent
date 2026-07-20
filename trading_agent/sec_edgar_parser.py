@@ -36,11 +36,6 @@ class _SecRecentFilings(BaseModel):
 class _SecAdditionalFile(BaseModel):
     model_config = ConfigDict(frozen=True, extra="allow")
 
-    name: StrictStr
-    filing_count: StrictInt = Field(alias="filingCount", ge=0)
-    filing_from: StrictStr = Field(alias="filingFrom")
-    filing_to: StrictStr = Field(alias="filingTo")
-
 
 class _SecFilings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="allow")
@@ -53,9 +48,6 @@ class _SecSubmissionDocument(BaseModel):
     model_config = ConfigDict(frozen=True, extra="allow")
 
     cik: StrictInt = Field(ge=0, le=9_999_999_999)
-    name: StrictStr
-    tickers: tuple[StrictStr, ...]
-    exchanges: tuple[StrictStr, ...]
     filings: _SecFilings
 
 
@@ -94,9 +86,6 @@ def parse_sec_submission_snapshot(
     filings = tuple(_filing(recent, index, cik, response.received_at) for index in range(row_count))
     return SecSubmissionSnapshot(
         cik=cik,
-        entity_name=document.name,
-        tickers=document.tickers,
-        exchanges=document.exchanges,
         filings=filings,
         additional_history_file_count=len(document.filings.files),
     )

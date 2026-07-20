@@ -11,7 +11,38 @@ from trading_agent.sec_edgar_models import (
     SecSubmissionRun,
     SecSubmissionSnapshot,
 )
-from trading_agent.sec_edgar_store_types import InvalidSecEdgarStoreError, SecStoredFilingVersion
+from trading_agent.sec_edgar_store_types import (
+    InvalidSecEdgarStoreError,
+    SecStoredFilingVersion,
+    SecStoredReceipt,
+)
+
+
+def receipt_from_connection(
+    connection: sqlite3.Connection,
+    collection_id: str,
+    cik: str,
+) -> SecStoredReceipt | None:
+    row = connection.execute(
+        "SELECT receipt_id,collection_id,cik,received_at,status_code,content_type,"
+        "content_encoding,payload_sha256,raw_payload FROM sec_submission_receipts "
+        "WHERE collection_id=? AND cik=?",
+        (collection_id, cik),
+    ).fetchone()
+    if row is None:
+        return None
+    response = SecSubmissionRawResponse(
+        collection_id=row[1],
+        cik=row[2],
+        received_at=dt.datetime.fromisoformat(row[3]),
+        status_code=row[4],
+        content_type=row[5],
+        content_encoding=row[6],
+        raw_payload=row[8],
+    )
+    if receipt_row(response) != tuple(row):
+        raise InvalidSecEdgarStoreError
+    return SecStoredReceipt(response)
 
 
 def append_filings(
@@ -81,6 +112,9 @@ def filings_from_connection(
     connection: sqlite3.Connection,
     run_id: str,
 ) -> tuple[SecStoredFilingVersion, ...]:
+    run = run_from_connection(connection, run_id)
+    if run is None:
+        return ()
     rows = connection.execute(
         "SELECT v.version_id,v.event_id,v.previous_version_id,v.payload_sha256,v.payload_json,"
         "o.receipt_id,o.observed_at,o.item_index,v.cik,v.accession_number "
@@ -88,10 +122,20 @@ def filings_from_connection(
         "WHERE o.run_id=? ORDER BY o.item_index",
         (run_id,),
     ).fetchall()
+    if len(rows) != run.filing_count:
+        raise InvalidSecEdgarStoreError
+    receipt = receipt_from_connection(connection, run.collection_id, run.cik)
+    if run.receipt_id is None:
+        if rows:
+            raise InvalidSecEdgarStoreError
+        return ()
+    if receipt is None or receipt.response.receipt_id != run.receipt_id:
+        raise InvalidSecEdgarStoreError
     result: list[SecStoredFilingVersion] = []
     for row in rows:
         version_id, event_id, previous_id, payload_sha, payload_json = row[:5]
         receipt_id, observed_at, item_index, cik, accession_number = row[5:]
+        observed = dt.datetime.fromisoformat(observed_at)
         event = SecFilingEvent.model_validate_json(payload_json)
         if (
             event.event_id != event_id
@@ -100,6 +144,9 @@ def filings_from_connection(
             or hashlib.sha256(payload_json.encode()).hexdigest() != payload_sha
             or version_identity(previous_id, event_id) != version_id
             or not _valid_previous(connection, previous_id, cik, accession_number)
+            or receipt_id != run.receipt_id
+            or observed != receipt.response.received_at
+            or item_index != len(result)
         ):
             raise InvalidSecEdgarStoreError
         result.append(
@@ -108,7 +155,7 @@ def filings_from_connection(
                 event,
                 previous_id,
                 receipt_id,
-                dt.datetime.fromisoformat(observed_at),
+                observed,
                 item_index,
             )
         )
@@ -136,23 +183,42 @@ def insert_run(connection: sqlite3.Connection, run: SecSubmissionRun) -> None:
 
 def run_from_connection(connection: sqlite3.Connection, run_id: str) -> SecSubmissionRun | None:
     row = connection.execute(
-        "SELECT payload_sha256,payload_json FROM sec_submission_runs WHERE run_id=?",
+        "SELECT run_id,collection_id,cik,receipt_id,status,failure_code,filing_count,"
+        "additional_history_file_count,payload_sha256,payload_json "
+        "FROM sec_submission_runs WHERE run_id=?",
         (run_id,),
     ).fetchone()
     if row is None:
         return None
-    run = SecSubmissionRun.model_validate_json(row[1])
-    if run.run_id != run_id or hashlib.sha256(row[1].encode()).hexdigest() != row[0]:
+    run = SecSubmissionRun.model_validate_json(row[9])
+    receipt = receipt_from_connection(connection, run.collection_id, run.cik)
+    relational = (
+        run.run_id,
+        run.collection_id,
+        run.cik,
+        run.receipt_id,
+        run.status.value,
+        run.failure_code,
+        run.filing_count,
+        run.additional_history_file_count,
+    )
+    if (
+        tuple(row[:8]) != relational
+        or hashlib.sha256(row[9].encode()).hexdigest() != row[8]
+        or (run.receipt_id is None) != (receipt is None)
+        or (receipt is not None and receipt.response.receipt_id != run.receipt_id)
+    ):
         raise InvalidSecEdgarStoreError
     return run
 
 
 def require_receipt(connection: sqlite3.Connection, run: SecSubmissionRun) -> None:
-    row = connection.execute(
-        "SELECT collection_id,cik,received_at FROM sec_submission_receipts WHERE receipt_id=?",
-        (run.receipt_id,),
-    ).fetchone()
-    if row is None or row[0] != run.collection_id or row[1] != run.cik or row[2] > run.completed_at.isoformat():
+    receipt = receipt_from_connection(connection, run.collection_id, run.cik)
+    if (
+        receipt is None
+        or receipt.response.receipt_id != run.receipt_id
+        or receipt.response.received_at > run.completed_at
+    ):
         raise InvalidSecEdgarStoreError
 
 

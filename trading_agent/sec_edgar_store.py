@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import datetime as dt
 import hashlib
 import sqlite3
 from pathlib import Path
@@ -25,6 +24,9 @@ from trading_agent.sec_edgar_store_support import (
 )
 from trading_agent.sec_edgar_store_support import (
     insert_run as _insert_run,
+)
+from trading_agent.sec_edgar_store_support import (
+    receipt_from_connection as _receipt_from_connection,
 )
 from trading_agent.sec_edgar_store_support import (
     receipt_row as _receipt_row,
@@ -164,26 +166,7 @@ class SecEdgarStore:
             return None
         try:
             with _reader(self.path) as connection:
-                row = connection.execute(
-                    "SELECT receipt_id,collection_id,cik,received_at,status_code,content_type,"
-                    "content_encoding,payload_sha256,raw_payload FROM sec_submission_receipts "
-                    "WHERE collection_id=? AND cik=?",
-                    (collection_id, cik),
-                ).fetchone()
-            if row is None:
-                return None
-            response = SecSubmissionRawResponse(
-                collection_id=row[1],
-                cik=row[2],
-                received_at=dt.datetime.fromisoformat(row[3]),
-                status_code=row[4],
-                content_type=row[5],
-                content_encoding=row[6],
-                raw_payload=row[8],
-            )
-            if _receipt_row(response) != tuple(row):
-                raise InvalidSecEdgarStoreError
-            return SecStoredReceipt(response)
+                return _receipt_from_connection(connection, collection_id, cik)
         except (OSError, sqlite3.Error, TypeError, ValueError):
             raise InvalidSecEdgarStoreError from None
 

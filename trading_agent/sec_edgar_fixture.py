@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import re
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Self, override
@@ -84,9 +86,24 @@ def load_sec_edgar_fixture(path: Path) -> SecEdgarFixtureFetcher:
         payload_path = candidate.resolve(strict=True)
         if not payload_path.is_relative_to(manifest_path.parent) or not payload_path.is_file():
             raise OSError
-        payload = payload_path.read_bytes()
+        descriptor = os.open(
+            payload_path,
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+        )
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_SEC_SUBMISSION_BYTES:
+                raise OSError
+            payload = bytearray()
+            while len(payload) <= MAX_SEC_SUBMISSION_BYTES:
+                chunk = os.read(descriptor, MAX_SEC_SUBMISSION_BYTES + 1 - len(payload))
+                if not chunk:
+                    break
+                payload.extend(chunk)
+        finally:
+            os.close(descriptor)
         if not payload or len(payload) > MAX_SEC_SUBMISSION_BYTES:
             raise OSError
-        return SecEdgarFixtureFetcher(manifest, payload)
+        return SecEdgarFixtureFetcher(manifest, bytes(payload))
     except (OSError, ValidationError, ValueError):
         raise SecEdgarFixtureError from None

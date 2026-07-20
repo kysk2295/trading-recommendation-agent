@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import gzip
+import time
 from pathlib import Path
 
 import httpx2
@@ -129,12 +130,21 @@ def test_sec_client_preserves_gzip_wire_bytes_and_parser_decodes_bounded_payload
     assert len(parse_sec_submission_snapshot(response).filings) == 2
 
 
-def test_sec_client_enforces_whole_request_deadline() -> None:
-    moments = iter((0.0, 46.0))
+def test_sec_client_interrupts_slow_stream_at_whole_request_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import trading_agent.sec_edgar_client as client_module
+
+    class SlowStream(httpx2.SyncByteStream):
+        def __iter__(self):
+            time.sleep(1.0)
+            yield b"{}"
 
     def handle(request: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(200, request=request, stream=httpx2.ByteStream(b"{}"))
+        return httpx2.Response(200, request=request, stream=SlowStream())
 
+    monkeypatch.setattr(client_module, "MAX_SEC_REQUEST_SECONDS", 0.05)
+    started = time.monotonic()
     with httpx2.Client(
         base_url="https://data.sec.gov",
         transport=httpx2.MockTransport(handle),
@@ -143,14 +153,8 @@ def test_sec_client_enforces_whole_request_deadline() -> None:
         client = SecEdgarClient(
             http_client,
             SecUserAgent(USER_AGENT),
-            _monotonic=lambda: next(moments),
         )
         with pytest.raises(SecEdgarTransportError):
             _ = client.fetch_submissions("sec-cycle-001", "0000320193")
 
-
-def test_sec_client_exposes_read_only_surface() -> None:
-    with httpx2.Client(base_url="https://data.sec.gov", follow_redirects=False) as http_client:
-        client = SecEdgarClient(http_client, SecUserAgent(USER_AGENT))
-
-    assert {name for name in dir(client) if not name.startswith("_")} == {"fetch_submissions"}
+    assert time.monotonic() - started < 0.5

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TypedDict
 
 import pytest
 
@@ -31,6 +32,29 @@ def test_sec_fixture_rejects_parent_escape(tmp_path: Path) -> None:
         _ = load_sec_edgar_fixture(manifest)
 
 
+def test_sec_fixture_rejects_oversized_payload_before_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import trading_agent.sec_edgar_fixture as fixture_module
+
+    manifest = _fixture(tmp_path)
+    payload = tmp_path / "submissions.json"
+    payload.write_bytes(b"12345")
+    original_read = Path.read_bytes
+
+    def reject_payload_read(path: Path) -> bytes:
+        if path == payload:
+            raise AssertionError("oversized payload was read")
+        return original_read(path)
+
+    monkeypatch.setattr(fixture_module, "MAX_SEC_SUBMISSION_BYTES", 4)
+    monkeypatch.setattr(Path, "read_bytes", reject_payload_read)
+
+    with pytest.raises(SecEdgarFixtureError):
+        _ = load_sec_edgar_fixture(manifest)
+
+
 def _fixture(directory: Path) -> Path:
     directory.mkdir(exist_ok=True)
     (directory / "submissions.json").write_bytes(b"{}")
@@ -39,7 +63,15 @@ def _fixture(directory: Path) -> Path:
     return manifest
 
 
-def _manifest(payload_path: str) -> dict[str, object]:
+class _FixtureManifest(TypedDict):
+    schema_version: int
+    received_at: str
+    http_status: int
+    content_type: str
+    payload_path: str
+
+
+def _manifest(payload_path: str) -> _FixtureManifest:
     return {
         "schema_version": 1,
         "received_at": "2026-07-20T14:00:00+00:00",

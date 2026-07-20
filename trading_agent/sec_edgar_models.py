@@ -166,9 +166,6 @@ class SecSubmissionSnapshot(BaseModel):
 
     schema_version: int = Field(default=1, ge=1, le=1)
     cik: str
-    entity_name: str
-    tickers: tuple[str, ...]
-    exchanges: tuple[str, ...]
     filings: tuple[SecFilingEvent, ...]
     additional_history_file_count: int = Field(ge=0)
 
@@ -176,11 +173,6 @@ class SecSubmissionSnapshot(BaseModel):
     def validate_snapshot(self) -> Self:
         if (
             _CIK.fullmatch(self.cik) is None
-            or not _bounded_text(self.entity_name, 300)
-            or len(self.tickers) != len(self.exchanges)
-            or any(not _bounded_text(item, 32) for item in self.tickers)
-            or any(not _bounded_text(item, 64) for item in self.exchanges)
-            or len(self.tickers) != len(set(self.tickers))
             or len(tuple(item.accession_number for item in self.filings))
             != len(set(item.accession_number for item in self.filings))
         ):
