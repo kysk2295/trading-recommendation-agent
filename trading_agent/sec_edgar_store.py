@@ -14,6 +14,10 @@ from trading_agent.private_directory_identity import (
     open_private_parent,
     require_private_directory_query_only,
 )
+from trading_agent.sec_edgar_capability_evidence import (
+    SecCapabilityEvidence,
+    sec_capability_evidence_from_connection,
+)
 from trading_agent.sec_edgar_models import (
     SecCollectionStatus,
     SecSubmissionRawResponse,
@@ -192,6 +196,15 @@ class SecEdgarStore:
         try:
             with _reader(self.path) as connection:
                 return _filings_from_connection(connection, run_id)
+        except (OSError, sqlite3.Error, TypeError, ValidationError, ValueError):
+            raise InvalidSecEdgarStoreError from None
+
+    def capability_evidence(self, collection_id: str, cik: str) -> SecCapabilityEvidence | None:
+        if not self._lookup_path_exists():
+            return None
+        try:
+            with _reader(self.path) as connection:
+                return sec_capability_evidence_from_connection(connection, collection_id, cik)
         except (OSError, sqlite3.Error, TypeError, ValidationError, ValueError):
             raise InvalidSecEdgarStoreError from None
 
