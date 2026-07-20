@@ -24,7 +24,8 @@ Institutional Multi-Market Quant Research OS Milestone 5의 첫 미국 공시 so
 - caller snapshot, receipt-backed failure code와 저장된 ordered observation은 exact raw receipt를 다시 파싱한 deterministic projection과 같아야 한다. 모든 public store write는 기존 전체 receipt, run, ordered observation과 version chain을 먼저 재생하며, snapshot filing CIK, accepted-at 대 receipt observation, failed-run provenance/history count와 linear correction 순서가 모순되면 mutation 전과 replay에서 모두 거부한다.
 - terminal success·failure run과 terminal 이전에 남은 orphan receipt는 CLI가 provider, fixture, User-Agent file과 HTTP client를 열기 전에 exact replay 또는 deterministic terminal 복구한다.
 - receiptless transport terminal로 끝난 collection key에는 늦은 receipt를 추가하지 않으며, 재시도는 새 collection ID를 사용한다.
-- database와 report alias, symlinked report 경로, broken database symlink, symlinked 또는 current-owner mode-700이 아닌 database parent, foreign version-0 SQLite와 invalid store는 fixture·User-Agent·provider fetch와 store mutation 전에 거부한다.
+- database와 report alias, symlinked report 경로, broken database symlink, symlinked database parent, foreign version-0 SQLite와 invalid store는 fixture·User-Agent·provider fetch와 store mutation 전에 거부한다.
+- CLI lookup은 current-owner mode-700이 아닌 기존 database parent도 fixture·User-Agent·provider 구성 전에 거부한다. direct store writer는 기존 공통 private-directory 정책대로 owner parent를 mode `700`으로 강화한 뒤 로컬 write를 수행한다.
 - fixture payload는 파일 크기를 먼저 확인하고 bounded read하며 issuer와 additional-history 내부 metadata는 이 checkpoint에서 소비하지 않으므로 rejection 조건으로 사용하지 않는다.
 - fixture와 production CLI는 raw body, CIK, accession, 회사명과 User-Agent를 보고서에 기록하지 않는다.
 
