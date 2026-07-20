@@ -25,6 +25,8 @@ Institutional Multi-Market Quant Research OS Milestone 5의 SEC recent 수집을
 - raw response는 parser 전에 확정한다. HTTP/구조/manifest 오류도 raw receipt와 terminal failure로 남고, transport failure만 receiptless terminal을 허용한다.
 - parse 이전 orphan은 부모 terminal 시각과 provider receipt 시각 중 늦은 값으로 deterministic terminal을 복구한다. 완료 child는 fixture·User-Agent·HTTP client를 열기 전에 exact replay한다.
 - 새 CLI 보고서는 파일/filing 집계와 replay 여부만 mode `600`으로 기록하고 CIK, 파일명, accession, 원문, User-Agent와 경로를 노출하지 않는다.
+- typed manifest 이전 run payload에 `source_kind`가 실제로 없으면 과거 parser가 허용했던 opaque `filings.files`는 count와 recent filing만 compatibility projection으로 재생한다. 이 경로는 history child를 만들지 않으며 신규 collection은 계속 typed manifest 없이는 실패한다.
+- 파일·User-Agent·store 실패는 CLI에서 로컬 경로를 포함하지 않는 고정 오류로 변환한다.
 
 ## 실행
 
@@ -43,8 +45,8 @@ uv run --script run_sec_edgar_history_collect.py \
 
 ## 검증
 
-- focused SEC: `111 passed`
-- full suite: `2964 passed`
+- focused SEC: `115 passed`
+- full suite: `2968 passed`
 - Ruff: 통과
 - basedpyright: `0 errors, 0 warnings`
 - manual CLI: `--help`, invalid CIK, recent fixture `2/2`, history fixture `1/1`, missing User-Agent terminal replay `1/0`
