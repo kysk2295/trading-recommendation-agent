@@ -43,8 +43,8 @@ uv run --script run_sec_edgar_history_collect.py \
 
 ## 검증
 
-- focused SEC: `106 passed`
-- full suite: `2959 passed in 145.68s`
+- focused SEC: `111 passed`
+- full suite: `2964 passed`
 - Ruff: 통과
 - basedpyright: `0 errors, 0 warnings`
 - manual CLI: `--help`, invalid CIK, recent fixture `2/2`, history fixture `1/1`, missing User-Agent terminal replay `1/0`
