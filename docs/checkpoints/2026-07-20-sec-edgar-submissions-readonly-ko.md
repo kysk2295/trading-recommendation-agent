@@ -18,7 +18,7 @@ Institutional Multi-Market Quant Research OS Milestone 5의 첫 미국 공시 so
 
 - `SecSubmissionRawResponse`는 0-byte HTTP 오류, JSON 외 MIME와 gzip/deflate encoding도 원문으로 보존하고 parser가 `200 application/json`을 별도로 요구한다.
 - recent filing column 길이, document/response/accession CIK 일치, accession, 접수시각, XBRL flag와 문서 identity를 strict하게 검증한다.
-- pinned `ijson` streaming preflight는 recent parallel column과 additional-history 목록을 item 2,001에서 Pydantic 전에 중단한다. Pydantic `max_length=2000`과 ignored extra를 2차 방어로 유지하며, rejected suffix가 10배 커져도 parser peak가 2배 미만인 allocation 회귀를 검증한다.
+- pinned `ijson` pure-Python streaming preflight는 recent parallel column과 additional-history 목록을 item 2,001에서 Pydantic 전에 중단한다. Pydantic `max_length=2000`과 ignored extra를 2차 방어로 유지하며, rejected suffix가 10배 커져도 parser peak가 2배 미만인 allocation 회귀를 검증한다. 4,500자리 integer도 native signal 종료 없이 sanitized `response_structure`로 닫는다.
 - 같은 accession의 동일 canonical event는 기존 version을 재사용한다. payload가 달라지면 검증된 linear topology에서 자식이 없는 유일한 tip을 부모로 새 immutable version을 만들며 SQLite `rowid` 순서에 의존하지 않는다.
 - correction observation은 이전 version의 최신 관측시각보다 빠를 수 없으며 모든 저장시각은 UTC로 canonicalize한다.
 - receipt, filing version, run과 observation table은 update/delete trigger로 append-only이며 SQLite structural integrity, exact DDL signature, foreign key, raw payload hash, duplicated run columns, run/receipt/observation lineage와 전체 accession version ancestor chain을 매번 확인한다.
@@ -54,9 +54,9 @@ uv run python run_sec_edgar_collect.py \
 
 fixture는 raw-first success, correction version, HTTP 오류 raw 보존, transport terminal failure와 provider-free replay를 검증한다. 이 체크포인트에서는 유효한 실제 연락처 User-Agent를 임의 생성하지 않았으므로 production SEC GET은 0건이다.
 
-- focused SEC: `84 passed`
-- SEC + OpenDART related: `136 passed`
-- full suite: `2937 passed`
+- focused SEC: `85 passed`
+- SEC + OpenDART related: `137 passed`
+- full suite: `2938 passed`
 - Ruff: 통과
 - basedpyright: `0 errors, 0 warnings`
 - compileall과 `git diff --check`: 통과
