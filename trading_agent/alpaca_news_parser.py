@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import zlib
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from trading_agent.alpaca_news_models import (
+    ALPACA_NEWS_MAX_RAW_BYTES,
     AlpacaNewsArticle,
     AlpacaNewsContractError,
     AlpacaNewsPage,
@@ -39,7 +41,7 @@ def parse_alpaca_news_page(
     try:
         if response.request_id != request.request_id or response.status_code != 200:
             raise AlpacaNewsContractError
-        wire = _WirePage.model_validate_json(response.raw_payload)
+        wire = _WirePage.model_validate_json(_decoded_payload(response))
         articles = tuple(
             AlpacaNewsArticle(
                 provider_article_id=item.id,
@@ -67,3 +69,27 @@ def parse_alpaca_news_page(
         )
     except (TypeError, ValidationError, ValueError):
         raise AlpacaNewsContractError from None
+
+
+def _decoded_payload(response: AlpacaNewsRawResponse) -> bytes:
+    if response.content_encoding == "identity":
+        return response.raw_payload
+    if response.content_encoding not in {"gzip", "deflate"}:
+        raise AlpacaNewsContractError
+    window_bits = zlib.MAX_WBITS | 16 if response.content_encoding == "gzip" else zlib.MAX_WBITS
+    try:
+        decoder = zlib.decompressobj(window_bits)
+        payload = decoder.decompress(response.raw_payload, ALPACA_NEWS_MAX_RAW_BYTES + 1)
+        if len(payload) > ALPACA_NEWS_MAX_RAW_BYTES:
+            raise AlpacaNewsContractError
+        payload += decoder.flush(ALPACA_NEWS_MAX_RAW_BYTES + 1 - len(payload))
+    except zlib.error:
+        raise AlpacaNewsContractError from None
+    if (
+        len(payload) > ALPACA_NEWS_MAX_RAW_BYTES
+        or not decoder.eof
+        or decoder.unused_data
+        or decoder.unconsumed_tail
+    ):
+        raise AlpacaNewsContractError
+    return payload

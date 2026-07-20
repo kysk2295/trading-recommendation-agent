@@ -86,7 +86,7 @@ class AlpacaNewsClient:
                     params=params,
                     headers={
                         "Accept": "application/json",
-                        "Accept-Encoding": "gzip, deflate, br, zstd",
+                        "Accept-Encoding": "gzip, deflate",
                         "APCA-API-KEY-ID": self._credentials.key_id,
                         "APCA-API-SECRET-KEY": self._credentials.secret_key,
                     },

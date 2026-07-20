@@ -63,6 +63,7 @@ def test_client_sends_exact_bounded_news_request_and_preserves_wire_bytes() -> N
     assert request.url.params["sort"] == "asc"
     assert request.url.params["limit"] == "50"
     assert request.url.params["include_content"] == "false"
+    assert request.headers["accept-encoding"] == "gzip, deflate"
     assert request.headers["apca-api-key-id"] == "test-key"
     assert request.headers["apca-api-secret-key"] == "test-secret"
     assert response.raw_payload == b'{"news":[],"next_page_token":null}'

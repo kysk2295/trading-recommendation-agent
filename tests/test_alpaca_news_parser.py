@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import datetime as dt
+import gzip
 import json
+import zlib
+from collections.abc import Callable
 
 import pytest
 from pydantic import JsonValue
 
 from trading_agent.alpaca_news_models import (
+    ALPACA_NEWS_MAX_RAW_BYTES,
     AlpacaNewsContractError,
     AlpacaNewsRawResponse,
     AlpacaNewsRequest,
@@ -53,7 +57,12 @@ def _document(
     }
 
 
-def _response(document: dict[str, JsonValue]) -> AlpacaNewsRawResponse:
+def _response(
+    document: dict[str, JsonValue],
+    *,
+    content_encoding: str = "identity",
+    raw_payload: bytes | None = None,
+) -> AlpacaNewsRawResponse:
     return AlpacaNewsRawResponse(
         request_id=_request().request_id,
         page_index=0,
@@ -61,8 +70,8 @@ def _response(document: dict[str, JsonValue]) -> AlpacaNewsRawResponse:
         received_at=RECEIVED,
         status_code=200,
         content_type="application/json",
-        content_encoding="identity",
-        raw_payload=json.dumps(document).encode(),
+        content_encoding=content_encoding,
+        raw_payload=json.dumps(document).encode() if raw_payload is None else raw_payload,
     )
 
 
@@ -77,6 +86,41 @@ def test_parser_projects_metadata_without_licensed_content() -> None:
     assert article.headline == "Example issuer announces product launch"
     assert "licensed body" not in article.model_dump_json()
     assert len(article.event_id) == 64
+
+
+@pytest.mark.parametrize(
+    ("content_encoding", "compress"),
+    (("gzip", gzip.compress), ("deflate", zlib.compress)),
+)
+def test_parser_decodes_supported_wire_compression(
+    content_encoding: str,
+    compress: Callable[[bytes], bytes],
+) -> None:
+    document = _document()
+    encoded = compress(json.dumps(document).encode())
+
+    page = parse_alpaca_news_page(
+        _request(),
+        _response(document, content_encoding=content_encoding, raw_payload=encoded),
+    )
+
+    assert page.articles[0].provider_article_id == 12345
+
+
+def test_parser_rejects_unsupported_or_oversized_decoded_payload() -> None:
+    document = _document()
+    with pytest.raises(AlpacaNewsContractError):
+        _ = parse_alpaca_news_page(
+            _request(),
+            _response(document, content_encoding="br"),
+        )
+
+    oversized = gzip.compress(b" " * (ALPACA_NEWS_MAX_RAW_BYTES + 1))
+    with pytest.raises(AlpacaNewsContractError):
+        _ = parse_alpaca_news_page(
+            _request(),
+            _response(document, content_encoding="gzip", raw_payload=oversized),
+        )
 
 
 def test_parser_rejects_article_without_requested_symbol() -> None:
