@@ -291,6 +291,78 @@ def test_immutable_alias_rolls_back_when_post_unlink_parent_sync_fails(
     assert not destination.exists()
 
 
+def test_immutable_alias_rolls_back_when_post_unlink_state_refresh_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    source = tmp_path / "pending.json"
+    destination = tmp_path / "final.json"
+    source.write_text("evidence\n", encoding="utf-8")
+    source.chmod(0o600)
+    original_file_state = private_immutable_alias._file_state
+    failed = False
+
+    def fail_after_source_unlink(descriptor: int) -> tuple[int, int, int, int, int, int]:
+        nonlocal failed
+        if not failed and not source.exists() and destination.exists():
+            failed = True
+            raise OSError
+        return original_file_state(descriptor)
+
+    monkeypatch.setattr(private_immutable_alias, "_file_state", fail_after_source_unlink)
+
+    # When
+    with pytest.raises(private_immutable_alias.InvalidPrivateImmutableAliasError):
+        private_immutable_alias.publish_private_immutable_alias(source, destination)
+
+    # Then
+    assert failed is True
+    assert not destination.exists()
+
+
+def test_immutable_alias_leaves_invalid_two_link_final_when_rollback_unlink_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    source = tmp_path / "pending.json"
+    destination = tmp_path / "final.json"
+    source.write_text("evidence\n", encoding="utf-8")
+    source.chmod(0o600)
+    original_fsync = private_immutable_alias.os.fsync
+    original_unlink = private_immutable_alias.os.unlink
+    sync_failed = False
+    rollback_unlink_failed = False
+
+    def fail_after_source_unlink(descriptor: int) -> None:
+        nonlocal sync_failed
+        if not sync_failed and not source.exists() and destination.exists():
+            sync_failed = True
+            raise OSError
+        original_fsync(descriptor)
+
+    def fail_final_rollback(name: str, *, dir_fd: int | None = None) -> None:
+        nonlocal rollback_unlink_failed
+        if name == destination.name and source.exists():
+            rollback_unlink_failed = True
+            raise OSError
+        original_unlink(name, dir_fd=dir_fd)
+
+    monkeypatch.setattr(private_immutable_alias.os, "fsync", fail_after_source_unlink)
+    monkeypatch.setattr(private_immutable_alias.os, "unlink", fail_final_rollback)
+
+    # When
+    with pytest.raises(private_immutable_alias.InvalidPrivateImmutableAliasError):
+        private_immutable_alias.publish_private_immutable_alias(source, destination)
+
+    # Then
+    assert sync_failed is True
+    assert rollback_unlink_failed is True
+    assert source.stat().st_nlink == 2
+    assert destination.stat().st_nlink == 2
+
+
 def test_open_smoke_cli_cleanup_preserves_foreign_file_after_parent_symlink_swap(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
