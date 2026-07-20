@@ -42,6 +42,9 @@ from trading_agent.sec_edgar_store_support import (
     require_receipt as _require_receipt,
 )
 from trading_agent.sec_edgar_store_support import (
+    require_run_parent_binding as _require_run_parent_binding,
+)
+from trading_agent.sec_edgar_store_support import (
     run_from_connection as _run_from_connection,
 )
 from trading_agent.sec_edgar_store_support import (
@@ -116,6 +119,7 @@ class SecEdgarStore:
             ):
                 raise InvalidSecEdgarStoreError
             with _writer(self.path) as connection:
+                _require_run_parent_binding(connection, run)
                 _require_receipt(connection, run)
                 receipt = _receipt_from_connection(connection, run.collection_id, run.cik)
                 if receipt is None:
@@ -150,6 +154,7 @@ class SecEdgarStore:
             if run.status is not SecCollectionStatus.FAILED:
                 raise InvalidSecEdgarStoreError
             with _writer(self.path) as connection:
+                _require_run_parent_binding(connection, run)
                 if run.receipt_id is not None:
                     _require_receipt(connection, run)
                     receipt = _receipt_from_connection(connection, run.collection_id, run.cik)

@@ -6,6 +6,7 @@ import signal
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from types import FrameType
 from typing import Final, NoReturn, final, override
 
@@ -16,6 +17,7 @@ from trading_agent.sec_edgar_models import (
     SEC_EDGAR_MAX_RAW_BYTES,
     SecSubmissionRawResponse,
     normalize_sec_cik,
+    normalize_sec_history_file_name,
 )
 
 MAX_SEC_SUBMISSION_BYTES: Final = SEC_EDGAR_MAX_RAW_BYTES
@@ -46,6 +48,13 @@ class _SecEdgarDeadlineExpired(TimeoutError):
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class _SecFetchRequest:
+    collection_id: str
+    cik: str
+    path: str
+
+
 @final
 class SecEdgarClient:
     __slots__ = ("_client", "_clock", "_user_agent")
@@ -69,10 +78,28 @@ class SecEdgarClient:
         if _SAFE_ID.fullmatch(collection_id) is None:
             raise SecEdgarTransportError
         cik = normalize_sec_cik(cik)
+        return self._fetch(_SecFetchRequest(collection_id, cik, f"/submissions/CIK{cik}.json"))
+
+    def fetch_additional_history(
+        self,
+        collection_id: str,
+        cik: str,
+        file_name: str,
+    ) -> SecSubmissionRawResponse:
+        if _SAFE_ID.fullmatch(collection_id) is None:
+            raise SecEdgarTransportError
+        try:
+            cik = normalize_sec_cik(cik)
+            file_name = normalize_sec_history_file_name(cik, file_name)
+        except ValueError:
+            raise SecEdgarTransportError from None
+        return self._fetch(_SecFetchRequest(collection_id, cik, f"/submissions/{file_name}"))
+
+    def _fetch(self, request: _SecFetchRequest) -> SecSubmissionRawResponse:
         try:
             with _request_deadline(), self._client.stream(
                 "GET",
-                f"/submissions/CIK{cik}.json",
+                request.path,
                 headers={
                     "User-Agent": self._user_agent.value,
                     "Accept": "application/json",
@@ -94,8 +121,8 @@ class SecEdgarClient:
         except (httpx2.HTTPError, _SecEdgarDeadlineExpired):
             raise SecEdgarTransportError from None
         return SecSubmissionRawResponse(
-            collection_id=collection_id,
-            cik=cik,
+            collection_id=request.collection_id,
+            cik=request.cik,
             received_at=received_at,
             status_code=status_code,
             content_type=content_type,

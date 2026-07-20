@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import json
 import sqlite3
 from pathlib import Path
 
@@ -9,6 +10,7 @@ import pytest
 
 import trading_agent.sec_edgar_store_sql as store_sql
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
+from trading_agent.sec_edgar_history_collection import collect_sec_additional_history
 from trading_agent.sec_edgar_models import (
     SecCollectionStatus,
     SecSubmissionRawResponse,
@@ -20,6 +22,24 @@ from trading_agent.sec_edgar_store import SecEdgarStore
 FIXTURE = Path(__file__).parent / "fixtures/sec_edgar/submissions.json"
 FIRST_AT = dt.datetime(2026, 7, 20, 14, tzinfo=dt.UTC)
 SECOND_AT = FIRST_AT + dt.timedelta(minutes=1)
+
+
+class _HistoryFetcher:
+    def fetch_additional_history(
+        self,
+        collection_id: str,
+        cik: str,
+        _file_name: str,
+    ) -> SecSubmissionRawResponse:
+        payload = Path(__file__).parent / "fixtures/sec_edgar/additional-history-001.json"
+        return SecSubmissionRawResponse(
+            collection_id=collection_id,
+            cik=cik,
+            received_at=SECOND_AT,
+            status_code=200,
+            content_type="application/json",
+            raw_payload=payload.read_bytes(),
+        )
 
 
 def test_sec_store_rejects_same_name_trigger_replacement(tmp_path: Path) -> None:
@@ -177,6 +197,41 @@ def test_sec_store_rejects_run_columns_inconsistent_with_payload(tmp_path: Path)
 
     with pytest.raises(ValueError):
         _ = store.collection_run(response.collection_id, response.cik)
+
+
+def test_sec_store_rejects_history_parent_binding_tamper(tmp_path: Path) -> None:
+    store = SecEdgarStore(tmp_path / "sec.sqlite3")
+    response = _response("sec-cycle-001", FIRST_AT, FIXTURE.read_bytes())
+    snapshot = parse_sec_submission_snapshot(response)
+    _ = store.append_receipt(response)
+    parent = store.append_collection(_run(response), snapshot).run
+    history = collect_sec_additional_history(
+        _HistoryFetcher(),
+        store,
+        parent.collection_id,
+        parent.cik,
+        _clock=lambda: SECOND_AT,
+    ).files[0].run
+    with sqlite3.connect(store.path) as connection:
+        row = connection.execute(
+            "SELECT payload_json FROM sec_submission_runs WHERE run_id=?",
+            (history.run_id,),
+        ).fetchone()
+        payload = json.loads(row[0])
+        payload["parent_receipt_id"] = "0" * 64
+        payload_json = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        trigger_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name='sec_submission_runs_no_update'"
+        ).fetchone()[0]
+        _ = connection.execute("DROP TRIGGER sec_submission_runs_no_update")
+        _ = connection.execute(
+            "UPDATE sec_submission_runs SET payload_sha256=?,payload_json=? WHERE run_id=?",
+            (hashlib.sha256(payload_json.encode()).hexdigest(), payload_json, history.run_id),
+        )
+        _ = connection.execute(trigger_sql)
+
+    with pytest.raises(ValueError):
+        _ = store.collection_run(history.collection_id, history.cik)
 
 
 def test_sec_store_rejects_run_starting_after_receipt_on_append_and_replay(tmp_path: Path) -> None:

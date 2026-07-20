@@ -58,6 +58,71 @@ def test_sec_client_sends_exact_get_with_declared_user_agent() -> None:
     assert FIXTURE.read_text() not in repr(response)
 
 
+def test_sec_client_fetches_exact_declared_additional_history_file() -> None:
+    requests: list[httpx2.Request] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            200,
+            request=request,
+            headers={"content-type": "application/json"},
+            stream=httpx2.ByteStream(b"{}"),
+        )
+
+    with httpx2.Client(
+        base_url="https://data.sec.gov",
+        transport=httpx2.MockTransport(handle),
+        follow_redirects=False,
+    ) as http_client:
+        response = SecEdgarClient(
+            http_client,
+            SecUserAgent(USER_AGENT),
+            _clock=lambda: RECEIVED_AT,
+        ).fetch_additional_history(
+            "sec-history-cycle-001",
+            "0000320193",
+            "CIK0000320193-submissions-001.json",
+        )
+
+    assert tuple(str(item.url) for item in requests) == (
+        "https://data.sec.gov/submissions/CIK0000320193-submissions-001.json",
+    )
+    assert response.collection_id == "sec-history-cycle-001"
+
+
+@pytest.mark.parametrize(
+    "file_name",
+    (
+        "../private.json",
+        "CIK0000000001-submissions-001.json",
+        "CIK0000320193-submissions-001.json?redirect=true",
+    ),
+)
+def test_sec_client_rejects_undeclared_history_path_before_request(file_name: str) -> None:
+    called = False
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        nonlocal called
+        called = True
+        return httpx2.Response(200, request=request, content=b"{}")
+
+    with httpx2.Client(
+        base_url="https://data.sec.gov",
+        transport=httpx2.MockTransport(handle),
+        follow_redirects=False,
+    ) as http_client:
+        client = SecEdgarClient(http_client, SecUserAgent(USER_AGENT))
+        with pytest.raises(SecEdgarTransportError):
+            _ = client.fetch_additional_history(
+                "sec-history-cycle-001",
+                "0000320193",
+                file_name,
+            )
+
+    assert called is False
+
+
 def test_sec_client_rejects_wrong_origin_and_redirects_before_request() -> None:
     called = False
 

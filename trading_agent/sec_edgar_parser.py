@@ -12,6 +12,7 @@ from ijson.common import JSONError
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
 from trading_agent.sec_edgar_models import (
+    SecAdditionalHistoryFile,
     SecEdgarResponseError,
     SecFilingEvent,
     SecSubmissionRawResponse,
@@ -24,6 +25,17 @@ _MAX_DECODED_BYTES = 64 * 1024 * 1024
 _ARRAY_ITEM_EVENTS = frozenset({"boolean", "null", "number", "start_array", "start_map", "string"})
 _BOUNDED_ARRAY_ITEMS = frozenset(
     {
+        "accessionNumber.item",
+        "acceptanceDateTime.item",
+        "filingDate.item",
+        "form.item",
+        "isInlineXBRL.item",
+        "isXBRL.item",
+        "items.item",
+        "primaryDocDescription.item",
+        "primaryDocument.item",
+        "reportDate.item",
+        "size.item",
         "filings.files.item",
         "filings.recent.accessionNumber.item",
         "filings.recent.acceptanceDateTime.item",
@@ -76,6 +88,11 @@ class _SecRecentFilings(BaseModel):
 class _SecAdditionalFile(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
+    name: StrictStr
+    filing_count: StrictInt = Field(alias="filingCount")
+    filing_from: StrictStr = Field(alias="filingFrom")
+    filing_to: StrictStr = Field(alias="filingTo")
+
 
 class _SecFilings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
@@ -108,6 +125,63 @@ def parse_sec_submission_snapshot(
     if cik != response.cik:
         raise SecEdgarResponseError("cik_mismatch")
     recent = document.filings.recent
+    filings = _filings_from_columns(recent, cik, response.received_at)
+    try:
+        history_files = tuple(
+            SecAdditionalHistoryFile(
+                cik=cik,
+                name=item.name,
+                filing_count=item.filing_count,
+                filing_from=dt.date.fromisoformat(item.filing_from),
+                filing_to=dt.date.fromisoformat(item.filing_to),
+            )
+            for item in document.filings.files
+        )
+    except (SecEdgarResponseError, ValidationError, ValueError):
+        raise SecEdgarResponseError("history_manifest") from None
+    return SecSubmissionSnapshot(
+        cik=cik,
+        filings=filings,
+        additional_history_files=history_files,
+    )
+
+
+def parse_sec_additional_history_snapshot(
+    response: SecSubmissionRawResponse,
+    manifest: SecAdditionalHistoryFile,
+) -> SecSubmissionSnapshot:
+    if response.status_code != 200:
+        raise SecEdgarResponseError(f"http_{response.status_code}")
+    if response.content_type != "application/json":
+        raise SecEdgarResponseError("content_type")
+    payload = _decoded_payload(response)
+    _require_bounded_json_arrays(payload)
+    try:
+        recent = _SecRecentFilings.model_validate_json(payload)
+    except (UnicodeError, ValidationError, ValueError, json.JSONDecodeError):
+        raise SecEdgarResponseError("response_structure") from None
+    filings = _filings_from_columns(recent, response.cik, response.received_at)
+    if (
+        manifest.cik != response.cik
+        or len(filings) != manifest.filing_count
+        or any(
+            item.filing_date < manifest.filing_from or item.filing_date > manifest.filing_to
+            for item in filings
+        )
+    ):
+        raise SecEdgarResponseError("history_manifest")
+    return SecSubmissionSnapshot(
+        cik=response.cik,
+        filings=filings,
+        additional_history_files=(),
+    )
+
+
+def _filings_from_columns(
+    recent: _SecRecentFilings,
+    cik: str,
+    received_at: dt.datetime,
+) -> tuple[SecFilingEvent, ...]:
     columns = (
         recent.accession_number,
         recent.filing_date,
@@ -124,12 +198,7 @@ def parse_sec_submission_snapshot(
     row_count = len(recent.accession_number)
     if row_count > _MAX_RECENT_FILINGS or any(len(column) != row_count for column in columns):
         raise SecEdgarResponseError("column_lengths")
-    filings = tuple(_filing(recent, index, cik, response.received_at) for index in range(row_count))
-    return SecSubmissionSnapshot(
-        cik=cik,
-        filings=filings,
-        additional_history_file_count=len(document.filings.files),
-    )
+    return tuple(_filing(recent, index, cik, received_at) for index in range(row_count))
 
 
 def _require_bounded_json_arrays(payload: bytes) -> None:

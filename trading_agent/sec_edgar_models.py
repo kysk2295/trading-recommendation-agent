@@ -15,6 +15,7 @@ _CIK = re.compile(r"^[0-9]{10}$")
 _ACCESSION = re.compile(r"^[0-9]{10}-[0-9]{2}-[0-9]{6}$")
 _FORM = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ./-]{0,31}$")
 _DOCUMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$")
+_HISTORY_FILE = re.compile(r"^CIK[0-9]{10}-submissions-[0-9]{3,6}\.json$")
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _CONTENT_TYPE = re.compile(r"^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$")
@@ -83,6 +84,11 @@ class SecCollectionStatus(StrEnum):
     FAILED = "failed"
 
 
+class SecSubmissionSourceKind(StrEnum):
+    RECENT = "recent"
+    ADDITIONAL_HISTORY = "additional_history"
+
+
 class SecSubmissionRun(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -96,6 +102,9 @@ class SecSubmissionRun(BaseModel):
     receipt_id: str | None
     filing_count: int = Field(ge=0)
     additional_history_file_count: int = Field(ge=0)
+    source_kind: SecSubmissionSourceKind = SecSubmissionSourceKind.RECENT
+    parent_receipt_id: str | None = None
+    history_file: SecAdditionalHistoryFile | None = None
 
     @field_validator("started_at", "completed_at")
     @classmethod
@@ -105,6 +114,7 @@ class SecSubmissionRun(BaseModel):
     @model_validator(mode="after")
     def validate_run(self) -> Self:
         success = self.status is SecCollectionStatus.SUCCESS
+        history = self.source_kind is SecSubmissionSourceKind.ADDITIONAL_HISTORY
         if (
             _SAFE_ID.fullmatch(self.collection_id) is None
             or _CIK.fullmatch(self.cik) is None
@@ -121,6 +131,14 @@ class SecSubmissionRun(BaseModel):
             or (not success and self.filing_count != 0)
             or (not success and self.additional_history_file_count != 0)
             or (self.failure_code is not None and _SAFE_ID.fullmatch(self.failure_code) is None)
+            or history != (self.parent_receipt_id is not None)
+            or history != (self.history_file is not None)
+            or (
+                self.parent_receipt_id is not None
+                and _HEX64.fullmatch(self.parent_receipt_id) is None
+            )
+            or (history and self.additional_history_file_count != 0)
+            or (self.history_file is not None and self.history_file.cik != self.cik)
         ):
             raise SecEdgarResponseError("run")
         return self
@@ -172,30 +190,80 @@ class SecFilingEvent(BaseModel):
         return hashlib.sha256(canonical_experiment_ledger_json(self).encode()).hexdigest()
 
 
+class SecAdditionalHistoryFile(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: int = Field(default=1, ge=1, le=1)
+    cik: str
+    name: str
+    filing_count: int = Field(ge=0, le=2_000)
+    filing_from: dt.date
+    filing_to: dt.date
+
+    @model_validator(mode="after")
+    def validate_history_file(self) -> Self:
+        if (
+            _CIK.fullmatch(self.cik) is None
+            or _HISTORY_FILE.fullmatch(self.name) is None
+            or not self.name.startswith(f"CIK{self.cik}-submissions-")
+            or self.filing_to < self.filing_from
+        ):
+            raise SecEdgarResponseError("history_manifest")
+        return self
+
+
 class SecSubmissionSnapshot(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     schema_version: int = Field(default=1, ge=1, le=1)
     cik: str
     filings: tuple[SecFilingEvent, ...]
-    additional_history_file_count: int = Field(ge=0)
+    additional_history_files: tuple[SecAdditionalHistoryFile, ...] = Field(max_length=2_000)
 
     @model_validator(mode="after")
     def validate_snapshot(self) -> Self:
         if (
             _CIK.fullmatch(self.cik) is None
             or any(item.cik != self.cik for item in self.filings)
+            or any(item.cik != self.cik for item in self.additional_history_files)
+            or len(tuple(item.name for item in self.additional_history_files))
+            != len(set(item.name for item in self.additional_history_files))
             or len(tuple(item.accession_number for item in self.filings))
             != len(set(item.accession_number for item in self.filings))
         ):
             raise SecEdgarResponseError("snapshot")
         return self
 
+    @property
+    def additional_history_file_count(self) -> int:
+        return len(self.additional_history_files)
+
 
 def normalize_sec_cik(value: str) -> str:
     if _CIK.fullmatch(value) is None:
         raise SecEdgarResponseError("cik")
     return value
+
+
+def normalize_sec_history_file_name(cik: str, value: str) -> str:
+    cik = normalize_sec_cik(cik)
+    if (
+        _HISTORY_FILE.fullmatch(value) is None
+        or not value.startswith(f"CIK{cik}-submissions-")
+    ):
+        raise SecEdgarResponseError("history_manifest")
+    return value
+
+
+def sec_additional_history_collection_id(
+    parent_receipt_id: str,
+    history_file: SecAdditionalHistoryFile,
+) -> str:
+    if _HEX64.fullmatch(parent_receipt_id) is None:
+        raise SecEdgarResponseError("history_manifest")
+    material = canonical_experiment_ledger_json(history_file)
+    digest = hashlib.sha256(f"{parent_receipt_id}|{material}".encode()).hexdigest()
+    return f"sec-history:{digest}"
 
 
 def _aware(value: dt.datetime) -> bool:

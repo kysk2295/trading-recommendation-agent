@@ -107,7 +107,7 @@ def test_sec_snapshot_rejects_filing_from_another_cik() -> None:
         _ = SecSubmissionSnapshot(
             cik=response.cik,
             filings=(foreign, *snapshot.filings[1:]),
-            additional_history_file_count=1,
+            additional_history_files=snapshot.additional_history_files,
         )
 
 

@@ -30,6 +30,12 @@ def test_sec_parser_projects_columnar_recent_filings() -> None:
     # Then
     assert snapshot.cik == "0000320193"
     assert snapshot.additional_history_file_count == 1
+    assert tuple(item.name for item in snapshot.additional_history_files) == (
+        "CIK0000320193-submissions-001.json",
+    )
+    assert snapshot.additional_history_files[0].filing_count == 1
+    assert snapshot.additional_history_files[0].filing_from == dt.date(1994, 1, 1)
+    assert snapshot.additional_history_files[0].filing_to == dt.date(2025, 12, 31)
     assert tuple(item.form for item in snapshot.filings) == ("8-K", "10-Q")
     assert snapshot.filings[0].items == ("2.02", "9.01")
     assert snapshot.filings[1].report_date is None
@@ -168,7 +174,7 @@ def test_sec_parser_ignores_unconsumed_issuer_and_history_metadata() -> None:
     document["name"] = {"not": "consumed"}
     document["tickers"] = "not-consumed"
     document["exchanges"] = None
-    document["filings"]["files"] = [{"unrecognized": [1, 2, 3]}]
+    document["filings"]["files"][0]["unrecognized"] = [1, 2, 3]
 
     snapshot = parse_sec_submission_snapshot(_response(json.dumps(document).encode()))
 
@@ -181,6 +187,26 @@ def test_sec_parser_rejects_excess_additional_history_files() -> None:
     document["filings"]["files"] = [{} for _ in range(2_001)]
 
     with pytest.raises(SecEdgarResponseError, match="response_structure"):
+        _ = parse_sec_submission_snapshot(_response(json.dumps(document).encode()))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("name", "../private.json"),
+        ("name", "CIK0000000001-submissions-001.json"),
+        ("filingCount", -1),
+        ("filingFrom", "2026-01-01"),
+    ),
+)
+def test_sec_parser_rejects_invalid_additional_history_manifest(
+    field: str,
+    value: str | int,
+) -> None:
+    document = json.loads(FIXTURE.read_bytes())
+    document["filings"]["files"][0][field] = value
+
+    with pytest.raises(SecEdgarResponseError, match="history_manifest"):
         _ = parse_sec_submission_snapshot(_response(json.dumps(document).encode()))
 
 

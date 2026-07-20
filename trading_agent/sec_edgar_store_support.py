@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import sqlite3
+from typing import assert_never
 
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.sec_edgar_models import (
@@ -10,7 +11,10 @@ from trading_agent.sec_edgar_models import (
     SecSubmissionRawResponse,
     SecSubmissionRun,
     SecSubmissionSnapshot,
+    SecSubmissionSourceKind,
+    sec_additional_history_collection_id,
 )
+from trading_agent.sec_edgar_parser import parse_sec_submission_snapshot
 from trading_agent.sec_edgar_store_projection import (
     receipt_bounds_valid,
     require_receipt_projection,
@@ -225,7 +229,79 @@ def run_from_connection(connection: sqlite3.Connection, run_id: str) -> SecSubmi
         or (receipt is not None and not receipt_bounds_valid(receipt.response, run))
     ):
         raise InvalidSecEdgarStoreError
+    require_run_parent_binding(connection, run)
     return run
+
+
+def require_run_parent_binding(
+    connection: sqlite3.Connection,
+    run: SecSubmissionRun,
+) -> None:
+    match run.source_kind:
+        case SecSubmissionSourceKind.RECENT:
+            return
+        case SecSubmissionSourceKind.ADDITIONAL_HISTORY:
+            if (
+                run.parent_receipt_id is None
+                or run.history_file is None
+                or run.parent_receipt_id == run.receipt_id
+            ):
+                raise InvalidSecEdgarStoreError
+            parent_row = connection.execute(
+                "SELECT run_id,payload_json FROM sec_submission_runs WHERE receipt_id=?",
+                (run.parent_receipt_id,),
+            ).fetchone()
+            if parent_row is None:
+                raise InvalidSecEdgarStoreError
+            parent_candidate = SecSubmissionRun.model_validate_json(parent_row[1])
+            if parent_candidate.source_kind is not SecSubmissionSourceKind.RECENT:
+                raise InvalidSecEdgarStoreError
+            parent = run_from_connection(connection, parent_row[0])
+            parent_receipt = receipt_by_id_from_connection(connection, run.parent_receipt_id)
+            child_receipt = (
+                None
+                if run.receipt_id is None
+                else receipt_by_id_from_connection(connection, run.receipt_id)
+            )
+            if (
+                parent is None
+                or parent.status.value != "success"
+                or parent.receipt_id != run.parent_receipt_id
+                or parent_receipt is None
+                or run.completed_at < parent.completed_at
+                or (
+                    child_receipt is not None
+                    and child_receipt.response.received_at
+                    < parent_receipt.response.received_at
+                )
+                or run.collection_id
+                != sec_additional_history_collection_id(run.parent_receipt_id, run.history_file)
+            ):
+                raise InvalidSecEdgarStoreError
+            try:
+                parent_snapshot = parse_sec_submission_snapshot(parent_receipt.response)
+            except ValueError:
+                raise InvalidSecEdgarStoreError from None
+            if run.history_file not in parent_snapshot.additional_history_files:
+                raise InvalidSecEdgarStoreError
+        case unreachable:
+            assert_never(unreachable)
+
+
+def receipt_by_id_from_connection(
+    connection: sqlite3.Connection,
+    receipt_id: str,
+) -> SecStoredReceipt | None:
+    row = connection.execute(
+        "SELECT collection_id,cik FROM sec_submission_receipts WHERE receipt_id=?",
+        (receipt_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    receipt = receipt_from_connection(connection, row[0], row[1])
+    if receipt is None or receipt.response.receipt_id != receipt_id:
+        raise InvalidSecEdgarStoreError
+    return receipt
 
 
 def require_receipt(connection: sqlite3.Connection, run: SecSubmissionRun) -> None:

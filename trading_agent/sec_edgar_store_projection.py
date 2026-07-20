@@ -9,8 +9,12 @@ from trading_agent.sec_edgar_models import (
     SecFilingEvent,
     SecSubmissionRawResponse,
     SecSubmissionRun,
+    SecSubmissionSourceKind,
 )
-from trading_agent.sec_edgar_parser import parse_sec_submission_snapshot
+from trading_agent.sec_edgar_parser import (
+    parse_sec_additional_history_snapshot,
+    parse_sec_submission_snapshot,
+)
 from trading_agent.sec_edgar_store_types import InvalidSecEdgarStoreError
 
 
@@ -24,7 +28,15 @@ def require_receipt_projection(
     events: Sequence[SecFilingEvent],
 ) -> None:
     try:
-        expected = parse_sec_submission_snapshot(response)
+        match run.source_kind:
+            case SecSubmissionSourceKind.RECENT:
+                expected = parse_sec_submission_snapshot(response)
+            case SecSubmissionSourceKind.ADDITIONAL_HISTORY:
+                if run.history_file is None:
+                    raise InvalidSecEdgarStoreError
+                expected = parse_sec_additional_history_snapshot(response, run.history_file)
+            case unreachable:
+                assert_never(unreachable)
     except SecEdgarResponseError as error:
         match run.status:
             case SecCollectionStatus.FAILED:
