@@ -105,6 +105,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [첫 정규장 Alpaca Paper smoke 시도 체크포인트](docs/checkpoints/2026-07-15-paper-first-regular-session-smoke-attempt-ko.md)
 - [두 번째 정규장 Alpaca Paper smoke 시도 체크포인트](docs/checkpoints/2026-07-16-paper-first-regular-session-smoke-retry-ko.md)
 - [세 번째 정규장 Alpaca Paper WSS 안전 중단 체크포인트](docs/checkpoints/2026-07-20-paper-first-regular-session-smoke-wss-skip-ko.md)
+- [네 번째 정규장 Alpaca Paper WSS 안전 중단 체크포인트](docs/checkpoints/2026-07-21-paper-first-regular-session-smoke-wss-skip-ko.md)
 - [Alpaca Paper CLI 오류 정보 최소화 체크포인트](docs/checkpoints/2026-07-15-paper-cli-error-redaction-ko.md)
 - [첫 정규장 Alpaca Paper smoke 런북](docs/runbooks/alpaca-paper-first-regular-session-smoke-ko.md)
 - [cancel·EOD 평탄화 smoke 구현 계획](docs/superpowers/plans/2026-07-15-paper-safety-mutation-smoke.md)
