@@ -6,11 +6,13 @@ from pathlib import Path
 from tests.test_run_us_day_operating_session import CapturingRunnerFactory, StaticRunner
 from tests.test_us_day_acceptance_evidence import _clean_repository, _git, _terminal
 from tests.us_day_operating_fixtures import AT, admission, readiness
+from trading_agent.hermes_delivery_models import HermesDeliveryKind
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.models import Recommendation, RecommendationState
 from trading_agent.paper_operating_session_models import PaperOrderAdmissionRequest
 from trading_agent.private_stable_report import write_private_stable_report
 from trading_agent.store import PaperStore
-from trading_agent.us_day_acceptance_evidence import UsDaySessionTerminal
+from trading_agent.us_day_acceptance_evidence import UsDaySessionTerminal, UsDayTerminalStatus
 from trading_agent.us_day_operating_cli import UsDayCliDependencies, main, parser
 from trading_agent.us_day_operating_models import (
     UsDayOperatingResult,
@@ -113,7 +115,7 @@ def test_finalize_writes_flat_censored_no_setup_terminal(tmp_path: Path, capsys)
     assert terminal.reasons == ("censored_no_setup",)
 
 
-def test_finalize_rejects_censored_terminal_when_orb_recommendation_exists(tmp_path: Path, capsys) -> None:
+def test_finalize_writes_blocked_terminal_when_orb_recommendation_exists(tmp_path: Path, capsys) -> None:
     # Given: the immutable source database contains a real-session ORB recommendation.
     repository = _clean_repository(tmp_path)
     source_path = Path("outputs/source/paper_recommendations.sqlite3")
@@ -142,13 +144,14 @@ def test_finalize_rejects_censored_terminal_when_orb_recommendation_exists(tmp_p
         (),
     )
     terminal_path = repository / "outputs/acceptance/us_day/sessions/false-censored.json"
+    delivery_database = repository / "outputs/delivery.sqlite3"
 
     # When: the operator attempts to attest the session as having no setup.
     exit_code = main(
         (
             "finalize",
             "--delivery-database",
-            str(repository / "outputs/delivery.sqlite3"),
+            str(delivery_database),
             "--execution-database",
             str(repository / "outputs/execution.sqlite3"),
             "--repository",
@@ -165,10 +168,16 @@ def test_finalize_rejects_censored_terminal_when_orb_recommendation_exists(tmp_p
         _dependencies(order_admission, inspection),
     )
 
-    # Then: false censored evidence is blocked before a terminal is written.
-    assert exit_code == 1
+    # Then: the flat session has a blocked terminal and a durable Hermes incident.
+    terminal = UsDaySessionTerminal.model_validate_json(terminal_path.read_text(encoding="utf-8"))
+    events = HermesDeliveryStore(delivery_database).events()
+    assert exit_code == 0
     assert json.loads(capsys.readouterr().out)["result"] == "blocked"
-    assert not terminal_path.exists()
+    assert terminal.status is UsDayTerminalStatus.BLOCKED
+    assert terminal.reasons == ("natural_setup_without_terminal",)
+    assert terminal.is_finally_reconciled is True
+    assert len(events) == 1
+    assert events[0].kind is HermesDeliveryKind.INCIDENT
 
 
 def test_finalize_rejects_missing_source_before_projecting_outcome(tmp_path: Path, capsys) -> None:

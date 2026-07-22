@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import sqlite3
 from contextlib import closing
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, override
 
@@ -16,11 +17,18 @@ class InvalidUsDayNoSetupSourceError(RuntimeError):
         return "US Day no-setup source is invalid"
 
 
-def require_no_orb_recommendation(
+@dataclass(frozen=True, slots=True)
+class OrbSessionRecommendation:
+    recommendation_id: str
+    symbol: str
+    created_at: dt.datetime
+
+
+def load_session_orb_recommendations(
     repository: Path,
     source_artifacts: tuple[Path, ...],
     session_bounds: tuple[dt.datetime, dt.datetime],
-) -> None:
+) -> tuple[OrbSessionRecommendation, ...]:
     databases = tuple(path for path in source_artifacts if path.name == WATCH_DATABASE_NAME)
     if len(databases) != 1:
         raise InvalidUsDayNoSetupSourceError
@@ -28,21 +36,22 @@ def require_no_orb_recommendation(
     try:
         with closing(sqlite3.connect(f"{path.resolve(strict=True).as_uri()}?mode=ro", uri=True)) as connection:
             _ = connection.execute("PRAGMA query_only = ON")
-            rows: list[tuple[str]] = connection.execute(
-                "SELECT created_at FROM recommendations WHERE strategy = ? ORDER BY created_at",
+            rows: list[tuple[str, str, str]] = connection.execute(
+                "SELECT recommendation_id, symbol, created_at FROM recommendations "
+                "WHERE strategy = ? ORDER BY created_at, symbol, recommendation_id",
                 (ORB_STRATEGY,),
             ).fetchall()
     except (OSError, sqlite3.Error):
         raise InvalidUsDayNoSetupSourceError from None
-    if any(_is_in_session(row[0], session_bounds) for row in rows):
-        raise InvalidUsDayNoSetupSourceError
+    recommendations = tuple(_recommendation(row) for row in rows)
+    return tuple(item for item in recommendations if session_bounds[0] <= item.created_at < session_bounds[1])
 
 
-def _is_in_session(raw: str, session_bounds: tuple[dt.datetime, dt.datetime]) -> bool:
+def _recommendation(row: tuple[str, str, str]) -> OrbSessionRecommendation:
     try:
-        observed_at = dt.datetime.fromisoformat(raw)
+        created_at = dt.datetime.fromisoformat(row[2])
     except ValueError:
         raise InvalidUsDayNoSetupSourceError from None
-    if observed_at.tzinfo is None:
+    if not row[0] or not row[1] or created_at.tzinfo is None:
         raise InvalidUsDayNoSetupSourceError
-    return session_bounds[0] <= observed_at < session_bounds[1]
+    return OrbSessionRecommendation(row[0], row[1], created_at)

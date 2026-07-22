@@ -9,13 +9,14 @@ from trading_agent.acceptance_evidence import (
     require_clean_repository_commit,
 )
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
+from trading_agent.paper_execution_models import IntentId
 from trading_agent.us_day_acceptance_evidence import (
     UsDayAcceptanceBuildRequest,
     UsDayAcceptanceEvidenceBundle,
     UsDaySessionTerminal,
     write_us_day_acceptance_evidence,
 )
-from trading_agent.us_day_no_setup_source import require_no_orb_recommendation
+from trading_agent.us_day_no_setup_source import OrbSessionRecommendation, load_session_orb_recommendations
 from trading_agent.us_day_operating_cli_contract import (
     EvidenceUsDayCommand,
     FinalizeUsDayCommand,
@@ -24,9 +25,14 @@ from trading_agent.us_day_operating_cli_contract import (
 from trading_agent.us_day_operating_models import (
     UsDayOperatingRequest,
     UsDayOperatingResult,
+    UsDayOperatingStatus,
     UsDayOperatingTransition,
 )
-from trading_agent.us_day_operating_projection import project_us_day_no_recommendation
+from trading_agent.us_day_operating_projection import (
+    UsDayMissingTerminalProjection,
+    project_us_day_missing_terminal,
+    project_us_day_no_recommendation,
+)
 from trading_agent.us_day_session_inspection import UsDaySessionInspection
 from trading_agent.us_day_session_terminal import (
     InvalidUsDaySessionTerminalError,
@@ -51,7 +57,7 @@ def finalize_us_day_terminal(
     if command.terminal_input is not None:
         terminal = _refresh_terminal(command, inspection)
     else:
-        terminal = _finalize_no_setup(command, inspection)
+        terminal = _finalize_session_without_run(command, inspection)
     write_us_day_session_terminal(command.paths.terminal_output, terminal)
     return terminal
 
@@ -137,7 +143,7 @@ def _refresh_terminal(
     )
 
 
-def _finalize_no_setup(
+def _finalize_session_without_run(
     command: FinalizeUsDayCommand,
     inspection: UsDaySessionInspection,
 ) -> UsDaySessionTerminal:
@@ -150,8 +156,49 @@ def _finalize_no_setup(
     bounds = regular_session_bounds(session_date)
     if bounds is None:
         raise InvalidUsDaySessionTerminalError
-    _validate_no_setup(command, inspection, bounds)
+    recommendations = _validate_session_without_run(command, inspection, bounds)
     delivery_store = HermesDeliveryStore(command.paths.delivery_store)
+    if recommendations:
+        projected = project_us_day_missing_terminal(
+            UsDayMissingTerminalProjection(
+                command.session_id,
+                command.strategy_version,
+                recommendations,
+                inspection.observed_at,
+            ),
+            delivery_store,
+        )
+        result = UsDayOperatingResult(
+            UsDayOperatingStatus.BLOCKED,
+            (
+                UsDayOperatingTransition.FLAT,
+                UsDayOperatingTransition.RECONCILED,
+                UsDayOperatingTransition.HERMES_RESULT_PROJECTED,
+            ),
+            ("natural_setup_without_terminal",),
+            command.session_id,
+            command.strategy_version,
+            IntentId(recommendations[0].recommendation_id),
+            inspection.broker_state,
+            None,
+            projected.delivery_id,
+        )
+        return build_us_day_session_terminal(
+            UsDayTerminalObservation(
+                result,
+                bounds[0],
+                inspection.observed_at,
+                inspection.reconciliation_passed,
+                inspection.broker_shadow_ledger_equal,
+            ),
+            UsDayTerminalPublication(
+                command.paths.repository,
+                command.source_artifact_paths,
+                AcceptanceSessionKind.REAL,
+                "real_session",
+                delivery_store,
+            ),
+        )
     projected = project_us_day_no_recommendation(
         command.session_id,
         command.strategy_version,
@@ -179,11 +226,11 @@ def _finalize_no_setup(
     )
 
 
-def _validate_no_setup(
+def _validate_session_without_run(
     command: FinalizeUsDayCommand,
     inspection: UsDaySessionInspection,
     session_bounds: tuple[dt.datetime, dt.datetime],
-) -> None:
+) -> tuple[OrbSessionRecommendation, ...]:
     state = inspection.broker_state
     if (
         command.session_id is None
@@ -199,4 +246,4 @@ def _validate_no_setup(
     _ = require_clean_repository_commit(command.paths.repository)
     for path in command.source_artifact_paths:
         _ = acceptance_artifact_sha256(command.paths.repository, path)
-    require_no_orb_recommendation(command.paths.repository, command.source_artifact_paths, session_bounds)
+    return load_session_orb_recommendations(command.paths.repository, command.source_artifact_paths, session_bounds)
