@@ -70,9 +70,9 @@ def run_systematic_regime_tick(
     )
     version = systematic_regime_strategy_version(code_version)
     card = build_systematic_card(source, replay_systematic_regime(source), version)
+    trial_created = int(register_systematic_regime_trial(experiment_ledger, card, code_version).created)
     with store.writer() as writer:
         card_created = int(writer.append_card(card))
-    trial_created = int(register_systematic_regime_trial(experiment_ledger, card, code_version).created)
     return SystematicOperatingResult(phase, card_created, trial_created, 0, finalized)
 
 

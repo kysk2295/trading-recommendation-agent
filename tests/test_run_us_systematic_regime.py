@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import run_us_systematic_regime as cli
+import trading_agent.systematic_regime_operating as operating
 from tests.test_systematic_regime_engine import _source
 from tests.test_systematic_regime_trial import CODE_VERSION, _extend_source
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
@@ -67,6 +68,35 @@ def test_operating_tick_runs_register_start_finalize_and_next_card(tmp_path: Pat
     assert finalized.cards_created == 1
     assert len(cards.cards()) == 2
     assert len(cards.outcomes()) == 1
+
+
+def test_operating_tick_does_not_publish_a_card_when_registration_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a completed source whose experiment ledger registration fails.
+    source = _source("risk_on")
+    experiment = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    cards = SystematicRegimeStore(tmp_path / "systematic.sqlite3")
+
+    def reject_registration(*args: object, **kwargs: object) -> None:
+        _ = args, kwargs
+        raise RuntimeError("injected registration failure")
+
+    monkeypatch.setattr(operating, "register_systematic_regime_trial", reject_registration)
+
+    # When: the post-close operating tick cannot register its shadow trial.
+    with pytest.raises(RuntimeError, match="injected registration failure"):
+        _ = run_systematic_regime_tick(
+            now=source.observed_at,
+            code_version=CODE_VERSION,
+            experiment_ledger=experiment,
+            store=cards,
+            source=source,
+        )
+
+    # Then: no externally visible recommendation card was published first.
+    assert cards.cards() == ()
 
 
 def test_cli_fixture_happy_path_writes_private_recommendation_card(tmp_path: Path) -> None:

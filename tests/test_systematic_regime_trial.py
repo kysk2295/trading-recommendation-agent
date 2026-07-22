@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Iterator
+from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
 
@@ -160,6 +162,47 @@ def test_invalid_target_session_leaves_research_ledger_unchanged(tmp_path: Path)
     assert ledger.multi_market_hypotheses() == ()
     assert ledger.multi_market_strategy_versions() == ()
     assert ledger.multi_market_trials() == ()
+
+
+def test_finalize_retry_completes_after_a_terminal_ledger_write_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a started trial whose first terminal ledger write will fail.
+    source = _source("risk_on")
+    version = systematic_regime_strategy_version(CODE_VERSION)
+    card = build_systematic_card(source, replay_systematic_regime(source), version)
+    ledger = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    cards = SystematicRegimeStore(tmp_path / "systematic.sqlite3")
+    with cards.writer() as writer:
+        _ = writer.append_card(card)
+    registration = register_systematic_regime_trial(ledger, card, CODE_VERSION)
+    bounds = regular_session_bounds(card.target_session)
+    assert bounds is not None
+    _ = start_systematic_regime_trial(ledger, card, bounds[0] + dt.timedelta(minutes=1))
+    target_source = _extend_source(source, card.target_session)
+
+    @contextmanager
+    def reject_writer(self: ExperimentLedgerStore) -> Iterator[None]:
+        _ = self
+        raise RuntimeError("injected terminal ledger failure")
+        yield
+
+    monkeypatch.setattr(ExperimentLedgerStore, "writer", reject_writer)
+
+    # When: the outcome append succeeds but the terminal event append fails once.
+    with pytest.raises(InvalidSystematicRegimeTrialError):
+        _ = finalize_systematic_regime_trial(ledger, cards, card, target_source)
+    monkeypatch.undo()
+    retried = finalize_systematic_regime_trial(ledger, cards, card, target_source)
+
+    # Then: exact retry reuses the outcome and closes one terminal event.
+    assert retried.created is True
+    assert len(cards.outcomes()) == 1
+    assert tuple(
+        item.event.event_kind
+        for item in ledger.multi_market_trial_events(registration.registration.trial_id)
+    ) == (TrialEventKind.STARTED, TrialEventKind.COMPLETED)
 
 
 def _extend_source(source: SwingDailySource, target_session: dt.date) -> SwingDailySource:
