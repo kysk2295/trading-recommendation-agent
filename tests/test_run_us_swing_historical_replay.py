@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
+import shutil
 import stat
 from pathlib import Path
 
@@ -63,7 +65,7 @@ def test_cli_replays_causal_swing_flow_through_cards_terminal_and_reviewer(
     assert "external broker mutations: 0" in rendered
 
 
-def test_cli_exact_replay_opens_no_fixture_and_preserves_evidence(
+def test_cli_exact_replay_skips_scheduler_and_preserves_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -74,20 +76,50 @@ def test_cli_exact_replay_opens_no_fixture_and_preserves_evidence(
     reviews = SwingShadowReviewStore(tmp_path / "reviews.sqlite3")
     before = (len(delivery.events()), len(reviews.events()))
 
-    def unexpected_fixture_open(_root: Path, *, session_date: dt.date) -> None:
-        raise AssertionError(session_date)
+    def unexpected_scheduler_tick(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("completed replay must not run the operating scheduler")
 
     monkeypatch.setattr(
-        "trading_agent.us_swing_historical_replay.load_swing_daily_source",
-        unexpected_fixture_open,
+        "trading_agent.us_swing_historical_replay.run_us_swing_operating_tick",
+        unexpected_scheduler_tick,
     )
 
     # When: the exact same CLI replay is requested again.
     return_code = main(arguments, runtime_code_version="test_code_v1")
 
-    # Then: it succeeds from stored evidence without reopening data or adding events.
+    # Then: it verifies source identity and succeeds without scheduling or adding events.
     assert return_code == 0
     assert (len(delivery.events()), len(reviews.events())) == before
+
+
+def test_cli_rejects_completed_replay_from_a_different_runtime_code_version(
+    tmp_path: Path,
+) -> None:
+    arguments = _arguments(tmp_path)
+    assert main(arguments, runtime_code_version="test_code_v1") == 0
+    before = _evidence_counts(tmp_path)
+
+    return_code = main(arguments, runtime_code_version="test_code_v2")
+
+    assert return_code == 1
+    assert _evidence_counts(tmp_path) == before
+
+
+def test_cli_rejects_completed_replay_after_fixture_content_changes(tmp_path: Path) -> None:
+    fixture_root = tmp_path / "fixtures"
+    shutil.copytree(REPLAY_FIXTURES, fixture_root)
+    arguments = _arguments(tmp_path, replay_fixtures=fixture_root)
+    assert main(arguments, runtime_code_version="test_code_v1") == 0
+    before = _evidence_counts(tmp_path)
+    bars_path = fixture_root / TERMINAL_SESSION.isoformat() / "daily-bars.json"
+    bars = json.loads(bars_path.read_text(encoding="utf-8"))
+    bars[-1]["volume"] += 1
+    bars_path.write_text(json.dumps(bars), encoding="utf-8")
+
+    return_code = main(arguments, runtime_code_version="test_code_v1")
+
+    assert return_code == 1
+    assert _evidence_counts(tmp_path) == before
 
 
 def test_cli_recovers_terminal_delivery_and_review_after_root_cards_only(tmp_path: Path) -> None:
@@ -118,12 +150,16 @@ def test_cli_recovers_terminal_delivery_and_review_after_root_cards_only(tmp_pat
     assert len(SwingShadowReviewStore(tmp_path / "reviews.sqlite3").events()) == 1
 
 
-def _arguments(tmp_path: Path) -> tuple[str, ...]:
+def _arguments(
+    tmp_path: Path,
+    *,
+    replay_fixtures: Path = REPLAY_FIXTURES,
+) -> tuple[str, ...]:
     return (
         "--fixture",
-        f"{SIGNAL_SESSION.isoformat()}={REPLAY_FIXTURES / SIGNAL_SESSION.isoformat()}",
+        f"{SIGNAL_SESSION.isoformat()}={replay_fixtures / SIGNAL_SESSION.isoformat()}",
         "--fixture",
-        f"{TERMINAL_SESSION.isoformat()}={REPLAY_FIXTURES / TERMINAL_SESSION.isoformat()}",
+        f"{TERMINAL_SESSION.isoformat()}={replay_fixtures / TERMINAL_SESSION.isoformat()}",
         "--research-manifest",
         str(RESEARCH_MANIFEST),
         "--experiment-ledger",
@@ -136,4 +172,12 @@ def _arguments(tmp_path: Path) -> tuple[str, ...]:
         str(tmp_path / "reviews.sqlite3"),
         "--output-dir",
         str(tmp_path / "output"),
+    )
+
+
+def _evidence_counts(tmp_path: Path) -> tuple[int, int, int]:
+    return (
+        len(HermesDeliveryStore(tmp_path / "delivery.sqlite3").events()),
+        len(SwingShadowReader(tmp_path / "shadow.sqlite3").signals()),
+        len(SwingShadowReviewStore(tmp_path / "reviews.sqlite3").events()),
     )

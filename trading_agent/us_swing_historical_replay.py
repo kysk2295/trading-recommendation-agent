@@ -96,7 +96,8 @@ def run_swing_historical_replay(
     config: SwingOperatingConfig,
 ) -> SwingHistoricalReplayResult:
     _require_request(request)
-    if not _replay_is_complete(request, config):
+    sources = _load_request_sources(request)
+    if not _replay_is_complete(request, config, sources):
         persisted_signals = config.shadow_ledger.signals()
         persisted_deliveries = config.delivery_store.events()
         replay_floor = min(
@@ -131,7 +132,7 @@ def run_swing_historical_replay(
                 )
                 if outcome.incidents:
                     raise InvalidSwingHistoricalReplayError
-    if not _replay_is_complete(request, config):
+    if not _replay_is_complete(request, config, sources):
         raise InvalidSwingHistoricalReplayError
     deliveries = config.delivery_store.events()
     signals = config.shadow_ledger.signals()
@@ -161,18 +162,36 @@ def run_swing_historical_replay(
 def _replay_is_complete(
     request: SwingHistoricalReplayRequest,
     config: SwingOperatingConfig,
+    sources: tuple[SwingDailySource, ...],
 ) -> bool:
-    requested_dates = frozenset(fixture.session_date for fixture in request.fixtures)
-    deliveries = config.delivery_store.events()
-    stored_source_dates = frozenset(
-        event.occurred_at.astimezone(NEW_YORK).date()
-        for event in deliveries
-        if event.root_delivery_id == event.delivery_id
-        and event.kind in {HermesDeliveryKind.WATCH, HermesDeliveryKind.NO_RECOMMENDATION}
-        and event.strategy_version == SWING_RESEARCH_CONTRACT.strategy_version
+    expected_sources = {source.session_date: source.source_key for source in sources}
+    requested_dates = frozenset(expected_sources)
+    versions = tuple(
+        stored.registration
+        for stored in config.experiment_ledger.strategy_versions()
+        if stored.registration.strategy_version == SWING_RESEARCH_CONTRACT.strategy_version
     )
-    if not requested_dates.issubset(stored_source_dates):
+    if len(versions) != 1 or versions[0].code_version != request.runtime_code_version:
         return False
+    deliveries = config.delivery_store.events()
+    for session_date, source_key in expected_sources.items():
+        roots = tuple(
+            event
+            for event in deliveries
+            if event.root_delivery_id == event.delivery_id
+            and event.occurred_at.astimezone(NEW_YORK).date() == session_date
+            and event.kind in {HermesDeliveryKind.WATCH, HermesDeliveryKind.NO_RECOMMENDATION}
+            and event.strategy_version == SWING_RESEARCH_CONTRACT.strategy_version
+        )
+        expected_evidence = {
+            f"swing-source:{source_key}",
+            f"swing_shadow/daily_source:{source_key}",
+        }
+        if not roots or any(
+            len(event.evidence_refs) != 1 or event.evidence_refs[0] not in expected_evidence
+            for event in roots
+        ):
+            return False
     reviews = {stored.event.signal_id for stored in config.review_store.events()}
     for signal in config.shadow_ledger.signals():
         if signal.observed_at.astimezone(NEW_YORK).date() not in requested_dates:
@@ -195,6 +214,21 @@ def _replay_is_complete(
         ):
             return False
     return True
+
+
+def _load_request_sources(
+    request: SwingHistoricalReplayRequest,
+) -> tuple[SwingDailySource, ...]:
+    sources = tuple(
+        load_swing_daily_source(
+            fixture.fixture_root,
+            session_date=fixture.session_date,
+        )
+        for fixture in request.fixtures
+    )
+    for source in sources:
+        _require_causal_snapshot(source)
+    return sources
 
 
 def _require_request(request: SwingHistoricalReplayRequest) -> None:
