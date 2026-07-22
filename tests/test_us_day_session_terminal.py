@@ -118,6 +118,22 @@ def test_flat_no_setup_session_builds_censored_terminal_without_natural_lifecycl
     assert terminal.hermes_acknowledged is False
 
 
+def test_no_setup_projection_replays_after_observation_time_changes(tmp_path: Path) -> None:
+    delivery_store = HermesDeliveryStore(tmp_path / "delivery.sqlite3")
+
+    first = project_us_day_no_recommendation("XNYS-2026-07-14", "orb-v1", delivery_store, AT)
+    replayed = project_us_day_no_recommendation(
+        "XNYS-2026-07-14",
+        "orb-v1",
+        delivery_store,
+        AT.replace(minute=AT.minute + 5),
+    )
+
+    assert replayed == first
+    assert len(delivery_store.events()) == 1
+    assert delivery_store.events()[0].occurred_at == AT
+
+
 def test_finalize_refreshes_delivery_ack_without_consuming_another_arm(tmp_path: Path) -> None:
     repository = _clean_repository(tmp_path)
     source_path = Path("outputs/source/current-watch.json")

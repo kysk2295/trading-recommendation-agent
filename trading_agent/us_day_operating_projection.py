@@ -6,12 +6,17 @@ import json
 from dataclasses import dataclass
 from typing import assert_never
 
+from trading_agent.hermes_delivery_errors import HermesDeliveryConflictError
 from trading_agent.hermes_delivery_models import (
     HERMES_DELIVERY_CONTRACT_VERSION,
     HermesDeliveryKind,
     hermes_delivery_id,
 )
-from trading_agent.hermes_delivery_projection import HermesProjectionRecord, project_outcomes
+from trading_agent.hermes_delivery_projection import (
+    HermesProjectionRecord,
+    delivery_event_from_projection_record,
+    project_outcomes,
+)
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.us_day_no_setup_source import OrbSessionRecommendation
 from trading_agent.us_day_operating_models import ProjectedUsDayEvent, UsDayOperatingRequest, UsDayOperatingStatus
@@ -127,12 +132,22 @@ def project_us_day_no_recommendation(
         rendered_text="day_trading operating result: no eligible setup.",
         payload_sha256=digest,
     )
-    with store.writer() as writer:
-        _ = project_outcomes((record,), writer)
+    _project_replayable_outcome(record, store)
     return ProjectedUsDayEvent(
         record.source_event_id,
         hermes_delivery_id(record.source_event_id, HERMES_DELIVERY_CONTRACT_VERSION),
     )
+
+
+def _project_replayable_outcome(record: HermesProjectionRecord, store: HermesDeliveryStore) -> None:
+    try:
+        with store.writer() as writer:
+            _ = project_outcomes((record,), writer)
+    except HermesDeliveryConflictError:
+        expected = delivery_event_from_projection_record(record)
+        existing = next((item for item in store.events() if item.delivery_id == expected.delivery_id), None)
+        if existing is None or existing.model_copy(update={"occurred_at": expected.occurred_at}) != expected:
+            raise
 
 
 def project_us_day_missing_terminal(
