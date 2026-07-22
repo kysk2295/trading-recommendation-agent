@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --script
-# noqa: SIZE_OK - active-session packaging repair changes metadata only; scanner logic is unchanged
+"""US Paper scanner metadata repair; scanner logic is unchanged. # noqa: SIZE_OK"""
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
