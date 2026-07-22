@@ -87,6 +87,8 @@ class SystematicRegimeStore:
                 rows: list[tuple[str]] = connection.execute(
                     "SELECT cards.payload_json FROM systematic_cards AS cards "
                     "JOIN systematic_card_publications AS publications USING (card_id) "
+                    "LEFT JOIN systematic_card_expirations AS expirations USING (card_id) "
+                    "WHERE expirations.card_id IS NULL "
                     "ORDER BY cards.rowid"
                 ).fetchall()
             return tuple(SystematicRecommendationCard.model_validate_json(row[0]) for row in rows)

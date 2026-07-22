@@ -10,6 +10,7 @@ import pytest
 
 from tests.test_systematic_regime_engine import STRATEGY_VERSION, _source
 from trading_agent.systematic_regime_engine import build_systematic_card, replay_systematic_regime
+from trading_agent.systematic_regime_schema import SYSTEMATIC_REGIME_SCHEMA_V1
 from trading_agent.systematic_regime_store import (
     InvalidSystematicRegimeStoreError,
     SystematicRegimeConflictError,
@@ -236,3 +237,47 @@ def test_writer_lease_survives_its_lock_path_being_replaced(tmp_path: Path) -> N
 
     # Then: the original store remains valid after the single writer exits.
     assert store.cards() == ()
+
+
+def test_card_cannot_be_both_published_and_expired(tmp_path: Path) -> None:
+    # Given: one publicly visible immutable card.
+    source = _source("risk_on")
+    card = build_systematic_card(source, replay_systematic_regime(source), STRATEGY_VERSION)
+    store = SystematicRegimeStore(tmp_path / "systematic.sqlite3")
+    with store.writer() as writer:
+        assert writer.append_card(card) is True
+
+    # When/Then: the terminal expiration marker cannot contradict publication.
+    with store.writer() as writer, pytest.raises(SystematicRegimeConflictError):
+        _ = writer.expire_card(card)
+    assert store.cards() == (card,)
+    assert store.expired_cards() == ()
+
+
+def test_writer_migrates_v1_publication_state_to_v2(tmp_path: Path) -> None:
+    # Given: a private v1 store containing one published card.
+    source = _source("risk_on")
+    card = build_systematic_card(source, replay_systematic_regime(source), STRATEGY_VERSION)
+    path = tmp_path / "systematic.sqlite3"
+    payload = card.model_dump_json()
+    with sqlite3.connect(path) as connection:
+        connection.executescript(f"{SYSTEMATIC_REGIME_SCHEMA_V1}PRAGMA user_version = 1;")
+        _ = connection.execute(
+            "INSERT INTO systematic_cards (card_id, payload_json) VALUES (?, ?)",
+            (card.card_id, payload),
+        )
+        _ = connection.execute(
+            "INSERT INTO systematic_card_publications (card_id, payload_json) VALUES (?, ?)",
+            (card.card_id, payload),
+        )
+    path.chmod(0o600)
+
+    # When: the current writer opens and migrates the exact prior schema.
+    store = SystematicRegimeStore(path)
+    with store.writer():
+        pass
+
+    # Then: prior publication remains readable under schema v2.
+    assert store.cards() == (card,)
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (2,)

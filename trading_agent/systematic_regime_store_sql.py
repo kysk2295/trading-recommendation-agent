@@ -18,34 +18,14 @@ from trading_agent.private_directory_identity import (
     require_private_directory,
     require_private_directory_query_only,
 )
-
-_SCHEMA_VERSION: Final = 1
-_MAX_DATABASE_BYTES: Final = 64 * 1024 * 1024
-_SCHEMA: Final = (
-    "CREATE TABLE systematic_cards (card_id TEXT PRIMARY KEY, payload_json TEXT NOT NULL);"
-    "CREATE TABLE systematic_card_publications ("
-    "card_id TEXT PRIMARY KEY REFERENCES systematic_cards(card_id), payload_json TEXT NOT NULL);"
-    "CREATE TABLE systematic_card_expirations ("
-    "card_id TEXT PRIMARY KEY REFERENCES systematic_cards(card_id), payload_json TEXT NOT NULL);"
-    "CREATE TABLE systematic_outcomes ("
-    "card_id TEXT PRIMARY KEY REFERENCES systematic_cards(card_id), payload_json TEXT NOT NULL);"
-    "CREATE TRIGGER systematic_cards_no_update BEFORE UPDATE ON systematic_cards "
-    "BEGIN SELECT RAISE(ABORT, 'append-only'); END;"
-    "CREATE TRIGGER systematic_cards_no_delete BEFORE DELETE ON systematic_cards "
-    "BEGIN SELECT RAISE(ABORT, 'append-only'); END;"
-    "CREATE TRIGGER systematic_card_publications_no_update BEFORE UPDATE "
-    "ON systematic_card_publications BEGIN SELECT RAISE(ABORT, 'append-only'); END;"
-    "CREATE TRIGGER systematic_card_publications_no_delete BEFORE DELETE "
-    "ON systematic_card_publications BEGIN SELECT RAISE(ABORT, 'append-only'); END;"
-    "CREATE TRIGGER systematic_card_expirations_no_update BEFORE UPDATE "
-    "ON systematic_card_expirations BEGIN SELECT RAISE(ABORT, 'append-only'); END;"
-    "CREATE TRIGGER systematic_card_expirations_no_delete BEFORE DELETE "
-    "ON systematic_card_expirations BEGIN SELECT RAISE(ABORT, 'append-only'); END;"
-    "CREATE TRIGGER systematic_outcomes_no_update BEFORE UPDATE ON systematic_outcomes "
-    "BEGIN SELECT RAISE(ABORT, 'append-only'); END;"
-    "CREATE TRIGGER systematic_outcomes_no_delete BEFORE DELETE ON systematic_outcomes "
-    "BEGIN SELECT RAISE(ABORT, 'append-only'); END;"
+from trading_agent.systematic_regime_schema import (
+    SYSTEMATIC_REGIME_EXPIRATION_SCHEMA_V2,
+    SYSTEMATIC_REGIME_SCHEMA_V1,
+    SYSTEMATIC_REGIME_SCHEMA_V2,
 )
+
+_SCHEMA_VERSION: Final = 2
+_MAX_DATABASE_BYTES: Final = 64 * 1024 * 1024
 
 
 class InvalidSystematicRegimeSqliteError(ValueError):
@@ -238,10 +218,21 @@ def _enable_foreign_keys(connection: sqlite3.Connection) -> None:
 
 
 def _prepare(connection: sqlite3.Connection) -> None:
-    if connection.execute("PRAGMA user_version").fetchone() == (0,):
+    version = connection.execute("PRAGMA user_version").fetchone()
+    if version == (0,):
         if _signature(connection):
             raise InvalidSystematicRegimeSqliteError
-        connection.executescript(f"{_SCHEMA}PRAGMA user_version = {_SCHEMA_VERSION};")
+        connection.executescript(
+            f"{SYSTEMATIC_REGIME_SCHEMA_V2}PRAGMA user_version = {_SCHEMA_VERSION};"
+        )
+    elif version == (1,):
+        if _signature(connection) != _EXPECTED_V1_SIGNATURE:
+            raise InvalidSystematicRegimeSqliteError
+        _require_integrity(connection)
+        connection.executescript(
+            f"{SYSTEMATIC_REGIME_EXPIRATION_SCHEMA_V2}"
+            f"PRAGMA user_version = {_SCHEMA_VERSION};"
+        )
     _require_schema(connection)
 
 
@@ -249,7 +240,14 @@ def _require_schema(connection: sqlite3.Connection) -> None:
     if (
         connection.execute("PRAGMA user_version").fetchone() != (_SCHEMA_VERSION,)
         or _signature(connection) != _EXPECTED_SIGNATURE
-        or connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
+    ):
+        raise InvalidSystematicRegimeSqliteError
+    _require_integrity(connection)
+
+
+def _require_integrity(connection: sqlite3.Connection) -> None:
+    if (
+        connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
         or connection.execute("PRAGMA foreign_key_check").fetchall()
     ):
         raise InvalidSystematicRegimeSqliteError
@@ -264,13 +262,14 @@ def _signature(connection: sqlite3.Connection) -> tuple[tuple[str, str, str, str
     )
 
 
-def _expected_signature() -> tuple[tuple[str, str, str, str], ...]:
+def _expected_signature(schema: str) -> tuple[tuple[str, str, str, str], ...]:
     with closing(sqlite3.connect(":memory:")) as connection:
-        connection.executescript(_SCHEMA)
+        connection.executescript(schema)
         return _signature(connection)
 
 
-_EXPECTED_SIGNATURE = _expected_signature()
+_EXPECTED_V1_SIGNATURE = _expected_signature(SYSTEMATIC_REGIME_SCHEMA_V1)
+_EXPECTED_SIGNATURE = _expected_signature(SYSTEMATIC_REGIME_SCHEMA_V2)
 
 
 __all__ = (
