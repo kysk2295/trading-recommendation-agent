@@ -281,3 +281,12 @@ def test_writer_migrates_v1_publication_state_to_v2(tmp_path: Path) -> None:
     assert store.cards() == (card,)
     with sqlite3.connect(path) as connection:
         assert connection.execute("PRAGMA user_version").fetchone() == (2,)
+
+
+def test_prepare_existing_does_not_create_a_missing_store_or_lock(tmp_path: Path) -> None:
+    path = tmp_path / "systematic.sqlite3"
+    store = SystematicRegimeStore(path)
+
+    assert store.prepare_existing() is False
+    assert not path.exists()
+    assert not (tmp_path / "systematic.sqlite3.writer.lock").exists()

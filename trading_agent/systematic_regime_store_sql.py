@@ -35,33 +35,63 @@ class InvalidSystematicRegimeSqliteError(ValueError):
 
 
 @contextmanager
-def systematic_writer_connection(path: Path) -> Iterator[sqlite3.Connection]:
+def systematic_writer_connection(
+    path: Path,
+    *,
+    create: bool = True,
+) -> Iterator[sqlite3.Connection]:
     absolute = absolute_private_path(path)
     try:
-        parent = open_private_parent(absolute.parent, create=True)
+        parent = open_private_parent(absolute.parent, create=create)
         try:
             require_private_directory(parent)
             lock_path = absolute.parent / f"{absolute.name}.writer.lock"
-            with _writer_lease(lock_path, parent):
-                database_descriptor = _open_file(parent, absolute.name, create=True, write=True)
+            if create:
+                with _writer_lease(lock_path, parent):
+                    database_descriptor = _open_file(parent, absolute.name, create=True, write=True)
+                    try:
+                        with _opened_writer_database(
+                            absolute,
+                            parent,
+                            database_descriptor,
+                        ) as connection:
+                            yield connection
+                    finally:
+                        os.close(database_descriptor)
+            else:
+                database_descriptor = _open_file(parent, absolute.name, create=False, write=True)
                 try:
-                    with closing(sqlite3.connect(":memory:")) as connection:
-                        _require_bound(absolute, parent, database_descriptor)
-                        original = _load_database(connection, database_descriptor)
-                        _enable_foreign_keys(connection)
-                        _prepare(connection)
+                    with _writer_lease(lock_path, parent), _opened_writer_database(
+                        absolute,
+                        parent,
+                        database_descriptor,
+                    ) as connection:
                         yield connection
-                        _require_bound(absolute, parent, database_descriptor)
-                        connection.commit()
-                        payload = connection.serialize()
-                        if payload != original:
-                            _replace_database(parent, absolute.name, payload)
                 finally:
                     os.close(database_descriptor)
         finally:
             os.close(parent)
     except (InvalidPrivateDirectoryIdentityError, OSError, sqlite3.Error, TypeError):
         raise InvalidSystematicRegimeSqliteError from None
+
+
+@contextmanager
+def _opened_writer_database(
+    absolute: Path,
+    parent: int,
+    descriptor: int,
+) -> Iterator[sqlite3.Connection]:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        _require_bound(absolute, parent, descriptor)
+        original = _load_database(connection, descriptor)
+        _enable_foreign_keys(connection)
+        _prepare(connection)
+        yield connection
+        _require_bound(absolute, parent, descriptor)
+        connection.commit()
+        payload = connection.serialize()
+        if payload != original:
+            _replace_database(parent, absolute.name, payload)
 
 
 @contextmanager

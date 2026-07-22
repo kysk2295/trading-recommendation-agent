@@ -73,12 +73,12 @@ class SystematicRegimeStore:
 
     def prepare_existing(self) -> bool:
         try:
-            if not private_store_exists(self.path):
-                return False
-            with self.writer():
+            with systematic_writer_connection(self.path, create=False):
                 pass
             return True
         except InvalidSystematicRegimeSqliteError:
+            if not private_store_exists(self.path):
+                return False
             raise InvalidSystematicRegimeStoreError from None
 
     @contextmanager
