@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import fcntl
 import os
+import secrets
 import sqlite3
 import stat
 from collections.abc import Iterator
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, suppress
 from pathlib import Path
 from typing import Final, override
 
@@ -19,14 +20,21 @@ from trading_agent.private_directory_identity import (
 )
 
 _SCHEMA_VERSION: Final = 1
+_MAX_DATABASE_BYTES: Final = 64 * 1024 * 1024
 _SCHEMA: Final = (
     "CREATE TABLE systematic_cards (card_id TEXT PRIMARY KEY, payload_json TEXT NOT NULL);"
+    "CREATE TABLE systematic_card_publications ("
+    "card_id TEXT PRIMARY KEY REFERENCES systematic_cards(card_id), payload_json TEXT NOT NULL);"
     "CREATE TABLE systematic_outcomes ("
     "card_id TEXT PRIMARY KEY REFERENCES systematic_cards(card_id), payload_json TEXT NOT NULL);"
     "CREATE TRIGGER systematic_cards_no_update BEFORE UPDATE ON systematic_cards "
     "BEGIN SELECT RAISE(ABORT, 'append-only'); END;"
     "CREATE TRIGGER systematic_cards_no_delete BEFORE DELETE ON systematic_cards "
     "BEGIN SELECT RAISE(ABORT, 'append-only'); END;"
+    "CREATE TRIGGER systematic_card_publications_no_update BEFORE UPDATE "
+    "ON systematic_card_publications BEGIN SELECT RAISE(ABORT, 'append-only'); END;"
+    "CREATE TRIGGER systematic_card_publications_no_delete BEFORE DELETE "
+    "ON systematic_card_publications BEGIN SELECT RAISE(ABORT, 'append-only'); END;"
     "CREATE TRIGGER systematic_outcomes_no_update BEFORE UPDATE ON systematic_outcomes "
     "BEGIN SELECT RAISE(ABORT, 'append-only'); END;"
     "CREATE TRIGGER systematic_outcomes_no_delete BEFORE DELETE ON systematic_outcomes "
@@ -51,12 +59,17 @@ def systematic_writer_connection(path: Path) -> Iterator[sqlite3.Connection]:
             with _writer_lease(lock_path, parent):
                 database_descriptor = _open_file(parent, absolute.name, create=True, write=True)
                 try:
-                    with closing(_connect_descriptor(database_descriptor, write=True)) as connection:
+                    with closing(sqlite3.connect(":memory:")) as connection:
                         _require_bound(absolute, parent, database_descriptor)
+                        original = _load_database(connection, database_descriptor)
                         _enable_foreign_keys(connection)
                         _prepare(connection)
                         yield connection
                         _require_bound(absolute, parent, database_descriptor)
+                        connection.commit()
+                        payload = connection.serialize()
+                        if payload != original:
+                            _replace_database(parent, absolute.name, payload)
                 finally:
                     os.close(database_descriptor)
         finally:
@@ -74,7 +87,7 @@ def systematic_reader_connection(path: Path) -> Iterator[sqlite3.Connection]:
             require_private_directory_query_only(parent)
             descriptor = _open_file(parent, absolute.name, create=False, write=False)
             try:
-                with closing(_connect_descriptor(descriptor, write=False)) as connection:
+                with closing(_connect_descriptor(descriptor)) as connection:
                     _require_bound(absolute, parent, descriptor)
                     _enable_foreign_keys(connection)
                     _ = connection.execute("PRAGMA query_only = ON")
@@ -108,9 +121,12 @@ def private_store_exists(path: Path) -> bool:
 @contextmanager
 def _writer_lease(path: Path, parent: int) -> Iterator[None]:
     descriptor = _open_file(parent, path.name, create=True, write=True)
+    parent_locked = False
     locked = False
     try:
         _require_bound(path, parent, descriptor)
+        fcntl.flock(parent, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        parent_locked = True
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         locked = True
         yield
@@ -120,6 +136,8 @@ def _writer_lease(path: Path, parent: int) -> Iterator[None]:
         finally:
             if locked:
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
+            if parent_locked:
+                fcntl.flock(parent, fcntl.LOCK_UN)
             os.close(descriptor)
 
 
@@ -160,17 +178,51 @@ def _require_private_file(descriptor: int) -> None:
         raise InvalidSystematicRegimeSqliteError
 
 
-def _connect_descriptor(descriptor: int, *, write: bool) -> sqlite3.Connection:
-    mode = "rw" if write else "ro"
-    connection = sqlite3.connect(
-        f"file:/dev/fd/{descriptor}?mode={mode}",
+def _connect_descriptor(descriptor: int) -> sqlite3.Connection:
+    return sqlite3.connect(
+        f"file:/dev/fd/{descriptor}?mode=ro",
         uri=True,
         timeout=0.0,
     )
-    if write and connection.execute("PRAGMA journal_mode = MEMORY").fetchone() != ("memory",):
-        connection.close()
+
+
+def _load_database(connection: sqlite3.Connection, descriptor: int) -> bytes:
+    size = os.fstat(descriptor).st_size
+    if size > _MAX_DATABASE_BYTES:
         raise InvalidSystematicRegimeSqliteError
-    return connection
+    payload = os.pread(descriptor, size, 0)
+    if len(payload) != size:
+        raise InvalidSystematicRegimeSqliteError
+    if payload:
+        connection.deserialize(payload)
+    return payload
+
+
+def _replace_database(parent: int, name: str, payload: bytes) -> None:
+    temporary = f".{name}.{secrets.token_hex(16)}.tmp"
+    descriptor = os.open(
+        temporary,
+        os.O_CLOEXEC | os.O_NOFOLLOW | os.O_RDWR | os.O_CREAT | os.O_EXCL,
+        0o600,
+        dir_fd=parent,
+    )
+    renamed = False
+    try:
+        offset = 0
+        while offset < len(payload):
+            offset += os.write(descriptor, payload[offset:])
+        os.fsync(descriptor)
+        _require_private_file(descriptor)
+        os.rename(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
+        renamed = True
+        os.fsync(parent)
+        replacement = _open_file(parent, name, create=False, write=False)
+        os.close(replacement)
+    finally:
+        os.close(descriptor)
+        if not renamed:
+            with suppress(FileNotFoundError):
+                os.unlink(temporary, dir_fd=parent)
 
 
 def _enable_foreign_keys(connection: sqlite3.Connection) -> None:

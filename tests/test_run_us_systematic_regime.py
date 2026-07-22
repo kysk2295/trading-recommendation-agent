@@ -20,7 +20,10 @@ from trading_agent.systematic_regime_operating import (
     SystematicOperatingPhase,
     run_systematic_regime_tick,
 )
-from trading_agent.systematic_regime_store import SystematicRegimeStore
+from trading_agent.systematic_regime_store import (
+    SystematicRegimeStore,
+    SystematicRegimeWriter,
+)
 from trading_agent.us_equity_calendar import regular_session_bounds
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,8 +98,74 @@ def test_operating_tick_does_not_publish_a_card_when_registration_fails(
             source=source,
         )
 
-    # Then: no externally visible recommendation card was published first.
+    # Then: the hidden staged card is published and started by the next regular tick.
     assert cards.cards() == ()
+    assert len(cards.pending_cards()) == 1
+    monkeypatch.undo()
+    bounds = regular_session_bounds(source.session_date + dt.timedelta(days=1))
+    assert bounds is not None
+    recovered = run_systematic_regime_tick(
+        now=bounds[0] + dt.timedelta(minutes=1),
+        code_version=CODE_VERSION,
+        experiment_ledger=experiment,
+        store=cards,
+        source=None,
+    )
+    assert recovered.cards_created == 1
+    assert recovered.trials_registered == 1
+    assert recovered.trials_started == 1
+    assert len(cards.cards()) == 1
+    assert cards.pending_cards() == ()
+
+
+def test_regular_tick_recovers_a_registered_but_unpublished_card(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: registration succeeds but the publication marker fails once.
+    source = _source("risk_on")
+    experiment = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    cards = SystematicRegimeStore(tmp_path / "systematic.sqlite3")
+
+    def reject_publication(
+        self: SystematicRegimeWriter,
+        card: object,
+    ) -> bool:
+        _ = self, card
+        raise RuntimeError("injected publication failure")
+
+    monkeypatch.setattr(SystematicRegimeWriter, "publish_card", reject_publication)
+
+    # When: the post-close tick stops after the durable trial registration.
+    with pytest.raises(RuntimeError, match="injected publication failure"):
+        _ = run_systematic_regime_tick(
+            now=source.observed_at,
+            code_version=CODE_VERSION,
+            experiment_ledger=experiment,
+            store=cards,
+            source=source,
+        )
+    assert cards.cards() == ()
+    pending = cards.pending_cards()
+    assert len(pending) == 1
+    assert len(experiment.multi_market_trials()) == 1
+    monkeypatch.undo()
+
+    # Then: the target-session tick publishes and starts the existing trial.
+    bounds = regular_session_bounds(pending[0].target_session)
+    assert bounds is not None
+    recovered = run_systematic_regime_tick(
+        now=bounds[0] + dt.timedelta(minutes=1),
+        code_version=CODE_VERSION,
+        experiment_ledger=experiment,
+        store=cards,
+        source=None,
+    )
+    assert recovered.cards_created == 1
+    assert recovered.trials_registered == 0
+    assert recovered.trials_started == 1
+    assert cards.cards() == pending
+    assert cards.pending_cards() == ()
 
 
 def test_cli_fixture_happy_path_writes_private_recommendation_card(tmp_path: Path) -> None:

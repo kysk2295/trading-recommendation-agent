@@ -33,10 +33,15 @@ def test_card_store_is_append_only_and_exact_replay_is_a_noop(tmp_path: Path) ->
     with store.writer() as writer:
         first = writer.append_card(card)
         second = writer.append_card(card)
+    inode = path.stat().st_ino
+    with store.writer() as writer:
+        exact_replay = writer.append_card(card)
 
     # Then: only one canonical card exists and the file is owner-private.
     assert first is True
     assert second is False
+    assert exact_replay is False
+    assert path.stat().st_ino == inode
     assert store.cards() == (card,)
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     with sqlite3.connect(path) as connection, pytest.raises(sqlite3.IntegrityError):
@@ -176,7 +181,9 @@ def test_reader_connection_stays_bound_during_a_path_swap(
     path = tmp_path / "systematic.sqlite3"
     alternate = tmp_path / "alternate.sqlite3"
     held = tmp_path / "held.sqlite3"
-    with SystematicRegimeStore(path).writer(), SystematicRegimeStore(alternate).writer():
+    with SystematicRegimeStore(path).writer():
+        pass
+    with SystematicRegimeStore(alternate).writer():
         pass
     with sqlite3.connect(path) as connection:
         _ = connection.execute("PRAGMA application_id = 111")
@@ -206,3 +213,26 @@ def test_reader_connection_stays_bound_during_a_path_swap(
 
     # Then: it queried the validated descriptor, never the temporary pathname target.
     assert application_id == (111,)
+
+
+def test_writer_lease_survives_its_lock_path_being_replaced(tmp_path: Path) -> None:
+    # Given: an active writer whose named lock inode is temporarily moved aside.
+    path = tmp_path / "systematic.sqlite3"
+    lock = tmp_path / "systematic.sqlite3.writer.lock"
+    held = tmp_path / "held.writer.lock"
+    store = SystematicRegimeStore(path)
+
+    # When: a second writer attempts to acquire a replacement lock name.
+    with store.writer():
+        lock.replace(held)
+        lock.write_bytes(b"")
+        lock.chmod(0o600)
+        try:
+            with pytest.raises(InvalidSystematicRegimeStoreError), store.writer():
+                pass
+        finally:
+            lock.unlink()
+            held.replace(lock)
+
+    # Then: the original store remains valid after the single writer exits.
+    assert store.cards() == ()

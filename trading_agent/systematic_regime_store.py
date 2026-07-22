@@ -85,7 +85,23 @@ class SystematicRegimeStore:
                 return ()
             with systematic_reader_connection(self.path) as connection:
                 rows: list[tuple[str]] = connection.execute(
-                    "SELECT payload_json FROM systematic_cards ORDER BY rowid"
+                    "SELECT cards.payload_json FROM systematic_cards AS cards "
+                    "JOIN systematic_card_publications AS publications USING (card_id) "
+                    "ORDER BY cards.rowid"
+                ).fetchall()
+            return tuple(SystematicRecommendationCard.model_validate_json(row[0]) for row in rows)
+        except (InvalidSystematicRegimeSqliteError, ValidationError, ValueError):
+            raise InvalidSystematicRegimeStoreError from None
+
+    def pending_cards(self) -> tuple[SystematicRecommendationCard, ...]:
+        try:
+            if not private_store_exists(self.path):
+                return ()
+            with systematic_reader_connection(self.path) as connection:
+                rows: list[tuple[str]] = connection.execute(
+                    "SELECT cards.payload_json FROM systematic_cards AS cards "
+                    "LEFT JOIN systematic_card_publications AS publications USING (card_id) "
+                    "WHERE publications.card_id IS NULL ORDER BY cards.rowid"
                 ).fetchall()
             return tuple(SystematicRecommendationCard.model_validate_json(row[0]) for row in rows)
         except (InvalidSystematicRegimeSqliteError, ValidationError, ValueError):
@@ -112,8 +128,22 @@ class SystematicRegimeWriter:
         self._connection = connection
 
     def append_card(self, card: SystematicRecommendationCard) -> bool:
+        staged = self.stage_card(card)
+        published = self.publish_card(card)
+        return staged or published
+
+    def stage_card(self, card: SystematicRecommendationCard) -> bool:
         checked = SystematicRecommendationCard.model_validate(card.model_dump(mode="python"))
         return self._append("systematic_cards", "card_id", checked.card_id, _canonical_payload(checked))
+
+    def publish_card(self, card: SystematicRecommendationCard) -> bool:
+        checked = SystematicRecommendationCard.model_validate(card.model_dump(mode="python"))
+        return self._append(
+            "systematic_card_publications",
+            "card_id",
+            checked.card_id,
+            _canonical_payload(checked),
+        )
 
     def append_outcome(self, outcome: SystematicShadowOutcome) -> bool:
         checked = SystematicShadowOutcome.model_validate(outcome.model_dump(mode="python"))
