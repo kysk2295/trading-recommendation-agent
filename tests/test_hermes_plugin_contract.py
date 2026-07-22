@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 from collections.abc import Callable
@@ -20,6 +21,18 @@ class FakePluginContext:
 
     def register_skill(self, name, path, description="") -> None:
         self.skills[name] = path
+
+
+def test_plugin_entrypoint_parses_on_hermes_python_311_runtime() -> None:
+    # Given
+    root = Path(__file__).parents[1]
+    source = root / "integrations" / "hermes" / "trading-agent" / "__init__.py"
+
+    # When
+    tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source), feature_version=(3, 11))
+
+    # Then
+    assert isinstance(tree, ast.Module)
 
 
 def test_plugin_registers_query_arm_tools_command_and_skill() -> None:

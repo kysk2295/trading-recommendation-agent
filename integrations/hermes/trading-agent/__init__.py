@@ -18,7 +18,7 @@ _DATABASE = Path("outputs/hermes/delivery.sqlite3")
 _ARM_DATABASE = Path("outputs/hermes/arm.sqlite3")
 _LANE_REGISTRY = Path("outputs/lane_control/lane_registry.sqlite3")
 _EXPERIMENT_LEDGER = Path("outputs/experiment_control/experiment_ledger.sqlite3")
-type ArmSchemaValue = str | bool | list[str] | dict[str, ArmSchemaValue]
+ArmSchemaValue = str | bool | list[str] | dict[str, "ArmSchemaValue"]
 
 _QUERY_SCHEMA = {
     "name": "trading_agent_query",
