@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from trading_agent.causality import first_eligible_bar_at
+from trading_agent.kis_live import NEW_YORK
 from trading_agent.models import (
     BarInput,
     Recommendation,
@@ -24,11 +25,50 @@ class InvalidBarTimestampError(ValueError):
         return f"timestamp에 UTC offset이 필요합니다: {self.timestamp}"
 
 
+@dataclass(frozen=True, slots=True)
+class BoundedReplaySourceError(ValueError):
+    reason: str
+
+    def __str__(self) -> str:
+        return f"bounded replay source rejected: {self.reason}"
+
+
 def load_bars(path: Path) -> tuple[BarInput, ...]:
     with path.open(encoding="utf-8", newline="") as handle:
         rows = tuple(csv.DictReader(handle))
     bars = tuple(_bar_from_row(row) for row in rows)
     return tuple(sorted(bars, key=lambda row: (row.timestamp, row.symbol)))
+
+
+def load_bounded_bars(
+    path: Path,
+    *,
+    max_rows: int,
+    max_sessions: int,
+) -> tuple[BarInput, ...]:
+    try:
+        source = path.resolve(strict=True)
+        if max_rows < 1 or max_sessions < 1 or "regend_us_stocks" in source.parts:
+            raise BoundedReplaySourceError("unsafe_source_or_budget")
+        bars: list[BarInput] = []
+        sessions: set[dt.date] = set()
+        with source.open(encoding="utf-8", newline="") as handle:
+            for index, raw in enumerate(csv.DictReader(handle)):
+                if index >= max_rows:
+                    raise BoundedReplaySourceError("row_budget_exceeded")
+                row = {key: value or "" for key, value in raw.items()}
+                bar = _bar_from_row(row)
+                bars.append(bar)
+                sessions.add(bar.timestamp.astimezone(NEW_YORK).date())
+                if len(sessions) > max_sessions:
+                    raise BoundedReplaySourceError("session_budget_exceeded")
+        if not bars:
+            raise BoundedReplaySourceError("empty_source")
+        return tuple(sorted(bars, key=lambda row: (row.timestamp, row.symbol)))
+    except BoundedReplaySourceError:
+        raise
+    except (KeyError, OSError, TypeError, UnicodeError, ValueError):
+        raise BoundedReplaySourceError("invalid_source") from None
 
 
 def write_report(path: Path, store: PaperStore) -> None:

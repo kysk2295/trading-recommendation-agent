@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "family": "intraday_challengers_v1",
+  "code_version": "m6-intraday-challenger-v1",
+  "hypotheses": [
+    {
+      "strategy": "vwap_reclaim",
+      "hypothesis_id": "H-MOM-VWAP-001"
+    },
+    {
+      "strategy": "hod_breakout",
+      "hypothesis_id": "H-MOM-HOD-001"
+    },
+    {
+      "strategy": "gap_and_go",
+      "hypothesis_id": "H-MOM-GAP-001"
+    }
+  ],
+  "registered_at": "2026-07-22T12:00:00Z",
+  "evaluator_version": "intraday_walk_forward_v1",
+  "minimum_training_sessions": 0,
+  "max_bars": 10,
+  "max_sessions": 1,
+  "per_side_fee_bps": 5,
+  "per_side_slippage_bps": 15,
+  "bootstrap_samples": 200,
+  "rss_limit_gib": 9.5
+}

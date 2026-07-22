@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import csv
+import datetime as dt
+import resource
+import sys
 from pathlib import Path
 
 from trading_agent.challenger_replay_models import ReplayBar, ReplayContext, ReplaySource
 from trading_agent.engine import RecommendationEngine, finalize_due_recommendations
-from trading_agent.kis_live import regular_session_bounds
-from trading_agent.metrics import extract_paper_trades
+from trading_agent.intraday_research_loop_models import (
+    IntradayWalkForwardError,
+    IntradayWalkForwardRequest,
+    IntradayWalkForwardResult,
+)
+from trading_agent.kis_live import NEW_YORK, regular_session_bounds
+from trading_agent.metrics import MetricsConfig, extract_paper_trades, summarize_performance
 from trading_agent.metrics_report import write_metrics_report
 from trading_agent.models import BarInput
 from trading_agent.replay import write_report
@@ -14,6 +22,63 @@ from trading_agent.risk import RiskConfig
 from trading_agent.scanner import MomentumScanner, ScannerConfig
 from trading_agent.store import PaperStore
 from trading_agent.strategy_factory import StrategyMode, build_strategy
+
+
+def run_intraday_walk_forward(
+    request: IntradayWalkForwardRequest,
+    work_dir: Path,
+) -> IntradayWalkForwardResult:
+    sessions: dict[dt.date, list[BarInput]] = {}
+    for bar in request.bars:
+        sessions.setdefault(bar.timestamp.astimezone(NEW_YORK).date(), []).append(bar)
+    ordered_sessions = tuple(sorted(sessions.items()))
+    oos_sessions = ordered_sessions[request.minimum_training_sessions :]
+    if not oos_sessions:
+        raise IntradayWalkForwardError("no_oos_sessions")
+    work_dir.mkdir(parents=True, exist_ok=True)
+    database = work_dir / f"{request.strategy.value}.sqlite3"
+    if database.exists():
+        raise IntradayWalkForwardError("work_database_exists")
+    store = PaperStore(database)
+    for _, rows in oos_sessions:
+        _require_rss_below(request.rss_limit_gib)
+        engine = _engine(request.strategy, store)
+        last_bars: dict[str, BarInput] = {}
+        for bar in rows:
+            _ = engine.process(bar)
+            last_bars[bar.symbol] = bar
+        for bar in last_bars.values():
+            engine.finalize_day(bar)
+    trades = extract_paper_trades((store,))
+    metrics = summarize_performance(
+        trades,
+        MetricsConfig(request.per_side_cost_bps, request.bootstrap_samples, 20_260_722),
+    )
+    peak = _require_rss_below(request.rss_limit_gib)
+    return IntradayWalkForwardResult(
+        strategy=request.strategy,
+        observed_sessions=len(oos_sessions),
+        fold_count=len(oos_sessions),
+        trade_count=metrics.trade_count,
+        side_cost_bps=metrics.side_cost_bps,
+        gross_average_return=(None if not trades else sum(row.gross_return for row in trades) / len(trades)),
+        average_return=metrics.average_return,
+        profit_factor=metrics.profit_factor,
+        cumulative_return=metrics.cumulative_return,
+        max_drawdown=metrics.max_drawdown,
+        mean_ci_low=metrics.mean_ci_low,
+        mean_ci_high=metrics.mean_ci_high,
+        peak_rss_gib=peak,
+    )
+
+
+def _require_rss_below(limit_gib: float) -> float:
+    peak = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    bytes_used = peak if sys.platform == "darwin" else peak * 1024.0
+    rss_gib = bytes_used / (1024.0**3)
+    if rss_gib >= limit_gib:
+        raise IntradayWalkForwardError("rss_limit_reached")
+    return rss_gib
 
 
 def run_challenger_replay(
