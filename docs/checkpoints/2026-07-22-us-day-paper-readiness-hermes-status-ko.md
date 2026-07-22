@@ -30,8 +30,20 @@
 - changed production format, compileall, no-excuse: 통과
 - production 모듈: 각각 156, 128 pure LOC
 
-## 남은 실제 증거
+## 실제 production Telegram 증거
 
-- 이 문서의 최초 commit 시점에는 격리 DB만 사용했으며 production Telegram message는 만들지 않았다.
-- pushed code로 production delivery store에 오늘 premarket status를 한 번 투영한 뒤 acknowledgement와 replay 불변을 추가 기록한다.
-- 이 readiness 상태는 US Day 추천이나 Paper lifecycle 완료 증거가 아니다. 정규장 자연 setup과 OCO/EOD 대사는 별도 M2 gate다.
+- pushed commit `5e4e9b5`로 실제 Paper GET/WSS readiness를 다시 실행했다.
+- production delivery store에 US `daily_summary / waiting_regular_session` event가 정확히 1건 생성됐다.
+- 첫 attempt는 `telegram_timeout`으로 retry가 예약됐고 두 번째 attempt가 Telegram acknowledgement를 기록했다.
+- 전체 원장 수치는 event `4`, attempt `9`, acknowledgement `2`, dead letter `2`가 됐다.
+- 동일 readiness CLI replay와 3초 대기 뒤에도 위 수치와 target event 1건이 변하지 않았다.
+- timeout 뒤 ACK이므로 delivery는 at-least-once다. 첫 timeout attempt가 플랫폼에서 수락됐는지는 로컬 원장만으로
+  증명할 수 없어 Telegram 중복 가능성을 0이라고 주장하지 않는다.
+- 자격증명, 계좌 fingerprint, chat/message ID는 출력하거나 문서화하지 않았다.
+- production 실행과 replay 모두 Paper POST/DELETE 및 broker mutation은 0건이었다.
+
+## 남은 제품 증거
+
+- 이 readiness 상태는 US Day 추천이나 Paper lifecycle 완료 증거가 아니다.
+- 정규장 자연 setup의 actionable card, armed Paper entry, 보호 OCO, EOD flat과 결과 ACK은 별도 M2 gate다.
+- M1도 실제 US 추천 또는 정규장 무추천 결과가 전달될 때까지 완료로 올리지 않는다.
