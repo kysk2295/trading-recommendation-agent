@@ -610,8 +610,8 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 
 ```bash
 uv run python run_us_systematic_regime.py \
-  --session-date YYYY-MM-DD \
-  --fixture-root /private/path/us-systematic-regime-fixture \
+  --session-date 2026-07-22 \
+  --fixture-root examples/us_systematic_regime/2026-07-22 \
   --database /private/tmp/us-systematic-regime.sqlite3 \
   --experiment-ledger /private/tmp/us-systematic-experiment.sqlite3 \
   --output-dir /private/tmp/us-systematic-regime-output
@@ -646,7 +646,7 @@ uv run python run_us_swing_historical_replay.py \
   --output-dir /tmp/us-swing-replay-report
 ```
 
-이 예시는 `WATCH → 다음 정규장 shadow 진입·손절 → EXIT`와 둘째 날의 `NO_RECOMMENDATION` 카드를 함께 만들고 Reviewer는 `continue_collection`만 기록한다. 동일 명령 replay는 기존 root card를 확인한 뒤 fixture를 다시 열지 않으며 신규 event를 추가하지 않는다. 이 경로에는 credential, endpoint, 계좌, 주문 또는 실제 POST 옵션이 없다.
+이 예시는 `WATCH → 다음 정규장 shadow 진입·손절 → EXIT`와 둘째 날의 `NO_RECOMMENDATION` 카드를 함께 만들고 Reviewer는 `continue_collection`만 기록한다. 동일 명령 replay는 fixture의 source identity와 저장된 root card·code version을 다시 대조한 뒤 scheduler를 재실행하거나 신규 event를 추가하지 않는다. 이 경로에는 credential, endpoint, 계좌, 주문 또는 실제 POST 옵션이 없다.
 
 ### KR 촉매 원장 로컬 적재
 
