@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 
 class PluginContextStub:
     def register_tool(self, **definition) -> None:
@@ -112,14 +114,10 @@ def test_telegram_sender_keeps_hermes_credentials_out_of_repr(monkeypatch) -> No
             ),
         ),
     )
-    constants = SimpleNamespace(get_default_hermes_root=lambda: Path("/safe/hermes"))
-    env_loader = SimpleNamespace(load_hermes_dotenv=lambda **kwargs: loaded.append(str(kwargs["hermes_home"])))
     send_command = SimpleNamespace(_load_hermes_env=lambda: loaded.append("profile"))
     originals = {
         "gateway.config": gateway,
-        "hermes_cli.env_loader": env_loader,
         "hermes_cli.send_cmd": send_command,
-        "hermes_constants": constants,
     }
     monkeypatch.setattr(sender_module.importlib, "import_module", lambda name: originals[name])
 
@@ -128,9 +126,59 @@ def test_telegram_sender_keeps_hermes_credentials_out_of_repr(monkeypatch) -> No
     representation = repr(sender)
 
     # Then
-    assert loaded == ["/safe/hermes", "profile"]
+    assert loaded == ["profile"]
     assert "dummy-secret-token" not in representation
     assert "123456789" not in representation
+
+
+def test_telegram_sender_uses_single_profile_owner_without_home_channel(monkeypatch) -> None:
+    # Given
+    plugin = _plugin_module()
+    sender_module = __import__(f"{plugin.__name__}.telegram_sender", fromlist=["HermesTelegramSender"])
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "123456789")
+    gateway = SimpleNamespace(
+        Platform=SimpleNamespace(TELEGRAM="telegram"),
+        load_gateway_config=lambda: SimpleNamespace(
+            platforms={"telegram": SimpleNamespace(token="dummy-secret-token")},
+            get_home_channel=lambda _platform: None,
+        ),
+    )
+    originals = {
+        "gateway.config": gateway,
+        "hermes_cli.send_cmd": SimpleNamespace(_load_hermes_env=lambda: None),
+    }
+    monkeypatch.setattr(sender_module.importlib, "import_module", lambda name: originals[name])
+
+    # When
+    sender = sender_module.HermesTelegramSender.from_hermes_config()
+
+    # Then
+    assert sender._chat_id == "123456789"
+    assert sender._thread_id is None
+
+
+@pytest.mark.parametrize("allowed_users", ["", "123,456", "owner"])
+def test_telegram_sender_blocks_ambiguous_profile_owner(monkeypatch, allowed_users: str) -> None:
+    # Given
+    plugin = _plugin_module()
+    sender_module = __import__(f"{plugin.__name__}.telegram_sender", fromlist=["HermesTelegramSender"])
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", allowed_users)
+    gateway = SimpleNamespace(
+        Platform=SimpleNamespace(TELEGRAM="telegram"),
+        load_gateway_config=lambda: SimpleNamespace(
+            platforms={"telegram": SimpleNamespace(token="dummy-secret-token")},
+            get_home_channel=lambda _platform: None,
+        ),
+    )
+    originals = {
+        "gateway.config": gateway,
+        "hermes_cli.send_cmd": SimpleNamespace(_load_hermes_env=lambda: None),
+    }
+    monkeypatch.setattr(sender_module.importlib, "import_module", lambda name: originals[name])
+
+    # When / Then
+    with pytest.raises(sender_module.InvalidHermesTelegramConfigurationError):
+        _ = sender_module.HermesTelegramSender.from_hermes_config()
 
 
 def _plugin_module():

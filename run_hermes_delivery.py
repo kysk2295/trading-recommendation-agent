@@ -21,6 +21,11 @@ from trading_agent.hermes_delivery_projection import (
     InvalidHermesProjectionSourceError,
     project_contract_outboxes,
 )
+from trading_agent.hermes_delivery_redrive import (
+    HermesDeliveryRedriveRequest,
+    InvalidHermesDeliveryRedriveError,
+    redrive_timeout_dead_letter,
+)
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.hermes_query_service import HermesAgentQueryService, InvalidHermesQueryError
 from trading_agent.kr_source_cycle_delivery import (
@@ -48,6 +53,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     kr_cycle.add_argument("--database", type=Path, required=True)
     kr_cycle.add_argument("--source-database", type=Path, required=True)
     kr_cycle.add_argument("--collection-cycle-id", required=True)
+    redrive = commands.add_parser("redrive", help="redrive one timeout dead letter as a new root event")
+    redrive.add_argument("--database", type=Path, required=True)
+    redrive.add_argument("--dead-letter-transition-id", required=True)
     query = commands.add_parser("query", help="query separate agent opinions")
     query.add_argument("--database", type=Path, required=True)
     query.add_argument("--symbol", required=True)
@@ -89,6 +97,20 @@ def main(
                         "result": "projected_kr_source_incident",
                     }
                 )
+            case "redrive":
+                result = redrive_timeout_dead_letter(
+                    store,
+                    HermesDeliveryRedriveRequest(
+                        dead_letter_transition_id=args.dead_letter_transition_id,
+                    ),
+                )
+                _print(
+                    {
+                        "inserted": result.inserted,
+                        "replayed": result.replayed,
+                        "result": "redriven",
+                    }
+                )
             case "query":
                 result = HermesAgentQueryService(store).query(args.symbol, observed_at=args.observed_at)
                 _print(
@@ -103,6 +125,7 @@ def main(
                 assert_never(unreachable)
     except (
         InvalidHermesProjectionSourceError,
+        InvalidHermesDeliveryRedriveError,
         InvalidKrSourceCycleDeliveryError,
         InvalidHermesDeliveryStoreError,
         InvalidHermesQueryError,

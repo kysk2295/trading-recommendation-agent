@@ -2,6 +2,9 @@
 
 작성 기준 커밋: `c164e1366a33d27dd7c1201696d57ea34de6ca1c`
 
+> 이 문서는 ACK가 없던 당시의 배치 상태를 보존한다. 실제 Telegram ACK와 timeout redrive 완료 근거는
+> `2026-07-22-hermes-delivery-redrive-ack-ko.md`를 따른다.
+
 ## 판정
 
 - gateway plugin이 실제로 load될 때만 daemon thread가 생기던 수명주기 의존성을 제거했다.

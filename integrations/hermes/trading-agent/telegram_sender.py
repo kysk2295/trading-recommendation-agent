@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 from dataclasses import dataclass
 
 from .delivery_worker import (
@@ -24,9 +25,6 @@ class HermesTelegramSender:
 
     @classmethod
     def from_hermes_config(cls) -> HermesTelegramSender:
-        constants = importlib.import_module("hermes_constants")
-        env_loader = importlib.import_module("hermes_cli.env_loader")
-        _ = env_loader.load_hermes_dotenv(hermes_home=constants.get_default_hermes_root())
         send_command = importlib.import_module("hermes_cli.send_cmd")
         send_command._load_hermes_env()
         gateway = importlib.import_module("gateway.config")
@@ -35,7 +33,18 @@ class HermesTelegramSender:
         platform_config = config.platforms.get(platform)
         home = config.get_home_channel(platform)
         token = None if platform_config is None else platform_config.token
-        if not token or home is None or not home.chat_id:
+        if not token:
+            raise InvalidHermesTelegramConfigurationError
+        if home is None:
+            allowed_users = tuple(
+                item.strip()
+                for item in os.getenv("TELEGRAM_ALLOWED_USERS", "").split(",")
+                if item.strip()
+            )
+            if len(allowed_users) != 1 or not allowed_users[0].isdigit():
+                raise InvalidHermesTelegramConfigurationError
+            return cls(_token=token, _chat_id=allowed_users[0], _thread_id=None)
+        if not home.chat_id:
             raise InvalidHermesTelegramConfigurationError
         try:
             thread_id = None if home.thread_id is None else int(home.thread_id)
