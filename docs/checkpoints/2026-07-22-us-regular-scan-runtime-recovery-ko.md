@@ -38,7 +38,8 @@
 - `telegram_timeout` 등 실제 전달 실패는 계속 hard dead-letter이며 완료를 차단한다.
 - 기능 커밋: `007f20f68121e72ebe162b86cd1b26d911c31a1a`
 - clean projector runtime: `/private/tmp/trading-agent-projector-20260722-007f20f`
-- 활성 projector 대사: expected `18`, acknowledged `9`, suppressed `9`, pending `0`, complete `true`
+- 10:22 EDT 최신 projector 대사: expected `19`, acknowledged `10`, suppressed `9`, pending `0`, complete `true`
+- 해당 시점 signal outbox는 없었으므로 새 ACK는 실제 opportunity WATCH 전달 증거다.
 - report는 mode `0600`이며 platform message ID, chat ID와 credential을 포함하지 않는다.
 - query-only replay 전후 production delivery DB 상태는 불변이었다.
 
