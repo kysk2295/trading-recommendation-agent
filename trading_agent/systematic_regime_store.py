@@ -101,7 +101,23 @@ class SystematicRegimeStore:
                 rows: list[tuple[str]] = connection.execute(
                     "SELECT cards.payload_json FROM systematic_cards AS cards "
                     "LEFT JOIN systematic_card_publications AS publications USING (card_id) "
-                    "WHERE publications.card_id IS NULL ORDER BY cards.rowid"
+                    "LEFT JOIN systematic_card_expirations AS expirations USING (card_id) "
+                    "WHERE publications.card_id IS NULL AND expirations.card_id IS NULL "
+                    "ORDER BY cards.rowid"
+                ).fetchall()
+            return tuple(SystematicRecommendationCard.model_validate_json(row[0]) for row in rows)
+        except (InvalidSystematicRegimeSqliteError, ValidationError, ValueError):
+            raise InvalidSystematicRegimeStoreError from None
+
+    def expired_cards(self) -> tuple[SystematicRecommendationCard, ...]:
+        try:
+            if not private_store_exists(self.path):
+                return ()
+            with systematic_reader_connection(self.path) as connection:
+                rows: list[tuple[str]] = connection.execute(
+                    "SELECT cards.payload_json FROM systematic_cards AS cards "
+                    "JOIN systematic_card_expirations AS expirations USING (card_id) "
+                    "ORDER BY cards.rowid"
                 ).fetchall()
             return tuple(SystematicRecommendationCard.model_validate_json(row[0]) for row in rows)
         except (InvalidSystematicRegimeSqliteError, ValidationError, ValueError):
@@ -140,6 +156,15 @@ class SystematicRegimeWriter:
         checked = SystematicRecommendationCard.model_validate(card.model_dump(mode="python"))
         return self._append(
             "systematic_card_publications",
+            "card_id",
+            checked.card_id,
+            _canonical_payload(checked),
+        )
+
+    def expire_card(self, card: SystematicRecommendationCard) -> bool:
+        checked = SystematicRecommendationCard.model_validate(card.model_dump(mode="python"))
+        return self._append(
+            "systematic_card_expirations",
             "card_id",
             checked.card_id,
             _canonical_payload(checked),

@@ -14,6 +14,7 @@ import run_us_systematic_regime as cli
 import trading_agent.systematic_regime_operating as operating
 from tests.test_systematic_regime_engine import _source
 from tests.test_systematic_regime_trial import CODE_VERSION, _extend_source
+from trading_agent.experiment_ledger_models import TrialEventKind
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.swing_shadow_models import SwingDailySource
 from trading_agent.systematic_regime_operating import (
@@ -166,6 +167,56 @@ def test_regular_tick_recovers_a_registered_but_unpublished_card(
     assert recovered.trials_started == 1
     assert cards.cards() == pending
     assert cards.pending_cards() == ()
+
+
+def test_post_close_censors_a_pending_card_that_missed_its_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a registered card stayed unpublished throughout its target session.
+    source = _source("risk_on")
+    experiment = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    cards = SystematicRegimeStore(tmp_path / "systematic.sqlite3")
+
+    def reject_publication(
+        self: SystematicRegimeWriter,
+        card: object,
+    ) -> bool:
+        _ = self, card
+        raise RuntimeError("injected publication failure")
+
+    monkeypatch.setattr(SystematicRegimeWriter, "publish_card", reject_publication)
+    with pytest.raises(RuntimeError, match="injected publication failure"):
+        _ = run_systematic_regime_tick(
+            now=source.observed_at,
+            code_version=CODE_VERSION,
+            experiment_ledger=experiment,
+            store=cards,
+            source=source,
+        )
+    pending = cards.pending_cards()
+    trial = experiment.multi_market_trials()[0].registration
+    monkeypatch.undo()
+
+    # When: operation resumes only after the missed target session closes.
+    target_source = _extend_source(source, pending[0].target_session)
+    recovered = run_systematic_regime_tick(
+        now=target_source.observed_at,
+        code_version=CODE_VERSION,
+        experiment_ledger=experiment,
+        store=cards,
+        source=target_source,
+    )
+
+    # Then: the stale card stays hidden and its trial closes as censored evidence.
+    assert recovered.trials_finalized == 1
+    assert cards.pending_cards() == ()
+    assert cards.expired_cards() == pending
+    assert pending[0] not in cards.cards()
+    assert tuple(
+        item.event.event_kind
+        for item in experiment.multi_market_trial_events(trial.trial_id)
+    ) == (TrialEventKind.STARTED, TrialEventKind.CENSORED)
 
 
 def test_cli_fixture_happy_path_writes_private_recommendation_card(tmp_path: Path) -> None:

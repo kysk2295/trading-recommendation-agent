@@ -11,6 +11,7 @@ from trading_agent.systematic_regime_engine import build_systematic_card, replay
 from trading_agent.systematic_regime_research import systematic_regime_strategy_version
 from trading_agent.systematic_regime_store import SystematicRegimeStore
 from trading_agent.systematic_regime_trial import (
+    censor_missed_systematic_regime_trial,
     finalize_systematic_regime_trial,
     register_systematic_regime_trial,
     start_systematic_regime_trial,
@@ -70,7 +71,13 @@ def run_systematic_regime_tick(
         return SystematicOperatingResult(phase, published, registered, started, 0)
     if source is None or source.session_date != now.astimezone(NEW_YORK).date():
         raise InvalidSystematicOperatingTickError
-    finalized = sum(
+    missed = _expire_missed_pending_cards(
+        experiment_ledger,
+        store,
+        code_version,
+        source.session_date,
+    )
+    finalized = missed + sum(
         finalize_systematic_regime_trial(experiment_ledger, store, card, source).created
         for card in store.cards()
         if card.target_session == source.session_date
@@ -104,6 +111,23 @@ def _publish_pending_cards(
         with store.writer() as writer:
             published += writer.publish_card(card)
     return published, registered
+
+
+def _expire_missed_pending_cards(
+    experiment_ledger: ExperimentLedgerStore,
+    store: SystematicRegimeStore,
+    code_version: str,
+    current_session: dt.date,
+) -> int:
+    censored = 0
+    for card in store.pending_cards():
+        if card.target_session > current_session:
+            continue
+        _ = register_systematic_regime_trial(experiment_ledger, card, code_version)
+        censored += censor_missed_systematic_regime_trial(experiment_ledger, card).created
+        with store.writer() as writer:
+            _ = writer.expire_card(card)
+    return censored
 
 
 def systematic_operating_phase(now: dt.datetime) -> SystematicOperatingPhase:

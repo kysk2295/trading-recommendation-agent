@@ -130,6 +130,49 @@ def start_systematic_regime_trial(
         raise InvalidSystematicRegimeTrialError from None
 
 
+def censor_missed_systematic_regime_trial(
+    ledger: ExperimentLedgerStore,
+    card: SystematicRecommendationCard,
+) -> SystematicTrialEventResult:
+    try:
+        registration = _require_trial(ledger, card)
+        bounds = regular_session_bounds(card.target_session)
+        if bounds is None:
+            raise InvalidSystematicRegimeTrialError
+        events = ledger.multi_market_trial_events(registration.trial_id)
+        if not events:
+            _ = start_systematic_regime_trial(ledger, card, bounds[0])
+            events = ledger.multi_market_trial_events(registration.trial_id)
+        started = next(iter(events), None)
+        if (
+            started is None
+            or len(events) > 2
+            or started.event.event_kind is not TrialEventKind.STARTED
+        ):
+            raise InvalidSystematicRegimeTrialError
+        event = ExperimentTrialEvent(
+            trial_id=registration.trial_id,
+            sequence=2,
+            event_kind=TrialEventKind.CENSORED,
+            occurred_at=bounds[1],
+            artifact_sha256s=(),
+            reason_codes=("missed_target_session_operating_tick",),
+            previous_event_key=str(started.event_key),
+        )
+        terminal = next(iter(events[1:]), None)
+        if terminal is not None:
+            if terminal.event != event:
+                raise InvalidSystematicRegimeTrialError
+            return SystematicTrialEventResult(False, event)
+        with ledger.writer() as writer:
+            created = writer.append_multi_market_trial_event(event)
+        return SystematicTrialEventResult(created, event)
+    except InvalidSystematicRegimeTrialError:
+        raise
+    except (AttributeError, RuntimeError, ValidationError, ValueError):
+        raise InvalidSystematicRegimeTrialError from None
+
+
 def finalize_systematic_regime_trial(
     ledger: ExperimentLedgerStore,
     store: SystematicRegimeStore,
@@ -201,6 +244,7 @@ __all__ = (
     "SystematicTrialEventResult",
     "SystematicTrialFinalizeResult",
     "SystematicTrialRegistrationResult",
+    "censor_missed_systematic_regime_trial",
     "finalize_systematic_regime_trial",
     "register_systematic_regime_trial",
     "start_systematic_regime_trial",
