@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Final
 
 from trading_agent.kis_provider import KisRankedStock
+from trading_agent.private_report import PRIVATE_REPORT_MODE, open_private_append
 
 RANKING_FIELDS: Final = (
     "observed_at",
@@ -74,7 +75,7 @@ def append_ranking_snapshot(path: Path, snapshot: RankingSnapshot) -> None:
     _migrate_legacy_file(path)
     has_header = path.is_file() and path.stat().st_size > 0
     selected_keys = {(stock.exchange, stock.symbol) for stock in snapshot.selected}
-    with path.open("a", encoding="utf-8", newline="") as handle:
+    with open_private_append(path) as handle:
         writer = csv.writer(handle)
         if not has_header:
             writer.writerow(RANKING_FIELDS)
@@ -109,7 +110,7 @@ def append_ranking_coverage(
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     has_header = path.is_file() and path.stat().st_size > 0
-    with path.open("a", encoding="utf-8", newline="") as handle:
+    with open_private_append(path) as handle:
         writer = csv.writer(handle)
         if not has_header:
             writer.writerow(RANKING_COVERAGE_FIELDS)
@@ -154,4 +155,5 @@ def _migrate_legacy_file(path: Path) -> None:
         )
         writer.writeheader()
         writer.writerows({**row, "selection_input": ""} for row in rows)
+    temporary.chmod(PRIVATE_REPORT_MODE)
     temporary.replace(path)

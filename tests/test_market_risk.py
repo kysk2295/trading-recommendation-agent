@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import stat
 from pathlib import Path
 
 import httpx2
@@ -125,6 +126,27 @@ def test_market_risk_screen_writes_append_only_decision_rows(tmp_path: Path) -> 
     assert rows[0]["volume"] == "1000000"
     assert rows[0]["average_daily_volume"] == "1000000"
     assert rows[0]["volume_to_adv"] == "1.0"
+
+
+def test_market_risk_screen_stays_owner_only_for_new_and_existing_file(
+    tmp_path: Path,
+) -> None:
+    # Given: a risk screen and no existing journal.
+    path = tmp_path / "market_risk_screen.csv"
+    screen = MarketRiskGate(_empty_halts(), MarketRiskConfig()).screen(
+        ((_stock("SAFE", 0.10),),),
+        1,
+    )
+
+    # When: the journal is created and later appended after a mode regression.
+    write_market_risk_screen(path, screen)
+    created_mode = stat.S_IMODE(path.stat().st_mode)
+    path.chmod(0o644)
+    write_market_risk_screen(path, screen)
+
+    # Then: both writes leave the journal owner-only.
+    assert created_mode == 0o600
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
 def test_market_risk_writer_migrates_legacy_header_before_append(tmp_path: Path) -> None:

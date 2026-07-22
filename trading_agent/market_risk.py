@@ -13,6 +13,7 @@ from typing import Final, final, override
 import httpx2
 
 from trading_agent.kis_provider import KisRankedStock, select_ranked_stocks
+from trading_agent.private_report import PRIVATE_REPORT_MODE, open_private_append
 
 NYSE_CURRENT_HALTS_URL: Final = "https://www.nyse.com/api/trade-halts/current/download"
 PORTFOLIO_LIMIT_REASON: Final = "포트폴리오 한도"
@@ -187,7 +188,7 @@ def write_market_risk_screen(path: Path, screen: MarketRiskScreen) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     _migrate_legacy_file(path)
     has_header = path.is_file() and path.stat().st_size > 0
-    with path.open("a", encoding="utf-8", newline="") as handle:
+    with open_private_append(path) as handle:
         writer = csv.writer(handle)
         if not has_header:
             writer.writerow(MARKET_RISK_HEADER)
@@ -269,4 +270,5 @@ def _migrate_legacy_file(path: Path) -> None:
         writer = csv.writer(handle)
         writer.writerow(MARKET_RISK_HEADER)
         writer.writerows((*row, "", "", "") for row in rows)
+    temporary.chmod(PRIVATE_REPORT_MODE)
     temporary.replace(path)
