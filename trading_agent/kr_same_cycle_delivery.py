@@ -24,6 +24,12 @@ from trading_agent.hermes_delivery_projection import (
     project_outcomes,
 )
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
+from trading_agent.kr_source_cycle_delivery import (
+    InvalidKrSourceCycleDeliveryError,
+    KrSourceCycleDeliveryRequest,
+    project_kr_source_cycle_incident,
+)
+from trading_agent.kr_theme_store import KrThemeStore
 from trading_agent.research_identity_models import AgentFamily, MarketId
 from trading_agent.signal_contract_models import OpportunitySnapshot
 
@@ -95,6 +101,17 @@ def project_kr_same_cycle_delivery(
         raise InvalidKrSameCycleDeliveryError from None
 
 
+def project_kr_source_incident_if_available(
+    source_store: KrThemeStore,
+    delivery_store: HermesDeliveryStore,
+    request: KrSourceCycleDeliveryRequest,
+) -> None:
+    try:
+        _ = project_kr_source_cycle_incident(source_store, delivery_store, request)
+    except InvalidKrSourceCycleDeliveryError:
+        return
+
+
 def _validate_request(request: KrSameCycleDeliveryRequest) -> None:
     opportunity_ids = tuple(item.opportunity_id for item in request.opportunities)
     if (
@@ -123,5 +140,7 @@ def _validate_request(request: KrSameCycleDeliveryRequest) -> None:
 __all__ = (
     "InvalidKrSameCycleDeliveryError",
     "KrSameCycleDeliveryRequest",
+    "KrSourceCycleDeliveryRequest",
     "project_kr_same_cycle_delivery",
+    "project_kr_source_incident_if_available",
 )

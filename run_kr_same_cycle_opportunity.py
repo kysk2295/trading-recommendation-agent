@@ -28,7 +28,9 @@ from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.kr_same_cycle_delivery import (
     InvalidKrSameCycleDeliveryError,
     KrSameCycleDeliveryRequest,
+    KrSourceCycleDeliveryRequest,
     project_kr_same_cycle_delivery,
+    project_kr_source_incident_if_available,
 )
 from trading_agent.kr_same_cycle_opportunity_run import (
     InvalidKrSameCycleOpportunityRunError,
@@ -81,6 +83,7 @@ def main(
 ) -> int:
     args = parse_args(argv)
     opportunity_count = 0
+    source_incident_enabled = False
     try:
         _validate_targets(args)
         policy = load_kr_same_cycle_opportunity_policy(args.policy)
@@ -95,6 +98,7 @@ def main(
                 projected_at=authority_checked_at,
             ),
         )
+        source_incident_enabled = True
         run_kr_same_cycle_collect.main(
             collection_cycle_id=args.collection_cycle_id,
             collection_date=args.collection_date.isoformat(),
@@ -152,6 +156,15 @@ def main(
         ValidationError,
         ValueError,
     ):
+        if source_incident_enabled:
+            project_kr_source_incident_if_available(
+                KrThemeStore(args.database),
+                HermesDeliveryStore(args.delivery_database),
+                KrSourceCycleDeliveryRequest(
+                    collection_cycle_id=args.collection_cycle_id,
+                    projected_at=clock(),
+                ),
+            )
         _write_report(args.output_dir, result="blocked", opportunity_count=0)
         return 1
     result = "ready" if opportunity_count else "no_opportunity"
