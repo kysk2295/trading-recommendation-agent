@@ -7,17 +7,30 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import datetime as dt
 import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
+from trading_agent.kr_theme_day_post_session_audit import (
+    kr_theme_day_post_session_phase_status,
+    run_audited_kr_theme_day_post_session_phase,
+)
+from trading_agent.kr_theme_day_shadow_entry_store import KrThemeDayShadowEntryStore
+from trading_agent.kr_theme_day_shadow_exit_store import KrThemeDayShadowExitStore
+from trading_agent.kr_theme_day_terminal_delivery import (
+    InvalidKrThemeDayTerminalDeliveryError,
+    KrThemeDayTerminalDeliverySources,
+    project_kr_theme_day_terminal_delivery,
+)
+from trading_agent.kr_theme_day_trial_terminal_store import KrThemeDayTrialTerminalStore
 from trading_agent.private_report import write_private_report
 
 REPORT_NAME = "kr_theme_day_post_session_ko.md"
 TERMINAL_AUDIT_NAME = "kr_theme_day_terminal_cycles.csv"
+DELIVERY_AUDIT_NAME = "kr_theme_day_terminal_delivery_cycles.csv"
 REVIEWER_AUDIT_NAME = "kr_theme_day_reviewer_cycles.csv"
 LIFECYCLE_AUDIT_NAME = "kr_theme_day_lifecycle_cycles.csv"
 
@@ -31,6 +44,7 @@ class KrThemeDayPostSessionPaths:
     entry_store: Path
     exit_store: Path
     terminal_store: Path
+    delivery_store: Path
     review_store: Path
     calendar_store: Path
     output_dir: Path
@@ -47,12 +61,21 @@ class KrThemeDayPostSessionRequest:
 @dataclass(frozen=True, slots=True)
 class KrThemeDayPostSessionResult:
     terminal_exit_code: int
+    delivery_exit_code: int | None
     reviewer_exit_code: int | None
     lifecycle_exit_code: int | None
 
     @property
     def completed(self) -> bool:
-        return self.terminal_exit_code == 0 and self.reviewer_exit_code == 0 and self.lifecycle_exit_code == 0
+        return (
+            self.terminal_exit_code == 0
+            and self.delivery_exit_code == 0
+            and self.reviewer_exit_code == 0
+            and self.lifecycle_exit_code == 0
+        )
+
+
+DeliveryRunner = Callable[[KrThemeDayPostSessionRequest], int]
 
 
 def terminal_command(request: KrThemeDayPostSessionRequest) -> tuple[str, ...]:
@@ -98,10 +121,26 @@ def lifecycle_command(request: KrThemeDayPostSessionRequest) -> tuple[str, ...]:
     )
 
 
+def _deliver_terminal(request: KrThemeDayPostSessionRequest) -> int:
+    paths = request.paths
+    sources = KrThemeDayTerminalDeliverySources(
+        entry_store=KrThemeDayShadowEntryStore(paths.entry_store),
+        exit_store=KrThemeDayShadowExitStore(paths.exit_store),
+        terminal_store=KrThemeDayTrialTerminalStore(paths.terminal_store),
+        delivery_store=HermesDeliveryStore(paths.delivery_store),
+    )
+    try:
+        _ = project_kr_theme_day_terminal_delivery(sources, request.trial_id)
+    except InvalidKrThemeDayTerminalDeliveryError:
+        return 1
+    return 0
+
+
 def run_post_session(
     request: KrThemeDayPostSessionRequest,
     *,
     runner: CommandRunner = lambda command: subprocess.run(command, check=False).returncode,
+    delivery_runner: DeliveryRunner = _deliver_terminal,
     clock: Clock = lambda: dt.datetime.now().astimezone(),
 ) -> KrThemeDayPostSessionResult:
     paths = request.paths
@@ -112,7 +151,14 @@ def run_post_session(
         clock,
     )
     if terminal != 0:
-        return KrThemeDayPostSessionResult(terminal, None, None)
+        return KrThemeDayPostSessionResult(terminal, None, None, None)
+    delivery = run_audited_kr_theme_day_post_session_phase(
+        lambda: delivery_runner(request),
+        paths.output_dir / DELIVERY_AUDIT_NAME,
+        clock,
+    )
+    if delivery != 0:
+        return KrThemeDayPostSessionResult(terminal, delivery, None, None)
     reviewer = _run_phase(
         reviewer_command(request),
         paths.output_dir / REVIEWER_AUDIT_NAME,
@@ -120,14 +166,14 @@ def run_post_session(
         clock,
     )
     if reviewer != 0:
-        return KrThemeDayPostSessionResult(terminal, reviewer, None)
+        return KrThemeDayPostSessionResult(terminal, delivery, reviewer, None)
     lifecycle = _run_phase(
         lifecycle_command(request),
         paths.output_dir / LIFECYCLE_AUDIT_NAME,
         runner,
         clock,
     )
-    return KrThemeDayPostSessionResult(terminal, reviewer, lifecycle)
+    return KrThemeDayPostSessionResult(terminal, delivery, reviewer, lifecycle)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -136,6 +182,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--entry-store", type=Path, required=True)
     parser.add_argument("--exit-store", type=Path, required=True)
     parser.add_argument("--terminal-store", type=Path, required=True)
+    parser.add_argument("--delivery-store", type=Path, required=True)
     parser.add_argument("--review-store", type=Path, required=True)
     parser.add_argument("--calendar-store", type=Path, required=True)
     parser.add_argument("--trial-id", required=True)
@@ -149,6 +196,7 @@ def main(
     argv: Sequence[str] | None = None,
     *,
     runner: CommandRunner = lambda command: subprocess.run(command, check=False).returncode,
+    delivery_runner: DeliveryRunner = _deliver_terminal,
     clock: Clock = lambda: dt.datetime.now().astimezone(),
 ) -> int:
     args = parse_args(argv)
@@ -158,6 +206,7 @@ def main(
             entry_store=args.entry_store,
             exit_store=args.exit_store,
             terminal_store=args.terminal_store,
+            delivery_store=args.delivery_store,
             review_store=args.review_store,
             calendar_store=args.calendar_store,
             output_dir=args.output_dir,
@@ -166,7 +215,12 @@ def main(
         strategy_version=args.strategy_version,
         session_date=args.session_date,
     )
-    result = run_post_session(request, runner=runner, clock=clock)
+    result = run_post_session(
+        request,
+        runner=runner,
+        delivery_runner=delivery_runner,
+        clock=clock,
+    )
     if not _write_report(request, result):
         return 2
     return 0 if result.completed else 1
@@ -191,30 +245,11 @@ def _run_phase(
     runner: CommandRunner,
     clock: Clock,
 ) -> int:
-    started_at = clock()
-    try:
-        exit_code = runner(command)
-    except OSError:
-        exit_code = 1
-    try:
-        audit_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        audit_path.parent.chmod(0o700)
-        has_header = audit_path.is_file() and audit_path.stat().st_size > 0
-        with audit_path.open("a", encoding="utf-8", newline="") as handle:
-            writer = csv.writer(handle)
-            if not has_header:
-                writer.writerow(("started_at", "exit_code", "status"))
-            writer.writerow(
-                (
-                    started_at.isoformat(),
-                    exit_code,
-                    "ok" if exit_code == 0 else "failed",
-                )
-            )
-        audit_path.chmod(0o600)
-    except OSError:
-        return 1
-    return exit_code
+    return run_audited_kr_theme_day_post_session_phase(
+        lambda: runner(command),
+        audit_path,
+        clock,
+    )
 
 
 def _write_report(
@@ -228,9 +263,10 @@ def _write_report(
         "",
         f"- result: {'completed_control_cycle' if result.completed else 'blocked'}",
         f"- session_date: {request.session_date.isoformat()}",
-        f"- terminal phase: {_phase_status(result.terminal_exit_code)}",
-        f"- Reviewer phase: {_phase_status(result.reviewer_exit_code)}",
-        f"- lifecycle phase: {_phase_status(result.lifecycle_exit_code)}",
+        f"- terminal phase: {kr_theme_day_post_session_phase_status(result.terminal_exit_code)}",
+        f"- delivery phase: {kr_theme_day_post_session_phase_status(result.delivery_exit_code)}",
+        f"- Reviewer phase: {kr_theme_day_post_session_phase_status(result.reviewer_exit_code)}",
+        f"- lifecycle phase: {kr_theme_day_post_session_phase_status(result.lifecycle_exit_code)}",
         "- automatic champion: false",
         "- order authority change: false",
         "- allocation change: false",
@@ -242,12 +278,6 @@ def _write_report(
     except OSError:
         return False
     return True
-
-
-def _phase_status(exit_code: int | None) -> str:
-    if exit_code is None:
-        return "not_started"
-    return "success" if exit_code == 0 else "failed"
 
 
 def _session_date(value: str) -> dt.date:

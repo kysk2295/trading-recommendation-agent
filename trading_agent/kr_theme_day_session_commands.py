@@ -110,6 +110,8 @@ def kr_theme_day_session_child_command(
                 str(manifest.paths.exit_store),
                 "--terminal-store",
                 str(manifest.paths.terminal_store),
+                "--delivery-store",
+                str(manifest.paths.delivery_store),
                 "--review-store",
                 str(manifest.paths.review_store),
                 "--calendar-store",

@@ -172,6 +172,9 @@ def test_restartable_fixture_day_reaches_censored_review_and_lifecycle(tmp_path:
     assert len(ledger.multi_market_trial_events(trial_id)) == 2
     assert len(KrThemeDayReviewStore(paths.review_store).events()) == 1
     assert len(ledger.multi_market_lifecycle_events(VERSION)) == 1
+    assert tuple(event.kind for event in HermesDeliveryStore(paths.delivery_store).events()) == (
+        HermesDeliveryKind.NO_RECOMMENDATION,
+    )
 
 
 def _manifest(tmp_path: Path) -> KrThemeDaySessionManifest:

@@ -12,9 +12,12 @@ import run_kr_theme_day_reviewer as reviewer_cli
 import run_kr_theme_day_trial_terminal as terminal_cli
 from tests.test_kr_theme_day_lifecycle import DECIDED_AT, _calendar_evidence
 from tests.test_kr_theme_day_reviewer import REVIEWED_AT
-from tests.test_kr_theme_day_shadow_entry import VERSION, _ledger
+from tests.test_kr_theme_day_shadow_entry import VERSION, _ledger, _signal
 from tests.test_kr_theme_day_trial_terminal import CLOSED_AT, _trial_stores
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
+from trading_agent.hermes_delivery_models import HermesDeliveryKind
+from trading_agent.hermes_delivery_projection import project_trade_signals
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStore
 from trading_agent.kr_theme_day_review_store import KrThemeDayReviewStore
 
@@ -30,6 +33,7 @@ def _paths(tmp_path: Path) -> post_session_cli.KrThemeDayPostSessionPaths:
         entry_store=tmp_path / "entries.sqlite3",
         exit_store=tmp_path / "exits.sqlite3",
         terminal_store=tmp_path / "terminals.sqlite3",
+        delivery_store=tmp_path / "delivery.sqlite3",
         review_store=tmp_path / "reviews.sqlite3",
         calendar_store=tmp_path / "calendar.sqlite3",
         output_dir=tmp_path / "post-session",
@@ -56,6 +60,8 @@ def _args(request: post_session_cli.KrThemeDayPostSessionRequest) -> tuple[str, 
         str(paths.exit_store),
         "--terminal-store",
         str(paths.terminal_store),
+        "--delivery-store",
+        str(paths.delivery_store),
         "--review-store",
         str(paths.review_store),
         "--calendar-store",
@@ -157,6 +163,7 @@ def test_phase_failure_stops_every_later_child_and_audits_attempt(tmp_path: Path
     )
 
     assert result.terminal_exit_code == 1
+    assert result.delivery_exit_code is None
     assert result.reviewer_exit_code is None
     assert result.lifecycle_exit_code is None
     assert calls == [post_session_cli.terminal_command(request)]
@@ -174,15 +181,44 @@ def test_reviewer_failure_stops_lifecycle_child(tmp_path: Path) -> None:
     result = post_session_cli.run_post_session(
         request,
         runner=lambda command: calls.append(command) or next(exits),
+        delivery_runner=lambda _request: 0,
         clock=lambda: STARTED_AT,
     )
 
-    assert (result.terminal_exit_code, result.reviewer_exit_code, result.lifecycle_exit_code) == (0, 1, None)
+    assert (
+        result.terminal_exit_code,
+        result.delivery_exit_code,
+        result.reviewer_exit_code,
+        result.lifecycle_exit_code,
+    ) == (0, 0, 1, None)
     assert calls == [
         post_session_cli.terminal_command(request),
         post_session_cli.reviewer_command(request),
     ]
     assert not (request.paths.output_dir / post_session_cli.LIFECYCLE_AUDIT_NAME).exists()
+
+
+def test_delivery_failure_stops_reviewer_and_lifecycle(tmp_path: Path) -> None:
+    request = _request(tmp_path)
+    calls: list[tuple[str, ...]] = []
+
+    result = post_session_cli.run_post_session(
+        request,
+        runner=lambda command: calls.append(command) or 0,
+        delivery_runner=lambda _request: 1,
+        clock=lambda: STARTED_AT,
+    )
+
+    assert (
+        result.terminal_exit_code,
+        result.delivery_exit_code,
+        result.reviewer_exit_code,
+        result.lifecycle_exit_code,
+    ) == (0, 1, None, None)
+    assert calls == [post_session_cli.terminal_command(request)]
+    assert _audit_rows(request.paths.output_dir / post_session_cli.DELIVERY_AUDIT_NAME) == [
+        (STARTED_AT.isoformat(), "1", "failed")
+    ]
 
 
 def test_fixture_happy_path_and_replay_run_all_real_child_mains(tmp_path: Path) -> None:
@@ -192,6 +228,8 @@ def test_fixture_happy_path_and_replay_run_all_real_child_mains(tmp_path: Path) 
     receipt, snapshot = _calendar_evidence()
     assert calendar.append(receipt, snapshot) is True
     request = _request(tmp_path, trial_id)
+    with HermesDeliveryStore(request.paths.delivery_store).writer() as writer:
+        assert project_trade_signals((_signal(),), writer, frozenset()).inserted == 1
     replay_offset = dt.timedelta(minutes=1)
     offset = dt.timedelta()
 
@@ -218,8 +256,13 @@ def test_fixture_happy_path_and_replay_run_all_real_child_mains(tmp_path: Path) 
     assert len(ledger.multi_market_trial_events(trial_id)) == 2
     assert len(KrThemeDayReviewStore(tmp_path / "reviews.sqlite3").events()) == 1
     assert len(ExperimentLedgerStore(tmp_path / "experiment.sqlite3").multi_market_lifecycle_events(VERSION)) == 1
+    assert tuple(event.kind for event in HermesDeliveryStore(request.paths.delivery_store).events()) == (
+        HermesDeliveryKind.ACTIONABLE,
+        HermesDeliveryKind.EXIT,
+    )
     for audit_name in (
         post_session_cli.TERMINAL_AUDIT_NAME,
+        post_session_cli.DELIVERY_AUDIT_NAME,
         post_session_cli.REVIEWER_AUDIT_NAME,
         post_session_cli.LIFECYCLE_AUDIT_NAME,
     ):
@@ -229,6 +272,7 @@ def test_fixture_happy_path_and_replay_run_all_real_child_mains(tmp_path: Path) 
     report = (request.paths.output_dir / post_session_cli.REPORT_NAME).read_text(encoding="utf-8")
     assert "result: completed_control_cycle" in report
     assert "terminal phase: success" in report
+    assert "delivery phase: success" in report
     assert "Reviewer phase: success" in report
     assert "lifecycle phase: success" in report
     assert "external account/order mutation: 0" in report
