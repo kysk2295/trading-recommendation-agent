@@ -15,6 +15,7 @@ from trading_agent.us_day_acceptance_evidence import (
     UsDaySessionTerminal,
     write_us_day_acceptance_evidence,
 )
+from trading_agent.us_day_no_setup_source import require_no_orb_recommendation
 from trading_agent.us_day_operating_cli_contract import (
     EvidenceUsDayCommand,
     FinalizeUsDayCommand,
@@ -140,7 +141,6 @@ def _finalize_no_setup(
     command: FinalizeUsDayCommand,
     inspection: UsDaySessionInspection,
 ) -> UsDaySessionTerminal:
-    _validate_no_setup(command, inspection)
     if command.session_id is None or command.strategy_version is None:
         raise InvalidUsDaySessionTerminalError
     try:
@@ -150,6 +150,7 @@ def _finalize_no_setup(
     bounds = regular_session_bounds(session_date)
     if bounds is None:
         raise InvalidUsDaySessionTerminalError
+    _validate_no_setup(command, inspection, bounds)
     delivery_store = HermesDeliveryStore(command.paths.delivery_store)
     projected = project_us_day_no_recommendation(
         command.session_id,
@@ -178,7 +179,11 @@ def _finalize_no_setup(
     )
 
 
-def _validate_no_setup(command: FinalizeUsDayCommand, inspection: UsDaySessionInspection) -> None:
+def _validate_no_setup(
+    command: FinalizeUsDayCommand,
+    inspection: UsDaySessionInspection,
+    session_bounds: tuple[dt.datetime, dt.datetime],
+) -> None:
     state = inspection.broker_state
     if (
         command.session_id is None
@@ -194,3 +199,4 @@ def _validate_no_setup(command: FinalizeUsDayCommand, inspection: UsDaySessionIn
     _ = require_clean_repository_commit(command.paths.repository)
     for path in command.source_artifact_paths:
         _ = acceptance_artifact_sha256(command.paths.repository, path)
+    require_no_orb_recommendation(command.paths.repository, command.source_artifact_paths, session_bounds)

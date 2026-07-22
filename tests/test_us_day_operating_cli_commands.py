@@ -6,8 +6,10 @@ from pathlib import Path
 from tests.test_run_us_day_operating_session import CapturingRunnerFactory, StaticRunner
 from tests.test_us_day_acceptance_evidence import _clean_repository, _git, _terminal
 from tests.us_day_operating_fixtures import AT, admission, readiness
+from trading_agent.models import Recommendation, RecommendationState
 from trading_agent.paper_operating_session_models import PaperOrderAdmissionRequest
 from trading_agent.private_stable_report import write_private_stable_report
+from trading_agent.store import PaperStore
 from trading_agent.us_day_acceptance_evidence import UsDaySessionTerminal
 from trading_agent.us_day_operating_cli import UsDayCliDependencies, main, parser
 from trading_agent.us_day_operating_models import (
@@ -71,10 +73,8 @@ def test_preflight_and_recover_use_read_only_operation_surface(tmp_path: Path, c
 
 def test_finalize_writes_flat_censored_no_setup_terminal(tmp_path: Path, capsys) -> None:
     repository = _clean_repository(tmp_path)
-    source_path = Path("outputs/source/no-setup.json")
-    source = repository / source_path
-    source.parent.mkdir(parents=True, exist_ok=True)
-    source.write_text("no-setup", encoding="utf-8")
+    source_path = Path("outputs/source/paper_recommendations.sqlite3")
+    _ = PaperStore(repository / source_path)
     order_admission = admission()
     inspection = UsDaySessionInspection(
         readiness(order_admission, 3).broker_state,
@@ -111,6 +111,64 @@ def test_finalize_writes_flat_censored_no_setup_terminal(tmp_path: Path, capsys)
     assert exit_code == 0
     assert json.loads(capsys.readouterr().out)["result"] == "censored"
     assert terminal.reasons == ("censored_no_setup",)
+
+
+def test_finalize_rejects_censored_terminal_when_orb_recommendation_exists(tmp_path: Path, capsys) -> None:
+    # Given: the immutable source database contains a real-session ORB recommendation.
+    repository = _clean_repository(tmp_path)
+    source_path = Path("outputs/source/paper_recommendations.sqlite3")
+    store = PaperStore(repository / source_path)
+    store.save(
+        Recommendation(
+            "orb-setup",
+            "FAST",
+            "opening_range_breakout",
+            AT,
+            10.5,
+            10.0,
+            11.0,
+            11.5,
+            RecommendationState.TIME_EXIT,
+            "causal setup",
+        )
+    )
+    order_admission = admission()
+    inspection = UsDaySessionInspection(
+        readiness(order_admission, 3).broker_state,
+        AT.replace(hour=20),
+        False,
+        True,
+        True,
+        (),
+    )
+    terminal_path = repository / "outputs/acceptance/us_day/sessions/false-censored.json"
+
+    # When: the operator attempts to attest the session as having no setup.
+    exit_code = main(
+        (
+            "finalize",
+            "--delivery-database",
+            str(repository / "outputs/delivery.sqlite3"),
+            "--execution-database",
+            str(repository / "outputs/execution.sqlite3"),
+            "--repository",
+            str(repository),
+            "--session-id",
+            "XNYS-2026-07-14",
+            "--source-artifact",
+            str(source_path),
+            "--strategy-version",
+            "orb-v1",
+            "--terminal-output",
+            str(terminal_path),
+        ),
+        _dependencies(order_admission, inspection),
+    )
+
+    # Then: false censored evidence is blocked before a terminal is written.
+    assert exit_code == 1
+    assert json.loads(capsys.readouterr().out)["result"] == "blocked"
+    assert not terminal_path.exists()
 
 
 def test_finalize_rejects_missing_source_before_projecting_outcome(tmp_path: Path, capsys) -> None:

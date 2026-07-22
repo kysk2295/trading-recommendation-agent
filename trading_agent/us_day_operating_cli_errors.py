@@ -53,6 +53,7 @@ from trading_agent.trade_update_receipts import (
     UnknownTradeUpdateReceiptError,
 )
 from trading_agent.us_day_acceptance_models import InvalidUsDayAcceptanceEvidenceError
+from trading_agent.us_day_no_setup_source import InvalidUsDayNoSetupSourceError
 from trading_agent.us_day_operating_cli_contract import InvalidUsDayCliCommandError
 from trading_agent.us_day_operating_models import InvalidUsDayOperatingRequestError
 from trading_agent.us_day_session_terminal import InvalidUsDaySessionTerminalError
@@ -83,6 +84,7 @@ US_DAY_OPERATIONAL_ERRORS: Final[tuple[type[BaseException], ...]] = (
     InvalidTradeUpdateRawReceiptError,
     InvalidUsDayAcceptanceEvidenceError,
     InvalidUsDayCliCommandError,
+    InvalidUsDayNoSetupSourceError,
     InvalidUsDayOperatingRequestError,
     InvalidUsDaySessionTerminalError,
     MissingAlpacaPaperCredentialsError,
@@ -121,6 +123,8 @@ def safe_operational_reason(error: BaseException) -> str:
         return "invalid_current_orb_source"
     if isinstance(error, InvalidUsDaySessionTerminalError):
         return "invalid_session_terminal"
+    if isinstance(error, InvalidUsDayNoSetupSourceError):
+        return "invalid_no_setup_source"
     if isinstance(error, InvalidUsDayAcceptanceEvidenceError):
         return "invalid_acceptance_evidence"
     return type(error).__name__
