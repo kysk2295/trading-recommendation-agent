@@ -290,3 +290,17 @@ def test_prepare_existing_does_not_create_a_missing_store_or_lock(tmp_path: Path
     assert store.prepare_existing() is False
     assert not path.exists()
     assert not (tmp_path / "systematic.sqlite3.writer.lock").exists()
+
+
+def test_prepare_existing_does_not_recreate_a_missing_lock(tmp_path: Path) -> None:
+    path = tmp_path / "systematic.sqlite3"
+    store = SystematicRegimeStore(path)
+    with store.writer():
+        pass
+    lock = tmp_path / "systematic.sqlite3.writer.lock"
+    lock.unlink()
+
+    with pytest.raises(InvalidSystematicRegimeStoreError):
+        _ = store.prepare_existing()
+    assert path.exists()
+    assert not lock.exists()

@@ -227,6 +227,9 @@ def test_regular_tick_migrates_an_existing_v1_store_before_reading(tmp_path: Pat
     with sqlite3.connect(path) as connection:
         connection.executescript(f"{SYSTEMATIC_REGIME_SCHEMA_V1}PRAGMA user_version = 1;")
     path.chmod(0o600)
+    lock = tmp_path / "systematic.sqlite3.writer.lock"
+    lock.write_bytes(b"")
+    lock.chmod(0o600)
     source = _source("risk_on")
     bounds = regular_session_bounds(source.session_date)
     assert bounds is not None

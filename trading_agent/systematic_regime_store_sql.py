@@ -47,7 +47,7 @@ def systematic_writer_connection(
             require_private_directory(parent)
             lock_path = absolute.parent / f"{absolute.name}.writer.lock"
             if create:
-                with _writer_lease(lock_path, parent):
+                with _writer_lease(lock_path, parent, create=True):
                     database_descriptor = _open_file(parent, absolute.name, create=True, write=True)
                     try:
                         with _opened_writer_database(
@@ -61,7 +61,7 @@ def systematic_writer_connection(
             else:
                 database_descriptor = _open_file(parent, absolute.name, create=False, write=True)
                 try:
-                    with _writer_lease(lock_path, parent), _opened_writer_database(
+                    with _writer_lease(lock_path, parent, create=False), _opened_writer_database(
                         absolute,
                         parent,
                         database_descriptor,
@@ -135,8 +135,8 @@ def private_store_exists(path: Path) -> bool:
 
 
 @contextmanager
-def _writer_lease(path: Path, parent: int) -> Iterator[None]:
-    descriptor = _open_file(parent, path.name, create=True, write=True)
+def _writer_lease(path: Path, parent: int, *, create: bool) -> Iterator[None]:
+    descriptor = _open_file(parent, path.name, create=create, write=True)
     parent_locked = False
     locked = False
     try:
