@@ -28,7 +28,7 @@ clean checkpoint `960de7e0571728653966c36dfacfae7d07b44814`를 두 production sh
 
 ## 예약 실행
 
-launchd label `ai.trading-agent.kr-m3-20260723`가 PID `42834`로 대기한다. exact detached runtime은 `/private/tmp/trading-agent-kr-m3-20260723-960de7e`이며 dirty main 작업트리를 실행 코드로 사용하지 않는다.
+launchd label `ai.trading-agent.kr-m3-20260723`가 running 상태로 대기한다. exact detached runtime은 `/private/tmp/trading-agent-kr-m3-20260723-960de7e`이며 dirty main 작업트리를 실행 코드로 사용하지 않는다.
 
 1. 08:55 KST: current-date calendar GET과 snapshot append
 2. 08:55 이후: exact composite와 2026-07-23 day trial 사전등록
@@ -42,6 +42,19 @@ launchd label `ai.trading-agent.kr-m3-20260723`가 PID `42834`로 대기한다. 
 이 보완은 source incomplete를 성과 0으로 평가하지 않는다. source incident와 censored day terminal은 서로 다른 evidence로 보존되며, Reviewer는 censored session을 data-quality blocker로 처리한다. exact runtime의 no-entry terminal·delivery·Reviewer/lifecycle focused E2E 4개와 post-session `--help` exit 0, 필수 인자 누락 exit 2가 통과했다. 수정된 wrapper는 `zsh -n`과 dry-run 뒤 장 시작 전 sleep 상태에서만 재제출했으며 US와 Hermes 프로세스는 재시작하지 않았다.
 
 wrapper는 exact SHA와 clean runtime, private policy/ledger/delivery file을 먼저 확인한다. `zsh -n`과 `DRY_RUN=1`은 통과했고 dry-run 이벤트에는 `paper_false`, `account_false`, `order_false`가 기록됐다. stdout/stderr는 등록 직후 모두 0바이트였고 wrapper, event log, stdout, stderr는 mode 700/600이다.
+
+## 장전 Opportunity parser 복구
+
+10:31 EDT 점검에서 09:05 positive Opportunity 경로가 host와 launchd PATH에 없는
+`jq`를 호출하는 사실을 확인했다. 외부 package를 설치하지 않고 pinned runtime의
+기존 `_cycle_opportunities` 구조 파서를 project venv에서 불러 exact cycle의 유일한
+Opportunity ID만 읽도록 wrapper를 수정했다.
+
+- 단일 exact-cycle fixture는 ID 하나를 반환했다.
+- 같은 cycle의 Opportunity이 둘이면 빈 결과로 fail-closed했다.
+- strategy code, trial SHA, policy, session 시각과 read-only 계약은 바꾸지 않았다.
+- 수정 뒤 wrapper `zsh -n`과 `DRY_RUN=1`이 통과했다.
+- 해당 KR launchd label만 장 시작 전 재기동했고 provider 호출과 주문 mutation은 0건이다.
 
 ## 검증
 
