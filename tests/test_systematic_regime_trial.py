@@ -4,6 +4,8 @@ import datetime as dt
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from tests.test_systematic_regime_engine import _source
 from trading_agent.experiment_ledger_models import (
     StrategyLifecycleState,
@@ -16,6 +18,7 @@ from trading_agent.systematic_regime_engine import build_systematic_card, replay
 from trading_agent.systematic_regime_research import systematic_regime_strategy_version
 from trading_agent.systematic_regime_store import SystematicRegimeStore
 from trading_agent.systematic_regime_trial import (
+    InvalidSystematicRegimeTrialError,
     finalize_systematic_regime_trial,
     register_systematic_regime_trial,
     start_systematic_regime_trial,
@@ -122,6 +125,21 @@ def test_existing_strategy_lifecycle_accepts_the_next_daily_trial(tmp_path: Path
     assert second.created is True
     assert len(experiment.multi_market_lifecycle_events(version)) == 1
     assert len(experiment.multi_market_trials()) == 2
+
+
+def test_invalid_card_version_leaves_research_ledger_unchanged(tmp_path: Path) -> None:
+    # Given: a card whose strategy version does not match the requested code version.
+    source = _source("risk_on")
+    card = build_systematic_card(source, replay_systematic_regime(source), "wrong-version")
+    ledger = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+
+    # When: registration rejects the mismatched card.
+    with pytest.raises(InvalidSystematicRegimeTrialError):
+        _ = register_systematic_regime_trial(ledger, card, CODE_VERSION)
+
+    # Then: immutable research state was not partially appended first.
+    assert ledger.multi_market_hypotheses() == ()
+    assert ledger.multi_market_strategy_versions() == ()
 
 
 def _extend_source(source: SwingDailySource, target_session: dt.date) -> SwingDailySource:

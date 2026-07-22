@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import stat
 import subprocess
@@ -118,7 +119,7 @@ def test_cli_historical_production_date_fails_before_credentials(
         credential_calls += 1
         raise AssertionError("credential loader must not run")
 
-    monkeypatch.setattr(cli, "load_alpaca_credentials", forbidden_credentials)
+    monkeypatch.setattr(cli, "load_private_alpaca_credentials", forbidden_credentials)
 
     # When: the CLI is asked to operate a historical date.
     result = cli.main(
@@ -176,6 +177,8 @@ def _write_fixture(root: Path, source: SwingDailySource) -> Path:
         bar.model_dump(mode="json", exclude={"observed_at"})
         for bar in source.bars
     ]
+    bars_payload = json.dumps(bars).encode()
+    manifest["bars_sha256"] = hashlib.sha256(bars_payload).hexdigest()
     (fixture / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    (fixture / "bars.json").write_text(json.dumps(bars), encoding="utf-8")
+    (fixture / "bars.json").write_bytes(bars_payload)
     return fixture

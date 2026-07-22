@@ -63,9 +63,9 @@ def register_systematic_regime_trial(
 ) -> SystematicTrialRegistrationResult:
     try:
         checked = SystematicRecommendationCard.model_validate(card.model_dump(mode="python"))
-        research = ensure_systematic_regime_research(ledger, code_version, checked.observed_at)
         if checked.strategy_version != systematic_regime_strategy_version(code_version):
             raise InvalidSystematicRegimeTrialError
+        research = ensure_systematic_regime_research(ledger, code_version, checked.observed_at)
         bounds = regular_session_bounds(checked.target_session)
         if bounds is None or checked.observed_at >= bounds[0]:
             raise InvalidSystematicRegimeTrialError

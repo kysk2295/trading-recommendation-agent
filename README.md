@@ -612,12 +612,12 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 uv run python run_us_systematic_regime.py \
   --session-date YYYY-MM-DD \
   --fixture-root /private/path/us-systematic-regime-fixture \
-  --database /tmp/us-systematic-regime.sqlite3 \
-  --experiment-ledger /tmp/us-systematic-experiment.sqlite3 \
-  --output-dir /tmp/us-systematic-regime-output
+  --database /private/tmp/us-systematic-regime.sqlite3 \
+  --experiment-ledger /private/tmp/us-systematic-experiment.sqlite3 \
+  --output-dir /private/tmp/us-systematic-regime-output
 ```
 
-장후 첫 tick은 당일 카드와 다음 세션 trial을 등록한다. 대상 세션 장중 tick은 trial을 시작하고, 대상 세션 장후 tick은 open→close shadow outcome으로 terminal을 확정한 뒤 다음 카드를 등록한다. 같은 입력의 재실행은 카드·trial·event·outcome을 늘리지 않는다.
+장후 첫 tick은 당일 카드와 다음 세션 trial을 등록한다. 대상 세션 장중 tick은 trial을 시작하고, 대상 세션 장후 tick은 open→close shadow outcome으로 terminal을 확정한 뒤 다음 카드를 등록한다. 같은 입력의 재실행은 카드·trial·event·outcome을 늘리지 않는다. private SQLite 경로는 symlink가 없는 canonical parent 아래에 두며 macOS 임시 경로는 `/tmp` alias 대신 `/private/tmp`를 사용한다.
 
 ### US swing 신고가·RVOL shadow
 

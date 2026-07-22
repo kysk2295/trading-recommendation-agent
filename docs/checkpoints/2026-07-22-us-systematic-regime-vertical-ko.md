@@ -32,12 +32,12 @@
 uv run python run_us_systematic_regime.py \
   --session-date YYYY-MM-DD \
   --fixture-root /private/path/us-systematic-regime-fixture \
-  --database /tmp/us-systematic-regime.sqlite3 \
-  --experiment-ledger /tmp/us-systematic-experiment.sqlite3 \
-  --output-dir /tmp/us-systematic-regime-output
+  --database /private/tmp/us-systematic-regime.sqlite3 \
+  --experiment-ledger /private/tmp/us-systematic-experiment.sqlite3 \
+  --output-dir /private/tmp/us-systematic-regime-output
 ```
 
-production에서는 `--fixture-root`를 생략한다. current NYSE post-close가 아니면 credential loader와 HTTP client 전에 차단한다. 운영 checkout은 clean이어야 하며 현재 commit SHA가 strategy version에 결합된다.
+production에서는 `--fixture-root`를 생략한다. current NYSE post-close가 아니면 credential loader와 HTTP client 전에 차단한다. 운영 checkout은 clean이어야 하며 현재 commit SHA가 strategy version에 결합된다. private SQLite와 lock은 symlink·hard-link를 거부하므로 macOS 임시 경로도 `/tmp` alias가 아닌 canonical `/private/tmp` parent를 사용한다.
 
 ## 검증
 

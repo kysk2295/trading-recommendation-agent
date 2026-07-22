@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 from decimal import Decimal
 from pathlib import Path
@@ -42,6 +43,17 @@ def test_fixture_rejects_a_partial_universe(tmp_path: Path) -> None:
     fixture_root = _write_fixture(tmp_path, SYSTEMATIC_REGIME_UNIVERSE[:-1])
 
     # When/Then: systematic source parsing fails closed.
+    with pytest.raises(InvalidSystematicDailySourceError):
+        _ = load_systematic_daily_source(fixture_root, session_date=SESSION)
+
+
+def test_fixture_rejects_bars_that_do_not_match_manifest_hash(tmp_path: Path) -> None:
+    # Given: a valid fixture whose bars change after the manifest was written.
+    fixture_root = _write_fixture(tmp_path, SYSTEMATIC_REGIME_UNIVERSE)
+    bars_path = fixture_root / "bars.json"
+    bars_path.write_bytes(bars_path.read_bytes() + b" ")
+
+    # When/Then: source loading rejects the manifest/content mismatch.
     with pytest.raises(InvalidSystematicDailySourceError):
         _ = load_systematic_daily_source(fixture_root, session_date=SESSION)
 
@@ -103,6 +115,27 @@ def test_production_collects_a_bounded_get_only_history() -> None:
     assert source.bars_for("SPY")[-1].close == Decimal("100.5")
 
 
+def test_production_collection_caps_unique_pagination_tokens() -> None:
+    # Given: a provider that never terminates but emits a fresh token each time.
+    requests: list[AlpacaDailyPageRequest] = []
+
+    class EndlessClient:
+        def fetch_daily_page(self, request: AlpacaDailyPageRequest) -> AlpacaBarsPayload:
+            requests.append(request)
+            token = None if len(requests) == 25 else f"token-{len(requests)}"
+            return AlpacaBarsPayload(bars={}, next_page_token=token)
+
+    # When/Then: the adapter stops at its own budget instead of trusting unique tokens forever.
+    with pytest.raises(InvalidSystematicDailySourceError):
+        _ = collect_current_systematic_daily_source(
+            bars_client=EndlessClient(),
+            session_date=SESSION,
+            observed_at=OBSERVED_AT,
+            now=OBSERVED_AT,
+        )
+    assert len(requests) < 25
+
+
 def _write_fixture(root: Path, symbols: tuple[str, ...]) -> Path:
     fixture = root / "fixture"
     fixture.mkdir()
@@ -120,6 +153,7 @@ def _write_fixture(root: Path, symbols: tuple[str, ...]) -> Path:
         for symbol in symbols
         for index, session in enumerate(sessions)
     ]
+    bars_payload = json.dumps(bars).encode()
     (fixture / "manifest.json").write_text(
         json.dumps(
             {
@@ -129,11 +163,12 @@ def _write_fixture(root: Path, symbols: tuple[str, ...]) -> Path:
                 "universe_id": "us_systematic_regime_etf_v1",
                 "symbols": symbols,
                 "bars_file": "bars.json",
+                "bars_sha256": hashlib.sha256(bars_payload).hexdigest(),
             }
         ),
         encoding="utf-8",
     )
-    (fixture / "bars.json").write_text(json.dumps(bars), encoding="utf-8")
+    (fixture / "bars.json").write_bytes(bars_payload)
     return fixture
 
 

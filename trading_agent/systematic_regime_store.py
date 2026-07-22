@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
-import fcntl
 import hashlib
 import json
-import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -15,6 +13,12 @@ from typing import Literal, Self, final, override
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from trading_agent.systematic_regime_models import SystematicRecommendationCard
+from trading_agent.systematic_regime_store_sql import (
+    InvalidSystematicRegimeSqliteError,
+    private_store_exists,
+    systematic_reader_connection,
+    systematic_writer_connection,
+)
 
 
 class InvalidSystematicRegimeStoreError(ValueError):
@@ -65,65 +69,39 @@ class SystematicRegimeStore:
     __slots__ = ("path",)
 
     def __init__(self, path: Path) -> None:
-        self.path = path.resolve(strict=False)
+        self.path = path.expanduser().absolute()
 
     @contextmanager
     def writer(self) -> Iterator[SystematicRegimeWriter]:
-        if self.path.is_symlink():
-            raise InvalidSystematicRegimeStoreError
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        lock_path = Path(f"{self.path}.writer.lock")
-        no_follow = getattr(os, "O_NOFOLLOW", None)
-        if no_follow is None or lock_path.is_symlink():
-            raise InvalidSystematicRegimeStoreError
         try:
-            descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | no_follow, 0o600)
-        except OSError as error:
-            raise InvalidSystematicRegimeStoreError from error
-        os.fchmod(descriptor, 0o600)
-        with os.fdopen(descriptor, "a+", encoding="utf-8") as handle:
-            try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as error:
-                raise InvalidSystematicRegimeStoreError from error
-            connection = sqlite3.connect(self.path, timeout=0.0)
-            os.chmod(self.path, 0o600)
-            try:
-                _prepare(connection)
+            with systematic_writer_connection(self.path) as connection:
                 yield SystematicRegimeWriter(connection)
-            finally:
-                connection.close()
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except InvalidSystematicRegimeSqliteError:
+            raise InvalidSystematicRegimeStoreError from None
 
     def cards(self) -> tuple[SystematicRecommendationCard, ...]:
-        if not self.path.is_file():
-            return ()
-        with self._reader() as connection:
-            rows: list[tuple[str]] = connection.execute(
-                "SELECT payload_json FROM systematic_cards ORDER BY rowid"
-            ).fetchall()
         try:
+            if not private_store_exists(self.path):
+                return ()
+            with systematic_reader_connection(self.path) as connection:
+                rows: list[tuple[str]] = connection.execute(
+                    "SELECT payload_json FROM systematic_cards ORDER BY rowid"
+                ).fetchall()
             return tuple(SystematicRecommendationCard.model_validate_json(row[0]) for row in rows)
-        except (ValidationError, ValueError):
+        except (InvalidSystematicRegimeSqliteError, ValidationError, ValueError):
             raise InvalidSystematicRegimeStoreError from None
 
     def outcomes(self) -> tuple[SystematicShadowOutcome, ...]:
-        if not self.path.is_file():
-            return ()
-        with self._reader() as connection:
-            rows: list[tuple[str]] = connection.execute(
-                "SELECT payload_json FROM systematic_outcomes ORDER BY rowid"
-            ).fetchall()
         try:
+            if not private_store_exists(self.path):
+                return ()
+            with systematic_reader_connection(self.path) as connection:
+                rows: list[tuple[str]] = connection.execute(
+                    "SELECT payload_json FROM systematic_outcomes ORDER BY rowid"
+                ).fetchall()
             return tuple(SystematicShadowOutcome.model_validate_json(row[0]) for row in rows)
-        except (ValidationError, ValueError):
+        except (InvalidSystematicRegimeSqliteError, ValidationError, ValueError):
             raise InvalidSystematicRegimeStoreError from None
-
-    def _reader(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
-        _ = connection.execute("PRAGMA query_only = ON")
-        _require_schema(connection)
-        return connection
 
 
 @final
@@ -159,33 +137,6 @@ class SystematicRegimeWriter:
         except sqlite3.IntegrityError as error:
             raise SystematicRegimeConflictError from error
         return True
-
-
-def _prepare(connection: sqlite3.Connection) -> None:
-    version: tuple[int] = connection.execute("PRAGMA user_version").fetchone()
-    if version == (0,):
-        connection.executescript(
-            "CREATE TABLE systematic_cards (card_id TEXT PRIMARY KEY, payload_json TEXT NOT NULL);"
-            "CREATE TABLE systematic_outcomes ("
-            "card_id TEXT PRIMARY KEY REFERENCES systematic_cards(card_id), payload_json TEXT NOT NULL);"
-            "CREATE TRIGGER systematic_cards_no_update BEFORE UPDATE ON systematic_cards "
-            "BEGIN SELECT RAISE(ABORT, 'append-only'); END;"
-            "CREATE TRIGGER systematic_cards_no_delete BEFORE DELETE ON systematic_cards "
-            "BEGIN SELECT RAISE(ABORT, 'append-only'); END;"
-            "CREATE TRIGGER systematic_outcomes_no_update BEFORE UPDATE ON systematic_outcomes "
-            "BEGIN SELECT RAISE(ABORT, 'append-only'); END;"
-            "CREATE TRIGGER systematic_outcomes_no_delete BEFORE DELETE ON systematic_outcomes "
-            "BEGIN SELECT RAISE(ABORT, 'append-only'); END;"
-            "PRAGMA user_version = 1;"
-        )
-    else:
-        _require_schema(connection)
-
-
-def _require_schema(connection: sqlite3.Connection) -> None:
-    version: tuple[int] = connection.execute("PRAGMA user_version").fetchone()
-    if version != (1,):
-        raise InvalidSystematicRegimeStoreError
 
 
 def _canonical_payload(value: BaseModel) -> str:

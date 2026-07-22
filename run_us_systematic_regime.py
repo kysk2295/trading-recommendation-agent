@@ -19,8 +19,8 @@ from trading_agent.alpaca_bars import AlpacaBarsClient
 from trading_agent.alpaca_http import (
     DEFAULT_ALPACA_SECRET_PATH,
     create_alpaca_client,
-    load_alpaca_credentials,
 )
+from trading_agent.alpaca_private_credentials import load_private_alpaca_credentials
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.private_report import write_private_report
 from trading_agent.systematic_regime_models import SystematicRecommendationCard
@@ -118,7 +118,7 @@ def _source(args: argparse.Namespace, now: dt.datetime, phase: SystematicOperati
         observed_at=now,
         now=now,
     )
-    credentials = load_alpaca_credentials(args.secret_path)
+    credentials = load_private_alpaca_credentials(args.secret_path)
     with create_alpaca_client() as client:
         return collect_current_systematic_daily_source(
             bars_client=AlpacaBarsClient(client, credentials, request_interval_seconds=1.0),
