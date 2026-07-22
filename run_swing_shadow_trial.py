@@ -26,6 +26,17 @@ from trading_agent.experiment_ledger_store import (
     InvalidExperimentLedgerSourceError,
     UnsupportedExperimentLedgerSchemaError,
 )
+from trading_agent.hermes_delivery_errors import (
+    HermesDeliveryConflictError,
+    HermesDeliveryWriterLeaseUnavailableError,
+    InvalidHermesDeliveryStoreError,
+)
+from trading_agent.hermes_delivery_projection import InvalidHermesProjectionSourceError
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
+from trading_agent.swing_shadow_delivery import (
+    InvalidSwingShadowDeliveryError,
+    project_swing_shadow_terminal_delivery,
+)
 from trading_agent.swing_shadow_review_store import (
     InvalidSwingShadowReviewSourceError,
     SwingShadowReviewConflictError,
@@ -56,6 +67,12 @@ REPORT_NAME = "swing_shadow_trial_ko.md"
 class _CliOutcome:
     created: bool
     outcome_kind: str
+    delivery_inserted: int = 0
+    delivery_replayed: int = 0
+
+
+class UnsupportedSwingShadowOperationError(ValueError):
+    pass
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -68,6 +85,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     ):
         command = operations.add_parser(operation, help=help_text)
         _add_common_arguments(command)
+        if operation == "finalize":
+            command.add_argument("--delivery-store", type=Path, required=True)
     review = operations.add_parser("review", help="완료된 trial을 authority 없이 독립 검토")
     _add_common_arguments(review)
     review.add_argument("--review-ledger", type=Path, required=True)
@@ -101,6 +120,8 @@ def main(
             f"operation: {args.operation}",
             f"created: {str(outcome.created).lower()}",
             f"{_outcome_label(args.operation)}: {outcome.outcome_kind}",
+            f"delivery_inserted: {outcome.delivery_inserted}",
+            f"delivery_replayed: {outcome.delivery_replayed}",
             "external broker mutation: 0",
         ),
     )
@@ -139,7 +160,18 @@ def _execute(
             signal_id=args.signal_id,
             finalized_at=timestamp,
         )
-        return _CliOutcome(result.created, result.event.event_kind.value)
+        delivery = project_swing_shadow_terminal_delivery(
+            ExperimentLedgerReader(args.experiment_ledger),
+            shadow,
+            HermesDeliveryStore(args.delivery_store),
+            args.signal_id,
+        )
+        return _CliOutcome(
+            result.created,
+            result.event.event_kind.value,
+            delivery.inserted,
+            delivery.replayed,
+        )
     if args.operation == "review":
         result = review_swing_shadow_trial(
             experiment_ledger=ExperimentLedgerReader(args.experiment_ledger),
@@ -149,7 +181,7 @@ def _execute(
             reviewed_at=timestamp,
         )
         return _CliOutcome(result.created, result.event.reviewer_action.value)
-    raise ValueError("unsupported operation")
+    raise UnsupportedSwingShadowOperationError
 
 
 def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
@@ -220,9 +252,14 @@ def _write_report(output_dir: Path, details: tuple[str, ...]) -> None:
 _CLI_ERRORS = (
     ExperimentLedgerConflictError,
     ExperimentLedgerWriterLeaseUnavailableError,
+    HermesDeliveryConflictError,
+    HermesDeliveryWriterLeaseUnavailableError,
+    InvalidHermesDeliveryStoreError,
+    InvalidHermesProjectionSourceError,
     InvalidExperimentLedgerSourceError,
     UnsupportedExperimentLedgerSchemaError,
     InvalidSwingShadowLedgerError,
+    InvalidSwingShadowDeliveryError,
     SwingShadowConflictError,
     SwingShadowWriterLeaseUnavailableError,
     InvalidSwingShadowTrialSourceError,

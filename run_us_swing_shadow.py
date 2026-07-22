@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-import os
-import stat
 from pathlib import Path
-from typing import Final, override
+from typing import override
 
 import typer
 from rich import print as rprint
@@ -26,10 +24,36 @@ from trading_agent.contract_outbox import (
     ContractOutboxFormatError,
     append_trade_signal_publication,
 )
+from trading_agent.hermes_delivery_errors import (
+    HermesDeliveryConflictError,
+    HermesDeliveryWriterLeaseUnavailableError,
+    InvalidHermesDeliveryStoreError,
+)
+from trading_agent.hermes_delivery_projection import InvalidHermesProjectionSourceError
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.private_report import write_private_report
 from trading_agent.swing_new_high_rvol import (
     InvalidNewHighRvolProjectionError,
     project_new_high_rvol_signals,
+)
+from trading_agent.swing_shadow_cli_files import (
+    SWING_CARDS_NAME as _CARDS_NAME,
+)
+from trading_agent.swing_shadow_cli_files import (
+    SWING_OUTBOX_NAME as _OUTBOX_NAME,
+)
+from trading_agent.swing_shadow_cli_files import (
+    SWING_REPORT_NAME as _REPORT_NAME,
+)
+from trading_agent.swing_shadow_cli_files import (
+    InvalidSwingShadowCliTargetError,
+    harden_private_swing_cards,
+    prepare_private_swing_file,
+    validate_swing_shadow_targets,
+)
+from trading_agent.swing_shadow_delivery import (
+    InvalidSwingShadowDeliveryError,
+    project_swing_shadow_cycle_delivery,
 )
 from trading_agent.swing_shadow_engine import (
     InvalidSwingShadowEngineError,
@@ -50,10 +74,6 @@ from trading_agent.swing_shadow_store import (
 from trading_agent.trade_signal_publication import TradeSignalPublication
 from trading_agent.us_equity_calendar import NEW_YORK
 
-_OUTBOX_NAME: Final = "trade-signals.v1.jsonl"
-_CARDS_NAME: Final = "trade-signal-cards-ko"
-_REPORT_NAME: Final = "us_swing_shadow_summary_ko.md"
-
 
 class UsSwingShadowRunError(ValueError):
     @override
@@ -66,14 +86,16 @@ def main(
     universe_file: str | None = None,
     fixture_root: str | None = None,
     database: str = "outputs/us_swing_shadow/swing-shadow.sqlite3",
+    delivery_database: str | None = None,
     output_dir: str = "outputs/us_swing_shadow/latest",
     secret_path: str = str(DEFAULT_ALPACA_SECRET_PATH),
 ) -> None:
     parsed_session = _parse_session_date(session_date)
     database_path = Path(database).expanduser().resolve(strict=False)
     output = Path(output_dir).expanduser().resolve(strict=False)
+    delivery_path = _delivery_path(delivery_database, fixture_root, output)
     try:
-        _validate_targets(database_path, output)
+        validate_swing_shadow_targets(database_path, delivery_path, output)
         source = (
             load_swing_daily_source(Path(fixture_root), session_date=parsed_session)
             if fixture_root is not None
@@ -92,7 +114,7 @@ def main(
         cards_dir = output / _CARDS_NAME
         new_publications = 0
         if signals or outbox.exists():
-            _prepare_private_file(outbox)
+            prepare_private_swing_file(outbox)
         for signal in signals:
             publication = TradeSignalPublication(
                 published_at=source.observed_at,
@@ -101,7 +123,9 @@ def main(
             new_publications += int(
                 append_trade_signal_publication(outbox, cards_dir, publication)
             )
-        _harden_private_cards(cards_dir)
+        harden_private_swing_cards(cards_dir)
+        with HermesDeliveryStore(delivery_path).writer() as writer:
+            delivery = project_swing_shadow_cycle_delivery(source, signals, writer)
         write_private_report(
             output / _REPORT_NAME,
             _report(
@@ -110,6 +134,7 @@ def main(
                 signal_count=len(signals),
                 new_publications=new_publications,
                 new_events=len(events),
+                new_deliveries=delivery.inserted,
             ),
         )
     except typer.BadParameter:
@@ -119,9 +144,15 @@ def main(
         AlpacaSecretFileError,
         ContractOutboxConflictError,
         ContractOutboxFormatError,
+        HermesDeliveryConflictError,
+        HermesDeliveryWriterLeaseUnavailableError,
+        InvalidHermesDeliveryStoreError,
+        InvalidHermesProjectionSourceError,
         InvalidNewHighRvolProjectionError,
+        InvalidSwingShadowCliTargetError,
         InvalidSwingDailySourceError,
         InvalidSwingShadowEngineError,
+        InvalidSwingShadowDeliveryError,
         InvalidSwingShadowLedgerError,
         MissingAlpacaCredentialsError,
         OSError,
@@ -203,64 +234,12 @@ def _current_new_york() -> dt.datetime:
     return dt.datetime.now(NEW_YORK)
 
 
-def _validate_targets(database: Path, output: Path) -> None:
-    database_candidates = (
-        database,
-        Path(f"{database}.writer.lock"),
-        Path(f"{database}-journal"),
-        Path(f"{database}-shm"),
-        Path(f"{database}-wal"),
-    )
-    database_targets = {
-        candidate.resolve(strict=False) for candidate in database_candidates
-    }
-    database_identities = {
-        _file_identity(candidate)
-        for candidate in database_candidates
-        if candidate.exists() and candidate.is_file()
-    }
-    for target in (output / _OUTBOX_NAME, output / _REPORT_NAME, output / _CARDS_NAME):
-        if (
-            target.is_symlink()
-            or target.resolve(strict=False) in database_targets
-            or (
-                target.exists()
-                and target.is_file()
-                and _file_identity(target) in database_identities
-            )
-        ):
-            raise UsSwingShadowRunError
-
-
-def _file_identity(path: Path) -> tuple[int, int]:
-    metadata = path.stat()
-    return metadata.st_dev, metadata.st_ino
-
-
-def _prepare_private_file(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.is_symlink():
-        raise UsSwingShadowRunError
-    try:
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        pass
-    else:
-        os.close(descriptor)
-    path.chmod(0o600)
-
-
-def _harden_private_cards(cards_dir: Path) -> None:
-    if not cards_dir.exists():
-        return
-    if cards_dir.is_symlink() or not cards_dir.is_dir():
-        raise UsSwingShadowRunError
-    cards_dir.chmod(0o700)
-    for card in cards_dir.iterdir():
-        metadata = card.lstat()
-        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-            raise UsSwingShadowRunError
-        card.chmod(0o600)
+def _delivery_path(value: str | None, fixture_root: str | None, output: Path) -> Path:
+    if value is not None:
+        return Path(value).expanduser().resolve(strict=False)
+    if fixture_root is not None:
+        return output / "hermes-delivery.sqlite3"
+    return Path("outputs/hermes/delivery.sqlite3").resolve(strict=False)
 
 
 def _report(
@@ -270,6 +249,7 @@ def _report(
     signal_count: int,
     new_publications: int,
     new_events: int,
+    new_deliveries: int,
 ) -> str:
     return "\n".join(
         (
@@ -283,6 +263,7 @@ def _report(
             f"- 조건부 신호: {signal_count}",
             f"- 신규 조건부 신호: {new_publications}",
             f"- 신규 shadow event: {new_events}",
+            f"- 신규 Hermes 전달: {new_deliveries}",
             "- 실행 모드: shadow only",
             "- broker account·order mutation: 없음",
             "",

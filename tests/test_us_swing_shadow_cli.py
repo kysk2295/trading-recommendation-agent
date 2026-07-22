@@ -11,6 +11,8 @@ import pytest
 import typer
 
 import run_us_swing_shadow
+from trading_agent.hermes_delivery_models import HermesDeliveryKind
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.swing_shadow_store import ShadowEventKind, SwingShadowStore
 from trading_agent.trade_signal_publication import TradeSignalPublication
 
@@ -25,6 +27,7 @@ def test_fixture_cli_projects_and_replays_private_swing_shadow_evidence(
 ) -> None:
     database = tmp_path / "ledger" / "swing-shadow.sqlite3"
     output = tmp_path / "output"
+    delivery = output / "hermes-delivery.sqlite3"
 
     run_us_swing_shadow.main(
         session_date=SESSION.isoformat(),
@@ -59,6 +62,11 @@ def test_fixture_cli_projects_and_replays_private_swing_shadow_evidence(
     assert "신규 shadow event: 1" in first_report
     assert "신규 조건부 신호: 0" in second_report
     assert "신규 shadow event: 0" in second_report
+    assert "신규 Hermes 전달: 1" in first_report
+    assert "신규 Hermes 전달: 0" in second_report
+    assert tuple(event.kind for event in HermesDeliveryStore(delivery).events()) == (
+        HermesDeliveryKind.WATCH,
+    )
     combined = first_report + second_report + terminal
     for marker in (signals[0].evidence_refs[0].record_id, "fixture-universe-v1"):
         assert marker not in combined
@@ -66,6 +74,7 @@ def test_fixture_cli_projects_and_replays_private_swing_shadow_evidence(
     assert str(output) not in combined
     for path in (
         database,
+        delivery,
         outbox,
         _report_path(output),
         *tuple((output / "trade-signal-cards-ko").iterdir()),
@@ -201,6 +210,7 @@ def test_help_exposes_only_bounded_local_options() -> None:
         "--universe-file",
         "--fixture-root",
         "--database",
+        "--delivery-database",
         "--output-dir",
         "--secret-path",
     ):

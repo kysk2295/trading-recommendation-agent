@@ -12,6 +12,9 @@ from types import SimpleNamespace
 
 import run_swing_shadow_trial as trial_cli
 from tests.test_swing_shadow_trial import _bounds, _seed_signal, _session_source
+from trading_agent.hermes_delivery_models import HermesDeliveryKind
+from trading_agent.hermes_delivery_projection import project_trade_signals
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.swing_shadow_engine import advance_swing_shadow_session
 
 PROJECT = Path(__file__).parents[1]
@@ -38,6 +41,16 @@ def test_help_exposes_only_local_shadow_operations() -> None:
         assert operation in completed.stdout
     for forbidden in ("--credential", "--endpoint", "--arm", "--force", "--code-version"):
         assert forbidden not in completed.stdout
+    finalize_help = subprocess.run(
+        (str(UV), "run", "python", str(SCRIPT), "finalize", "--help"),
+        cwd=PROJECT,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_execution_environment(),
+    )
+    assert finalize_help.returncode == 0
+    assert "--delivery-store" in finalize_help.stdout
 
 
 def test_unknown_option_creates_no_source_or_report(tmp_path: Path) -> None:
@@ -105,7 +118,13 @@ def test_fixture_register_start_finalize_review_and_replay_are_local_only(tmp_pa
     with shadow.writer() as writer:
         _ = advance_swing_shadow_session(writer, source=terminal_source)
     terminal = shadow.events(signal.signal_id)[-1]
-    finalized = trial_cli.main(("finalize", *base), now=terminal.observed_at + dt.timedelta(minutes=1))
+    delivery = HermesDeliveryStore(tmp_path / "delivery.sqlite3")
+    with delivery.writer() as writer:
+        assert project_trade_signals((signal,), writer, frozenset()).inserted == 1
+    finalized = trial_cli.main(
+        ("finalize", *base, "--delivery-store", str(delivery.path)),
+        now=terminal.observed_at + dt.timedelta(minutes=1),
+    )
     finalize_report = _report(tmp_path)
     reviewed = trial_cli.main(
         ("review", *base, "--review-ledger", str(tmp_path / "review.sqlite3")),
@@ -123,8 +142,13 @@ def test_fixture_register_start_finalize_review_and_replay_are_local_only(tmp_pa
     assert "created: false" in register_replay_report
     assert "event_kind: started" in start_report
     assert "event_kind: completed" in finalize_report
+    assert "delivery_inserted: 1" in finalize_report
     assert "reviewer_action: continue_collection" in review_report
     assert len(experiments.trials()) == 1
+    assert tuple(event.kind for event in delivery.events()) == (
+        HermesDeliveryKind.WATCH,
+        HermesDeliveryKind.NO_RECOMMENDATION,
+    )
     assert stat.S_IMODE((tmp_path / "experiments.sqlite3").stat().st_mode) == 0o600
     assert stat.S_IMODE((tmp_path / "swing-shadow.sqlite3").stat().st_mode) == 0o600
     assert stat.S_IMODE((tmp_path / "review.sqlite3").stat().st_mode) == 0o600
