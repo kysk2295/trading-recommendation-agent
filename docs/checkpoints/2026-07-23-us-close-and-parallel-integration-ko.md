@@ -58,3 +58,26 @@ terminal 파일을 쓰기 전에 재시작되면 같은 immutable delivery ident
 
 전체 pytest, Ruff, basedpyright와 독립 review lane은 이 체크포인트 커밋 뒤 정확한
 통합 SHA에서 수행한다.
+
+## 최초 통합 리뷰에서 수정한 결함
+
+최초 통합 SHA 리뷰는 다음 두 문제를 차단했다.
+
+1. M5가 root WATCH/no-recommendation 카드만으로 완료를 판단해, terminal delivery나
+   Reviewer append 전에 중단된 replay를 복구하지 못했다.
+2. M6 heavy-run lock이 기존 hard link에 `fchmod(0600)`을 적용해 연결된 파일의
+   권한을 바꿀 수 있었다.
+
+M5 완료 판단은 이제 요청 날짜의 root 카드뿐 아니라 각 signal의 shadow terminal,
+완료 trial event, terminal delivery와 Reviewer evidence를 모두 요구한다. 중간 상태를
+복구할 때 이미 관찰된 미래 terminal을 앞선 시각에 finalize하지 않고, persisted
+source 시각부터 순서대로 재개한다.
+
+M6 lease는 private parent descriptor, exact mode `0600`, 소유자, regular file,
+single-link, name-to-descriptor identity를 lock 전·후에 확인한다. parent/final symlink,
+hard link, 비공개 권한 위반과 lock name 교체는 모두 원본을 변경하지 않고 차단한다.
+
+- blocker RED: M5 1건 + M6 4건, 총 5 failed
+- 수정 뒤 집중 회귀: 11 passed
+- 변경 파일 Ruff: passed
+- 변경 파일 basedpyright: 0 errors, 0 warnings, 0 notes
