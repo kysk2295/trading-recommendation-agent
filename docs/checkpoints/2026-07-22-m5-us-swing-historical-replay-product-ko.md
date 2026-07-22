@@ -9,7 +9,7 @@
 - 기존 신고가·RVOL v1 projector가 첫 날 조건부 `WATCH`를 만들고, 조건이 없는 다음 날은 `NO_RECOMMENDATION`을 만든다.
 - 기존 Swing shadow engine이 다음 정규장의 trigger, 보수적 stop-first 규칙과 terminal을 append-only 원장에 기록한다.
 - 기존 global experiment trial이 장전 등록·정규장 시작·장후 완료 순서를 보존하고, terminal Hermes `EXIT`와 query-only 독립 Reviewer `continue_collection`을 연결한다.
-- 모든 요청 날짜의 root card가 이미 있으면 exact replay는 fixture를 다시 열지 않고 저장된 evidence만 집계한다.
+- exact replay는 요청 fixture의 source hash와 저장된 code version·root card·terminal·Reviewer evidence를 대조하고, 모두 같으면 scheduler를 재실행하거나 새 event를 append하지 않는다.
 
 ## 안전 경계
 
@@ -22,7 +22,7 @@
 ## 검증
 
 - failing-first E2E: 신규 entrypoint 부재에서 RED, 전체 causal flow에서 GREEN
-- exact replay 회귀: 실제 CLI `rc=1` 재현 뒤 source 재개방 0·event 불증가 `rc=0`으로 GREEN
+- exact replay 회귀: 실제 CLI `rc=1` 재현 뒤 source identity 재검증·scheduler 재실행 0·event 불증가 `rc=0`으로 GREEN
 - Swing 집중 회귀: `68 passed`
 - 전체 회귀: `3294 passed in 186.87s`
 - Ruff 전체: 통과
