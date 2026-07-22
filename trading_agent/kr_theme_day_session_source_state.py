@@ -6,6 +6,9 @@ from zoneinfo import ZoneInfo
 
 from trading_agent.experiment_ledger_models import TrialEventKind
 from trading_agent.experiment_ledger_store import InvalidExperimentLedgerSourceError
+from trading_agent.hermes_delivery_errors import InvalidHermesDeliveryStoreError
+from trading_agent.hermes_delivery_models import HermesDeliveryKind
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.kis_kr_market_models import KisKrMarketReceipt, KisKrMarketReceiptKind
 from trading_agent.kis_kr_market_receipt_store import KisKrMarketReceiptStore
 from trading_agent.kr_theme_day_review_store import (
@@ -93,7 +96,13 @@ def _resolve_source_state(
             case unreachable:
                 assert_never(unreachable)
         return kr_theme_day_session_source_state(tuple(sorted(references)))
-    except (AttributeError, InvalidExperimentLedgerSourceError, TypeError, ValueError):
+    except (
+        AttributeError,
+        InvalidExperimentLedgerSourceError,
+        InvalidHermesDeliveryStoreError,
+        TypeError,
+        ValueError,
+    ):
         raise InvalidKrThemeDaySessionEvidenceError from None
 
 
@@ -170,14 +179,41 @@ def _entry_references(
 ) -> tuple[str, ...]:
     trial_id = kr_theme_day_trial_id(manifest.session_date, manifest.strategy_version)
     bounded = cutoff if observed_through is None else min(cutoff, observed_through)
-    ids = tuple(
+    entries = tuple(
         sorted(
-            entry.entry_id
-            for entry in KrThemeDayShadowEntryStore(manifest.paths.entry_store).entries()
-            if entry.trial_id == trial_id and entry.filled_at.astimezone(KST) <= bounded
+            (
+                entry
+                for entry in KrThemeDayShadowEntryStore(manifest.paths.entry_store).entries()
+                if entry.trial_id == trial_id and entry.filled_at.astimezone(KST) <= bounded
+            ),
+            key=lambda entry: entry.entry_id,
         )
     )
-    return (f"entry-count:{len(ids)}", *(f"entry:{value}" for value in ids))
+    delivery_events = HermesDeliveryStore(manifest.paths.delivery_store).events() if entries else ()
+    delivery_ids: list[str] = []
+    for entry in entries:
+        matches = tuple(
+            event
+            for event in delivery_events
+            if event.source_event_id == entry.signal_id
+            and event.kind is HermesDeliveryKind.ACTIONABLE
+            and event.market_id == "kr_equities"
+            and event.agent_family == "day_trading"
+            and event.instrument_id == entry.symbol
+            and event.strategy_version == entry.strategy_version
+            and event.occurred_at == entry.signal_observed_at
+            and event.status == "current_quote_validated"
+            and event.root_delivery_id != event.delivery_id
+        )
+        if len(matches) != 1:
+            raise InvalidKrThemeDaySessionEvidenceError
+        delivery_ids.append(matches[0].delivery_id)
+    return (
+        f"entry-count:{len(entries)}",
+        *(f"entry:{entry.entry_id}" for entry in entries),
+        f"delivery-count:{len(delivery_ids)}",
+        *(f"delivery:{delivery_id}" for delivery_id in sorted(delivery_ids)),
+    )
 
 
 def _exit_references(

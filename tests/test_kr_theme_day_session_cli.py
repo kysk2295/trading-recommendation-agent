@@ -194,6 +194,7 @@ def _onboard_args(
         ("opportunity-outbox", paths.opportunity_outbox),
         ("receipt-store", paths.receipt_store),
         ("entry-store", paths.entry_store),
+        ("delivery-database", paths.delivery_store),
         ("exit-store", paths.exit_store),
         ("terminal-store", paths.terminal_store),
         ("review-store", paths.review_store),

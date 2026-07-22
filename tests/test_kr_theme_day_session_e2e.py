@@ -21,6 +21,9 @@ from tests.test_kr_theme_day_trial import _calendar_evidence
 from tests.test_kr_theme_day_trial_terminal import CLOSED_AT
 from trading_agent.contract_outbox import append_opportunity_snapshot
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
+from trading_agent.hermes_delivery_models import HermesDeliveryKind
+from trading_agent.hermes_delivery_projection import project_opportunity_snapshots
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.kis_kr_market_receipt_store import KisKrMarketReceiptStore
 from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStore
 from trading_agent.kr_theme_day_review_store import KrThemeDayReviewStore
@@ -50,6 +53,7 @@ def test_fixture_tick_runs_all_real_intraday_children_end_to_end(tmp_path: Path)
     manifest = _manifest(tmp_path)
     assert append_opportunity_snapshot(manifest.paths.opportunity_outbox, _opportunity()) is True
     manifest.paths.opportunity_outbox.chmod(0o600)
+    _project_opportunity(manifest)
     first_at = dt.datetime(2026, 7, 20, 9, 4, 4, tzinfo=KST)
     replay_at = dt.datetime(2026, 7, 20, 9, 4, 30, tzinfo=KST)
 
@@ -71,6 +75,10 @@ def test_fixture_tick_runs_all_real_intraday_children_end_to_end(tmp_path: Path)
     assert replay.completed_phases == ()
     assert len(KisKrMarketReceiptStore(paths.receipt_store).receipts()) == 3
     assert len(KrThemeDayShadowEntryStore(paths.entry_store).entries()) == 1
+    assert tuple(event.kind for event in HermesDeliveryStore(paths.delivery_store).events()) == (
+        HermesDeliveryKind.WATCH,
+        HermesDeliveryKind.ACTIONABLE,
+    )
     assert len(KrThemeDaySessionAuditStore(paths.audit_store).events(manifest.session_id)) == 5
     assert len(KrThemeDaySessionEvidenceStore(paths.audit_store).attestations(manifest.session_id)) == 5
 
@@ -80,6 +88,7 @@ def test_later_entry_does_not_change_prior_cycle_source_state(tmp_path: Path) ->
     manifest = _manifest(tmp_path)
     assert append_opportunity_snapshot(manifest.paths.opportunity_outbox, _opportunity()) is True
     manifest.paths.opportunity_outbox.chmod(0o600)
+    _project_opportunity(manifest)
     observed = dt.datetime(2026, 7, 20, 9, 4, 4, tzinfo=KST)
     _ = run_kr_theme_day_session_tick(
         manifest,
@@ -187,6 +196,11 @@ def _manifest(tmp_path: Path) -> KrThemeDaySessionManifest:
             }
         )
     )
+
+
+def _project_opportunity(manifest: KrThemeDaySessionManifest) -> None:
+    with HermesDeliveryStore(manifest.paths.delivery_store).writer() as writer:
+        _ = project_opportunity_snapshots((_opportunity(),), writer)
 
 
 def _post_session_runner(command: tuple[str, ...]) -> int:

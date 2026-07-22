@@ -11,6 +11,9 @@ from tests.test_kis_kr_market_projection import _opportunity
 from tests.test_kr_theme_day_intraday import _receipt_store
 from tests.test_kr_theme_day_shadow_entry import VERSION, _ledger
 from trading_agent.contract_outbox import append_opportunity_snapshot
+from trading_agent.hermes_delivery_models import HermesDeliveryKind
+from trading_agent.hermes_delivery_projection import project_opportunity_snapshots
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.kr_theme_day_shadow_entry_store import KrThemeDayShadowEntryStore
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,24 +41,39 @@ def test_intraday_cli_projects_fixture_receipts_and_replays(tmp_path: Path) -> N
     _ = _ledger(database)
     receipt_store = _receipt_store(tmp_path)
     entry_store = tmp_path / "entries.sqlite3"
+    delivery_store = tmp_path / "delivery.sqlite3"
     outbox = tmp_path / "opportunities.jsonl"
     assert append_opportunity_snapshot(outbox, _opportunity()) is True
     outbox.chmod(0o600)
+    with HermesDeliveryStore(delivery_store).writer() as writer:
+        _ = project_opportunity_snapshots((_opportunity(),), writer)
     output = tmp_path / "report"
-    args = _args(database, receipt_store.path, entry_store, outbox, output)
+    args = _args(database, receipt_store.path, entry_store, delivery_store, outbox, output)
 
     first = intraday_cli.main(args)
     second = intraday_cli.main(args)
 
     report = (output / "kr_theme_day_intraday_ko.md").read_text(encoding="utf-8")
+    card = (output / "kr_theme_day_recommendation_card.ko.md").read_text(encoding="utf-8")
     assert first == 0
     assert second == 0
     assert len(KrThemeDayShadowEntryStore(entry_store).entries()) == 1
+    delivery_events = HermesDeliveryStore(delivery_store).events()
+    assert len(delivery_events) == 2
+    assert delivery_events[-1].kind is HermesDeliveryKind.ACTIONABLE
+    assert delivery_events[-1].status == "current_quote_validated"
+    assert delivery_events[-1].root_delivery_id == delivery_events[0].delivery_id
     assert "결과: entry_replayed" in report
     assert "order authority: false" in report
     assert "external mutation: 0" in report
+    assert "recommendation card: written" in report
     assert "005930" not in report
+    assert "한국 주식" in card
+    assert "주문 권한: 없음 (KR shadow-only)" in card
+    assert "국내 계좌·주문·잔고 API를 사용하지 않습니다" in card
+    assert "005930" in card
     assert stat.S_IMODE((output / "kr_theme_day_intraday_ko.md").stat().st_mode) == 0o600
+    assert stat.S_IMODE((output / "kr_theme_day_recommendation_card.ko.md").stat().st_mode) == 0o600
 
 
 def test_intraday_cli_blocks_missing_opportunity_without_entry(tmp_path: Path) -> None:
@@ -65,7 +83,14 @@ def test_intraday_cli_blocks_missing_opportunity_without_entry(tmp_path: Path) -
     entry_store = tmp_path / "entries.sqlite3"
 
     result = intraday_cli.main(
-        _args(database, receipt_store.path, entry_store, tmp_path / "missing.jsonl", tmp_path / "report")
+        _args(
+            database,
+            receipt_store.path,
+            entry_store,
+            tmp_path / "delivery.sqlite3",
+            tmp_path / "missing.jsonl",
+            tmp_path / "report",
+        )
     )
 
     assert result == 1
@@ -81,7 +106,16 @@ def test_intraday_cli_blocks_opportunity_changed_after_onboarding(tmp_path: Path
     outbox = tmp_path / "opportunities.jsonl"
     assert append_opportunity_snapshot(outbox, _opportunity()) is True
     outbox.chmod(0o600)
-    args = list(_args(database, receipt_store.path, entry_store, outbox, tmp_path / "report"))
+    args = list(
+        _args(
+            database,
+            receipt_store.path,
+            entry_store,
+            tmp_path / "delivery.sqlite3",
+            outbox,
+            tmp_path / "report",
+        )
+    )
     args[args.index("--opportunity-sha256") + 1] = "0" * 64
 
     # When
@@ -92,10 +126,31 @@ def test_intraday_cli_blocks_opportunity_changed_after_onboarding(tmp_path: Path
     assert not entry_store.exists()
 
 
+def test_intraday_cli_blocks_delivery_database_alias_before_shadow_entry(tmp_path: Path) -> None:
+    # Given
+    database = tmp_path / "experiment.sqlite3"
+    _ = _ledger(database)
+    receipt_store = _receipt_store(tmp_path)
+    entry_store = tmp_path / "entries.sqlite3"
+    outbox = tmp_path / "opportunities.jsonl"
+    assert append_opportunity_snapshot(outbox, _opportunity()) is True
+    outbox.chmod(0o600)
+
+    # When
+    result = intraday_cli.main(
+        _args(database, receipt_store.path, entry_store, entry_store, outbox, tmp_path / "report")
+    )
+
+    # Then
+    assert result == 1
+    assert not entry_store.exists()
+
+
 def _args(
     database: Path,
     receipt_store: Path,
     entry_store: Path,
+    delivery_store: Path,
     outbox: Path,
     output: Path,
 ) -> tuple[str, ...]:
@@ -118,6 +173,8 @@ def _args(
         str(receipt_store),
         "--entry-store",
         str(entry_store),
+        "--delivery-database",
+        str(delivery_store),
         "--output-dir",
         str(output),
     )

@@ -111,7 +111,7 @@ def main(
     ):
         if args.command == "onboard":
             _write_onboarding_report(args.output_dir, None)
-        elif args.command == "tick":
+        if args.command == "tick":
             _write_report(args.output_dir, None)
         return 1
     _write_report(args.output_dir, result)
@@ -125,6 +125,7 @@ def _path_arguments(parser: argparse.ArgumentParser) -> None:
         "opportunity-outbox",
         "receipt-store",
         "entry-store",
+        "delivery-database",
         "exit-store",
         "terminal-store",
         "review-store",
@@ -143,6 +144,7 @@ def _paths(args: argparse.Namespace) -> KrThemeDaySessionPaths:
         opportunity_outbox=args.opportunity_outbox.absolute(),
         receipt_store=args.receipt_store.absolute(),
         entry_store=args.entry_store.absolute(),
+        delivery_store=args.delivery_database.absolute(),
         exit_store=args.exit_store.absolute(),
         terminal_store=args.terminal_store.absolute(),
         review_store=args.review_store.absolute(),

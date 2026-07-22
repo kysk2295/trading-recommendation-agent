@@ -39,6 +39,7 @@ def _identity(tmp_path: Path) -> KrThemeDaySessionIdentity:
             opportunity_outbox=tmp_path / "opportunities.jsonl",
             receipt_store=tmp_path / "receipts.sqlite3",
             entry_store=tmp_path / "entries.sqlite3",
+            delivery_store=tmp_path / "delivery.sqlite3",
             exit_store=tmp_path / "exits.sqlite3",
             terminal_store=tmp_path / "terminals.sqlite3",
             review_store=tmp_path / "reviews.sqlite3",
@@ -69,7 +70,7 @@ def test_manifest_round_trip_is_content_addressed_and_private(tmp_path: Path) ->
 
     # Then
     assert loaded == manifest
-    assert loaded.schema_version == 2
+    assert loaded.schema_version == 3
     assert len(loaded.session_id) == 64
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 

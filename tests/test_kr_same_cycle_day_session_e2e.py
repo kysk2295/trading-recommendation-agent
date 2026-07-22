@@ -227,6 +227,7 @@ def _session_paths(
         opportunity_outbox=outbox,
         receipt_store=(tmp_path / "market-receipts.sqlite3").absolute(),
         entry_store=(tmp_path / "entries.sqlite3").absolute(),
+        delivery_store=(tmp_path / "delivery.sqlite3").absolute(),
         exit_store=(tmp_path / "exits.sqlite3").absolute(),
         terminal_store=(tmp_path / "terminals.sqlite3").absolute(),
         review_store=(tmp_path / "reviews.sqlite3").absolute(),

@@ -16,7 +16,7 @@ from trading_agent.hermes_delivery_models import (
     hermes_delivery_id,
 )
 from trading_agent.hermes_delivery_store import HermesDeliveryWriter
-from trading_agent.signal_contract_models import OpportunitySnapshot, SignalActionability
+from trading_agent.signal_contract_models import OpportunitySnapshot, SignalActionability, TradeSignalEnvelope
 from trading_agent.trade_signal_outbox_reader import TradeSignalOutboxReaderError, read_trade_signal_publications
 from trading_agent.trade_signal_publication import TradeSignalPublication
 
@@ -140,6 +140,25 @@ def project_opportunity_snapshots(
     return project_outcomes(records, writer)
 
 
+def project_trade_signals(
+    signals: tuple[TradeSignalEnvelope, ...],
+    writer: HermesDeliveryWriter,
+    root_source_event_ids: frozenset[str],
+) -> HermesProjectionResult:
+    validated = tuple(
+        TradeSignalEnvelope.model_validate(signal.model_dump(mode="python")) for signal in signals
+    )
+    records = tuple(
+        _trade_signal_record(
+            signal,
+            root_source_event_ids,
+            hashlib.sha256(signal.model_dump_json().encode()).hexdigest(),
+        )
+        for signal in validated
+    )
+    return project_outcomes(records, writer)
+
+
 def _read_opportunities(path: Path) -> tuple[OpportunitySnapshot, ...]:
     source = path.expanduser().absolute()
     if source.is_symlink():
@@ -192,7 +211,18 @@ def _opportunity_records(snapshot: OpportunitySnapshot) -> tuple[HermesProjectio
 
 
 def _signal_record(publication: TradeSignalPublication, root_sources: frozenset[str]) -> HermesProjectionRecord:
-    signal = publication.signal
+    return _trade_signal_record(
+        publication.signal,
+        root_sources,
+        hashlib.sha256(publication.model_dump_json().encode()).hexdigest(),
+    )
+
+
+def _trade_signal_record(
+    signal: TradeSignalEnvelope,
+    root_sources: frozenset[str],
+    payload_sha256: str,
+) -> HermesProjectionRecord:
     root_source = None if signal.opportunity_id is None else f"{signal.opportunity_id}:{signal.symbol}"
     kind = (
         HermesDeliveryKind.ACTIONABLE
@@ -216,5 +246,5 @@ def _signal_record(publication: TradeSignalPublication, root_sources: frozenset[
             f"{signal.strategy_lane.agent_family.value}: {signal.symbol}, entry {signal.entry_price}, "
             f"stop {signal.stop_price}, targets {targets}. {signal.rationale}"
         ),
-        payload_sha256=hashlib.sha256(publication.model_dump_json().encode()).hexdigest(),
+        payload_sha256=payload_sha256,
     )

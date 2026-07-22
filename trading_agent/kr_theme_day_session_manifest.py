@@ -34,6 +34,7 @@ class KrThemeDaySessionPaths(BaseModel):
     opportunity_outbox: Path
     receipt_store: Path
     entry_store: Path
+    delivery_store: Path
     exit_store: Path
     terminal_store: Path
     review_store: Path
@@ -102,7 +103,7 @@ class KrThemeDaySessionIdentity(BaseModel):
 
 
 class KrThemeDaySessionManifest(KrThemeDaySessionIdentity):
-    schema_version: Literal[2] = 2
+    schema_version: Literal[3] = 3
     session_id: str
 
     @model_validator(mode="after")
@@ -115,7 +116,7 @@ class KrThemeDaySessionManifest(KrThemeDaySessionIdentity):
 def build_kr_theme_day_session_manifest(identity: KrThemeDaySessionIdentity) -> KrThemeDaySessionManifest:
     validated = KrThemeDaySessionIdentity.model_validate(identity.model_dump(mode="python"))
     provisional = KrThemeDaySessionManifest.model_construct(
-        schema_version=2,
+        schema_version=3,
         session_id="0" * 64,
         strategy_version=validated.strategy_version,
         code_version=validated.code_version,

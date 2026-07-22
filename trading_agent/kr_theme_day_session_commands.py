@@ -76,6 +76,8 @@ def kr_theme_day_session_child_command(
                 str(manifest.paths.receipt_store),
                 "--entry-store",
                 str(manifest.paths.entry_store),
+                "--delivery-database",
+                str(manifest.paths.delivery_store),
                 "--output-dir",
                 str(output),
             )

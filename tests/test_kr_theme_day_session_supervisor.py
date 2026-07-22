@@ -140,6 +140,7 @@ def test_entry_uses_fresh_time_observed_after_collection(tmp_path: Path) -> None
     assert result.blocked_phase is None
     entry = commands[3]
     assert entry[entry.index("--evaluated-at") + 1] == "2026-07-20T09:04:05+09:00"
+    assert entry[entry.index("--delivery-database") + 1] == str(manifest.paths.delivery_store)
 
 
 def test_legacy_completed_event_without_source_attestation_is_replayed(tmp_path: Path) -> None:
