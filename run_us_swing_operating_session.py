@@ -11,7 +11,7 @@ import datetime as dt
 import sqlite3
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import override
@@ -32,6 +32,12 @@ from trading_agent.us_swing_operating_coordinator import (
     SwingOperatingRequest,
     SwingOperatingResult,
     run_us_swing_operating_tick,
+)
+from trading_agent.us_swing_operating_models import (
+    SwingScanCompleted,
+    SwingScanFailed,
+    SwingScanFailureReason,
+    SwingScanOutcome,
 )
 
 ROOT = Path(__file__).resolve().parent
@@ -58,8 +64,9 @@ class SwingScannerCommand:
 @dataclass(frozen=True, slots=True)
 class SubprocessSwingDailyScanner:
     command: SwingScannerCommand
+    clock: Callable[[], dt.datetime]
 
-    def run(self, session_date: dt.date) -> dt.datetime:
+    def run(self, session_date: dt.date) -> SwingScanOutcome:
         arguments = [
             sys.executable,
             str(ROOT / "run_us_swing_shadow.py"),
@@ -87,11 +94,14 @@ class SubprocessSwingDailyScanner:
             )
         else:
             raise UsSwingOperatingCliError
-        _ = subprocess.run(arguments, cwd=ROOT, check=True, capture_output=True, text=True)
-        if self.command.fixture_root is not None:
-            source = load_swing_daily_source(self.command.fixture_root, session_date=session_date)
-            return source.observed_at + dt.timedelta(microseconds=1)
-        return dt.datetime.now(NEW_YORK)
+        try:
+            _ = subprocess.run(arguments, cwd=ROOT, check=True, capture_output=True, text=True)
+            if self.command.fixture_root is not None:
+                source = load_swing_daily_source(self.command.fixture_root, session_date=session_date)
+                return SwingScanCompleted(source.observed_at + dt.timedelta(microseconds=1))
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return SwingScanFailed(self.clock(), SwingScanFailureReason.SOURCE_UNAVAILABLE)
+        return SwingScanCompleted(self.clock())
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -159,7 +169,8 @@ def main(
                 auto_universe=args.auto_universe,
                 fixture_root=args.fixture_root,
                 secret_path=args.secret_path,
-            )
+            ),
+            clock=lambda: timestamp,
         )
         result = run_us_swing_operating_tick(
             SwingOperatingRequest(timestamp, code_version),
@@ -220,6 +231,7 @@ def _write_report(output_dir: Path, result: SwingOperatingResult | None) -> None
             f"started: {result.started}",
             f"finalized: {result.finalized}",
             f"delivered: {result.delivered}",
+            f"incidents: {result.incidents}",
             f"reviewed: {result.reviewed}",
             f"blocked_signals: {len(result.blocked_signal_ids)}",
             "external broker mutations: 0",

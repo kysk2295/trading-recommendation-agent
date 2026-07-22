@@ -3,10 +3,6 @@ from __future__ import annotations
 import datetime as dt
 from typing import Final, assert_never
 
-from trading_agent.hermes_delivery_models import HermesDeliveryKind
-from trading_agent.hermes_delivery_store import HermesDeliveryStore
-from trading_agent.research_identity_models import AgentFamily, MarketId, StrategyLaneRef
-from trading_agent.swing_research_contract import SWING_RESEARCH_CONTRACT
 from trading_agent.swing_shadow_delivery import project_swing_shadow_terminal_delivery
 from trading_agent.swing_shadow_reviewer import review_swing_shadow_trial
 from trading_agent.swing_shadow_store import ShadowEventKind
@@ -25,6 +21,7 @@ from trading_agent.us_swing_operating_models import (
     SwingOperatingRequest,
     SwingOperatingResult,
 )
+from trading_agent.us_swing_source_cycle import run_post_close_swing_source_cycle
 
 _TERMINAL_KINDS: Final = frozenset(
     {
@@ -33,11 +30,6 @@ _TERMINAL_KINDS: Final = frozenset(
         ShadowEventKind.TARGETED,
         ShadowEventKind.TIME_EXIT,
     }
-)
-_SWING_LANE: Final = StrategyLaneRef(
-    market_id=MarketId.US_EQUITIES,
-    agent_family=AgentFamily.SWING_TRADING,
-    strategy_id=SWING_RESEARCH_CONTRACT.strategy_id,
 )
 
 
@@ -52,24 +44,29 @@ def run_us_swing_operating_tick(
     ):
         raise InvalidSwingOperatingRequestError
     now = request.now.astimezone(NEW_YORK)
-    session_date = now.date()
     phase = _phase(now)
     scanner_executed = False
+    incidents = 0
     operation_request = request
     match phase:
         case SwingOperatingPhase.NON_SESSION:
-            return SwingOperatingResult(phase, False, 0, 0, 0, 0, 0, ())
-        case SwingOperatingPhase.POST_CLOSE if not _has_source_cycle(config.delivery_store, session_date):
-            scanned_at = config.scanner.run(session_date)
-            if (
-                not _aware(scanned_at)
-                or scanned_at < request.now
-                or scanned_at.astimezone(NEW_YORK).date() != session_date
-            ):
-                raise InvalidSwingOperatingRequestError
-            operation_request = SwingOperatingRequest(scanned_at, request.runtime_code_version)
-            scanner_executed = True
-        case SwingOperatingPhase.PRE_OPEN | SwingOperatingPhase.REGULAR | SwingOperatingPhase.POST_CLOSE:
+            return SwingOperatingResult(
+                phase=phase,
+                scanner_executed=False,
+                registered=0,
+                started=0,
+                finalized=0,
+                delivered=0,
+                incidents=0,
+                reviewed=0,
+                blocked_signal_ids=(),
+            )
+        case SwingOperatingPhase.POST_CLOSE:
+            source_cycle = run_post_close_swing_source_cycle(request, config)
+            operation_request = source_cycle.operation_request
+            scanner_executed = source_cycle.scanner_executed
+            incidents = source_cycle.incidents
+        case SwingOperatingPhase.PRE_OPEN | SwingOperatingPhase.REGULAR:
             pass
         case unreachable:
             assert_never(unreachable)
@@ -84,6 +81,7 @@ def run_us_swing_operating_tick(
         started=started,
         finalized=finalized,
         delivered=delivered,
+        incidents=incidents,
         reviewed=reviewed,
         blocked_signal_ids=tuple(sorted(set((*registration_blocks, *start_blocks, *terminal_blocks)))),
     )
@@ -129,9 +127,7 @@ def _start_due(
     phase: SwingOperatingPhase,
 ) -> tuple[int, tuple[str, ...]]:
     session_date = request.now.astimezone(NEW_YORK).date()
-    registrations = {
-        stored.registration.trial_id: stored.registration for stored in config.experiment_ledger.trials()
-    }
+    registrations = {stored.registration.trial_id: stored.registration for stored in config.experiment_ledger.trials()}
     started = 0
     blocked: list[str] = []
     for signal in config.shadow_ledger.signals():
@@ -166,9 +162,7 @@ def _reconcile_terminals(
     request: SwingOperatingRequest,
     config: SwingOperatingConfig,
 ) -> tuple[int, int, int, tuple[str, ...]]:
-    registrations = {
-        stored.registration.trial_id: stored.registration for stored in config.experiment_ledger.trials()
-    }
+    registrations = {stored.registration.trial_id: stored.registration for stored in config.experiment_ledger.trials()}
     finalized = delivered = reviewed = 0
     blocked: list[str] = []
     for signal in config.shadow_ledger.signals():
@@ -203,19 +197,6 @@ def _reconcile_terminals(
         )
         reviewed += int(review.created)
     return finalized, delivered, reviewed, tuple(blocked)
-
-
-def _has_source_cycle(store: HermesDeliveryStore, session_date: dt.date) -> bool:
-    return any(
-        event.root_delivery_id == event.delivery_id
-        and event.kind in {HermesDeliveryKind.WATCH, HermesDeliveryKind.NO_RECOMMENDATION}
-        and event.occurred_at.astimezone(NEW_YORK).date() == session_date
-        and event.market_id == _SWING_LANE.market_id.value
-        and event.agent_family == _SWING_LANE.agent_family.value
-        and event.lane_id == _SWING_LANE.canonical_id
-        and event.strategy_version == SWING_RESEARCH_CONTRACT.strategy_version
-        for event in store.events()
-    )
 
 
 def _phase(now: dt.datetime) -> SwingOperatingPhase:

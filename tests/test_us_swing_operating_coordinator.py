@@ -20,6 +20,7 @@ from trading_agent.us_swing_operating_coordinator import (
     SwingOperatingRequest,
     run_us_swing_operating_tick,
 )
+from trading_agent.us_swing_operating_models import SwingScanCompleted, SwingScanOutcome
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "examples" / "research" / "us-swing-new-high-rvol-v1.json"
@@ -155,7 +156,7 @@ class _FixtureScanner:
         self._delivery = delivery
         self.session_dates: list[dt.date] = []
 
-    def run(self, session_date: dt.date) -> dt.datetime:
+    def run(self, session_date: dt.date) -> SwingScanOutcome:
         source = self._sources[session_date]
         signals = project_new_high_rvol_signals(source)
         with self._shadow.writer() as writer:
@@ -163,7 +164,7 @@ class _FixtureScanner:
         with self._delivery.writer() as writer:
             _ = project_swing_shadow_cycle_delivery(source, signals, writer)
         self.session_dates.append(session_date)
-        return source.observed_at + dt.timedelta(seconds=1)
+        return SwingScanCompleted(source.observed_at + dt.timedelta(seconds=1))
 
 
 def _config(

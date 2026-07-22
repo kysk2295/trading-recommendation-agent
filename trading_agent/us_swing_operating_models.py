@@ -18,8 +18,26 @@ class SwingOperatingPhase(StrEnum):
     POST_CLOSE = "post_close"
 
 
+class SwingScanFailureReason(StrEnum):
+    SOURCE_UNAVAILABLE = "source_unavailable"
+
+
+@dataclass(frozen=True, slots=True)
+class SwingScanCompleted:
+    completed_at: dt.datetime
+
+
+@dataclass(frozen=True, slots=True)
+class SwingScanFailed:
+    failed_at: dt.datetime
+    reason: SwingScanFailureReason
+
+
+type SwingScanOutcome = SwingScanCompleted | SwingScanFailed
+
+
 class SwingDailyScanner(Protocol):
-    def run(self, session_date: dt.date) -> dt.datetime: ...
+    def run(self, session_date: dt.date) -> SwingScanOutcome: ...
 
 
 class InvalidSwingOperatingRequestError(ValueError):
@@ -51,6 +69,7 @@ class SwingOperatingResult:
     started: int
     finalized: int
     delivered: int
+    incidents: int
     reviewed: int
     blocked_signal_ids: tuple[str, ...]
     external_broker_mutations: int = 0
@@ -63,4 +82,8 @@ __all__ = (
     "SwingOperatingPhase",
     "SwingOperatingRequest",
     "SwingOperatingResult",
+    "SwingScanCompleted",
+    "SwingScanFailed",
+    "SwingScanFailureReason",
+    "SwingScanOutcome",
 )

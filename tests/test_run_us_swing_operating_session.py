@@ -57,9 +57,7 @@ def test_cli_fixture_tick_runs_scanner_registers_trial_and_replays(tmp_path: Pat
     assert replay == 0
     assert len(SwingShadowReader(shadow).signals()) == 1
     assert len(ExperimentLedgerReader(experiment).trials()) == 1
-    assert tuple(event.kind for event in HermesDeliveryStore(delivery).events()) == (
-        HermesDeliveryKind.WATCH,
-    )
+    assert tuple(event.kind for event in HermesDeliveryStore(delivery).events()) == (HermesDeliveryKind.WATCH,)
     report = output / "us_swing_operating_session_ko.md"
     assert stat.S_IMODE(report.stat().st_mode) == 0o600
     assert "scanner_executed: false" in report.read_text(encoding="utf-8")
@@ -80,6 +78,53 @@ def test_cli_help_exposes_one_tick_operating_contract() -> None:
     assert "--universe-file" in completed.stdout
     assert "--auto-universe" in completed.stdout
     assert "--experiment-ledger" in completed.stdout
+
+
+def test_cli_projects_source_incident_when_post_close_scanner_fails(tmp_path: Path) -> None:
+    # Given: a post-close operating tick whose completed-day source is unavailable.
+    delivery = tmp_path / "delivery.sqlite3"
+    output = tmp_path / "output"
+    now = dt.datetime.combine(SESSION, dt.time(16, 5), tzinfo=NEW_YORK)
+    arguments = (
+        "--session-date",
+        SESSION.isoformat(),
+        "--fixture-root",
+        str(tmp_path / "missing-fixture"),
+        "--research-manifest",
+        str(MANIFEST),
+        "--experiment-ledger",
+        str(tmp_path / "experiment.sqlite3"),
+        "--shadow-ledger",
+        str(tmp_path / "shadow.sqlite3"),
+        "--delivery-store",
+        str(delivery),
+        "--review-ledger",
+        str(tmp_path / "reviews.sqlite3"),
+        "--output-dir",
+        str(output),
+    )
+
+    # When: the real subprocess scanner boundary cannot load that source.
+    first = main(arguments, now=now, runtime_code_version="test_code_v1")
+    replay = main(
+        arguments,
+        now=now + dt.timedelta(minutes=1),
+        runtime_code_version="test_code_v1",
+    )
+
+    # Then: the handled failure becomes one deliverable incident, never a broker action.
+    assert (first, replay) == (0, 0)
+    events = HermesDeliveryStore(delivery).events()
+    assert tuple(event.kind for event in events) == (HermesDeliveryKind.INCIDENT,)
+    event = events[0]
+    bounds = regular_session_bounds(SESSION)
+    assert bounds is not None
+    assert event.source_event_id == "swing-source-incident:20260717:new_high_rvol_20d_1p5_v1:source_unavailable"
+    assert event.status == "blocked_source_unavailable"
+    assert event.occurred_at == bounds[1]
+    report = (output / "us_swing_operating_session_ko.md").read_text(encoding="utf-8")
+    assert "incidents: 1" in report
+    assert "external broker mutations: 0" in report
 
 
 def _write_signal_fixture(tmp_path: Path) -> Path:
