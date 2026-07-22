@@ -15,6 +15,10 @@ from typing import Final, assert_never
 _SYMBOL = re.compile(r"^(?:[A-Z0-9][A-Z0-9./-]{0,19}|[0-9]{6})$")
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$")
 _DATABASE = Path("outputs/hermes/delivery.sqlite3")
+_ARM_DATABASE = Path("outputs/hermes/arm.sqlite3")
+_LANE_REGISTRY = Path("outputs/lane_control/lane_registry.sqlite3")
+_EXPERIMENT_LEDGER = Path("outputs/experiment_control/experiment_ledger.sqlite3")
+type ArmSchemaValue = str | bool | list[str] | dict[str, ArmSchemaValue]
 
 _QUERY_SCHEMA = {
     "name": "trading_agent_query",
@@ -37,42 +41,27 @@ _STATUS_SCHEMA = {
     "description": "Report whether the local trading-agent query and delivery surfaces are available.",
     "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
 }
-_ARM_PREPARE_SCHEMA = {
-    "name": "trading_agent_arm_prepare",
-    "description": "Prepare an expiring owner-bound Alpaca Paper arm request without placing an order.",
-    "parameters": {
+
+
+def _arm_schema(name: str, description: str, fields: tuple[str, ...]) -> dict[str, ArmSchemaValue]:
+    parameters: dict[str, ArmSchemaValue] = {
         "type": "object",
-        "properties": {
-            "session_id": {"type": "string"},
-            "lane_id": {"type": "string"},
-        },
-        "required": ["session_id", "lane_id"],
+        "properties": {field: {"type": "string"} for field in fields},
+        "required": list(fields),
         "additionalProperties": False,
-    },
-}
-_ARM_CONFIRM_SCHEMA = {
-    "name": "trading_agent_arm_confirm",
-    "description": "Confirm one prepared owner-bound Alpaca Paper arm request.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "request_id": {"type": "string"},
-            "confirmation": {"type": "string"},
-        },
-        "required": ["request_id", "confirmation"],
-        "additionalProperties": False,
-    },
-}
-_ARM_REVOKE_SCHEMA = {
-    "name": "trading_agent_arm_revoke",
-    "description": "Revoke a pending owner-bound Alpaca Paper arm request.",
-    "parameters": {
-        "type": "object",
-        "properties": {"request_id": {"type": "string"}},
-        "required": ["request_id"],
-        "additionalProperties": False,
-    },
-}
+    }
+    return {"name": name, "description": description, "parameters": parameters}
+
+
+_ARM_PREPARE_SCHEMA = _arm_schema(
+    "trading_agent_arm_prepare", "Prepare an expiring owner-bound Paper arm request.", ("session_id", "lane_id")
+)
+_ARM_CONFIRM_SCHEMA = _arm_schema(
+    "trading_agent_arm_confirm", "Confirm one owner-bound Paper arm request.", ("request_id", "confirmation")
+)
+_ARM_REVOKE_SCHEMA = _arm_schema(
+    "trading_agent_arm_revoke", "Revoke an unconsumed Paper arm request.", ("request_id",)
+)
 
 
 class InvalidTradingAgentPluginConfigurationError(ValueError):
@@ -122,7 +111,10 @@ def _start_delivery_worker() -> None:
     try:
         from .delivery_worker import start_delivery_daemon
         from .telegram_sender import HermesTelegramSender, InvalidHermesTelegramConfigurationError
-
+    except ImportError:
+        _DELIVERY_STATE.status = _PluginDeliveryStatus.BLOCKED_CONFIGURATION
+        return
+    try:
         root = _project_root()
         sender = HermesTelegramSender.from_hermes_config()
         _ = start_delivery_daemon(root / _DATABASE, sender)
@@ -177,7 +169,7 @@ def _status(args: Mapping[str, str], **context: str) -> str:
             "delivery_worker_status": _delivery_worker_status(),
             "query_available": (root / "run_hermes_delivery.py").is_file(),
             "result": "ready",
-            "version": "1.1.0",
+            "version": "1.2.0",
         }
     )
 
@@ -206,7 +198,40 @@ def _arm(args: Mapping[str, str], context: Mapping[str, str], *, required: tuple
         return _blocked("project_root_invalid")
     if not gateway.is_file():
         return _blocked("arm_gateway_unavailable")
-    return _blocked("arm_gateway_contract_pending")
+    common = ("--database", str(_ARM_DATABASE), "--lane-registry", str(_LANE_REGISTRY))
+    common += ("--experiment-ledger", str(_EXPERIMENT_LEDGER))
+    if required == ("lane_id", "session_id"):
+        command = (
+            "prepare",
+            *common,
+            "--owner-id-hash",
+            owner_binding,
+            "--session-id",
+            args["session_id"],
+            "--lane-id",
+            args["lane_id"],
+        )
+    elif required == ("confirmation", "request_id"):
+        command = (
+            "confirm",
+            *common,
+            "--owner-id-hash",
+            owner_binding,
+            "--request-id",
+            args["request_id"],
+            "--confirmation",
+            args["confirmation"],
+        )
+    else:
+        command = (
+            "revoke",
+            *common,
+            "--owner-id-hash",
+            owner_binding,
+            "--request-id",
+            args["request_id"],
+        )
+    return _run_project_cli("run_hermes_arm_gateway.py", command)
 
 
 def _owner_binding(context: Mapping[str, str]) -> str | None:

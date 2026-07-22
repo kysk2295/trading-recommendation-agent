@@ -114,6 +114,50 @@ def test_arm_handler_derives_owner_from_session_context_and_fails_closed(tmp_pat
     assert unavailable == {"reason": "arm_gateway_unavailable", "result": "blocked"}
 
 
+def test_arm_handler_calls_gateway_with_hashed_owner_context(tmp_path: Path, monkeypatch) -> None:
+    # Given
+    plugin = _load_plugin()
+    context = FakePluginContext()
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "AGENTS.md").write_text("rules\n", encoding="utf-8")
+    (project / "run_hermes_delivery.py").write_text("pass\n", encoding="utf-8")
+    (project / "run_hermes_arm_gateway.py").write_text("pass\n", encoding="utf-8")
+    monkeypatch.setenv("TRADING_AGENT_PROJECT_ROOT", str(project))
+    calls: list[tuple[str, ...]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = '{"request_id":"a","result":"prepared"}\n'
+
+    def fake_run(command, **kwargs):
+        calls.append(tuple(command))
+        return Completed()
+
+    monkeypatch.setattr(plugin.subprocess, "run", fake_run)
+    plugin.register(context)
+    handler = context.tools["trading_agent_arm_prepare"]["handler"]
+
+    # When
+    result = json.loads(
+        handler(
+            {"session_id": "XNYS-2026-07-22", "lane_id": "intraday_momentum"},
+            platform="telegram",
+            sender_id="owner-1",
+            session_id="chat-session-1",
+        )
+    )
+
+    # Then
+    assert result == {"request_id": "a", "result": "prepared"}
+    assert len(calls) == 1
+    command = calls[0]
+    assert command[1:4] == ("run", "python", str(project / "run_hermes_arm_gateway.py"))
+    owner_index = command.index("--owner-id-hash") + 1
+    assert len(command[owner_index]) == 64
+    assert "owner-1" not in command
+
+
 def _load_plugin():
     root = Path(__file__).parents[1]
     source = root / "integrations" / "hermes" / "trading-agent" / "__init__.py"

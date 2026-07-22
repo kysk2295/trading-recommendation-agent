@@ -67,7 +67,7 @@ def test_plugin_status_reports_disabled_at_least_once_contract(tmp_path: Path, m
         "delivery_worker_status": "disabled",
         "query_available": True,
         "result": "ready",
-        "version": "1.1.0",
+        "version": "1.2.0",
     }
 
 
