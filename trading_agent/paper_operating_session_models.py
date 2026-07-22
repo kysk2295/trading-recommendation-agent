@@ -22,6 +22,7 @@ from trading_agent.paper_protective_exit import (
     NoProtectiveExitRequired,
 )
 from trading_agent.paper_risk import DEFAULT_PAPER_RISK_CONFIG, PaperRiskConfig
+from trading_agent.paper_runtime import PaperRuntimeReadiness
 from trading_agent.paper_safety_models import BlockedPaperSafetyPlan, PaperSafetyPlanDecision
 from trading_agent.paper_trade_update_classification import PaperTradeUpdateIngestionResult
 
@@ -36,6 +37,8 @@ class PaperOrderAdmissionRequest:
 
 
 class PaperOperatingSession(Protocol):
+    def readiness(self) -> PaperRuntimeReadiness: ...
+
     def ingest_next(self, timeout_seconds: float) -> PaperTradeUpdateIngestionResult: ...
 
     def evaluate_order(

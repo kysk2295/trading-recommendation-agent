@@ -27,6 +27,7 @@ from trading_agent.paper_operating_mutation_models import (
 from trading_agent.paper_operating_session_models import (
     BusyPaperOperatingSessionError,
     InactivePaperOperatingSessionError,
+    PaperMutationRecoveryBarrierError,
     PaperOperatingSession,
     PaperOrderAdmissionRequest,
 )
@@ -40,7 +41,11 @@ from trading_agent.paper_protective_exit import (
     NoProtectiveExitRequired,
 )
 from trading_agent.paper_risk import DEFAULT_PAPER_RISK_CONFIG, PaperRiskConfig
-from trading_agent.paper_runtime import PaperStateAndClockLoader, read_paper_broker_state_and_clock
+from trading_agent.paper_runtime import (
+    PaperRuntimeReadiness,
+    PaperStateAndClockLoader,
+    read_paper_broker_state_and_clock,
+)
 from trading_agent.paper_runtime_session import _LivePaperRuntimeSession
 from trading_agent.paper_safety_models import (
     BlockedPaperSafetyPlan,
@@ -96,6 +101,18 @@ class _LivePaperOperatingSession:
     def ingest_next(self, timeout_seconds: float) -> PaperTradeUpdateIngestionResult:
         with self._exclusive_operation():
             return self._owner.ingestion.ingest_next(timeout_seconds)
+
+    def readiness(self) -> PaperRuntimeReadiness:
+        with self._exclusive_operation():
+            checkpoint = self._owner.recovery()
+            barrier_reasons = self._barrier_reasons(checkpoint)
+            if barrier_reasons:
+                raise PaperMutationRecoveryBarrierError(barrier_reasons)
+            readiness = self._runtime.readiness()
+            barrier_reasons = self._barrier_reasons(checkpoint)
+            if barrier_reasons:
+                raise PaperMutationRecoveryBarrierError(barrier_reasons)
+            return readiness
 
     def evaluate_order(
         self,
