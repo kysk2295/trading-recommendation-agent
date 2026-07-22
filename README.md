@@ -367,6 +367,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 과거 원장 삭제, 결과 사후 재분류, 실거래 활성화와 안전선 우회는 허용하지 않는다.
 
+**2026-07-22 M6 bounded intraday research loop 업데이트:** 기존 intraday 가설·strategy version 계약과 global experiment ledger를 재사용해 VWAP reclaim, HOD breakout, Gap-and-Go 세 challenger를 하나의 명시적 bundle로 사전등록하고, bounded local CSV를 순차 cost-adjusted walk-forward fold로 평가한 뒤 query-only 독립 Reviewer가 `promote`·`hold`·`demote` 권고를 content-addressed mode-600 evidence로 남기는 local-only CLI를 추가했다. 비차단 lease는 프로세스 간 무거운 empirical run을 하나로 제한하고 각 fold 전후 9.5 GiB RSS gate를 확인한다. exact replay는 trial/event/artifact를 늘리지 않으며 Reviewer 권고는 lifecycle·allocation·주문권한을 자동 변경하지 않는다. 현재 1-session repository fixture의 세 결과는 모두 `hold`이고 수익성·champion 증거가 아니다. 상세 계약은 [체크포인트](docs/checkpoints/2026-07-22-m6-intraday-automated-research-review-loop-ko.md)에 있다.
+
 ### Single Writer, Multiple Readers
 
 - 실행 원장과 향후 broker paper 상태를 변경하는 프로세스는 하나뿐이다.
