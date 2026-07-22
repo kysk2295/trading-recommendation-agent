@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "session_date": "2026-07-17",
+  "observed_at": "2026-07-17T16:05:00-04:00",
+  "universe_id": "fixture-universe-v1",
+  "symbols": ["ACME"],
+  "bars_file": "daily-bars.json"
+}
