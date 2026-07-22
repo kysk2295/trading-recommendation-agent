@@ -3,9 +3,12 @@ from __future__ import annotations
 import datetime as dt
 from decimal import Decimal
 
+import pytest
+
 from trading_agent.signal_contract_models import SignalActionability
 from trading_agent.swing_shadow_models import SwingDailyBar, SwingDailySource
 from trading_agent.systematic_regime_engine import (
+    InvalidSystematicRegimeSourceError,
     build_systematic_card,
     replay_systematic_regime,
 )
@@ -86,6 +89,19 @@ def test_replay_decision_does_not_use_the_next_session_close() -> None:
     assert first.regime is second.regime
     assert first.candidate_symbols == second.candidate_symbols
     assert first.net_return_bps != second.net_return_bps
+
+
+def test_replay_rejects_an_aligned_history_with_a_missing_market_session() -> None:
+    # Given: every symbol omits the same completed NYSE session.
+    source = _source("risk_on")
+    missing = source.bars_for("SPY")[-5].session_date
+    gapped = source.model_copy(
+        update={"bars": tuple(bar for bar in source.bars if bar.session_date != missing)},
+    )
+
+    # When/Then: replay refuses to relabel the later bar as the next-session outcome.
+    with pytest.raises(InvalidSystematicRegimeSourceError):
+        _ = replay_systematic_regime(gapped)
 
 
 def _source(regime: str) -> SwingDailySource:

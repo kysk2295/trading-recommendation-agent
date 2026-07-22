@@ -4,6 +4,7 @@ import datetime as dt
 import hashlib
 from dataclasses import dataclass
 from decimal import Decimal
+from itertools import pairwise
 from typing import Final, override
 
 from pydantic import ValidationError
@@ -118,6 +119,7 @@ def _checked_source(
         checked.symbols != SYSTEMATIC_REGIME_UNIVERSE
         or len(sessions) < 201
         or any(tuple(bar.session_date for bar in history) != sessions for history in histories.values())
+        or any(_next_session(current)[0] != following for current, following in pairwise(sessions))
         or sessions[-1] != checked.session_date
     ):
         raise InvalidSystematicRegimeSourceError
