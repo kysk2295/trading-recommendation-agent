@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import fcntl
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -54,7 +56,7 @@ def test_plugin_status_reports_disabled_at_least_once_contract(tmp_path: Path, m
     (project / "run_hermes_delivery.py").write_text("pass\n", encoding="utf-8")
     monkeypatch.setenv("TRADING_AGENT_PROJECT_ROOT", str(project))
     plugin = _plugin_module()
-    monkeypatch.setattr(plugin._DELIVERY_STATE, "status", plugin._PluginDeliveryStatus.DISABLED)
+    monkeypatch.setattr(plugin, "_DELIVERY_STATUS", plugin._PluginDeliveryStatus.DISABLED)
 
     # When
     status = json.loads(plugin._status({}))
@@ -67,15 +69,38 @@ def test_plugin_status_reports_disabled_at_least_once_contract(tmp_path: Path, m
         "delivery_worker_status": "disabled",
         "query_available": True,
         "result": "ready",
-        "version": "1.2.0",
+        "version": "1.3.0",
     }
+
+
+def test_plugin_status_reports_external_service_lease(tmp_path: Path, monkeypatch) -> None:
+    # Given
+    project = tmp_path / "project"
+    lock_path = project / "outputs" / "hermes" / "delivery.sqlite3.service.lock"
+    lock_path.parent.mkdir(parents=True)
+    (project / "AGENTS.md").write_text("rules\n", encoding="utf-8")
+    (project / "run_hermes_delivery.py").write_text("pass\n", encoding="utf-8")
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    os.fchmod(descriptor, 0o600)
+    fcntl.flock(descriptor, fcntl.LOCK_EX)
+    monkeypatch.setenv("TRADING_AGENT_PROJECT_ROOT", str(project))
+    plugin = _plugin_module()
+    monkeypatch.setattr(plugin, "_DELIVERY_STATUS", plugin._PluginDeliveryStatus.DISABLED)
+
+    # When
+    status = json.loads(plugin._status({}))
+
+    # Then
+    assert status["delivery_worker_status"] == "external_running"
+    fcntl.flock(descriptor, fcntl.LOCK_UN)
+    os.close(descriptor)
 
 
 def test_telegram_sender_keeps_hermes_credentials_out_of_repr(monkeypatch) -> None:
     # Given
     plugin = _plugin_module()
     sender_module = __import__(f"{plugin.__name__}.telegram_sender", fromlist=["HermesTelegramSender"])
-    loaded: list[bool] = []
+    loaded: list[str] = []
     gateway = SimpleNamespace(
         Platform=SimpleNamespace(TELEGRAM="telegram"),
         load_gateway_config=lambda: SimpleNamespace(
@@ -87,8 +112,15 @@ def test_telegram_sender_keeps_hermes_credentials_out_of_repr(monkeypatch) -> No
             ),
         ),
     )
-    send_command = SimpleNamespace(_load_hermes_env=lambda: loaded.append(True))
-    originals = {"gateway.config": gateway, "hermes_cli.send_cmd": send_command}
+    constants = SimpleNamespace(get_default_hermes_root=lambda: Path("/safe/hermes"))
+    env_loader = SimpleNamespace(load_hermes_dotenv=lambda **kwargs: loaded.append(str(kwargs["hermes_home"])))
+    send_command = SimpleNamespace(_load_hermes_env=lambda: loaded.append("profile"))
+    originals = {
+        "gateway.config": gateway,
+        "hermes_cli.env_loader": env_loader,
+        "hermes_cli.send_cmd": send_command,
+        "hermes_constants": constants,
+    }
     monkeypatch.setattr(sender_module.importlib, "import_module", lambda name: originals[name])
 
     # When
@@ -96,7 +128,7 @@ def test_telegram_sender_keeps_hermes_credentials_out_of_repr(monkeypatch) -> No
     representation = repr(sender)
 
     # Then
-    assert loaded == [True]
+    assert loaded == ["/safe/hermes", "profile"]
     assert "dummy-secret-token" not in representation
     assert "123456789" not in representation
 

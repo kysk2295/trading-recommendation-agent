@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import fcntl
+import os
+import stat
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -21,6 +25,16 @@ class RetryableHermesPlatformError(RuntimeError):
 class TerminalHermesPlatformError(RuntimeError):
     def __str__(self) -> str:
         return "Hermes platform delivery was rejected"
+
+
+class HermesDeliveryServiceLeaseUnavailableError(RuntimeError):
+    def __str__(self) -> str:
+        return "Hermes delivery service lease is unavailable"
+
+
+class InvalidHermesDeliveryServiceError(ValueError):
+    def __str__(self) -> str:
+        return "Hermes delivery service is invalid"
 
 
 class HermesDeliveryTickStatus(StrEnum):
@@ -161,10 +175,9 @@ def start_delivery_daemon(
     with _DAEMON_STATE.lock:
         if _DAEMON_STATE.thread is not None and _DAEMON_STATE.thread.is_alive():
             return False
-        worker = HermesDeliveryWorker(store=HermesDeliveryStore(database), sender=sender)
         thread = threading.Thread(
             target=_run_daemon,
-            args=(worker, poll_seconds),
+            args=(database, sender, poll_seconds),
             name="hermes-trading-delivery",
             daemon=True,
         )
@@ -180,8 +193,51 @@ def delivery_daemon_status() -> str:
         return "running" if _DAEMON_STATE.thread.is_alive() else "failed"
 
 
-def _run_daemon(worker: HermesDeliveryWorker, poll_seconds: float) -> None:
-    pause = threading.Event()
-    while True:
-        _ = worker.tick()
-        _ = pause.wait(poll_seconds)
+def run_delivery_service(
+    database: Path,
+    sender: HermesDeliverySender,
+    *,
+    poll_seconds: float = 1.0,
+    stop_event: threading.Event | None = None,
+) -> None:
+    if not database.is_absolute() or poll_seconds <= 0 or poll_seconds > 60:
+        raise InvalidHermesDeliveryServiceError
+    pause = threading.Event() if stop_event is None else stop_event
+    with _service_lease(database):
+        worker = HermesDeliveryWorker(store=HermesDeliveryStore(database), sender=sender)
+        while not pause.is_set():
+            _ = worker.tick()
+            _ = pause.wait(poll_seconds)
+
+
+def _run_daemon(database: Path, sender: HermesDeliverySender, poll_seconds: float) -> None:
+    try:
+        run_delivery_service(database, sender, poll_seconds=poll_seconds)
+    except (HermesDeliveryServiceLeaseUnavailableError, InvalidHermesDeliveryServiceError, OSError):
+        return
+
+
+@contextmanager
+def _service_lease(database: Path) -> Iterator[None]:
+    database.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(
+        f"{database}.service.lock",
+        os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
+        0o600,
+    )
+    locked = False
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_nlink != 1:
+            raise InvalidHermesDeliveryServiceError
+        os.fchmod(descriptor, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise HermesDeliveryServiceLeaseUnavailableError from error
+        locked = True
+        yield
+    finally:
+        if locked:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)

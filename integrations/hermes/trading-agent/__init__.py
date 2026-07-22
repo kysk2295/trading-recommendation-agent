@@ -10,7 +10,7 @@ import subprocess
 from collections.abc import Mapping
 from enum import StrEnum
 from pathlib import Path
-from typing import Final, assert_never
+from typing import assert_never
 
 _SYMBOL = re.compile(r"^(?:[A-Z0-9][A-Z0-9./-]{0,19}|[0-9]{6})$")
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$")
@@ -95,36 +95,33 @@ class _PluginDeliveryStatus(StrEnum):
     BLOCKED_CONFIGURATION = "blocked_configuration"
 
 
-class _PluginDeliveryState:
-    """Mutable runtime status for the process-owned delivery worker."""
-
-    __slots__ = ("status",)
-
-    def __init__(self) -> None:
-        self.status = _PluginDeliveryStatus.DISABLED
-
-
-_DELIVERY_STATE: Final = _PluginDeliveryState()
+_DELIVERY_STATUS = _PluginDeliveryStatus.DISABLED
 
 
 def _start_delivery_worker() -> None:
+    global _DELIVERY_STATUS
     try:
         from .delivery_worker import start_delivery_daemon
         from .telegram_sender import HermesTelegramSender, InvalidHermesTelegramConfigurationError
     except ImportError:
-        _DELIVERY_STATE.status = _PluginDeliveryStatus.BLOCKED_CONFIGURATION
+        _DELIVERY_STATUS = _PluginDeliveryStatus.BLOCKED_CONFIGURATION
         return
     try:
         root = _project_root()
         sender = HermesTelegramSender.from_hermes_config()
         _ = start_delivery_daemon(root / _DATABASE, sender)
-        _DELIVERY_STATE.status = _PluginDeliveryStatus.RUNNING
+        _DELIVERY_STATUS = _PluginDeliveryStatus.RUNNING
     except (InvalidTradingAgentPluginConfigurationError, InvalidHermesTelegramConfigurationError):
-        _DELIVERY_STATE.status = _PluginDeliveryStatus.BLOCKED_CONFIGURATION
+        _DELIVERY_STATUS = _PluginDeliveryStatus.BLOCKED_CONFIGURATION
 
 
 def _delivery_worker_status() -> str:
-    match _DELIVERY_STATE.status:
+    from .service_status import external_delivery_service_status
+
+    external = external_delivery_service_status(_project_root() / _DATABASE)
+    if external != "stopped":
+        return external
+    match _DELIVERY_STATUS:
         case _PluginDeliveryStatus.RUNNING:
             from .delivery_worker import delivery_daemon_status
 
@@ -169,7 +166,7 @@ def _status(args: Mapping[str, str], **context: str) -> str:
             "delivery_worker_status": _delivery_worker_status(),
             "query_available": (root / "run_hermes_delivery.py").is_file(),
             "result": "ready",
-            "version": "1.2.0",
+            "version": "1.3.0",
         }
     )
 

@@ -24,6 +24,9 @@ class HermesTelegramSender:
 
     @classmethod
     def from_hermes_config(cls) -> HermesTelegramSender:
+        constants = importlib.import_module("hermes_constants")
+        env_loader = importlib.import_module("hermes_cli.env_loader")
+        _ = env_loader.load_hermes_dotenv(hermes_home=constants.get_default_hermes_root())
         send_command = importlib.import_module("hermes_cli.send_cmd")
         send_command._load_hermes_env()
         gateway = importlib.import_module("gateway.config")

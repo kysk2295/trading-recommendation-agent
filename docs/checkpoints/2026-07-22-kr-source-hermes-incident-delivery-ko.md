@@ -65,8 +65,10 @@ claim하지는 않았다. 동일 프로필 설정을 사용하는 단일 one-sho
 
 ## 남은 M1 운영 조건
 
-1. Telegram 연결 회복 뒤 동일 retry identity가 acknowledgement 1건으로 끝나는지 확인한다.
-2. gateway의 lazy plugin lifecycle과 분리된 항상 실행 가능한 single-worker 계약을 실제 실패 근거 아래 보완한다.
-3. 실제 추천 카드, 명시적 무추천과 incident가 모두 같은 production delivery 원장에서 중복 없이 전달되는지 검증한다.
+launchd-managed single-worker는
+`2026-07-22-hermes-delivery-single-worker-service-ko.md`에서 구현·배치·재시작 검증했다.
+
+1. Telegram 연결 회복 뒤 새 current event가 acknowledgement 1건으로 끝나는지 확인한다.
+2. 실제 추천 카드, 명시적 무추천과 incident가 같은 production delivery 원장에서 중복 없이 전달되는지 검증한다.
 
 실자금 endpoint, Alpaca live endpoint, KIS·LS 주문 endpoint와 자격증명 값은 사용하거나 기록하지 않았다.

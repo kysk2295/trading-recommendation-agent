@@ -29,6 +29,8 @@ def test_plugin_runtime_island_supports_hermes_python_311() -> None:
     sources = (
         root / "integrations" / "hermes" / "trading-agent" / "__init__.py",
         root / "integrations" / "hermes" / "trading-agent" / "delivery_worker.py",
+        root / "integrations" / "hermes" / "trading-agent" / "service.py",
+        root / "integrations" / "hermes" / "trading-agent" / "service_status.py",
         root / "integrations" / "hermes" / "trading-agent" / "telegram_sender.py",
         root / "trading_agent" / "hermes_delivery_errors.py",
         root / "trading_agent" / "hermes_delivery_models.py",
