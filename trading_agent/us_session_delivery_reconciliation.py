@@ -24,6 +24,7 @@ from trading_agent.us_session_delivery_terminal import (
 )
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
+_STALE_SUPPRESSION_REASON = "market_event_ineligible"
 
 
 class InvalidUsSessionDeliveryReconciliationError(ValueError):
@@ -50,9 +51,9 @@ class UsSessionDeliveryReconciliationRequest(BaseModel):
 class UsSessionDeliveryReconciliation(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
-    schema_version: Literal[1] = 1
-    policy_version: Literal["us-session-hermes-reconciliation-v1"] = (
-        "us-session-hermes-reconciliation-v1"
+    schema_version: Literal[2] = 2
+    policy_version: Literal["us-session-hermes-reconciliation-v2"] = (
+        "us-session-hermes-reconciliation-v2"
     )
     session_date: dt.date
     generated_at: dt.datetime
@@ -60,11 +61,13 @@ class UsSessionDeliveryReconciliation(BaseModel):
     expected_delivery_ids: tuple[str, ...]
     projected_delivery_ids: tuple[str, ...]
     acknowledged_delivery_ids: tuple[str, ...]
+    suppressed_delivery_ids: tuple[str, ...]
     dead_letter_delivery_ids: tuple[str, ...]
     pending_delivery_ids: tuple[str, ...]
     expected_count: int
     projected_count: int
     acknowledged_count: int
+    suppressed_count: int
     dead_letter_count: int
     pending_count: int
     complete: bool
@@ -74,12 +77,14 @@ class UsSessionDeliveryReconciliation(BaseModel):
         expected = set(self.expected_delivery_ids)
         projected = set(self.projected_delivery_ids)
         acknowledged = set(self.acknowledged_delivery_ids)
+        suppressed = set(self.suppressed_delivery_ids)
         dead = set(self.dead_letter_delivery_ids)
         pending = set(self.pending_delivery_ids)
         sequences = (
             self.expected_delivery_ids,
             self.projected_delivery_ids,
             self.acknowledged_delivery_ids,
+            self.suppressed_delivery_ids,
             self.dead_letter_delivery_ids,
             self.pending_delivery_ids,
         )
@@ -87,6 +92,7 @@ class UsSessionDeliveryReconciliation(BaseModel):
             self.expected_count,
             self.projected_count,
             self.acknowledged_count,
+            self.suppressed_count,
             self.dead_letter_count,
             self.pending_count,
         )
@@ -98,18 +104,21 @@ class UsSessionDeliveryReconciliation(BaseModel):
             or any(sequence != tuple(sorted(set(sequence))) for sequence in sequences)
             or not projected <= expected
             or not acknowledged <= projected
+            or not suppressed <= projected
             or not dead <= projected
-            or acknowledged & dead
-            or pending != expected - acknowledged - dead
+            or acknowledged & (suppressed | dead)
+            or suppressed & dead
+            or pending != expected - acknowledged - suppressed - dead
             or counts
             != (
                 len(expected),
                 len(projected),
                 len(acknowledged),
+                len(suppressed),
                 len(dead),
                 len(pending),
             )
-            or self.complete != (acknowledged == expected and not dead)
+            or self.complete != ((acknowledged | suppressed) == expected and not dead)
         ):
             raise InvalidUsSessionDeliveryReconciliationError
         return self
@@ -154,14 +163,22 @@ def reconcile_us_session_deliveries(
         for item in store.acknowledgements()
         if item.delivery_id in expected_by_id
     }
+    terminal_transitions = tuple(
+        item for item in store.dead_letters() if item.delivery_id in expected_by_id
+    )
+    suppressed = {
+        item.delivery_id
+        for item in terminal_transitions
+        if item.reason == _STALE_SUPPRESSION_REASON
+    }
     dead = {
         item.delivery_id
-        for item in store.dead_letters()
-        if item.delivery_id in expected_by_id
+        for item in terminal_transitions
+        if item.reason != _STALE_SUPPRESSION_REASON
     }
     expected = set(expected_by_id)
     projected = set(persisted_by_id)
-    pending = expected - acknowledged - dead
+    pending = expected - acknowledged - suppressed - dead
     source_digest = us_session_projection_sha256(records)
     return UsSessionDeliveryReconciliation(
         session_date=request.session_date,
@@ -170,14 +187,16 @@ def reconcile_us_session_deliveries(
         expected_delivery_ids=tuple(sorted(expected)),
         projected_delivery_ids=tuple(sorted(projected)),
         acknowledged_delivery_ids=tuple(sorted(acknowledged)),
+        suppressed_delivery_ids=tuple(sorted(suppressed)),
         dead_letter_delivery_ids=tuple(sorted(dead)),
         pending_delivery_ids=tuple(sorted(pending)),
         expected_count=len(expected),
         projected_count=len(projected),
         acknowledged_count=len(acknowledged),
+        suppressed_count=len(suppressed),
         dead_letter_count=len(dead),
         pending_count=len(pending),
-        complete=acknowledged == expected and not dead,
+        complete=(acknowledged | suppressed) == expected and not dead,
     )
 
 

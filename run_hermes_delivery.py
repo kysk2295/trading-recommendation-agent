@@ -174,6 +174,7 @@ def main(
                         "expected": report.expected_count,
                         "pending": report.pending_count,
                         "result": "reconciled_session",
+                        "suppressed": report.suppressed_count,
                     }
                 )
             case "project-kr-cycle":

@@ -165,6 +165,7 @@ def test_reconcile_session_cli_writes_private_aggregate_report(
         "expected": 2,
         "pending": 0,
         "result": "reconciled_session",
+        "suppressed": 0,
     }
     assert stat.S_IMODE(output.stat().st_mode) == 0o600
     payload = json.loads(output.read_text(encoding="utf-8"))
