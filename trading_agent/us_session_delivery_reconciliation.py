@@ -127,13 +127,13 @@ def reconcile_us_session_deliveries(
         raise InvalidUsSessionDeliveryReconciliationError
     expected_events = tuple(delivery_event_from_projection_record(record) for record in records)
     if request.terminal_artifact is not None:
-        if request.terminal_artifact.finalized_at > request.generated_at:
+        if request.terminal_artifact.terminal_at > request.generated_at:
             raise InvalidUsSessionDeliveryReconciliationError
         rebuilt = build_us_session_delivery_terminal(
             UsSessionDeliveryTerminalRequest(
                 sources=request.sources,
                 session_date=request.session_date,
-                finalized_at=request.terminal_artifact.finalized_at,
+                evaluated_at=request.terminal_artifact.terminal_at,
             )
         )
         if rebuilt != request.terminal_artifact:

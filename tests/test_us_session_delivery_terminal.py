@@ -9,9 +9,16 @@ import pytest
 
 from run_hermes_delivery import main
 from tests.test_contract_outbox import OBSERVED_AT, _opportunity
-from tests.test_us_session_delivery_projection import _later_opportunity, _sources
+from tests.test_us_session_delivery_projection import (
+    _later_opportunity,
+    _later_publication,
+    _sources,
+)
 from tests.test_us_session_delivery_reconciliation import _session_sources
-from trading_agent.contract_outbox import append_opportunity_snapshot
+from trading_agent.contract_outbox import (
+    append_opportunity_snapshot,
+    append_trade_signal_publication,
+)
 from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.hermes_delivery_projection import HermesProjectionSources
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
@@ -26,6 +33,8 @@ from trading_agent.us_session_delivery_terminal import (
     InvalidUsSessionDeliveryTerminalError,
     UsSessionDeliveryTerminalRequest,
     project_us_session_delivery_terminal,
+)
+from trading_agent.us_session_delivery_terminal_artifact import (
     read_us_session_delivery_terminal,
     write_us_session_delivery_terminal,
 )
@@ -42,7 +51,7 @@ def test_terminal_rejects_projection_before_regular_session_close(
     request = UsSessionDeliveryTerminalRequest(
         sources=sources,
         session_date=OBSERVED_AT.date(),
-        finalized_at=OBSERVED_AT,
+        evaluated_at=OBSERVED_AT,
     )
 
     # When / Then: no terminal opinion can be created from an incomplete session.
@@ -60,13 +69,18 @@ def test_no_signal_terminal_projects_private_no_recommendation_once(
     request = UsSessionDeliveryTerminalRequest(
         sources=sources,
         session_date=OBSERVED_AT.date(),
-        finalized_at=FINALIZED_AT,
+        evaluated_at=FINALIZED_AT,
     )
     artifact_path = tmp_path / "terminal.json"
 
     # When: terminal projection and its exact replay are published.
     first = project_us_session_delivery_terminal(request, store)
-    replay = project_us_session_delivery_terminal(request, store)
+    replay = project_us_session_delivery_terminal(
+        request.model_copy(
+            update={"evaluated_at": FINALIZED_AT + dt.timedelta(minutes=1)}
+        ),
+        store,
+    )
     write_us_session_delivery_terminal(artifact_path, first.artifact)
     persisted = read_us_session_delivery_terminal(artifact_path)
 
@@ -96,7 +110,7 @@ def test_signal_terminal_is_daily_summary_and_final_reconciliation_scope(
         UsSessionDeliveryTerminalRequest(
             sources=sources,
             session_date=OBSERVED_AT.date(),
-            finalized_at=FINALIZED_AT,
+            evaluated_at=FINALIZED_AT,
         ),
         store,
     ).artifact
@@ -130,6 +144,36 @@ def test_signal_terminal_is_daily_summary_and_final_reconciliation_scope(
     assert report.expected_count == 3
     assert report.acknowledged_count == 3
     assert report.complete is True
+
+
+def test_terminal_rejects_late_source_change_after_first_terminal(
+    tmp_path: Path,
+) -> None:
+    # Given: a no-setup terminal is already fixed for the closed session.
+    sources = _opportunity_only_sources(tmp_path)
+    store = HermesDeliveryStore(tmp_path / "delivery.sqlite3")
+    request = UsSessionDeliveryTerminalRequest(
+        sources=sources,
+        session_date=OBSERVED_AT.date(),
+        evaluated_at=FINALIZED_AT,
+    )
+    first = project_us_session_delivery_terminal(request, store)
+    second_opportunity = _later_opportunity(_opportunity())
+    assert append_trade_signal_publication(
+        sources.signal_outbox,
+        tmp_path / "cards",
+        _later_publication(second_opportunity),
+    )
+
+    # When / Then: a changed source cannot create a second terminal for the session.
+    with pytest.raises(InvalidUsSessionDeliveryTerminalError):
+        _ = project_us_session_delivery_terminal(
+            request.model_copy(
+                update={"evaluated_at": FINALIZED_AT + dt.timedelta(minutes=2)}
+            ),
+            store,
+        )
+    assert store.events() == (first.artifact.event,)
 
 
 def test_finalize_session_cli_writes_redacted_terminal_artifact(

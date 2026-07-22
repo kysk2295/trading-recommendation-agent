@@ -22,6 +22,8 @@ from trading_agent.us_session_delivery_terminal import (
     UsSessionDeliveryTerminalRequest,
     UsSessionDeliveryTerminalResult,
     project_us_session_delivery_terminal,
+)
+from trading_agent.us_session_delivery_terminal_artifact import (
     read_us_session_delivery_terminal,
     write_us_session_delivery_terminal,
 )
@@ -37,7 +39,7 @@ class ProjectUsSessionCommand:
 class FinalizeUsSessionCommand:
     sources: HermesProjectionSources
     session_date: dt.date
-    finalized_at: dt.datetime
+    evaluated_at: dt.datetime
     output: Path
 
 
@@ -70,7 +72,7 @@ def finalize_us_session_command(
         UsSessionDeliveryTerminalRequest(
             sources=command.sources,
             session_date=command.session_date,
-            finalized_at=command.finalized_at,
+            evaluated_at=command.evaluated_at,
         ),
         store,
     )

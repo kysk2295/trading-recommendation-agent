@@ -4,10 +4,9 @@ import datetime as dt
 import hashlib
 import json
 import re
-from pathlib import Path
 from typing import Literal, Self, override
 
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from trading_agent.hermes_delivery_models import HermesDeliveryEvent, HermesDeliveryKind
 from trading_agent.hermes_delivery_projection import (
@@ -17,11 +16,6 @@ from trading_agent.hermes_delivery_projection import (
     project_outcomes,
 )
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
-from trading_agent.private_query_file import (
-    InvalidPrivateQueryFileError,
-    read_private_text_query_only,
-)
-from trading_agent.private_stable_report import write_private_stable_report
 from trading_agent.research_identity_models import AgentFamily
 from trading_agent.us_equity_calendar import regular_session_bounds
 from trading_agent.us_session_delivery_projection import (
@@ -44,11 +38,11 @@ class UsSessionDeliveryTerminalRequest(BaseModel):
 
     sources: HermesProjectionSources
     session_date: dt.date
-    finalized_at: dt.datetime
+    evaluated_at: dt.datetime
 
     @model_validator(mode="after")
     def validate_request(self) -> Self:
-        if self.finalized_at.tzinfo is None or self.finalized_at.utcoffset() is None:
+        if self.evaluated_at.tzinfo is None or self.evaluated_at.utcoffset() is None:
             raise InvalidUsSessionDeliveryTerminalError
         return self
 
@@ -61,7 +55,7 @@ class UsSessionDeliveryTerminalArtifact(BaseModel):
         "us-session-hermes-terminal-v1"
     )
     session_date: dt.date
-    finalized_at: dt.datetime
+    terminal_at: dt.datetime
     source_projection_sha256: str
     watch_count: int
     signal_count: int
@@ -78,8 +72,8 @@ class UsSessionDeliveryTerminalArtifact(BaseModel):
         )
         expected_status = "session_summary" if signal_terminal else "censored_no_setup"
         if (
-            self.finalized_at.tzinfo is None
-            or self.finalized_at.utcoffset() is None
+            self.terminal_at.tzinfo is None
+            or self.terminal_at.utcoffset() is None
             or _HEX64.fullmatch(self.source_projection_sha256) is None
             or self.watch_count < 1
             or self.signal_count < 0
@@ -88,7 +82,7 @@ class UsSessionDeliveryTerminalArtifact(BaseModel):
             or len(self.signal_symbols) > self.signal_count
             or self.event.kind is not expected_kind
             or self.event.status != expected_status
-            or self.event.occurred_at != self.finalized_at
+            or self.event.occurred_at != self.terminal_at
             or self.event.root_delivery_id != self.event.delivery_id
             or self.event.market_id != "us_equities"
             or self.event.agent_family != AgentFamily.DAY_TRADING.value
@@ -117,7 +111,7 @@ def build_us_session_delivery_terminal(
     if bounds is None:
         raise InvalidUsSessionDeliveryTerminalError
     close = bounds[1]
-    if not close <= request.finalized_at <= close + _RECOVERY_WINDOW:
+    if not close <= request.evaluated_at <= close + _RECOVERY_WINDOW:
         raise InvalidUsSessionDeliveryTerminalError
     records = us_session_projection_records(request.sources, request.session_date)
     if not records or any(record.occurred_at > close for record in records):
@@ -171,7 +165,7 @@ def build_us_session_delivery_terminal(
         lane_id=None,
         strategy_version=_single_strategy_version(signal_records),
         instrument_id=None,
-        occurred_at=request.finalized_at,
+        occurred_at=close,
         status=status,
         evidence_refs=tuple(sorted(item.source_event_id for item in records)),
         rendered_text=_render_terminal(
@@ -184,7 +178,7 @@ def build_us_session_delivery_terminal(
     )
     return UsSessionDeliveryTerminalArtifact(
         session_date=request.session_date,
-        finalized_at=request.finalized_at,
+        terminal_at=close,
         source_projection_sha256=source_digest,
         watch_count=len(watch_records),
         signal_count=len(signal_records),
@@ -198,6 +192,15 @@ def project_us_session_delivery_terminal(
     store: HermesDeliveryStore,
 ) -> UsSessionDeliveryTerminalResult:
     artifact = build_us_session_delivery_terminal(request)
+    existing = tuple(
+        event
+        for event in store.events()
+        if event.source_event_id.startswith("us-session-terminal-")
+        and event.market_id == "us_equities"
+        and event.occurred_at == artifact.terminal_at
+    )
+    if existing and existing != (artifact.event,):
+        raise InvalidUsSessionDeliveryTerminalError
     record = _artifact_record(artifact)
     with store.writer() as writer:
         projection = project_outcomes((record,), writer)
@@ -206,30 +209,6 @@ def project_us_session_delivery_terminal(
         inserted=projection.inserted,
         replayed=projection.replayed,
     )
-
-
-def write_us_session_delivery_terminal(
-    destination: Path,
-    artifact: UsSessionDeliveryTerminalArtifact,
-) -> None:
-    validated = UsSessionDeliveryTerminalArtifact.model_validate(
-        artifact.model_dump(mode="python")
-    )
-    write_private_stable_report(
-        destination,
-        validated.model_dump_json(indent=2) + "\n",
-    )
-
-
-def read_us_session_delivery_terminal(
-    source: Path,
-) -> UsSessionDeliveryTerminalArtifact:
-    try:
-        return UsSessionDeliveryTerminalArtifact.model_validate_json(
-            read_private_text_query_only(source)
-        )
-    except (InvalidPrivateQueryFileError, ValidationError, ValueError):
-        raise InvalidUsSessionDeliveryTerminalError from None
 
 
 def _artifact_record(
