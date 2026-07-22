@@ -4,6 +4,8 @@ import datetime as dt
 import stat
 from pathlib import Path
 
+import pytest
+
 from run_us_swing_historical_replay import main
 from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
@@ -26,24 +28,7 @@ def test_cli_replays_causal_swing_flow_through_cards_terminal_and_reviewer(
     shadow = tmp_path / "shadow.sqlite3"
     reviews = tmp_path / "reviews.sqlite3"
     output = tmp_path / "output"
-    arguments = (
-        "--fixture",
-        f"{SIGNAL_SESSION.isoformat()}={REPLAY_FIXTURES / SIGNAL_SESSION.isoformat()}",
-        "--fixture",
-        f"{TERMINAL_SESSION.isoformat()}={REPLAY_FIXTURES / TERMINAL_SESSION.isoformat()}",
-        "--research-manifest",
-        str(RESEARCH_MANIFEST),
-        "--experiment-ledger",
-        str(tmp_path / "experiment.sqlite3"),
-        "--shadow-ledger",
-        str(shadow),
-        "--delivery-store",
-        str(delivery),
-        "--review-ledger",
-        str(reviews),
-        "--output-dir",
-        str(output),
-    )
+    arguments = _arguments(tmp_path)
 
     # When: the historical replay is driven through its real CLI boundary.
     return_code = main(arguments, runtime_code_version="test_code_v1")
@@ -72,3 +57,51 @@ def test_cli_replays_causal_swing_flow_through_cards_terminal_and_reviewer(
     assert "no-recommendation cards: 1" in rendered
     assert "reviewer evidence: 1" in rendered
     assert "external broker mutations: 0" in rendered
+
+
+def test_cli_exact_replay_opens_no_fixture_and_preserves_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: the complete two-session replay already exists in immutable stores.
+    arguments = _arguments(tmp_path)
+    assert main(arguments, runtime_code_version="test_code_v1") == 0
+    delivery = HermesDeliveryStore(tmp_path / "delivery.sqlite3")
+    reviews = SwingShadowReviewStore(tmp_path / "reviews.sqlite3")
+    before = (len(delivery.events()), len(reviews.events()))
+
+    def unexpected_fixture_open(_root: Path, *, session_date: dt.date) -> None:
+        raise AssertionError(session_date)
+
+    monkeypatch.setattr(
+        "trading_agent.us_swing_historical_replay.load_swing_daily_source",
+        unexpected_fixture_open,
+    )
+
+    # When: the exact same CLI replay is requested again.
+    return_code = main(arguments, runtime_code_version="test_code_v1")
+
+    # Then: it succeeds from stored evidence without reopening data or adding events.
+    assert return_code == 0
+    assert (len(delivery.events()), len(reviews.events())) == before
+
+
+def _arguments(tmp_path: Path) -> tuple[str, ...]:
+    return (
+        "--fixture",
+        f"{SIGNAL_SESSION.isoformat()}={REPLAY_FIXTURES / SIGNAL_SESSION.isoformat()}",
+        "--fixture",
+        f"{TERMINAL_SESSION.isoformat()}={REPLAY_FIXTURES / TERMINAL_SESSION.isoformat()}",
+        "--research-manifest",
+        str(RESEARCH_MANIFEST),
+        "--experiment-ledger",
+        str(tmp_path / "experiment.sqlite3"),
+        "--shadow-ledger",
+        str(tmp_path / "shadow.sqlite3"),
+        "--delivery-store",
+        str(tmp_path / "delivery.sqlite3"),
+        "--review-ledger",
+        str(tmp_path / "reviews.sqlite3"),
+        "--output-dir",
+        str(tmp_path / "output"),
+    )

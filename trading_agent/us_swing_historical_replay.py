@@ -8,6 +8,7 @@ from typing import Final, override
 from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.swing_new_high_rvol import project_new_high_rvol_signals
+from trading_agent.swing_research_contract import SWING_RESEARCH_CONTRACT
 from trading_agent.swing_shadow_delivery import project_swing_shadow_cycle_delivery
 from trading_agent.swing_shadow_engine import advance_swing_shadow_session
 from trading_agent.swing_shadow_models import SwingDailySource
@@ -93,22 +94,33 @@ def run_swing_historical_replay(
     config: SwingOperatingConfig,
 ) -> SwingHistoricalReplayResult:
     _require_request(request)
-    for fixture in request.fixtures:
-        bounds = regular_session_bounds(fixture.session_date)
-        if bounds is None:
-            raise InvalidSwingHistoricalReplayError
-        moments = (
-            bounds[0] - dt.timedelta(minutes=5),
-            bounds[0] + dt.timedelta(minutes=1),
-            bounds[1],
-        )
-        for now in moments:
-            outcome = run_us_swing_operating_tick(
-                SwingOperatingRequest(now, request.runtime_code_version),
-                config,
-            )
-            if outcome.blocked_signal_ids or outcome.incidents:
+    stored_source_dates = frozenset(
+        event.occurred_at.astimezone(NEW_YORK).date()
+        for event in config.delivery_store.events()
+        if event.root_delivery_id == event.delivery_id
+        and event.kind
+        in {HermesDeliveryKind.WATCH, HermesDeliveryKind.NO_RECOMMENDATION}
+        and event.strategy_version == SWING_RESEARCH_CONTRACT.strategy_version
+    )
+    if any(
+        fixture.session_date not in stored_source_dates for fixture in request.fixtures
+    ):
+        for fixture in request.fixtures:
+            bounds = regular_session_bounds(fixture.session_date)
+            if bounds is None:
                 raise InvalidSwingHistoricalReplayError
+            moments = (
+                bounds[0] - dt.timedelta(minutes=5),
+                bounds[0] + dt.timedelta(minutes=1),
+                bounds[1],
+            )
+            for now in moments:
+                outcome = run_us_swing_operating_tick(
+                    SwingOperatingRequest(now, request.runtime_code_version),
+                    config,
+                )
+                if outcome.blocked_signal_ids or outcome.incidents:
+                    raise InvalidSwingHistoricalReplayError
     deliveries = config.delivery_store.events()
     signals = config.shadow_ledger.signals()
     events = tuple(
