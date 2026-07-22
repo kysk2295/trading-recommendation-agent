@@ -15,6 +15,7 @@
 - `run_kr_same_cycle_collect.py`가 DART → LS NEWS → KIS ranking → volume surge를 같은 날짜·cycle ID로 직렬 처리한 뒤 DB-only coordinator를 호출. complete cycle은 0, terminal source 실패 cycle은 `complete=false`와 nonzero로 보존하며 full terminal replay는 어떤 stage도 호출하지 않음
 - `run_kr_theme_projection.py`는 resolved input ledger·SQLite sidecar와 KR JSONL/report output의 경로·hard-link 충돌을 ledger open 전 차단하고, zero-projection replay를 포함해 committed keyword projection outbox와 한국어 요약을 mode `600`으로 유지. provider·LLM·broker·TradeSignal·국내 주문 호출 없음
 - `run_us_swing_shadow.py`는 완료된 US 일봉 21세션에서 신고가·RVOL v1의 다음 세션 conditional signal을 만들고 dedicated mode-600 append-only SQLite에 다중세션 shadow event를 기록. fixture replay는 network·credential·Paper를 열지 않으며 production은 current NYSE post-close와 정렬된 1~50 symbol universe를 credential 전 검사한 뒤 Alpaca data GET만 허용
+- `run_us_systematic_regime.py`는 고정 ETF 6종의 완료 일봉으로 SPY trend·momentum과 equity breadth를 인과적으로 replay하고 risk-on/risk-off sleeve 상위 2종 또는 mixed no-recommendation 카드를 생성. 다음 세션 shadow trial의 등록·장중 시작·장후 outcome/lifecycle을 연결하지만 `market_regime`은 signal-only이고 계좌·주문·POST·Allocation Manager 권한은 없음
 - bounded production KIS 원장 local-only 파생에서 랭킹 60행 중 거래량 30행과 영문 포함 코드 7개를 보존하고 terminal replay 신규 0행 확인. provider·credential·network·broker 호출 없음
 - KIS 주간거래 `BAQ/BAY/BAA`를 프리마켓·정규장과 분리한 원시 랭킹 forward 수집 완료
 - 매 cycle KIS 원시 랭킹 행·출처·선택 여부 CSV 누적
@@ -141,16 +142,17 @@
 3. 기존 minute-bar polling bridge는 별도로 pagination·재시작 offset·provider gap 장기 soak를 누적한다. polling과 trade WebSocket을 서로의 coverage로 대체하거나 전체시장 coverage로 표현하지 않는다.
 4. 현재 NYSE post-close와 mode-600 data credential·정렬된 bounded universe가 동시에 맞을 때만 US swing 일봉 source를 read-only로 한 번 수집한다. 그 뒤에만 동일 CLI로 signal/shadow forward evidence를 누적하며, Paper 계좌·주문은 열지 않는다.
 5. current NYSE post-close source가 안전하게 축적된 뒤에만 새 US swing signal을 다음 정규장 전 local trial로 등록하고 terminal evidence를 누적한다. 표본·동일 위험 비교·승격 근거가 쌓이기 전에는 lane 권한을 바꾸지 않는다.
-6. fixture E2E가 끝난 KR same-cycle orchestrator를 전체 품질 게이트와 수동 CLI QA로 확정한다. 현재 KST·자격증명·정상 endpoint 조건이 모두 맞을 때만 별도 bounded production same-cycle을 read-only로 실행하고, 아니면 provider를 억지로 열지 않는다.
-7. 동일-cycle production coverage가 immutable evidence로 확정된 뒤 exact code-coupled KR theme shadow version을 global experiment ledger에 먼저 등록하고, 그 원장을 요구하는 별도 manifest로 KR keyword Opportunity projection을 실행한다. source 실패를 성공이나 부분 complete로 축소하지 않으며, projection도 TradeSignal·국내 주문을 열지 않는다.
-8. 구현된 KR day pure signal kernel 앞에 completed-bar VWAP reclaim setup extractor와 LS/KIS current quote/status read-only adapter를 연결한다. 그 뒤 multi-market trial schema, 비용 모델, shadow fill과 terminal outcome을 순서대로 추가하고 국내 주문 권한은 만들지 않는다.
-9. 새 코드 commit이 생긴 경우 다음 NYSE 개장 전에 clean checkout의 local-only experiment ledger bootstrap을 실행해 code-coupled strategy version을 append한다. 정규장 뒤 누락된 preregistration은 소급 생성하지 않고 read-only 관찰만 보존한다.
-10. 열린 뉴욕 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증
-11. 실제 적격 ORB 세션마다 preregistered daily trial을 누적하고 terminal replay·실패·검열 운영 결과를 대사하되 열린 trial을 임의 terminal로 추정하지 않음
-12. 추가 부분체결이 실제 발생할 때 staged 보호 OCO cancel → terminal 대사 → 다음 호출 replacement를 같은 축소 한도에서 검증하되 체결을 억지로 만들지 않음
-13. equal-risk terminal trial·broker/shadow·DSR/PBO·parameter plateau·SIP 증거 계약이 모두 생긴 뒤에만 comparison·promotion Controller 단계를 별도 구현
-14. 최소 두 executable Paper champion 전에는 Portfolio Manager를 구현하지 않음
-15. generic correction/tombstone replay 위에 extraction invalidation과 provider별 deletion cursor·retention 이행을 추가하되 기존 immutable event를 덮어쓰지 않음
+6. US systematic regime fixture replay와 shadow lifecycle을 누적하고, 현재 NYSE post-close의 bounded market-data GET은 자연스럽게 조건이 맞을 때만 실행한다. 충분한 독립 표본·동일 위험 비교 전에는 champion·Paper·allocation으로 승격하지 않는다.
+7. fixture E2E가 끝난 KR same-cycle orchestrator를 전체 품질 게이트와 수동 CLI QA로 확정한다. 현재 KST·자격증명·정상 endpoint 조건이 모두 맞을 때만 별도 bounded production same-cycle을 read-only로 실행하고, 아니면 provider를 억지로 열지 않는다.
+8. 동일-cycle production coverage가 immutable evidence로 확정된 뒤 exact code-coupled KR theme shadow version을 global experiment ledger에 먼저 등록하고, 그 원장을 요구하는 별도 manifest로 KR keyword Opportunity projection을 실행한다. source 실패를 성공이나 부분 complete로 축소하지 않으며, projection도 TradeSignal·국내 주문을 열지 않는다.
+9. 구현된 KR day pure signal kernel 앞에 completed-bar VWAP reclaim setup extractor와 LS/KIS current quote/status read-only adapter를 연결한다. 그 뒤 multi-market trial schema, 비용 모델, shadow fill과 terminal outcome을 순서대로 추가하고 국내 주문 권한은 만들지 않는다.
+10. 새 코드 commit이 생긴 경우 다음 NYSE 개장 전에 clean checkout의 local-only experiment ledger bootstrap을 실행해 code-coupled strategy version을 append한다. 정규장 뒤 누락된 preregistration은 소급 생성하지 않고 read-only 관찰만 보존한다.
+11. 열린 뉴욕 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증
+12. 실제 적격 ORB 세션마다 preregistered daily trial을 누적하고 terminal replay·실패·검열 운영 결과를 대사하되 열린 trial을 임의 terminal로 추정하지 않음
+13. 추가 부분체결이 실제 발생할 때 staged 보호 OCO cancel → terminal 대사 → 다음 호출 replacement를 같은 축소 한도에서 검증하되 체결을 억지로 만들지 않음
+14. equal-risk terminal trial·broker/shadow·DSR/PBO·parameter plateau·SIP 증거 계약이 모두 생긴 뒤에만 comparison·promotion Controller 단계를 별도 구현
+15. 최소 두 executable Paper champion 전에는 Portfolio Manager를 구현하지 않음
+16. generic correction/tombstone replay 위에 extraction invalidation과 provider별 deletion cursor·retention 이행을 추가하되 기존 immutable event를 덮어쓰지 않음
 
 ## 시작 전 확인
 
