@@ -13,8 +13,14 @@ from pathlib import Path
 from typing import Final, Protocol, assert_never, final
 
 from trading_agent.hermes_delivery_errors import HermesDeliveryWriterLeaseUnavailableError
-from trading_agent.hermes_delivery_models import HermesDeliveryFailure, HermesDeliveryTransitionKind
+from trading_agent.hermes_delivery_models import (
+    HermesDeliveryFailure,
+    HermesDeliveryKind,
+    HermesDeliveryTransitionKind,
+)
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
+
+_CURRENT_MARKET_EVENT_MAX_AGE: Final = dt.timedelta(seconds=30)
 
 
 class RetryableHermesPlatformError(RuntimeError):
@@ -43,6 +49,7 @@ class HermesDeliveryTickStatus(StrEnum):
     ACKNOWLEDGED = "acknowledged"
     RETRY_SCHEDULED = "retry_scheduled"
     DEAD_LETTERED = "dead_lettered"
+    SUPPRESSED = "suppressed"
 
 
 def _utc_now() -> dt.datetime:
@@ -105,6 +112,34 @@ class HermesDeliveryWorker:
                 )
                 if claim is None:
                     return HermesDeliveryTickResult(status=HermesDeliveryTickStatus.IDLE)
+                match claim.event.kind:
+                    case HermesDeliveryKind.WATCH | HermesDeliveryKind.ACTIONABLE:
+                        age = now - claim.event.occurred_at
+                        if age < dt.timedelta(0) or age > _CURRENT_MARKET_EVENT_MAX_AGE:
+                            _ = writer.fail(
+                                claim,
+                                HermesDeliveryFailure(
+                                    failed_at=now,
+                                    reason="market_event_ineligible",
+                                    retry_delay_seconds=0,
+                                    terminal=True,
+                                ),
+                            )
+                            return HermesDeliveryTickResult(
+                                status=HermesDeliveryTickStatus.SUPPRESSED,
+                                delivery_id=claim.event.delivery_id,
+                            )
+                    case (
+                        HermesDeliveryKind.INVALIDATION
+                        | HermesDeliveryKind.EXIT
+                        | HermesDeliveryKind.INCIDENT
+                        | HermesDeliveryKind.NO_RECOMMENDATION
+                        | HermesDeliveryKind.RESEARCH
+                        | HermesDeliveryKind.DAILY_SUMMARY
+                    ):
+                        pass
+                    case unreachable:
+                        assert_never(unreachable)
                 request = HermesDeliverySendRequest(
                     delivery_id=claim.event.delivery_id,
                     text=claim.event.rendered_text,

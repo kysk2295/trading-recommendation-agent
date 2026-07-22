@@ -6,6 +6,8 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 from trading_agent.hermes_delivery_models import HermesDeliveryKind, build_hermes_delivery_event
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 
@@ -178,6 +180,49 @@ def test_retry_budget_exhaustion_dead_letters_instead_of_raising(tmp_path: Path)
     assert len(store.dead_letters()) == 1
 
 
+@pytest.mark.parametrize(
+    ("kind", "clock_offset_seconds"),
+    [
+        (HermesDeliveryKind.WATCH, 31),
+        (HermesDeliveryKind.ACTIONABLE, 31),
+        (HermesDeliveryKind.WATCH, -1),
+        (HermesDeliveryKind.ACTIONABLE, -1),
+    ],
+)
+def test_worker_suppresses_ineligible_current_market_event(
+    tmp_path: Path,
+    kind: HermesDeliveryKind,
+    clock_offset_seconds: int,
+) -> None:
+    # Given
+    worker_module = _worker_module()
+    store = HermesDeliveryStore(tmp_path / "delivery.sqlite3")
+    with store.writer() as writer:
+        _ = writer.append_event(_event(f"{kind.value}-{clock_offset_seconds}", kind=kind))
+    sender = FakeTelegramSender(message_ids=[])
+    clock = ManualClock(AT + dt.timedelta(seconds=clock_offset_seconds))
+    worker = worker_module.HermesDeliveryWorker(
+        store=store,
+        sender=sender,
+        settings=worker_module.HermesDeliveryWorkerSettings(clock=clock),
+    )
+
+    # When
+    result = worker.tick()
+    restarted_result = worker_module.HermesDeliveryWorker(
+        store=store,
+        sender=sender,
+        settings=worker_module.HermesDeliveryWorkerSettings(clock=clock),
+    ).tick()
+
+    # Then
+    assert result.status is worker_module.HermesDeliveryTickStatus.SUPPRESSED
+    assert restarted_result.status is worker_module.HermesDeliveryTickStatus.IDLE
+    assert sender.calls == []
+    assert len(store.attempts()) == 1
+    assert store.dead_letters()[0].reason == "market_event_ineligible"
+
+
 def test_two_workers_cannot_own_the_writer_lease_simultaneously(tmp_path: Path) -> None:
     # Given
     worker_module = _worker_module()
@@ -264,8 +309,14 @@ def _load_module(name: str, filename: str, *, package: bool):
     if name in sys.modules:
         return sys.modules[name]
     root = Path(__file__).parents[1] / "integrations" / "hermes" / "trading-agent"
-    options = {"submodule_search_locations": [str(root)]} if package else {}
-    specification = importlib.util.spec_from_file_location(name, root / filename, **options)
+    if package:
+        specification = importlib.util.spec_from_file_location(
+            name,
+            root / filename,
+            submodule_search_locations=[str(root)],
+        )
+    else:
+        specification = importlib.util.spec_from_file_location(name, root / filename)
     assert specification is not None and specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     sys.modules[name] = module
