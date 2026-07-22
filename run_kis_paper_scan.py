@@ -1,4 +1,18 @@
-#!/usr/bin/env -S uv run --python 3.12 --with httpx2[http2,brotli,zstd] --with pydantic --with rich --with typer python
+#!/usr/bin/env -S uv run --script
+# noqa: SIZE_OK - active-session packaging repair changes metadata only; scanner logic is unchanged
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#   "duckdb==1.5.4",
+#   "httpx2[http2,brotli,zstd]",
+#   "ijson==3.5.0",
+#   "pyarrow==25.0.0",
+#   "pydantic>=2.11",
+#   "rich>=13.9",
+#   "typer>=0.15",
+#   "websockets>=16,<17",
+# ]
+# ///
 
 from __future__ import annotations
 
