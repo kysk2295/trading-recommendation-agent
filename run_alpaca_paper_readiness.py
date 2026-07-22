@@ -30,12 +30,17 @@ from trading_agent.execution_errors import (
     UnsupportedExecutionSchemaError,
 )
 from trading_agent.execution_store import ExecutionStore
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.paper_runtime import CredentialLoader, PaperRuntimeEpochChangedError
 from trading_agent.paper_runtime_session import (
     PaperRuntimeProbeLoader,
     probe_paper_runtime,
 )
 from trading_agent.private_report import write_private_report
+from trading_agent.us_day_readiness_delivery import (
+    InvalidUsDayReadinessDeliveryError,
+    project_us_day_readiness,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +66,7 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("outputs/paper_execution/readiness/latest"),
     )
+    parser.add_argument("--delivery-database", type=Path)
     return parser
 
 
@@ -130,6 +136,12 @@ def main(
         reasons=readiness.reasons,
     )
     _write_report(args.output_dir, report)
+    if args.delivery_database is not None:
+        try:
+            _ = project_us_day_readiness(readiness, HermesDeliveryStore(args.delivery_database))
+        except InvalidUsDayReadinessDeliveryError as error:
+            print(_safe_error_reason(error), file=sys.stderr)
+            return 2
     return 0 if readiness.ready else 1
 
 

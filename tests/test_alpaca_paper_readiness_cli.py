@@ -14,6 +14,8 @@ from trading_agent.alpaca_paper_order_stream import (
     PaperStreamEpoch,
 )
 from trading_agent.execution_store import ExecutionStore
+from trading_agent.hermes_delivery_models import HermesDeliveryKind
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.paper_execution_models import (
     AccountFingerprint,
     PaperAccountSnapshot,
@@ -112,6 +114,7 @@ def test_readiness_missing_ledger_fails_before_credentials_or_network(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "missing/execution.sqlite3"
+    delivery = tmp_path / "delivery.sqlite3"
     loader_called = False
 
     def loader(
@@ -128,6 +131,8 @@ def test_readiness_missing_ledger_fails_before_credentials_or_network(
             str(database),
             "--output-dir",
             str(tmp_path / "report"),
+            "--delivery-database",
+            str(delivery),
         ],
         credential_loader=_credentials,
         probe_loader=loader,
@@ -136,6 +141,7 @@ def test_readiness_missing_ledger_fails_before_credentials_or_network(
     assert code == 1
     assert loader_called is False
     assert not database.exists()
+    assert not delivery.exists()
     assert "초기화되지 않았습니다" in (tmp_path / "report/paper_runtime_readiness_ko.md").read_text(encoding="utf-8")
 
 
@@ -198,3 +204,68 @@ def test_readiness_redacts_runtime_error_details(
     assert "안전 오류 유형: OSError" in captured.err
     assert "sensitive-account-and-broker-id" not in report
     assert "sensitive-account-and-broker-id" not in captured.err
+
+
+def test_readiness_projects_one_replayable_premarket_hermes_status(tmp_path: Path) -> None:
+    # Given: a flat reconciled Paper account during the current session premarket.
+    database = tmp_path / "execution.sqlite3"
+    delivery = tmp_path / "delivery.sqlite3"
+    checked_at = dt.datetime(2026, 7, 14, 12, tzinfo=dt.UTC)
+    base = _readiness()
+    readiness = replace(
+        base,
+        broker_state=replace(
+            base.broker_state,
+            account=replace(base.broker_state.account, observed_at=checked_at),
+        ),
+        market_clock=replace(
+            base.market_clock,
+            observed_at=checked_at,
+            market_timestamp=checked_at,
+            next_open=dt.datetime(2026, 7, 14, 13, 30, tzinfo=dt.UTC),
+            next_close=dt.datetime(2026, 7, 14, 20, tzinfo=dt.UTC),
+        ),
+        stream_heartbeat=replace(
+            base.stream_heartbeat,
+            authorized_at=checked_at - dt.timedelta(seconds=5),
+            subscribed_at=checked_at - dt.timedelta(seconds=4),
+            pong_at=checked_at,
+        ),
+        portfolio=replace(base.portfolio, observed_at=checked_at),
+    )
+    _initialize(database)
+    arguments = (
+        "--database",
+        str(database),
+        "--delivery-database",
+        str(delivery),
+        "--output-dir",
+        str(tmp_path / "report"),
+    )
+
+    # When: the same read-only readiness probe is run twice.
+    first = readiness_cli.main(
+        arguments,
+        credential_loader=_credentials,
+        probe_loader=lambda _credentials, _store: readiness,
+    )
+    replay = readiness_cli.main(
+        arguments,
+        credential_loader=_credentials,
+        probe_loader=lambda _credentials, _store: replace(
+            readiness,
+            stream_heartbeat=replace(
+                readiness.stream_heartbeat,
+                pong_at=checked_at + dt.timedelta(minutes=1),
+            ),
+        ),
+    )
+
+    # Then: Hermes receives one non-actionable status with no private runtime identity.
+    assert (first, replay) == (0, 0)
+    events = HermesDeliveryStore(delivery).events()
+    assert len(events) == 1
+    assert events[0].kind is HermesDeliveryKind.DAILY_SUMMARY
+    assert events[0].status == "waiting_regular_session"
+    assert FINGERPRINT not in events[0].model_dump_json()
+    assert "epoch-1" not in events[0].model_dump_json()
