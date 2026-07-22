@@ -1,5 +1,5 @@
 name: trading-agent
-version: 1.0.0
+version: 1.1.0
 description: "Read-only agent queries, durable alerts, and signed Alpaca Paper arm routing."
 author: trading-recommendation-agent
 kind: standalone

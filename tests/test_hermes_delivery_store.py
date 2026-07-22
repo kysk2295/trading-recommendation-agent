@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from trading_agent.hermes_delivery_models import (
+    HermesDeliveryFailure,
     HermesDeliveryKind,
     HermesDeliveryTransitionKind,
     build_hermes_delivery_event,
@@ -82,9 +83,11 @@ def test_retry_budget_exhaustion_appends_dead_letter(tmp_path: Path) -> None:
         assert first is not None
         first_failure = writer.fail(
             first,
-            failed_at=AT + dt.timedelta(seconds=1),
-            reason="telegram_timeout",
-            retry_delay_seconds=5,
+            HermesDeliveryFailure(
+                failed_at=AT + dt.timedelta(seconds=1),
+                reason="telegram_timeout",
+                retry_delay_seconds=5,
+            ),
         )
         second = writer.claim_next(worker_id="worker-b", now=AT + dt.timedelta(seconds=6), lease_seconds=30)
         assert second is not None
@@ -92,9 +95,11 @@ def test_retry_budget_exhaustion_appends_dead_letter(tmp_path: Path) -> None:
         # When
         terminal = writer.fail(
             second,
-            failed_at=AT + dt.timedelta(seconds=7),
-            reason="telegram_rejected",
-            retry_delay_seconds=5,
+            HermesDeliveryFailure(
+                failed_at=AT + dt.timedelta(seconds=7),
+                reason="telegram_rejected",
+                retry_delay_seconds=5,
+            ),
         )
 
     # Then
@@ -137,9 +142,11 @@ def test_store_is_append_only_mode_600_and_single_writer(tmp_path: Path) -> None
         assert first is not None
         _ = writer.fail(
             first,
-            failed_at=AT + dt.timedelta(seconds=1),
-            reason="telegram_timeout",
-            retry_delay_seconds=1,
+            HermesDeliveryFailure(
+                failed_at=AT + dt.timedelta(seconds=1),
+                reason="telegram_timeout",
+                retry_delay_seconds=1,
+            ),
         )
         second = writer.claim_next(worker_id="worker-a", now=AT + dt.timedelta(seconds=2), lease_seconds=30)
         assert second is not None

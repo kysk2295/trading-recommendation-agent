@@ -22,6 +22,7 @@ from trading_agent.hermes_delivery_models import (
     HermesDeliveryAttempt,
     HermesDeliveryClaim,
     HermesDeliveryEvent,
+    HermesDeliveryFailure,
     HermesDeliveryTransition,
     HermesDeliveryTransitionKind,
     HermesReplyLineage,
@@ -170,36 +171,21 @@ class HermesDeliveryWriter:
         self._connection.commit()
         return True
 
-    def fail(
-        self,
-        claim: HermesDeliveryClaim,
-        *,
-        failed_at: dt.datetime,
-        reason: str,
-        retry_delay_seconds: int,
-    ) -> HermesDeliveryTransition:
+    def fail(self, claim: HermesDeliveryClaim, failure: HermesDeliveryFailure) -> HermesDeliveryTransition:
         self._require_active()
-        if retry_delay_seconds < 0 or retry_delay_seconds > 3600:
-            raise InvalidHermesDeliveryOperationError("invalid Hermes delivery retry delay")
-        self._require_claim(claim, failed_at)
-        kind = (
-            HermesDeliveryTransitionKind.DEAD_LETTER
-            if claim.attempt.attempt_number >= claim.event.max_attempts
-            else HermesDeliveryTransitionKind.RETRY_SCHEDULED
-        )
-        available_at = (
-            None
-            if kind is HermesDeliveryTransitionKind.DEAD_LETTER
-            else failed_at + dt.timedelta(seconds=retry_delay_seconds)
-        )
+        failure = HermesDeliveryFailure.model_validate(failure.model_dump(mode="python"))
+        self._require_claim(claim, failure.failed_at)
+        terminal = failure.terminal or claim.attempt.attempt_number >= claim.event.max_attempts
+        kind = HermesDeliveryTransitionKind.DEAD_LETTER if terminal else HermesDeliveryTransitionKind.RETRY_SCHEDULED
+        available_at = None if terminal else failure.failed_at + dt.timedelta(seconds=failure.retry_delay_seconds)
         transition = HermesDeliveryTransition(
             transition_id=hermes_transition_id(claim.attempt.attempt_id, kind),
             delivery_id=claim.event.delivery_id,
             attempt_id=claim.attempt.attempt_id,
             kind=kind,
-            occurred_at=failed_at,
+            occurred_at=failure.failed_at,
             available_at=available_at,
-            reason=reason,
+            reason=failure.reason,
         )
         self._connection.execute(
             "INSERT INTO hermes_delivery_transitions VALUES (?, ?, ?, ?, ?, ?)",

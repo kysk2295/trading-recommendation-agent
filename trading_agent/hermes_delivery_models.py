@@ -34,6 +34,25 @@ class HermesDeliveryTransitionKind(StrEnum):
     DEAD_LETTER = "dead_letter"
 
 
+class HermesDeliveryFailure(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True, hide_input_in_errors=True)
+
+    failed_at: dt.datetime
+    reason: str
+    retry_delay_seconds: int
+    terminal: bool = False
+
+    @model_validator(mode="after")
+    def validate_failure(self) -> Self:
+        if (
+            not _aware(self.failed_at)
+            or _IDENTIFIER.fullmatch(self.reason) is None
+            or not 0 <= self.retry_delay_seconds <= 3600
+        ):
+            raise InvalidHermesDeliveryModelError("invalid Hermes delivery failure")
+        return self
+
+
 class HermesDeliveryEvent(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True, hide_input_in_errors=True)
 

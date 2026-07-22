@@ -8,7 +8,9 @@ import re
 import shutil
 import subprocess
 from collections.abc import Mapping
+from enum import StrEnum
 from pathlib import Path
+from typing import Final, assert_never
 
 _SYMBOL = re.compile(r"^(?:[A-Z0-9][A-Z0-9./-]{0,19}|[0-9]{6})$")
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$")
@@ -94,6 +96,51 @@ def register(ctx) -> None:
     )
     skill = Path(__file__).parent / "skills" / "trading-agent" / "SKILL.md"
     ctx.register_skill("trading-agent", skill, "Query separate trading-agent opinions and Paper status safely.")
+    if os.environ.get("TRADING_AGENT_HERMES_DELIVERY_ENABLED") == "1":
+        _start_delivery_worker()
+
+
+class _PluginDeliveryStatus(StrEnum):
+    DISABLED = "disabled"
+    RUNNING = "running"
+    BLOCKED_CONFIGURATION = "blocked_configuration"
+
+
+class _PluginDeliveryState:
+    """Mutable runtime status for the process-owned delivery worker."""
+
+    __slots__ = ("status",)
+
+    def __init__(self) -> None:
+        self.status = _PluginDeliveryStatus.DISABLED
+
+
+_DELIVERY_STATE: Final = _PluginDeliveryState()
+
+
+def _start_delivery_worker() -> None:
+    try:
+        from .delivery_worker import start_delivery_daemon
+        from .telegram_sender import HermesTelegramSender, InvalidHermesTelegramConfigurationError
+
+        root = _project_root()
+        sender = HermesTelegramSender.from_hermes_config()
+        _ = start_delivery_daemon(root / _DATABASE, sender)
+        _DELIVERY_STATE.status = _PluginDeliveryStatus.RUNNING
+    except (InvalidTradingAgentPluginConfigurationError, InvalidHermesTelegramConfigurationError):
+        _DELIVERY_STATE.status = _PluginDeliveryStatus.BLOCKED_CONFIGURATION
+
+
+def _delivery_worker_status() -> str:
+    match _DELIVERY_STATE.status:
+        case _PluginDeliveryStatus.RUNNING:
+            from .delivery_worker import delivery_daemon_status
+
+            return delivery_daemon_status()
+        case _PluginDeliveryStatus.DISABLED | _PluginDeliveryStatus.BLOCKED_CONFIGURATION as status:
+            return status.value
+        case unreachable:
+            assert_never(unreachable)
 
 
 def _query(args: Mapping[str, str], **context: str) -> str:
@@ -126,9 +173,11 @@ def _status(args: Mapping[str, str], **context: str) -> str:
         {
             "arm_gateway_available": (root / "run_hermes_arm_gateway.py").is_file(),
             "delivery_database_available": (root / _DATABASE).is_file(),
+            "delivery_semantics": "at_least_once",
+            "delivery_worker_status": _delivery_worker_status(),
             "query_available": (root / "run_hermes_delivery.py").is_file(),
             "result": "ready",
-            "version": "1.0.0",
+            "version": "1.1.0",
         }
     )
 
