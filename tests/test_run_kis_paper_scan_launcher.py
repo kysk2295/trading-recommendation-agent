@@ -12,8 +12,11 @@ def test_standalone_scan_launcher_declares_imported_analytics_dependencies() -> 
 
     # When: the self-contained PEP 723 dependency declaration is parsed.
     assert lines[0] == "#!/usr/bin/env -S uv run --script"
-    closing = lines.index("# ///", 2)
-    metadata = tomllib.loads("\n".join(line.removeprefix("# ") for line in lines[2:closing]))
+    opening = lines.index("# /// script")
+    closing = lines.index("# ///", opening + 1)
+    metadata = tomllib.loads(
+        "\n".join(line.removeprefix("# ") for line in lines[opening + 1 : closing])
+    )
 
     # Then: imported analytics runtimes are pinned without relying on project cwd.
     assert "duckdb==1.5.4" in metadata["dependencies"]
