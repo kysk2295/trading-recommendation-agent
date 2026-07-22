@@ -16,6 +16,10 @@ from trading_agent.systematic_regime_store import (
     SystematicRegimeStore,
     SystematicShadowOutcome,
 )
+from trading_agent.systematic_regime_store_sql import (
+    InvalidSystematicRegimeSqliteError,
+    systematic_reader_connection,
+)
 
 
 def test_card_store_is_append_only_and_exact_replay_is_a_noop(tmp_path: Path) -> None:
@@ -79,6 +83,26 @@ def test_store_rejects_database_and_lock_hard_links(tmp_path: Path) -> None:
     with pytest.raises(InvalidSystematicRegimeStoreError), SystematicRegimeStore(database).writer():
         pass
 
+
+def test_rejected_database_alias_does_not_leak_descriptors(tmp_path: Path) -> None:
+    # Given: a hard-linked database that repeatedly fails private-file validation.
+    linked_database = tmp_path / "linked-database"
+    linked_database.write_bytes(b"")
+    linked_database.chmod(0o600)
+    database = tmp_path / "systematic.sqlite3"
+    os.link(linked_database, database)
+    before = len(tuple(Path("/dev/fd").iterdir()))
+
+    # When: a long-lived caller retries the rejected writer boundary.
+    for _ in range(25):
+        with pytest.raises(InvalidSystematicRegimeStoreError), SystematicRegimeStore(
+            database
+        ).writer():
+            pass
+
+    # Then: rejected descriptors were closed instead of accumulating.
+    assert len(tuple(Path("/dev/fd").iterdir())) <= before + 1
+
     database.unlink()
     (tmp_path / "systematic.sqlite3.writer.lock").unlink()
     lock_source = tmp_path / "lock-source"
@@ -126,3 +150,19 @@ def test_store_rejects_missing_append_only_trigger(tmp_path: Path) -> None:
     # When/Then: query-only replay refuses the weakened schema.
     with pytest.raises(InvalidSystematicRegimeStoreError):
         _ = store.cards()
+
+
+def test_reader_rejects_stored_foreign_key_violation(tmp_path: Path) -> None:
+    # Given: an otherwise canonical schema containing an out-of-band orphan row.
+    path = tmp_path / "systematic.sqlite3"
+    store = SystematicRegimeStore(path)
+    with store.writer():
+        pass
+    with sqlite3.connect(path) as connection:
+        _ = connection.execute(
+            "INSERT INTO systematic_outcomes (card_id, payload_json) VALUES ('missing', '{}')"
+        )
+
+    # When/Then: schema replay checks stored referential integrity before payload parsing.
+    with pytest.raises(InvalidSystematicRegimeSqliteError), systematic_reader_connection(path):
+        pass

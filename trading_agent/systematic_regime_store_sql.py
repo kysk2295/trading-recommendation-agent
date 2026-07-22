@@ -135,7 +135,11 @@ def _open_file(parent: int, name: str, *, create: bool, write: bool) -> int:
         if not create:
             raise
         descriptor = os.open(name, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=parent)
-    _require_private_file(descriptor)
+    try:
+        _require_private_file(descriptor)
+    except (OSError, ValueError):
+        os.close(descriptor)
+        raise
     return descriptor
 
 
@@ -178,6 +182,7 @@ def _require_schema(connection: sqlite3.Connection) -> None:
         connection.execute("PRAGMA user_version").fetchone() != (_SCHEMA_VERSION,)
         or _signature(connection) != _EXPECTED_SIGNATURE
         or connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
+        or connection.execute("PRAGMA foreign_key_check").fetchall()
     ):
         raise InvalidSystematicRegimeSqliteError
 

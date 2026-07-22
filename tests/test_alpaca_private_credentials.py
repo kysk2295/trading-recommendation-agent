@@ -8,34 +8,21 @@ import pytest
 import trading_agent.alpaca_private_credentials as credentials_module
 
 
-def test_private_credential_loader_uses_no_follow_descriptor(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Given: a valid private credential file and an observable OS open boundary.
+def test_private_credential_loader_reads_private_regular_file(tmp_path: Path) -> None:
+    # Given: a valid private credential file.
     secret = tmp_path / "alpaca.env"
     secret.write_text(
         "APCA_API_KEY_ID=test-key\nAPCA_API_SECRET_KEY=test-secret\n",
         encoding="utf-8",
     )
     secret.chmod(0o600)
-    observed_flags: list[int] = []
-    real_open = os.open
-
-    def tracked_open(path: Path, flags: int) -> int:
-        observed_flags.append(flags)
-        return real_open(path, flags)
-
-    monkeypatch.setattr(credentials_module.os, "open", tracked_open)
 
     # When: the private loader reads the file.
     credentials = credentials_module.load_private_alpaca_credentials(secret)
 
-    # Then: it opens through an OS no-follow descriptor and returns redacted values.
+    # Then: it returns the typed values without changing their private source.
     assert credentials.key_id == "test-key"
     assert credentials.secret_key == "test-secret"
-    assert observed_flags
-    assert observed_flags[0] & os.O_NOFOLLOW
 
 
 def test_private_credential_loader_rejects_symlink_and_hard_link(tmp_path: Path) -> None:
@@ -56,3 +43,21 @@ def test_private_credential_loader_rejects_symlink_and_hard_link(tmp_path: Path)
         _ = credentials_module.load_private_alpaca_credentials(symlink)
     with pytest.raises(credentials_module.PrivateAlpacaCredentialsError):
         _ = credentials_module.load_private_alpaca_credentials(hard_link)
+
+
+def test_private_credential_loader_rejects_symlinked_parent(tmp_path: Path) -> None:
+    # Given: a private credential file reached through an aliased directory component.
+    real_parent = tmp_path / "real"
+    real_parent.mkdir(mode=0o700)
+    secret = real_parent / "alpaca.env"
+    secret.write_text(
+        "APCA_API_KEY_ID=test-key\nAPCA_API_SECRET_KEY=test-secret\n",
+        encoding="utf-8",
+    )
+    secret.chmod(0o600)
+    alias = tmp_path / "alias"
+    alias.symlink_to(real_parent, target_is_directory=True)
+
+    # When/Then: no ancestor symlink can become credential authority.
+    with pytest.raises(credentials_module.PrivateAlpacaCredentialsError):
+        _ = credentials_module.load_private_alpaca_credentials(alias / "alpaca.env")

@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Final, override
 
 from trading_agent.alpaca_http import AlpacaCredentials
+from trading_agent.private_directory_identity import (
+    absolute_private_path,
+    open_private_parent,
+    require_private_directory_query_only,
+)
 
 _MAX_SECRET_BYTES: Final = 4_096
 
@@ -18,28 +23,34 @@ class PrivateAlpacaCredentialsError(PermissionError):
 
 def load_private_alpaca_credentials(path: Path) -> AlpacaCredentials:
     try:
-        absolute = path.expanduser().absolute()
-        descriptor = os.open(
-            absolute,
-            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
-        )
+        absolute = absolute_private_path(path)
+        parent = open_private_parent(absolute.parent, create=False)
         try:
-            metadata = os.fstat(descriptor)
-            if (
-                not stat.S_ISREG(metadata.st_mode)
-                or metadata.st_uid != os.getuid()
-                or stat.S_IMODE(metadata.st_mode) != 0o600
-                or metadata.st_nlink != 1
-            ):
-                raise PrivateAlpacaCredentialsError
-            payload = bytearray()
-            while len(payload) <= _MAX_SECRET_BYTES:
-                chunk = os.read(descriptor, _MAX_SECRET_BYTES + 1 - len(payload))
-                if not chunk:
-                    break
-                payload.extend(chunk)
+            require_private_directory_query_only(parent)
+            descriptor = os.open(
+                absolute.name,
+                os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+                dir_fd=parent,
+            )
+            try:
+                metadata = os.fstat(descriptor)
+                if (
+                    not stat.S_ISREG(metadata.st_mode)
+                    or metadata.st_uid != os.getuid()
+                    or stat.S_IMODE(metadata.st_mode) != 0o600
+                    or metadata.st_nlink != 1
+                ):
+                    raise PrivateAlpacaCredentialsError
+                payload = bytearray()
+                while len(payload) <= _MAX_SECRET_BYTES:
+                    chunk = os.read(descriptor, _MAX_SECRET_BYTES + 1 - len(payload))
+                    if not chunk:
+                        break
+                    payload.extend(chunk)
+            finally:
+                os.close(descriptor)
         finally:
-            os.close(descriptor)
+            os.close(parent)
         if len(payload) > _MAX_SECRET_BYTES:
             raise PrivateAlpacaCredentialsError
         values: dict[str, str] = {}
