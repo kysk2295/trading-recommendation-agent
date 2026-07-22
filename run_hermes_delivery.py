@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import assert_never
 
@@ -23,8 +23,15 @@ from trading_agent.hermes_delivery_projection import (
 )
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.hermes_query_service import HermesAgentQueryService, InvalidHermesQueryError
+from trading_agent.kr_source_cycle_delivery import (
+    InvalidKrSourceCycleDeliveryError,
+    KrSourceCycleDeliveryRequest,
+    project_kr_source_cycle_incident,
+)
+from trading_agent.kr_theme_store import KrThemeStore
 
 type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
+Clock = Callable[[], dt.datetime]
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -34,6 +41,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     project.add_argument("--database", type=Path, required=True)
     project.add_argument("--opportunities", type=Path, required=True)
     project.add_argument("--signals", type=Path, required=True)
+    kr_cycle = commands.add_parser(
+        "project-kr-cycle",
+        help="project a current incomplete KR source cycle incident",
+    )
+    kr_cycle.add_argument("--database", type=Path, required=True)
+    kr_cycle.add_argument("--source-database", type=Path, required=True)
+    kr_cycle.add_argument("--collection-cycle-id", required=True)
     query = commands.add_parser("query", help="query separate agent opinions")
     query.add_argument("--database", type=Path, required=True)
     query.add_argument("--symbol", required=True)
@@ -41,7 +55,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    clock: Clock = lambda: dt.datetime.now(dt.UTC),
+) -> int:
     args = parse_args(argv)
     try:
         store = HermesDeliveryStore(args.database)
@@ -54,6 +72,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                 with store.writer() as writer:
                     result = project_contract_outboxes(sources, writer)
                 _print({"examined": result.examined, "inserted": result.inserted, "result": "projected"})
+            case "project-kr-cycle":
+                result = project_kr_source_cycle_incident(
+                    KrThemeStore(args.source_database),
+                    store,
+                    KrSourceCycleDeliveryRequest(
+                        collection_cycle_id=args.collection_cycle_id,
+                        projected_at=clock(),
+                    ),
+                )
+                _print(
+                    {
+                        "examined": result.examined,
+                        "inserted": result.inserted,
+                        "replayed": result.replayed,
+                        "result": "projected_kr_source_incident",
+                    }
+                )
             case "query":
                 result = HermesAgentQueryService(store).query(args.symbol, observed_at=args.observed_at)
                 _print(
@@ -68,6 +103,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 assert_never(unreachable)
     except (
         InvalidHermesProjectionSourceError,
+        InvalidKrSourceCycleDeliveryError,
         InvalidHermesDeliveryStoreError,
         InvalidHermesQueryError,
         ValidationError,
