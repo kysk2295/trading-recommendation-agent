@@ -9,13 +9,17 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import assert_never
 
 from pydantic import ValidationError
 
-from trading_agent.hermes_delivery_errors import InvalidHermesDeliveryStoreError
+from trading_agent.hermes_delivery_errors import (
+    HermesDeliveryWriterLeaseUnavailableError,
+    InvalidHermesDeliveryStoreError,
+)
 from trading_agent.hermes_delivery_projection import (
     HermesProjectionSources,
     InvalidHermesProjectionSourceError,
@@ -34,8 +38,15 @@ from trading_agent.kr_source_cycle_delivery import (
     project_kr_source_cycle_incident,
 )
 from trading_agent.kr_theme_store import KrThemeStore
+from trading_agent.private_stable_report import InvalidPrivateStableReportError
 from trading_agent.us_session_delivery_projection import (
     project_us_session_contract_outboxes,
+)
+from trading_agent.us_session_delivery_reconciliation import (
+    InvalidUsSessionDeliveryReconciliationError,
+    UsSessionDeliveryReconciliationRequest,
+    reconcile_us_session_deliveries,
+    write_us_session_delivery_reconciliation,
 )
 
 type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
@@ -57,6 +68,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     session.add_argument("--opportunities", type=Path, required=True)
     session.add_argument("--signals", type=Path, required=True)
     session.add_argument("--session-date", type=_date, required=True)
+    reconcile = commands.add_parser(
+        "reconcile-session",
+        help="reconcile exact US session deliveries and acknowledgements",
+    )
+    reconcile.add_argument("--database", type=Path, required=True)
+    reconcile.add_argument("--opportunities", type=Path, required=True)
+    reconcile.add_argument("--signals", type=Path, required=True)
+    reconcile.add_argument("--session-date", type=_date, required=True)
+    reconcile.add_argument("--output", type=Path, required=True)
     kr_cycle = commands.add_parser(
         "project-kr-cycle",
         help="project a current incomplete KR source cycle incident",
@@ -109,6 +129,28 @@ def main(
                         "result": "projected_session",
                     }
                 )
+            case "reconcile-session":
+                report = reconcile_us_session_deliveries(
+                    UsSessionDeliveryReconciliationRequest(
+                        sources=HermesProjectionSources(
+                            opportunity_outbox=args.opportunities,
+                            signal_outbox=args.signals,
+                        ),
+                        session_date=args.session_date,
+                        generated_at=clock(),
+                    ),
+                    store,
+                )
+                write_us_session_delivery_reconciliation(args.output, report)
+                _print(
+                    {
+                        "acknowledged": report.acknowledged_count,
+                        "complete": report.complete,
+                        "expected": report.expected_count,
+                        "pending": report.pending_count,
+                        "result": "reconciled_session",
+                    }
+                )
             case "project-kr-cycle":
                 result = project_kr_source_cycle_incident(
                     KrThemeStore(args.source_database),
@@ -155,9 +197,13 @@ def main(
     except (
         InvalidHermesProjectionSourceError,
         InvalidHermesDeliveryRedriveError,
+        HermesDeliveryWriterLeaseUnavailableError,
         InvalidKrSourceCycleDeliveryError,
         InvalidHermesDeliveryStoreError,
         InvalidHermesQueryError,
+        InvalidPrivateStableReportError,
+        InvalidUsSessionDeliveryReconciliationError,
+        sqlite3.DatabaseError,
         ValidationError,
     ):
         _print({"reason": "invalid_projection_source", "result": "blocked"})

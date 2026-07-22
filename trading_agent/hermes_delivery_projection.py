@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from trading_agent.hermes_delivery_models import (
     HERMES_DELIVERY_CONTRACT_VERSION,
+    HermesDeliveryEvent,
     HermesDeliveryKind,
     build_hermes_delivery_event,
     hermes_delivery_id,
@@ -111,29 +112,35 @@ def project_outcomes(
 ) -> HermesProjectionResult:
     inserted = 0
     for untrusted in records:
-        record = HermesProjectionRecord.model_validate(untrusted.model_dump(mode="python"))
-        root_delivery_id = (
-            None
-            if record.root_source_event_id is None
-            else hermes_delivery_id(record.root_source_event_id, HERMES_DELIVERY_CONTRACT_VERSION)
-        )
-        event = build_hermes_delivery_event(
-            kind=record.kind,
-            source_event_id=record.source_event_id,
-            market_id=record.market_id,
-            lane_id=record.lane_id,
-            occurred_at=record.occurred_at,
-            payload_sha256=record.payload_sha256,
-            rendered_text=record.rendered_text,
-            agent_family=record.agent_family,
-            instrument_id=record.instrument_id,
-            strategy_version=record.strategy_version,
-            status=record.status,
-            evidence_refs=record.evidence_refs,
-            root_delivery_id=root_delivery_id,
-        )
+        event = delivery_event_from_projection_record(untrusted)
         inserted += int(writer.append_event(event).inserted)
     return HermesProjectionResult(examined=len(records), inserted=inserted, replayed=len(records) - inserted)
+
+
+def delivery_event_from_projection_record(
+    untrusted: HermesProjectionRecord,
+) -> HermesDeliveryEvent:
+    record = HermesProjectionRecord.model_validate(untrusted.model_dump(mode="python"))
+    root_delivery_id = (
+        None
+        if record.root_source_event_id is None
+        else hermes_delivery_id(record.root_source_event_id, HERMES_DELIVERY_CONTRACT_VERSION)
+    )
+    return build_hermes_delivery_event(
+        kind=record.kind,
+        source_event_id=record.source_event_id,
+        market_id=record.market_id,
+        lane_id=record.lane_id,
+        occurred_at=record.occurred_at,
+        payload_sha256=record.payload_sha256,
+        rendered_text=record.rendered_text,
+        agent_family=record.agent_family,
+        instrument_id=record.instrument_id,
+        strategy_version=record.strategy_version,
+        status=record.status,
+        evidence_refs=record.evidence_refs,
+        root_delivery_id=root_delivery_id,
+    )
 
 
 def project_opportunity_snapshots(

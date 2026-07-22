@@ -30,6 +30,16 @@ def project_us_session_contract_outboxes(
     session_date: dt.date,
     writer: HermesDeliveryWriter,
 ) -> HermesProjectionResult:
+    return project_outcomes(
+        us_session_projection_records(sources, session_date),
+        writer,
+    )
+
+
+def us_session_projection_records(
+    sources: HermesProjectionSources,
+    session_date: dt.date,
+) -> tuple[HermesProjectionRecord, ...]:
     snapshots = tuple(
         snapshot
         for snapshot in read_opportunity_snapshots(sources.opportunity_outbox)
@@ -46,7 +56,7 @@ def project_us_session_contract_outboxes(
         raise InvalidHermesProjectionSourceError from None
     roots = _first_symbol_roots(snapshots)
     signals = _signal_records(publications, snapshots, roots)
-    return project_outcomes((*roots.values(), *signals), writer)
+    return (*roots.values(), *signals)
 
 
 def _first_symbol_roots(
