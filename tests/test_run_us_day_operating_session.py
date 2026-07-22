@@ -19,13 +19,15 @@ from trading_agent.us_day_operating_models import (
 
 
 class StaticRunner:
-    __slots__ = ("result",)
+    __slots__ = ("request", "result")
 
     def __init__(self, result: UsDayOperatingResult) -> None:
         self.result = result
+        self.request: UsDayOperatingRequest | None = None
 
     def run(self, request: UsDayOperatingRequest) -> UsDayOperatingResult:
         assert request.session_id == self.result.session_id
+        self.request = request
         return self.result
 
 
@@ -37,9 +39,8 @@ class CapturingRunnerFactory:
         self.command: RunUsDayCommand | None = None
         self.request: UsDayOperatingRequest | None = None
 
-    def __call__(self, command: RunUsDayCommand, request: UsDayOperatingRequest) -> StaticRunner:
+    def __call__(self, command: RunUsDayCommand) -> StaticRunner:
         self.command = command
-        self.request = request
         return self.runner
 
 
@@ -72,8 +73,8 @@ def test_cli_run_projects_redacted_completed_result(tmp_path: Path, capsys) -> N
     assert payload["result"] == "completed"
     assert payload["session_id"] == "XNYS-2026-07-14"
     assert "account" not in payload
-    assert factory.request is not None
-    assert factory.request.quote_observed_at == order_admission.candidate_intent.created_at
+    assert factory.runner.request is not None
+    assert factory.runner.request.quote_observed_at == order_admission.candidate_intent.created_at
 
 
 def test_cli_blocks_uninitialized_execution_store_before_credentials(tmp_path: Path, capsys) -> None:

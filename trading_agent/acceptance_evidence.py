@@ -1,18 +1,15 @@
 from __future__ import annotations
 
-import argparse
 import hashlib
-import json
 import os
 import re
 import stat
 import subprocess
-from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
-from typing import Final, Literal, Self, assert_never, override
+from typing import Final, Literal, Self, override
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, model_validator
 
 from trading_agent.private_stable_report import (
     InvalidPrivateStableReportError,
@@ -101,6 +98,8 @@ class AcceptanceEvidenceManifest(BaseModel):
     generated_at: AwareDatetime
     sessions: tuple[AcceptanceSessionEvidence, ...]
     artifacts: tuple[AcceptanceArtifactEvidence, ...]
+    fixture_labels: tuple[str, ...] = ()
+    source_artifact_hashes: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def validate_manifest(self) -> Self:
@@ -111,6 +110,10 @@ class AcceptanceEvidenceManifest(BaseModel):
             or _IDENTIFIER.fullmatch(self.verifier_version) is None
             or not self.artifacts
             or len({artifact.path for artifact in self.artifacts}) != len(self.artifacts)
+            or self.fixture_labels != tuple(sorted(set(self.fixture_labels)))
+            or self.source_artifact_hashes != tuple(sorted(set(self.source_artifact_hashes)))
+            or any(_IDENTIFIER.fullmatch(label) is None for label in self.fixture_labels)
+            or any(_SHA256.fullmatch(value) is None for value in self.source_artifact_hashes)
         ):
             raise InvalidAcceptanceEvidenceError(AcceptanceEvidenceFailure.INVALID_MANIFEST)
         return self
@@ -125,6 +128,8 @@ class AcceptanceEvidenceBuildRequest(BaseModel):
     generated_at: AwareDatetime
     sessions: tuple[AcceptanceSessionEvidence, ...]
     artifact_paths: tuple[Path, ...]
+    fixture_labels: tuple[str, ...] = ()
+    source_artifact_hashes: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def validate_request(self) -> Self:
@@ -135,6 +140,10 @@ class AcceptanceEvidenceBuildRequest(BaseModel):
             or not self.artifact_paths
             or any(not _is_relative_artifact_path(path) for path in self.artifact_paths)
             or len(set(self.artifact_paths)) != len(self.artifact_paths)
+            or self.fixture_labels != tuple(sorted(set(self.fixture_labels)))
+            or self.source_artifact_hashes != tuple(sorted(set(self.source_artifact_hashes)))
+            or any(_IDENTIFIER.fullmatch(label) is None for label in self.fixture_labels)
+            or any(_SHA256.fullmatch(value) is None for value in self.source_artifact_hashes)
         ):
             raise InvalidAcceptanceEvidenceError(AcceptanceEvidenceFailure.INVALID_MANIFEST)
         return self
@@ -146,9 +155,7 @@ def build_acceptance_manifest(
     output: Path,
 ) -> AcceptanceEvidenceManifest:
     root = _repository_root(repository)
-    commit_sha = _git(root, "rev-parse", "HEAD")
-    if _git(root, "status", "--porcelain=v1", "--untracked-files=all"):
-        raise InvalidAcceptanceEvidenceError(AcceptanceEvidenceFailure.DIRTY_REPOSITORY)
+    commit_sha = require_clean_repository_commit(root)
     artifacts = tuple(
         AcceptanceArtifactEvidence(path=path, sha256=_artifact_sha256(root, path)) for path in request.artifact_paths
     )
@@ -160,6 +167,8 @@ def build_acceptance_manifest(
         generated_at=request.generated_at,
         sessions=request.sessions,
         artifacts=artifacts,
+        fixture_labels=request.fixture_labels,
+        source_artifact_hashes=request.source_artifact_hashes,
     )
     try:
         write_private_stable_report(output, manifest.model_dump_json(indent=2) + "\n")
@@ -189,48 +198,16 @@ def verify_acceptance_manifest(
             raise InvalidAcceptanceEvidenceError(AcceptanceEvidenceFailure.ARTIFACT_HASH_MISMATCH)
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Operational acceptance evidence manifest")
-    commands = parser.add_subparsers(dest="command", required=True)
-    build = commands.add_parser("build", help="build a manifest from a typed request")
-    build.add_argument("--request", type=Path, required=True)
-    build.add_argument("--repository", type=Path, default=Path.cwd())
-    build.add_argument("--output", type=Path, required=True)
-    verify = commands.add_parser("verify", help="verify a manifest against repository evidence")
-    verify.add_argument("--criterion", required=True)
-    verify.add_argument("--manifest", type=Path, required=True)
-    verify.add_argument("--repository", type=Path, default=Path.cwd())
-    verify.add_argument("--require-clean-commit", action="store_true")
-    verify.add_argument("--require-session-binding", action="store_true")
-    return parser.parse_args(argv)
+def require_clean_repository_commit(repository: Path) -> str:
+    root = _repository_root(repository)
+    commit_sha = _git(root, "rev-parse", "HEAD")
+    if _git(root, "status", "--porcelain=v1", "--untracked-files=all"):
+        raise InvalidAcceptanceEvidenceError(AcceptanceEvidenceFailure.DIRTY_REPOSITORY)
+    return commit_sha
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = parse_args(argv)
-    try:
-        match args.command:
-            case "build":
-                request = AcceptanceEvidenceBuildRequest.model_validate_json(args.request.read_text(encoding="utf-8"))
-                manifest = build_acceptance_manifest(request, args.repository, args.output)
-                _print_result({"criterion_id": manifest.criterion_id, "result": "built"})
-            case "verify":
-                manifest = AcceptanceEvidenceManifest.model_validate_json(args.manifest.read_text(encoding="utf-8"))
-                if manifest.criterion_id != args.criterion:
-                    raise InvalidAcceptanceEvidenceError(AcceptanceEvidenceFailure.CRITERION_MISMATCH)
-                verify_acceptance_manifest(
-                    manifest,
-                    args.repository,
-                    require_clean_commit=args.require_clean_commit,
-                    require_session_binding=args.require_session_binding,
-                )
-                _print_result({"criterion_id": manifest.criterion_id, "result": "verified"})
-            case unreachable:
-                assert_never(unreachable)
-    except (InvalidAcceptanceEvidenceError, OSError, UnicodeError, ValidationError) as error:
-        reason = error.reason.value if isinstance(error, InvalidAcceptanceEvidenceError) else "invalid_manifest"
-        _print_result({"reason": reason, "result": "blocked"})
-        return 1
-    return 0
+def acceptance_artifact_sha256(repository: Path, relative_path: Path) -> str:
+    return _artifact_sha256(_repository_root(repository), relative_path)
 
 
 def _repository_root(repository: Path) -> Path:
@@ -283,11 +260,3 @@ def _artifact_sha256(repository: Path, relative_path: Path) -> str:
 
 def _is_relative_artifact_path(path: Path) -> bool:
     return not path.is_absolute() and path != Path() and ".." not in path.parts
-
-
-def _print_result(payload: dict[str, str]) -> None:
-    print(json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")))
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

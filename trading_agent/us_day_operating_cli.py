@@ -1,38 +1,47 @@
 from __future__ import annotations
 
-import argparse
 import datetime as dt
 import hashlib
 import json
-import secrets
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, assert_never
 
-from trading_agent.alpaca_paper_config import load_alpaca_paper_credentials
-from trading_agent.execution_store import ExecutionStore
-from trading_agent.hermes_arm_authority import LedgerHermesArmAuthorityConfig, LedgerHermesArmAuthorityResolver
-from trading_agent.hermes_arm_gateway import HermesArmGateway, HermesArmGatewayConfig
-from trading_agent.hermes_arm_signing import (
-    DEFAULT_HERMES_ARM_SIGNING_KEY_PATH,
-    HermesArmSigner,
-    load_hermes_arm_signing_key,
-)
-from trading_agent.hermes_arm_store import HermesArmStore
-from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.paper_entry_source import load_current_orb_paper_entry
 from trading_agent.paper_operating_session_models import PaperOrderAdmissionRequest
-from trading_agent.us_day_operating_arm import StrategyBoundHermesArmConsumer
-from trading_agent.us_day_operating_cli_errors import (
-    US_DAY_OPERATIONAL_ERRORS,
-    UninitializedUsDayExecutionStoreError,
-    safe_operational_reason,
+from trading_agent.us_day_operating_attestation import (
+    finalize_us_day_terminal,
+    publish_us_day_run_terminal,
+    write_us_day_evidence,
 )
-from trading_agent.us_day_operating_coordinator import UsDayOperatingCoordinator, UsDayOperatingCoordinatorConfig
-from trading_agent.us_day_operating_models import UsDayOperatingRequest, UsDayOperatingResult, UsDayOperatingStatus
+from trading_agent.us_day_operating_cli_contract import (
+    EvidenceUsDayCommand,
+    FinalizeUsDayCommand,
+    PreflightUsDayCommand,
+    RecoverUsDayCommand,
+    parse_command,
+)
+from trading_agent.us_day_operating_cli_contract import (
+    RunUsDayCommand as RunUsDayCommand,
+)
+from trading_agent.us_day_operating_cli_contract import (
+    parser as parser,
+)
+from trading_agent.us_day_operating_cli_errors import US_DAY_OPERATIONAL_ERRORS, safe_operational_reason
+from trading_agent.us_day_operating_cli_output import print_inspection, print_operating_result, print_payload
+from trading_agent.us_day_operating_models import (
+    UsDayOperatingRequest,
+    UsDayOperatingResult,
+    UsDayOperatingStatus,
+)
+from trading_agent.us_day_operating_runner import build_runner as build_runner
+from trading_agent.us_day_operating_runner import now_utc
+from trading_agent.us_day_session_inspection import (
+    DefaultUsDayReadOnlyOperations,
+    UsDayReadOnlyOperations,
+)
 
-type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
 type SourceLoader = Callable[[Path, dt.datetime], PaperOrderAdmissionRequest]
 type Clock = Callable[[], dt.datetime]
 
@@ -42,31 +51,7 @@ class UsDayRunner(Protocol):
 
 
 class UsDayRunnerFactory(Protocol):
-    def __call__(self, command: RunUsDayCommand, request: UsDayOperatingRequest) -> UsDayRunner: ...
-
-
-@dataclass(frozen=True, slots=True)
-class UsDayStorePaths:
-    arm: Path
-    delivery: Path
-    execution: Path
-    watch: Path
-
-
-@dataclass(frozen=True, slots=True)
-class UsDayAuthorityPaths:
-    experiment_ledger: Path
-    lane_registry: Path
-    repository: Path
-    signing_key: Path
-
-
-@dataclass(frozen=True, slots=True)
-class RunUsDayCommand:
-    arm_request_id: str
-    authority: UsDayAuthorityPaths
-    session_id: str
-    stores: UsDayStorePaths
+    def __call__(self, command: RunUsDayCommand) -> UsDayRunner: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,87 +59,45 @@ class UsDayCliDependencies:
     clock: Clock
     runner_factory: UsDayRunnerFactory
     source_loader: SourceLoader
-
-
-def now_utc() -> dt.datetime:
-    return dt.datetime.now(dt.UTC)
-
-
-def build_runner(command: RunUsDayCommand, request: UsDayOperatingRequest) -> UsDayRunner:
-    execution_store = ExecutionStore(command.stores.execution)
-    if not execution_store.is_initialized():
-        raise UninitializedUsDayExecutionStoreError
-    signer = HermesArmSigner(load_hermes_arm_signing_key(command.authority.signing_key))
-    arm_store = HermesArmStore(command.stores.arm, signer)
-    resolver = LedgerHermesArmAuthorityResolver(
-        LedgerHermesArmAuthorityConfig(
-            repository=command.authority.repository,
-            lane_registry=command.authority.lane_registry,
-            experiment_ledger=command.authority.experiment_ledger,
-        )
-    )
-    gateway = HermesArmGateway(
-        HermesArmGatewayConfig(
-            store=arm_store,
-            authority_resolver=resolver,
-            signer=signer,
-            clock=now_utc,
-            nonce_factory=lambda: secrets.token_bytes(32),
-            ttl_seconds=300,
-        )
-    )
-    return UsDayOperatingCoordinator(
-        UsDayOperatingCoordinatorConfig(
-            arm_consumer=StrategyBoundHermesArmConsumer(gateway, arm_store),
-            credentials=load_alpaca_paper_credentials(),
-            execution_store=execution_store,
-            delivery_store=HermesDeliveryStore(command.stores.delivery),
-        )
-    )
+    read_only_operations: UsDayReadOnlyOperations = field(default_factory=DefaultUsDayReadOnlyOperations)
 
 
 DEFAULT_DEPENDENCIES = UsDayCliDependencies(now_utc, build_runner, load_current_orb_paper_entry)
-
-
-def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(description="Run one causally current US Day Alpaca Paper operating session")
-    commands = root.add_subparsers(dest="command", required=True)
-    run = commands.add_parser("run", help="consume one Hermes arm and drive the existing Paper session to terminal")
-    run.add_argument("--arm-database", type=Path, required=True)
-    run.add_argument("--arm-request-id", required=True)
-    run.add_argument("--delivery-database", type=Path, required=True)
-    run.add_argument("--execution-database", type=Path, required=True)
-    run.add_argument("--experiment-ledger", type=Path, required=True)
-    run.add_argument("--lane-registry", type=Path, required=True)
-    run.add_argument("--repository", type=Path, default=Path.cwd())
-    run.add_argument("--session-id", required=True)
-    run.add_argument("--signing-key", type=Path, default=DEFAULT_HERMES_ARM_SIGNING_KEY_PATH)
-    run.add_argument("--watch-database", type=Path, required=True)
-    return root
 
 
 def main(
     argv: Sequence[str] | None = None,
     dependencies: UsDayCliDependencies = DEFAULT_DEPENDENCIES,
 ) -> int:
-    namespace = parser().parse_args(argv)
-    command = _command(namespace)
-    evaluated_at = dependencies.clock()
     try:
-        admission = dependencies.source_loader(command.stores.watch, evaluated_at)
-        request = _request(command, admission, evaluated_at)
-        result = dependencies.runner_factory(command, request).run(request)
+        command = parse_command(argv)
+        match command:
+            case RunUsDayCommand():
+                return _run(command, dependencies)
+            case PreflightUsDayCommand():
+                return _preflight(command, dependencies)
+            case RecoverUsDayCommand():
+                return _recover(command, dependencies)
+            case FinalizeUsDayCommand():
+                return _finalize(command, dependencies)
+            case EvidenceUsDayCommand():
+                return _evidence(command, dependencies.clock())
+            case unreachable:
+                assert_never(unreachable)
     except US_DAY_OPERATIONAL_ERRORS as error:
-        _print({"reason": safe_operational_reason(error), "result": "blocked"})
+        print_payload({"reason": safe_operational_reason(error), "result": "blocked"})
         return 1
-    _print(
-        {
-            "reasons": list(result.reasons),
-            "result": result.status.value,
-            "session_id": result.session_id,
-            "transitions": [transition.value for transition in result.transitions],
-        }
-    )
+
+
+def _run(command: RunUsDayCommand, dependencies: UsDayCliDependencies) -> int:
+    evaluated_at = dependencies.clock()
+    admission = dependencies.source_loader(command.stores.watch, evaluated_at)
+    request = _request(command, admission, evaluated_at)
+    result = dependencies.runner_factory(command).run(request)
+    if command.terminal_output is not None:
+        inspection = dependencies.read_only_operations.recover(command.stores.execution)
+        _ = publish_us_day_run_terminal(command, request, result, inspection)
+    print_operating_result(result)
     match result.status:
         case UsDayOperatingStatus.COMPLETED:
             return 0
@@ -166,23 +109,36 @@ def main(
             assert_never(unreachable)
 
 
-def _command(namespace: argparse.Namespace) -> RunUsDayCommand:
-    return RunUsDayCommand(
-        arm_request_id=namespace.arm_request_id,
-        session_id=namespace.session_id,
-        stores=UsDayStorePaths(
-            arm=namespace.arm_database,
-            delivery=namespace.delivery_database,
-            execution=namespace.execution_database,
-            watch=namespace.watch_database,
-        ),
-        authority=UsDayAuthorityPaths(
-            experiment_ledger=namespace.experiment_ledger,
-            lane_registry=namespace.lane_registry,
-            repository=namespace.repository,
-            signing_key=namespace.signing_key,
-        ),
+def _preflight(command: PreflightUsDayCommand, dependencies: UsDayCliDependencies) -> int:
+    admission = dependencies.source_loader(command.watch_store, dependencies.clock())
+    result = dependencies.read_only_operations.preflight(command.execution_store, admission)
+    print_inspection(result.session, "ready" if result.admission_approved else "blocked", result.reasons)
+    return 0 if result.admission_approved else 1
+
+
+def _recover(command: RecoverUsDayCommand, dependencies: UsDayCliDependencies) -> int:
+    inspection = dependencies.read_only_operations.recover(command.execution_store)
+    print_inspection(inspection, "recovered" if not inspection.reasons else "blocked", inspection.reasons)
+    return 0 if not inspection.reasons else 1
+
+
+def _finalize(command: FinalizeUsDayCommand, dependencies: UsDayCliDependencies) -> int:
+    inspection = dependencies.read_only_operations.recover(command.paths.execution_store)
+    terminal = finalize_us_day_terminal(command, inspection)
+    print_payload({"hermes_acknowledged": terminal.hermes_acknowledged, "result": terminal.status.value})
+    return 0 if terminal.is_finally_reconciled else 1
+
+
+def _evidence(command: EvidenceUsDayCommand, generated_at: dt.datetime) -> int:
+    bundle = write_us_day_evidence(command, generated_at)
+    print_payload(
+        {
+            "criterion_id": bundle.manifest.criterion_id,
+            "operating_product_complete": bundle.report.operating_product_complete,
+            "result": "built",
+        }
     )
+    return 0
 
 
 def _request(
@@ -205,7 +161,3 @@ def _request(
         evaluated_at=evaluated_at,
         actionable_payload_sha256=hashlib.sha256(material.encode()).hexdigest(),
     )
-
-
-def _print(payload: Mapping[str, JsonValue]) -> None:
-    print(json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")))

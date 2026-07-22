@@ -303,6 +303,115 @@ snapshot과 Reviewer가 모두 성공한 경우에만 같은 exact trial을 loca
 
 manual runner 또는 finalizer가 nonzero이면 다른 terminal kind를 추정하거나 임의 audit로 `failed`를 만들지 않는다. 자동 watch가 phase 종료코드를 먼저 audit한 경우에만 그 audit로 failed terminal을 시도한다. 그렇지 않은 수동 실패는 열린 trial과 source를 보존해 reconciliation 대상으로 남긴다. snapshot success 뒤에만 Reviewer가 실행되며 Reviewer는 권고만 append한다. 첫 smoke 결과는 기능 검증 근거일 뿐 확정수익이나 승격 근거가 아니다.
 
+## 10. US Day 통합 운영 terminal과 3-session 증거
+
+아래 통합 CLI는 기존 entry·보호 OCO·EOD safety·대사 수명주기를 한 owner로 직렬 실행한다. 별도 broker writer나 주문 client를 만들지 않는다. `preflight`와 `recover`는 mutation recovery를 호출하지 않고 현재 Alpaca Paper GET/WSS readiness와 admission만 읽는다.
+
+```bash
+export ARM_DB=outputs/hermes/arm.sqlite3
+export DELIVERY_DB=outputs/hermes/delivery.sqlite3
+export SESSION_ID="XNYS-${NY_DATE}"
+export SOURCE_ARTIFACT="$SMOKE_RUN/05_candidate/candidate.csv"
+export TERMINAL_ROOT=outputs/acceptance/us_day/sessions
+export TERMINAL="$TERMINAL_ROOT/${NY_DATE}.json"
+mkdir -p "$TERMINAL_ROOT"
+
+./run_us_day_operating_session.py preflight \
+  --execution-database "$PAPER_DB" \
+  --watch-database "$WATCH_RUN/paper_recommendations.sqlite3"
+```
+
+`preflight`가 0이어도 주문 권한은 없다. Telegram의 명시적 owner 확인이 도착한 세션에만 Hermes가 5분 만료 one-use arm을 준비하고 확인한다. `OWNER_ID_HASH`, request ID와 confirmation은 자격증명이 아니지만 private 운영값이므로 채팅·로그·shell history에 복사하지 않고 mode `600` 파일로만 전달한다.
+
+```bash
+export ARM_PREPARE="$SMOKE_RUN/hermes-arm-prepare.json"
+./run_hermes_arm_gateway.py prepare \
+  --database "$ARM_DB" \
+  --repository . \
+  --lane-registry "$LANE_DB" \
+  --experiment-ledger "$EXPERIMENT_DB" \
+  --owner-id-hash "$OWNER_ID_HASH" \
+  --session-id "$SESSION_ID" \
+  --lane-id intraday_momentum > "$ARM_PREPARE"
+chmod 600 "$ARM_PREPARE"
+
+export ARM_REQUEST_ID="$(plutil -extract request_id raw -o - "$ARM_PREPARE")"
+export ARM_CONFIRMATION="$(plutil -extract confirmation raw -o - "$ARM_PREPARE")"
+
+# 이 줄은 Telegram owner가 exact session/lane을 명시적으로 승인한 뒤에만 실행한다.
+./run_hermes_arm_gateway.py confirm \
+  --database "$ARM_DB" \
+  --repository . \
+  --lane-registry "$LANE_DB" \
+  --experiment-ledger "$EXPERIMENT_DB" \
+  --owner-id-hash "$OWNER_ID_HASH" \
+  --request-id "$ARM_REQUEST_ID" \
+  --confirmation "$ARM_CONFIRMATION"
+unset ARM_CONFIRMATION
+```
+
+현재 분의 immutable candidate CSV가 있고 arm이 확인된 뒤에만 통합 `run`을 호출한다. `--source-artifact`는 저장소 상대경로여야 하며 이후 수정하지 않는다. terminal을 요청하면서 source를 생략하면 coordinator나 broker를 열기 전에 차단된다.
+
+```bash
+./run_us_day_operating_session.py run \
+  --arm-database "$ARM_DB" \
+  --arm-request-id "$ARM_REQUEST_ID" \
+  --delivery-database "$DELIVERY_DB" \
+  --execution-database "$PAPER_DB" \
+  --experiment-ledger "$EXPERIMENT_DB" \
+  --lane-registry "$LANE_DB" \
+  --repository . \
+  --session-id "$SESSION_ID" \
+  --source-artifact "$SOURCE_ARTIFACT" \
+  --terminal-output "$TERMINAL" \
+  --watch-database "$WATCH_RUN/paper_recommendations.sqlite3"
+```
+
+`completed`, `blocked`, `incident` 모두 Hermes outcome을 투영하고, `--terminal-output`이 있으면 read-only current state를 다시 읽어 그 세션 terminal을 남긴다. blocked/incident도 빈 이유로 성공 처리하지 않는다. exit 2 또는 대사 미완료에서는 arm을 다시 준비하거나 mutation을 재전송하지 않고 다음 read-only 명령만 실행한다.
+
+```bash
+./run_us_day_operating_session.py recover \
+  --execution-database "$PAPER_DB"
+```
+
+NYSE 정규장 종료 뒤 기존 terminal을 최종 broker/shadow 상태와 Hermes acknowledgement로 갱신한다. 입력과 출력은 같은 private 파일이어도 된다.
+
+```bash
+./run_us_day_operating_session.py finalize \
+  --delivery-database "$DELIVERY_DB" \
+  --execution-database "$PAPER_DB" \
+  --repository . \
+  --terminal-input "$TERMINAL" \
+  --terminal-output "$TERMINAL"
+```
+
+그날 자연 setup 자체가 없어서 `run`하지 않은 경우에만, 장후 flat·대사 일치가 확인된 뒤 `censored_no_setup` terminal을 만든다. `STRATEGY_VERSION`은 pre-open에 등록된 exact Paper champion 값을 사용하며 임의 문자열로 대체하지 않는다.
+
+```bash
+./run_us_day_operating_session.py finalize \
+  --delivery-database "$DELIVERY_DB" \
+  --execution-database "$PAPER_DB" \
+  --repository . \
+  --session-id "$SESSION_ID" \
+  --source-artifact "$SOURCE_ARTIFACT" \
+  --strategy-version "$STRATEGY_VERSION" \
+  --terminal-output "$TERMINAL"
+```
+
+서로 다른 실제 NYSE 거래일 terminal이 세 개 이상 쌓이면 한 번에 증거 bundle을 만든다. fixture와 휴장일은 eligible session 수에 포함되지 않는다. 세 session이 모두 최종 flat·대사 일치·Hermes acknowledgement를 가져야 하며, 그중 하나는 실제 `entry → protective OCO → flat → reconciliation → Hermes outcome`을 완주해야 US natural lifecycle subgate가 true다. no-setup session이 열 번 쌓여도 이 자연 수명주기를 대신하지 않는다.
+
+```bash
+./run_us_day_operating_session.py evidence \
+  --repository . \
+  --terminal outputs/acceptance/us_day/sessions/YYYY-MM-DD-1.json \
+  --terminal outputs/acceptance/us_day/sessions/YYYY-MM-DD-2.json \
+  --terminal outputs/acceptance/us_day/sessions/YYYY-MM-DD-3.json
+```
+
+결과는 `outputs/acceptance/us_day/three_session_report.json`, `natural_paper_lifecycle.json`, `final_reconciliation.json`, `hermes_outcome_receipt.json`과 `outputs/acceptance/day/manifest.json`이다. 모든 파일은 mode `600`, exact clean commit, session ID, policy version, source SHA-256과 fixture label에 결합된다.
+
+휴장, 정규장 밖, 자연 setup 없음, 최신 완료 1분봉 없음, stale quote, spread·시장시계·account binding·broker/shadow 대사 불일치는 정상적인 fail-closed 결과다. threshold를 낮추거나 과거 추천·새 DB·새 arm으로 POST를 강제하지 않는다.
+
 ## 즉시 중단 조건
 
 - fixed credential 파일 부재, mode·owner·regular-file 조건 실패

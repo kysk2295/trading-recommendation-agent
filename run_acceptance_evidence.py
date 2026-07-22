@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from trading_agent.acceptance_evidence import main
+from trading_agent.acceptance_evidence_cli import main
 
 if __name__ == "__main__":
     raise SystemExit(main())

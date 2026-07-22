@@ -18,9 +18,9 @@ from trading_agent.acceptance_evidence import (
     AcceptanceSessionKind,
     InvalidAcceptanceEvidenceError,
     build_acceptance_manifest,
-    main,
     verify_acceptance_manifest,
 )
+from trading_agent.acceptance_evidence_cli import main
 
 UTC = dt.UTC
 AT = dt.datetime(2026, 7, 22, 14, 0, tzinfo=UTC)

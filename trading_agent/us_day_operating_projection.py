@@ -90,6 +90,41 @@ def project_us_day_terminal(
     )
 
 
+def project_us_day_no_recommendation(
+    session_id: str,
+    strategy_version: str,
+    store: HermesDeliveryStore,
+    occurred_at: dt.datetime,
+) -> ProjectedUsDayEvent:
+    material = json.dumps(
+        (session_id, strategy_version, "censored_no_setup"),
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(material.encode()).hexdigest()
+    record = HermesProjectionRecord(
+        source_event_id=f"us-day-no-recommendation-{digest}",
+        root_source_event_id=None,
+        kind=HermesDeliveryKind.NO_RECOMMENDATION,
+        market_id="us_equities",
+        agent_family="day_trading",
+        lane_id="intraday_momentum",
+        strategy_version=strategy_version,
+        instrument_id=None,
+        occurred_at=occurred_at,
+        status="censored_no_setup",
+        evidence_refs=(),
+        rendered_text="day_trading operating result: no eligible setup.",
+        payload_sha256=digest,
+    )
+    with store.writer() as writer:
+        _ = project_outcomes((record,), writer)
+    return ProjectedUsDayEvent(
+        record.source_event_id,
+        hermes_delivery_id(record.source_event_id, HERMES_DELIVERY_CONTRACT_VERSION),
+    )
+
+
 def _source_id(prefix: str, request: UsDayOperatingRequest, reasons: tuple[str, ...]) -> str:
     intent = request.order_admission.candidate_intent
     material = json.dumps(

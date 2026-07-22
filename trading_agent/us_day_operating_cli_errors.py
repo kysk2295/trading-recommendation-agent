@@ -4,7 +4,9 @@ import sqlite3
 from typing import Final, override
 
 import httpx2
+from pydantic import ValidationError
 
+from trading_agent.acceptance_evidence import InvalidAcceptanceEvidenceError
 from trading_agent.alpaca_http import AlpacaApiError
 from trading_agent.alpaca_paper_activities import PaperActivityHistoryIncompleteError
 from trading_agent.alpaca_paper_client import PaperOrderReadIncompleteError
@@ -50,7 +52,10 @@ from trading_agent.trade_update_receipts import (
     TradeUpdateReceiptConflictError,
     UnknownTradeUpdateReceiptError,
 )
+from trading_agent.us_day_acceptance_models import InvalidUsDayAcceptanceEvidenceError
+from trading_agent.us_day_operating_cli_contract import InvalidUsDayCliCommandError
 from trading_agent.us_day_operating_models import InvalidUsDayOperatingRequestError
+from trading_agent.us_day_session_terminal import InvalidUsDaySessionTerminalError
 
 
 class UninitializedUsDayExecutionStoreError(RuntimeError):
@@ -65,6 +70,7 @@ US_DAY_OPERATIONAL_ERRORS: Final[tuple[type[BaseException], ...]] = (
     AlpacaPaperSecretEncodingError,
     AlpacaPaperSecretFileError,
     ExecutionSchemaIntegrityError,
+    InvalidAcceptanceEvidenceError,
     InvalidCurrentOrbPaperEntrySourceError,
     InvalidHermesArmRequestError,
     InvalidHermesProjectionSourceError,
@@ -75,7 +81,10 @@ US_DAY_OPERATIONAL_ERRORS: Final[tuple[type[BaseException], ...]] = (
     InvalidPaperStreamRecoveryError,
     InvalidProtectiveOcoRecoveryError,
     InvalidTradeUpdateRawReceiptError,
+    InvalidUsDayAcceptanceEvidenceError,
+    InvalidUsDayCliCommandError,
     InvalidUsDayOperatingRequestError,
+    InvalidUsDaySessionTerminalError,
     MissingAlpacaPaperCredentialsError,
     OSError,
     PaperAccountActivityConflictError,
@@ -95,9 +104,11 @@ US_DAY_OPERATIONAL_ERRORS: Final[tuple[type[BaseException], ...]] = (
     UninitializedUsDayExecutionStoreError,
     UnknownTradeUpdateReceiptError,
     UnsupportedExecutionSchemaError,
+    ValidationError,
     WriterLeaseUnavailableError,
     httpx2.HTTPError,
     sqlite3.Error,
+    UnicodeError,
 )
 
 
@@ -108,4 +119,8 @@ def safe_operational_reason(error: BaseException) -> str:
         return "uninitialized_execution_store"
     if isinstance(error, InvalidCurrentOrbPaperEntrySourceError):
         return "invalid_current_orb_source"
+    if isinstance(error, InvalidUsDaySessionTerminalError):
+        return "invalid_session_terminal"
+    if isinstance(error, InvalidUsDayAcceptanceEvidenceError):
+        return "invalid_acceptance_evidence"
     return type(error).__name__
