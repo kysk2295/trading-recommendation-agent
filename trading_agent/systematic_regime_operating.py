@@ -53,6 +53,7 @@ def run_systematic_regime_tick(
         if source is not None:
             raise InvalidSystematicOperatingTickError
         return SystematicOperatingResult(phase, 0, 0, 0, 0)
+    _ = store.prepare_existing()
     if phase is SystematicOperatingPhase.REGULAR_SESSION:
         if source is not None:
             raise InvalidSystematicOperatingTickError

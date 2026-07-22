@@ -71,6 +71,16 @@ class SystematicRegimeStore:
     def __init__(self, path: Path) -> None:
         self.path = path.expanduser().absolute()
 
+    def prepare_existing(self) -> bool:
+        try:
+            if not private_store_exists(self.path):
+                return False
+            with self.writer():
+                pass
+            return True
+        except InvalidSystematicRegimeSqliteError:
+            raise InvalidSystematicRegimeStoreError from None
+
     @contextmanager
     def writer(self) -> Iterator[SystematicRegimeWriter]:
         try:

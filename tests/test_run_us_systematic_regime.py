@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -21,6 +22,7 @@ from trading_agent.systematic_regime_operating import (
     SystematicOperatingPhase,
     run_systematic_regime_tick,
 )
+from trading_agent.systematic_regime_schema import SYSTEMATIC_REGIME_SCHEMA_V1
 from trading_agent.systematic_regime_store import (
     SystematicRegimeStore,
     SystematicRegimeWriter,
@@ -217,6 +219,32 @@ def test_post_close_censors_a_pending_card_that_missed_its_session(
         item.event.event_kind
         for item in experiment.multi_market_trial_events(trial.trial_id)
     ) == (TrialEventKind.CENSORED,)
+
+
+def test_regular_tick_migrates_an_existing_v1_store_before_reading(tmp_path: Path) -> None:
+    # Given: the exact prior private schema exists with no staged cards.
+    path = tmp_path / "systematic.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(f"{SYSTEMATIC_REGIME_SCHEMA_V1}PRAGMA user_version = 1;")
+    path.chmod(0o600)
+    source = _source("risk_on")
+    bounds = regular_session_bounds(source.session_date)
+    assert bounds is not None
+
+    # When: the normal regular-session operating surface reads the store.
+    result = run_systematic_regime_tick(
+        now=bounds[0] + dt.timedelta(minutes=1),
+        code_version=CODE_VERSION,
+        experiment_ledger=ExperimentLedgerStore(tmp_path / "experiment.sqlite3"),
+        store=SystematicRegimeStore(path),
+        source=None,
+    )
+
+    # Then: preflight migrated v1 before the first query without creating work.
+    assert result.cards_created == 0
+    assert result.trials_started == 0
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (2,)
 
 
 def test_cli_fixture_happy_path_writes_private_recommendation_card(tmp_path: Path) -> None:
