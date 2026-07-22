@@ -19,7 +19,7 @@ from pydantic import (
 
 MAX_LS_NWS_FRAME_BYTES: Final = 262_144
 _KST: Final = ZoneInfo("Asia/Seoul")
-_REALKEY = re.compile(r"^[0-9]{24}$")
+_REALKEY = re.compile(r"^[0-9A-Z]{24}$")
 _UNSIGNED_DECIMAL = re.compile(r"^[0-9]{1,10}$")
 _DATE = re.compile(r"^[0-9]{8}$")
 _TIME = re.compile(r"^[0-9]{6}$")

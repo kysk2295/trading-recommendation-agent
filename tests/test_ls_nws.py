@@ -161,6 +161,22 @@ def test_parser_accepts_observed_extended_nws_shape_and_preserves_fields() -> No
     assert payload["codeaccu"] == ""
 
 
+def test_parser_accepts_observed_uppercase_alphanumeric_realkey() -> None:
+    document = _document()
+    body = document["body"]
+    assert isinstance(body, dict)
+    observed_realkey_shape = "2026071509010000ABCD1234"
+    body["realkey"] = observed_realkey_shape
+
+    parsed = parse_ls_nws_frame(
+        _frame(document),
+        collection_date=COLLECTION_DATE,
+    )
+
+    assert parsed.realkey == observed_realkey_shape
+    assert parsed.source_record_id == f"ls-nws://news/{observed_realkey_shape}"
+
+
 @pytest.mark.parametrize(
     ("extensions", "failure_code"),
     (
