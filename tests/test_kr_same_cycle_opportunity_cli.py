@@ -10,6 +10,8 @@ import pytest
 
 import run_kr_same_cycle_opportunity
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
+from trading_agent.hermes_delivery_models import HermesDeliveryKind
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.kr_theme_research_registration import (
     kr_theme_strategy_version,
     register_kr_theme_research_manifest,
@@ -60,6 +62,9 @@ def test_fixture_cli_collects_and_projects_same_cycle_opportunity_with_exact_rep
     assert stat.S_IMODE(summary.stat().st_mode) == 0o600
     assert "result: ready" in summary.read_text(encoding="utf-8")
     assert "opportunity count: 1" in summary.read_text(encoding="utf-8")
+    delivery = HermesDeliveryStore(paths["delivery"])
+    assert len(delivery.events()) == 1
+    assert delivery.events()[0].kind is HermesDeliveryKind.WATCH
 
 
 def test_unregistered_policy_blocks_before_collection_store_creation(tmp_path: Path) -> None:
@@ -78,7 +83,39 @@ def test_unregistered_policy_blocks_before_collection_store_creation(tmp_path: P
     # Then: it fails before any provider-backed collection ledger is opened.
     assert result == 1
     assert not paths["database"].exists()
+    assert not paths["delivery"].exists()
     assert "result: blocked" in (paths["output"] / "kr_same_cycle_opportunity_ko.md").read_text(encoding="utf-8")
+
+
+def test_complete_cycle_without_candidate_delivers_no_opportunity_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    paths = _paths(tmp_path)
+    _register(paths["ledger"], tmp_path)
+    policy = _write_policy(tmp_path)
+    monkeypatch.setattr(run_kr_same_cycle_opportunity.run_kr_theme_projection, "main", lambda **_values: None)
+
+    # When
+    first = run_kr_same_cycle_opportunity.main(
+        _argv(paths, policy),
+        clock=lambda: dt.datetime(2026, 7, 16, 10, 2, 30, tzinfo=KST),
+    )
+    second = run_kr_same_cycle_opportunity.main(
+        _argv(paths, policy),
+        clock=lambda: dt.datetime(2026, 7, 16, 15, 0, tzinfo=KST),
+    )
+
+    # Then
+    events = HermesDeliveryStore(paths["delivery"]).events()
+    assert first == 0
+    assert second == 0
+    assert len(events) == 1
+    assert events[0].kind is HermesDeliveryKind.NO_RECOMMENDATION
+    assert "result: no_opportunity" in (paths["output"] / "kr_same_cycle_opportunity_ko.md").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_historical_production_request_blocks_before_collector(
@@ -130,6 +167,7 @@ def test_help_exposes_no_account_or_order_surface() -> None:
         "--policy",
         "--database",
         "--experiment-ledger",
+        "--delivery-database",
         "--fixture-root",
     ):
         assert option in output
@@ -141,6 +179,7 @@ def _paths(tmp_path: Path) -> dict[str, Path]:
     return {
         "database": tmp_path / "kr-theme.sqlite3",
         "ledger": tmp_path / "experiment.sqlite3",
+        "delivery": tmp_path / "delivery.sqlite3",
         "collection": tmp_path / "collection",
         "projection": tmp_path / "projection",
         "runs": tmp_path / "runs",
@@ -160,6 +199,8 @@ def _argv(paths: dict[str, Path], policy: Path) -> list[str]:
         str(paths["database"]),
         "--experiment-ledger",
         str(paths["ledger"]),
+        "--delivery-database",
+        str(paths["delivery"]),
         "--collection-output-dir",
         str(paths["collection"]),
         "--run-root",

@@ -198,6 +198,8 @@ def _same_cycle_args(tmp_path: Path, ledger_path: Path, policy: Path) -> tuple[s
         str(tmp_path / "kr-theme.sqlite3"),
         "--experiment-ledger",
         str(ledger_path),
+        "--delivery-database",
+        str(tmp_path / "delivery.sqlite3"),
         "--collection-output-dir",
         str(tmp_path / "collection"),
         "--run-root",

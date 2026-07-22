@@ -129,6 +129,17 @@ def project_outcomes(
     return HermesProjectionResult(examined=len(records), inserted=inserted, replayed=len(records) - inserted)
 
 
+def project_opportunity_snapshots(
+    snapshots: tuple[OpportunitySnapshot, ...],
+    writer: HermesDeliveryWriter,
+) -> HermesProjectionResult:
+    validated = tuple(
+        OpportunitySnapshot.model_validate(snapshot.model_dump(mode="python")) for snapshot in snapshots
+    )
+    records = tuple(record for snapshot in validated for record in _opportunity_records(snapshot))
+    return project_outcomes(records, writer)
+
+
 def _read_opportunities(path: Path) -> tuple[OpportunitySnapshot, ...]:
     source = path.expanduser().absolute()
     if source.is_symlink():

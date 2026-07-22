@@ -24,6 +24,12 @@ from trading_agent.experiment_ledger_store import (
     InvalidExperimentLedgerSourceError,
     UnsupportedExperimentLedgerSchemaError,
 )
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
+from trading_agent.kr_same_cycle_delivery import (
+    InvalidKrSameCycleDeliveryError,
+    KrSameCycleDeliveryRequest,
+    project_kr_same_cycle_delivery,
+)
 from trading_agent.kr_same_cycle_opportunity_run import (
     InvalidKrSameCycleOpportunityRunError,
     KrSameCycleOpportunityPreparation,
@@ -59,6 +65,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--policy", type=Path, required=True)
     parser.add_argument("--database", type=Path, required=True)
     parser.add_argument("--experiment-ledger", type=Path, required=True)
+    parser.add_argument("--delivery-database", type=Path, required=True)
     parser.add_argument("--collection-output-dir", type=Path, required=True)
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--projection-output-dir", type=Path, required=True)
@@ -115,12 +122,23 @@ def main(
             output_dir=str(args.projection_output_dir),
             experiment_ledger=str(args.experiment_ledger),
         )
-        opportunity_count = _cycle_opportunity_count(
+        opportunities = _cycle_opportunities(
             args.projection_output_dir / "opportunities.v1.jsonl",
             args.collection_cycle_id,
         )
+        opportunity_count = len(opportunities)
+        _ = project_kr_same_cycle_delivery(
+            HermesDeliveryStore(args.delivery_database),
+            KrSameCycleDeliveryRequest(
+                collection_cycle_id=args.collection_cycle_id,
+                strategy_version=policy.producer_strategy_version,
+                occurred_at=_exact_cycle_completed_at(store, args.collection_cycle_id),
+                opportunities=opportunities,
+            ),
+        )
     except (
         InvalidExperimentLedgerSourceError,
+        InvalidKrSameCycleDeliveryError,
         InvalidKrSameCycleOpportunityRunError,
         InvalidKrThemeResearchRegistrationError,
         InvalidKrThemeSourceError,
@@ -146,7 +164,7 @@ def main(
 
 
 def _validate_targets(args: argparse.Namespace) -> None:
-    databases = (args.database, args.experiment_ledger)
+    databases = (args.database, args.experiment_ledger, args.delivery_database)
     artifacts = (
         args.output_dir / REPORT_NAME,
         args.collection_output_dir / "kr_same_cycle_summary_ko.md",
@@ -165,7 +183,7 @@ def _validate_targets(args: argparse.Namespace) -> None:
             Path(f"{database}-wal"),
         )
     }
-    if len({item.expanduser().resolve(strict=False) for item in databases}) != 2:
+    if len({item.expanduser().resolve(strict=False) for item in databases}) != 3:
         raise InvalidKrSameCycleOpportunityRunError
     if any(artifact.expanduser().resolve(strict=False) in database_targets for artifact in artifacts):
         raise InvalidKrSameCycleOpportunityRunError
@@ -179,21 +197,22 @@ def _validate_targets(args: argparse.Namespace) -> None:
             raise InvalidKrSameCycleOpportunityRunError
 
 
-def _cycle_opportunity_count(path: Path, collection_cycle_id: str) -> int:
+def _cycle_opportunities(path: Path, collection_cycle_id: str) -> tuple[OpportunitySnapshot, ...]:
     if not path.is_file() or path.is_symlink():
-        return 0
+        return ()
     metadata = path.lstat()
     if stat.S_IMODE(metadata.st_mode) != 0o600:
         raise InvalidKrSameCycleOpportunityRunError
     opportunities = tuple(
         OpportunitySnapshot.model_validate_json(line) for line in path.read_text(encoding="utf-8").splitlines() if line
     )
-    return sum(
-        any(
+    return tuple(
+        opportunity
+        for opportunity in opportunities
+        if any(
             evidence.namespace == "kr/collection_cycle" and evidence.record_id == collection_cycle_id
             for evidence in opportunity.evidence_refs
         )
-        for opportunity in opportunities
     )
 
 
