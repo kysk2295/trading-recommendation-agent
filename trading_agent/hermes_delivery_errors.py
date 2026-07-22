@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import override
+from typing_extensions import override  # noqa: UP035 - Hermes gateway uses Python 3.11.
 
 
 class HermesDeliveryConflictError(RuntimeError):

@@ -23,16 +23,37 @@ class FakePluginContext:
         self.skills[name] = path
 
 
-def test_plugin_entrypoint_parses_on_hermes_python_311_runtime() -> None:
+def test_plugin_runtime_island_supports_hermes_python_311() -> None:
     # Given
     root = Path(__file__).parents[1]
-    source = root / "integrations" / "hermes" / "trading-agent" / "__init__.py"
+    sources = (
+        root / "integrations" / "hermes" / "trading-agent" / "__init__.py",
+        root / "integrations" / "hermes" / "trading-agent" / "delivery_worker.py",
+        root / "integrations" / "hermes" / "trading-agent" / "telegram_sender.py",
+        root / "trading_agent" / "hermes_delivery_errors.py",
+        root / "trading_agent" / "hermes_delivery_models.py",
+        root / "trading_agent" / "hermes_delivery_reader.py",
+        root / "trading_agent" / "hermes_delivery_schema.py",
+        root / "trading_agent" / "hermes_delivery_store.py",
+    )
 
     # When
-    tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source), feature_version=(3, 11))
+    trees = tuple(
+        ast.parse(source.read_text(encoding="utf-8"), filename=str(source), feature_version=(3, 11))
+        for source in sources
+    )
+    unsupported_typing_imports = tuple(
+        alias.name
+        for tree in trees
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "typing"
+        for alias in node.names
+        if alias.name == "override"
+    )
 
     # Then
-    assert isinstance(tree, ast.Module)
+    assert all(isinstance(tree, ast.Module) for tree in trees)
+    assert unsupported_typing_imports == ()
 
 
 def test_plugin_registers_query_arm_tools_command_and_skill() -> None:

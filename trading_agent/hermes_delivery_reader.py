@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -14,6 +15,8 @@ from trading_agent.hermes_delivery_models import (
     HermesDeliveryTransitionKind,
 )
 from trading_agent.hermes_delivery_schema import require_hermes_delivery_schema
+
+ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
 class HermesDeliveryReader:
@@ -38,7 +41,7 @@ class HermesDeliveryReader:
             if item.kind is HermesDeliveryTransitionKind.DEAD_LETTER
         )
 
-    def _models[ModelT: BaseModel](self, table: str, model: type[ModelT]) -> tuple[ModelT, ...]:
+    def _models(self, table: str, model: type[ModelT]) -> tuple[ModelT, ...]:
         if not self.path.is_file():
             return ()
         with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
