@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, override
 
+from trading_agent.experiment_ledger_models import TrialEventKind
 from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.swing_new_high_rvol import project_new_high_rvol_signals
@@ -14,6 +15,7 @@ from trading_agent.swing_shadow_engine import advance_swing_shadow_session
 from trading_agent.swing_shadow_models import SwingDailySource
 from trading_agent.swing_shadow_source import load_swing_daily_source
 from trading_agent.swing_shadow_store import ShadowEventKind, SwingShadowStore
+from trading_agent.swing_shadow_trial import swing_shadow_trial_id
 from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
 from trading_agent.us_swing_operating_coordinator import run_us_swing_operating_tick
 from trading_agent.us_swing_operating_models import (
@@ -94,33 +96,43 @@ def run_swing_historical_replay(
     config: SwingOperatingConfig,
 ) -> SwingHistoricalReplayResult:
     _require_request(request)
-    stored_source_dates = frozenset(
-        event.occurred_at.astimezone(NEW_YORK).date()
-        for event in config.delivery_store.events()
-        if event.root_delivery_id == event.delivery_id
-        and event.kind
-        in {HermesDeliveryKind.WATCH, HermesDeliveryKind.NO_RECOMMENDATION}
-        and event.strategy_version == SWING_RESEARCH_CONTRACT.strategy_version
-    )
-    if any(
-        fixture.session_date not in stored_source_dates for fixture in request.fixtures
-    ):
+    if not _replay_is_complete(request, config):
+        persisted_signals = config.shadow_ledger.signals()
+        persisted_deliveries = config.delivery_store.events()
+        replay_floor = min(
+            (signal.observed_at for signal in persisted_signals),
+            default=None,
+        )
         for fixture in request.fixtures:
             bounds = regular_session_bounds(fixture.session_date)
             if bounds is None:
                 raise InvalidSwingHistoricalReplayError
+            persisted_times = tuple(
+                signal.observed_at
+                for signal in persisted_signals
+                if signal.observed_at.astimezone(NEW_YORK).date() == fixture.session_date
+            ) + tuple(
+                event.occurred_at
+                for event in persisted_deliveries
+                if event.occurred_at.astimezone(NEW_YORK).date() == fixture.session_date
+            )
+            persisted_post_close = max(persisted_times, default=bounds[1])
             moments = (
                 bounds[0] - dt.timedelta(minutes=5),
                 bounds[0] + dt.timedelta(minutes=1),
-                bounds[1],
+                persisted_post_close,
             )
             for now in moments:
+                if replay_floor is not None and now < replay_floor:
+                    continue
                 outcome = run_us_swing_operating_tick(
                     SwingOperatingRequest(now, request.runtime_code_version),
                     config,
                 )
-                if outcome.blocked_signal_ids or outcome.incidents:
+                if outcome.incidents:
                     raise InvalidSwingHistoricalReplayError
+    if not _replay_is_complete(request, config):
+        raise InvalidSwingHistoricalReplayError
     deliveries = config.delivery_store.events()
     signals = config.shadow_ledger.signals()
     events = tuple(
@@ -144,6 +156,45 @@ def run_swing_historical_replay(
         shadow_terminals=sum(event.kind in _TERMINAL_KINDS for event in events),
         reviewer_evidence=len(config.review_store.events()),
     )
+
+
+def _replay_is_complete(
+    request: SwingHistoricalReplayRequest,
+    config: SwingOperatingConfig,
+) -> bool:
+    requested_dates = frozenset(fixture.session_date for fixture in request.fixtures)
+    deliveries = config.delivery_store.events()
+    stored_source_dates = frozenset(
+        event.occurred_at.astimezone(NEW_YORK).date()
+        for event in deliveries
+        if event.root_delivery_id == event.delivery_id
+        and event.kind in {HermesDeliveryKind.WATCH, HermesDeliveryKind.NO_RECOMMENDATION}
+        and event.strategy_version == SWING_RESEARCH_CONTRACT.strategy_version
+    )
+    if not requested_dates.issubset(stored_source_dates):
+        return False
+    reviews = {stored.event.signal_id for stored in config.review_store.events()}
+    for signal in config.shadow_ledger.signals():
+        if signal.observed_at.astimezone(NEW_YORK).date() not in requested_dates:
+            continue
+        shadow_events = config.shadow_ledger.events(signal.signal_id)
+        trial_events = config.experiment_ledger.trial_events(swing_shadow_trial_id(signal))
+        watch = tuple(event for event in deliveries if event.source_event_id == signal.signal_id)
+        if (
+            not shadow_events
+            or shadow_events[-1].kind not in _TERMINAL_KINDS
+            or len(trial_events) != 2
+            or trial_events[-1].event.event_kind is not TrialEventKind.COMPLETED
+            or signal.signal_id not in reviews
+            or len(watch) != 1
+            or not any(
+                event.root_delivery_id == watch[0].delivery_id
+                and event.delivery_id != event.root_delivery_id
+                for event in deliveries
+            )
+        ):
+            return False
+    return True
 
 
 def _require_request(request: SwingHistoricalReplayRequest) -> None:

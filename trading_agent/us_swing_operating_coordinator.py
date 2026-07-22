@@ -170,6 +170,8 @@ def _reconcile_terminals(
         registration = registrations.get(swing_shadow_trial_id(signal))
         if not events or events[-1].kind not in _TERMINAL_KINDS or registration is None:
             continue
+        if events[-1].observed_at > request.now:
+            continue
         trial_events = config.experiment_ledger.trial_events(registration.trial_id)
         if not trial_events:
             blocked.append(signal.signal_id)

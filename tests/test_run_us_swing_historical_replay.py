@@ -11,7 +11,11 @@ from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.swing_shadow_review_models import SwingShadowReviewerAction
 from trading_agent.swing_shadow_review_store import SwingShadowReviewStore
-from trading_agent.swing_shadow_store import ShadowEventKind, SwingShadowReader
+from trading_agent.swing_shadow_store import ShadowEventKind, SwingShadowReader, SwingShadowStore
+from trading_agent.us_swing_historical_replay import (
+    HistoricalSwingFixtureScanner,
+    SwingHistoricalReplayFixture,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 RESEARCH_MANIFEST = ROOT / "examples" / "research" / "us-swing-new-high-rvol-v1.json"
@@ -84,6 +88,34 @@ def test_cli_exact_replay_opens_no_fixture_and_preserves_evidence(
     # Then: it succeeds from stored evidence without reopening data or adding events.
     assert return_code == 0
     assert (len(delivery.events()), len(reviews.events())) == before
+
+
+def test_cli_recovers_terminal_delivery_and_review_after_root_cards_only(tmp_path: Path) -> None:
+    delivery = HermesDeliveryStore(tmp_path / "delivery.sqlite3")
+    shadow = SwingShadowStore(tmp_path / "shadow.sqlite3")
+    fixtures = tuple(
+        SwingHistoricalReplayFixture(session, REPLAY_FIXTURES / session.isoformat())
+        for session in (SIGNAL_SESSION, TERMINAL_SESSION)
+    )
+    scanner = HistoricalSwingFixtureScanner(fixtures, shadow, delivery)
+    for session in (SIGNAL_SESSION, TERMINAL_SESSION):
+        _ = scanner.run(session)
+
+    assert tuple(event.kind for event in delivery.events()) == (
+        HermesDeliveryKind.WATCH,
+        HermesDeliveryKind.NO_RECOMMENDATION,
+    )
+    assert SwingShadowReviewStore(tmp_path / "reviews.sqlite3").events() == ()
+
+    return_code = main(_arguments(tmp_path), runtime_code_version="test_code_v1")
+
+    assert return_code == 0
+    assert tuple(event.kind for event in delivery.events()) == (
+        HermesDeliveryKind.WATCH,
+        HermesDeliveryKind.NO_RECOMMENDATION,
+        HermesDeliveryKind.EXIT,
+    )
+    assert len(SwingShadowReviewStore(tmp_path / "reviews.sqlite3").events()) == 1
 
 
 def _arguments(tmp_path: Path) -> tuple[str, ...]:
