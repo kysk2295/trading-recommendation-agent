@@ -214,13 +214,11 @@ def test_heavy_lease_detects_lock_name_replacement(tmp_path: Path) -> None:
     lock = Path(f"{ledger}.m6-heavy.lock")
     held = tmp_path / "held.lock"
 
-    with _heavy_empirical_lease(ledger):
-        lock.replace(held)
-        lock.write_bytes(b"")
-        lock.chmod(0o600)
-        try:
-            with pytest.raises(IntradayResearchLoopError), _heavy_empirical_lease(ledger):
-                pass
-        finally:
-            lock.unlink()
-            held.replace(lock)
+    try:
+        with pytest.raises(IntradayResearchLoopError), _heavy_empirical_lease(ledger):
+            lock.replace(held)
+            lock.write_bytes(b"")
+            lock.chmod(0o600)
+    finally:
+        lock.unlink(missing_ok=True)
+        held.replace(lock)
