@@ -166,3 +166,43 @@ def test_reader_rejects_stored_foreign_key_violation(tmp_path: Path) -> None:
     # When/Then: schema replay checks stored referential integrity before payload parsing.
     with pytest.raises(InvalidSystematicRegimeSqliteError), systematic_reader_connection(path):
         pass
+
+
+def test_reader_connection_stays_bound_during_a_path_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: two canonical databases and a path swap during sqlite3.connect.
+    path = tmp_path / "systematic.sqlite3"
+    alternate = tmp_path / "alternate.sqlite3"
+    held = tmp_path / "held.sqlite3"
+    with SystematicRegimeStore(path).writer(), SystematicRegimeStore(alternate).writer():
+        pass
+    with sqlite3.connect(path) as connection:
+        _ = connection.execute("PRAGMA application_id = 111")
+    with sqlite3.connect(alternate) as connection:
+        _ = connection.execute("PRAGMA application_id = 777")
+    original_connect = sqlite3.connect
+
+    def swapping_connect(
+        database: str,
+        *,
+        uri: bool = False,
+        timeout: float = 5.0,
+    ) -> sqlite3.Connection:
+        path.replace(held)
+        alternate.replace(path)
+        try:
+            return original_connect(database, uri=uri, timeout=timeout)
+        finally:
+            path.replace(alternate)
+            held.replace(path)
+
+    monkeypatch.setattr(sqlite3, "connect", swapping_connect)
+
+    # When: the query-only reader opens across the ABA swap.
+    with systematic_reader_connection(path) as connection:
+        application_id = connection.execute("PRAGMA application_id").fetchone()
+
+    # Then: it queried the validated descriptor, never the temporary pathname target.
+    assert application_id == (111,)

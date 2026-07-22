@@ -17,7 +17,6 @@ from trading_agent.private_directory_identity import (
     require_private_directory,
     require_private_directory_query_only,
 )
-from trading_agent.sqlite_uri import sqlite_read_only_uri, sqlite_read_write_uri
 
 _SCHEMA_VERSION: Final = 1
 _SCHEMA: Final = (
@@ -52,9 +51,7 @@ def systematic_writer_connection(path: Path) -> Iterator[sqlite3.Connection]:
             with _writer_lease(lock_path, parent):
                 database_descriptor = _open_file(parent, absolute.name, create=True, write=True)
                 try:
-                    with closing(
-                        sqlite3.connect(sqlite_read_write_uri(absolute), uri=True, timeout=0.0)
-                    ) as connection:
+                    with closing(_connect_descriptor(database_descriptor, write=True)) as connection:
                         _require_bound(absolute, parent, database_descriptor)
                         _enable_foreign_keys(connection)
                         _prepare(connection)
@@ -77,7 +74,7 @@ def systematic_reader_connection(path: Path) -> Iterator[sqlite3.Connection]:
             require_private_directory_query_only(parent)
             descriptor = _open_file(parent, absolute.name, create=False, write=False)
             try:
-                with closing(sqlite3.connect(sqlite_read_only_uri(absolute), uri=True)) as connection:
+                with closing(_connect_descriptor(descriptor, write=False)) as connection:
                     _require_bound(absolute, parent, descriptor)
                     _enable_foreign_keys(connection)
                     _ = connection.execute("PRAGMA query_only = ON")
@@ -161,6 +158,19 @@ def _require_private_file(descriptor: int) -> None:
         or metadata.st_nlink != 1
     ):
         raise InvalidSystematicRegimeSqliteError
+
+
+def _connect_descriptor(descriptor: int, *, write: bool) -> sqlite3.Connection:
+    mode = "rw" if write else "ro"
+    connection = sqlite3.connect(
+        f"file:/dev/fd/{descriptor}?mode={mode}",
+        uri=True,
+        timeout=0.0,
+    )
+    if write and connection.execute("PRAGMA journal_mode = MEMORY").fetchone() != ("memory",):
+        connection.close()
+        raise InvalidSystematicRegimeSqliteError
+    return connection
 
 
 def _enable_foreign_keys(connection: sqlite3.Connection) -> None:
