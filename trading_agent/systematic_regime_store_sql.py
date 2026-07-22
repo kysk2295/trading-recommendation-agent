@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import fcntl
 import os
-import secrets
 import sqlite3
 import stat
 from collections.abc import Iterator
-from contextlib import closing, contextmanager, suppress
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Final, override
 
@@ -23,9 +22,15 @@ from trading_agent.systematic_regime_schema import (
     SYSTEMATIC_REGIME_SCHEMA_V1,
     SYSTEMATIC_REGIME_SCHEMA_V2,
 )
+from trading_agent.systematic_regime_store_file import (
+    InvalidSystematicRegimeFileError,
+    load_sqlite_database,
+    open_private_file,
+    replace_sqlite_database,
+    require_private_file,
+)
 
 _SCHEMA_VERSION: Final = 2
-_MAX_DATABASE_BYTES: Final = 64 * 1024 * 1024
 
 
 class InvalidSystematicRegimeSqliteError(ValueError):
@@ -48,7 +53,7 @@ def systematic_writer_connection(
             lock_path = absolute.parent / f"{absolute.name}.writer.lock"
             if create:
                 with _writer_lease(lock_path, parent, create=True):
-                    database_descriptor = _open_file(parent, absolute.name, create=True, write=True)
+                    database_descriptor = open_private_file(parent, absolute.name, create=True, write=True)
                     try:
                         with _opened_writer_database(
                             absolute,
@@ -59,7 +64,7 @@ def systematic_writer_connection(
                     finally:
                         os.close(database_descriptor)
             else:
-                database_descriptor = _open_file(parent, absolute.name, create=False, write=True)
+                database_descriptor = open_private_file(parent, absolute.name, create=False, write=True)
                 try:
                     with _writer_lease(lock_path, parent, create=False), _opened_writer_database(
                         absolute,
@@ -71,7 +76,13 @@ def systematic_writer_connection(
                     os.close(database_descriptor)
         finally:
             os.close(parent)
-    except (InvalidPrivateDirectoryIdentityError, OSError, sqlite3.Error, TypeError):
+    except (
+        InvalidPrivateDirectoryIdentityError,
+        InvalidSystematicRegimeFileError,
+        OSError,
+        sqlite3.Error,
+        TypeError,
+    ):
         raise InvalidSystematicRegimeSqliteError from None
 
 
@@ -83,7 +94,7 @@ def _opened_writer_database(
 ) -> Iterator[sqlite3.Connection]:
     with closing(sqlite3.connect(":memory:")) as connection:
         _require_bound(absolute, parent, descriptor)
-        original = _load_database(connection, descriptor)
+        original = load_sqlite_database(connection, descriptor)
         _enable_foreign_keys(connection)
         _prepare(connection)
         yield connection
@@ -91,7 +102,7 @@ def _opened_writer_database(
         connection.commit()
         payload = connection.serialize()
         if payload != original:
-            _replace_database(parent, absolute.name, payload)
+            replace_sqlite_database(parent, absolute.name, payload)
 
 
 @contextmanager
@@ -101,7 +112,7 @@ def systematic_reader_connection(path: Path) -> Iterator[sqlite3.Connection]:
         parent = open_private_parent(absolute.parent, create=False)
         try:
             require_private_directory_query_only(parent)
-            descriptor = _open_file(parent, absolute.name, create=False, write=False)
+            descriptor = open_private_file(parent, absolute.name, create=False, write=False)
             try:
                 with closing(_connect_descriptor(descriptor)) as connection:
                     _require_bound(absolute, parent, descriptor)
@@ -114,7 +125,13 @@ def systematic_reader_connection(path: Path) -> Iterator[sqlite3.Connection]:
                 os.close(descriptor)
         finally:
             os.close(parent)
-    except (InvalidPrivateDirectoryIdentityError, OSError, sqlite3.Error, TypeError):
+    except (
+        InvalidPrivateDirectoryIdentityError,
+        InvalidSystematicRegimeFileError,
+        OSError,
+        sqlite3.Error,
+        TypeError,
+    ):
         raise InvalidSystematicRegimeSqliteError from None
 
 
@@ -136,7 +153,7 @@ def private_store_exists(path: Path) -> bool:
 
 @contextmanager
 def _writer_lease(path: Path, parent: int, *, create: bool) -> Iterator[None]:
-    descriptor = _open_file(parent, path.name, create=create, write=True)
+    descriptor = open_private_file(parent, path.name, create=create, write=True)
     parent_locked = False
     locked = False
     try:
@@ -157,41 +174,13 @@ def _writer_lease(path: Path, parent: int, *, create: bool) -> Iterator[None]:
             os.close(descriptor)
 
 
-def _open_file(parent: int, name: str, *, create: bool, write: bool) -> int:
-    flags = os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
-    flags |= os.O_RDWR if write else os.O_RDONLY
-    try:
-        descriptor = os.open(name, flags, dir_fd=parent)
-    except FileNotFoundError:
-        if not create:
-            raise
-        descriptor = os.open(name, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=parent)
-    try:
-        _require_private_file(descriptor)
-    except (OSError, ValueError):
-        os.close(descriptor)
-        raise
-    return descriptor
-
-
 def _require_bound(path: Path, parent: int, descriptor: int) -> None:
     require_open_directory_path(path.parent, parent)
     named = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
     opened = os.fstat(descriptor)
     if (named.st_dev, named.st_ino) != (opened.st_dev, opened.st_ino):
         raise InvalidSystematicRegimeSqliteError
-    _require_private_file(descriptor)
-
-
-def _require_private_file(descriptor: int) -> None:
-    metadata = os.fstat(descriptor)
-    if (
-        not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o600
-        or metadata.st_nlink != 1
-    ):
-        raise InvalidSystematicRegimeSqliteError
+    require_private_file(descriptor)
 
 
 def _connect_descriptor(descriptor: int) -> sqlite3.Connection:
@@ -200,45 +189,6 @@ def _connect_descriptor(descriptor: int) -> sqlite3.Connection:
         uri=True,
         timeout=0.0,
     )
-
-
-def _load_database(connection: sqlite3.Connection, descriptor: int) -> bytes:
-    size = os.fstat(descriptor).st_size
-    if size > _MAX_DATABASE_BYTES:
-        raise InvalidSystematicRegimeSqliteError
-    payload = os.pread(descriptor, size, 0)
-    if len(payload) != size:
-        raise InvalidSystematicRegimeSqliteError
-    if payload:
-        connection.deserialize(payload)
-    return payload
-
-
-def _replace_database(parent: int, name: str, payload: bytes) -> None:
-    temporary = f".{name}.{secrets.token_hex(16)}.tmp"
-    descriptor = os.open(
-        temporary,
-        os.O_CLOEXEC | os.O_NOFOLLOW | os.O_RDWR | os.O_CREAT | os.O_EXCL,
-        0o600,
-        dir_fd=parent,
-    )
-    renamed = False
-    try:
-        offset = 0
-        while offset < len(payload):
-            offset += os.write(descriptor, payload[offset:])
-        os.fsync(descriptor)
-        _require_private_file(descriptor)
-        os.rename(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
-        renamed = True
-        os.fsync(parent)
-        replacement = _open_file(parent, name, create=False, write=False)
-        os.close(replacement)
-    finally:
-        os.close(descriptor)
-        if not renamed:
-            with suppress(FileNotFoundError):
-                os.unlink(temporary, dir_fd=parent)
 
 
 def _enable_foreign_keys(connection: sqlite3.Connection) -> None:
