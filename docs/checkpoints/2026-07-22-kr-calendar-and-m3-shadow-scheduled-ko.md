@@ -56,6 +56,18 @@ Opportunity ID만 읽도록 wrapper를 수정했다.
 - 수정 뒤 wrapper `zsh -n`과 `DRY_RUN=1`이 통과했다.
 - 해당 KR launchd label만 장 시작 전 재기동했고 provider 호출과 주문 mutation은 0건이다.
 
+## 장전 uv runtime 복구
+
+10:38 EDT 실제 launchd PATH를 재현해 첫 calendar CLI `--help`를 실행했을 때
+exit `127`, `env: uv: No such file or directory`가 발생했다. pinned runtime의 CLI가
+PEP 723 `uv run --script` shebang을 사용하지만 launchd 기본 PATH에는 사용자 uv가
+없었다.
+
+wrapper가 사용자 uv와 표준 system/Homebrew 경로를 명시적으로 export하도록 바꿨다.
+같은 sanitized environment에서 첫 calendar CLI `--help`가 exit 0인지 확인한 뒤
+dry-run을 다시 수행하고 해당 KR label만 장 시작 전에 재기동했다. provider GET과
+account/order mutation은 수행하지 않았다.
+
 ## 검증
 
 - TDD RED: calendar CLI 부재와 auth/client/store 경로 부재를 순서대로 확인
