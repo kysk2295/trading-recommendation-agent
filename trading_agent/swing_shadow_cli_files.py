@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import datetime as dt
 import os
 import stat
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, override
 
@@ -14,6 +16,36 @@ class InvalidSwingShadowCliTargetError(ValueError):
     @override
     def __str__(self) -> str:
         return "US swing shadow output target is invalid"
+
+
+@dataclass(frozen=True, slots=True)
+class SwingShadowReport:
+    session_date: dt.date
+    symbol_count: int
+    signal_count: int
+    new_publications: int
+    new_events: int
+    new_deliveries: int
+
+    def render(self) -> str:
+        return "\n".join(
+            (
+                "# US Swing New-High RVOL Shadow 요약",
+                "",
+                "> 완료된 일봉만 쓰는 조건부 추천 및 shadow forward-validation입니다. "
+                + "현재 호가, 자동주문, Paper 계좌 또는 확정수익 주장이 아닙니다.",
+                "",
+                f"- 세션: {self.session_date.isoformat()}",
+                f"- 관측 종목 수: {self.symbol_count}",
+                f"- 조건부 신호: {self.signal_count}",
+                f"- 신규 조건부 신호: {self.new_publications}",
+                f"- 신규 shadow event: {self.new_events}",
+                f"- 신규 Hermes 전달: {self.new_deliveries}",
+                "- 실행 모드: shadow only",
+                "- broker account·order mutation: 없음",
+                "",
+            )
+        )
 
 
 def validate_swing_shadow_targets(
@@ -94,6 +126,7 @@ __all__ = (
     "SWING_OUTBOX_NAME",
     "SWING_REPORT_NAME",
     "InvalidSwingShadowCliTargetError",
+    "SwingShadowReport",
     "harden_private_swing_cards",
     "prepare_private_swing_file",
     "validate_swing_shadow_targets",

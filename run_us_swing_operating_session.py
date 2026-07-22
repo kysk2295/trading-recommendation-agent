@@ -50,6 +50,7 @@ class SwingScannerCommand:
     delivery_store: Path
     output_dir: Path
     universe_file: Path | None
+    auto_universe: bool
     fixture_root: Path | None
     secret_path: Path
 
@@ -73,6 +74,8 @@ class SubprocessSwingDailyScanner:
         ]
         if self.command.fixture_root is not None:
             arguments.extend(("--fixture-root", str(self.command.fixture_root)))
+        elif self.command.auto_universe:
+            arguments.append("--auto-universe")
         elif self.command.universe_file is not None:
             arguments.extend(
                 (
@@ -99,6 +102,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--universe-file", type=Path)
     source.add_argument("--fixture-root", type=Path)
+    source.add_argument("--auto-universe", action="store_true")
     parser.add_argument(
         "--research-manifest",
         type=Path,
@@ -152,6 +156,7 @@ def main(
                 delivery_store=args.delivery_store,
                 output_dir=args.output_dir / "scanner",
                 universe_file=args.universe_file,
+                auto_universe=args.auto_universe,
                 fixture_root=args.fixture_root,
                 secret_path=args.secret_path,
             )

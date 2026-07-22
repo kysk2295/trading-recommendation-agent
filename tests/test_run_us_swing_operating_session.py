@@ -78,6 +78,7 @@ def test_cli_help_exposes_one_tick_operating_contract() -> None:
     assert "--session-date" in completed.stdout
     assert "--fixture-root" in completed.stdout
     assert "--universe-file" in completed.stdout
+    assert "--auto-universe" in completed.stdout
     assert "--experiment-ledger" in completed.stdout
 
 

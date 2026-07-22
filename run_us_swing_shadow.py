@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import override
 
@@ -18,6 +19,10 @@ from trading_agent.alpaca_http import (
     MissingAlpacaCredentialsError,
     create_alpaca_client,
     load_alpaca_credentials,
+)
+from trading_agent.alpaca_most_active import (
+    AlpacaMostActiveClient,
+    InvalidAlpacaMostActiveSourceError,
 )
 from trading_agent.contract_outbox import (
     ContractOutboxConflictError,
@@ -47,6 +52,7 @@ from trading_agent.swing_shadow_cli_files import (
 )
 from trading_agent.swing_shadow_cli_files import (
     InvalidSwingShadowCliTargetError,
+    SwingShadowReport,
     harden_private_swing_cards,
     prepare_private_swing_file,
     validate_swing_shadow_targets,
@@ -81,9 +87,18 @@ class UsSwingShadowRunError(ValueError):
         return "US swing shadow run을 안전하게 실행할 수 없습니다"
 
 
+@dataclass(frozen=True, slots=True)
+class _ProductionSourceRequest:
+    session_date: dt.date
+    universe_file: str | None
+    auto_universe: bool
+    secret_path: Path
+
+
 def main(
     session_date: str | None = None,
     universe_file: str | None = None,
+    auto_universe: bool = False,
     fixture_root: str | None = None,
     database: str = "outputs/us_swing_shadow/swing-shadow.sqlite3",
     delivery_database: str | None = None,
@@ -96,15 +111,19 @@ def main(
     delivery_path = _delivery_path(delivery_database, fixture_root, output)
     try:
         validate_swing_shadow_targets(database_path, delivery_path, output)
-        source = (
-            load_swing_daily_source(Path(fixture_root), session_date=parsed_session)
-            if fixture_root is not None
-            else _collect_production_source(
-                parsed_session,
-                universe_file=universe_file,
-                secret_path=Path(secret_path),
+        if fixture_root is not None:
+            if universe_file is not None or auto_universe:
+                raise UsSwingShadowRunError
+            source = load_swing_daily_source(Path(fixture_root), session_date=parsed_session)
+        else:
+            source = _collect_production_source(
+                _ProductionSourceRequest(
+                    session_date=parsed_session,
+                    universe_file=universe_file,
+                    auto_universe=auto_universe,
+                    secret_path=Path(secret_path),
+                )
             )
-        )
         signals = project_new_high_rvol_signals(source)
         store = SwingShadowStore(database_path)
         with store.writer() as writer:
@@ -128,14 +147,14 @@ def main(
             delivery = project_swing_shadow_cycle_delivery(source, signals, writer)
         write_private_report(
             output / _REPORT_NAME,
-            _report(
-                source_session_date=source.session_date,
+            SwingShadowReport(
+                session_date=source.session_date,
                 symbol_count=len(source.symbols),
                 signal_count=len(signals),
                 new_publications=new_publications,
                 new_events=len(events),
                 new_deliveries=delivery.inserted,
-            ),
+            ).render(),
         )
     except typer.BadParameter:
         raise
@@ -149,6 +168,7 @@ def main(
         InvalidHermesDeliveryStoreError,
         InvalidHermesProjectionSourceError,
         InvalidNewHighRvolProjectionError,
+        InvalidAlpacaMostActiveSourceError,
         InvalidSwingShadowCliTargetError,
         InvalidSwingDailySourceError,
         InvalidSwingShadowEngineError,
@@ -170,24 +190,33 @@ def main(
     )
 
 
-def _collect_production_source(
-    session_date: dt.date,
-    *,
-    universe_file: str | None,
-    secret_path: Path,
-):
-    if universe_file is None:
-        raise UsSwingShadowRunError
-    symbols = _load_universe(Path(universe_file))
+def _collect_production_source(request: _ProductionSourceRequest):
     now = _current_new_york()
-    normalized = validate_current_swing_daily_collection(
-        symbols=symbols,
-        session_date=session_date,
-        observed_at=now,
-        now=now,
+    if request.auto_universe:
+        if request.universe_file is not None:
+            raise UsSwingShadowRunError
+        symbols = ("SPY",)
+    else:
+        if request.universe_file is None:
+            raise UsSwingShadowRunError
+        symbols = _load_universe(Path(request.universe_file))
+    _ = validate_current_swing_daily_collection(
+        symbols=symbols, session_date=request.session_date, observed_at=now, now=now
     )
-    credentials = load_alpaca_credentials(secret_path)
+    credentials = load_alpaca_credentials(request.secret_path)
     with create_alpaca_client() as data_client:
+        if request.auto_universe:
+            symbols = AlpacaMostActiveClient(data_client, credentials).fetch(
+                top=50,
+                session_date=request.session_date,
+                observed_at=now,
+            ).scanner_symbols
+        normalized = validate_current_swing_daily_collection(
+            symbols=symbols,
+            session_date=request.session_date,
+            observed_at=now,
+            now=now,
+        )
         return collect_current_swing_daily_source(
             bars_client=AlpacaBarsClient(
                 data_client,
@@ -195,7 +224,7 @@ def _collect_production_source(
                 request_interval_seconds=1.0,
             ),
             symbols=normalized,
-            session_date=session_date,
+            session_date=request.session_date,
             observed_at=now,
             universe_id=_universe_id(normalized),
             now=now,
@@ -240,35 +269,6 @@ def _delivery_path(value: str | None, fixture_root: str | None, output: Path) ->
     if fixture_root is not None:
         return output / "hermes-delivery.sqlite3"
     return Path("outputs/hermes/delivery.sqlite3").resolve(strict=False)
-
-
-def _report(
-    *,
-    source_session_date: dt.date,
-    symbol_count: int,
-    signal_count: int,
-    new_publications: int,
-    new_events: int,
-    new_deliveries: int,
-) -> str:
-    return "\n".join(
-        (
-            "# US Swing New-High RVOL Shadow 요약",
-            "",
-            "> 완료된 일봉만 쓰는 조건부 추천 및 shadow forward-validation입니다. "
-            + "현재 호가, 자동주문, Paper 계좌 또는 확정수익 주장이 아닙니다.",
-            "",
-            f"- 세션: {source_session_date.isoformat()}",
-            f"- 관측 종목 수: {symbol_count}",
-            f"- 조건부 신호: {signal_count}",
-            f"- 신규 조건부 신호: {new_publications}",
-            f"- 신규 shadow event: {new_events}",
-            f"- 신규 Hermes 전달: {new_deliveries}",
-            "- 실행 모드: shadow only",
-            "- broker account·order mutation: 없음",
-            "",
-        )
-    )
 
 
 if __name__ == "__main__":
