@@ -142,6 +142,26 @@ def test_invalid_card_version_leaves_research_ledger_unchanged(tmp_path: Path) -
     assert ledger.multi_market_strategy_versions() == ()
 
 
+def test_invalid_target_session_leaves_research_ledger_unchanged(tmp_path: Path) -> None:
+    # Given: an otherwise valid card whose target date is not a regular US session.
+    source = _source("risk_on")
+    version = systematic_regime_strategy_version(CODE_VERSION)
+    card = build_systematic_card(source, replay_systematic_regime(source), version)
+    weekend_card = card.model_copy(
+        update={"target_session": dt.date(2026, 7, 25)},
+    )
+    ledger = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+
+    # When: registration rejects the non-session target.
+    with pytest.raises(InvalidSystematicRegimeTrialError):
+        _ = register_systematic_regime_trial(ledger, weekend_card, CODE_VERSION)
+
+    # Then: no immutable research rows were partially appended first.
+    assert ledger.multi_market_hypotheses() == ()
+    assert ledger.multi_market_strategy_versions() == ()
+    assert ledger.multi_market_trials() == ()
+
+
 def _extend_source(source: SwingDailySource, target_session: dt.date) -> SwingDailySource:
     bounds = regular_session_bounds(target_session)
     assert bounds is not None
