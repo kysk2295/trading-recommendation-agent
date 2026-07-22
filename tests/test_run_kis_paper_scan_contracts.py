@@ -15,6 +15,7 @@ from run_kis_paper_scan import (
     append_trade_signal_contracts,
     build_trade_signal_contracts,
     configure_research_projection,
+    project_current_session_deliveries,
     project_opportunity_research_input,
     publish_opportunity_contract,
     publish_trade_signal_contracts,
@@ -23,6 +24,8 @@ from trading_agent.alpaca_http import AlpacaCredentials
 from trading_agent.alpaca_security_master import collect_alpaca_security_master
 from trading_agent.alpaca_security_master_store import AlpacaSecurityMasterStore
 from trading_agent.contract_outbox import ContractOutboxConflictError
+from trading_agent.hermes_delivery_models import HermesDeliveryKind
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.kis_provider import KisRankedStock
 from trading_agent.kis_research_projection import ResearchProjectionOptions
 from trading_agent.kis_us_quote import KisUsLevelOneQuote
@@ -94,6 +97,53 @@ def test_opportunity_helper_writes_the_additive_v2_artifact(tmp_path: Path) -> N
     lines = (tmp_path / "opportunities.v1.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     assert json.loads(lines[0])["opportunity_id"] == snapshot.opportunity_id
+
+
+def test_scanner_projects_watch_before_later_signal_reply(tmp_path: Path) -> None:
+    # Given: the scanner has published a current Opportunity Manager snapshot.
+    stock = _stock()
+    opportunity = publish_opportunity_contract(
+        tmp_path,
+        _complete_discovery(stock),
+        _halts(),
+        _screen(stock),
+        OBSERVED_AT,
+    )
+    assert opportunity is not None
+    delivery = HermesDeliveryStore(tmp_path / "delivery.sqlite3")
+
+    # When: delivery runs before scanning and again after a Day signal is appended.
+    first = project_current_session_deliveries(tmp_path, delivery, OBSERVED_AT)
+    recommendation = Recommendation(
+        recommendation_id="rec-delivery",
+        symbol="ACME",
+        strategy="opening_range_breakout",
+        created_at=OBSERVED_AT + dt.timedelta(seconds=10),
+        entry=10.5,
+        stop=10.0,
+        target_1r=11.0,
+        target_2r=11.5,
+        state=RecommendationState.SETUP,
+        rationale="ORB와 거래량 확대",
+    )
+    assert publish_trade_signal_contracts(
+        tmp_path,
+        (recommendation,),
+        opportunity,
+        StrategyMode.ORB,
+        OBSERVED_AT + dt.timedelta(seconds=15),
+        OBSERVED_AT,
+    ) == 1
+    second = project_current_session_deliveries(tmp_path, delivery, OBSERVED_AT)
+
+    # Then: one WATCH root and one Day signal reply are durable without replay spam.
+    events = delivery.events()
+    assert (first.inserted, second.inserted) == (1, 1)
+    assert tuple(event.kind for event in events) == (
+        HermesDeliveryKind.WATCH,
+        HermesDeliveryKind.WATCH,
+    )
+    assert events[1].root_delivery_id == events[0].delivery_id
 
 
 def test_failed_discovery_publishes_no_v2_contract(tmp_path: Path) -> None:

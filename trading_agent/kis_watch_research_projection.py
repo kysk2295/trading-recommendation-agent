@@ -21,6 +21,7 @@ class WatchScanConfig:
     top: int
     max_pages: int
     research_projection: ResearchProjectionWatchConfig | None = None
+    delivery_database: Path | None = None
 
 
 def research_projection_watch_config(
@@ -56,17 +57,23 @@ def scan_command(output: Path, config: WatchScanConfig) -> tuple[str, ...]:
         str(config.max_pages),
     )
     research = config.research_projection
-    if research is None:
-        return command
-    return (
-        *command,
-        "--research-projection-store",
-        str(research.projection_store),
-        "--research-canonical-root",
-        str(research.canonical_root),
-        "--research-security-master-store",
-        str(research.security_master_store),
-    )
+    if research is not None:
+        command = (
+            *command,
+            "--research-projection-store",
+            str(research.projection_store),
+            "--research-canonical-root",
+            str(research.canonical_root),
+            "--research-security-master-store",
+            str(research.security_master_store),
+        )
+    if config.delivery_database is not None:
+        command = (
+            *command,
+            "--delivery-database",
+            str(config.delivery_database),
+        )
+    return command
 
 
 __all__ = (

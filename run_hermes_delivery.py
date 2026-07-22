@@ -34,6 +34,9 @@ from trading_agent.kr_source_cycle_delivery import (
     project_kr_source_cycle_incident,
 )
 from trading_agent.kr_theme_store import KrThemeStore
+from trading_agent.us_session_delivery_projection import (
+    project_us_session_contract_outboxes,
+)
 
 type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
 Clock = Callable[[], dt.datetime]
@@ -46,6 +49,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     project.add_argument("--database", type=Path, required=True)
     project.add_argument("--opportunities", type=Path, required=True)
     project.add_argument("--signals", type=Path, required=True)
+    session = commands.add_parser(
+        "project-session",
+        help="project deduplicated US session watches and signal replies",
+    )
+    session.add_argument("--database", type=Path, required=True)
+    session.add_argument("--opportunities", type=Path, required=True)
+    session.add_argument("--signals", type=Path, required=True)
+    session.add_argument("--session-date", type=_date, required=True)
     kr_cycle = commands.add_parser(
         "project-kr-cycle",
         help="project a current incomplete KR source cycle incident",
@@ -80,6 +91,24 @@ def main(
                 with store.writer() as writer:
                     result = project_contract_outboxes(sources, writer)
                 _print({"examined": result.examined, "inserted": result.inserted, "result": "projected"})
+            case "project-session":
+                sources = HermesProjectionSources(
+                    opportunity_outbox=args.opportunities,
+                    signal_outbox=args.signals,
+                )
+                with store.writer() as writer:
+                    result = project_us_session_contract_outboxes(
+                        sources,
+                        args.session_date,
+                        writer,
+                    )
+                _print(
+                    {
+                        "examined": result.examined,
+                        "inserted": result.inserted,
+                        "result": "projected_session",
+                    }
+                )
             case "project-kr-cycle":
                 result = project_kr_source_cycle_incident(
                     KrThemeStore(args.source_database),
@@ -144,6 +173,13 @@ def _datetime(value: str) -> dt.datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise argparse.ArgumentTypeError("timestamp must include timezone")
     return parsed
+
+
+def _date(value: str) -> dt.date:
+    try:
+        return dt.date.fromisoformat(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("invalid date") from error
 
 
 def _print(payload: Mapping[str, JsonValue]) -> None:

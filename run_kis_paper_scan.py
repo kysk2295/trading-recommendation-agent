@@ -28,6 +28,11 @@ from trading_agent.contract_outbox import (
     append_trade_signal_publication,
 )
 from trading_agent.engine import RecommendationEngine
+from trading_agent.hermes_delivery_projection import (
+    HermesProjectionResult,
+    HermesProjectionSources,
+)
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.kis_auth import (
     KisMode,
     create_kis_client,
@@ -83,10 +88,14 @@ from trading_agent.trade_signal_publication import (
     TradeSignalPublication,
     project_trade_signal_publications,
 )
+from trading_agent.us_equity_calendar import NEW_YORK
 from trading_agent.us_quote_actionability import QuoteAssessmentStatus
 from trading_agent.us_quote_publication import (
     UsQuotePublicationBatch,
     evaluate_quote_publications,
+)
+from trading_agent.us_session_delivery_projection import (
+    project_us_session_contract_outboxes,
 )
 from trading_agent.us_subscription_models import BroadScannerSnapshot
 
@@ -222,6 +231,41 @@ def append_quote_actionability_contracts(
     )
 
 
+def project_current_session_deliveries(
+    output: Path,
+    store: HermesDeliveryStore,
+    observed_at: dt.datetime,
+) -> HermesProjectionResult:
+    sources = HermesProjectionSources(
+        opportunity_outbox=output / "opportunities.v1.jsonl",
+        signal_outbox=output / "trade-signals.v1.jsonl",
+    )
+    with store.writer() as writer:
+        return project_us_session_contract_outboxes(
+            sources,
+            observed_at.astimezone(NEW_YORK).date(),
+            writer,
+        )
+
+
+def configure_delivery_store(
+    output: Path,
+    recommendation_database: Path,
+    value: str | None,
+) -> HermesDeliveryStore | None:
+    if value is None:
+        return None
+    path = Path(value).expanduser().resolve(strict=False)
+    forbidden = {
+        recommendation_database.resolve(strict=False),
+        (output / "opportunities.v1.jsonl").resolve(strict=False),
+        (output / "trade-signals.v1.jsonl").resolve(strict=False),
+    }
+    if path in forbidden:
+        raise typer.BadParameter("delivery database must be independent")
+    return HermesDeliveryStore(path)
+
+
 def main(
     output_dir: str | None = None,
     top: int = 3,
@@ -233,6 +277,7 @@ def main(
     research_projection_store: str | None = None,
     research_canonical_root: str | None = None,
     research_security_master_store: str | None = None,
+    delivery_database: str | None = None,
 ) -> None:
     if not 1 <= top <= 10:
         raise typer.BadParameter("top은 1~10이어야 합니다")
@@ -251,6 +296,11 @@ def main(
     started_at = dt.datetime.now().astimezone()
     output = _output_path(output_dir, started_at)
     database = output / "paper_recommendations.sqlite3"
+    delivery_store = configure_delivery_store(
+        output,
+        database,
+        delivery_database,
+    )
     credentials = load_kis_credentials(mode)
     store = PaperStore(database)
     causality_exclusions = exclude_backdated_recommendations(store, started_at)
@@ -315,6 +365,15 @@ def main(
                 halt_snapshot,
                 risk_screen,
                 checked_at,
+            )
+            delivery_inserted = (
+                0
+                if delivery_store is None
+                else project_current_session_deliveries(
+                    output,
+                    delivery_store,
+                    checked_at,
+                ).inserted
             )
             scanner_snapshot = project_opportunity_research_input(
                 opportunity,
@@ -393,6 +452,12 @@ def main(
         conditional_publications,
     )
     quote_contracts = append_quote_actionability_contracts(output, quote_batch)
+    if delivery_store is not None:
+        delivery_inserted += project_current_session_deliveries(
+            output,
+            delivery_store,
+            checked_at,
+        ).inserted
     waiting_validations = sum(
         assessment.status is QuoteAssessmentStatus.VALIDATED_WAITING for assessment in quote_batch.assessments
     )
@@ -430,7 +495,7 @@ def main(
         + f"신규 v2 조건부 신호 {contract_signals}개, 호가 평가 {quote_attempts}건, "
         + f"검증 대기 {waiting_validations}건, 검증 도달 {trigger_validations}건, "
         + f"차단 {blocked_assessments}건, 신규 현재호가 신호 "
-        + f"{quote_contracts.validated_signal_count}개, {output}"
+        + f"{quote_contracts.validated_signal_count}개, Hermes 신규 {delivery_inserted}건, {output}"
     )
     exit_code = scan_exit_code(
         tuple(observations),

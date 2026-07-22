@@ -31,6 +31,28 @@ def test_watch_scan_command_uses_ten_candidate_portfolio_by_default(tmp_path: Pa
     assert command[-4:] == ("--top", "10", "--max-pages", "1")
 
 
+def test_watch_scan_command_passes_delivery_store_without_order_authority(
+    tmp_path: Path,
+) -> None:
+    # Given: a production watch has an opt-in Hermes delivery database.
+    delivery = tmp_path / "delivery.sqlite3"
+    config = run_kis_paper_watch.WatchScanConfig(
+        run_kis_paper_watch.StrategyMode.ORB,
+        10,
+        1,
+        delivery_database=delivery,
+    )
+
+    # When: the regular-session scanner child command is built.
+    command = run_kis_paper_watch._scan_command(tmp_path / "session", config)
+
+    # Then: delivery is enabled without adding broker or owner authority.
+    assert command[-2:] == ("--delivery-database", str(delivery))
+    joined = " ".join(command).lower()
+    for forbidden in ("--arm", "--credential", "--endpoint", "--force"):
+        assert forbidden not in joined
+
+
 def test_premarket_scan_command_is_rankings_only(tmp_path: Path) -> None:
     # Given: a shared session output and the maximum candidate portfolio.
     top = 10

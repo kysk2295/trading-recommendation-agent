@@ -87,14 +87,21 @@ def project_contract_outboxes(
     sources: HermesProjectionSources,
     writer: HermesDeliveryWriter,
 ) -> HermesProjectionResult:
-    opportunities = _read_opportunities(sources.opportunity_outbox)
+    opportunities = read_opportunity_snapshots(sources.opportunity_outbox)
     try:
         publications = read_trade_signal_publications(sources.signal_outbox)
     except TradeSignalOutboxReaderError:
         raise InvalidHermesProjectionSourceError from None
-    records = tuple(record for opportunity in opportunities for record in _opportunity_records(opportunity))
+    records = tuple(
+        record
+        for opportunity in opportunities
+        for record in opportunity_projection_records(opportunity)
+    )
     root_sources = frozenset(record.source_event_id for record in records)
-    records += tuple(_signal_record(publication, root_sources) for publication in publications)
+    records += tuple(
+        signal_publication_projection_record(publication, root_sources)
+        for publication in publications
+    )
     return project_outcomes(records, writer)
 
 
@@ -136,7 +143,11 @@ def project_opportunity_snapshots(
     validated = tuple(
         OpportunitySnapshot.model_validate(snapshot.model_dump(mode="python")) for snapshot in snapshots
     )
-    records = tuple(record for snapshot in validated for record in _opportunity_records(snapshot))
+    records = tuple(
+        record
+        for snapshot in validated
+        for record in opportunity_projection_records(snapshot)
+    )
     return project_outcomes(records, writer)
 
 
@@ -159,7 +170,7 @@ def project_trade_signals(
     return project_outcomes(records, writer)
 
 
-def _read_opportunities(path: Path) -> tuple[OpportunitySnapshot, ...]:
+def read_opportunity_snapshots(path: Path) -> tuple[OpportunitySnapshot, ...]:
     source = path.expanduser().absolute()
     if source.is_symlink():
         raise InvalidHermesProjectionSourceError
@@ -184,7 +195,9 @@ def _read_opportunities(path: Path) -> tuple[OpportunitySnapshot, ...]:
         raise InvalidHermesProjectionSourceError from None
 
 
-def _opportunity_records(snapshot: OpportunitySnapshot) -> tuple[HermesProjectionRecord, ...]:
+def opportunity_projection_records(
+    snapshot: OpportunitySnapshot,
+) -> tuple[HermesProjectionRecord, ...]:
     incomplete = any(not coverage.complete for coverage in snapshot.source_coverage)
     kind = HermesDeliveryKind.INCIDENT if incomplete else HermesDeliveryKind.WATCH
     status = "blocked_source_incomplete" if incomplete else "watch"
@@ -210,7 +223,10 @@ def _opportunity_records(snapshot: OpportunitySnapshot) -> tuple[HermesProjectio
     )
 
 
-def _signal_record(publication: TradeSignalPublication, root_sources: frozenset[str]) -> HermesProjectionRecord:
+def signal_publication_projection_record(
+    publication: TradeSignalPublication,
+    root_sources: frozenset[str],
+) -> HermesProjectionRecord:
     return _trade_signal_record(
         publication.signal,
         root_sources,

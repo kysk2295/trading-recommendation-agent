@@ -358,6 +358,7 @@ def main(
     research_projection_store: Path | None = None,
     research_canonical_root: Path | None = None,
     research_security_master_store: Path | None = None,
+    delivery_database: Path | None = None,
 ) -> None:
     if not 1 <= cycles <= 390:
         raise typer.BadParameter("cycles는 1~390이어야 합니다")
@@ -376,7 +377,13 @@ def main(
         research_canonical_root,
         research_security_master_store,
     )
-    scan_config = WatchScanConfig(strategy, top, max_pages, research_projection)
+    scan_config = WatchScanConfig(
+        strategy,
+        top,
+        max_pages,
+        research_projection,
+        delivery_database,
+    )
     lane_forward_validation = _lane_forward_validation_config(
         strategy,
         lane_execution_database,
