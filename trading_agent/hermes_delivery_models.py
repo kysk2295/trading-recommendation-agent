@@ -48,6 +48,11 @@ class HermesDeliveryEvent(BaseModel):
     occurred_at: dt.datetime
     payload_sha256: str
     rendered_text: str
+    agent_family: str | None = None
+    instrument_id: str | None = None
+    strategy_version: str | None = None
+    status: str = "pending"
+    evidence_refs: tuple[str, ...] = ()
     max_attempts: int = 3
 
     @model_validator(mode="after")
@@ -55,15 +60,22 @@ class HermesDeliveryEvent(BaseModel):
         identifiers = (self.source_event_id, self.market_id)
         if self.lane_id is not None:
             identifiers += (self.lane_id,)
+        optional_identifiers = tuple(
+            value for value in (self.agent_family, self.instrument_id, self.strategy_version) if value is not None
+        )
         if (
             self.delivery_id != hermes_delivery_id(self.source_event_id, self.contract_version)
             or _HEX64.fullmatch(self.root_delivery_id) is None
             or _HEX64.fullmatch(self.payload_sha256) is None
             or not all(_IDENTIFIER.fullmatch(value) for value in identifiers)
+            or not all(_IDENTIFIER.fullmatch(value) for value in optional_identifiers)
             or not _aware(self.occurred_at)
             or not self.rendered_text
             or self.rendered_text != self.rendered_text.strip()
             or len(self.rendered_text) > 4096
+            or _IDENTIFIER.fullmatch(self.status) is None
+            or self.evidence_refs != tuple(sorted(set(self.evidence_refs)))
+            or any(not value or value != value.strip() or len(value) > 512 for value in self.evidence_refs)
             or not 1 <= self.max_attempts <= 10
         ):
             raise InvalidHermesDeliveryModelError("invalid Hermes delivery event")
@@ -178,6 +190,11 @@ def build_hermes_delivery_event(
     occurred_at: dt.datetime,
     payload_sha256: str,
     rendered_text: str,
+    agent_family: str | None = None,
+    instrument_id: str | None = None,
+    strategy_version: str | None = None,
+    status: str = "pending",
+    evidence_refs: tuple[str, ...] = (),
     root_delivery_id: str | None = None,
     max_attempts: int = 3,
 ) -> HermesDeliveryEvent:
@@ -192,6 +209,11 @@ def build_hermes_delivery_event(
         occurred_at=occurred_at,
         payload_sha256=payload_sha256,
         rendered_text=rendered_text,
+        agent_family=agent_family,
+        instrument_id=instrument_id,
+        strategy_version=strategy_version,
+        status=status,
+        evidence_refs=evidence_refs,
         max_attempts=max_attempts,
     )
 
