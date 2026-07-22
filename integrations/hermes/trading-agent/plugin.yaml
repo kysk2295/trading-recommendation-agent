@@ -1,0 +1,15 @@
+name: trading-agent
+version: 1.0.0
+description: "Read-only agent queries, durable alerts, and signed Alpaca Paper arm routing."
+author: trading-recommendation-agent
+kind: standalone
+provides_tools:
+  - trading_agent_query
+  - trading_agent_status
+  - trading_agent_arm_prepare
+  - trading_agent_arm_confirm
+  - trading_agent_arm_revoke
+requires_env:
+  - name: TRADING_AGENT_PROJECT_ROOT
+    description: "Absolute path to the active trading-recommendation-agent checkout"
+    secret: false
