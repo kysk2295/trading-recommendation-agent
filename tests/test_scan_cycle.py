@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import stat
 from pathlib import Path
 
 from trading_agent.kis_scan import ScanObservation
@@ -60,6 +61,24 @@ def test_cycle_audit_appends_failure_and_recovery(tmp_path: Path) -> None:
     with path.open(encoding="utf-8", newline="") as handle:
         rows = tuple(csv.DictReader(handle))
     assert tuple(row["status"] for row in rows) == ("failed", "ok")
+
+
+def test_cycle_audit_stays_owner_only_for_new_and_existing_file(
+    tmp_path: Path,
+) -> None:
+    # Given: no cycle audit exists yet.
+    path = tmp_path / "watch_cycles.csv"
+    started_at = dt.datetime(2026, 7, 22, 9, 0, tzinfo=dt.UTC)
+
+    # When: the audit is created and appended after a mode regression.
+    append_cycle_audit(path, started_at, 0)
+    created_mode = stat.S_IMODE(path.stat().st_mode)
+    path.chmod(0o644)
+    append_cycle_audit(path, started_at, 0)
+
+    # Then: both writes leave the audit owner-only.
+    assert created_mode == 0o600
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
 def test_partial_provider_error_makes_the_scan_cycle_fail() -> None:

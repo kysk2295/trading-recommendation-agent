@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import sqlite3
+import stat
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -28,6 +29,10 @@ from trading_agent.paper_execution_models import (
 )
 
 FINGERPRINT = AccountFingerprint("a" * 64)
+
+
+def _execution_sqlite_paths(database: Path) -> tuple[Path, Path, Path]:
+    return database, Path(f"{database}-wal"), Path(f"{database}-shm")
 
 
 def _intent(entry: float = 10.0) -> PaperOrderIntent:
@@ -81,6 +86,39 @@ def test_single_writer_inserts_an_intent_once(tmp_path: Path) -> None:
     assert repeated is False
     assert len(store.intents()) == 1
     assert store.intents()[0].quantity == 259
+
+
+def test_writer_creates_owner_only_database_and_sidecars(tmp_path: Path) -> None:
+    # Given: no execution ledger files exist.
+    database = tmp_path / "execution.sqlite3"
+    store = ExecutionStore(database)
+
+    # When: the execution writer initializes its WAL database.
+    with store.writer():
+        paths = _execution_sqlite_paths(database)
+        modes = tuple(stat.S_IMODE(path.stat().st_mode) for path in paths)
+
+    # Then: the main database and both sidecars are owner-only.
+    assert modes == (0o600, 0o600, 0o600)
+
+
+def test_writer_repairs_existing_database_and_sidecars_to_owner_only(
+    tmp_path: Path,
+) -> None:
+    # Given: an existing execution ledger and sidecars are locally readable.
+    database = tmp_path / "execution.sqlite3"
+    store = ExecutionStore(database)
+    with store.writer():
+        paths = _execution_sqlite_paths(database)
+        for path in paths:
+            path.chmod(0o644)
+
+    # When: the next execution writer acquires the ledger.
+    with store.writer():
+        modes = tuple(stat.S_IMODE(path.stat().st_mode) for path in paths)
+
+    # Then: all execution ledger files are owner-only again.
+    assert modes == (0o600, 0o600, 0o600)
 
 
 def test_same_intent_id_with_different_fields_is_rejected(tmp_path: Path) -> None:

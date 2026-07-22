@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from trading_agent.kis_scan import ScanObservation
+from trading_agent.private_report import open_private_append
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +44,7 @@ def append_cycle_audit(
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     has_header = path.is_file() and path.stat().st_size > 0
-    with path.open("a", encoding="utf-8", newline="") as handle:
+    with open_private_append(path) as handle:
         writer = csv.writer(handle)
         if not has_header:
             writer.writerow(("started_at", "exit_code", "status"))
