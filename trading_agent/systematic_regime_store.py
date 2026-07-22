@@ -53,7 +53,7 @@ class SystematicShadowOutcome(BaseModel):
             or (self.net_return_bps is not None and not self.net_return_bps.is_finite())
             or len(self.source_key) != 64
         ):
-            raise ValueError("invalid systematic shadow outcome")
+            raise InvalidSystematicRegimeStoreError
         return self
 
     @property

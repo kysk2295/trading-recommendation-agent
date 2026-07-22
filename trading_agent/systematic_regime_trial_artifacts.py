@@ -26,6 +26,10 @@ from trading_agent.systematic_regime_store import SystematicShadowOutcome
 from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
 
 
+class InvalidSystematicRegimeTrialArtifactError(ValueError):
+    pass
+
+
 def build_systematic_trial_registration(
     card: SystematicRecommendationCard,
     scope: MultiMarketExperimentScope,
@@ -107,12 +111,13 @@ def build_systematic_shadow_outcome(
 def _calendar_id(session_date: dt.date) -> str:
     bounds = regular_session_bounds(session_date)
     if bounds is None:
-        raise ValueError("invalid systematic target session")
+        raise InvalidSystematicRegimeTrialArtifactError
     material = f"nyse-calendar-v1|{bounds[0].isoformat()}|{bounds[1].isoformat()}"
     return hashlib.sha256(material.encode()).hexdigest()
 
 
 __all__ = (
+    "InvalidSystematicRegimeTrialArtifactError",
     "build_systematic_lifecycle_event",
     "build_systematic_shadow_outcome",
     "build_systematic_trial_registration",

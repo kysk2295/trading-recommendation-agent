@@ -12,6 +12,10 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from trading_agent.signal_contract_models import EvidenceRef, TradeSignalEnvelope
 
 
+class InvalidSystematicRegimeModelError(ValueError):
+    pass
+
+
 class RegimeLabel(StrEnum):
     RISK_ON = "risk_on"
     RISK_OFF = "risk_off"
@@ -49,7 +53,7 @@ class SystematicMarketContext(BaseModel):
             or not self.producer_version
             or self.evidence_ref.observed_at != self.observed_at
         ):
-            raise ValueError("invalid systematic market context")
+            raise InvalidSystematicRegimeModelError
         return self
 
 
@@ -72,7 +76,7 @@ class SystematicReplayObservation(BaseModel):
             or self.candidate_symbols != tuple(sorted(set(self.candidate_symbols)))
             or (self.net_return_bps is not None and not self.net_return_bps.is_finite())
         ):
-            raise ValueError("invalid systematic replay observation")
+            raise InvalidSystematicRegimeModelError
         return self
 
 
@@ -95,7 +99,7 @@ class SystematicReplayResult(BaseModel):
             or not self.observations
             or pairs != tuple(sorted(set(pairs)))
         ):
-            raise ValueError("invalid systematic replay")
+            raise InvalidSystematicRegimeModelError
         return self
 
     @property
@@ -134,7 +138,7 @@ class SystematicRecommendationCard(BaseModel):
             or tuple(sorted(signal.symbol for signal in self.signals)) != self.candidate_symbols
             or len(self.replay_id) != 64
         ):
-            raise ValueError("invalid systematic recommendation card")
+            raise InvalidSystematicRegimeModelError
         return self
 
     @property
@@ -157,6 +161,7 @@ def _aware(value: dt.datetime) -> bool:
 
 
 __all__ = (
+    "InvalidSystematicRegimeModelError",
     "RegimeLabel",
     "SystematicDecisionKind",
     "SystematicMarketContext",
