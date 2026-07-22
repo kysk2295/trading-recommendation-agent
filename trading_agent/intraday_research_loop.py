@@ -6,7 +6,7 @@ import hashlib
 import os
 import stat
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import override
@@ -132,11 +132,19 @@ def _heavy_empirical_lease(ledger_path: Path) -> Iterator[None]:
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         descriptor_locked = True
         _require_lease_binding(lock_path, parent, descriptor)
-    except (BlockingIOError, InvalidPrivateDirectoryIdentityError, OSError, ValueError):
+    except (
+        BlockingIOError,
+        IntradayResearchLoopError,
+        InvalidPrivateDirectoryIdentityError,
+        OSError,
+        ValueError,
+    ):
         if descriptor >= 0:
-            os.close(descriptor)
+            with suppress(OSError):
+                os.close(descriptor)
         if parent >= 0:
-            os.close(parent)
+            with suppress(OSError):
+                os.close(parent)
         raise IntradayResearchLoopError from None
     try:
         yield

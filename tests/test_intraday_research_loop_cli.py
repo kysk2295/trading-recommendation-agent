@@ -178,6 +178,21 @@ def test_heavy_lease_rejects_hard_link_without_changing_target_mode(tmp_path: Pa
     assert target.read_bytes() == b"unchanged"
 
 
+def test_heavy_lease_closes_descriptors_after_rejected_hard_link(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.write_bytes(b"unchanged")
+    target.chmod(0o600)
+    ledger = tmp_path / "experiment.sqlite3"
+    os.link(target, Path(f"{ledger}.m6-heavy.lock"))
+    descriptors_before = len(os.listdir("/dev/fd"))
+
+    for _ in range(20):
+        with pytest.raises(IntradayResearchLoopError), _heavy_empirical_lease(ledger):
+            pass
+
+    assert len(os.listdir("/dev/fd")) == descriptors_before
+
+
 def test_heavy_lease_rejects_non_private_existing_lock(tmp_path: Path) -> None:
     ledger = tmp_path / "experiment.sqlite3"
     lock = Path(f"{ledger}.m6-heavy.lock")
