@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 import run_intraday_research_loop as research_cli
 from trading_agent.experiment_ledger_models import TrialEventKind, TrialKind
 from trading_agent.experiment_ledger_store import ExperimentLedgerReader
+from trading_agent.intraday_research_loop import IntradayResearchLoopError, _heavy_empirical_lease
 from trading_agent.lane_bootstrap import bootstrap_lane_control_plane
 from trading_agent.lane_registry_store import LaneRegistryStore
 
@@ -158,3 +162,65 @@ def test_intraday_research_loop_runs_and_replays_full_local_vertical(tmp_path: P
     report = (output / "intraday_research_loop_ko.md").read_text(encoding="utf-8")
     assert "result: ready" in report
     assert "external mutation: 0" in report
+
+
+def test_heavy_lease_rejects_hard_link_without_changing_target_mode(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.write_bytes(b"unchanged")
+    target.chmod(0o644)
+    ledger = tmp_path / "experiment.sqlite3"
+    os.link(target, Path(f"{ledger}.m6-heavy.lock"))
+
+    with pytest.raises(IntradayResearchLoopError), _heavy_empirical_lease(ledger):
+        pass
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+    assert target.read_bytes() == b"unchanged"
+
+
+def test_heavy_lease_rejects_non_private_existing_lock(tmp_path: Path) -> None:
+    ledger = tmp_path / "experiment.sqlite3"
+    lock = Path(f"{ledger}.m6-heavy.lock")
+    lock.write_bytes(b"")
+    lock.chmod(0o644)
+
+    with pytest.raises(IntradayResearchLoopError), _heavy_empirical_lease(ledger):
+        pass
+
+    assert stat.S_IMODE(lock.stat().st_mode) == 0o644
+
+
+def test_heavy_lease_rejects_parent_and_final_symlinks(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir(mode=0o700)
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+    target = real / "target"
+    target.write_bytes(b"unchanged")
+    target.chmod(0o600)
+    final_alias_ledger = real / "final.sqlite3"
+    Path(f"{final_alias_ledger}.m6-heavy.lock").symlink_to(target)
+
+    with pytest.raises(IntradayResearchLoopError), _heavy_empirical_lease(alias / "parent.sqlite3"):
+        pass
+    with pytest.raises(IntradayResearchLoopError), _heavy_empirical_lease(final_alias_ledger):
+        pass
+
+    assert target.read_bytes() == b"unchanged"
+
+
+def test_heavy_lease_detects_lock_name_replacement(tmp_path: Path) -> None:
+    ledger = tmp_path / "experiment.sqlite3"
+    lock = Path(f"{ledger}.m6-heavy.lock")
+    held = tmp_path / "held.lock"
+
+    with _heavy_empirical_lease(ledger):
+        lock.replace(held)
+        lock.write_bytes(b"")
+        lock.chmod(0o600)
+        try:
+            with pytest.raises(IntradayResearchLoopError), _heavy_empirical_lease(ledger):
+                pass
+        finally:
+            lock.unlink()
+            held.replace(lock)
