@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "session_date": "2026-07-22",
+  "observed_at": "2026-07-22T16:05:00-04:00",
+  "universe_id": "us_systematic_regime_etf_v1",
+  "symbols": [
+    "GLD",
+    "IEF",
+    "IWM",
+    "QQQ",
+    "SHY",
+    "SPY"
+  ],
+  "bars_file": "bars.json",
+  "bars_sha256": "79917d2e1b7036e0d8ebcaa1996352554ad46b2e3af086777b30ac30e8f1e872"
+}

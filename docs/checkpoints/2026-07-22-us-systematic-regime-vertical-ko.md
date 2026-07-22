@@ -30,14 +30,18 @@
 
 ```bash
 uv run python run_us_systematic_regime.py \
-  --session-date YYYY-MM-DD \
-  --fixture-root /private/path/us-systematic-regime-fixture \
+  --session-date 2026-07-22 \
+  --fixture-root examples/us_systematic_regime/2026-07-22 \
   --database /private/tmp/us-systematic-regime.sqlite3 \
   --experiment-ledger /private/tmp/us-systematic-experiment.sqlite3 \
   --output-dir /private/tmp/us-systematic-regime-output
 ```
 
 production에서는 `--fixture-root`를 생략한다. current NYSE post-close가 아니면 credential loader와 HTTP client 전에 차단한다. 운영 checkout은 clean이어야 하며 현재 commit SHA가 strategy version에 결합된다. private SQLite와 lock은 symlink·hard-link를 거부하므로 macOS 임시 경로도 `/tmp` alias가 아닌 canonical `/private/tmp` parent를 사용한다.
+
+커밋된 `2026-07-22` fixture는 고정 universe의 ETF별 201개 정렬 세션을 가진 합성
+`risk_on` 입력이다. 현재 날짜 CLI 경계, signal-only 카드와 private ledger를 재현하기
+위한 QA 자료이며 실제 시장 데이터, 현재 추천, 전략 성과 또는 승격 근거가 아니다.
 
 ## 검증
 

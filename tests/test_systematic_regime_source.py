@@ -23,6 +23,24 @@ SESSION = dt.date(2026, 7, 20)
 BOUNDS = regular_session_bounds(SESSION)
 assert BOUNDS is not None
 OBSERVED_AT = BOUNDS[1] + dt.timedelta(minutes=5)
+COMMITTED_FIXTURE_SESSION = dt.date(2026, 7, 22)
+COMMITTED_FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "examples"
+    / "us_systematic_regime"
+    / COMMITTED_FIXTURE_SESSION.isoformat()
+)
+
+
+def test_committed_fixture_loads_the_full_systematic_universe() -> None:
+    source = load_systematic_daily_source(
+        COMMITTED_FIXTURE,
+        session_date=COMMITTED_FIXTURE_SESSION,
+    )
+
+    assert source.symbols == SYSTEMATIC_REGIME_UNIVERSE
+    assert len(source.bars_for("SPY")) == 201
+    assert source.bars_for("SPY")[-1].session_date == COMMITTED_FIXTURE_SESSION
 
 
 def test_fixture_loads_exact_aligned_systematic_universe(tmp_path: Path) -> None:
