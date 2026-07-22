@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import re
 from pathlib import Path
 from typing import Literal, Self, override
@@ -16,6 +15,12 @@ from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.private_stable_report import write_private_stable_report
 from trading_agent.us_session_delivery_projection import (
     us_session_projection_records,
+    us_session_projection_sha256,
+)
+from trading_agent.us_session_delivery_terminal import (
+    UsSessionDeliveryTerminalArtifact,
+    UsSessionDeliveryTerminalRequest,
+    build_us_session_delivery_terminal,
 )
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -33,6 +38,7 @@ class UsSessionDeliveryReconciliationRequest(BaseModel):
     sources: HermesProjectionSources
     session_date: dt.date
     generated_at: dt.datetime
+    terminal_artifact: UsSessionDeliveryTerminalArtifact | None = None
 
     @model_validator(mode="after")
     def validate_request(self) -> Self:
@@ -120,6 +126,19 @@ def reconcile_us_session_deliveries(
     if not records or any(record.occurred_at > request.generated_at for record in records):
         raise InvalidUsSessionDeliveryReconciliationError
     expected_events = tuple(delivery_event_from_projection_record(record) for record in records)
+    if request.terminal_artifact is not None:
+        if request.terminal_artifact.finalized_at > request.generated_at:
+            raise InvalidUsSessionDeliveryReconciliationError
+        rebuilt = build_us_session_delivery_terminal(
+            UsSessionDeliveryTerminalRequest(
+                sources=request.sources,
+                session_date=request.session_date,
+                finalized_at=request.terminal_artifact.finalized_at,
+            )
+        )
+        if rebuilt != request.terminal_artifact:
+            raise InvalidUsSessionDeliveryReconciliationError
+        expected_events += (request.terminal_artifact.event,)
     expected_by_id = {event.delivery_id: event for event in expected_events}
     if len(expected_by_id) != len(expected_events):
         raise InvalidUsSessionDeliveryReconciliationError
@@ -143,10 +162,7 @@ def reconcile_us_session_deliveries(
     expected = set(expected_by_id)
     projected = set(persisted_by_id)
     pending = expected - acknowledged - dead
-    ordered_records = tuple(sorted(records, key=lambda item: item.source_event_id))
-    source_digest = hashlib.sha256(
-        b"\n".join(record.model_dump_json().encode() for record in ordered_records)
-    ).hexdigest()
+    source_digest = us_session_projection_sha256(records)
     return UsSessionDeliveryReconciliation(
         session_date=request.session_date,
         generated_at=request.generated_at,

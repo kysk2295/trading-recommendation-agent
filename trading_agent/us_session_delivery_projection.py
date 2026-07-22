@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 from zoneinfo import ZoneInfo
 
 from trading_agent.hermes_delivery_projection import (
@@ -57,6 +58,19 @@ def us_session_projection_records(
     roots = _first_symbol_roots(snapshots)
     signals = _signal_records(publications, snapshots, roots)
     return (*roots.values(), *signals)
+
+
+def us_session_projection_sha256(
+    records: tuple[HermesProjectionRecord, ...],
+) -> str:
+    validated = tuple(
+        HermesProjectionRecord.model_validate(record.model_dump(mode="python"))
+        for record in records
+    )
+    ordered = tuple(sorted(validated, key=lambda item: item.source_event_id))
+    return hashlib.sha256(
+        b"\n".join(record.model_dump_json().encode() for record in ordered)
+    ).hexdigest()
 
 
 def _first_symbol_roots(

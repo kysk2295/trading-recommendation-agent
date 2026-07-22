@@ -32,6 +32,14 @@ from trading_agent.hermes_delivery_redrive import (
 )
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.hermes_query_service import HermesAgentQueryService, InvalidHermesQueryError
+from trading_agent.hermes_us_session_commands import (
+    FinalizeUsSessionCommand,
+    ProjectUsSessionCommand,
+    ReconcileUsSessionCommand,
+    finalize_us_session_command,
+    project_us_session_command,
+    reconcile_us_session_command,
+)
 from trading_agent.kr_source_cycle_delivery import (
     InvalidKrSourceCycleDeliveryError,
     KrSourceCycleDeliveryRequest,
@@ -39,15 +47,8 @@ from trading_agent.kr_source_cycle_delivery import (
 )
 from trading_agent.kr_theme_store import KrThemeStore
 from trading_agent.private_stable_report import InvalidPrivateStableReportError
-from trading_agent.us_session_delivery_projection import (
-    project_us_session_contract_outboxes,
-)
-from trading_agent.us_session_delivery_reconciliation import (
-    InvalidUsSessionDeliveryReconciliationError,
-    UsSessionDeliveryReconciliationRequest,
-    reconcile_us_session_deliveries,
-    write_us_session_delivery_reconciliation,
-)
+from trading_agent.us_session_delivery_reconciliation import InvalidUsSessionDeliveryReconciliationError
+from trading_agent.us_session_delivery_terminal import InvalidUsSessionDeliveryTerminalError
 
 type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
 Clock = Callable[[], dt.datetime]
@@ -68,6 +69,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     session.add_argument("--opportunities", type=Path, required=True)
     session.add_argument("--signals", type=Path, required=True)
     session.add_argument("--session-date", type=_date, required=True)
+    finalize = commands.add_parser(
+        "finalize-session",
+        help="publish a closed US session no-setup or signal-count result",
+    )
+    finalize.add_argument("--database", type=Path, required=True)
+    finalize.add_argument("--opportunities", type=Path, required=True)
+    finalize.add_argument("--signals", type=Path, required=True)
+    finalize.add_argument("--session-date", type=_date, required=True)
+    finalize.add_argument("--output", type=Path, required=True)
     reconcile = commands.add_parser(
         "reconcile-session",
         help="reconcile exact US session deliveries and acknowledgements",
@@ -77,6 +87,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     reconcile.add_argument("--signals", type=Path, required=True)
     reconcile.add_argument("--session-date", type=_date, required=True)
     reconcile.add_argument("--output", type=Path, required=True)
+    reconcile.add_argument("--terminal-artifact", type=Path)
     kr_cycle = commands.add_parser(
         "project-kr-cycle",
         help="project a current incomplete KR source cycle incident",
@@ -112,16 +123,13 @@ def main(
                     result = project_contract_outboxes(sources, writer)
                 _print({"examined": result.examined, "inserted": result.inserted, "result": "projected"})
             case "project-session":
-                sources = HermesProjectionSources(
-                    opportunity_outbox=args.opportunities,
-                    signal_outbox=args.signals,
-                )
-                with store.writer() as writer:
-                    result = project_us_session_contract_outboxes(
-                        sources,
+                result = project_us_session_command(
+                    ProjectUsSessionCommand(
+                        _sources(args.opportunities, args.signals),
                         args.session_date,
-                        writer,
-                    )
+                    ),
+                    store,
+                )
                 _print(
                     {
                         "examined": result.examined,
@@ -129,19 +137,36 @@ def main(
                         "result": "projected_session",
                     }
                 )
-            case "reconcile-session":
-                report = reconcile_us_session_deliveries(
-                    UsSessionDeliveryReconciliationRequest(
-                        sources=HermesProjectionSources(
-                            opportunity_outbox=args.opportunities,
-                            signal_outbox=args.signals,
-                        ),
-                        session_date=args.session_date,
-                        generated_at=clock(),
+            case "finalize-session":
+                result = finalize_us_session_command(
+                    FinalizeUsSessionCommand(
+                        _sources(args.opportunities, args.signals),
+                        args.session_date,
+                        clock(),
+                        args.output,
                     ),
                     store,
                 )
-                write_us_session_delivery_reconciliation(args.output, report)
+                _print(
+                    {
+                        "inserted": result.inserted,
+                        "kind": result.artifact.event.kind.value,
+                        "result": "finalized_session",
+                        "signals": result.artifact.signal_count,
+                        "watches": result.artifact.watch_count,
+                    }
+                )
+            case "reconcile-session":
+                report = reconcile_us_session_command(
+                    ReconcileUsSessionCommand(
+                        _sources(args.opportunities, args.signals),
+                        args.session_date,
+                        clock(),
+                        args.output,
+                        args.terminal_artifact,
+                    ),
+                    store,
+                )
                 _print(
                     {
                         "acknowledged": report.acknowledged_count,
@@ -203,6 +228,7 @@ def main(
         InvalidHermesQueryError,
         InvalidPrivateStableReportError,
         InvalidUsSessionDeliveryReconciliationError,
+        InvalidUsSessionDeliveryTerminalError,
         sqlite3.DatabaseError,
         ValidationError,
     ):
@@ -219,6 +245,13 @@ def _datetime(value: str) -> dt.datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise argparse.ArgumentTypeError("timestamp must include timezone")
     return parsed
+
+
+def _sources(opportunities: Path, signals: Path) -> HermesProjectionSources:
+    return HermesProjectionSources(
+        opportunity_outbox=opportunities,
+        signal_outbox=signals,
+    )
 
 
 def _date(value: str) -> dt.date:
