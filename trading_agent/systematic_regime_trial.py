@@ -140,26 +140,18 @@ def censor_missed_systematic_regime_trial(
         if bounds is None:
             raise InvalidSystematicRegimeTrialError
         events = ledger.multi_market_trial_events(registration.trial_id)
-        if not events:
-            _ = start_systematic_regime_trial(ledger, card, bounds[0])
-            events = ledger.multi_market_trial_events(registration.trial_id)
-        started = next(iter(events), None)
-        if (
-            started is None
-            or len(events) > 2
-            or started.event.event_kind is not TrialEventKind.STARTED
-        ):
+        if len(events) > 1:
             raise InvalidSystematicRegimeTrialError
         event = ExperimentTrialEvent(
             trial_id=registration.trial_id,
-            sequence=2,
+            sequence=1,
             event_kind=TrialEventKind.CENSORED,
             occurred_at=bounds[1],
             artifact_sha256s=(),
             reason_codes=("missed_target_session_operating_tick",),
-            previous_event_key=str(started.event_key),
+            previous_event_key=None,
         )
-        terminal = next(iter(events[1:]), None)
+        terminal = next(iter(events), None)
         if terminal is not None:
             if terminal.event != event:
                 raise InvalidSystematicRegimeTrialError

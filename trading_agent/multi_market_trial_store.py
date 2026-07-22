@@ -177,8 +177,15 @@ def _require_chain(
                 sequence == 1
                 and event.occurred_at < market_session_open(parent.strategy_lane.market_id, parent.planned_start)
             )
-            or (sequence == 1 and event.event_kind is not TrialEventKind.STARTED)
+            or (
+                sequence == 1
+                and event.event_kind not in (TrialEventKind.STARTED, TrialEventKind.CENSORED)
+            )
             or (sequence == 2 and event.event_kind is TrialEventKind.STARTED)
+            or (
+                previous is not None
+                and previous.event.event_kind is not TrialEventKind.STARTED
+            )
             or (previous is None and event.previous_event_key is not None)
             or (previous is not None and event.previous_event_key != previous.event_key)
             or (previous is not None and event.occurred_at < previous.event.occurred_at)

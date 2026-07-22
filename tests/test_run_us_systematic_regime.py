@@ -216,7 +216,7 @@ def test_post_close_censors_a_pending_card_that_missed_its_session(
     assert tuple(
         item.event.event_kind
         for item in experiment.multi_market_trial_events(trial.trial_id)
-    ) == (TrialEventKind.STARTED, TrialEventKind.CENSORED)
+    ) == (TrialEventKind.CENSORED,)
 
 
 def test_cli_fixture_happy_path_writes_private_recommendation_card(tmp_path: Path) -> None:

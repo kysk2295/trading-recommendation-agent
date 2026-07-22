@@ -110,6 +110,18 @@ def _started() -> ExperimentTrialEvent:
     )
 
 
+def _unstarted_censored() -> ExperimentTrialEvent:
+    return ExperimentTrialEvent(
+        trial_id=_trial().trial_id,
+        sequence=1,
+        event_kind=TrialEventKind.CENSORED,
+        occurred_at=dt.datetime(2026, 7, 20, 15, 30, tzinfo=KST),
+        artifact_sha256s=(),
+        reason_codes=("missed_operating_tick",),
+        previous_event_key=None,
+    )
+
+
 def _register_lineage(store: ExperimentLedgerStore) -> None:
     hypothesis, version = _lineage()
     with store.writer() as writer:
@@ -136,6 +148,17 @@ def test_writer_registers_multi_market_trial_and_event_replay(tmp_path: Path) ->
 
     assert store.multi_market_trials()[0].registration == _trial()
     assert store.multi_market_trial_events(_trial().trial_id)[0].event == _started()
+
+
+def test_multi_market_trial_records_an_unstarted_censored_terminal(tmp_path: Path) -> None:
+    store = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    _register_lineage(store)
+
+    with store.writer() as writer:
+        assert writer.register_multi_market_trial(_trial()) is True
+        assert writer.append_multi_market_trial_event(_unstarted_censored()) is True
+
+    assert store.multi_market_trial_events(_trial().trial_id)[0].event == _unstarted_censored()
 
 
 def test_multi_market_trial_requires_exact_parent_and_event_chain(tmp_path: Path) -> None:

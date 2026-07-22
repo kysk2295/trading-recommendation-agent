@@ -248,6 +248,15 @@ class ExperimentTrialEvent(BaseModel):
             if self.sequence != 1 or self.previous_event_key is not None or self.artifact_sha256s or self.reason_codes:
                 raise ValueError("invalid started experiment trial event")
             return self
+        if self.sequence == 1:
+            if (
+                self.event_kind is not TrialEventKind.CENSORED
+                or self.previous_event_key is not None
+                or self.artifact_sha256s
+                or not self.reason_codes
+            ):
+                raise ValueError("invalid unstarted censored experiment trial event")
+            return self
         if self.sequence < 2 or self.previous_event_key is None or not _HEX64.fullmatch(self.previous_event_key):
             raise ValueError("invalid terminal experiment trial chain")
         if self.event_kind is TrialEventKind.COMPLETED:
