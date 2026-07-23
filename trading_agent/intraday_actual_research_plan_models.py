@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Literal, Self, override
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.intraday_research_input_binding_models import (
@@ -62,6 +62,10 @@ class IntradayActualResearchRunSpec(BaseModel):
     per_side_slippage_bps: int
     bootstrap_samples: int
     rss_limit_gib: float
+    required_outcome_trace_schema_version: Literal[2] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     paths: IntradayActualResearchPlanPaths
 
     @model_validator(mode="after")
@@ -103,7 +107,7 @@ class IntradayActualResearchRunSpec(BaseModel):
 class IntradayActualResearchRunPlanContent(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[2] = 2
+    schema_version: Literal[2, 3] = 3
     spec: IntradayActualResearchRunSpec
     source_queue_snapshot_id: str
     source_queue_artifact: Path
@@ -113,6 +117,8 @@ class IntradayActualResearchRunPlanContent(BaseModel):
         if (
             _HEX64.fullmatch(self.source_queue_snapshot_id) is None
             or not self.source_queue_artifact.is_absolute()
+            or (self.schema_version == 3)
+            is not (self.spec.required_outcome_trace_schema_version is not None)
         ):
             raise IntradayActualResearchPlanError
         return self
@@ -121,7 +127,7 @@ class IntradayActualResearchRunPlanContent(BaseModel):
 class IntradayActualResearchRunPlan(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[2] = 2
+    schema_version: Literal[2, 3] = 3
     plan_id: str
     content: IntradayActualResearchRunPlanContent
 
@@ -130,7 +136,7 @@ class IntradayActualResearchRunPlan(BaseModel):
         expected = hashlib.sha256(
             canonical_experiment_ledger_json(self.content).encode()
         ).hexdigest()
-        if self.plan_id != expected:
+        if self.schema_version != self.content.schema_version or self.plan_id != expected:
             raise IntradayActualResearchPlanError
         return self
 
@@ -139,6 +145,7 @@ def create_intraday_actual_research_run_plan(
     content: IntradayActualResearchRunPlanContent,
 ) -> IntradayActualResearchRunPlan:
     return IntradayActualResearchRunPlan(
+        schema_version=content.schema_version,
         plan_id=hashlib.sha256(
             canonical_experiment_ledger_json(content).encode()
         ).hexdigest(),

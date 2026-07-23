@@ -10,7 +10,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, override
+from typing import Final, Literal, override
 
 from trading_agent.daily_research_contract import strategy_contract
 from trading_agent.experiment_ledger_bootstrap import bootstrap_current_intraday_experiments
@@ -52,6 +52,7 @@ class IntradayResearchLoopPaths:
     source_queue_artifact: Path | None = None
     data_foundation_manifests: tuple[Path, ...] = ()
     persisted_manifest_sha256: str | None = None
+    required_outcome_trace_schema_version: Literal[2] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +126,12 @@ def run_intraday_research_loop(
     with _heavy_empirical_lease(paths.experiment_ledger):
         for selection in manifest.hypotheses:
             experiment, created = run_or_replay_intraday_trial(context, selection)
+            if (
+                paths.required_outcome_trace_schema_version is not None
+                and experiment.schema_version
+                != paths.required_outcome_trace_schema_version
+            ):
+                raise IntradayResearchLoopError
             experiment_created += int(created)
             review, created = review_intraday_experiment(
                 IntradayReviewRequest(

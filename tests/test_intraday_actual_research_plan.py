@@ -18,6 +18,9 @@ from trading_agent.intraday_actual_research_plan_models import (
     IntradayActualResearchPlanPaths,
     IntradayActualResearchRunSpec,
 )
+from trading_agent.intraday_research_artifacts import (
+    load_intraday_experiment_artifact,
+)
 
 
 def test_planned_actual_research_freezes_queue_and_replays_exact_plan(
@@ -41,8 +44,9 @@ def test_planned_actual_research_freezes_queue_and_replays_exact_plan(
 
     assert first.plan_created is True
     assert first.queue_created is True
-    assert first.plan.schema_version == 2
-    assert first.plan.content.schema_version == 2
+    assert first.plan.schema_version == 3
+    assert first.plan.content.schema_version == 3
+    assert first.plan.content.spec.required_outcome_trace_schema_version == 2
     assert replay.plan_created is False
     assert replay.queue_created is False
     assert replay.plan.plan_id == first.plan.plan_id
@@ -51,6 +55,10 @@ def test_planned_actual_research_freezes_queue_and_replays_exact_plan(
     assert replay.actual.loop.review_artifacts_created == 0
     assert len(ExperimentLedgerReader(ledger.path).strategy_versions()) == 1
     assert len(ExperimentLedgerReader(ledger.path).trials()) == 1
+    artifacts = tuple(first.plan.content.spec.paths.artifact_root.glob("*.json"))
+    assert tuple(
+        load_intraday_experiment_artifact(path).schema_version for path in artifacts
+    ) == (2,)
     assert stat.S_IMODE(first.plan_path.stat().st_mode) == 0o600
     assert stat.S_IMODE(first.plan.content.source_queue_artifact.stat().st_mode) == 0o600
 
@@ -138,6 +146,7 @@ def _spec(request, *, run_key: str) -> IntradayActualResearchRunSpec:
         per_side_slippage_bps=request.per_side_slippage_bps,
         bootstrap_samples=request.bootstrap_samples,
         rss_limit_gib=request.rss_limit_gib,
+        required_outcome_trace_schema_version=2,
         paths=IntradayActualResearchPlanPaths(
             dataset_root=request.paths.dataset_root,
             binding_root=request.paths.binding_root,

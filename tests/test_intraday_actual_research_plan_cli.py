@@ -42,6 +42,7 @@ def test_planned_actual_research_cli_exposes_plan_boundary_and_rejects_bad_bindi
     assert "--strategy-binding" in help_result.stdout
     assert "--dataset-producer-commit-sha" in help_result.stdout
     assert "--code-version" in help_result.stdout
+    assert "--required-outcome-trace-schema-version" in help_result.stdout
     assert "--prerequisite-receipt" in help_result.stdout
     assert "--prerequisite-report" in help_result.stdout
     assert bad_result.returncode == 2
@@ -88,6 +89,8 @@ def test_planned_actual_research_cli_blocks_before_plan_mutation(
             "d" * 40,
             "--code-version",
             "code-version",
+            "--required-outcome-trace-schema-version",
+            "2",
             "--registered-at",
             "2026-07-23T20:15:00+00:00",
             "--lane-registry",

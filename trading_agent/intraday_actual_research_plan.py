@@ -76,6 +76,9 @@ def run_planned_intraday_actual_research(
             per_side_slippage_bps=content.spec.per_side_slippage_bps,
             bootstrap_samples=content.spec.bootstrap_samples,
             rss_limit_gib=content.spec.rss_limit_gib,
+            required_outcome_trace_schema_version=(
+                content.spec.required_outcome_trace_schema_version
+            ),
             paths=IntradayActualResearchPaths(
                 dataset_root=paths.dataset_root,
                 binding_root=paths.binding_root,

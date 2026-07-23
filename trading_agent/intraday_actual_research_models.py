@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from trading_agent.intraday_research_dataset_catalog_models import (
     IntradayResearchDatasetCatalogResult,
@@ -44,6 +45,7 @@ class IntradayActualResearchRequest:
     bootstrap_samples: int
     rss_limit_gib: float
     paths: IntradayActualResearchPaths
+    required_outcome_trace_schema_version: Literal[2] | None = None
 
 
 @dataclass(frozen=True, slots=True)

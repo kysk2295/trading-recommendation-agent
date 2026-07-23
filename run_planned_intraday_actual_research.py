@@ -77,6 +77,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--dataset-producer-commit-sha", required=True)
     parser.add_argument("--code-version", required=True)
+    parser.add_argument(
+        "--required-outcome-trace-schema-version",
+        type=int,
+        choices=(2,),
+        required=True,
+    )
     parser.add_argument("--registered-at", type=_aware_datetime, required=True)
     parser.add_argument("--lane-registry", type=Path, required=True)
     parser.add_argument("--experiment-ledger", type=Path, required=True)
@@ -120,6 +126,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 per_side_slippage_bps=args.per_side_slippage_bps,
                 bootstrap_samples=args.bootstrap_samples,
                 rss_limit_gib=args.rss_limit_gib,
+                required_outcome_trace_schema_version=(
+                    args.required_outcome_trace_schema_version
+                ),
                 paths=IntradayActualResearchPlanPaths(
                     dataset_root=args.dataset_dir.resolve(strict=False),
                     binding_root=args.binding_dir.resolve(strict=False),
@@ -157,6 +166,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         + f"- selected sessions: {actual.catalog.dataset.session_count}\n"
         + f"- input sha256: {actual.catalog.dataset.input_sha256}\n"
         + f"- manifest sha256: {actual.binding.manifest_sha256}\n"
+        + "- outcome trace schema: "
+        + f"{result.plan.content.spec.required_outcome_trace_schema_version}\n"
         + f"- foundations: {len(actual.binding.foundation_paths)}\n"
         + f"- trials: {actual.loop.trials_total}\n"
         + f"- experiment artifacts created: {actual.loop.experiment_artifacts_created}\n"
