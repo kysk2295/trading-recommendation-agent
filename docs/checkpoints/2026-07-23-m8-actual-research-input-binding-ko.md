@@ -33,4 +33,11 @@
 
 ## 아직 남은 운영 증거
 
-이 코드는 actual-ready 결속 도구다. 2026-07-23 시점 보존된 실제 네 세션은 strict quality gate를 통과하지 못했으므로 actual CSV, actual READY foundation, historical trial은 여전히 0건이다. 예약된 clean forward session이 성공하고 명시 entitlement 계약이 제공된 뒤 이 CLI로 실제 SHA를 발행해야 한다. 결과가 `hold` 또는 실패여도 품질 gate나 Reviewer 기준을 완화하지 않는다.
+KIS `us_candidate_minute` 원천을 로컬 historical research에만 쓰는 명시 계약
+`examples/data/kis-us-candidate-minute-historical-research-v1.json`을 등록했다. 실시간
+사용은 허용하지 않고, 원천 재배포도 허용하지 않으며 파생 산출물만 보존 대상으로
+선언한다. 이 계약은 프로젝트의 보수적인 로컬 보존·삭제 정책이며 KIS 약관에 대한
+법률적 해석이나 제3자 재배포 권리를 뜻하지 않는다. 운영 복사본은 mode 600으로
+`outputs/experiment_control/source_intraday/contracts/`에 게시했다.
+
+이 코드는 actual-ready 결속 도구다. 2026-07-23 시점 보존된 실제 네 세션은 strict quality gate를 통과하지 못했으므로 actual CSV, actual READY foundation, historical trial은 여전히 0건이다. 예약된 clean forward session이 성공한 뒤 이 CLI로 실제 SHA를 발행해야 한다. 결과가 `hold` 또는 실패여도 품질 gate나 Reviewer 기준을 완화하지 않는다.

@@ -910,7 +910,7 @@ uv run python run_source_driven_hypothesis_queue.py \
 uv run python run_intraday_research_input_binding.py \
   --dataset-csv outputs/experiment_control/source_intraday/datasets/intraday_point_in_time_<CSV_SHA256>.csv \
   --dataset-receipt outputs/experiment_control/source_intraday/datasets/intraday_point_in_time_<CSV_SHA256>_<RECEIPT_SHA256>.json \
-  --entitlement-contract outputs/experiment_control/source_intraday/contracts/kis-us-candidate-minute-research-v1.json \
+  --entitlement-contract outputs/experiment_control/source_intraday/contracts/kis-us-candidate-minute-historical-research-v1.json \
   --source-queue-artifact outputs/experiment_control/source_intraday/queue/source_hypothesis_queue_<QUEUE_SHA256>.json \
   --strategy-binding vwap_reclaim,actual_vwap_reclaim_v1,<VWAP_CARD_SHA256> \
   --strategy-binding hod_breakout,actual_hod_breakout_v1,<HOD_CARD_SHA256> \

@@ -66,6 +66,9 @@ def test_binding_publishes_ready_foundation_and_exact_v2_manifest(tmp_path: Path
     assert foundation.sha256 == first.foundation_sha256s[0]
     assert foundation.manifest.evaluate_data_readiness().status is StrategyDataStatus.READY
     assert foundation.manifest.capabilities[0].historical_from == dt.date(2026, 7, 14)
+    assert foundation.manifest.entitlements[0].entitlement_id == (
+        "kis-us-candidate-minute-historical-research-v1"
+    )
     assert manifest.input_sha256 == dataset.input_sha256
     assert manifest.source_queue_snapshot_id is not None
     assert manifest.hypotheses[0].data_foundation_sha256 == foundation.sha256

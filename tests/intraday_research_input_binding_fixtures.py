@@ -25,6 +25,10 @@ from trading_agent.source_driven_hypothesis_queue_models import (
 )
 
 NOW = dt.datetime(2026, 7, 23, 5, 30, tzinfo=dt.UTC)
+PROJECT = Path(__file__).resolve().parents[1]
+KIS_ENTITLEMENT = (
+    PROJECT / "examples" / "data" / "kis-us-candidate-minute-historical-research-v1.json"
+)
 
 
 def write_dataset(tmp_path: Path) -> IntradayResearchDatasetResult:
@@ -41,27 +45,11 @@ def write_dataset(tmp_path: Path) -> IntradayResearchDatasetResult:
 
 
 def write_entitlement(tmp_path: Path, *, provider: str = "kis") -> Path:
-    entitlement = DataEntitlement.model_validate(
-        {
-            "schema_version": 1,
-            "entitlement_id": f"{provider}-strict-forward-research-v1",
-            "source_id": {"schema_version": 1, "provider": provider, "feed": "us_candidate_minute"},
-            "market_domains": ["us_equities"],
-            "event_types": ["minute_bar"],
-            "permitted_uses": ["historical_research"],
-            "real_time": False,
-            "historical": True,
-            "redistribution_policy": "none",
-            "retention": {
-                "raw_retention_days": 30,
-                "derived_retention_days": 365,
-                "deletion_required": True,
-                "correction_policy": "append_correction",
-            },
-            "effective_from": "2026-07-01T00:00:00Z",
-            "effective_to": None,
-        }
-    )
+    payload = json.loads(KIS_ENTITLEMENT.read_text(encoding="utf-8"))
+    if provider != "kis":
+        payload["entitlement_id"] = f"{provider}-strict-forward-research-v1"
+        payload["source_id"]["provider"] = provider
+    entitlement = DataEntitlement.model_validate(payload)
     path = tmp_path / f"{provider}-entitlement.json"
     payload = json.dumps(entitlement.model_dump(mode="json"), sort_keys=True, separators=(",", ":")) + "\n"
     assert publish_private_immutable_text(path, payload)

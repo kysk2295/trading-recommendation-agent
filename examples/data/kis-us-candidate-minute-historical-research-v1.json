@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "entitlement_id": "kis-us-candidate-minute-historical-research-v1",
+  "source_id": {
+    "schema_version": 1,
+    "provider": "kis",
+    "feed": "us_candidate_minute"
+  },
+  "market_domains": ["us_equities"],
+  "event_types": ["minute_bar"],
+  "permitted_uses": ["historical_research"],
+  "real_time": false,
+  "historical": true,
+  "redistribution_policy": "derived_only",
+  "retention": {
+    "raw_retention_days": 30,
+    "derived_retention_days": 365,
+    "deletion_required": true,
+    "correction_policy": "append_correction"
+  },
+  "effective_from": "2026-07-17T00:00:00Z",
+  "effective_to": null
+}
