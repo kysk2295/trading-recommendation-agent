@@ -240,3 +240,57 @@ focused `4 passed`, 전체 `3431 passed`, 전체 Ruff 통과, basedpyright
 `0 errors, 0 warnings, 0 notes`다. 격리 PEP 723 `--help`, 완전 fixture,
 필수 artifact 결손과 잘못된 minimum 입력은 각각 exit `0/0/1/2`였고 생성된
 happy/blocked 보고서는 mode `600`이었다.
+
+## US forward 장전 strict readiness 예약
+
+commit `3d488137ce6d612ebea98dd0b862e1fe9843ef44`에 read-only
+`run_forward_premarket_readiness.py`를 추가했다. 장전 원장을 정규장 원장과 섞지
+않고 다음 네 artifact를 한 번씩 읽어 combined input SHA-256에 결속한다.
+
+- `premarket_watch_cycles.csv`
+- `premarket_ranking_request_coverage.csv`
+- `premarket_ranking_snapshots.csv`
+- `premarket_risk_screen.csv`
+
+각 watch cycle은 NAS/NYS/AMS의 updown/volume 여섯 request exact set, 성공 status와
+양의 row count, snapshot row cardinality, risk-selected candidate identity를 모두
+대사한다. cycle 시작과 provider 관측은 180초 이내여야 하고 current New York
+session date·premarket window, 최신 cycle age와 최소 최신 후보 수도 함께 검사한다.
+실패 cycle·request, 결손·중복·stale artifact는 삭제하거나 완화하지 않고 blocker로
+남긴다. 성공도 정규장 또는 post-session 최종 적격성이 아니다.
+
+20:00 KST actual worktree 원장의 수동 CLI 결과는 다음과 같았다.
+
+- result: `ready`
+- premarket cycles: `36`
+- ranking requests: `216`
+- ranking snapshot rows: `13,625`
+- latest selected candidates: `10`
+- ranking/watch failure: `0`
+- report mode: `600`
+- provider/account/order mutation: `0`
+
+PEP 723 격리 `--help`가 shared schema import의 `httpx2` 미선언으로 실패하는 결함을
+실제 CLI QA에서 발견했다. 같은 isolated subprocess를 RED 테스트로 고정하고 dependency
+metadata를 수정한 뒤 GREEN을 확인했다. focused `3 passed`, 전체 `3442 passed`,
+Ruff, basedpyright `0 errors, 0 warnings, 0 notes`, no-excuse가 통과했다.
+
+같은 exact SHA의 clean detached runtime
+`/private/tmp/trading-agent-premarket-readiness-20260723-3d48813`을 고정하고
+`ai.trading-agent.forward-premarket-readiness-20260723` job을 2026-07-23
+09:25 EDT / 22:25 KST에 등록했다.
+
+- minimum cycles: `60`
+- maximum latest age: `600 seconds`
+- minimum latest selected: `1`
+- output:
+  `outputs/live_sessions/20260723/premarket_readiness/exact-3d488137`
+- 등록 직후 state: `running`, run count `1`, PID `64899`
+- wrapper mode: `700`
+- stdout/stderr mode: `600`
+- wrapper `zsh -n`: pass
+
+payload 종료 뒤 atomic receipt를 쓰고 자기 label을 제거하는 공용 at-most-once runner를
+사용한다. 이 시점에는 실행시각 전이므로 scheduled state만 검증했으며 실제 `ready`
+terminal은 22:25 이후 별도로 확인해야 한다. 기존 forward, preflight, SIP,
+option-chain, progress, finalizer, dataset/research job과 Hermes PID는 변경하지 않았다.
