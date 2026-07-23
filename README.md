@@ -441,6 +441,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-24 KIS US 네 번째 server attempt·clean-session rollover 업데이트:** 2026-07-23 actual forward의 cycle 232에서 `AMS/TSLZ` 분봉 GET이 기존 세 번의 시도를 모두 `500`으로 소진해 watch failure와 candidate context 결손을 만든 사실을 원본 retry/watch/candidate 원장으로 확인했다. 실패 cycle과 strict gate는 그대로 보존하고 공용 read-only GET의 `500/502/503/504`에 세 번째 `2.0초` bounded retry를 추가해 최초 요청 포함 최대 네 번만 시도한다. `429`·redirect·transport error는 완화하지 않았다. exact SHA `3c476d5`의 clean runtime과 별도 experimental-shadow ledger로 2026-07-24 full-session watch를 교체 예약했고, 2026-07-25 01:45/04:15 KST strict progress 감사와 기존 closeout→causal dataset→actual research 체인은 동일 forward label을 기다린다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-24-kis-forward-recovery-rollover-ko.md)에 있다.
 
+**2026-07-24 M8 strict actual-research 예약 업데이트:** 2026-07-24 downstream dataset/research 예약이 실제 payload 실행 전이지만 오래된 SHA와 계약을 사용해 최신 strict closeout prerequisite와 독립 terminal audit이 빠져 있음을 확인했다. stdout/stderr 0바이트, plan/dataset/report 부재를 확인한 두 stale 대기 job만 제거하고 exact clean `8ef5904` runtime으로 05:06 KST strict closeout, 05:18 causal dataset·READY foundation·3전략 walk-forward·Reviewer, 05:35 exact persisted-manifest terminal audit을 at-most-once 연결했다. dataset producer SHA와 frozen strategy code version은 별도로 결속하며, 실패·지연은 부분 CSV나 trial로 바꾸지 않는다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-24-m8-strict-actual-research-schedule-ko.md)에 있다.
+
 ### Single Writer, Multiple Readers
 
 - 실행 원장과 향후 broker paper 상태를 변경하는 프로세스는 하나뿐이다.
@@ -589,6 +591,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [Strict closeout 기반 actual research handoff 체크포인트](docs/checkpoints/2026-07-23-post-closeout-research-handoff-ko.md)
 - [M8 정규장 handoff·provenance 분리·실시간 체인 체크포인트](docs/checkpoints/2026-07-23-m8-open-handoff-provenance-schedule-ko.md)
 - [KIS forward 연속 서버 오류 복구·다음 세션 rollover 체크포인트](docs/checkpoints/2026-07-24-kis-forward-recovery-rollover-ko.md)
+- [M8 strict closeout→actual research→terminal audit 예약 체크포인트](docs/checkpoints/2026-07-24-m8-strict-actual-research-schedule-ko.md)
 - [US news-catalyst shadow trial·Reviewer 체크포인트](docs/checkpoints/2026-07-21-us-news-catalyst-shadow-trial-reviewer-ko.md)
 - [US news-catalyst current-session feature observation 체크포인트](docs/checkpoints/2026-07-21-us-news-catalyst-feature-observation-ko.md)
 - [US news-catalyst frozen cohort collection 체크포인트](docs/checkpoints/2026-07-21-us-news-catalyst-frozen-cohort-collection-ko.md)
