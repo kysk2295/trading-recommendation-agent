@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Investor announcements</title>
+    <link>https://issuer.example/investor</link>
+    <description>Issuer-direct investor announcements</description>
+    <item>
+      <guid isPermaLink="false">example-dividend-2026-06-10</guid>
+      <title>Example issuer announces quarterly dividend</title>
+      <link>https://issuer.example/investor/dividend-history</link>
+      <pubDate>Wed, 10 Jun 2026 13:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

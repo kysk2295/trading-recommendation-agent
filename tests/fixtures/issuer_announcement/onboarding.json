@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "onboarding_id": "example-investor-announcements-v1",
+  "source_id": {
+    "provider": "issuer_direct",
+    "feed": "example_investor_announcements"
+  },
+  "issuer_id": "cik:0000000001",
+  "symbols": [
+    "ABCD"
+  ],
+  "endpoint": "https://issuer.example/investor/announcements.xml",
+  "allowed_hosts": [
+    "issuer.example"
+  ],
+  "terms_url": "https://issuer.example/legal/terms",
+  "feed_format": "rss2",
+  "automated_access_permitted": true,
+  "license_reviewed_at": "2026-07-23T00:00:00Z",
+  "effective_from": "2026-07-23T00:00:00Z",
+  "effective_to": null,
+  "permitted_uses": [
+    "historical_research",
+    "shadow_forward"
+  ],
+  "redistribution_policy": "none",
+  "raw_retention_days": 1,
+  "derived_retention_days": 365,
+  "deletion_required": true,
+  "correction_policy": "append_correction",
+  "max_requests_per_minute": 6,
+  "freshness_slo_seconds": 3600,
+  "max_items": 50
+}
