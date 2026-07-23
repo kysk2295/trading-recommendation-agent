@@ -18,11 +18,16 @@ def write_closed_source_session(
     *,
     include_censored_symbol: bool = True,
     post_session_complete: bool = True,
+    session_date: dt.date = dt.date(2026, 7, 14),
 ) -> None:
     session.mkdir(parents=True)
     database = session / "paper_recommendations.sqlite3"
     _ = PaperStore(database)
-    observed_at = dt.datetime(2026, 7, 14, 9, 35, 30, tzinfo=NEW_YORK)
+    observed_at = dt.datetime.combine(
+        session_date,
+        dt.time(9, 35, 30),
+        tzinfo=NEW_YORK,
+    )
     contexts = (("NAS", "DEMO"),)
     if include_censored_symbol:
         contexts = (*contexts, ("NYS", "SHORT"))
@@ -56,13 +61,18 @@ def write_closed_source_session(
     _write_quality_files(session, observed_at, len(contexts))
     if post_session_complete:
         (session / "post_session_metrics_cycles.csv").write_text(
-            "started_at,exit_code,status\n2026-07-14T16:01:31-04:00,0,ok\n",
+            "started_at,exit_code,status\n"
+            + f"{dt.datetime.combine(session_date, dt.time(16, 1, 31), tzinfo=NEW_YORK).isoformat()},0,ok\n",
             encoding="utf-8",
         )
 
 
 def _complete_gap_bars(observed_at: dt.datetime) -> tuple[tuple[SqlValue, ...], ...]:
-    opened_at = dt.datetime(2026, 7, 14, 9, 30, tzinfo=NEW_YORK)
+    opened_at = dt.datetime.combine(
+        observed_at.date(),
+        dt.time(9, 30),
+        tzinfo=NEW_YORK,
+    )
     rows: list[tuple[SqlValue, ...]] = []
     for index in range(390):
         timestamp = opened_at + dt.timedelta(minutes=index)
@@ -88,7 +98,11 @@ def _complete_gap_bars(observed_at: dt.datetime) -> tuple[tuple[SqlValue, ...], 
 
 
 def _short_bars(observed_at: dt.datetime) -> tuple[tuple[SqlValue, ...], ...]:
-    opened_at = dt.datetime(2026, 7, 14, 9, 30, tzinfo=NEW_YORK)
+    opened_at = dt.datetime.combine(
+        observed_at.date(),
+        dt.time(9, 30),
+        tzinfo=NEW_YORK,
+    )
     return tuple(
         (
             "NYS",
