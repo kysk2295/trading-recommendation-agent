@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["pydantic", "rich", "typer"]
+# dependencies = ["httpx2[http2,brotli,zstd]", "pydantic", "rich", "typer"]
 # ///
 # ─── How to run ───
 # ./run_adaptive_strategy_evaluation.py outputs/live_sessions/<session>

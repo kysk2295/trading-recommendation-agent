@@ -33,6 +33,7 @@ from trading_agent.kis_watch_wait import (
     collect_premarket_until_regular_open,
     wait_for_session_open,
 )
+from trading_agent.operational_child_preflight import preflight_operational_children
 from trading_agent.orb_forward_trial import OrbTrialFailurePhase
 from trading_agent.replay import write_report
 from trading_agent.scan_cycle import (
@@ -396,6 +397,28 @@ def main(
         experiment_ledger,
         lane_forward_validation,
     )
+    optional_preflight_children: list[str] = []
+    if collect_premarket:
+        optional_preflight_children.append("run_kis_premarket_scan.py")
+    if lane_forward_validation is not None:
+        optional_preflight_children.extend(
+            (
+                "run_orb_lane_forward_validation.py",
+                "run_intraday_lane_daily_snapshot.py",
+                "run_lane_reviewer.py",
+            )
+        )
+    if orb_trial is not None:
+        optional_preflight_children.append("run_orb_forward_trial.py")
+    preflight_failures = preflight_operational_children(
+        Path(__file__).parent,
+        tuple(optional_preflight_children),
+    )
+    if preflight_failures:
+        failed_names = ", ".join(preflight_failures)
+        raise typer.BadParameter(
+            f"standalone runtime preflight failed: {failed_names}"
+        )
     checked_at = dt.datetime.now(ZoneInfo("America/New_York"))
     output = (
         Path(output_dir) if output_dir is not None else Path("outputs/live_sessions") / checked_at.strftime("%Y%m%d")
