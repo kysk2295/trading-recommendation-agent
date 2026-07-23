@@ -558,6 +558,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [M6 Alpaca 옵션 계약 security master 체크포인트](docs/checkpoints/2026-07-23-m6-alpaca-option-contract-security-master-ko.md)
 - [M6 exact option surface identity join 체크포인트](docs/checkpoints/2026-07-23-m6-option-surface-identity-join-ko.md)
 - [Strict forward post-session closeout 체크포인트](docs/checkpoints/2026-07-23-forward-post-session-strict-closeout-ko.md)
+- [Strict closeout 기반 actual research handoff 체크포인트](docs/checkpoints/2026-07-23-post-closeout-research-handoff-ko.md)
 - [US news-catalyst shadow trial·Reviewer 체크포인트](docs/checkpoints/2026-07-21-us-news-catalyst-shadow-trial-reviewer-ko.md)
 - [US news-catalyst current-session feature observation 체크포인트](docs/checkpoints/2026-07-21-us-news-catalyst-feature-observation-ko.md)
 - [US news-catalyst frozen cohort collection 체크포인트](docs/checkpoints/2026-07-21-us-news-catalyst-frozen-cohort-collection-ko.md)
