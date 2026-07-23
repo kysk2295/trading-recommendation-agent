@@ -72,6 +72,13 @@ def run_systematic_regime_tick(
         return SystematicOperatingResult(phase, published, registered, started, 0)
     if source is None or source.session_date != now.astimezone(NEW_YORK).date():
         raise InvalidSystematicOperatingTickError
+    if _completed_source_replay(
+        experiment_ledger,
+        store,
+        source,
+        code_version,
+    ):
+        return SystematicOperatingResult(phase, 0, 0, 0, 0)
     missed = _expire_missed_pending_cards(
         experiment_ledger,
         store,
@@ -91,6 +98,47 @@ def run_systematic_regime_tick(
     with store.writer() as writer:
         card_created = int(writer.publish_card(card))
     return SystematicOperatingResult(phase, card_created, trial_created, 0, finalized)
+
+
+def _completed_source_replay(
+    experiment_ledger: ExperimentLedgerStore,
+    store: SystematicRegimeStore,
+    source: SwingDailySource,
+    code_version: str,
+) -> bool:
+    published = tuple(
+        card
+        for card in store.cards()
+        if card.context.evidence_ref.namespace == "systematic/daily_source"
+        and card.context.evidence_ref.record_id == source.source_key
+        and card.observed_at == source.observed_at
+    )
+    pending = tuple(
+        card
+        for card in store.pending_cards()
+        if card.context.evidence_ref.namespace == "systematic/daily_source"
+        and card.context.evidence_ref.record_id == source.source_key
+        and card.observed_at == source.observed_at
+    )
+    if len(published) + len(pending) > 1:
+        raise InvalidSystematicOperatingTickError
+    if pending:
+        if pending[0].strategy_version != systematic_regime_strategy_version(code_version):
+            raise InvalidSystematicOperatingTickError
+        return False
+    if not published:
+        return False
+    card = published[0]
+    trials = tuple(
+        item.registration
+        for item in experiment_ledger.multi_market_trials()
+        if item.registration.strategy_version == card.strategy_version
+        and item.registration.planned_start == card.target_session
+        and item.registration.trial_id.startswith(f"us-systematic-regime-{card.target_session:%Y%m%d}-")
+    )
+    if len(trials) != 1:
+        raise InvalidSystematicOperatingTickError
+    return True
 
 
 def _publish_pending_cards(

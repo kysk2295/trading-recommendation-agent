@@ -402,7 +402,7 @@ def test_cli_production_replays_exact_source_before_credentials(
     replay = cli.main(
         arguments,
         now=source.observed_at + dt.timedelta(minutes=1),
-        runtime_code_version=CODE_VERSION,
+        runtime_code_version="different_code_version",
     )
 
     assert (first, replay) == (0, 0)
