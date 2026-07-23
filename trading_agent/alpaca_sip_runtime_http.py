@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from trading_agent.alpaca_http import ALPACA_DATA_URL, AlpacaCredentials
 from trading_agent.alpaca_models import BARS_ADAPTER
 from trading_agent.alpaca_sip_runtime_models import (
+    AlpacaSipHttpStatusError,
     AlpacaSipMinutePage,
     AlpacaSipMinutePageRequest,
     AlpacaSipRawPage,
@@ -64,6 +65,8 @@ class AlpacaSipMinutePageClient:
                     raise AlpacaSipRuntimeError
                 seen_tokens.add(token)
             raise AlpacaSipRuntimeError
+        except AlpacaSipRuntimeError:
+            raise
         except (AttributeError, TypeError, ValidationError, ValueError, httpx2.HTTPError):
             raise AlpacaSipRuntimeError from None
 
@@ -94,9 +97,10 @@ class AlpacaSipMinutePageClient:
                 "APCA-API-SECRET-KEY": self._credentials.secret_key,
             },
         )
+        if response.status_code != 200:
+            raise AlpacaSipHttpStatusError(response.status_code)
         if (
-            response.status_code != 200
-            or response.history
+            response.history
             or response.url.scheme != "https"
             or response.url.host != "data.alpaca.markets"
             or response.url.path != _BARS_PATH

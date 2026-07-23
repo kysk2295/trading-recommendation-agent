@@ -35,6 +35,7 @@ from trading_agent.alpaca_sip_runtime_evidence_store import (
 )
 from trading_agent.alpaca_sip_runtime_http import AlpacaSipMinutePageClient
 from trading_agent.alpaca_sip_runtime_models import (
+    AlpacaSipHttpStatusError,
     AlpacaSipMinutePage,
     AlpacaSipMinutePageRequest,
     AlpacaSipRawPage,
@@ -111,6 +112,15 @@ def main(
             output_dir / REPORT_NAME,
             _report(result, network_access),
         )
+    except AlpacaSipHttpStatusError as error:
+        try:
+            write_private_stable_report(
+                output_dir / REPORT_NAME,
+                _blocked_report(error.status_code),
+            )
+        except (InvalidPrivateStableReportError, OSError, TypeError, ValueError):
+            raise typer.BadParameter("bounded Alpaca SIP spot capture is invalid") from None
+        raise typer.Exit(code=2) from None
     except (
         AlpacaSecretFileError,
         AlpacaSipRuntimeError,
@@ -192,6 +202,28 @@ def _report(
             f"- new runtime receipts: {result.inserted_receipt_count}",
             f"- network access: {network_access}",
             "- provider operation: GET-only or exact local replay",
+            "- broker, account, or order mutation: none",
+            "",
+        )
+    )
+
+
+def _blocked_report(status_code: int) -> str:
+    reason = {
+        401: "sip_authentication_rejected",
+        403: "sip_access_forbidden",
+        429: "provider_rate_limited",
+    }.get(status_code, "provider_unavailable" if status_code >= 500 else "provider_http_rejected")
+    return "\n".join(
+        (
+            "# Alpaca SIP Spot Capture",
+            "",
+            "> M6 GET-only source admission evidence; not a recommendation or order.",
+            "",
+            "- result: blocked_source",
+            f"- reason: {reason}",
+            f"- provider status: {status_code}",
+            "- network access: GET-only",
             "- broker, account, or order mutation: none",
             "",
         )

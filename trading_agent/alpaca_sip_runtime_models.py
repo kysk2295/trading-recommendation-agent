@@ -24,6 +24,20 @@ class AlpacaSipRuntimeError(ValueError):
         return "AlpacaSipRuntimeError()"
 
 
+class AlpacaSipHttpStatusError(AlpacaSipRuntimeError):
+    __slots__ = ("status_code",)
+
+    def __init__(self, status_code: int) -> None:
+        if type(status_code) is not int or not 100 <= status_code <= 599 or status_code == 200:
+            raise AlpacaSipRuntimeError
+        super().__init__()
+        self.status_code = status_code
+
+    @override
+    def __repr__(self) -> str:
+        return f"AlpacaSipHttpStatusError(status_code={self.status_code})"
+
+
 @dataclass(frozen=True, slots=True)
 class AlpacaSipMinutePageRequest:
     session_date: dt.date
@@ -74,6 +88,7 @@ class StoredAlpacaSipRawPage:
 
 
 __all__ = (
+    "AlpacaSipHttpStatusError",
     "AlpacaSipMinutePage",
     "AlpacaSipMinutePageRequest",
     "AlpacaSipRawPage",
