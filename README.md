@@ -375,6 +375,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-23 KIS KR 실제 장중 market smoke 업데이트:** 열린 KRX 세션에서 당일 분봉·현재가 상태·호가 예상체결 production GET을 raw-first로 실제 실행했다. 첫 rank-1 종목의 3개 응답은 모두 HTTP 200이었지만, 실응답과 공식 KIS 예제가 `new_mkop_cls_code`를 `output1`에 두는 반면 local strict model이 `output2`에서 요구하는 오류를 발견했다. provider-shaped RED 뒤 model과 projection을 바로잡았고, 잘못된 위치 fallback은 열지 않았다. 대표 보통주 재검증은 production CLI exit 0, 신규 raw receipt 3건, 실제 raw snapshot replay `open/continuous`를 확인했다. 첫 후보의 0 상·하한가는 임의 보정하지 않고 계속 fail-closed했다. account/order endpoint와 mutation은 0건이다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-kis-kr-open-session-market-smoke-ko.md)에 있다.
 
+**2026-07-23 M8 source-driven hypothesis queue 업데이트:** 기존 global experiment ledger의 immutable research source/card를 query-only로 읽어 `evidence_review → strategy_design → historical_replay → active_research/independent_review/recovery`로 보내는 content-addressed queue를 추가했다. GitHub 공개 저장소, 뉴스, Reddit/X 공개 토론을 discovery source kind로 받을 수 있지만, 이런 출처만 있는 가설은 독립 근거 검토를 통과하기 전 전략 설계로 보내지 않는다. schema v7은 기존 source table을 재작성하지 않고 discovery 전용 append-only table만 추가한다. 큐는 항상 최신 immutable strategy version의 trial만 사용하므로 과거 version 완료 결과를 새 version에 재사용하지 않는다. lifecycle/allocation/order authority는 모두 false이며 provider·credential·broker import가 없다. 현재 운영 ledger에는 source-backed card가 0개라 production queue item은 아직 없고 자동 source connector·코드 생성은 후속 단계다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-m8-source-driven-hypothesis-queue-ko.md)에 있다.
+
 ### Single Writer, Multiple Readers
 
 - 실행 원장과 향후 broker paper 상태를 변경하는 프로세스는 하나뿐이다.
