@@ -123,6 +123,24 @@ start tick은 provider·credential 없이 exact registered trial만 시작한다
 처리한다. start가 누락되면 finalize는 no-position 성과를 추정하지 않고 실패한다.
 두 job은 기존 US forward·finalizer, KR finalizer와 Hermes를 변경하지 않았다.
 
+다음 장후 source와 월요일 lifecycle도 같은 exact runtime으로 no-op-safe 예약했다.
+
+- `ai.trading-agent.us-swing-post-close-20260724`:
+  `2026-07-24 16:10 EDT`
+- `ai.trading-agent.us-swing-start-20260727`:
+  `2026-07-27 09:31 EDT`
+- `ai.trading-agent.us-swing-post-close-20260727`:
+  `2026-07-27 16:10 EDT`
+- `ai.trading-agent.us-systematic-start-20260727`:
+  `2026-07-27 09:31 EDT`
+- `ai.trading-agent.us-systematic-finalize-20260727`:
+  `2026-07-27 16:05 EDT`
+
+다섯 wrapper는 모두 shell syntax와 mode `700`, 열 개 stdout/stderr log는 mode
+`600`·`0 bytes`, launchd state `running`·runs `1`, receipt·claim 부재를 확인했다.
+swing regular tick과 systematic regular tick은 due trial이 없으면 provider·credential
+없이 no-op으로 닫힌다.
+
 - 2026-07-24 정규장에는 예약된 systematic trial start 결과를 검증하고 장후 actual
   source로 no-position terminal을 확정한다.
 - swing은 다음 실제 장후 source에서 고정 신호가 생길 때만 prospective trial을
