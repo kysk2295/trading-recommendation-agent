@@ -383,6 +383,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-23 실제 point-in-time 연구 데이터셋 업데이트:** strict forward-session loader를 통과한 여러 세션을 기존 M8 bounded research CSV로 materialize하는 local-only CLI를 추가했다. 세션 하나라도 품질 미달이면 부분 데이터셋 없이 전체를 차단하고, 완전한 종목 중에도 최초 candidate context가 관측된 시각 이후에 시작한 분봉만 사용한다. 각 bar에는 해당 시점 이전 최신 `prior_close`·ADV·spread context를 결합하며 중복 bar, 중복 거래일, 60세션·100,000 bar 초과를 차단한다. CSV SHA-256과 원본 session content SHA-256을 content-addressed mode-600 receipt에 함께 기록한다. 완전 fixture 1세션은 장중 최초 관측 전 6분을 제외한 384 causal bar로 성공했고, 기존 실제 4세션은 그대로 차단되어 신규 성과 trial은 0건이다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-m8-point-in-time-research-dataset-ko.md)에 있다.
 
+**2026-07-23 실제 연구 입력 결속 업데이트:** strict dataset CSV와 canonical receipt, mode-600 non-fixture historical entitlement 계약, exact source-driven queue/card를 한 경계에서 검증해 전략별 READY `DataFoundationManifest`, exact `input_sha256`·foundation SHA가 등록된 v2 manifest와 결속 receipt를 content-addressed로 발행하는 CLI를 추가했다. 최대 세 개의 서로 다른 queue card와 VWAP/HOD/Gap-and-Go lane을 한 manifest에 묶을 수 있다. entitlement를 CSV에서 추정하지 않고 명시 계약으로 요구하며 fixture provider, design-ready가 아닌 card, hash·행·세션·시각·예산 불일치는 publication 전에 차단한다. 이는 actual-ready 연결 도구이며 아직 clean 실제 session이 없어 실제 foundation이나 성과 trial을 만들었다는 뜻은 아니다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-m8-actual-research-input-binding-ko.md)에 있다.
+
 **2026-07-23 실시간 검증 예약 업데이트:** 실행 중인 US full-session watch는 유지하고 같은 frozen commit runtime에 current-setup Paper GET/WSS preflight observer, Alpaca SIP read-only stream smoke, 장마감 flat/reconciliation terminal finalizer와 strict causal dataset materializer를 별도 one-shot launchd job으로 연결했다. 기존 KR finalizer와 Hermes service도 변경하지 않았다. signed one-time Hermes arm이 없는 상태에서 Paper POST/DELETE job을 만들지 않았고, OpenDART private 설정이 없는 KR 다음 source cycle도 성공으로 가장해 예약하지 않았다. wrapper 구문·dry-run·bad input·mode와 실제 launchd 대기 상태를 검증했다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-realtime-validation-schedule-ko.md)에 있다.
 
 **2026-07-23 KIS US repeated server-error 복구 업데이트:** 실제 4개 forward session의 strict quality 결손을 원본 audit으로 재대사해 2026-07-22 첫 16회는 이미 닫힌 scanner `duckdb` runtime 누락, 이후 공통 실패는 종목별 KIS GET의 `500 → 500` 미복구임을 확인했다. shared GET은 기존 server status에만 총 3회, 0.25초·0.75초 bounded backoff를 적용하고 `429`·redirect·transport error와 audit 의미는 유지한다. 품질 gate와 과거 실패 원장은 바꾸지 않았다. 새 SHA의 clean runtime으로 2026-07-24 full watch, Paper read-only preflight, SIP smoke, close terminal과 strict causal dataset job을 예약했다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-kis-server-retry-recovery-ko.md)에 있다.
@@ -893,15 +895,27 @@ uv run python run_source_driven_hypothesis_queue.py \
   --artifact-root outputs/experiment_control/source_intraday/queue \
   --output-dir outputs/experiment_control/source_intraday/queue-report
 
+uv run python run_intraday_research_input_binding.py \
+  --dataset-csv outputs/experiment_control/source_intraday/datasets/intraday_point_in_time_<CSV_SHA256>.csv \
+  --dataset-receipt outputs/experiment_control/source_intraday/datasets/intraday_point_in_time_<CSV_SHA256>_<RECEIPT_SHA256>.json \
+  --entitlement-contract outputs/experiment_control/source_intraday/contracts/kis-us-candidate-minute-research-v1.json \
+  --source-queue-artifact outputs/experiment_control/source_intraday/queue/source_hypothesis_queue_<QUEUE_SHA256>.json \
+  --strategy-binding vwap_reclaim,actual_vwap_reclaim_v1,<CARD_SHA256> \
+  --code-version "$(git rev-parse HEAD)" \
+  --registered-at <UTC_ISO8601> \
+  --output-dir outputs/experiment_control/source_intraday/binding \
+  --max-sessions 20 \
+  --max-bars 100000
+
 uv run python run_intraday_research_loop.py \
-  --manifest examples/research/intraday-source-backed-v2.json \
-  --input-csv examples/example_intraday.csv \
+  --manifest outputs/experiment_control/source_intraday/binding/intraday_research_manifest_<MANIFEST_SHA256>.json \
+  --input-csv outputs/experiment_control/source_intraday/datasets/intraday_point_in_time_<CSV_SHA256>.csv \
   --lane-registry outputs/lane_control/lane_registry.sqlite3 \
   --experiment-ledger outputs/experiment_control/source_intraday.sqlite3 \
   --artifact-root outputs/experiment_control/source_intraday/trials \
   --review-root outputs/experiment_control/source_intraday/reviews \
-  --source-queue-artifact outputs/experiment_control/source_intraday/queue/source_hypothesis_queue_e95a94497a42cb160bcdf3af8cd0e799d5eb426581bfee0998436987896d510f.json \
-  --data-foundation-manifest examples/data/us-vwap-reclaim-historical-fixture-v1.json \
+  --source-queue-artifact outputs/experiment_control/source_intraday/queue/source_hypothesis_queue_<QUEUE_SHA256>.json \
+  --data-foundation-manifest outputs/experiment_control/source_intraday/binding/intraday_data_foundation_vwap_reclaim_<FOUNDATION_SHA256>.json \
   --output-dir outputs/experiment_control/source_intraday/latest
 ```
 
