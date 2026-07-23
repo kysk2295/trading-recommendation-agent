@@ -6,6 +6,11 @@
 
 ## 현재 상태
 
+- M6 macro context의 첫 공식 source로 미국 재무부 Daily Treasury Par Yield Curve
+  XML feed를 raw-first 연결했다. actual 2026-07 monthly GET은 최신/이전
+  `2026-07-22/21`, 14개 CMT maturity, receipt/run `1/1`의 content-addressed
+  context를 만들었고 nonexistent fixture replay는 network를 열지 않았다. 이는
+  일별 par curve evidence이지 intraday tradable quote나 전략·Paper 권한이 아니다.
 - 2026-07-27 US 실제 forward 체인은 장전 handoff부터 late progress, strict closeout, actual causal dataset·READY foundation·3전략 walk-forward·독립 Reviewer와 terminal audit까지 일곱 at-most-once job으로 예약돼 있다. exact `bc40069` runtime은 최소 `300`개 ranking/watch/retry/candidate 동일 cardinality를 요구하고 terminal audit에서 Reviewer evidence·decision·reason을 원본 experiment로 재계산한다. 완화·결손·실패 cycle과 위조 review는 plan·dataset·trial 또는 audit terminal에서 차단한다. 실행 전까지 이는 성공 증거가 아니다.
 - actual causal dataset과 downstream binding receipt는 schema v2에서 exact producer commit을 CSV·source-session SHA와 함께 보존한다. 7월 23·24일 dataset/catalog→planned research job은 clean `70e7d94` runtime에 고정됐으며, clean session 전에는 READY artifact나 trial을 만들지 않는다.
 - M8 source-backed intraday v2가 immutable research card의 `strategy_design` queue를 승인된 기존 intraday template, 새 strategy version, bounded historical replay와 독립 Reviewer까지 연결한다. stale queue의 다른 version 재사용, queue artifact 누락, 사전등록 SHA-256이 다른 input, strategy가 다르거나 `READY`가 아닌 historical data foundation은 version 등록 전에 차단한다. foundation hash는 trial evidence budget에도 남는다. committed fixture 첫 실행/replay는 trial·review `1/1 → 0/0`, decision `hold`, provider/account/order mutation 0건이다.
