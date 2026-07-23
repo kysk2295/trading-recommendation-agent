@@ -92,7 +92,7 @@ def project_kis_kr_market_snapshot(
     quote_delay = request.quote_receipt.received_at - quote_at
     if quote_delay < dt.timedelta(0) or quote_delay > _MAX_QUOTE_DELAY:
         raise KisKrMarketEvidenceError
-    session_state, trading_mode = _market_mode(status.new_mkop_cls_code)
+    session_state, trading_mode = _market_mode(quote.new_mkop_cls_code)
     evidence = tuple(
         sorted(
             (

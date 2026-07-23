@@ -156,13 +156,13 @@ class KisKrOrderBookRow(BaseModel):
     aspr_acpt_hour: StrictStr
     askp1: StrictStr
     bidp1: StrictStr
+    new_mkop_cls_code: StrictStr
 
 
 class KisKrOrderBookStatusRow(BaseModel):
     model_config = _PROVIDER_CONFIG
 
     stck_shrn_iscd: StrictStr
-    new_mkop_cls_code: StrictStr
     antc_mkop_cls_code: StrictStr
     stck_prpr: StrictStr
     stck_sdpr: StrictStr

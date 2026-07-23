@@ -215,10 +215,14 @@ def _price_body(*, vi_code: str = "N") -> bytes:
 def _quote_body(*, symbol: str = "005930", vi_code: str = "N") -> bytes:
     return _json_body(
         {
-            "output1": {"aspr_acpt_hour": "090403", "askp1": "103", "bidp1": "102.9"},
+            "output1": {
+                "aspr_acpt_hour": "090403",
+                "askp1": "103",
+                "bidp1": "102.9",
+                "new_mkop_cls_code": "20",
+            },
             "output2": {
                 "stck_shrn_iscd": symbol,
-                "new_mkop_cls_code": "20",
                 "antc_mkop_cls_code": "00",
                 "stck_prpr": "103",
                 "stck_sdpr": "95",
