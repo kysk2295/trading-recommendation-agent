@@ -6,6 +6,7 @@
 
 ## 현재 상태
 
+- M8 source-backed intraday v2가 immutable research card의 `strategy_design` queue를 승인된 기존 intraday template, 새 strategy version, bounded historical replay와 독립 Reviewer까지 연결한다. stale queue의 다른 version 재사용과 queue artifact 누락은 차단하며 committed fixture 첫 실행/replay는 trial·review `1/1 → 0/0`, decision `hold`, provider/account/order mutation 0건이다.
 - 2026-07-23 KR M3 production shadow에서 KIS current calendar GET, pre-open trial 복구와 Hermes source-preflight incident ACK를 실제 확인했다. OpenDART 설정 부재로 four-source cycle은 data-quality `CENSORED`이며 15:32 one-shot post-session finalizer가 대기한다. account/order mutation은 0건이다.
 - KIS 읽기 전용 인증·랭킹·분봉 연결 완료
 - KIS 국내 KRX 등락률·거래량 순위의 current-date raw-first `kis_ranking` source run과 restart no-network CLI 구현
@@ -147,13 +148,14 @@
 7. fixture E2E가 끝난 KR same-cycle orchestrator를 전체 품질 게이트와 수동 CLI QA로 확정한다. 현재 KST·자격증명·정상 endpoint 조건이 모두 맞을 때만 별도 bounded production same-cycle을 read-only로 실행하고, 아니면 provider를 억지로 열지 않는다.
 8. 동일-cycle production coverage가 immutable evidence로 확정된 뒤 exact code-coupled KR theme shadow version을 global experiment ledger에 먼저 등록하고, 그 원장을 요구하는 별도 manifest로 KR keyword Opportunity projection을 실행한다. source 실패를 성공이나 부분 complete로 축소하지 않으며, projection도 TradeSignal·국내 주문을 열지 않는다.
 9. 구현된 KR day pure signal kernel 앞에 completed-bar VWAP reclaim setup extractor와 LS/KIS current quote/status read-only adapter를 연결한다. 그 뒤 multi-market trial schema, 비용 모델, shadow fill과 terminal outcome을 순서대로 추가하고 국내 주문 권한은 만들지 않는다.
-10. 새 코드 commit이 생긴 경우 다음 NYSE 개장 전에 clean checkout의 local-only experiment ledger bootstrap을 실행해 code-coupled strategy version을 append한다. 정규장 뒤 누락된 preregistration은 소급 생성하지 않고 read-only 관찰만 보존한다.
-11. 열린 뉴욕 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증
-12. 실제 적격 ORB 세션마다 preregistered daily trial을 누적하고 terminal replay·실패·검열 운영 결과를 대사하되 열린 trial을 임의 terminal로 추정하지 않음
-13. 추가 부분체결이 실제 발생할 때 staged 보호 OCO cancel → terminal 대사 → 다음 호출 replacement를 같은 축소 한도에서 검증하되 체결을 억지로 만들지 않음
-14. equal-risk terminal trial·broker/shadow·DSR/PBO·parameter plateau·SIP 증거 계약이 모두 생긴 뒤에만 comparison·promotion Controller 단계를 별도 구현
-15. 최소 두 executable Paper champion 전에는 Portfolio Manager를 구현하지 않음
-16. generic correction/tombstone replay 위에 extraction invalidation과 provider별 deletion cursor·retention 이행을 추가하되 기존 immutable event를 덮어쓰지 않음
+10. source-backed intraday v2의 승인 가설을 늘리되 무거운 historical run은 한 번에 하나씩 실행하고, 각 최신 version의 point-in-time partition과 shadow forward evidence를 별도로 누적한다. 자동 코드 생성과 lifecycle 승격은 별도 검증 전까지 닫아 둔다.
+11. 새 코드 commit이 생긴 경우 다음 NYSE 개장 전에 clean checkout의 local-only experiment ledger bootstrap을 실행해 code-coupled strategy version을 append한다. 정규장 뒤 누락된 preregistration은 소급 생성하지 않고 read-only 관찰만 보존한다.
+12. 열린 뉴욕 정규장에서 축소 entry 1건 → 즉시 보호 OCO → WSS·REST·Account Activities·원장 대사 → armed safety cancel/flatten → open order 0·position 0 최종 대사를 한 smoke로 검증
+13. 실제 적격 ORB 세션마다 preregistered daily trial을 누적하고 terminal replay·실패·검열 운영 결과를 대사하되 열린 trial을 임의 terminal로 추정하지 않음
+14. 추가 부분체결이 실제 발생할 때 staged 보호 OCO cancel → terminal 대사 → 다음 호출 replacement를 같은 축소 한도에서 검증하되 체결을 억지로 만들지 않음
+15. equal-risk terminal trial·broker/shadow·DSR/PBO·parameter plateau·SIP 증거 계약이 모두 생긴 뒤에만 comparison·promotion Controller 단계를 별도 구현
+16. 최소 두 executable Paper champion 전에는 Portfolio Manager를 구현하지 않음
+17. generic correction/tombstone replay 위에 extraction invalidation과 provider별 deletion cursor·retention 이행을 추가하되 기존 immutable event를 덮어쓰지 않음
 
 ## 시작 전 확인
 

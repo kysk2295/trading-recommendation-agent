@@ -377,6 +377,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-23 M8 source-driven hypothesis queue 업데이트:** 기존 global experiment ledger의 immutable research source/card를 query-only로 읽어 `evidence_review → strategy_design → historical_replay → active_research/independent_review/recovery`로 보내는 content-addressed queue를 추가했다. GitHub 공개 저장소, 뉴스, Reddit/X 공개 토론을 discovery source kind로 받을 수 있지만, 이런 출처만 있는 가설은 독립 근거 검토를 통과하기 전 전략 설계로 보내지 않는다. schema v7은 기존 source table을 재작성하지 않고 discovery 전용 append-only table만 추가한다. 큐는 항상 최신 immutable strategy version의 trial만 사용하므로 과거 version 완료 결과를 새 version에 재사용하지 않는다. lifecycle/allocation/order authority는 모두 false이며 provider·credential·broker import가 없다. 현재 운영 ledger에는 source-backed card가 0개라 production queue item은 아직 없고 자동 source connector·코드 생성은 후속 단계다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-m8-source-driven-hypothesis-queue-ko.md)에 있다.
 
+**2026-07-23 M8 source-backed intraday 실행 업데이트:** `strategy_design` 큐 항목을 사람이 승인한 기존 VWAP/HOD/Gap-and-Go 템플릿에만 결합해 새 immutable strategy version을 등록하고, 기존 bounded M6 walk-forward와 독립 Reviewer까지 실행하는 v2 경로를 추가했다. queue snapshot/card/source 내용과 ledger 부모를 모두 다시 대조하며 오래된 queue를 다른 version 생성에 재사용하지 않는다. v1 bundle은 그대로 호환되고 v2는 exact content-addressed queue artifact가 없으면 ledger mutation 전에 차단된다. committed VWAP 예제의 실제 CLI 첫 실행은 historical trial/review artifact `1/1`, exact replay는 `0/0`, Reviewer는 `hold`였으며 파일은 mode `600`이다. 이는 코드 자동생성·성과·승격·Paper 권한이 아니라 첫 source-to-experiment 수직축이다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-m8-source-backed-intraday-loop-ko.md)에 있다.
+
 ### Single Writer, Multiple Readers
 
 - 실행 원장과 향후 broker paper 상태를 변경하는 프로세스는 하나뿐이다.
@@ -861,6 +863,30 @@ uv run python run_research_hypothesis_register.py \
   --manifest examples/research/us-swing-new-high-rvol-v1.json \
   --database outputs/experiment_control/research_source_lineage.sqlite3 \
   --output-dir outputs/experiment_control/research_source_lineage/latest
+```
+
+출처 카드에서 승인된 intraday v2 실험을 실행하려면 먼저 queue artifact를 확정하고 그 exact artifact를 bounded loop에 전달한다. 아래 예제는 로컬 CSV만 읽고 historical trial과 독립 review를 생성하며 provider, credential, 계좌 또는 주문 endpoint를 열지 않는다.
+
+```bash
+uv run python run_research_hypothesis_register.py \
+  --manifest examples/research/us-vwap-reclaim-source-v2.json \
+  --database outputs/experiment_control/source_intraday.sqlite3 \
+  --output-dir outputs/experiment_control/source_intraday/register
+
+uv run python run_source_driven_hypothesis_queue.py \
+  --database outputs/experiment_control/source_intraday.sqlite3 \
+  --artifact-root outputs/experiment_control/source_intraday/queue \
+  --output-dir outputs/experiment_control/source_intraday/queue-report
+
+uv run python run_intraday_research_loop.py \
+  --manifest examples/research/intraday-source-backed-v2.json \
+  --input-csv examples/example_intraday.csv \
+  --lane-registry outputs/lane_control/lane_registry.sqlite3 \
+  --experiment-ledger outputs/experiment_control/source_intraday.sqlite3 \
+  --artifact-root outputs/experiment_control/source_intraday/trials \
+  --review-root outputs/experiment_control/source_intraday/reviews \
+  --source-queue-artifact outputs/experiment_control/source_intraday/queue/source_hypothesis_queue_e95a94497a42cb160bcdf3af8cd0e799d5eb426581bfee0998436987896d510f.json \
+  --output-dir outputs/experiment_control/source_intraday/latest
 ```
 
 ORB 세션의 장 종료 확정은 로컬 source preflight를 자격증명보다 먼저 실행하고, 통과할 때만 Alpaca Paper GET/WSS readiness를 수집한다. fixture 우회 플래그와 POST/DELETE 경로는 없으며 같은 근거의 재실행은 한 행을 exact replay한다.
