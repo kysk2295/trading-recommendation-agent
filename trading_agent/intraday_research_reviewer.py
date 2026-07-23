@@ -25,6 +25,7 @@ from trading_agent.intraday_research_loop_models import (
 from trading_agent.private_immutable_file import (
     InvalidPrivateImmutableFileError,
     publish_private_immutable_text,
+    read_private_text,
 )
 
 INTRADAY_REVIEWER_VERSION: Final = "intraday_historical_reviewer_v1"
@@ -96,9 +97,7 @@ def review_intraday_experiment(request: IntradayReviewRequest) -> tuple[Intraday
         request.experiment,
         request.reviewed_at,
     )
-    identity = hashlib.sha256(
-        canonical_experiment_ledger_json(review_payload).encode()
-    ).hexdigest()
+    identity = hashlib.sha256(canonical_experiment_ledger_json(review_payload).encode()).hexdigest()
     artifact = IntradayReviewArtifact(
         artifact_id=identity,
         payload=review_payload,
@@ -113,17 +112,27 @@ def review_intraday_experiment(request: IntradayReviewRequest) -> tuple[Intraday
         raise InvalidIntradayResearchReviewError from None
 
 
+def load_intraday_review_artifact(path: Path) -> IntradayReviewArtifact:
+    try:
+        payload = read_private_text(path)
+        artifact = IntradayReviewArtifact.model_validate_json(payload)
+        expected_name = f"intraday_research_review_{artifact.artifact_id}.json"
+        if path.name != expected_name or payload != canonical_experiment_ledger_json(artifact) + "\n":
+            raise InvalidIntradayResearchReviewError
+        return artifact
+    except InvalidIntradayResearchReviewError:
+        raise
+    except (InvalidPrivateImmutableFileError, TypeError, ValidationError, ValueError):
+        raise InvalidIntradayResearchReviewError from None
+
+
 def evaluate_intraday_experiment(
     ledger: ExperimentLedgerReader,
     experiment: IntradayExperimentArtifact,
     reviewed_at: dt.datetime,
 ) -> IntradayReviewPayload:
     payload = experiment.payload
-    matching = tuple(
-        row
-        for row in ledger.trials()
-        if row.registration.trial_id == payload.trial_id
-    )
+    matching = tuple(row for row in ledger.trials() if row.registration.trial_id == payload.trial_id)
     if len(matching) != 1:
         raise InvalidIntradayResearchReviewError
     trial = matching[0].registration
@@ -196,5 +205,6 @@ __all__ = (
     "IntradayReviewRequest",
     "InvalidIntradayResearchReviewError",
     "evaluate_intraday_experiment",
+    "load_intraday_review_artifact",
     "review_intraday_experiment",
 )
