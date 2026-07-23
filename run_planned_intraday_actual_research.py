@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import re
 import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
@@ -22,10 +23,20 @@ from trading_agent.intraday_actual_research_plan_models import (
 from trading_agent.intraday_research_input_binding_models import (
     IntradayResearchStrategyBinding,
 )
+from trading_agent.private_immutable_file import read_private_text
 from trading_agent.private_report import write_private_report
 from trading_agent.strategy_factory import StrategyMode
 
 REPORT_NAME = "intraday_actual_research_ko.md"
+_SUCCESS_RECEIPT = re.compile(
+    r"exit_code=0\ncompleted_at_epoch=[1-9][0-9]*\n"
+)
+_STRICT_CLOSEOUT_RESULTS = {"- result: recovered", "- result: replayed"}
+_STRICT_CLOSEOUT_MARKERS = (
+    "- failed cycle deletion: 0",
+    "- quality gate relaxed: false",
+    "- provider, credential, account, or order operation: 0",
+)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -67,12 +78,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--per-side-slippage-bps", type=int, default=15)
     parser.add_argument("--bootstrap-samples", type=int, default=1_000)
     parser.add_argument("--rss-limit-gib", type=float, default=9.5)
+    parser.add_argument("--prerequisite-receipt", type=Path)
+    parser.add_argument("--prerequisite-report", type=Path)
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
+        _require_closeout_prerequisite(
+            args.prerequisite_receipt,
+            args.prerequisite_report,
+        )
         result = run_planned_intraday_actual_research(
             IntradayActualResearchRunSpec(
                 run_key=args.run_key,
@@ -135,6 +152,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         + "- external mutation: 0\n",
     )
     return 0
+
+
+def _require_closeout_prerequisite(
+    receipt: Path | None,
+    report: Path | None,
+) -> None:
+    if (receipt is None) != (report is None):
+        raise ValueError("prerequisite_paths_incomplete")
+    if receipt is None or report is None:
+        return
+    receipt_payload = read_private_text(receipt)
+    report_lines = read_private_text(report).splitlines()
+    results = tuple(
+        line for line in report_lines if line.startswith("- result: ")
+    )
+    if (
+        _SUCCESS_RECEIPT.fullmatch(receipt_payload) is None
+        or len(results) != 1
+        or results[0] not in _STRICT_CLOSEOUT_RESULTS
+        or any(report_lines.count(marker) != 1 for marker in _STRICT_CLOSEOUT_MARKERS)
+    ):
+        raise ValueError("closeout_prerequisite_invalid")
 
 
 def _strategy_binding(value: str) -> IntradayResearchStrategyBinding:
