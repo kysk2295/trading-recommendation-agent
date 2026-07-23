@@ -82,6 +82,8 @@ flowchart LR
 
 US systematic `regime_rotation` vertical은 고정 ETF 6종(`GLD`, `IEF`, `IWM`, `QQQ`, `SHY`, `SPY`)의 완료 일봉만 사용한다. SPY 200세션 평균·20세션 momentum과 SPY/QQQ/IWM의 50세션 breadth로 `risk_on`, `risk_off`, `mixed`를 판정하고, risk-on 또는 risk-off sleeve의 60세션 momentum 상위 2종만 다음 정규장 조건부 후보로 만든다. historical replay는 각 결정일 당시까지의 봉으로만 후보를 정한 뒤 다음 세션 open→close 동일가중 수익에서 왕복 40bp를 차감한다. `mixed`는 명시적 no-recommendation이다. 카드는 `us_equities/systematic_quant/regime_rotation` shadow trial과 lifecycle에 연결되지만 `market_regime`은 signal-only이며 계좌·주문·Allocation Manager 권한은 없다.
 
+**2026-07-24 actual IEX completed-daily 업데이트:** 명시적 `iex|sip` feed와 source identity를 completed-daily schema v2에 결속하고 actual IEX 장후 GET을 실행했다. swing은 50종목·1600 bars를 보존했으나 고정 new-high/RVOL 신호가 없어 `no_recommendation`, trial 0건으로 닫혔다. systematic은 고정 6 ETF·1776 bars의 exact source에서 `mixed` 카드를 만들고 2026-07-24 `shadow_forward` trial 1건을 등록했다. private source replay는 credential 전에 exact SHA를 재사용하며 다른 runtime code SHA에서도 같은 session card/trial을 늘리지 않는다. 이는 IEX-only shadow evidence이며 Paper Champion, 주문 또는 allocation 권한이 아니다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-24-m6-actual-iex-daily-shadow-ko.md)에 있다.
+
 **2026-07-16 업데이트:** source-bound 신고가·RVOL 가설 카드와 정확히 일치하는 신호 하나를 global `shadow_forward` trial 하나로 사전등록한다. `run_swing_shadow_trial.py`의 local-only `register → start → finalize → review` 순서는 query-only swing shadow 원장을 다시 대조해 terminal artifact hash를 확정하고, 별도 mode-600 append-only Reviewer 원장에는 `continue_collection`만 기록한다. 이 경로는 lifecycle 전이, champion, allocation, Paper 계좌·주문과 provider 연결을 만들지 않으며, `expired`는 0수익 대체가 아니라 명시적 no-entry 관찰이다.
 
 **2026-07-19 strategy authority 업데이트:** global experiment ledger schema v3에 전략 버전별 immutable `StrategyAuthorityBinding`을 추가했다. exact `StrategyLaneRef`, 최대 운영모드와 승인된 legacy 실행 lane을 한 번만 결합하고, 부모 전략 ID·lane·기록시각 불일치와 같은 버전의 mode 변경을 fail-closed한다. Alpaca Paper mode는 미국 day/swing에만 허용하며 KR lane은 multi-market experiment scope v2 전까지 legacy `LaneId`로 위장하지 않는다. 아직 champion 전이·allocation·risk·주문 권한은 열지 않았다.
@@ -596,6 +598,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [M6 CFTC TFF positioning context 체크포인트](docs/checkpoints/2026-07-24-m6-cftc-tff-positioning-context-ko.md)
 - [M6 futures positioning as-of join 체크포인트](docs/checkpoints/2026-07-24-m6-futures-positioning-context-ko.md)
 - [M6 Treasury yield curve macro context 체크포인트](docs/checkpoints/2026-07-24-m6-treasury-yield-curve-context-ko.md)
+- [M6 actual IEX completed-daily shadow 체크포인트](docs/checkpoints/2026-07-24-m6-actual-iex-daily-shadow-ko.md)
 - [Actual Alpaca SIP entitlement admission 체크포인트](docs/checkpoints/2026-07-24-alpaca-sip-entitlement-admission-actual-ko.md)
 - [Strict forward post-session closeout 체크포인트](docs/checkpoints/2026-07-23-forward-post-session-strict-closeout-ko.md)
 - [Strict closeout 기반 actual research handoff 체크포인트](docs/checkpoints/2026-07-23-post-closeout-research-handoff-ko.md)
