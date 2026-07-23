@@ -138,7 +138,7 @@ def register_kr_theme_research_manifest(
     ledger: ExperimentLedgerStore,
 ) -> KrThemeResearchRegistrationResult:
     manifest = load_kr_theme_research_manifest(manifest_path)
-    hypothesis, version = _registrations(manifest)
+    hypothesis, version = kr_theme_research_registrations(manifest)
     with ledger.writer() as writer:
         hypotheses_created = int(writer.register_multi_market_hypothesis(hypothesis))
         versions_created = int(writer.register_multi_market_strategy_version(version))
@@ -196,7 +196,7 @@ def load_kr_theme_research_manifest(
         raise InvalidKrThemeResearchRegistrationError from None
 
 
-def _registrations(
+def kr_theme_research_registrations(
     manifest: KrThemeResearchRegistrationManifest,
 ) -> tuple[MultiMarketHypothesisRegistration, MultiMarketStrategyVersionRegistration]:
     contract = _CONTRACTS.get(manifest.hypothesis_id)
