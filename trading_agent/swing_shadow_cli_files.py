@@ -14,6 +14,7 @@ SWING_OUTBOX_NAME: Final = "trade-signals.v1.jsonl"
 SWING_CARDS_NAME: Final = "trade-signal-cards-ko"
 SWING_REPORT_NAME: Final = "us_swing_shadow_summary_ko.md"
 SWING_SOURCES_DIR: Final = "daily-sources"
+_MAX_SOURCE_BYTES: Final = 8 * 1024 * 1024
 
 
 class InvalidSwingShadowCliTargetError(ValueError):
@@ -116,6 +117,41 @@ def write_private_swing_source(output: Path, source: SwingDailySource) -> Path:
     return destination
 
 
+def load_private_swing_sources(output: Path) -> tuple[SwingDailySource, ...]:
+    source_dir = output / SWING_SOURCES_DIR
+    if not source_dir.exists():
+        return ()
+    try:
+        metadata = source_dir.lstat()
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) != 0o700
+            or metadata.st_uid != os.getuid()
+        ):
+            raise InvalidSwingShadowCliTargetError
+        paths = tuple(sorted(source_dir.iterdir()))
+        sources = tuple(SwingDailySource.model_validate_json(_read_private_file(path)) for path in paths)
+        if len(sources) != len({source.source_key for source in sources}) or any(
+            path.name != f"swing_daily_source_{source.source_key}.json"
+            for path, source in zip(paths, sources, strict=True)
+        ):
+            raise InvalidSwingShadowCliTargetError
+        return tuple(
+            sorted(
+                sources,
+                key=lambda source: (
+                    source.session_date,
+                    source.source_id.canonical_id,
+                    source.source_key,
+                ),
+            )
+        )
+    except InvalidSwingShadowCliTargetError:
+        raise
+    except (OSError, TypeError, ValueError):
+        raise InvalidSwingShadowCliTargetError from None
+
+
 def prepare_private_swing_file(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_symlink():
@@ -167,6 +203,7 @@ def _read_private_file(path: Path) -> bytes:
             or stat.S_IMODE(metadata.st_mode) != 0o600
             or metadata.st_nlink != 1
             or metadata.st_uid != os.getuid()
+            or not 0 < metadata.st_size <= _MAX_SOURCE_BYTES
         ):
             raise InvalidSwingShadowCliTargetError
     except BaseException:
@@ -184,6 +221,7 @@ __all__ = (
     "InvalidSwingShadowCliTargetError",
     "SwingShadowReport",
     "harden_private_swing_cards",
+    "load_private_swing_sources",
     "prepare_private_swing_file",
     "validate_swing_shadow_targets",
     "write_private_swing_source",

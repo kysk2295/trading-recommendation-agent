@@ -16,8 +16,10 @@ import trading_agent.systematic_regime_operating as operating
 from tests.test_systematic_regime_engine import _source
 from tests.test_systematic_regime_trial import CODE_VERSION, _extend_source
 from trading_agent.alpaca_bars import AlpacaDailyFeed
+from trading_agent.data_capability_models import DataSourceId
 from trading_agent.experiment_ledger_models import TrialEventKind
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
+from trading_agent.swing_shadow_cli_files import write_private_swing_source
 from trading_agent.swing_shadow_models import SwingDailySource
 from trading_agent.systematic_regime_operating import (
     SystematicOperatingPhase,
@@ -361,6 +363,53 @@ def test_cli_current_production_requires_explicit_feed_before_credentials(
 
     assert result == 1
     assert credential_calls == 0
+
+
+def test_cli_production_replays_exact_source_before_credentials(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _source("risk_on").model_copy(update={"source_id": DataSourceId(provider="alpaca", feed="iex")})
+    output = tmp_path / "output"
+    _ = write_private_swing_source(output, source)
+    credential_calls = 0
+
+    def forbidden_credentials(path: Path):
+        nonlocal credential_calls
+        _ = path
+        credential_calls += 1
+        raise AssertionError("exact replay must not read credentials")
+
+    monkeypatch.setattr(cli, "load_private_alpaca_credentials", forbidden_credentials)
+    arguments = [
+        "--session-date",
+        source.session_date.isoformat(),
+        "--feed",
+        AlpacaDailyFeed.IEX.value,
+        "--database",
+        str(tmp_path / "systematic.sqlite3"),
+        "--experiment-ledger",
+        str(tmp_path / "experiment.sqlite3"),
+        "--output-dir",
+        str(output),
+    ]
+
+    first = cli.main(
+        arguments,
+        now=source.observed_at,
+        runtime_code_version=CODE_VERSION,
+    )
+    replay = cli.main(
+        arguments,
+        now=source.observed_at + dt.timedelta(minutes=1),
+        runtime_code_version=CODE_VERSION,
+    )
+
+    assert (first, replay) == (0, 0)
+    assert credential_calls == 0
+    assert len(SystematicRegimeStore(tmp_path / "systematic.sqlite3").cards()) == 1
+    assert len(ExperimentLedgerStore(tmp_path / "experiment.sqlite3").multi_market_trials()) == 1
+    assert len(tuple((output / "daily-sources").glob("*.json"))) == 1
 
 
 def test_cli_help_and_invalid_date_surface() -> None:

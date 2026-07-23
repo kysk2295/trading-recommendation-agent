@@ -21,9 +21,13 @@ from trading_agent.alpaca_http import (
     create_alpaca_client,
 )
 from trading_agent.alpaca_private_credentials import load_private_alpaca_credentials
+from trading_agent.data_capability_models import DataSourceId
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.private_report import write_private_report
-from trading_agent.swing_shadow_cli_files import write_private_swing_source
+from trading_agent.swing_shadow_cli_files import (
+    load_private_swing_sources,
+    write_private_swing_source,
+)
 from trading_agent.systematic_regime_models import SystematicRecommendationCard
 from trading_agent.systematic_regime_operating import (
     SystematicOperatingPhase,
@@ -118,6 +122,21 @@ def _source(args: argparse.Namespace, now: dt.datetime, phase: SystematicOperati
     if args.feed is None:
         raise UsSystematicRegimeCliError
     feed = AlpacaDailyFeed(args.feed)
+    replay = tuple(
+        source
+        for source in load_private_swing_sources(args.output_dir.expanduser().resolve(strict=False))
+        if source.session_date == args.session_date
+        and source.source_id == DataSourceId(provider="alpaca", feed=feed.value)
+    )
+    if len(replay) > 1:
+        raise UsSystematicRegimeCliError
+    if replay:
+        validate_current_systematic_collection(
+            session_date=args.session_date,
+            observed_at=replay[0].observed_at,
+            now=now,
+        )
+        return replay[0]
     validate_current_systematic_collection(
         session_date=args.session_date,
         observed_at=now,
