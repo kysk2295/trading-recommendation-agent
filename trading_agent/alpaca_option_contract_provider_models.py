@@ -37,6 +37,7 @@ class ProviderOptionContract(BaseModel):
     style: OptionExerciseStyle
     strike_price: Decimal = Field(gt=0)
     size: Decimal = Field(gt=0)
+    multiplier: Decimal = Field(gt=0)
     open_interest: int | None = Field(default=None, ge=0)
     open_interest_date: dt.date | None = None
     close_price: Decimal | None = Field(default=None, ge=0)
@@ -45,9 +46,13 @@ class ProviderOptionContract(BaseModel):
 
     @model_validator(mode="after")
     def validate_observations(self) -> Self:
-        if (self.open_interest is None) != (self.open_interest_date is None) or (
-            self.close_price is None
-        ) != (self.close_price_date is None):
+        if (
+            self.size != self.multiplier
+            or (self.open_interest is None)
+            != (self.open_interest_date is None)
+            or (self.close_price is None)
+            != (self.close_price_date is None)
+        ):
             raise ProviderOptionContractError
         return self
 

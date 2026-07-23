@@ -65,6 +65,7 @@ def test_occ_projection_conflict_is_preserved_as_failed_terminal(
                     "style": "american",
                     "strike_price": "201",
                     "size": "100",
+                    "multiplier": "100",
                 }
             ],
             "page_token": None,

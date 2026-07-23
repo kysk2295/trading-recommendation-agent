@@ -85,7 +85,7 @@ def project_option_security_master_contract(
         strike_price=contract.strike_price,
         contract_type=contract.type,
         exercise_style=contract.style,
-        multiplier=contract.size,
+        multiplier=contract.multiplier,
         tradable=contract.tradable,
         open_interest=contract.open_interest,
         open_interest_date=contract.open_interest_date,

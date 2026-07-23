@@ -17,10 +17,10 @@ ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "run_alpaca_option_contract_catalog.py"
 
 
-def test_fixture_cli_materializes_option_contract_security_master(
+def test_fixture_cli_accepts_documented_provider_multiplier(
     tmp_path: Path,
 ) -> None:
-    # Given an exact active Alpaca option-contract page with OI and size.
+    # Given an exact Alpaca contract with documented size and multiplier.
     raw_payload = json.dumps(
         {
             "option_contracts": [
@@ -38,6 +38,7 @@ def test_fixture_cli_materializes_option_contract_security_master(
                     "style": "american",
                     "strike_price": "200",
                     "size": "100",
+                    "multiplier": "100",
                     "open_interest": "1234",
                     "open_interest_date": "2026-07-22",
                     "close_price": "5.10",
@@ -138,6 +139,7 @@ def test_live_cli_uses_exact_get_and_raw_first_terminal(
                     "style": "american",
                     "strike_price": "200",
                     "size": "100",
+                    "multiplier": "100",
                     "open_interest": "1234",
                     "open_interest_date": "2026-07-22",
                     "close_price": "5.10",
