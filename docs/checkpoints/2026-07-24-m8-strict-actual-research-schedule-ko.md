@@ -77,6 +77,42 @@ trial을 발행하지 않는다. READY audit이 성공해도 Reviewer 기준은 
 champion이나 주문 권한을 자동 생성하지 않는다. executable Paper champion 두 개
 전에는 Allocation Manager를 계속 비활성으로 유지한다.
 
+## Schema v2 comparison 후속 재감사 예약
+
+기존 2026-07-24 및 2026-07-27 research/audit payload는 실행 전 frozen 상태를
+그대로 보존했다. 이후 배포된 terminal audit schema v2가 2~3전략의 exact
+equal-risk comparison artifact ID와 상태를 같은 terminal artifact에 결속하므로,
+기존 job을 제거·교체하지 않고 query-only 후속 재감사 두 개를 추가했다.
+
+clean detached runtime
+`/private/tmp/trading-agent-terminal-comparison-audit-91ff5d2`는 exact
+`91ff5d2900d9c06d09c6cdebaa3fe4d1df745d5d`이며 clean status를 payload 실행
+직전에 다시 확인한다. audit runtime과 연구 dataset producer SHA는 서로 다른
+필드로 보존한다.
+
+| 시각 | launchd label | 연구 producer | 관측 PID |
+|---|---|---|---:|
+| 2026-07-25 06:35 KST | `ai.trading-agent.actual-research-comparison-audit-20260724` | `8ef5904df2589f95cc80013e068d2a2cbdb4c96f` | 38652 |
+| 2026-07-28 06:10 KST | `ai.trading-agent.actual-research-comparison-audit-20260727` | `bc400690febe0fb376b68594290a20ea55764b34` | 38654 |
+
+두 job은 기존 research completion receipt와 plan/report를 읽고 별도
+`exact-91ff5d2-schema-v2` output root에만 발행한다. 성공 receipt가 아니거나 plan,
+CSV, persisted manifest, READY foundation, completed trial/review 또는 동일 위험
+계약이 맞지 않으면 audit은 nonzero로 차단한다. 실패를 새 research 실행이나 부분
+artifact로 복구하지 않는다.
+
+등록 QA는 다음과 같다.
+
+- payload/runner `zsh -n`: 통과
+- payload dry-run: exit `0`, schema `2`, strict, mutation `false`
+- payload bad input: exit `2`, stdout `0 bytes`
+- frozen runtime audit CLI `--help`: exit `0`, stderr `0 bytes`
+- payload/runner mode: `700`
+- stdout/stderr mode: `600`, 등록 직후 `0 bytes`
+- 두 label: `state=running`, `runs=1`
+- 등록 직후 receipt/claim: 없음
+- external provider, credential, broker, account와 order mutation: `0`
+
 ## PEP 723 독립 실행 복구
 
 운영 수동 QA에서 project environment가 아닌 각 CLI의 PEP 723 isolated environment로
