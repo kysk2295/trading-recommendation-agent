@@ -70,7 +70,7 @@ def bind_intraday_research_input(
             source_queue_snapshot_id=queue.snapshot_id,
             input_sha256=source.sha256,
             registered_at=request.registered_at,
-            evaluator_version="intraday_walk_forward_v1",
+            evaluator_version="intraday_walk_forward_v2",
             minimum_training_sessions=request.minimum_training_sessions,
             max_bars=request.max_bars,
             max_sessions=request.max_sessions,
@@ -210,15 +210,11 @@ def _build_selections_and_foundations(request, receipt, entitlement, queue):
 def _queue_item_accepts_binding(item, strategy_version: str) -> bool:
     if item.route is HypothesisQueueRoute.STRATEGY_DESIGN:
         return not item.strategy_versions and not item.historical_trial_ids
-    return (
-        item.route
-        in {
-            HypothesisQueueRoute.HISTORICAL_REPLAY,
-            HypothesisQueueRoute.INDEPENDENT_REVIEW,
-            HypothesisQueueRoute.RECOVERY,
-        }
-        and item.strategy_versions == (strategy_version,)
-    )
+    return item.route in {
+        HypothesisQueueRoute.HISTORICAL_REPLAY,
+        HypothesisQueueRoute.INDEPENDENT_REVIEW,
+        HypothesisQueueRoute.RECOVERY,
+    } and item.strategy_versions == (strategy_version,)
 
 
 def _payload(model: BaseModel) -> str:

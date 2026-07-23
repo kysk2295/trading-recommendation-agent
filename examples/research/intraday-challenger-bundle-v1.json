@@ -17,7 +17,7 @@
     }
   ],
   "registered_at": "2026-07-22T12:00:00Z",
-  "evaluator_version": "intraday_walk_forward_v1",
+  "evaluator_version": "intraday_walk_forward_v2",
   "minimum_training_sessions": 0,
   "max_bars": 10,
   "max_sessions": 1,

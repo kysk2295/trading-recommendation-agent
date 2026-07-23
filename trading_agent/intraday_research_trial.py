@@ -100,6 +100,7 @@ def run_or_replay_intraday_trial(
         raise IntradayHistoricalTrialError("bounded_walk_forward_failed") from None
     artifact = intraday_experiment_artifact(
         IntradayExperimentPayload(
+            schema_version=result.schema_version,
             trial_id=registration.trial_id,
             strategy_version=registration.strategy_version,
             evaluator_version=registration.evaluator_version,
@@ -139,6 +140,7 @@ def _run_walk_forward(
                 per_side_cost_bps=context.manifest.per_side_total_cost_bps,
                 bootstrap_samples=context.manifest.bootstrap_samples,
                 rss_limit_gib=context.manifest.rss_limit_gib,
+                evaluator_version=context.manifest.evaluator_version,
             ),
             Path(temporary),
         )

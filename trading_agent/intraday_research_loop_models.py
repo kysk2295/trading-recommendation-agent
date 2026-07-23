@@ -10,6 +10,11 @@ from typing import Final, Literal, Self, override
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from trading_agent.intraday_walk_forward_models import (
+    INTRADAY_BOOTSTRAP_SEED,
+    IntradaySessionOutcome,
+    IntradayWalkForwardResult,
+)
 from trading_agent.models import BarInput
 from trading_agent.strategy_factory import StrategyMode
 
@@ -76,7 +81,7 @@ class IntradayResearchManifest(BaseModel):
     source_queue_snapshot_id: str | None = None
     input_sha256: str | None = None
     registered_at: dt.datetime
-    evaluator_version: Literal["intraday_walk_forward_v1"]
+    evaluator_version: Literal["intraday_walk_forward_v1", "intraday_walk_forward_v2"]
     minimum_training_sessions: int = Field(ge=0, le=20)
     max_bars: int = Field(ge=1, le=100_000)
     max_sessions: int = Field(ge=1, le=60)
@@ -159,6 +164,7 @@ class IntradayWalkForwardRequest:
     per_side_cost_bps: int
     bootstrap_samples: int
     rss_limit_gib: float
+    evaluator_version: Literal["intraday_walk_forward_v1", "intraday_walk_forward_v2"] = "intraday_walk_forward_v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,25 +173,6 @@ class IntradayWalkForwardError(RuntimeError):
 
     def __str__(self) -> str:
         return f"intraday walk-forward blocked: {self.reason}"
-
-
-class IntradayWalkForwardResult(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    schema_version: Literal[1] = 1
-    strategy: StrategyMode
-    observed_sessions: int = Field(ge=1)
-    fold_count: int = Field(ge=1)
-    trade_count: int = Field(ge=0)
-    side_cost_bps: int = Field(ge=20, le=100)
-    gross_average_return: float | None
-    average_return: float | None
-    profit_factor: float | None
-    cumulative_return: float | None
-    max_drawdown: float | None
-    mean_ci_low: float | None
-    mean_ci_high: float | None
-    peak_rss_gib: float = Field(ge=0.0, le=9.5)
 
 
 def intraday_reviewer_decision(evidence: IntradayReviewEvidence) -> IntradayReviewerDecision:
@@ -225,10 +212,12 @@ def load_intraday_research_manifest(path: Path) -> IntradayResearchManifest:
 
 
 __all__ = (
+    "INTRADAY_BOOTSTRAP_SEED",
     "IntradayHypothesisSelection",
     "IntradayResearchManifest",
     "IntradayReviewEvidence",
     "IntradayReviewerDecision",
+    "IntradaySessionOutcome",
     "IntradayWalkForwardError",
     "IntradayWalkForwardRequest",
     "IntradayWalkForwardResult",

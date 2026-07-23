@@ -134,9 +134,12 @@ def summarize_performance(
         peak = max(peak, equity)
         max_drawdown = min(max_drawdown, equity / peak - 1.0)
     mean = sum(returns) / len(returns)
-    means = _day_block_bootstrap_means(trades, returns, config)
-    lower = means[int((len(means) - 1) * 0.025)] if means else None
-    upper = means[int((len(means) - 1) * 0.975)] if means else None
+    blocks = _day_return_blocks(trades, returns)
+    lower, upper = day_block_bootstrap_interval(
+        blocks,
+        config.bootstrap_samples,
+        config.random_seed,
+    )
     fallback_count = sum(trade.uses_close_fallback for trade in trades)
     return PerformanceMetrics(
         config.side_cost_bps,
@@ -159,24 +162,32 @@ def net_return(trade: PaperTrade, side_cost_bps: int) -> float:
     return trade.exit * (1.0 - cost_rate) / (trade.entry * (1.0 + cost_rate)) - 1.0
 
 
-def _day_block_bootstrap_means(
+def _day_return_blocks(
     trades: tuple[PaperTrade, ...],
     returns: tuple[float, ...],
-    config: MetricsConfig,
-) -> list[float]:
-    if config.bootstrap_samples <= 0:
-        return []
+) -> tuple[tuple[float, ...], ...]:
     grouped: dict[dt.date, list[float]] = {}
     for trade, value in zip(trades, returns, strict=True):
         session_date = trade.exit_at.astimezone(NEW_YORK).date()
         grouped.setdefault(session_date, []).append(value)
-    blocks = tuple(tuple(values) for values in grouped.values())
-    if len(blocks) < 2:
-        return []
-    rng = random.Random(config.random_seed)
+    return tuple(tuple(values) for values in grouped.values())
+
+
+def day_block_bootstrap_interval(
+    blocks: tuple[tuple[float, ...], ...],
+    bootstrap_samples: int,
+    random_seed: int,
+) -> tuple[float | None, float | None]:
+    if len(blocks) < 2 or bootstrap_samples <= 0:
+        return None, None
+    rng = random.Random(random_seed)
     means: list[float] = []
-    for _ in range(config.bootstrap_samples):
+    for _ in range(bootstrap_samples):
         selected = tuple(rng.choice(blocks) for _ in blocks)
         sample = tuple(value for block in selected for value in block)
         means.append(sum(sample) / len(sample))
-    return sorted(means)
+    ordered = sorted(means)
+    return (
+        ordered[int((len(ordered) - 1) * 0.025)],
+        ordered[int((len(ordered) - 1) * 0.975)],
+    )

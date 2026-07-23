@@ -11,10 +11,20 @@ from trading_agent.engine import RecommendationEngine, finalize_due_recommendati
 from trading_agent.intraday_research_loop_models import (
     IntradayWalkForwardError,
     IntradayWalkForwardRequest,
+)
+from trading_agent.intraday_walk_forward_models import (
+    INTRADAY_BOOTSTRAP_SEED,
+    IntradaySessionOutcome,
     IntradayWalkForwardResult,
 )
 from trading_agent.kis_live import NEW_YORK, regular_session_bounds
-from trading_agent.metrics import MetricsConfig, extract_paper_trades, summarize_performance
+from trading_agent.metrics import (
+    MetricsConfig,
+    PaperTrade,
+    extract_paper_trades,
+    net_return,
+    summarize_performance,
+)
 from trading_agent.metrics_report import write_metrics_report
 from trading_agent.models import BarInput
 from trading_agent.replay import write_report
@@ -52,10 +62,15 @@ def run_intraday_walk_forward(
     trades = extract_paper_trades((store,))
     metrics = summarize_performance(
         trades,
-        MetricsConfig(request.per_side_cost_bps, request.bootstrap_samples, 20_260_722),
+        MetricsConfig(request.per_side_cost_bps, request.bootstrap_samples, INTRADAY_BOOTSTRAP_SEED),
     )
+    session_outcomes = tuple(
+        _session_outcome(session_date, trades, request.per_side_cost_bps) for session_date, _ in oos_sessions
+    )
+    trace_enabled = request.evaluator_version == "intraday_walk_forward_v2"
     peak = _require_rss_below(request.rss_limit_gib)
     return IntradayWalkForwardResult(
+        schema_version=2 if trace_enabled else 1,
         strategy=request.strategy,
         observed_sessions=len(oos_sessions),
         fold_count=len(oos_sessions),
@@ -69,6 +84,22 @@ def run_intraday_walk_forward(
         mean_ci_low=metrics.mean_ci_low,
         mean_ci_high=metrics.mean_ci_high,
         peak_rss_gib=peak,
+        bootstrap_samples=request.bootstrap_samples if trace_enabled else None,
+        bootstrap_seed=INTRADAY_BOOTSTRAP_SEED if trace_enabled else None,
+        session_outcomes=session_outcomes if trace_enabled else (),
+    )
+
+
+def _session_outcome(
+    session_date: dt.date,
+    trades: tuple[PaperTrade, ...],
+    side_cost_bps: int,
+) -> IntradaySessionOutcome:
+    selected = tuple(trade for trade in trades if trade.exit_at.astimezone(NEW_YORK).date() == session_date)
+    return IntradaySessionOutcome(
+        session_date=session_date,
+        gross_trade_returns=tuple(trade.gross_return for trade in selected),
+        net_trade_returns=tuple(net_return(trade, side_cost_bps) for trade in selected),
     )
 
 

@@ -9,7 +9,7 @@ from typing import Literal, Self, override
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
-from trading_agent.intraday_research_loop_models import IntradayWalkForwardResult
+from trading_agent.intraday_walk_forward_models import IntradayWalkForwardResult
 from trading_agent.private_immutable_file import (
     InvalidPrivateImmutableFileError,
     publish_private_immutable_text,
@@ -28,7 +28,7 @@ class InvalidIntradayResearchArtifactError(ValueError):
 class IntradayExperimentPayload(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 2
     trial_id: str
     strategy_version: str
     evaluator_version: str
@@ -51,6 +51,7 @@ class IntradayExperimentPayload(BaseModel):
             or not _aware(self.started_at)
             or not _aware(self.completed_at)
             or not self.registered_at <= self.started_at <= self.completed_at
+            or self.result.schema_version != self.schema_version
         ):
             raise InvalidIntradayResearchArtifactError
         return self
@@ -59,14 +60,14 @@ class IntradayExperimentPayload(BaseModel):
 class IntradayExperimentArtifact(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 2
     artifact_id: str
     payload: IntradayExperimentPayload
 
     @model_validator(mode="after")
     def validate_artifact(self) -> Self:
         expected = hashlib.sha256(canonical_experiment_ledger_json(self.payload).encode()).hexdigest()
-        if self.artifact_id != expected:
+        if self.artifact_id != expected or self.schema_version != self.payload.schema_version:
             raise InvalidIntradayResearchArtifactError
         return self
 
@@ -74,7 +75,11 @@ class IntradayExperimentArtifact(BaseModel):
 def intraday_experiment_artifact(payload: IntradayExperimentPayload) -> IntradayExperimentArtifact:
     checked = IntradayExperimentPayload.model_validate(payload.model_dump())
     identity = hashlib.sha256(canonical_experiment_ledger_json(checked).encode()).hexdigest()
-    return IntradayExperimentArtifact(artifact_id=identity, payload=checked)
+    return IntradayExperimentArtifact(
+        schema_version=checked.schema_version,
+        artifact_id=identity,
+        payload=checked,
+    )
 
 
 def publish_intraday_experiment_artifact(

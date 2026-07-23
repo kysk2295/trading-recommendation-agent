@@ -29,9 +29,7 @@ def test_research_loop_standalone_launcher_declares_transitive_http_dependency()
     # When: the isolated dependency declaration is parsed.
     opening = lines.index("# /// script")
     closing = lines.index("# ///", opening + 1)
-    metadata = tomllib.loads(
-        "\n".join(line.removeprefix("# ") for line in lines[opening + 1 : closing])
-    )
+    metadata = tomllib.loads("\n".join(line.removeprefix("# ") for line in lines[opening + 1 : closing]))
 
     # Then: the transitive KIS model import can resolve its HTTP runtime.
     assert "httpx2[http2,brotli,zstd]" in metadata["dependencies"]
@@ -173,9 +171,12 @@ def test_intraday_research_loop_runs_and_replays_full_local_vertical(tmp_path: P
     review_paths = tuple(reviews.glob("intraday_research_review_*.json"))
     assert len(artifact_paths) == 3
     assert len(review_paths) == 3
-    assert {json.loads(path.read_text(encoding="utf-8"))["payload"]["decision"] for path in review_paths} == {
-        "hold"
-    }
+    experiment_payloads = tuple(json.loads(path.read_text(encoding="utf-8")) for path in artifact_paths)
+    assert {payload["schema_version"] for payload in experiment_payloads} == {2}
+    assert {payload["payload"]["schema_version"] for payload in experiment_payloads} == {2}
+    assert {payload["payload"]["result"]["schema_version"] for payload in experiment_payloads} == {2}
+    assert all(len(payload["payload"]["result"]["session_outcomes"]) == 1 for payload in experiment_payloads)
+    assert {json.loads(path.read_text(encoding="utf-8"))["payload"]["decision"] for path in review_paths} == {"hold"}
     assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in (*artifact_paths, *review_paths))
     report = (output / "intraday_research_loop_ko.md").read_text(encoding="utf-8")
     assert "result: ready" in report
