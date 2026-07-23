@@ -36,6 +36,31 @@ class OptionTrade(BaseModel):
     conditions: tuple[str, ...] | str | None = Field(default=None, alias="c")
 
 
+class OptionBar(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    timestamp: dt.datetime = Field(alias="t")
+    open: Decimal = Field(alias="o", ge=0)
+    high: Decimal = Field(alias="h", ge=0)
+    low: Decimal = Field(alias="l", ge=0)
+    close: Decimal = Field(alias="c", ge=0)
+    volume: Decimal = Field(alias="v", ge=0)
+    trade_count: int = Field(alias="n", ge=0)
+    volume_weighted_price: Decimal = Field(alias="vw", ge=0)
+
+    @model_validator(mode="after")
+    def validate_bar(self) -> Self:
+        if (
+            self.timestamp.tzinfo is None
+            or self.timestamp.utcoffset() is None
+            or self.low > min(self.open, self.close)
+            or self.high < max(self.open, self.close)
+            or self.low > self.high
+        ):
+            raise ProviderOptionChainError
+        return self
+
+
 class OptionGreeks(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -57,6 +82,9 @@ class ProviderOptionSnapshot(BaseModel):
         ge=0,
     )
     greeks: OptionGreeks | None = None
+    minute_bar: OptionBar | None = Field(default=None, alias="minuteBar")
+    daily_bar: OptionBar | None = Field(default=None, alias="dailyBar")
+    previous_daily_bar: OptionBar | None = Field(default=None, alias="prevDailyBar")
 
 
 class ProviderOptionChainPage(BaseModel):
@@ -77,6 +105,7 @@ class ProviderOptionChainPage(BaseModel):
 
 
 __all__ = (
+    "OptionBar",
     "OptionGreeks",
     "OptionQuote",
     "OptionTrade",

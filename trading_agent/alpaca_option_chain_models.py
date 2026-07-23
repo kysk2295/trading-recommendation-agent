@@ -11,6 +11,7 @@ from typing import Final, Literal, Self, assert_never, override
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from trading_agent.alpaca_option_chain_provider_models import (
+    OptionBar,
     OptionGreeks,
     OptionQuote,
     OptionTrade,
@@ -137,6 +138,9 @@ class OptionContractSnapshot(BaseModel):
     latest_trade: OptionTrade | None
     implied_volatility: Decimal | None
     greeks: OptionGreeks | None
+    minute_bar: OptionBar | None = None
+    daily_bar: OptionBar | None = None
+    previous_daily_bar: OptionBar | None = None
 
 
 class OptionChainRun(BaseModel):
@@ -208,6 +212,9 @@ def option_snapshot(
         latest_trade=value.latest_trade,
         implied_volatility=value.implied_volatility,
         greeks=value.greeks,
+        minute_bar=value.minute_bar,
+        daily_bar=value.daily_bar,
+        previous_daily_bar=value.previous_daily_bar,
     )
 
 
@@ -225,6 +232,7 @@ def _token(value: str | None) -> bool:
 __all__ = (
     "ALPACA_OPTION_CHAIN_MAX_RAW_BYTES",
     "AlpacaOptionChainError",
+    "OptionBar",
     "OptionChainFailure",
     "OptionChainRawResponse",
     "OptionChainRequest",

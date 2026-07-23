@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from decimal import Decimal
 from pathlib import Path
 
 import httpx2
@@ -153,3 +154,100 @@ def test_paginated_chain_is_terminally_replayed_without_network(
     assert calls[1].url.params["page_token"] == "opaque-token"
     assert calls[0].headers["accept-encoding"] == "identity"
     assert store.counts() == (2, 1)
+
+
+def test_actual_chain_bar_fields_are_preserved_in_successful_terminal(
+    tmp_path: Path,
+) -> None:
+    raw_payload = json.dumps(
+        {
+            "snapshots": {
+                "AAPL260724C00200000": {
+                    "latestQuote": {
+                        "t": "2026-07-23T14:31:00Z",
+                        "ax": "C",
+                        "ap": 5.2,
+                        "as": 3,
+                        "bx": "P",
+                        "bp": 5.0,
+                        "bs": 4,
+                        "c": "R",
+                    },
+                    "minuteBar": {
+                        "t": "2026-07-23T14:30:00Z",
+                        "o": 5.0,
+                        "h": 5.3,
+                        "l": 4.9,
+                        "c": 5.2,
+                        "v": 12,
+                        "n": 4,
+                        "vw": 5.1,
+                    },
+                    "dailyBar": {
+                        "t": "2026-07-23T04:00:00Z",
+                        "o": 4.8,
+                        "h": 5.4,
+                        "l": 4.7,
+                        "c": 5.2,
+                        "v": 120,
+                        "n": 40,
+                        "vw": 5.0,
+                    },
+                    "prevDailyBar": {
+                        "t": "2026-07-22T04:00:00Z",
+                        "o": 4.5,
+                        "h": 4.9,
+                        "l": 4.4,
+                        "c": 4.8,
+                        "v": 90,
+                        "n": 30,
+                        "vw": 4.7,
+                    },
+                }
+            },
+            "next_page_token": None,
+        },
+        separators=(",", ":"),
+    ).encode()
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            request=request,
+            headers={"content-type": "application/json"},
+            stream=httpx2.ByteStream(raw_payload),
+        )
+
+    store = AlpacaOptionChainStore(tmp_path / "option-chain.sqlite3")
+    store.preflight_write()
+    with httpx2.Client(
+        base_url="https://data.alpaca.markets",
+        transport=httpx2.MockTransport(handle),
+        follow_redirects=False,
+    ) as http_client:
+        result = collect_alpaca_option_chain(
+            AlpacaOptionChainClient(
+                http_client,
+                CREDENTIALS,
+                _clock=lambda: RECEIVED,
+            ),
+            store,
+            _request(),
+            _clock=iter((STARTED, COMPLETED)).__next__,
+        )
+
+    assert result.run.status is OptionChainStatus.SUCCESS
+    assert result.run.failure_code is None
+    snapshot = result.run.snapshots[0]
+    assert snapshot.minute_bar is not None
+    assert snapshot.minute_bar.close == Decimal("5.2")
+    assert snapshot.daily_bar is not None
+    assert snapshot.daily_bar.volume == Decimal("120")
+    assert snapshot.previous_daily_bar is not None
+    assert snapshot.previous_daily_bar.timestamp == dt.datetime(
+        2026,
+        7,
+        22,
+        4,
+        tzinfo=dt.UTC,
+    )
