@@ -57,8 +57,11 @@ def materialize_intraday_research_dataset_catalog(
     if len(set(dates)) != len(dates):
         raise IntradayResearchDatasetCatalogError("duplicate_eligible_session_date")
     selected = tuple(path for _, path in sorted(eligible)[-request.max_sessions :])
+    selected_dates = tuple(sorted(dates)[-request.max_sessions :])
     if len(selected) < request.minimum_sessions:
         raise IntradayResearchDatasetCatalogError("minimum_clean_sessions_not_met")
+    if not set(request.required_session_dates).issubset(selected_dates):
+        raise IntradayResearchDatasetCatalogError("required_clean_session_not_selected")
     try:
         dataset = materialize_intraday_research_dataset(
             IntradayResearchDatasetRequest(
@@ -73,7 +76,8 @@ def materialize_intraday_research_dataset_catalog(
             dataset_receipt_name=dataset.receipt_path.name,
             minimum_sessions=request.minimum_sessions,
             candidate_sessions=len(request.session_dirs),
-            selected_session_dates=tuple(sorted(dates)[-request.max_sessions :]),
+            required_session_dates=request.required_session_dates,
+            selected_session_dates=selected_dates,
             selected_source_sha256s=dataset.source_session_sha256s,
             audits=tuple(audits),
         )
@@ -119,6 +123,7 @@ def _validate_request(request: IntradayResearchDatasetCatalogRequest) -> None:
         or request.max_sessions > 60
         or request.max_bars < 1
         or request.max_bars > 100_000
+        or len(set(request.required_session_dates)) != len(request.required_session_dates)
     ):
         raise IntradayResearchDatasetCatalogError("invalid_catalog_budget_or_identity")
 

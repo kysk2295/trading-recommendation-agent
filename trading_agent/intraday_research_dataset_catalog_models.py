@@ -17,6 +17,7 @@ class IntradayResearchDatasetCatalogRequest:
     minimum_sessions: int
     max_sessions: int
     max_bars: int
+    required_session_dates: tuple[dt.date, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +56,7 @@ class IntradayResearchDatasetCatalogReceipt(BaseModel):
     dataset_receipt_name: str
     minimum_sessions: int
     candidate_sessions: int
+    required_session_dates: tuple[dt.date, ...]
     selected_session_dates: tuple[dt.date, ...]
     selected_source_sha256s: tuple[str, ...]
     audits: tuple[IntradayResearchDatasetSessionAudit, ...]

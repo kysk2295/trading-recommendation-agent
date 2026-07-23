@@ -211,6 +211,30 @@ def test_catalog_exact_replay_reuses_dataset_and_audit_receipt(tmp_path: Path) -
     assert len(tuple(request.output_root.glob("intraday_research_catalog_*.json"))) == 1
 
 
+def test_catalog_requires_the_current_session_to_be_strict_eligible(tmp_path: Path) -> None:
+    complete = tmp_path / "2026-07-14"
+    blocked = tmp_path / "2026-07-15"
+    write_closed_source_session(complete, session_date=dt.date(2026, 7, 14))
+    write_closed_source_session(
+        blocked,
+        post_session_complete=False,
+        session_date=dt.date(2026, 7, 15),
+    )
+
+    with pytest.raises(IntradayResearchDatasetCatalogError):
+        _ = materialize_intraday_research_dataset_catalog(
+            IntradayResearchDatasetCatalogRequest(
+                session_dirs=(complete, blocked),
+                output_root=tmp_path / "catalog",
+                minimum_sessions=1,
+                max_sessions=2,
+                max_bars=1_000,
+                required_session_dates=(dt.date(2026, 7, 15),),
+            )
+        )
+    assert not (tmp_path / "catalog").exists()
+
+
 def test_dataset_cli_exposes_sessions_and_runs_happy_path(tmp_path: Path) -> None:
     # Given: the operator CLI and one complete source session.
     source = tmp_path / "source"

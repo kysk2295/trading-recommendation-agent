@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -31,6 +32,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--minimum-sessions", type=int, default=1)
     parser.add_argument("--max-sessions", type=int, default=60)
     parser.add_argument("--max-bars", type=int, default=100_000)
+    parser.add_argument("--required-session-date", type=_session_date, action="append", default=[])
     return parser.parse_args(argv)
 
 
@@ -44,6 +46,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 minimum_sessions=args.minimum_sessions,
                 max_sessions=args.max_sessions,
                 max_bars=args.max_bars,
+                required_session_dates=tuple(args.required_session_date),
             )
         )
     except (IntradayResearchDatasetCatalogError, OSError, TypeError, ValueError):
@@ -70,6 +73,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         + "- external mutation: 0\n",
     )
     return 0
+
+
+def _session_date(value: str) -> dt.date:
+    try:
+        return dt.date.fromisoformat(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("required session date must be YYYY-MM-DD") from None
 
 
 if __name__ == "__main__":

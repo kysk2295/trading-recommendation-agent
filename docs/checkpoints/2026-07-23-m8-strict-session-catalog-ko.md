@@ -19,6 +19,8 @@ clean session을 누적하려면 결과와 무관한 사전 품질 선택 계층
   receipt에 남긴다.
 - unique session name과 거래일을 요구하고, 최소 clean session 수 미달은 dataset
   publication 전에 차단한다.
+- 예약 거래일을 `required_session_date`로 고정하면 그 날짜 자체가 clean selection에
+  포함되지 않는 한 과거 clean session만으로 새 dataset을 재발행하지 않는다.
 - 적격 세션이 최대 60개를 넘으면 날짜순 최신 60개만 bounded 입력으로 선택한다.
 - 선택된 집합은 기존 strict materializer를 다시 통과하므로 catalog 판정과 dataset
   판정이 다르면 publication이 차단된다.
@@ -35,8 +37,8 @@ clean session을 누적하려면 결과와 무관한 사전 품질 선택 계층
 - CLI help, minimum floor bad path, happy path, exact replay: `0/1/0/0`
 - happy/replay artifact mode: 모두 `600`
 - 기존 실제 4개 session audit: exit `1`, report `blocked`, data artifact `0`
-- dataset/binding/source-backed loop 회귀 포함: `28 passed`
-- 전체 pytest: `3409 passed`
+- dataset/binding/source-backed loop 회귀 포함: `29 passed`
+- 전체 pytest: `3410 passed`
 - changed-file Ruff, basedpyright `0 errors, 0 warnings`, compileall 통과
 - external mutation: `0`
 
