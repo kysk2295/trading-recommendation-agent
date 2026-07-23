@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,13 @@ def test_bounded_loader_reads_current_intraday_example() -> None:
     assert len(bars) == 7
     assert bars[0].symbol == "DEMO"
     assert bars[-1].timestamp.minute == 36
+
+
+def test_bounded_loader_hashes_the_exact_bytes_it_parses() -> None:
+    source = replay.load_bounded_bar_source(EXAMPLE, max_rows=10, max_sessions=1)
+
+    assert source.bars == replay.load_bounded_bars(EXAMPLE, max_rows=10, max_sessions=1)
+    assert source.sha256 == hashlib.sha256(EXAMPLE.read_bytes()).hexdigest()
 
 
 def test_bounded_loader_stops_before_oversized_history_is_processed() -> None:

@@ -27,7 +27,7 @@ from trading_agent.private_directory_identity import (
     require_open_directory_path,
     require_private_directory,
 )
-from trading_agent.replay import load_bounded_bars
+from trading_agent.replay import load_bounded_bar_source
 from trading_agent.source_backed_intraday_design import register_source_backed_intraday_design
 from trading_agent.source_driven_hypothesis_queue import load_source_driven_hypothesis_queue
 
@@ -73,12 +73,15 @@ def run_intraday_research_loop(
         item.strategy.value not in lane_manifests[0].strategy_ids for item in manifest.hypotheses
     ):
         raise IntradayResearchLoopError
-    bars = load_bounded_bars(
+    source = load_bounded_bar_source(
         paths.input_csv,
         max_rows=manifest.max_bars,
         max_sessions=manifest.max_sessions,
     )
-    data_version = _file_sha256(paths.input_csv)
+    if manifest.schema_version == 2 and manifest.input_sha256 != source.sha256:
+        raise IntradayResearchLoopError
+    bars = source.bars
+    data_version = source.sha256
     manifest_sha256 = hashlib.sha256(canonical_experiment_ledger_json(manifest).encode()).hexdigest()
     if manifest.schema_version == 1:
         _ = bootstrap_current_intraday_experiments(
@@ -127,11 +130,6 @@ def run_intraday_research_loop(
         review_artifacts_created=review_created,
         decisions=tuple(decisions),
     )
-
-
-def _file_sha256(path: Path) -> str:
-    with path.open("rb") as handle:
-        return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
 @contextmanager

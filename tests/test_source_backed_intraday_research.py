@@ -3,8 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from trading_agent.experiment_ledger_store import ExperimentLedgerReader, ExperimentLedgerStore
-from trading_agent.intraday_research_loop import IntradayResearchLoopPaths, run_intraday_research_loop
+from trading_agent.intraday_research_loop import (
+    IntradayResearchLoopError,
+    IntradayResearchLoopPaths,
+    run_intraday_research_loop,
+)
 from trading_agent.intraday_research_loop_models import IntradayResearchManifest
 from trading_agent.lane_bootstrap import bootstrap_lane_control_plane
 from trading_agent.lane_registry_store import LaneRegistryStore
@@ -22,6 +28,7 @@ from trading_agent.source_driven_hypothesis_queue_models import HypothesisQueueR
 PROJECT = Path(__file__).resolve().parents[1]
 SOURCE_EXAMPLE = PROJECT / "examples" / "research" / "us-swing-new-high-rvol-v1.json"
 INPUT_CSV = PROJECT / "examples" / "example_intraday.csv"
+INPUT_SHA256 = "2a0222a20540d7d07b95130dc6a7414733f75f5210958820fde8021259e96391"
 
 
 def test_source_backed_intraday_manifest_binds_queue_card_and_new_version() -> None:
@@ -39,6 +46,7 @@ def test_source_backed_intraday_manifest_binds_queue_card_and_new_version() -> N
                 }
             ],
             "source_queue_snapshot_id": "c" * 64,
+            "input_sha256": INPUT_SHA256,
             "registered_at": "2026-07-23T02:32:00Z",
             "evaluator_version": "intraday_walk_forward_v1",
             "minimum_training_sessions": 0,
@@ -56,6 +64,7 @@ def test_source_backed_intraday_manifest_binds_queue_card_and_new_version() -> N
     assert selection.strategy_version == "first_vwap_reclaim_source_v2"
     assert selection.queue_card_key == "b" * 64
     assert manifest.source_queue_snapshot_id == "c" * 64
+    assert manifest.input_sha256 == INPUT_SHA256
 
 
 def test_source_backed_design_registers_exact_new_version_and_replays(tmp_path: Path) -> None:
@@ -130,6 +139,33 @@ def test_source_backed_intraday_loop_runs_historical_trial_and_independent_revie
     assert projected.snapshot.items[0].route is HypothesisQueueRoute.INDEPENDENT_REVIEW
 
 
+def test_source_backed_intraday_loop_rejects_unregistered_input_before_version(tmp_path: Path) -> None:
+    ledger = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
+    _ = register_research_hypothesis_manifest(_source_card_manifest(tmp_path), ledger)
+    queue = project_source_driven_hypothesis_queue(ExperimentLedgerReader(ledger.path))
+    queue_path, _ = publish_source_driven_hypothesis_queue(tmp_path / "queue", queue)
+    lane_registry = tmp_path / "lane.sqlite3"
+    _ = bootstrap_lane_control_plane(LaneRegistryStore(lane_registry))
+    manifest = _research_manifest(queue.snapshot_id, queue.snapshot.items[0].card_key).model_copy(
+        update={"input_sha256": "d" * 64}
+    )
+
+    with pytest.raises(IntradayResearchLoopError):
+        _ = run_intraday_research_loop(
+            manifest,
+            IntradayResearchLoopPaths(
+                input_csv=INPUT_CSV,
+                lane_registry=lane_registry,
+                experiment_ledger=ledger.path,
+                artifact_root=tmp_path / "artifacts",
+                review_root=tmp_path / "reviews",
+                source_queue_artifact=queue_path,
+            ),
+        )
+
+    assert ExperimentLedgerReader(ledger.path).strategy_versions() == ()
+
+
 def _research_manifest(snapshot_id: str, card_key: str) -> IntradayResearchManifest:
     return IntradayResearchManifest.model_validate(
         {
@@ -145,6 +181,7 @@ def _research_manifest(snapshot_id: str, card_key: str) -> IntradayResearchManif
                 }
             ],
             "source_queue_snapshot_id": snapshot_id,
+            "input_sha256": INPUT_SHA256,
             "registered_at": "2026-07-23T02:32:00Z",
             "evaluator_version": "intraday_walk_forward_v1",
             "minimum_training_sessions": 0,

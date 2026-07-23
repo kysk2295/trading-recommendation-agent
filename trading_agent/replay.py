@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import hashlib
+import io
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +17,8 @@ from trading_agent.models import (
     RecommendationState,
 )
 from trading_agent.store import PaperStore
+
+_MAX_BOUNDED_REPLAY_BYTES = 64 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +37,12 @@ class BoundedReplaySourceError(ValueError):
         return f"bounded replay source rejected: {self.reason}"
 
 
+@dataclass(frozen=True, slots=True)
+class BoundedBarSource:
+    bars: tuple[BarInput, ...]
+    sha256: str
+
+
 def load_bars(path: Path) -> tuple[BarInput, ...]:
     with path.open(encoding="utf-8", newline="") as handle:
         rows = tuple(csv.DictReader(handle))
@@ -46,25 +56,44 @@ def load_bounded_bars(
     max_rows: int,
     max_sessions: int,
 ) -> tuple[BarInput, ...]:
+    return load_bounded_bar_source(
+        path,
+        max_rows=max_rows,
+        max_sessions=max_sessions,
+    ).bars
+
+
+def load_bounded_bar_source(
+    path: Path,
+    *,
+    max_rows: int,
+    max_sessions: int,
+) -> BoundedBarSource:
     try:
         source = path.resolve(strict=True)
         if max_rows < 1 or max_sessions < 1 or "regend_us_stocks" in source.parts:
             raise BoundedReplaySourceError("unsafe_source_or_budget")
+        raw_bytes = source.read_bytes()
+        if len(raw_bytes) > _MAX_BOUNDED_REPLAY_BYTES:
+            raise BoundedReplaySourceError("byte_budget_exceeded")
         bars: list[BarInput] = []
         sessions: set[dt.date] = set()
-        with source.open(encoding="utf-8", newline="") as handle:
-            for index, raw in enumerate(csv.DictReader(handle)):
-                if index >= max_rows:
-                    raise BoundedReplaySourceError("row_budget_exceeded")
-                row = {key: value or "" for key, value in raw.items()}
-                bar = _bar_from_row(row)
-                bars.append(bar)
-                sessions.add(bar.timestamp.astimezone(NEW_YORK).date())
-                if len(sessions) > max_sessions:
-                    raise BoundedReplaySourceError("session_budget_exceeded")
+        handle = io.StringIO(raw_bytes.decode("utf-8"), newline="")
+        for index, raw in enumerate(csv.DictReader(handle)):
+            if index >= max_rows:
+                raise BoundedReplaySourceError("row_budget_exceeded")
+            row = {key: value or "" for key, value in raw.items()}
+            bar = _bar_from_row(row)
+            bars.append(bar)
+            sessions.add(bar.timestamp.astimezone(NEW_YORK).date())
+            if len(sessions) > max_sessions:
+                raise BoundedReplaySourceError("session_budget_exceeded")
         if not bars:
             raise BoundedReplaySourceError("empty_source")
-        return tuple(sorted(bars, key=lambda row: (row.timestamp, row.symbol)))
+        return BoundedBarSource(
+            bars=tuple(sorted(bars, key=lambda row: (row.timestamp, row.symbol))),
+            sha256=hashlib.sha256(raw_bytes).hexdigest(),
+        )
     except BoundedReplaySourceError:
         raise
     except (KeyError, OSError, TypeError, UnicodeError, ValueError):

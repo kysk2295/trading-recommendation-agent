@@ -67,6 +67,7 @@ class IntradayResearchManifest(BaseModel):
     code_version: str
     hypotheses: tuple[IntradayHypothesisSelection, ...]
     source_queue_snapshot_id: str | None = None
+    input_sha256: str | None = None
     registered_at: dt.datetime
     evaluator_version: Literal["intraday_walk_forward_v1"]
     minimum_training_sessions: int = Field(ge=0, le=20)
@@ -100,13 +101,17 @@ class IntradayResearchManifest(BaseModel):
                 and (
                     self.source_queue_snapshot_id is None
                     or _HEX64.fullmatch(self.source_queue_snapshot_id) is None
+                    or self.input_sha256 is None
+                    or _HEX64.fullmatch(self.input_sha256) is None
                     or any(not item.is_source_backed for item in self.hypotheses)
                 )
             )
             or (
                 not source_backed
                 and (
-                    self.source_queue_snapshot_id is not None or any(item.is_source_backed for item in self.hypotheses)
+                    self.source_queue_snapshot_id is not None
+                    or self.input_sha256 is not None
+                    or any(item.is_source_backed for item in self.hypotheses)
                 )
             )
         ):

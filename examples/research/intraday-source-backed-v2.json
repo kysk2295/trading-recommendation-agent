@@ -11,6 +11,7 @@
     }
   ],
   "source_queue_snapshot_id": "e95a94497a42cb160bcdf3af8cd0e799d5eb426581bfee0998436987896d510f",
+  "input_sha256": "2a0222a20540d7d07b95130dc6a7414733f75f5210958820fde8021259e96391",
   "registered_at": "2026-07-23T02:32:00Z",
   "evaluator_version": "intraday_walk_forward_v1",
   "minimum_training_sessions": 0,
