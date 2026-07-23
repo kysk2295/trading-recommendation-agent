@@ -31,6 +31,14 @@
 
 16:05 EDT finalizer가 exact terminal을 만들지 못하면 Reviewer는 ledger를 생성하지 않고 차단된다. 예약 자체는 성공 증거가 아니며 실행 뒤 receipt, report, review ledger와 terminal artifact를 다시 검증해야 한다.
 
+같은 frozen runtime으로 다음 systematic 정규장의 Reviewer도 연결했다.
+
+- label: `ai.trading-agent.us-systematic-review-20260727`
+- 실행: 2026-07-27 16:12 EDT, 2026-07-28 05:12 KST
+- prerequisite: 2026-07-27 finalizer receipt의 exact `exit_code=0`
+- 기대 terminal cardinality: 누적 exact 2건
+- semantics: `--all-terminal` exact replay 뒤 `eligible_trials: 2`가 아니면 nonzero
+
 ## 검증
 
 - focused pytest: `38 passed`

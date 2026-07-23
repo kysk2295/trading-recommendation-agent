@@ -6,7 +6,7 @@
 
 ## 현재 상태
 
-- exact `5c78ee9` systematic 독립 Reviewer가 global terminal chain, persisted card, completed-daily source와 재계산한 shadow outcome의 SHA 집합을 query-only로 재검증하고 별도 mode-600 append-only ledger에 기록한다. actual 2026-07-24 trial은 아직 open이라 preflight review 0건이며, 16:05 EDT finalizer 성공 receipt 뒤 16:12 EDT에 exact card 한 건을 검토하는 at-most-once job이 예약돼 있다. 실행 전까지 terminal·review 성공 증거가 아니다.
+- exact `5c78ee9` systematic 독립 Reviewer가 global terminal chain, persisted card, completed-daily source와 재계산한 shadow outcome의 SHA 집합을 query-only로 재검증하고 별도 mode-600 append-only ledger에 기록한다. actual 2026-07-24 trial은 아직 open이라 preflight review 0건이며, 7월 24·27일 16:05 EDT finalizer 성공 receipt 뒤 각각 16:12 EDT에 exact terminal cardinality를 검토하는 at-most-once job이 예약돼 있다. 실행 전까지 terminal·review 성공 증거가 아니다.
 - M6 macro context의 첫 공식 source로 미국 재무부 Daily Treasury Par Yield Curve
   XML feed를 raw-first 연결했다. actual 2026-07 monthly GET은 최신/이전
   `2026-07-22/21`, 14개 CMT maturity, receipt/run `1/1`의 content-addressed
