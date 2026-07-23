@@ -6,6 +6,7 @@
 
 ## 현재 상태
 
+- 2026-07-23 KR M3 production shadow에서 KIS current calendar GET, pre-open trial 복구와 Hermes source-preflight incident ACK를 실제 확인했다. OpenDART 설정 부재로 four-source cycle은 data-quality `CENSORED`이며 15:32 one-shot post-session finalizer가 대기한다. account/order mutation은 0건이다.
 - KIS 읽기 전용 인증·랭킹·분봉 연결 완료
 - KIS 국내 KRX 등락률·거래량 순위의 current-date raw-first `kis_ranking` source run과 restart no-network CLI 구현
 - KR day shadow 앞의 provider-neutral market gate가 session·VI·단일가·거래정지·투자지정, 가격제한과 5초 quote evidence를 모두 요구하며 unknown을 fail-closed한다. LS/KIS 실시간 adapter와 TradeSignal/shadow fill 연결은 아직 남아 있다.
