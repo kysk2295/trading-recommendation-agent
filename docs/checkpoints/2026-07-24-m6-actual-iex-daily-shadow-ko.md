@@ -101,8 +101,30 @@ clean `3bfcf8ebc6e5fcd94c17fcb6a6c3e61524aef9e8`에서 존재하지 않는 crede
 
 ## 다음 운영 단계
 
-- 2026-07-24 정규장에는 등록된 systematic trial을 시작하고 장후 actual source로
-  no-position terminal을 확정한다.
+2026-07-24 정규장 start와 장후 terminal을 다음 frozen runtime의 at-most-once
+launchd job으로 등록했다.
+
+- frozen runtime:
+  `/private/tmp/trading-agent-systematic-20260724-e510dab`
+- exact commit:
+  `e510dab66cc3d515fb753ed03895cea4b6f9e647`
+- start label / 시각:
+  `ai.trading-agent.us-systematic-start-20260724`,
+  `2026-07-24 09:31 EDT` (`22:31 KST`)
+- finalize label / 시각:
+  `ai.trading-agent.us-systematic-finalize-20260724`,
+  `2026-07-24 16:05 EDT` (`2026-07-25 05:05 KST`)
+- wrapper / log mode: `700 / 600`
+- atomic claim·완료 receipt: enabled
+- 시작 전 상태: label running/sleeping, runs `1`, receipt·claim 없음, log `0 bytes`
+
+start tick은 provider·credential 없이 exact registered trial만 시작한다. finalize tick은
+명시적 IEX completed-daily GET 뒤 prior trial terminal과 다음 카드 등록을 함께
+처리한다. start가 누락되면 finalize는 no-position 성과를 추정하지 않고 실패한다.
+두 job은 기존 US forward·finalizer, KR finalizer와 Hermes를 변경하지 않았다.
+
+- 2026-07-24 정규장에는 예약된 systematic trial start 결과를 검증하고 장후 actual
+  source로 no-position terminal을 확정한다.
 - swing은 다음 실제 장후 source에서 고정 신호가 생길 때만 prospective trial을
   등록한다.
 - SIP entitlement가 복구되기 전에는 IEX evidence를 Paper Champion으로 승격하지
