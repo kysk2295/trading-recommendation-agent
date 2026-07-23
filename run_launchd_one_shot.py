@@ -108,6 +108,7 @@ class OneShotRequest(BaseModel):
 
 
 def prepare_one_shot(request: OneShotRequest) -> None:
+    _require_explicit_interpreter(Path(request.command[0]))
     if os.path.lexists(request.receipt) or os.path.lexists(f"{request.receipt}.claim"):
         raise OneShotInstallError("schedule_already_claimed")
     for path in (
@@ -124,6 +125,16 @@ def prepare_one_shot(request: OneShotRequest) -> None:
     _prepare_private_log(request.stdout_log)
     _prepare_private_log(request.stderr_log)
     _write_private_executable(request.wrapper, _render_runner(request))
+
+
+def _require_explicit_interpreter(executable: Path) -> None:
+    with executable.open("rb") as handle:
+        first_line = handle.readline(4096)
+    if not first_line.startswith(b"#!"):
+        return
+    interpreter = first_line[2:].lstrip().split(maxsplit=1)[0]
+    if interpreter == b"/usr/bin/env":
+        raise OneShotInstallError("explicit_interpreter_required")
 
 
 def submit_one_shot(request: OneShotRequest) -> None:

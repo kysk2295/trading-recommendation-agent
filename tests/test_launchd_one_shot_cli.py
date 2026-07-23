@@ -108,3 +108,50 @@ def test_prepare_blocks_reusing_completed_receipt(tmp_path: Path) -> None:
     assert completed.returncode == 1
     assert completed.stderr == '{"reason": "schedule_already_claimed", "result": "blocked"}\n'
     assert not wrapper.exists()
+
+
+def test_prepare_requires_explicit_interpreter_for_env_shebang(
+    tmp_path: Path,
+) -> None:
+    payload = tmp_path / "payload.py"
+    payload.write_text(
+        "#!/usr/bin/env -S uv run --script\nprint('never scheduled')\n",
+        encoding="utf-8",
+    )
+    payload.chmod(0o700)
+    output = tmp_path / "scheduled"
+    wrapper = output / "runner.zsh"
+
+    completed = subprocess.run(
+        (
+            "uv",
+            "run",
+            "--script",
+            str(SCRIPT),
+            "--label",
+            "ai.trading-agent.pytest-env-shebang",
+            "--run-at",
+            "1970-01-01T00:00:00+00:00",
+            "--wrapper",
+            str(wrapper),
+            "--stdout-log",
+            str(output / "stdout.log"),
+            "--stderr-log",
+            str(output / "stderr.log"),
+            "--receipt",
+            str(output / "receipt.txt"),
+            "--prepare-only",
+            "--",
+            str(payload),
+        ),
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 1
+    assert completed.stderr == (
+        '{"reason": "explicit_interpreter_required", "result": "blocked"}\n'
+    )
+    assert not output.exists()
