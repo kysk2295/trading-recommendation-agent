@@ -172,3 +172,33 @@ CLI 검증은 focused `10 passed`, 전체 `3428 passed`, Ruff 통과,
 basedpyright `0 errors, 0 warnings, 0 notes`다. 격리 PEP 723 `--help`, invalid
 session과 완전한 임시 control-plane happy path를 실제 subprocess로 실행했고 각각
 exit `0/1/0`, stderr `0` bytes, 보고서 mode `600`을 확인했다.
+
+## launchd at-most-once 예약 경계
+
+15:32 KST에 실행된 기존 KR finalizer는 terminal, delivery, 독립 Reviewer와 lifecycle
+control 단계가 모두 성공했고 외부 계좌·주문 mutation은 `0`이었다. 그러나 wrapper가
+정상 exit `0` 뒤 자신의 launchd label을 제거하지 않아 `launchctl submit` daemon이
+약 10초 간격으로 다시 실행했다. 17:29 KST 관측값은 `runs=670`,
+`last exit code=0`이었고 lifecycle CSV도 같은 수만큼 증가했다. payload source에는
+반복문이 없고 post-session command가 하나뿐이라 application loop가 아니라 scheduler
+종료 계약 결손으로 확정했다.
+
+commit `3e565f3a2fc42aabfe1b39f9bdc0fe6e54ded6bc`에 공용
+`run_launchd_one_shot.py`를 추가했다.
+
+- timezone-aware 실행시각, 절대 실행파일과 서로 다른 절대 artifact 경로만 허용한다.
+- stdout/stderr와 완료 receipt는 mode `600`, wrapper와 atomic claim은 mode `700`이다.
+- 실행시각 직전에 claim을 원자적으로 획득해 payload를 at-most-once로 제한한다.
+- payload 성공·실패를 private receipt에 기록한 뒤 자기 launchd label을 제거한다.
+- 완료 receipt나 기존 claim을 재사용한 새 예약은 `schedule_already_claimed`로 차단한다.
+- label, command, receipt 어느 경로도 계좌 식별자나 자격증명을 출력하지 않는다.
+
+실제 임시 launchd label을 현재 코드로 즉시 예약한 수동 QA에서는 `scheduled`,
+15초 뒤 label 부재, payload line count `1`, receipt `exit_code=0`을 확인했다.
+동일 receipt 재사용은 exit `1`로 차단됐다. CLI `--help`, timezone 없는 bad input과
+happy path는 exit `0/2/0`이었고 bad input은 artifact를 만들지 않았다.
+
+focused `2 passed`, 전체 `3430 passed`, 전체 Ruff 통과, basedpyright
+`0 errors, 0 warnings, 0 notes`다. 7월 23일과 24일 US 예약 wrapper는 이미 모든
+terminal branch에서 자기 label을 제거하므로 실행 중인 PID를 재등록하지 않았다.
+사용자 지시대로 기존 KR finalizer와 Hermes service도 중단·변경·재시작하지 않았다.
