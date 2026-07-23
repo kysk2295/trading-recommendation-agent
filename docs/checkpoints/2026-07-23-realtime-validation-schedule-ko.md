@@ -19,6 +19,14 @@ KR의 당일 data-quality censored trial은 기존
 `ai.trading-agent.kr-m3-finalize-20260723`가 15:32 KST에 terminal, 독립 Reviewer와
 lifecycle evidence로 닫는다.
 
+15:36 KST 장 시작 전 점검에서 7월 23일 forward job이 KIS 반복 server-error 복구 전
+runtime `0c7dc575`를 사용하고 있음을 발견했다. 아직 watch database를 만들기 전인
+대기 상태에서 downstream finalizer와 dataset watcher만 잠시 suspend하고 동일 label을
+retry 복구 runtime `d59d2534a2561472c894bfe2acb56bd051dfca90`로 교체한 뒤 즉시
+resume했다. downstream PID와 run count는 유지됐고 새 forward runner는 mode 700,
+stdout/stderr는 mode 600, broker mutation은 false다. KR finalizer와 Hermes service는
+이 교체 대상이 아니었다.
+
 ## 권한 경계
 
 - SIP smoke는 `--arm-read-only`만 사용하고 계좌·주문 endpoint를 호출하지 않는다.
