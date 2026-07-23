@@ -79,3 +79,22 @@ Paper arm 또는 국내 주문 endpoint가 없다.
 
 OpenDART mode-600 설정이 공급되기 전에는 complete four-source cycle과 KR 추천을 열지
 않는다. 이 세션은 champion, 수익성 또는 Allocation Manager 근거가 아니다.
+
+## 15:32 장후 finalizer 실증
+
+예약된 finalizer는 2026-07-23 15:32 KST에 실행되어 terminal, Hermes delivery,
+독립 Reviewer, lifecycle 네 phase를 모두 성공으로 닫았다.
+
+- terminal: `censored`, `no_shadow_entry_artifact`, entry/exit `0/0`
+- Reviewer: `data_quality_review`, completed/censored/failed session `0/1/0`
+- lifecycle: 기존 `experimental_shadow` 등록의 exact replay
+- terminal/review append-only 원장: 각각 1행
+- post-session report와 네 audit, terminal/Reviewer/lifecycle report: mode 600
+- stdout: 0 bytes, stderr: 의존성 설치 집계만 기록
+- automatic champion, order authority, allocation, account/order mutation: 모두 0
+
+submitted launchd job은 runner 종료 뒤에도 약 10초마다 자동 재기동되어 audit와
+운영 event 행은 늘었지만, content-addressed terminal/review/lifecycle 원장은 exact
+replay로 각각 한 행을 유지했다. 명시적으로 보존하라는 운영 제약에 따라 이 job을
+중단·변경·재시작하지 않았다. 이후 one-shot wrapper에는 종료 전 자기 label 제거를
+포함해 같은 재기동을 방지했다.
