@@ -42,3 +42,27 @@ lifecycle evidence로 닫는다.
 실제 장중 결과는 각 private mode-600 stdout/stderr/event artifact와 terminal/dataset
 artifact로 판정한다. 예약 상태 자체는 readiness, clean session, Paper 실행 또는
 성과 증거가 아니다.
+
+## 2026-07-24 연속 실행 확장
+
+7월 23일 표본이 실패하더라도 다음 정규장 표본을 자동 확보하도록 7월 24일에도
+US forward, 장중 preflight, read-only SIP smoke, 장마감 finalizer, strict causal
+dataset job을 같은 fail-closed 경계로 예약했다. forward runtime은 retry 복구가
+포함된 `d59d2534a2561472c894bfe2acb56bd051dfca90`에 고정되어 있다.
+
+dataset 뒤의 수동 단절도 제거했다. 별도
+`ai.trading-agent.intraday-research-20260724` one-shot은 dataset job이 terminal이
+될 때까지 기다린 뒤 다음을 순서대로 실행한다.
+
+1. dataset report가 `ready`이고 exact CSV/receipt가 각각 하나인지 확인한다.
+2. `26b5e2538c354837c27d827a08f45ba5cdf2a45c` frozen runtime, mode-600 KIS
+   historical-research entitlement, exact 세 queue card로 VWAP reclaim, HOD
+   breakout, Gap-and-Go READY foundation과 v2 manifest를 결속한다.
+3. 같은 CSV SHA, foundation SHA, queue snapshot을 사용해 bounded multi-strategy
+   walk-forward와 query-only 독립 Reviewer를 실행한다.
+
+dataset이 blocked이거나 artifact cardinality, runtime SHA, entitlement, queue,
+foundation 중 하나라도 다르면 후속 loop는 실행하지 않는다. runner `zsh -n`,
+`--dry-run` exit 0, unknown argument exit 2, mode 700을 확인했고 launchd의 run
+count 1·running 상태와 stdout/stderr mode 600을 확인했다. 이 예약은 주문 권한,
+lifecycle 자동 승격 또는 성과 증거가 아니다.
