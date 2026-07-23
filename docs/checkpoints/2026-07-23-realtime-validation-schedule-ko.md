@@ -291,8 +291,21 @@ Ruff, basedpyright `0 errors, 0 warnings, 0 notes`, no-excuse가 통과했다.
 - wrapper `zsh -n`: pass
 
 payload 종료 뒤 atomic receipt를 쓰고 자기 label을 제거하는 공용 at-most-once runner를
-사용한다. 이 시점에는 실행시각 전이므로 scheduled state만 검증했으며 실제 `ready`
-terminal은 22:25 이후 별도로 확인해야 한다. 기존 forward, preflight, SIP,
+사용한다. 22:25:01 KST에 실제 terminal을 확인했다.
+
+- receipt: `exit_code=0`, mode `600`
+- result: `ready`
+- combined input SHA-256:
+  `2c76600c82c525ac24980807753ad1538ff097f4cb2a98b11c6a933b1cf2c441`
+- premarket cycles / ranking requests: `65 / 390`
+- ranking snapshot rows: `29,184`
+- latest observed age / selected candidates: `139 seconds / 10`
+- quality gate relaxed: `false`
+- provider/account/order mutation: `0`
+- 종료 뒤 launchd label: 없음
+
+stdout은 `forward premarket readiness ready`, stderr는 isolated runtime의 dependency
+설치 한 줄뿐이었고 둘 다 mode `600`이었다. 기존 forward, preflight, SIP,
 option-chain, progress, finalizer, dataset/research job과 Hermes PID는 변경하지 않았다.
 
 ## M6 exact option surface 정규장 검증 예약
