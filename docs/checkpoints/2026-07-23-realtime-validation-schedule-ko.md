@@ -14,6 +14,7 @@ clean commit `0c7dc575301862d3cf0d98c6d9c16c69111783fb`의 detached runtime을 �
 | `ai.trading-agent.alpaca-sip-smoke-20260723` | 09:35 EDT | AAPL SIP trade stream 최대 3 frame read-only smoke |
 | `ai.trading-agent.us-day-finalizer-20260723` | watch 종료 뒤, 최대 16:15 EDT | flat broker 상태, reconciliation, real scheduled-session terminal |
 | `ai.trading-agent.intraday-dataset-20260723` | watch 종료 뒤, 최대 16:30 EDT | strict quality gate를 통한 causal research CSV materialization |
+| `ai.trading-agent.intraday-research-20260723` | dataset 종료 뒤, 최대 17:00 EDT | exact CSV·receipt의 세 READY foundation/v2 manifest 결속과 실제 walk-forward·독립 Reviewer |
 
 KR의 당일 data-quality censored trial은 기존
 `ai.trading-agent.kr-m3-finalize-20260723`가 15:32 KST에 terminal, 독립 Reviewer와
@@ -26,6 +27,12 @@ retry 복구 runtime `d59d2534a2561472c894bfe2acb56bd051dfca90`로 교체한 뒤
 resume했다. downstream PID와 run count는 유지됐고 새 forward runner는 mode 700,
 stdout/stderr는 mode 600, broker mutation은 false다. KR finalizer와 Hermes service는
 이 교체 대상이 아니었다.
+
+같은 날 dataset 뒤 수동 단절도 남기지 않았다. 별도 actual research job은
+`26b5e2538c354837c27d827a08f45ba5cdf2a45c` frozen runtime에서 dataset READY와
+artifact cardinality를 먼저 확인하고, KIS entitlement와 exact 세 queue card가 모두
+맞을 때만 binding과 Reviewer를 실행한다. runner `zsh -n`, dry-run, bad input과
+mode 700, launchd run count 1·running, stdout/stderr mode 600을 확인했다.
 
 ## 권한 경계
 
