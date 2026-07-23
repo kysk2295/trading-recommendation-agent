@@ -22,7 +22,8 @@
 
 ## 닫은 결함
 
-체크포인트 `aa8730c`, `293c28c`, `a8ee8dc`, `db72cc1`은 운영 결함을 닫는다.
+체크포인트 `aa8730c`, `293c28c`, `a8ee8dc`, `db72cc1`, `6805be5`는 운영 결함을
+닫는다.
 
 1. trial CLI는 명시 시각과 calendar 관측시각이 절대시각 기준 같은 초인 경우에만
    관측시각으로 올려 causal ordering을 보존한다. 다음 초 또는 더 먼 미래 evidence는
@@ -39,6 +40,10 @@
 6. generic preflight incident는 exact terminal replay를 먼저 확인한 뒤 OpenDART·LS·KIS
    credential file 구조만 검증하는 전용 typed preflight 실패에서만 만든다. collector의
    다른 예외는 이 상태로 축소하지 않는다.
+7. typed preflight 실패와 partial source ledger가 함께 있으면 source-specific
+   `blocked_source_incomplete`를 우선하고 generic incident를 만들지 않는다.
+8. incident projection의 lease·SQLite·conflict·I/O 실패는 삼키지 않고 typed delivery
+   error로 전파해 supervisor 재시작과 운영 감시가 실패를 관측하게 한다.
 
 실제 delivery DB에서 event `38 -> 39`, attempt `43 -> 44`, acknowledgement
 `27 -> 28`을 확인했다. 같은 cycle 재실행 뒤 세 수는 변하지 않았고 KR preflight
@@ -61,13 +66,14 @@ Paper arm 또는 국내 주문 endpoint가 없다.
 ## 검증
 
 - RED: 같은 초의 259228 microsecond calendar와 source-ledger 이전 preflight failure
-- focused regression: `52 passed`
+- focused regressions: 기존 preflight 묶음 `52 passed`; 리뷰 blocker 묶음 `23 passed`
 - Ruff: 통과
 - basedpyright: `0 errors, 0 warnings, 0 notes`
-- 전체 pytest: 제품/시장 코드 `3277 passed`; 별도 Grok harness `84 passed, 5 failed`.
-  합계 `3361 passed, 5 failed`이며 실패 5개는 임시 repo에서 `uv run --offline`이
+- 전체 pytest: 제품/시장 코드 `3279 passed`; 별도 Grok harness `84 passed, 5 failed`.
+  합계 `3363 passed, 5 failed`이며 실패 5개는 임시 repo에서 `uv run --offline`이
   pytest·Ruff·basedpyright 실행환경을 해석하지 못한 현재 host 의존 경로다.
 - actual CLI replay: incident `1 -> 1`, delivery/attempt/ACK 추가 `0/0/0`
+- fixture CLI happy/replay: exit `0/0`, projection run `1`, Opportunity `1`, report mode `600`
 - domestic account/order mutation: `0`
 - Alpaca Paper POST/DELETE: `0`
 
