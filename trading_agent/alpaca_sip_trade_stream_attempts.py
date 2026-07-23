@@ -75,7 +75,7 @@ class AlpacaSipConnectionAttemptStore:
 
     def append(self, attempt: AlpacaSipFailedConnectionAttempt) -> None:
         try:
-            content_hash = _content_hash(attempt)
+            content_hash = connection_attempt_content_hash(attempt)
             row = (
                 attempt.connection_epoch,
                 attempt.config.symbol,
@@ -204,12 +204,12 @@ def _from_row(
     ).fetchone()
     if not limits[attempt.stage][0] <= controls <= limits[attempt.stage][1] or terminal is not None:
         raise AlpacaSipTradeStreamProtocolError
-    if row[6] != _content_hash(attempt):
+    if row[6] != connection_attempt_content_hash(attempt):
         raise AlpacaSipTradeStreamProtocolError
     return attempt
 
 
-def _content_hash(attempt: AlpacaSipFailedConnectionAttempt) -> str:
+def connection_attempt_content_hash(attempt: AlpacaSipFailedConnectionAttempt) -> str:
     content = {
         "connection_epoch": attempt.connection_epoch,
         "failed_at": attempt.failed_at.astimezone(dt.UTC).isoformat(),
@@ -227,4 +227,5 @@ __all__ = (
     "AlpacaSipConnectionAttemptTracker",
     "AlpacaSipConnectionFailureCode",
     "AlpacaSipFailedConnectionAttempt",
+    "connection_attempt_content_hash",
 )
