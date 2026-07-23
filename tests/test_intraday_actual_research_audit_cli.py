@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import stat
 import subprocess
@@ -12,12 +13,17 @@ import pytest
 from tests.intraday_research_input_binding_fixtures import NOW
 from tests.test_intraday_actual_research import _request
 from tests.test_intraday_actual_research_plan import _spec
+from trading_agent.experiment_ledger_keys import (
+    canonical_experiment_ledger_json,
+)
 from trading_agent.experiment_ledger_store import ExperimentLedgerReader
 from trading_agent.intraday_actual_research_audit import (
     audit_intraday_actual_research,
 )
 from trading_agent.intraday_actual_research_audit_models import (
+    IntradayActualResearchAuditArtifact,
     IntradayActualResearchAuditError,
+    IntradayActualResearchAuditPayload,
     IntradayActualResearchAuditRequest,
 )
 from trading_agent.intraday_actual_research_plan import (
@@ -25,6 +31,9 @@ from trading_agent.intraday_actual_research_plan import (
 )
 from trading_agent.intraday_equal_risk_comparison_models import (
     EqualRiskComparisonStatus,
+)
+from trading_agent.intraday_overfit_diagnostics_models import (
+    IntradayOverfitDiagnosticsStatus,
 )
 from trading_agent.intraday_research_input_binding_models import (
     IntradayResearchStrategyBinding,
@@ -128,6 +137,10 @@ def test_actual_research_audit_cli_proves_exact_terminal_chain(
     assert audit["payload"]["reviewer_decisions"] == ["hold"]
     assert audit["payload"]["comparison_artifact_id"] is None
     assert audit["payload"]["comparison_status"] is None
+    assert audit["payload"]["overfit_diagnostics_artifact_id"] is None
+    assert audit["payload"]["overfit_diagnostics_status"] is None
+    assert audit["schema_version"] == 3
+    assert audit["payload"]["schema_version"] == 3
     assert audit["payload"]["automatic_state_change_allowed"] is False
     assert audit["payload"]["order_authority_change_allowed"] is False
     assert audit["payload"]["allocation_change_allowed"] is False
@@ -135,10 +148,29 @@ def test_actual_research_audit_cli_proves_exact_terminal_chain(
     assert "- equal-risk comparison: not_applicable" in (output / "intraday_actual_research_audit_ko.md").read_text(
         encoding="utf-8"
     )
+    assert "- DSR/PBO diagnostics: not_applicable" in (
+        output / "intraday_actual_research_audit_ko.md"
+    ).read_text(encoding="utf-8")
     assert all(
         stat.S_IMODE(path.stat().st_mode) == 0o600
         for path in (*artifacts, output / "intraday_actual_research_audit_ko.md")
     )
+
+    legacy_raw = audit["payload"].copy()
+    legacy_raw["schema_version"] = 2
+    del legacy_raw["overfit_diagnostics_artifact_id"]
+    del legacy_raw["overfit_diagnostics_status"]
+    legacy_payload = IntradayActualResearchAuditPayload.model_validate(legacy_raw)
+    legacy_id = hashlib.sha256(
+        canonical_experiment_ledger_json(legacy_payload).encode()
+    ).hexdigest()
+    legacy_artifact = IntradayActualResearchAuditArtifact(
+        schema_version=2,
+        artifact_id=legacy_id,
+        payload=legacy_payload,
+    )
+    assert legacy_artifact.schema_version == 2
+    assert legacy_artifact.payload.schema_version == 2
 
 
 def test_actual_research_audit_preserves_three_strategy_foundation_order(
@@ -212,6 +244,11 @@ def test_actual_research_audit_preserves_three_strategy_foundation_order(
     assert tuple(item.value for item in result.artifact.payload.reviewer_decisions) == ("hold", "hold", "hold")
     assert result.artifact.payload.comparison_artifact_id is not None
     assert result.artifact.payload.comparison_status is EqualRiskComparisonStatus.COLLECTING
+    assert result.artifact.payload.overfit_diagnostics_artifact_id is not None
+    assert (
+        result.artifact.payload.overfit_diagnostics_status
+        is IntradayOverfitDiagnosticsStatus.COLLECTING
+    )
     comparisons = tuple((tmp_path / "audit-three").glob("intraday_equal_risk_comparison_*.json"))
     assert len(comparisons) == 1
     comparison = json.loads(comparisons[0].read_text(encoding="utf-8"))
@@ -220,6 +257,19 @@ def test_actual_research_audit_preserves_three_strategy_foundation_order(
         result.artifact.payload.trial_ids
     )
     assert stat.S_IMODE(comparisons[0].stat().st_mode) == 0o600
+    diagnostics = tuple(
+        (tmp_path / "audit-three").glob(
+            "intraday_overfit_diagnostics_*.json"
+        )
+    )
+    assert len(diagnostics) == 1
+    diagnostic = json.loads(diagnostics[0].read_text(encoding="utf-8"))
+    assert diagnostic["artifact_id"] == (
+        result.artifact.payload.overfit_diagnostics_artifact_id
+    )
+    assert diagnostic["payload"]["statistics"]["status"] == "collecting"
+    assert len(diagnostic["payload"]["statistics"]["candidates"]) == 3
+    assert stat.S_IMODE(diagnostics[0].stat().st_mode) == 0o600
 
     early_receipt = tmp_path / "research-three-early.receipt"
     write_private_report(
@@ -242,6 +292,11 @@ def test_actual_research_audit_preserves_three_strategy_foundation_order(
             )
         )
     assert not tuple((tmp_path / "audit-three-early").glob("intraday_equal_risk_comparison_*.json"))
+    assert not tuple(
+        (tmp_path / "audit-three-early").glob(
+            "intraday_overfit_diagnostics_*.json"
+        )
+    )
 
     cli_output = tmp_path / "audit-three-cli"
     completed = subprocess.run(
@@ -274,7 +329,13 @@ def test_actual_research_audit_preserves_three_strategy_foundation_order(
     assert "- equal-risk comparison: collecting" in (cli_output / "intraday_actual_research_audit_ko.md").read_text(
         encoding="utf-8"
     )
+    assert "- DSR/PBO diagnostics: collecting" in (
+        cli_output / "intraday_actual_research_audit_ko.md"
+    ).read_text(encoding="utf-8")
     assert len(tuple(cli_output.glob("intraday_equal_risk_comparison_*.json"))) == 1
+    assert len(
+        tuple(cli_output.glob("intraday_overfit_diagnostics_*.json"))
+    ) == 1
 
 
 def test_actual_research_audit_rejects_plan_producer_identity_drift(

@@ -12,6 +12,9 @@ from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_jso
 from trading_agent.intraday_equal_risk_comparison_models import (
     EqualRiskComparisonStatus,
 )
+from trading_agent.intraday_overfit_diagnostics_models import (
+    IntradayOverfitDiagnosticsStatus,
+)
 from trading_agent.intraday_research_loop_models import IntradayReviewerDecision
 
 _HEX40: Final = re.compile(r"^[0-9a-f]{40}$")
@@ -61,7 +64,7 @@ class IntradayActualResearchAuditRequest(BaseModel):
 class IntradayActualResearchAuditPayload(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[2] = 2
+    schema_version: Literal[2, 3] = 3
     run_key: str
     plan_id: str
     research_completed_at_epoch: int
@@ -77,6 +80,8 @@ class IntradayActualResearchAuditPayload(BaseModel):
     reviewer_decisions: tuple[IntradayReviewerDecision, ...]
     comparison_artifact_id: str | None
     comparison_status: EqualRiskComparisonStatus | None
+    overfit_diagnostics_artifact_id: str | None = None
+    overfit_diagnostics_status: IntradayOverfitDiagnosticsStatus | None = None
     automatic_state_change_allowed: Literal[False] = False
     order_authority_change_allowed: Literal[False] = False
     allocation_change_allowed: Literal[False] = False
@@ -85,6 +90,7 @@ class IntradayActualResearchAuditPayload(BaseModel):
     def validate_payload(self) -> Self:
         cardinality = len(self.foundation_sha256s)
         comparison_required = cardinality >= 2
+        diagnostics_required = self.schema_version == 3 and cardinality == 3
         if (
             _RUN_KEY.fullmatch(self.run_key) is None
             or _HEX64.fullmatch(self.plan_id) is None
@@ -101,6 +107,21 @@ class IntradayActualResearchAuditPayload(BaseModel):
             or (self.comparison_artifact_id is not None and _HEX64.fullmatch(self.comparison_artifact_id) is None)
             or (self.comparison_artifact_id is not None) is not comparison_required
             or (self.comparison_status is not None) is not comparison_required
+            or (
+                self.overfit_diagnostics_artifact_id is not None
+                and _HEX64.fullmatch(
+                    self.overfit_diagnostics_artifact_id
+                )
+                is None
+            )
+            or (
+                self.overfit_diagnostics_artifact_id is not None
+            )
+            is not diagnostics_required
+            or (
+                self.overfit_diagnostics_status is not None
+            )
+            is not diagnostics_required
             or any(not value for value in self.trial_ids)
             or any(
                 len(set(values)) != cardinality
@@ -128,14 +149,17 @@ class IntradayActualResearchAuditPayload(BaseModel):
 class IntradayActualResearchAuditArtifact(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[2] = 2
+    schema_version: Literal[2, 3] = 3
     artifact_id: str
     payload: IntradayActualResearchAuditPayload
 
     @model_validator(mode="after")
     def validate_artifact(self) -> Self:
         expected = hashlib.sha256(canonical_experiment_ledger_json(self.payload).encode()).hexdigest()
-        if self.artifact_id != expected:
+        if (
+            self.artifact_id != expected
+            or self.schema_version != self.payload.schema_version
+        ):
             raise IntradayActualResearchAuditError("invalid_artifact_id")
         return self
 

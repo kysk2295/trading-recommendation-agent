@@ -75,6 +75,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     payload = result.artifact.payload
     decisions = ", ".join(item.value for item in payload.reviewer_decisions)
     comparison = "not_applicable" if payload.comparison_status is None else payload.comparison_status.value
+    diagnostics = (
+        "not_applicable"
+        if payload.overfit_diagnostics_status is None
+        else payload.overfit_diagnostics_status.value
+    )
     write_private_report(
         output_root / REPORT_NAME,
         "# Intraday actual research terminal audit\n\n"
@@ -90,6 +95,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         + f"- independent reviews: {len(payload.review_artifact_ids)}\n"
         + f"- reviewer decisions: {decisions}\n"
         + f"- equal-risk comparison: {comparison}\n"
+        + f"- DSR/PBO diagnostics: {diagnostics}\n"
         + "- automatic state change: false\n"
         + "- order authority change: false\n"
         + "- allocation change: false\n"

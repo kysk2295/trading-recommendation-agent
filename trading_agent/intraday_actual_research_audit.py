@@ -34,6 +34,10 @@ from trading_agent.intraday_equal_risk_comparison import (
     EqualRiskComparisonRequest,
     compare_intraday_equal_risk_trials,
 )
+from trading_agent.intraday_overfit_diagnostics import (
+    IntradayOverfitDiagnosticsRequest,
+    diagnose_intraday_overfit,
+)
 from trading_agent.private_immutable_file import (
     InvalidPrivateImmutableFileError,
     publish_private_immutable_text,
@@ -53,20 +57,34 @@ def audit_intraday_actual_research(
         _require_ready_report(request.research_report, plan)
         dataset, binding = load_actual_research_inputs(plan)
         trials = load_actual_research_trials(plan, dataset, binding)
+        reviewed_at = dt.datetime.fromtimestamp(completed_at, tz=dt.UTC)
+        ledger = ExperimentLedgerReader(
+            plan.content.spec.paths.experiment_ledger
+        )
         comparison = (
             compare_intraday_equal_risk_trials(
                 EqualRiskComparisonRequest(
-                    ledger=ExperimentLedgerReader(plan.content.spec.paths.experiment_ledger),
+                    ledger=ledger,
                     experiments=trials.experiments,
                     reviews=trials.reviews,
                     artifact_root=request.output_root,
-                    reviewed_at=dt.datetime.fromtimestamp(
-                        completed_at,
-                        tz=dt.UTC,
-                    ),
+                    reviewed_at=reviewed_at,
                 )
             )[0]
             if len(trials.trial_ids) >= 2
+            else None
+        )
+        diagnostics = (
+            diagnose_intraday_overfit(
+                IntradayOverfitDiagnosticsRequest(
+                    ledger=ledger,
+                    experiments=trials.experiments,
+                    reviews=trials.reviews,
+                    artifact_root=request.output_root,
+                    reviewed_at=reviewed_at,
+                )
+            )[0]
+            if len(trials.trial_ids) == 3
             else None
         )
         payload = IntradayActualResearchAuditPayload(
@@ -85,6 +103,14 @@ def audit_intraday_actual_research(
             reviewer_decisions=trials.reviewer_decisions,
             comparison_artifact_id=(None if comparison is None else comparison.artifact_id),
             comparison_status=(None if comparison is None else comparison.payload.status),
+            overfit_diagnostics_artifact_id=(
+                None if diagnostics is None else diagnostics.artifact_id
+            ),
+            overfit_diagnostics_status=(
+                None
+                if diagnostics is None
+                else diagnostics.payload.statistics.status
+            ),
         )
         artifact_id = _sha(canonical_experiment_ledger_json(payload))
         artifact = IntradayActualResearchAuditArtifact(
