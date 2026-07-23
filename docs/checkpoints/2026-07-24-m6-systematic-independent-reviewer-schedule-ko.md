@@ -43,6 +43,7 @@
 
 - focused pytest: `38 passed`
 - Reviewer/CLI 추가 테스트: `8 passed`
+- 전체 pytest 최신 기준선: `3579 passed`
 - Ruff: 통과
 - basedpyright: `0 errors, 0 warnings, 0 notes`
 - CLI `--help`: 통과

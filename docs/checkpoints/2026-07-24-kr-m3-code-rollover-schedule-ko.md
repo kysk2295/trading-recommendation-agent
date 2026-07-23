@@ -50,6 +50,7 @@
 ## 검증
 
 - rollover와 기존 registration focused: `11 passed`
+- 전체 pytest: `3579 passed in 220.45s`
 - Ruff: 통과
 - basedpyright: `0 errors, 0 warnings, 0 notes`
 - CLI `--help`, bad SHA, happy, exact replay: `0/1/0/0`
