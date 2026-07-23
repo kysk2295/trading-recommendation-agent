@@ -75,12 +75,34 @@ Manager 금지도 유지한다.
 - changed-file format과 `git diff --check`: 통과
 - production Python 최대 LOC: core `157`, models `155`, CLI `104`
 
+## Actual terminal audit 결속
+
+commit `3cfd7c7e966a75e08ae0c471aab46853837d2faa`에서 actual research
+terminal audit을 schema v2로 올리고, 두 개 이상의 전략을 감사할 때 위 comparison
+경계를 같은 terminal 실행 안에서 호출하도록 결속했다.
+
+- terminal audit이 이미 검증한 exact experiment와 독립 review 객체를 comparison에
+  전달하므로 임의 경로나 별도 candidate 입력을 받지 않는다.
+- research 성공 receipt의 `completed_at_epoch`를 comparison 시각으로 사용하며, review
+  원천보다 이른 receipt는 comparison artifact 발행 전에 차단한다.
+- 2~3전략 audit은 comparison artifact ID와 `collecting|comparison_ready` 상태를
+  content-addressed terminal artifact에 포함한다.
+- 단일 전략 audit은 두 필드를 모두 비워 두고 보고서에 `not_applicable`을 명시한다.
+- comparison artifact는 terminal audit과 같은 private output root에 mode `600`으로
+  발행되며 lifecycle·주문·allocation 변경 권한은 계속 없다.
+
+TDD에서 먼저 comparison 필드 결손을 확인한 뒤 1전략, 3전략, 이른 receipt 차단과
+실제 subprocess happy path를 추가했다. 변경 뒤 audit 타깃은 `5 passed`, 전체
+pytest는 `3583 passed in 221.59s`, 전체 Ruff와 basedpyright
+`0 errors, 0 warnings, 0 notes`, CLI help/bad/happy가 통과했다.
+
 ## 다음 운영 경계
 
-이 구현은 아직 예약된 2026-07-24 frozen actual-research payload에 소급 주입하지
-않았다. clean actual session에서 causal CSV, READY v2 manifest, 세 completed
-walk-forward와 독립 review가 실제 생성된 뒤 같은 query-only CLI로 comparison
-artifact를 추가 실행하고 exact terminal audit에 결속해야 한다.
+이 구현은 예약된 2026-07-24 및 2026-07-27 frozen actual-research payload에 소급
+주입하지 않았다. clean actual session에서 causal CSV, READY v2 manifest, 세
+completed walk-forward와 독립 review가 실제 생성된 뒤 exact
+`3cfd7c7e966a75e08ae0c471aab46853837d2faa` 이상 runtime으로 terminal audit을
+실행해야 comparison까지 한 terminal artifact에 결속된다.
 
 실제 비교 표본이 성숙하더라도 DSR/PBO, parameter plateau, SIP 또는 동등
 consolidated feed와 broker/shadow Paper evidence는 별도 승격 검토 입력이다.
