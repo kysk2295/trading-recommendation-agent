@@ -4,6 +4,7 @@ import datetime as dt
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Final
 from zoneinfo import ZoneInfo
 
@@ -21,6 +22,11 @@ from trading_agent.alpaca_models import (
 NEW_YORK: Final = ZoneInfo("America/New_York")
 
 
+class AlpacaDailyFeed(StrEnum):
+    IEX = "iex"
+    SIP = "sip"
+
+
 @dataclass(frozen=True, slots=True)
 class AlpacaPageRequest:
     session_date: dt.date
@@ -36,6 +42,7 @@ class AlpacaDailyPageRequest:
     start_date: dt.date
     end_date: dt.date
     page_token: str | None = None
+    feed: AlpacaDailyFeed = AlpacaDailyFeed.SIP
 
 
 class AlpacaBarsClient:
@@ -88,7 +95,7 @@ class AlpacaBarsClient:
             "end": request.end_date.isoformat(),
             "limit": "10000",
             "adjustment": "raw",
-            "feed": "sip",
+            "feed": request.feed.value,
             "asof": request.session_date.isoformat(),
             "sort": "asc",
         }

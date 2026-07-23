@@ -5,13 +5,14 @@ import json
 import re
 from decimal import Decimal
 from pathlib import Path
-from typing import Final, Protocol, override
+from typing import Final, Literal, Protocol, override
 
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
-from trading_agent.alpaca_bars import AlpacaDailyPageRequest
+from trading_agent.alpaca_bars import AlpacaDailyFeed, AlpacaDailyPageRequest
 from trading_agent.alpaca_http import AlpacaApiError
 from trading_agent.alpaca_models import AlpacaBarsPayload
+from trading_agent.data_capability_models import DataSourceId
 from trading_agent.swing_shadow_models import (
     SwingDailyBar,
     SwingDailySource,
@@ -37,9 +38,10 @@ class InvalidSwingDailySourceError(ValueError):
 class _FixtureManifest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: int
+    schema_version: Literal[2]
     session_date: dt.date
     observed_at: dt.datetime
+    source_id: DataSourceId
     universe_id: str
     symbols: tuple[str, ...]
     bars_file: str
@@ -47,20 +49,14 @@ class _FixtureManifest(BaseModel):
     @model_validator(mode="after")
     def validate_manifest(self) -> _FixtureManifest:
         path = Path(self.bars_file)
-        if (
-            self.schema_version != 1
-            or path.name != self.bars_file
-            or path.suffix != ".json"
-        ):
+        if path.name != self.bars_file or path.suffix != ".json":
             raise ValueError("invalid swing fixture manifest")
         return self
 
 
 def load_swing_daily_source(fixture_root: Path, *, session_date: dt.date) -> SwingDailySource:
     try:
-        manifest = _FixtureManifest.model_validate_json(
-            (fixture_root / "manifest.json").read_text(encoding="utf-8")
-        )
+        manifest = _FixtureManifest.model_validate_json((fixture_root / "manifest.json").read_text(encoding="utf-8"))
         if manifest.session_date != session_date:
             raise InvalidSwingDailySourceError
         raw_bars = json.loads((fixture_root / manifest.bars_file).read_text(encoding="utf-8"))
@@ -76,6 +72,7 @@ def load_swing_daily_source(fixture_root: Path, *, session_date: dt.date) -> Swi
         return SwingDailySource(
             session_date=manifest.session_date,
             observed_at=manifest.observed_at,
+            source_id=manifest.source_id,
             universe_id=manifest.universe_id,
             symbols=manifest.symbols,
             bars=bars,
@@ -92,6 +89,7 @@ def collect_current_swing_daily_source(
     symbols: tuple[str, ...],
     session_date: dt.date,
     observed_at: dt.datetime,
+    feed: AlpacaDailyFeed,
     universe_id: str,
     now: dt.datetime,
 ) -> SwingDailySource:
@@ -107,10 +105,12 @@ def collect_current_swing_daily_source(
             symbols=normalized,
             session_date=session_date,
             observed_at=observed_at,
+            feed=feed,
         )
         return SwingDailySource(
             session_date=session_date,
             observed_at=observed_at,
+            source_id=DataSourceId(provider="alpaca", feed=feed.value),
             universe_id=universe_id,
             symbols=normalized,
             bars=raw_bars,
@@ -152,6 +152,7 @@ def _collect_bars(
     symbols: tuple[str, ...],
     session_date: dt.date,
     observed_at: dt.datetime,
+    feed: AlpacaDailyFeed,
 ) -> tuple[SwingDailyBar, ...]:
     page_token: str | None = None
     seen_tokens: set[str] = set()
@@ -165,6 +166,7 @@ def _collect_bars(
                 start_date=first_date,
                 end_date=session_date,
                 page_token=page_token,
+                feed=feed,
             )
         )
         for symbol, symbol_bars in payload.bars.items():

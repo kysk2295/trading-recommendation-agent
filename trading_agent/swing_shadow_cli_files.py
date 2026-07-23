@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, override
 
+from trading_agent.swing_shadow_models import SwingDailySource
+
 SWING_OUTBOX_NAME: Final = "trade-signals.v1.jsonl"
 SWING_CARDS_NAME: Final = "trade-signal-cards-ko"
 SWING_REPORT_NAME: Final = "us_swing_shadow_summary_ko.md"
+SWING_SOURCES_DIR: Final = "daily-sources"
 
 
 class InvalidSwingShadowCliTargetError(ValueError):
@@ -58,25 +62,58 @@ def validate_swing_shadow_targets(
     if len(database_targets) != len(database_candidates):
         raise InvalidSwingShadowCliTargetError
     database_identities = {
-        _file_identity(candidate)
-        for candidate in database_candidates
-        if candidate.exists() and candidate.is_file()
+        _file_identity(candidate) for candidate in database_candidates if candidate.exists() and candidate.is_file()
     }
     for target in (
         output / SWING_OUTBOX_NAME,
         output / SWING_REPORT_NAME,
         output / SWING_CARDS_NAME,
+        output / SWING_SOURCES_DIR,
     ):
         if (
             target.is_symlink()
             or target.resolve(strict=False) in database_targets
-            or (
-                target.exists()
-                and target.is_file()
-                and _file_identity(target) in database_identities
-            )
+            or (target.exists() and target.is_file() and _file_identity(target) in database_identities)
         ):
             raise InvalidSwingShadowCliTargetError
+
+
+def write_private_swing_source(output: Path, source: SwingDailySource) -> Path:
+    source_dir = output / SWING_SOURCES_DIR
+    if source_dir.is_symlink() or (source_dir.exists() and not source_dir.is_dir()):
+        raise InvalidSwingShadowCliTargetError
+    source_dir.mkdir(parents=True, exist_ok=True)
+    source_dir.chmod(0o700)
+    payload = (
+        json.dumps(
+            source.model_dump(mode="json"),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode()
+    destination = source_dir / f"swing_daily_source_{source.source_key}.json"
+    try:
+        descriptor = os.open(
+            destination,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+        )
+    except FileExistsError:
+        if _read_private_file(destination) != payload:
+            raise InvalidSwingShadowCliTargetError from None
+        return destination
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            _ = handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        destination.unlink(missing_ok=True)
+        raise
+    return destination
 
 
 def prepare_private_swing_file(path: Path) -> None:
@@ -121,13 +158,33 @@ def _file_identity(path: Path) -> tuple[int, int]:
     return metadata.st_dev, metadata.st_ino
 
 
+def _read_private_file(path: Path) -> bytes:
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+            or metadata.st_uid != os.getuid()
+        ):
+            raise InvalidSwingShadowCliTargetError
+    except BaseException:
+        os.close(descriptor)
+        raise
+    with os.fdopen(descriptor, "rb") as handle:
+        return handle.read()
+
+
 __all__ = (
     "SWING_CARDS_NAME",
     "SWING_OUTBOX_NAME",
     "SWING_REPORT_NAME",
+    "SWING_SOURCES_DIR",
     "InvalidSwingShadowCliTargetError",
     "SwingShadowReport",
     "harden_private_swing_cards",
     "prepare_private_swing_file",
     "validate_swing_shadow_targets",
+    "write_private_swing_source",
 )

@@ -5,6 +5,7 @@ from decimal import Decimal
 
 import pytest
 
+from trading_agent.data_capability_models import DataSourceId
 from trading_agent.signal_contract_models import SignalActionability
 from trading_agent.swing_shadow_models import SwingDailyBar, SwingDailySource
 from trading_agent.systematic_regime_engine import (
@@ -117,6 +118,7 @@ def _source(regime: str) -> SwingDailySource:
     return SwingDailySource(
         session_date=sessions[-1],
         observed_at=observed_at,
+        source_id=DataSourceId(provider="fixture", feed="completed_daily"),
         universe_id="us_systematic_regime_etf_v1",
         symbols=SYMBOLS,
         bars=bars,

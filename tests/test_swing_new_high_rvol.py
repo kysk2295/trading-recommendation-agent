@@ -5,6 +5,7 @@ from decimal import Decimal
 
 import pytest
 
+from trading_agent.data_capability_models import DataSourceId
 from trading_agent.signal_contract_models import (
     SignalActionability,
     SignalEntryType,
@@ -32,9 +33,7 @@ def test_projects_deterministic_conditional_signal_for_new_high_and_rvol() -> No
     next_session_bounds = regular_session_bounds(dt.date(2026, 7, 16))
     assert next_session_bounds is not None
     assert signal.signal_id == project_new_high_rvol_signals(source)[0].signal_id
-    assert signal.strategy_lane.canonical_id == (
-        "us_equities/swing_trading/new_high_momentum"
-    )
+    assert signal.strategy_lane.canonical_id == ("us_equities/swing_trading/new_high_momentum")
     assert signal.producer_strategy_version == "new_high_rvol_20d_1p5_v1"
     assert signal.symbol == "ACME"
     assert signal.observed_at == OBSERVED_AT
@@ -52,9 +51,7 @@ def test_projects_deterministic_conditional_signal_for_new_high_and_rvol() -> No
 
 def test_uses_one_logical_signal_id_when_source_observation_is_revised() -> None:
     source = _source()
-    revised_source = source.model_copy(
-        update={"observed_at": OBSERVED_AT + dt.timedelta(minutes=1)}
-    )
+    revised_source = source.model_copy(update={"observed_at": OBSERVED_AT + dt.timedelta(minutes=1)})
 
     first = project_new_high_rvol_signals(source)[0]
     revised = project_new_high_rvol_signals(revised_source)[0]
@@ -84,9 +81,7 @@ def test_rejects_source_without_complete_twenty_session_history() -> None:
 
 
 def test_rejects_source_observed_before_its_regular_close() -> None:
-    source = _source().model_copy(
-        update={"observed_at": dt.datetime(2026, 7, 15, 15, 59, tzinfo=NEW_YORK)}
-    )
+    source = _source().model_copy(update={"observed_at": dt.datetime(2026, 7, 15, 15, 59, tzinfo=NEW_YORK)})
 
     with pytest.raises(InvalidNewHighRvolProjectionError):
         _ = project_new_high_rvol_signals(source)
@@ -145,6 +140,7 @@ def _source(
     return SwingDailySource(
         session_date=SESSION,
         observed_at=OBSERVED_AT,
+        source_id=DataSourceId(provider="fixture", feed="completed_daily"),
         universe_id="fixture-universe-v1",
         symbols=("ACME", "BETA"),
         bars=bars,

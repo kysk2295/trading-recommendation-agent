@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from trading_agent.data_capability_models import DataSourceId
 from trading_agent.experiment_ledger_models import (
     StrategyLifecycleState,
     TrialEventKind,
@@ -260,6 +261,7 @@ def _signal_source() -> SwingDailySource:
     return SwingDailySource(
         session_date=SIGNAL_SESSION,
         observed_at=observed_at,
+        source_id=DataSourceId(provider="fixture", feed="completed_daily"),
         universe_id="fixture_universe_v1",
         symbols=("ACME",),
         bars=bars,
@@ -278,6 +280,7 @@ def _session_source(
     return SwingDailySource(
         session_date=session_date,
         observed_at=observed_at,
+        source_id=DataSourceId(provider="fixture", feed="completed_daily"),
         universe_id="fixture_universe_v1",
         symbols=("ACME",),
         bars=(

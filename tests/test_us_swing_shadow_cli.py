@@ -12,7 +12,7 @@ import pytest
 import typer
 
 import run_us_swing_shadow
-from trading_agent.alpaca_bars import AlpacaBarsClient
+from trading_agent.alpaca_bars import AlpacaBarsClient, AlpacaDailyFeed
 from trading_agent.alpaca_http import AlpacaCredentials
 from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
@@ -40,6 +40,7 @@ def test_fixture_cli_projects_and_replays_private_swing_shadow_evidence(
         database=str(database),
         output_dir=str(output),
     )
+    source = load_swing_daily_source(EXAMPLE, session_date=SESSION)
     first_report = _report(output)
     run_us_swing_shadow.main(
         session_date=SESSION.isoformat(),
@@ -53,25 +54,24 @@ def test_fixture_cli_projects_and_replays_private_swing_shadow_evidence(
     store = SwingShadowStore(database)
     signals = store.signals()
     assert len(signals) == 1
-    assert tuple(event.kind for event in store.events(signals[0].signal_id)) == (
-        ShadowEventKind.SIGNAL_CREATED,
-    )
+    assert tuple(event.kind for event in store.events(signals[0].signal_id)) == (ShadowEventKind.SIGNAL_CREATED,)
     outbox = output / "trade-signals.v1.jsonl"
     publications = tuple(
-        TradeSignalPublication.model_validate_json(line)
-        for line in outbox.read_text(encoding="utf-8").splitlines()
+        TradeSignalPublication.model_validate_json(line) for line in outbox.read_text(encoding="utf-8").splitlines()
     )
     assert len(publications) == 1
     assert publications[0].signal.signal_id == signals[0].signal_id
+    source_artifacts = tuple((output / "daily-sources").iterdir())
+    assert len(source_artifacts) == 1
+    assert source_artifacts[0].name == f"swing_daily_source_{source.source_key}.json"
+    assert SwingDailySource.model_validate_json(source_artifacts[0].read_text(encoding="utf-8")) == source
     assert "신규 조건부 신호: 1" in first_report
     assert "신규 shadow event: 1" in first_report
     assert "신규 조건부 신호: 0" in second_report
     assert "신규 shadow event: 0" in second_report
     assert "신규 Hermes 전달: 1" in first_report
     assert "신규 Hermes 전달: 0" in second_report
-    assert tuple(event.kind for event in HermesDeliveryStore(delivery).events()) == (
-        HermesDeliveryKind.WATCH,
-    )
+    assert tuple(event.kind for event in HermesDeliveryStore(delivery).events()) == (HermesDeliveryKind.WATCH,)
     combined = first_report + second_report + terminal
     for marker in (signals[0].evidence_refs[0].record_id, "fixture-universe-v1"):
         assert marker not in combined
@@ -82,6 +82,7 @@ def test_fixture_cli_projects_and_replays_private_swing_shadow_evidence(
         delivery,
         outbox,
         _report_path(output),
+        source_artifacts[0],
         *tuple((output / "trade-signal-cards-ko").iterdir()),
     ):
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
@@ -127,6 +128,7 @@ def test_historical_production_request_does_not_load_credentials_or_open_client(
         run_us_swing_shadow.main(
             session_date=SESSION.isoformat(),
             universe_file=str(universe),
+            feed=AlpacaDailyFeed.IEX,
             database=str(tmp_path / "ledger.sqlite3"),
             output_dir=str(tmp_path / "output"),
             secret_path=str(tmp_path / "private-alpaca.env"),
@@ -159,6 +161,39 @@ def test_invalid_universe_row_does_not_load_credentials(
         run_us_swing_shadow.main(
             session_date=SESSION.isoformat(),
             universe_file=str(universe),
+            feed=AlpacaDailyFeed.IEX,
+            database=str(tmp_path / "ledger.sqlite3"),
+            output_dir=str(tmp_path / "output"),
+            secret_path=str(tmp_path / "private-alpaca.env"),
+        )
+
+    assert calls == 0
+
+
+def test_current_production_requires_explicit_feed_before_credentials(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    universe = tmp_path / "universe.txt"
+    universe.write_text("ACME\n", encoding="utf-8")
+    calls = 0
+
+    def unexpected_credentials(_: Path) -> object:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("missing feed must fail before credentials")
+
+    monkeypatch.setattr(run_us_swing_shadow, "load_alpaca_credentials", unexpected_credentials)
+    monkeypatch.setattr(
+        run_us_swing_shadow,
+        "_current_new_york",
+        lambda: dt.datetime(2026, 7, 15, 16, 5, tzinfo=run_us_swing_shadow.NEW_YORK),
+    )
+
+    with pytest.raises(typer.BadParameter):
+        run_us_swing_shadow.main(
+            session_date=SESSION.isoformat(),
+            universe_file=str(universe),
             database=str(tmp_path / "ledger.sqlite3"),
             output_dir=str(tmp_path / "output"),
             secret_path=str(tmp_path / "private-alpaca.env"),
@@ -174,6 +209,7 @@ def test_auto_universe_fetches_most_active_before_completed_daily_source(
     # Given: a current post-close run and a valid read-only most-active response.
     requests: list[httpx2.Request] = []
     captured_symbols: tuple[str, ...] = ()
+    captured_feed: AlpacaDailyFeed | None = None
 
     def respond(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
@@ -198,12 +234,14 @@ def test_auto_universe_fetches_most_active_before_completed_daily_source(
         symbols: tuple[str, ...],
         session_date: dt.date,
         observed_at: dt.datetime,
+        feed: AlpacaDailyFeed,
         universe_id: str,
         now: dt.datetime,
     ) -> SwingDailySource:
-        nonlocal captured_symbols
+        nonlocal captured_feed, captured_symbols
         _ = bars_client, session_date, observed_at, universe_id, now
         captured_symbols = symbols
+        captured_feed = feed
         return load_swing_daily_source(EXAMPLE, session_date=SESSION)
 
     monkeypatch.setattr(run_us_swing_shadow, "create_alpaca_client", lambda: client)
@@ -223,6 +261,7 @@ def test_auto_universe_fetches_most_active_before_completed_daily_source(
     run_us_swing_shadow.main(
         session_date=SESSION.isoformat(),
         auto_universe=True,
+        feed=AlpacaDailyFeed.IEX,
         database=str(tmp_path / "ledger.sqlite3"),
         delivery_database=str(tmp_path / "delivery.sqlite3"),
         output_dir=str(tmp_path / "output"),
@@ -231,9 +270,8 @@ def test_auto_universe_fetches_most_active_before_completed_daily_source(
 
     # Then: only the data screener is called and canonical symbols reach daily collection.
     assert captured_symbols == ("ACME",)
-    assert tuple(request.url.path for request in requests) == (
-        "/v1beta1/screener/stocks/most-actives",
-    )
+    assert captured_feed is AlpacaDailyFeed.IEX
+    assert tuple(request.url.path for request in requests) == ("/v1beta1/screener/stocks/most-actives",)
 
 
 def test_historical_auto_universe_request_does_not_load_credentials(
@@ -260,6 +298,7 @@ def test_historical_auto_universe_request_does_not_load_credentials(
         run_us_swing_shadow.main(
             session_date=SESSION.isoformat(),
             auto_universe=True,
+            feed=AlpacaDailyFeed.IEX,
             database=str(tmp_path / "ledger.sqlite3"),
             output_dir=str(tmp_path / "output"),
             secret_path=str(tmp_path / "alpaca.env"),

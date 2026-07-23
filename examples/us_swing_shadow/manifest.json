@@ -1,7 +1,12 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "session_date": "2026-07-15",
   "observed_at": "2026-07-15T16:05:00-04:00",
+  "source_id": {
+    "schema_version": 1,
+    "provider": "fixture",
+    "feed": "completed_daily"
+  },
   "universe_id": "fixture-universe-v1",
   "symbols": ["ACME"],
   "bars_file": "daily-bars.json"

@@ -4,6 +4,7 @@ import datetime as dt
 from decimal import Decimal
 from pathlib import Path
 
+from trading_agent.data_capability_models import DataSourceId
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.research_hypothesis_registration import register_research_hypothesis_manifest
@@ -207,6 +208,7 @@ def _signal_source() -> SwingDailySource:
     return SwingDailySource(
         session_date=SIGNAL_SESSION,
         observed_at=observed_at,
+        source_id=DataSourceId(provider="fixture", feed="completed_daily"),
         universe_id="fixture_universe_v1",
         symbols=("ACME",),
         bars=bars,
@@ -219,6 +221,7 @@ def _terminal_source() -> SwingDailySource:
     return SwingDailySource(
         session_date=PLANNED_SESSION,
         observed_at=observed_at,
+        source_id=DataSourceId(provider="fixture", feed="completed_daily"),
         universe_id="fixture_universe_v1",
         symbols=("ACME",),
         bars=tuple(

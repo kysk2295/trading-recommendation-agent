@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from trading_agent.alpaca_bars import AlpacaDailyPageRequest
 from trading_agent.alpaca_http import AlpacaApiError
 from trading_agent.alpaca_models import AlpacaBarsPayload
+from trading_agent.data_capability_models import DataSourceId
 from trading_agent.swing_shadow_models import SwingDailyBar, SwingDailySource
 from trading_agent.systematic_regime_engine import SYSTEMATIC_REGIME_UNIVERSE
 from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
@@ -68,14 +69,12 @@ def load_systematic_daily_source(
             or any(not isinstance(raw, dict) for raw in raw_bars)
         ):
             raise InvalidSystematicDailySourceError
-        bars = tuple(
-            SwingDailyBar.model_validate(raw | {"observed_at": manifest.observed_at})
-            for raw in raw_bars
-        )
+        bars = tuple(SwingDailyBar.model_validate(raw | {"observed_at": manifest.observed_at}) for raw in raw_bars)
         return _validate_source(
             SwingDailySource(
                 session_date=manifest.session_date,
                 observed_at=manifest.observed_at,
+                source_id=DataSourceId(provider="fixture", feed="completed_daily"),
                 universe_id=manifest.universe_id,
                 symbols=manifest.symbols,
                 bars=bars,
@@ -127,6 +126,7 @@ def collect_current_systematic_daily_source(
             SwingDailySource(
                 session_date=session_date,
                 observed_at=observed_at,
+                source_id=DataSourceId(provider="alpaca", feed="sip"),
                 universe_id=SYSTEMATIC_UNIVERSE_ID,
                 symbols=SYSTEMATIC_REGIME_UNIVERSE,
                 bars=bars,

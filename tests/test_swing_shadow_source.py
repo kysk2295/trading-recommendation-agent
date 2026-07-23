@@ -6,11 +6,13 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Never
 
+import httpx2
 import pytest
 
-from trading_agent.alpaca_bars import AlpacaDailyPageRequest
-from trading_agent.alpaca_http import AlpacaApiError
+from trading_agent.alpaca_bars import AlpacaBarsClient, AlpacaDailyFeed, AlpacaDailyPageRequest
+from trading_agent.alpaca_http import AlpacaApiError, AlpacaCredentials
 from trading_agent.alpaca_models import AlpacaBar, AlpacaBarsPayload
+from trading_agent.data_capability_models import DataSourceId
 from trading_agent.swing_shadow_source import (
     InvalidSwingDailySourceError,
     collect_current_swing_daily_source,
@@ -30,6 +32,7 @@ def test_fixture_source_loads_exact_completed_symbol_histories(tmp_path: Path) -
 
     assert source.session_date == SESSION
     assert source.observed_at == OBSERVED_AT
+    assert source.source_id == DataSourceId(provider="fixture", feed="completed_daily")
     assert source.symbols == ("ACME", "BETA")
     assert len(source.bars_for("ACME")) == 21
     assert source.bars_for("ACME")[-1].session_date == SESSION
@@ -90,6 +93,7 @@ def test_production_historical_or_preclose_request_opens_no_data_client() -> Non
             symbols=("ACME",),
             session_date=SESSION,
             observed_at=historical_now,
+            feed=AlpacaDailyFeed.IEX,
             universe_id="fixture-universe-v1",
             now=historical_now,
         )
@@ -101,6 +105,7 @@ def test_production_historical_or_preclose_request_opens_no_data_client() -> Non
             symbols=("ACME",),
             session_date=SESSION,
             observed_at=preclose_now,
+            feed=AlpacaDailyFeed.IEX,
             universe_id="fixture-universe-v1",
             now=preclose_now,
         )
@@ -147,6 +152,7 @@ def test_production_collects_bounded_completed_daily_bars() -> None:
         symbols=("ACME", "BETA"),
         session_date=SESSION,
         observed_at=OBSERVED_AT,
+        feed=AlpacaDailyFeed.IEX,
         universe_id="fixture-universe-v1",
         now=OBSERVED_AT,
     )
@@ -154,8 +160,39 @@ def test_production_collects_bounded_completed_daily_bars() -> None:
     assert len(requests) == 1
     assert requests[0].start_date == SESSION - dt.timedelta(days=45)
     assert requests[0].end_date == SESSION
+    assert requests[0].feed is AlpacaDailyFeed.IEX
+    assert source.source_id == DataSourceId(provider="alpaca", feed="iex")
     assert source.bars_for("ACME")[-1].close == Decimal("10.1")
     assert source.bars_for("BETA")[-1].volume == 100_020
+
+
+def test_alpaca_daily_client_sends_the_explicit_iex_feed() -> None:
+    requests: list[httpx2.Request] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json={"bars": {}, "next_page_token": None})
+
+    with httpx2.Client(
+        base_url="https://data.alpaca.markets",
+        transport=httpx2.MockTransport(respond),
+    ) as client:
+        _ = AlpacaBarsClient(
+            client,
+            AlpacaCredentials("key", "secret"),
+            request_interval_seconds=0,
+        ).fetch_daily_page(
+            AlpacaDailyPageRequest(
+                session_date=SESSION,
+                symbols=("ACME",),
+                start_date=SESSION - dt.timedelta(days=45),
+                end_date=SESSION,
+                feed=AlpacaDailyFeed.IEX,
+            )
+        )
+
+    assert len(requests) == 1
+    assert requests[0].url.params["feed"] == "iex"
 
 
 def test_production_hides_alpaca_api_error() -> None:
@@ -170,6 +207,7 @@ def test_production_hides_alpaca_api_error() -> None:
             symbols=("ACME",),
             session_date=SESSION,
             observed_at=OBSERVED_AT,
+            feed=AlpacaDailyFeed.SIP,
             universe_id="fixture-universe-v1",
             now=OBSERVED_AT,
         )
@@ -197,9 +235,10 @@ def _write_fixture(root: Path, *, symbols: tuple[str, ...]) -> Path:
     _write_json(
         fixture_root / "manifest.json",
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "session_date": SESSION.isoformat(),
             "observed_at": OBSERVED_AT.isoformat(),
+            "source_id": {"schema_version": 1, "provider": "fixture", "feed": "completed_daily"},
             "universe_id": "fixture-universe-v1",
             "symbols": list(symbols),
             "bars_file": "daily-bars.json",

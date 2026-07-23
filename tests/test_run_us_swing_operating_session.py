@@ -77,6 +77,7 @@ def test_cli_help_exposes_one_tick_operating_contract() -> None:
     assert "--fixture-root" in completed.stdout
     assert "--universe-file" in completed.stdout
     assert "--auto-universe" in completed.stdout
+    assert "--feed" in completed.stdout
     assert "--experiment-ledger" in completed.stdout
 
 
@@ -133,9 +134,14 @@ def _write_signal_fixture(tmp_path: Path) -> Path:
     observed_at = dt.datetime.combine(SESSION, dt.time(16, 5), tzinfo=NEW_YORK)
     sessions = _following_sessions(SESSION, 21)
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "session_date": SESSION.isoformat(),
         "observed_at": observed_at.isoformat(),
+        "source_id": {
+            "schema_version": 1,
+            "provider": "fixture",
+            "feed": "completed_daily",
+        },
         "universe_id": "fixture_universe_v1",
         "symbols": ["ACME"],
         "bars_file": "daily-bars.json",

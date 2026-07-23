@@ -728,7 +728,7 @@ uv run python run_us_swing_shadow.py \
   --output-dir /tmp/us-swing-shadow-output
 ```
 
-production에서는 `--fixture-root` 대신 정렬된 1~50개 미국 종목을 담은 `--universe-file`을 준다. `--session-date`가 실행 시점 뉴욕 날짜이고 정규장 종료 뒤일 때만 mode-600 `~/.config/trading-agent/alpaca.env`를 읽어 Alpaca market-data 일봉 GET을 수행한다. historical·장마감 전·비정규장 요청은 자격증명과 HTTP client를 열기 전에 거절한다. 이 CLI는 Alpaca Paper endpoint, 계좌, 주문, 현재 호가 또는 외부 메시지를 호출하지 않는다.
+production에서는 `--fixture-root` 대신 정렬된 1~50개 미국 종목을 담은 `--universe-file`과 명시적 `--feed iex|sip`을 준다. feed를 생략하거나 fixture에 feed를 덧붙이면 자격증명 전에 차단하며, SIP 실패를 IEX로 조용히 대체하지 않는다. `--session-date`가 실행 시점 뉴욕 날짜이고 정규장 종료 뒤일 때만 mode-600 `~/.config/trading-agent/alpaca.env`를 읽어 Alpaca market-data 일봉 GET을 수행한다. source는 `alpaca/iex` 또는 `alpaca/sip` identity를 포함한 content-addressed mode-600 JSON으로 보존되며 신호 evidence ref의 source key와 일치한다. historical·장마감 전·비정규장 요청은 자격증명과 HTTP client를 열기 전에 거절한다. IEX-only 증거는 Challenger까지만 허용하고 SIP 또는 동등 consolidated feed 검증 없이는 Paper Champion 근거로 쓰지 않는다. 이 CLI는 Alpaca Paper endpoint, 계좌, 주문, 현재 호가 또는 외부 메시지를 호출하지 않는다.
 
 두 개 이상의 연속 정규장 fixture를 당시 장후 시점 순서로 재생해 카드, 다중 세션 shadow terminal과 독립 Reviewer 증거까지 확인하려면 전용 historical replay를 사용한다. source는 해당 날짜의 장후 tick에서만 열리며, 날짜 누락·역순·중복과 사전등록 이전 신호는 원장 생성 전에 차단된다.
 

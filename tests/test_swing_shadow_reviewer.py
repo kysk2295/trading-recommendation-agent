@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from trading_agent.data_capability_models import DataSourceId
 from trading_agent.experiment_ledger_keys import experiment_trial_event_key
 from trading_agent.experiment_ledger_models import ExperimentTrialEvent, TrialEventKind
 from trading_agent.experiment_ledger_store import ExperimentLedgerReader, ExperimentLedgerStore
@@ -186,9 +187,7 @@ def test_review_store_is_private_append_only_and_query_only(tmp_path: Path) -> N
             _ = connection.execute("UPDATE swing_shadow_review_events SET payload_json = '{}' ")
         with pytest.raises(sqlite3.IntegrityError, match="append-only"):
             _ = connection.execute("DELETE FROM swing_shadow_review_events")
-    with SwingShadowReviewReader(store.path).reader_connection() as connection, pytest.raises(
-        sqlite3.OperationalError
-    ):
+    with SwingShadowReviewReader(store.path).reader_connection() as connection, pytest.raises(sqlite3.OperationalError):
         _ = connection.execute("DELETE FROM swing_shadow_review_events")
     with store.writer(), pytest.raises(SwingShadowReviewWriterLeaseUnavailableError), store.writer():
         pass
@@ -219,9 +218,7 @@ print(json.dumps(sorted(name for name in sys.modules if name.startswith('trading
         "portfolio_manager",
     )
 
-    assert not {
-        module for module in loaded_modules if any(marker in module for marker in forbidden)
-    }
+    assert not {module for module in loaded_modules if any(marker in module for marker in forbidden)}
 
 
 def _completed_trial(
@@ -293,6 +290,7 @@ def _signal_source() -> SwingDailySource:
     return SwingDailySource(
         session_date=SIGNAL_SESSION,
         observed_at=observed_at,
+        source_id=DataSourceId(provider="fixture", feed="completed_daily"),
         universe_id="fixture_universe_v1",
         symbols=("ACME",),
         bars=bars,
@@ -311,6 +309,7 @@ def _session_source(
     return SwingDailySource(
         session_date=session_date,
         observed_at=observed_at,
+        source_id=DataSourceId(provider="fixture", feed="completed_daily"),
         universe_id="fixture_universe_v1",
         symbols=("ACME",),
         bars=(

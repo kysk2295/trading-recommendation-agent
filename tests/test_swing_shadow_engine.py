@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from trading_agent.data_capability_models import DataSourceId
 from trading_agent.swing_new_high_rvol import project_new_high_rvol_signals
 from trading_agent.swing_shadow_engine import advance_swing_shadow_session
 from trading_agent.swing_shadow_models import SwingDailyBar, SwingDailySource
@@ -171,9 +172,7 @@ def test_rejects_revised_source_evidence_under_the_same_logical_signal_id(
     tmp_path: Path,
 ) -> None:
     source = _signal_source()
-    revised_source = source.model_copy(
-        update={"observed_at": source.observed_at + dt.timedelta(minutes=1)}
-    )
+    revised_source = source.model_copy(update={"observed_at": source.observed_at + dt.timedelta(minutes=1)})
     first = project_new_high_rvol_signals(source)[0]
     revised = project_new_high_rvol_signals(revised_source)[0]
     store = SwingShadowStore(tmp_path / "swing-shadow.sqlite3")
@@ -238,6 +237,7 @@ def _signal_source() -> SwingDailySource:
     return SwingDailySource(
         session_date=SIGNAL_SESSION,
         observed_at=observed_at,
+        source_id=DataSourceId(provider="fixture", feed="completed_daily"),
         universe_id="fixture-universe-v1",
         symbols=("ACME",),
         bars=bars,
@@ -256,6 +256,7 @@ def _session_source(
     return SwingDailySource(
         session_date=session_date,
         observed_at=observed_at,
+        source_id=DataSourceId(provider="fixture", feed="completed_daily"),
         universe_id="fixture-universe-v1",
         symbols=("ACME",),
         bars=(

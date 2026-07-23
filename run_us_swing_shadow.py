@@ -11,7 +11,7 @@ from typing import override
 import typer
 from rich import print as rprint
 
-from trading_agent.alpaca_bars import AlpacaBarsClient
+from trading_agent.alpaca_bars import AlpacaBarsClient, AlpacaDailyFeed
 from trading_agent.alpaca_http import (
     DEFAULT_ALPACA_SECRET_PATH,
     AlpacaApiError,
@@ -56,6 +56,7 @@ from trading_agent.swing_shadow_cli_files import (
     harden_private_swing_cards,
     prepare_private_swing_file,
     validate_swing_shadow_targets,
+    write_private_swing_source,
 )
 from trading_agent.swing_shadow_delivery import (
     InvalidSwingShadowDeliveryError,
@@ -92,6 +93,7 @@ class _ProductionSourceRequest:
     session_date: dt.date
     universe_file: str | None
     auto_universe: bool
+    feed: AlpacaDailyFeed
     secret_path: Path
 
 
@@ -100,6 +102,7 @@ def main(
     universe_file: str | None = None,
     auto_universe: bool = False,
     fixture_root: str | None = None,
+    feed: AlpacaDailyFeed | None = None,
     database: str = "outputs/us_swing_shadow/swing-shadow.sqlite3",
     delivery_database: str | None = None,
     output_dir: str = "outputs/us_swing_shadow/latest",
@@ -112,18 +115,22 @@ def main(
     try:
         validate_swing_shadow_targets(database_path, delivery_path, output)
         if fixture_root is not None:
-            if universe_file is not None or auto_universe:
+            if universe_file is not None or auto_universe or feed is not None:
                 raise UsSwingShadowRunError
             source = load_swing_daily_source(Path(fixture_root), session_date=parsed_session)
         else:
+            if feed is None:
+                raise UsSwingShadowRunError
             source = _collect_production_source(
                 _ProductionSourceRequest(
                     session_date=parsed_session,
                     universe_file=universe_file,
                     auto_universe=auto_universe,
+                    feed=feed,
                     secret_path=Path(secret_path),
                 )
             )
+        _ = write_private_swing_source(output, source)
         signals = project_new_high_rvol_signals(source)
         store = SwingShadowStore(database_path)
         with store.writer() as writer:
@@ -139,9 +146,7 @@ def main(
                 published_at=source.observed_at,
                 signal=signal,
             )
-            new_publications += int(
-                append_trade_signal_publication(outbox, cards_dir, publication)
-            )
+            new_publications += int(append_trade_signal_publication(outbox, cards_dir, publication))
         harden_private_swing_cards(cards_dir)
         with HermesDeliveryStore(delivery_path).writer() as writer:
             delivery = project_swing_shadow_cycle_delivery(source, signals, writer)
@@ -206,11 +211,15 @@ def _collect_production_source(request: _ProductionSourceRequest):
     credentials = load_alpaca_credentials(request.secret_path)
     with create_alpaca_client() as data_client:
         if request.auto_universe:
-            symbols = AlpacaMostActiveClient(data_client, credentials).fetch(
-                top=50,
-                session_date=request.session_date,
-                observed_at=now,
-            ).scanner_symbols
+            symbols = (
+                AlpacaMostActiveClient(data_client, credentials)
+                .fetch(
+                    top=50,
+                    session_date=request.session_date,
+                    observed_at=now,
+                )
+                .scanner_symbols
+            )
         normalized = validate_current_swing_daily_collection(
             symbols=symbols,
             session_date=request.session_date,
@@ -226,6 +235,7 @@ def _collect_production_source(request: _ProductionSourceRequest):
             symbols=normalized,
             session_date=request.session_date,
             observed_at=now,
+            feed=request.feed,
             universe_id=_universe_id(normalized),
             now=now,
         )
@@ -244,11 +254,7 @@ def _parse_session_date(value: str | None) -> dt.date:
 
 
 def _load_universe(path: Path) -> tuple[str, ...]:
-    symbols = tuple(
-        line.strip().upper()
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    )
+    symbols = tuple(line.strip().upper() for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
     if not symbols:
         raise UsSwingShadowRunError
     return symbols

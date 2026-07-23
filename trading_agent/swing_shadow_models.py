@@ -5,10 +5,11 @@ import hashlib
 import json
 import re
 from decimal import Decimal
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from trading_agent.data_capability_models import DataSourceId
 from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
 
 _US_SYMBOL = re.compile(r"^[A-Z][A-Z0-9.-]{0,15}$")
@@ -48,9 +49,10 @@ class SwingDailyBar(BaseModel):
 class SwingDailySource(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: int = 1
+    schema_version: Literal[2] = 2
     session_date: dt.date
     observed_at: dt.datetime
+    source_id: DataSourceId
     universe_id: str
     symbols: tuple[str, ...]
     bars: tuple[SwingDailyBar, ...]
@@ -59,14 +61,9 @@ class SwingDailySource(BaseModel):
     def validate_source(self) -> Self:
         bounds = regular_session_bounds(self.session_date)
         bar_keys = tuple((bar.symbol, bar.session_date) for bar in self.bars)
-        target_symbols = tuple(
-            sorted(
-                bar.symbol for bar in self.bars if bar.session_date == self.session_date
-            )
-        )
+        target_symbols = tuple(sorted(bar.symbol for bar in self.bars if bar.session_date == self.session_date))
         if (
-            self.schema_version != 1
-            or bounds is None
+            bounds is None
             or not _aware(self.observed_at)
             or self.observed_at.astimezone(NEW_YORK) < bounds[1]
             or self.observed_at.astimezone(NEW_YORK).date() != self.session_date

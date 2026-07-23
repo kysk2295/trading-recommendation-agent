@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from tests.test_systematic_regime_engine import _source
+from trading_agent.data_capability_models import DataSourceId
 from trading_agent.experiment_ledger_models import (
     StrategyLifecycleState,
     TrialEventKind,
@@ -200,8 +201,7 @@ def test_finalize_retry_completes_after_a_terminal_ledger_write_failure(
     assert retried.created is True
     assert len(cards.outcomes()) == 1
     assert tuple(
-        item.event.event_kind
-        for item in ledger.multi_market_trial_events(registration.registration.trial_id)
+        item.event.event_kind for item in ledger.multi_market_trial_events(registration.registration.trial_id)
     ) == (TrialEventKind.STARTED, TrialEventKind.COMPLETED)
 
 
@@ -228,6 +228,7 @@ def _extend_source(source: SwingDailySource, target_session: dt.date) -> SwingDa
     return SwingDailySource(
         session_date=target_session,
         observed_at=observed_at,
+        source_id=DataSourceId(provider="fixture", feed="completed_daily"),
         universe_id=source.universe_id,
         symbols=source.symbols,
         bars=tuple(bars),

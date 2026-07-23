@@ -18,6 +18,7 @@ from typing import override
 
 from pydantic import ValidationError
 
+from trading_agent.alpaca_bars import AlpacaDailyFeed
 from trading_agent.alpaca_http import DEFAULT_ALPACA_SECRET_PATH
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
@@ -58,6 +59,7 @@ class SwingScannerCommand:
     universe_file: Path | None
     auto_universe: bool
     fixture_root: Path | None
+    feed: AlpacaDailyFeed | None
     secret_path: Path
 
 
@@ -82,12 +84,18 @@ class SubprocessSwingDailyScanner:
         if self.command.fixture_root is not None:
             arguments.extend(("--fixture-root", str(self.command.fixture_root)))
         elif self.command.auto_universe:
-            arguments.append("--auto-universe")
+            if self.command.feed is None:
+                raise UsSwingOperatingCliError
+            arguments.extend(("--auto-universe", "--feed", self.command.feed.value))
         elif self.command.universe_file is not None:
+            if self.command.feed is None:
+                raise UsSwingOperatingCliError
             arguments.extend(
                 (
                     "--universe-file",
                     str(self.command.universe_file),
+                    "--feed",
+                    self.command.feed.value,
                     "--secret-path",
                     str(self.command.secret_path),
                 )
@@ -113,6 +121,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     source.add_argument("--universe-file", type=Path)
     source.add_argument("--fixture-root", type=Path)
     source.add_argument("--auto-universe", action="store_true")
+    parser.add_argument("--feed", choices=tuple(AlpacaDailyFeed))
     parser.add_argument(
         "--research-manifest",
         type=Path,
@@ -157,6 +166,7 @@ def main(
     timestamp = dt.datetime.now(NEW_YORK) if now is None else now
     try:
         _ = _session_date(args.session_date, timestamp)
+        feed = _source_feed(args.fixture_root, args.feed)
         code_version = _current_code_version() if runtime_code_version is None else runtime_code_version
         experiment = ExperimentLedgerStore(args.experiment_ledger)
         _ = register_research_hypothesis_manifest(args.research_manifest, experiment)
@@ -168,6 +178,7 @@ def main(
                 universe_file=args.universe_file,
                 auto_universe=args.auto_universe,
                 fixture_root=args.fixture_root,
+                feed=feed,
                 secret_path=args.secret_path,
             ),
             clock=lambda: timestamp,
@@ -217,6 +228,19 @@ def _current_code_version() -> str:
     if dirty:
         raise UsSwingOperatingCliError
     return revision
+
+
+def _source_feed(
+    fixture_root: Path | None,
+    value: str | None,
+) -> AlpacaDailyFeed | None:
+    if fixture_root is not None:
+        if value is not None:
+            raise UsSwingOperatingCliError
+        return None
+    if value is None:
+        raise UsSwingOperatingCliError
+    return AlpacaDailyFeed(value)
 
 
 def _write_report(output_dir: Path, result: SwingOperatingResult | None) -> None:
