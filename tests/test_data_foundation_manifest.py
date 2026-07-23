@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from trading_agent.data_foundation_manifest import (
     DataFoundationManifest,
     InvalidDataFoundationManifestError,
+    load_data_foundation_artifact,
     load_data_foundation_manifest,
 )
 from trading_agent.strategy_data_gate import StrategyDataStatus
@@ -28,6 +29,13 @@ def test_fixture_manifest_cross_links_and_evaluates_ready() -> None:
     assert decision.status is StrategyDataStatus.READY
     assert decision.evaluations[0].selected_source_id is not None
     assert decision.evaluations[0].selected_source_id.canonical_id == "fixture/sip"
+
+
+def test_foundation_artifact_hashes_the_exact_validated_bytes() -> None:
+    artifact = load_data_foundation_artifact(EXAMPLE)
+
+    assert artifact.manifest == load_data_foundation_manifest(EXAMPLE)
+    assert len(artifact.sha256) == 64
 
 
 def test_loader_rejects_missing_or_non_file_manifest(tmp_path: Path) -> None:
@@ -79,7 +87,7 @@ def test_aliases_and_actions_reference_declared_instruments() -> None:
             "ratio_denominator": None,
             "cash_amount": None,
             "currency": None,
-            "successor_instrument_id": None
+            "successor_instrument_id": None,
         }
     ]
 

@@ -157,6 +157,13 @@ def _trial_registration(
     trial_id = f"m6-{selection.strategy.value}-{hashlib.sha256(seed.encode()).hexdigest()[:16]}"
     registered_at = context.manifest.registered_at + dt.timedelta(seconds=1)
     planned = _next_regular_session(registered_at)
+    evidence_budget = [
+        f"max_bars:{context.manifest.max_bars}",
+        f"max_sessions:{context.manifest.max_sessions}",
+        f"rss_limit_gib:{context.manifest.rss_limit_gib}",
+    ]
+    if selection.data_foundation_sha256 is not None:
+        evidence_budget.append(f"data_foundation_sha256:{selection.data_foundation_sha256}")
     return ExperimentTrialRegistration(
         trial_id=trial_id,
         strategy_version=design.strategy_version,
@@ -169,15 +176,7 @@ def _trial_registration(
         planned_start=planned,
         planned_end=planned,
         registered_at=registered_at,
-        evidence_budget=tuple(
-            sorted(
-                (
-                    f"max_bars:{context.manifest.max_bars}",
-                    f"max_sessions:{context.manifest.max_sessions}",
-                    f"rss_limit_gib:{context.manifest.rss_limit_gib}",
-                )
-            )
-        ),
+        evidence_budget=tuple(sorted(evidence_budget)),
     )
 
 

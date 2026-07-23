@@ -34,10 +34,15 @@ class IntradayHypothesisSelection(BaseModel):
     hypothesis_id: str
     strategy_version: str | None = None
     queue_card_key: str | None = None
+    data_foundation_sha256: str | None = None
 
     @model_validator(mode="after")
     def validate_selection(self) -> Self:
-        source_backed = self.strategy_version is not None or self.queue_card_key is not None
+        source_backed = (
+            self.strategy_version is not None
+            or self.queue_card_key is not None
+            or self.data_foundation_sha256 is not None
+        )
         if (
             self.strategy is StrategyMode.ORB
             or _IDENTIFIER.fullmatch(self.hypothesis_id) is None
@@ -48,6 +53,8 @@ class IntradayHypothesisSelection(BaseModel):
                     or _IDENTIFIER.fullmatch(self.strategy_version) is None
                     or self.queue_card_key is None
                     or _HEX64.fullmatch(self.queue_card_key) is None
+                    or self.data_foundation_sha256 is None
+                    or _HEX64.fullmatch(self.data_foundation_sha256) is None
                 )
             )
         ):

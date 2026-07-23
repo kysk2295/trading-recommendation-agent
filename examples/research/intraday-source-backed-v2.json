@@ -7,7 +7,8 @@
       "strategy": "vwap_reclaim",
       "hypothesis_id": "H-MOM-VWAP-SOURCE-002",
       "strategy_version": "first_vwap_reclaim_source_v2",
-      "queue_card_key": "c2940bb80c97523d86489d95ca91d1b8c1e2a350bef02c7fc8ddbf1d1127714d"
+      "queue_card_key": "c2940bb80c97523d86489d95ca91d1b8c1e2a350bef02c7fc8ddbf1d1127714d",
+      "data_foundation_sha256": "baccd5b6944d239d4467267b98ab24790a78b20fb68f9d337d0cc1465e276e94"
     }
   ],
   "source_queue_snapshot_id": "e95a94497a42cb160bcdf3af8cd0e799d5eb426581bfee0998436987896d510f",

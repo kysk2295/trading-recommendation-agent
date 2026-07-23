@@ -21,6 +21,7 @@ from trading_agent.experiment_ledger_store import (
     UnsupportedExperimentLedgerSchemaError,
 )
 from trading_agent.intraday_research_artifacts import InvalidIntradayResearchArtifactError
+from trading_agent.intraday_research_data_gate import InvalidIntradayResearchDataError
 from trading_agent.intraday_research_loop import (
     IntradayResearchLoopError,
     IntradayResearchLoopPaths,
@@ -51,6 +52,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--artifact-root", type=Path, required=True)
     parser.add_argument("--review-root", type=Path, required=True)
     parser.add_argument("--source-queue-artifact", type=Path)
+    parser.add_argument("--data-foundation-manifest", type=Path, action="append")
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser.parse_args(argv)
 
@@ -68,6 +70,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 artifact_root=args.artifact_root,
                 review_root=args.review_root,
                 source_queue_artifact=args.source_queue_artifact,
+                data_foundation_manifests=tuple(args.data_foundation_manifest or ()),
             ),
         )
     except (
@@ -77,6 +80,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         InvalidExperimentLedgerBootstrapSourceError,
         InvalidExperimentLedgerSourceError,
         InvalidIntradayResearchArtifactError,
+        InvalidIntradayResearchDataError,
         InvalidIntradayResearchManifestError,
         InvalidIntradayResearchReviewError,
         InvalidIntradayTrialDesignError,

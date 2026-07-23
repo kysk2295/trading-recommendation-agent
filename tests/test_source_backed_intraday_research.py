@@ -6,6 +6,10 @@ from pathlib import Path
 import pytest
 
 from trading_agent.experiment_ledger_store import ExperimentLedgerReader, ExperimentLedgerStore
+from trading_agent.intraday_research_data_gate import (
+    InvalidIntradayResearchDataError,
+    require_intraday_research_data,
+)
 from trading_agent.intraday_research_loop import (
     IntradayResearchLoopError,
     IntradayResearchLoopPaths,
@@ -29,6 +33,9 @@ PROJECT = Path(__file__).resolve().parents[1]
 SOURCE_EXAMPLE = PROJECT / "examples" / "research" / "us-swing-new-high-rvol-v1.json"
 INPUT_CSV = PROJECT / "examples" / "example_intraday.csv"
 INPUT_SHA256 = "2a0222a20540d7d07b95130dc6a7414733f75f5210958820fde8021259e96391"
+FOUNDATION = PROJECT / "examples" / "data" / "us-vwap-reclaim-historical-fixture-v1.json"
+ORB_FOUNDATION = PROJECT / "examples" / "data" / "us-orb-data-foundation-v1.json"
+FOUNDATION_SHA256 = "baccd5b6944d239d4467267b98ab24790a78b20fb68f9d337d0cc1465e276e94"
 
 
 def test_source_backed_intraday_manifest_binds_queue_card_and_new_version() -> None:
@@ -43,6 +50,7 @@ def test_source_backed_intraday_manifest_binds_queue_card_and_new_version() -> N
                     "hypothesis_id": "H-MOM-VWAP-SOURCE-002",
                     "strategy_version": "first_vwap_reclaim_source_v2",
                     "queue_card_key": "b" * 64,
+                    "data_foundation_sha256": FOUNDATION_SHA256,
                 }
             ],
             "source_queue_snapshot_id": "c" * 64,
@@ -63,6 +71,7 @@ def test_source_backed_intraday_manifest_binds_queue_card_and_new_version() -> N
     assert manifest.schema_version == 2
     assert selection.strategy_version == "first_vwap_reclaim_source_v2"
     assert selection.queue_card_key == "b" * 64
+    assert selection.data_foundation_sha256 == FOUNDATION_SHA256
     assert manifest.source_queue_snapshot_id == "c" * 64
     assert manifest.input_sha256 == INPUT_SHA256
 
@@ -86,6 +95,17 @@ def test_source_backed_design_registers_exact_new_version_and_replays(tmp_path: 
     assert versions[0].registration.strategy_version == "first_vwap_reclaim_source_v2"
     assert versions[0].registration.hypothesis_id == "H-MOM-VWAP-SOURCE-002"
     assert versions[0].registration.ledger_recorded_at == manifest.registered_at
+
+
+def test_source_backed_data_gate_requires_exact_ready_strategy_foundation() -> None:
+    manifest = _research_manifest("c" * 64, "b" * 64)
+
+    with pytest.raises(InvalidIntradayResearchDataError):
+        require_intraday_research_data(manifest, ())
+    with pytest.raises(InvalidIntradayResearchDataError):
+        require_intraday_research_data(manifest, (ORB_FOUNDATION,))
+
+    require_intraday_research_data(manifest, (FOUNDATION,))
 
 
 def test_source_backed_design_rejects_reusing_stale_queue_for_another_version(tmp_path: Path) -> None:
@@ -125,18 +145,21 @@ def test_source_backed_intraday_loop_runs_historical_trial_and_independent_revie
         artifact_root=tmp_path / "artifacts",
         review_root=tmp_path / "reviews",
         source_queue_artifact=queue_path,
+        data_foundation_manifests=(FOUNDATION,),
     )
 
     first = run_intraday_research_loop(manifest, paths)
     replay = run_intraday_research_loop(manifest, paths)
 
-    projected = project_source_driven_hypothesis_queue(ExperimentLedgerReader(ledger.path))
+    reader = ExperimentLedgerReader(ledger.path)
+    projected = project_source_driven_hypothesis_queue(reader)
     assert first.trials_total == 1
     assert first.experiment_artifacts_created == 1
     assert first.review_artifacts_created == 1
     assert replay.experiment_artifacts_created == 0
     assert replay.review_artifacts_created == 0
     assert projected.snapshot.items[0].route is HypothesisQueueRoute.INDEPENDENT_REVIEW
+    assert f"data_foundation_sha256:{FOUNDATION_SHA256}" in reader.trials()[0].registration.evidence_budget
 
 
 def test_source_backed_intraday_loop_rejects_unregistered_input_before_version(tmp_path: Path) -> None:
@@ -146,9 +169,22 @@ def test_source_backed_intraday_loop_rejects_unregistered_input_before_version(t
     queue_path, _ = publish_source_driven_hypothesis_queue(tmp_path / "queue", queue)
     lane_registry = tmp_path / "lane.sqlite3"
     _ = bootstrap_lane_control_plane(LaneRegistryStore(lane_registry))
-    manifest = _research_manifest(queue.snapshot_id, queue.snapshot.items[0].card_key).model_copy(
-        update={"input_sha256": "d" * 64}
-    )
+    registered = _research_manifest(queue.snapshot_id, queue.snapshot.items[0].card_key)
+    with pytest.raises(InvalidIntradayResearchDataError):
+        _ = run_intraday_research_loop(
+            registered,
+            IntradayResearchLoopPaths(
+                input_csv=INPUT_CSV,
+                lane_registry=lane_registry,
+                experiment_ledger=ledger.path,
+                artifact_root=tmp_path / "artifacts",
+                review_root=tmp_path / "reviews",
+                source_queue_artifact=queue_path,
+            ),
+        )
+    assert ExperimentLedgerReader(ledger.path).strategy_versions() == ()
+
+    manifest = registered.model_copy(update={"input_sha256": "d" * 64})
 
     with pytest.raises(IntradayResearchLoopError):
         _ = run_intraday_research_loop(
@@ -160,6 +196,7 @@ def test_source_backed_intraday_loop_rejects_unregistered_input_before_version(t
                 artifact_root=tmp_path / "artifacts",
                 review_root=tmp_path / "reviews",
                 source_queue_artifact=queue_path,
+                data_foundation_manifests=(FOUNDATION,),
             ),
         )
 
@@ -178,6 +215,7 @@ def _research_manifest(snapshot_id: str, card_key: str) -> IntradayResearchManif
                     "hypothesis_id": "H-MOM-VWAP-SOURCE-002",
                     "strategy_version": "first_vwap_reclaim_source_v2",
                     "queue_card_key": card_key,
+                    "data_foundation_sha256": FOUNDATION_SHA256,
                 }
             ],
             "source_queue_snapshot_id": snapshot_id,

@@ -15,6 +15,7 @@ from trading_agent.daily_research_contract import strategy_contract
 from trading_agent.experiment_ledger_bootstrap import bootstrap_current_intraday_experiments
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.experiment_ledger_store import ExperimentLedgerReader, ExperimentLedgerStore
+from trading_agent.intraday_research_data_gate import require_intraday_research_data
 from trading_agent.intraday_research_loop_models import IntradayResearchManifest, IntradayReviewerDecision
 from trading_agent.intraday_research_reviewer import IntradayReviewRequest, review_intraday_experiment
 from trading_agent.intraday_research_trial import IntradayTrialExecutionContext, run_or_replay_intraday_trial
@@ -46,6 +47,7 @@ class IntradayResearchLoopPaths:
     artifact_root: Path
     review_root: Path
     source_queue_artifact: Path | None = None
+    data_foundation_manifests: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +82,7 @@ def run_intraday_research_loop(
     )
     if manifest.schema_version == 2 and manifest.input_sha256 != source.sha256:
         raise IntradayResearchLoopError
+    require_intraday_research_data(manifest, paths.data_foundation_manifests)
     bars = source.bars
     data_version = source.sha256
     manifest_sha256 = hashlib.sha256(canonical_experiment_ledger_json(manifest).encode()).hexdigest()

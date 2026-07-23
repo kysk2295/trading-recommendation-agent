@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import re
+from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
 from typing import Literal, Self, override
@@ -121,12 +123,28 @@ class DataFoundationManifest(BaseModel):
         )
 
 
+@dataclass(frozen=True, slots=True)
+class DataFoundationArtifact:
+    manifest: DataFoundationManifest
+    sha256: str
+
+
 def load_data_foundation_manifest(path: Path) -> DataFoundationManifest:
+    return load_data_foundation_artifact(path).manifest
+
+
+def load_data_foundation_artifact(path: Path) -> DataFoundationArtifact:
     try:
         manifest_path = path.resolve(strict=True)
         if not manifest_path.is_file() or manifest_path.stat().st_size > _MAX_MANIFEST_BYTES:
             raise OSError
-        return DataFoundationManifest.model_validate_json(manifest_path.read_bytes())
+        raw_bytes = manifest_path.read_bytes()
+        if len(raw_bytes) > _MAX_MANIFEST_BYTES:
+            raise OSError
+        return DataFoundationArtifact(
+            manifest=DataFoundationManifest.model_validate_json(raw_bytes),
+            sha256=hashlib.sha256(raw_bytes).hexdigest(),
+        )
     except (OSError, UnicodeError, ValidationError, ValueError):
         raise InvalidDataFoundationManifestError from None
 
@@ -179,7 +197,9 @@ def _aware(value: dt.datetime) -> bool:
 
 
 __all__ = (
+    "DataFoundationArtifact",
     "DataFoundationManifest",
     "InvalidDataFoundationManifestError",
+    "load_data_foundation_artifact",
     "load_data_foundation_manifest",
 )
