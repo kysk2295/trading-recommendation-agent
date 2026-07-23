@@ -417,6 +417,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-23 M8 dataset producer provenance 업데이트:** actual causal dataset receipt와 downstream input-binding receipt를 schema v2로 올려 exact 40자리 producer commit을 CSV·source-session SHA와 함께 content-addressed evidence에 결속했다. dataset·catalog CLI는 `--producer-commit-sha`를 필수로 요구하고 잘못된 SHA를 publication 전에 차단한다. Git provenance가 없던 7월 23일 복사 runtime은 READY artifact 생성 전에 폐기하고 exact clean `70e7d94` runtime으로 7월 23·24일 dataset/catalog→planned research 대기 job을 교체했다. strict gate, 실패 cycle, entitlement, Reviewer와 성과 기준은 바꾸지 않았다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-m8-dataset-producer-provenance-ko.md)에 있다.
 
+**2026-07-23 M8 정규장 handoff·provenance 분리 예약 업데이트:** 장전 collector의 sleep을 official 09:30 EDT open으로 상한 처리해 첫 정규장 scan 지연을 닫고, actual coordinator의 dataset producer SHA와 frozen strategy code version을 별도 필드로 분리했다. exact clean `f917ffe` runtime으로 2026-07-27 장전→정규장 390-cycle watch, 09:25 readiness, strict closeout, causal dataset→READY foundation→3전략 walk-forward→독립 Reviewer를 네 at-most-once job으로 예약했다. 품질 gate와 실패 cycle은 유지했고 executable Paper champion 두 개 전이라 Paper arm과 Allocation Manager는 열지 않았다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-m8-open-handoff-provenance-schedule-ko.md)에 있다.
+
 **2026-07-23 KIS US repeated server-error 복구 업데이트:** 실제 4개 forward session의 strict quality 결손을 원본 audit으로 재대사해 2026-07-22 첫 16회는 이미 닫힌 scanner `duckdb` runtime 누락, 이후 공통 실패는 종목별 KIS GET의 `500 → 500` 미복구임을 확인했다. shared GET은 기존 server status에만 총 3회, 0.25초·0.75초 bounded backoff를 적용하고 `429`·redirect·transport error와 audit 의미는 유지한다. 품질 gate와 과거 실패 원장은 바꾸지 않았다. 새 SHA의 clean runtime으로 2026-07-24 full watch, Paper read-only preflight, SIP smoke, close terminal과 strict causal dataset job을 예약했다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-kis-server-retry-recovery-ko.md)에 있다.
 
 ### Single Writer, Multiple Readers
@@ -559,6 +561,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [M6 exact option surface identity join 체크포인트](docs/checkpoints/2026-07-23-m6-option-surface-identity-join-ko.md)
 - [Strict forward post-session closeout 체크포인트](docs/checkpoints/2026-07-23-forward-post-session-strict-closeout-ko.md)
 - [Strict closeout 기반 actual research handoff 체크포인트](docs/checkpoints/2026-07-23-post-closeout-research-handoff-ko.md)
+- [M8 정규장 handoff·provenance 분리·실시간 체인 체크포인트](docs/checkpoints/2026-07-23-m8-open-handoff-provenance-schedule-ko.md)
 - [US news-catalyst shadow trial·Reviewer 체크포인트](docs/checkpoints/2026-07-21-us-news-catalyst-shadow-trial-reviewer-ko.md)
 - [US news-catalyst current-session feature observation 체크포인트](docs/checkpoints/2026-07-21-us-news-catalyst-feature-observation-ko.md)
 - [US news-catalyst frozen cohort collection 체크포인트](docs/checkpoints/2026-07-21-us-news-catalyst-frozen-cohort-collection-ko.md)
