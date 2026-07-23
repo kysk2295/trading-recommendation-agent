@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "root_symbol": "ES",
+  "source_observed_at": "2026-06-01T12:00:00-05:00",
+  "source_reference": "https://www.cmegroup.com/markets/equities/sp/e-mini-sandp500.html",
+  "contracts": [
+    {
+      "instrument": {
+        "schema_version": 1,
+        "value": "cme:es-202609",
+        "market_domain": "us_derivatives",
+        "asset_class": "future",
+        "venue": "XCME",
+        "currency": "USD",
+        "timezone": "America/Chicago",
+        "valid_from": "2026-03-01T00:00:00-06:00",
+        "valid_to": null
+      },
+      "provider_alias": {
+        "schema_version": 1,
+        "instrument_id": "cme:es-202609",
+        "namespace": "cme",
+        "alias_type": "provider_symbol",
+        "value": "ESU6",
+        "effective_from": "2026-03-01T00:00:00-06:00",
+        "effective_to": null
+      },
+      "root_symbol": "ES",
+      "settlement_type": "cash",
+      "multiplier": "50",
+      "listed_at": "2026-03-01T00:00:00-06:00",
+      "active_from": "2026-06-01T12:00:00-05:00",
+      "roll_at": "2026-09-10T16:00:00-05:00",
+      "first_notice_at": null,
+      "last_trade_at": "2026-09-18T08:30:00-05:00",
+      "expiration_date": "2026-09-18",
+      "observed_at": "2026-06-01T12:00:00-05:00"
+    },
+    {
+      "instrument": {
+        "schema_version": 1,
+        "value": "cme:es-202612",
+        "market_domain": "us_derivatives",
+        "asset_class": "future",
+        "venue": "XCME",
+        "currency": "USD",
+        "timezone": "America/Chicago",
+        "valid_from": "2026-03-01T00:00:00-06:00",
+        "valid_to": null
+      },
+      "provider_alias": {
+        "schema_version": 1,
+        "instrument_id": "cme:es-202612",
+        "namespace": "cme",
+        "alias_type": "provider_symbol",
+        "value": "ESZ6",
+        "effective_from": "2026-03-01T00:00:00-06:00",
+        "effective_to": null
+      },
+      "root_symbol": "ES",
+      "settlement_type": "cash",
+      "multiplier": "50",
+      "listed_at": "2026-03-01T00:00:00-06:00",
+      "active_from": "2026-09-10T16:00:00-05:00",
+      "roll_at": "2026-12-10T16:00:00-06:00",
+      "first_notice_at": null,
+      "last_trade_at": "2026-12-18T08:30:00-06:00",
+      "expiration_date": "2026-12-18",
+      "observed_at": "2026-06-01T12:00:00-05:00"
+    }
+  ]
+}
