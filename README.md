@@ -381,6 +381,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-23 실제 historical data 적격성 감사:** 보존된 KIS forward session 4개는 기존 strict loader에서 모두 품질 차단됐고, 검증된 Alpaca SIP AAPL 20세션·7,800분봉은 급등 후보의 point-in-time universe·prior close·ADV·spread가 없어 대체 입력으로 사용하지 않았다. 따라서 실제 historical 성과 trial은 0건이며 fixture `hold`를 수익성으로 표현하지 않는다. 상세 결손은 [감사 체크포인트](docs/checkpoints/2026-07-23-m8-real-data-eligibility-audit-ko.md)에 있다.
 
+**2026-07-23 실제 point-in-time 연구 데이터셋 업데이트:** strict forward-session loader를 통과한 여러 세션을 기존 M8 bounded research CSV로 materialize하는 local-only CLI를 추가했다. 세션 하나라도 품질 미달이면 부분 데이터셋 없이 전체를 차단하고, 완전한 종목 중에도 최초 candidate context가 관측된 시각 이후에 시작한 분봉만 사용한다. 각 bar에는 해당 시점 이전 최신 `prior_close`·ADV·spread context를 결합하며 중복 bar, 중복 거래일, 60세션·100,000 bar 초과를 차단한다. CSV SHA-256과 원본 session content SHA-256을 content-addressed mode-600 receipt에 함께 기록한다. 완전 fixture 1세션은 장중 최초 관측 전 6분을 제외한 384 causal bar로 성공했고, 기존 실제 4세션은 그대로 차단되어 신규 성과 trial은 0건이다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-m8-point-in-time-research-dataset-ko.md)에 있다.
+
 ### Single Writer, Multiple Readers
 
 - 실행 원장과 향후 broker paper 상태를 변경하는 프로세스는 하나뿐이다.
@@ -870,6 +872,13 @@ uv run python run_research_hypothesis_register.py \
 출처 카드에서 승인된 intraday v2 실험을 실행하려면 먼저 queue artifact를 확정하고 그 exact artifact를 bounded loop에 전달한다. 아래 예제는 로컬 CSV만 읽고 historical trial과 독립 review를 생성하며 provider, credential, 계좌 또는 주문 endpoint를 열지 않는다.
 
 ```bash
+uv run python run_intraday_research_dataset.py \
+  --session-dir outputs/live_sessions/<적격-거래일-1> \
+  --session-dir outputs/live_sessions/<적격-거래일-2> \
+  --output-dir outputs/experiment_control/source_intraday/datasets \
+  --max-sessions 20 \
+  --max-bars 100000
+
 uv run python run_research_hypothesis_register.py \
   --manifest examples/research/us-vwap-reclaim-source-v2.json \
   --database outputs/experiment_control/source_intraday.sqlite3 \
