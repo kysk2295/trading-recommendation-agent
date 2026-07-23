@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import stat
 from pathlib import Path
 
@@ -11,10 +12,12 @@ from trading_agent.forward_post_session import (
     ForwardPostSessionError,
     ForwardPostSessionResult,
     ForwardPostSessionStatus,
+    PostSessionFinalizer,
+    PostSessionRunner,
 )
 
 
-def test_cli_writes_private_recovered_report(
+def test_cli_defaults_to_strict_cycle_floor_in_recovered_report(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -42,13 +45,13 @@ def test_cli_writes_private_recovered_report(
     cli.main(
         session,
         session_date="2026-07-23",
-        minimum_watch_cycles=300,
         output_dir=output,
     )
 
     report = output / cli.REPORT_NAME
     content = report.read_text(encoding="utf-8")
     assert "- result: recovered" in content
+    assert "- minimum watch cycles: 300" in content
     assert "- watch cycles: 390" in content
     assert "- candidate inputs: 3200" in content
     assert "- quality gate relaxed: false" in content
@@ -64,7 +67,15 @@ def test_cli_preserves_blocker_in_private_report(
     session.mkdir()
     output = tmp_path / "report"
 
-    def blocked(*_args: object, **_kwargs: object) -> ForwardPostSessionResult:
+    def blocked(
+        session: Path,
+        session_date: dt.date,
+        *,
+        minimum_watch_cycles: int,
+        observed_at: dt.datetime,
+        finalizer: PostSessionFinalizer,
+        runner: PostSessionRunner,
+    ) -> ForwardPostSessionResult:
         raise ForwardPostSessionError("post_session_failure_preserved")
 
     monkeypatch.setattr(cli, "close_forward_post_session", blocked)
@@ -91,6 +102,36 @@ def test_cli_rejects_bad_date_before_output(tmp_path: Path) -> None:
         cli.main(
             tmp_path,
             session_date="not-a-date",
+            output_dir=output,
+        )
+
+    assert not output.exists()
+
+
+def test_cli_rejects_relaxed_cycle_floor_before_closeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "report"
+
+    def unexpected(
+        session: Path,
+        session_date: dt.date,
+        *,
+        minimum_watch_cycles: int,
+        observed_at: dt.datetime,
+        finalizer: PostSessionFinalizer,
+        runner: PostSessionRunner,
+    ) -> ForwardPostSessionResult:
+        raise AssertionError("closeout must not run")
+
+    monkeypatch.setattr(cli, "close_forward_post_session", unexpected)
+
+    with pytest.raises(typer.BadParameter):
+        cli.main(
+            tmp_path,
+            session_date="2026-07-23",
+            minimum_watch_cycles=299,
             output_dir=output,
         )
 

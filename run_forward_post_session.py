@@ -36,7 +36,7 @@ REPORT_NAME: Final = "forward_post_session_closeout_ko.md"
 def main(
     session_dir: Annotated[Path, typer.Argument()],
     session_date: Annotated[str, typer.Option()],
-    minimum_watch_cycles: Annotated[int, typer.Option()] = 1,
+    minimum_watch_cycles: Annotated[int, typer.Option()] = 300,
     output_dir: Annotated[Path | None, typer.Option()] = None,
 ) -> None:
     try:
@@ -45,9 +45,9 @@ def main(
         raise typer.BadParameter(
             "session-date는 YYYY-MM-DD여야 합니다"
         ) from None
-    if not 1 <= minimum_watch_cycles <= 390:
+    if not 300 <= minimum_watch_cycles <= 390:
         raise typer.BadParameter(
-            "minimum-watch-cycles는 1~390이어야 합니다"
+            "minimum-watch-cycles는 300~390이어야 합니다"
         )
     report_root = (
         output_dir
