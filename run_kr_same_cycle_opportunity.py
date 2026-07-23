@@ -87,6 +87,7 @@ def main(
     args = parse_args(argv)
     opportunity_count = 0
     source_incident_enabled = False
+    source_collection_completed = False
     incident_strategy_version: str | None = None
     try:
         _validate_targets(args)
@@ -111,6 +112,7 @@ def main(
             output_dir=str(args.collection_output_dir),
             fixture_root=(None if args.fixture_root is None else str(args.fixture_root)),
         )
+        source_collection_completed = True
         store = KrThemeStore(args.database)
         prepared_at = (
             clock() if args.fixture_root is None else _exact_cycle_completed_at(store, args.collection_cycle_id)
@@ -170,7 +172,11 @@ def main(
                     projected_at=clock(),
                 ),
             )
-            if not source_incident_projected and incident_strategy_version is not None:
+            if (
+                not source_incident_projected
+                and not source_collection_completed
+                and incident_strategy_version is not None
+            ):
                 with suppress(InvalidKrSameCycleDeliveryError):
                     _ = project_kr_source_preflight_incident(
                         HermesDeliveryStore(args.delivery_database),

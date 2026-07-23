@@ -84,10 +84,13 @@ def main(
                 "operating mode: shadow",
             )
         if args.command == "start":
+            occurred_at = dt.datetime.fromisoformat(args.occurred_at)
+            if not ledger.multi_market_trial_events(args.trial_id):
+                _require_not_future_start(occurred_at, clock())
             event = start_kr_theme_day_shadow_trial(
                 ledger,
                 args.trial_id,
-                dt.datetime.fromisoformat(args.occurred_at),
+                occurred_at,
             )
             details = (
                 _created_reused("event", event.created),
@@ -136,6 +139,13 @@ def _causal_registration_time(requested: dt.datetime, observed_at: dt.datetime) 
     if requested_utc.replace(microsecond=0) != observed_utc.replace(microsecond=0):
         raise InvalidKrThemeDayTrialError
     return observed_at
+
+
+def _require_not_future_start(occurred_at: dt.datetime, now: dt.datetime) -> None:
+    if occurred_at.tzinfo is None or occurred_at.utcoffset() is None or now.tzinfo is None or now.utcoffset() is None:
+        raise InvalidKrThemeDayTrialError
+    if occurred_at > now:
+        raise InvalidKrThemeDayTrialError
 
 
 def _created_reused(label: str, created: bool) -> str:

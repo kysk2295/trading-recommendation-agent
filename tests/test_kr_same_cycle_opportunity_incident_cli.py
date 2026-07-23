@@ -88,6 +88,29 @@ def test_source_preflight_failure_delivers_incident_once(
     assert events[0].status == "blocked_source_preflight"
 
 
+def test_projection_failure_after_complete_collection_is_not_preflight_incident(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _paths(tmp_path)
+    _register(paths["ledger"], tmp_path)
+    policy = _write_policy(tmp_path)
+
+    def reject_projection(**_values: str) -> None:
+        raise ValueError("projection blocked")
+
+    monkeypatch.setattr(run_kr_same_cycle_opportunity.run_kr_theme_projection, "main", reject_projection)
+
+    result = run_kr_same_cycle_opportunity.main(
+        _argv(paths, policy),
+        clock=lambda: dt.datetime(2026, 7, 16, 10, 2, 30, tzinfo=KST),
+    )
+
+    assert result == 1
+    assert len(KrThemeStore(paths["database"]).source_runs(CYCLE_ID)) == 4
+    assert HermesDeliveryStore(paths["delivery"]).events() == ()
+
+
 def test_unregistered_research_cannot_deliver_preexisting_source_incident(tmp_path: Path) -> None:
     # Given: an incomplete source ledger but no registered strategy authority.
     paths = _paths(tmp_path)
