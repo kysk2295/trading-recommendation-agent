@@ -11,6 +11,7 @@ from trading_agent.us_market_data_runtime_models import (
     MarketDataRuntimeIncident,
     MarketDataRuntimeIncidentKind,
     MarketDataRuntimeReceipt,
+    build_market_data_runtime_receipt,
 )
 
 
@@ -77,6 +78,41 @@ def bar_from_row(row: tuple[str, str, str, str, str, str, int]) -> CompletedMinu
         Decimal(row[5]),
         row[6],
     )
+
+
+def receipt_from_row(
+    row: tuple[
+        str,
+        str,
+        int,
+        str,
+        str,
+        str,
+        bytes,
+        str,
+        str,
+        str,
+        str,
+        str,
+        str,
+        str,
+        str,
+        int,
+    ],
+) -> MarketDataRuntimeReceipt:
+    receipt = build_market_data_runtime_receipt(
+        source_id=row[0],
+        connection_epoch=row[1],
+        sequence=row[2],
+        received_at=datetime_from_text(row[4]),
+        raw_payload=row[6],
+        instrument_id=row[7],
+        symbol=row[8],
+        completed_bar=bar_from_row(row[9:]),
+    )
+    if receipt.receipt_id != row[3] or receipt.payload_sha256 != row[5]:
+        raise MarketDataRuntimeError
+    return receipt
 
 
 def datetime_from_text(value: str) -> dt.datetime:
