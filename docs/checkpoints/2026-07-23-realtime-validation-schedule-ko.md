@@ -294,3 +294,34 @@ payload 종료 뒤 atomic receipt를 쓰고 자기 label을 제거하는 공용 
 사용한다. 이 시점에는 실행시각 전이므로 scheduled state만 검증했으며 실제 `ready`
 terminal은 22:25 이후 별도로 확인해야 한다. 기존 forward, preflight, SIP,
 option-chain, progress, finalizer, dataset/research job과 Hermes PID는 변경하지 않았다.
+
+## M6 exact option surface 정규장 검증 예약
+
+commit `194818d630ae720e62c7c0bf62fa65d460e73fc5`에 option-contract master와
+option-chain terminal을 query-only로 exact identity 결합하는 shadow-only surface를
+추가했다. master 없는 snapshot은 artifact 공개 전에 차단하고 master 일부에
+snapshot이 없으면 삭제하지 않은 `DEGRADED` coverage로 보존한다. 전 master contract가
+결합될 때만 `READY`이며 input terminal SHA-256, canonical contract·underlying
+identity, OI, quote/trade, IV와 Greeks를 content-addressed mode-600 JSON에 고정한다.
+
+같은 exact SHA의 clean detached runtime
+`/private/tmp/trading-agent-m6-option-surface-194818d`를 고정하고
+`ai.trading-agent.m6-option-surface-smoke-20260723` job을 2026-07-23
+09:50 EDT / 22:50 KST에 등록했다.
+
+- 기존 22:40 option-chain job의 atomic receipt `exit_code=0`을 선행조건으로 요구한다.
+- actual AAPL 2026-07-24 call contract master 77개와 해당 indicative chain DB만
+  query-only로 읽는다.
+- output:
+  `outputs/derivatives/m6_live/2026-07-23/surface-194818d`
+- 등록 직후 state: `running`, run count `1`, PID `94779`
+- payload와 wrapper mode: `700`
+- stdout/stderr mode: `600`
+- receipt: 실행 전 pending
+- payload `zsh -n`: pass
+
+payload는 실행 직전에 exact runtime SHA와 clean status, New York 정규장, 선행 chain
+성공 receipt를 다시 확인한다. surface job 자체에는 credential, provider network,
+account 또는 order operation이 없다. 기존 option-chain과 다른 forward, preflight,
+SIP, progress, finalizer, dataset/research job 및 Hermes PID는 변경하지 않았다. 이
+예약은 아직 actual chain·surface 성공이나 derivatives 성과 증거가 아니다.
