@@ -385,6 +385,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-23 실시간 검증 예약 업데이트:** 실행 중인 US full-session watch는 유지하고 같은 frozen commit runtime에 current-setup Paper GET/WSS preflight observer, Alpaca SIP read-only stream smoke, 장마감 flat/reconciliation terminal finalizer와 strict causal dataset materializer를 별도 one-shot launchd job으로 연결했다. 기존 KR finalizer와 Hermes service도 변경하지 않았다. signed one-time Hermes arm이 없는 상태에서 Paper POST/DELETE job을 만들지 않았고, OpenDART private 설정이 없는 KR 다음 source cycle도 성공으로 가장해 예약하지 않았다. wrapper 구문·dry-run·bad input·mode와 실제 launchd 대기 상태를 검증했다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-realtime-validation-schedule-ko.md)에 있다.
 
+**2026-07-23 KIS US repeated server-error 복구 업데이트:** 실제 4개 forward session의 strict quality 결손을 원본 audit으로 재대사해 2026-07-22 첫 16회는 이미 닫힌 scanner `duckdb` runtime 누락, 이후 공통 실패는 종목별 KIS GET의 `500 → 500` 미복구임을 확인했다. shared GET은 기존 server status에만 총 3회, 0.25초·0.75초 bounded backoff를 적용하고 `429`·redirect·transport error와 audit 의미는 유지한다. 품질 gate와 과거 실패 원장은 바꾸지 않았다. 새 SHA의 clean runtime으로 2026-07-24 full watch, Paper read-only preflight, SIP smoke, close terminal과 strict causal dataset job을 예약했다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-kis-server-retry-recovery-ko.md)에 있다.
+
 ### Single Writer, Multiple Readers
 
 - 실행 원장과 향후 broker paper 상태를 변경하는 프로세스는 하나뿐이다.
