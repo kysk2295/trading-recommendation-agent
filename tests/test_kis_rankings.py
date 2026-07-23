@@ -50,8 +50,8 @@ def test_discovery_keeps_other_rankings_when_one_exchange_request_fails() -> Non
         )
 
     # Then: five successful groups remain and the missing source is explicit.
-    assert len(requests) == 7
-    assert requests.count(("updown", "AMS")) == 2
+    assert len(requests) == 8
+    assert requests.count(("updown", "AMS")) == 3
     assert len(waits) == 6
     assert len(discovery.groups) == 5
     assert discovery.failures[0].source is RankingSource.UPDOWN

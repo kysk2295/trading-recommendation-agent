@@ -47,6 +47,42 @@ def test_get_retries_one_transient_server_error() -> None:
     assert events[0].outcome == "recovered"
 
 
+def test_get_uses_bounded_backoff_for_consecutive_server_errors() -> None:
+    statuses = iter((500, 503, 200))
+    attempts = 0
+    delays: list[float] = []
+
+    def handle(_: httpx2.Request) -> httpx2.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx2.Response(next(statuses), json={"ok": True})
+
+    with httpx2.Client(
+        base_url="https://openapi.koreainvestment.com:9443",
+        transport=httpx2.MockTransport(handle),
+    ) as client:
+        capture = begin_retry_capture()
+        try:
+            response = get_with_server_retry(
+                client,
+                "/read-only",
+                params={"EXCD": "NAS", "SYMB": "DEMO"},
+                headers={"authorization": "Bearer redacted"},
+                sleeper=delays.append,
+            )
+            events = captured_retry_events()
+        finally:
+            end_retry_capture(capture)
+
+    assert response.status_code == 200
+    assert attempts == 3
+    assert delays == [0.25, 0.75]
+    assert len(events) == 1
+    assert events[0].first_status == 500
+    assert events[0].final_status == 200
+    assert events[0].outcome == "recovered"
+
+
 def test_get_never_follows_redirects_with_auth_headers() -> None:
     requests: list[httpx2.Request] = []
 
@@ -77,7 +113,7 @@ def test_get_never_follows_redirects_with_auth_headers() -> None:
     assert requests[0].url.host == "openapi.koreainvestment.com"
 
 
-def test_get_stops_after_one_retry_and_does_not_retry_rate_limits() -> None:
+def test_get_stops_after_bounded_server_retries_and_does_not_retry_rate_limits() -> None:
     server_attempts = 0
 
     def server_error(_: httpx2.Request) -> httpx2.Response:
@@ -117,7 +153,7 @@ def test_get_stops_after_one_retry_and_does_not_retry_rate_limits() -> None:
         )
 
     assert repeated.status_code == 500
-    assert server_attempts == 2
+    assert server_attempts == 3
     assert limited.status_code == 429
     assert rate_attempts == 1
 

@@ -9,7 +9,7 @@ from typing import Final, Literal
 import httpx2
 
 RETRIABLE_SERVER_STATUSES: Final = frozenset((500, 502, 503, 504))
-SERVER_RETRY_DELAY_SECONDS: Final = 0.08
+SERVER_RETRY_DELAYS_SECONDS: Final = (0.25, 0.75)
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,37 +56,41 @@ def get_with_server_retry(
     )
     if response.status_code not in RETRIABLE_SERVER_STATUSES:
         return response
-    sleeper(SERVER_RETRY_DELAY_SECONDS)
-    try:
-        retried = client.get(
-            path,
-            params=params,
-            headers=headers,
-            follow_redirects=False,
-        )
-    except httpx2.HTTPError:
-        _capture_retry(
-            KisReadRetryEvent(
-                endpoint=path,
-                exchange=params.get("EXCD", ""),
-                symbol=params.get("SYMB", ""),
-                first_status=response.status_code,
-                final_status="transport_error",
-                outcome="failed",
+    first_status = response.status_code
+    for delay in SERVER_RETRY_DELAYS_SECONDS:
+        sleeper(delay)
+        try:
+            response = client.get(
+                path,
+                params=params,
+                headers=headers,
+                follow_redirects=False,
             )
-        )
-        raise
+        except httpx2.HTTPError:
+            _capture_retry(
+                KisReadRetryEvent(
+                    endpoint=path,
+                    exchange=params.get("EXCD", ""),
+                    symbol=params.get("SYMB", ""),
+                    first_status=first_status,
+                    final_status="transport_error",
+                    outcome="failed",
+                )
+            )
+            raise
+        if response.status_code not in RETRIABLE_SERVER_STATUSES:
+            break
     _capture_retry(
         KisReadRetryEvent(
             endpoint=path,
             exchange=params.get("EXCD", ""),
             symbol=params.get("SYMB", ""),
-            first_status=response.status_code,
-            final_status=retried.status_code,
-            outcome="recovered" if retried.is_success else "failed",
+            first_status=first_status,
+            final_status=response.status_code,
+            outcome="recovered" if response.is_success else "failed",
         )
     )
-    return retried
+    return response
 
 
 def _capture_retry(event: KisReadRetryEvent) -> None:
