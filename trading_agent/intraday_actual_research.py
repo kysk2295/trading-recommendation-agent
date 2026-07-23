@@ -68,6 +68,7 @@ def run_intraday_actual_research(
             review_root=paths.review_root,
             source_queue_artifact=paths.source_queue_artifact,
             data_foundation_manifests=binding.foundation_paths,
+            persisted_manifest_sha256=binding.manifest_sha256,
         ),
     )
     return IntradayActualResearchResult(catalog=catalog, binding=binding, loop=loop)

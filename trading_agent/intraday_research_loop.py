@@ -4,12 +4,13 @@ import datetime as dt
 import fcntl
 import hashlib
 import os
+import re
 import stat
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import override
+from typing import Final, override
 
 from trading_agent.daily_research_contract import strategy_contract
 from trading_agent.experiment_ledger_bootstrap import bootstrap_current_intraday_experiments
@@ -32,6 +33,8 @@ from trading_agent.replay import load_bounded_bar_source
 from trading_agent.source_backed_intraday_design import register_source_backed_intraday_design
 from trading_agent.source_driven_hypothesis_queue import load_source_driven_hypothesis_queue
 
+_HEX64: Final = re.compile(r"^[0-9a-f]{64}$")
+
 
 class IntradayResearchLoopError(RuntimeError):
     @override
@@ -48,6 +51,7 @@ class IntradayResearchLoopPaths:
     review_root: Path
     source_queue_artifact: Path | None = None
     data_foundation_manifests: tuple[Path, ...] = ()
+    persisted_manifest_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +89,12 @@ def run_intraday_research_loop(
     require_intraday_research_data(manifest, paths.data_foundation_manifests)
     bars = source.bars
     data_version = source.sha256
-    manifest_sha256 = hashlib.sha256(canonical_experiment_ledger_json(manifest).encode()).hexdigest()
+    canonical_manifest_sha256 = hashlib.sha256(
+        canonical_experiment_ledger_json(manifest).encode()
+    ).hexdigest()
+    manifest_sha256 = paths.persisted_manifest_sha256 or canonical_manifest_sha256
+    if _HEX64.fullmatch(manifest_sha256) is None:
+        raise IntradayResearchLoopError
     if manifest.schema_version == 1:
         _ = bootstrap_current_intraday_experiments(
             lane_registry=LaneRegistryReader(paths.lane_registry),
