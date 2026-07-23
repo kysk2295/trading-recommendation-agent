@@ -32,7 +32,7 @@ def run_intraday_actual_research(
             minimum_sessions=request.minimum_clean_sessions,
             max_sessions=request.max_sessions,
             max_bars=request.max_bars,
-            producer_commit_sha=request.code_version,
+            producer_commit_sha=request.dataset_producer_commit_sha,
             required_session_dates=request.required_session_dates,
         )
     )

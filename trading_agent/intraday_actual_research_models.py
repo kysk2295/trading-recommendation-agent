@@ -31,6 +31,7 @@ class IntradayActualResearchRequest:
     session_dirs: tuple[Path, ...]
     required_session_dates: tuple[dt.date, ...]
     strategy_bindings: tuple[IntradayResearchStrategyBinding, ...]
+    dataset_producer_commit_sha: str
     code_version: str
     registered_at: dt.datetime
     observed_at: dt.datetime

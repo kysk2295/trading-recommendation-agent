@@ -39,6 +39,11 @@ _STRICT_CLOSEOUT_MARKERS = (
 )
 
 
+class CloseoutPrerequisiteError(ValueError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Freeze an exact run plan and execute strict actual intraday research"
@@ -63,6 +68,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         required=True,
         metavar="STRATEGY,VERSION,CARD_SHA256",
     )
+    parser.add_argument("--dataset-producer-commit-sha", required=True)
     parser.add_argument("--code-version", required=True)
     parser.add_argument("--registered-at", type=_aware_datetime, required=True)
     parser.add_argument("--lane-registry", type=Path, required=True)
@@ -96,6 +102,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 session_dirs=tuple(path.resolve(strict=False) for path in args.session_dir),
                 required_session_dates=tuple(args.required_session_date),
                 strategy_bindings=tuple(args.strategy_binding),
+                dataset_producer_commit_sha=args.dataset_producer_commit_sha,
                 code_version=args.code_version,
                 registered_at=args.registered_at,
                 minimum_clean_sessions=args.minimum_clean_sessions,
@@ -159,7 +166,7 @@ def _require_closeout_prerequisite(
     report: Path | None,
 ) -> None:
     if (receipt is None) != (report is None):
-        raise ValueError("prerequisite_paths_incomplete")
+        raise CloseoutPrerequisiteError("prerequisite_paths_incomplete")
     if receipt is None or report is None:
         return
     receipt_payload = read_private_text(receipt)
@@ -173,7 +180,7 @@ def _require_closeout_prerequisite(
         or results[0] not in _STRICT_CLOSEOUT_RESULTS
         or any(report_lines.count(marker) != 1 for marker in _STRICT_CLOSEOUT_MARKERS)
     ):
-        raise ValueError("closeout_prerequisite_invalid")
+        raise CloseoutPrerequisiteError("closeout_prerequisite_invalid")
 
 
 def _strategy_binding(value: str) -> IntradayResearchStrategyBinding:

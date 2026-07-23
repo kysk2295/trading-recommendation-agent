@@ -13,6 +13,7 @@ from trading_agent.intraday_research_input_binding_models import (
     IntradayResearchStrategyBinding,
 )
 
+_HEX40 = re.compile(r"^[0-9a-f]{40}$")
 _HEX40_OR_64 = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _RUN_KEY = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
@@ -50,6 +51,7 @@ class IntradayActualResearchRunSpec(BaseModel):
     session_dirs: tuple[Path, ...]
     required_session_dates: tuple[dt.date, ...]
     strategy_bindings: tuple[IntradayResearchStrategyBinding, ...]
+    dataset_producer_commit_sha: str
     code_version: str
     registered_at: dt.datetime
     minimum_clean_sessions: int
@@ -83,6 +85,7 @@ class IntradayActualResearchRunSpec(BaseModel):
                 or _HEX64.fullmatch(item.queue_card_key) is None
                 for item in bindings
             )
+            or _HEX40.fullmatch(self.dataset_producer_commit_sha) is None
             or _HEX40_OR_64.fullmatch(self.code_version) is None
             or not _aware(self.registered_at)
             or not 1 <= self.minimum_clean_sessions <= self.max_sessions <= 60
@@ -100,7 +103,7 @@ class IntradayActualResearchRunSpec(BaseModel):
 class IntradayActualResearchRunPlanContent(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     spec: IntradayActualResearchRunSpec
     source_queue_snapshot_id: str
     source_queue_artifact: Path
@@ -118,7 +121,7 @@ class IntradayActualResearchRunPlanContent(BaseModel):
 class IntradayActualResearchRunPlan(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     plan_id: str
     content: IntradayActualResearchRunPlanContent
 

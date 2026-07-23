@@ -20,7 +20,13 @@ from trading_agent.intraday_actual_research_models import (
 from trading_agent.intraday_research_dataset_catalog_models import (
     IntradayResearchDatasetCatalogError,
 )
+from trading_agent.intraday_research_dataset_models import (
+    IntradayResearchDatasetReceipt,
+)
 from trading_agent.intraday_research_input_binding_models import IntradayResearchStrategyBinding
+from trading_agent.intraday_research_loop_models import (
+    load_intraday_research_manifest,
+)
 from trading_agent.lane_bootstrap import bootstrap_lane_control_plane
 from trading_agent.lane_registry_store import LaneRegistryStore
 from trading_agent.research_hypothesis_registration import register_research_hypothesis_manifest
@@ -66,6 +72,29 @@ def test_actual_research_runs_and_replays_catalog_binding_trial_and_review(tmp_p
         *tuple(request.paths.review_root.glob("*.json")),
     )
     assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in published)
+
+
+def test_actual_research_separates_dataset_and_strategy_code_provenance(
+    tmp_path: Path,
+) -> None:
+    request, _ = _request(tmp_path)
+    producer_commit = "f" * 40
+
+    result = run_intraday_actual_research(
+        replace(
+            request,
+            dataset_producer_commit_sha=producer_commit,
+        )
+    )
+
+    receipt = IntradayResearchDatasetReceipt.model_validate_json(
+        result.catalog.dataset.receipt_path.read_text(encoding="utf-8")
+    )
+    manifest = load_intraday_research_manifest(
+        result.binding.manifest_path
+    )
+    assert receipt.producer_commit_sha == producer_commit
+    assert manifest.code_version == request.code_version
 
 
 def test_actual_research_blocks_before_strategy_or_trial_when_current_session_is_not_clean(
@@ -162,6 +191,8 @@ def test_actual_research_cli_exposes_full_vertical_and_rejects_bad_binding() -> 
     assert "--entitlement-contract" in help_result.stdout
     assert "--source-queue-artifact" in help_result.stdout
     assert "--strategy-binding" in help_result.stdout
+    assert "--dataset-producer-commit-sha" in help_result.stdout
+    assert "--code-version" in help_result.stdout
     assert "--lane-registry" in help_result.stdout
     assert "--experiment-ledger" in help_result.stdout
     assert bad_result.returncode == 2
@@ -202,6 +233,7 @@ def _request(
                     queue_card_key=queue.snapshot.items[0].card_key,
                 ),
             ),
+            dataset_producer_commit_sha="d" * 40,
             code_version="e" * 40,
             registered_at=NOW,
             observed_at=NOW,

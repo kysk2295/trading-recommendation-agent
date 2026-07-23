@@ -41,6 +41,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         required=True,
         metavar="STRATEGY,VERSION,CARD_SHA256",
     )
+    parser.add_argument("--dataset-producer-commit-sha", required=True)
     parser.add_argument("--code-version", required=True)
     parser.add_argument("--registered-at", type=_aware_datetime, required=True)
     parser.add_argument("--lane-registry", type=Path, required=True)
@@ -67,6 +68,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 session_dirs=tuple(args.session_dir),
                 required_session_dates=tuple(args.required_session_date),
                 strategy_bindings=tuple(args.strategy_binding),
+                dataset_producer_commit_sha=args.dataset_producer_commit_sha,
                 code_version=args.code_version,
                 registered_at=args.registered_at,
                 observed_at=dt.datetime.now(dt.UTC),

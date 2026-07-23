@@ -64,6 +64,7 @@ def run_planned_intraday_actual_research(
             session_dirs=content.spec.session_dirs,
             required_session_dates=content.spec.required_session_dates,
             strategy_bindings=content.spec.strategy_bindings,
+            dataset_producer_commit_sha=content.spec.dataset_producer_commit_sha,
             code_version=content.spec.code_version,
             registered_at=content.spec.registered_at,
             observed_at=observed_at,
