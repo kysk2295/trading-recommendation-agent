@@ -297,6 +297,13 @@ receipt/claim 없음, clean runtime, payload·wrapper `700`, 빈 stdout/stderr `
 확인했다. 나머지 네 예약과 실행 중인 7월 23일 watch PID `62716`, Hermes PID
 `31663`은 변경하지 않았다.
 
+23:37 KST에는 terminal audit이 independent review를 원본 experiment·ledger에서
+재계산하는 exact `bc400690febe0fb376b68594290a20ea55764b34` runtime으로 같은 세
+job만 다시 교체했다. 새 PID `20813/20819/20824`, 세 job `state=running`,
+`runs=1`, receipt/claim 없음, clean runtime, payload·wrapper `700`, 빈
+stdout/stderr `600`을 확인했다. 나머지 네 예약과 실행 중인 7월 23일 watch,
+Hermes는 변경하지 않았다.
+
 ## US forward 장전 strict readiness 예약
 
 commit `3d488137ce6d612ebea98dd0b862e1fe9843ef44`에 read-only
