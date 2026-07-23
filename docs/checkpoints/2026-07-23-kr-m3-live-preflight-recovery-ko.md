@@ -69,9 +69,8 @@ Paper arm 또는 국내 주문 endpoint가 없다.
 - focused regressions: 기존 preflight 묶음 `52 passed`; 리뷰 blocker 묶음 `23 passed`
 - Ruff: 통과
 - basedpyright: `0 errors, 0 warnings, 0 notes`
-- 전체 pytest: 제품/시장 코드 `3279 passed`; 별도 Grok harness `84 passed, 5 failed`.
-  합계 `3363 passed, 5 failed`이며 실패 5개는 임시 repo에서 `uv run --offline`이
-  pytest·Ruff·basedpyright 실행환경을 해석하지 못한 현재 host 의존 경로다.
+- 전체 pytest: 제품/시장 코드 `3279 passed`; Grok 개발 harness를 포함한 전체
+  `3368 passed`
 - actual CLI replay: incident `1 -> 1`, delivery/attempt/ACK 추가 `0/0/0`
 - fixture CLI happy/replay: exit `0/0`, projection run `1`, Opportunity `1`, report mode `600`
 - domestic account/order mutation: `0`
