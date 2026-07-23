@@ -379,6 +379,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-23 M8 source-backed intraday 실행 업데이트:** `strategy_design` 큐 항목을 사람이 승인한 기존 VWAP/HOD/Gap-and-Go 템플릿에만 결합해 새 immutable strategy version을 등록하고, 기존 bounded M6 walk-forward와 독립 Reviewer까지 실행하는 v2 경로를 추가했다. queue snapshot/card/source 내용과 ledger 부모를 모두 다시 대조하며 오래된 queue를 다른 version 생성에 재사용하지 않는다. v1 bundle은 그대로 호환되고 v2는 exact content-addressed queue artifact가 없으면 ledger mutation 전에 차단된다. historical input은 최대 64 MiB 원본 bytes를 한 번만 읽어 파싱과 SHA-256에 함께 사용하며 v2 manifest의 사전등록 `input_sha256`과 다르면 version 등록 전에 차단된다. 또한 exact `DataFoundationManifest`가 해당 US day strategy의 `historical_research + minute_bar` capability·entitlement·역사 범위·완전성을 `READY`로 판정해야 하며 그 artifact hash를 trial 원장에 남긴다. committed VWAP 예제의 실제 CLI 첫 실행은 historical trial/review artifact `1/1`, exact replay는 `0/0`, Reviewer는 `hold`였으며 파일은 mode `600`이다. 이는 코드 자동생성·성과·승격·Paper 권한이 아니라 첫 source-to-experiment 수직축이다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-m8-source-backed-intraday-loop-ko.md)에 있다.
 
+**2026-07-23 실제 historical data 적격성 감사:** 보존된 KIS forward session 4개는 기존 strict loader에서 모두 품질 차단됐고, 검증된 Alpaca SIP AAPL 20세션·7,800분봉은 급등 후보의 point-in-time universe·prior close·ADV·spread가 없어 대체 입력으로 사용하지 않았다. 따라서 실제 historical 성과 trial은 0건이며 fixture `hold`를 수익성으로 표현하지 않는다. 상세 결손은 [감사 체크포인트](docs/checkpoints/2026-07-23-m8-real-data-eligibility-audit-ko.md)에 있다.
+
 ### Single Writer, Multiple Readers
 
 - 실행 원장과 향후 broker paper 상태를 변경하는 프로세스는 하나뿐이다.
