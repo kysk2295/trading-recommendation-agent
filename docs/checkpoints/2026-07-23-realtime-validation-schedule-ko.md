@@ -281,6 +281,15 @@ commit `3d76f891343503593a476c3ea80060cf82f0ff06`에서 공용
 terminal audit은 `/bin/zsh`, early/late progress는 명시적
 `/Users/goyunseo/.local/bin/uv`를 사용해 모두 통과했다.
 
+23:11 KST에는 closeout payload의 `--minimum-watch-cycles 1`과 downstream actual
+research의 cycle-cardinality 미검증 결손을 수정한 exact
+`ca78cf6a4a5ccf663d2de9cccb773aebe7b5531d` runtime으로 closeout/research/audit
+세 job만 교체했다. 새 admission은 최소 `300` cycle과
+ranking/watch/retry/candidate input의 동일한 `300~390` cardinality를 요구한다.
+새 PID `98137/98143/98148`, 세 job `state=running`, `runs=1`, receipt/claim 없음,
+payload·wrapper `700`, stdout/stderr `600`을 확인했다. 나머지 네 예약과 실행 중인
+7월 23일 watch, KR finalizer, Hermes는 변경하지 않았다.
+
 ## US forward 장전 strict readiness 예약
 
 commit `3d488137ce6d612ebea98dd0b862e1fe9843ef44`에 read-only

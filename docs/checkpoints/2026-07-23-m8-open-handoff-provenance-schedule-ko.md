@@ -1,7 +1,7 @@
 # M8 정규장 handoff·provenance 분리·실시간 체인 체크포인트
 
 최초 작성: 2026-07-23 21:56 KST
-최종 갱신: 2026-07-23 22:56 KST
+최종 갱신: 2026-07-23 23:11 KST
 
 ## KR 장후 예약 실측
 
@@ -165,15 +165,18 @@ credential, account, order mutation 경로가 없다.
 
 ## 2026-07-27 exact-runtime 실시간 체인
 
-readiness와 closeout은 clean detached runtime
+readiness는 clean detached runtime
 `/private/tmp/trading-agent-open-handoff-20260727-f917ffe`의 exact commit
-`f917ffeff52f8ab02cf40f8978e071a1c0ca073a`를 유지한다. forward, early/late
-progress, research와 terminal audit은 clean detached runtime
+`f917ffeff52f8ab02cf40f8978e071a1c0ca073a`를 유지한다. forward와 early/late
+progress는 clean detached runtime
 `/private/tmp/trading-agent-cycle-cadence-20260727-5ecad89`의 exact commit
-`5ecad89ba8eb68319c7fce95290103a1ad83bc69`로 교체했다. forward, research와
-terminal audit payload는 실행 직전 runtime HEAD, dirty 상태와 뉴욕 거래일을
-검사한다. progress runner는 명시적 `uv --directory`와 exact script 절대경로를
-사용한다.
+`5ecad89ba8eb68319c7fce95290103a1ad83bc69`를 사용한다. closeout, research와
+terminal audit은 아래 admission 수정 뒤 clean detached runtime
+`/private/tmp/trading-agent-strict-closeout-20260727-ca78cf6`의 exact commit
+`ca78cf6a4a5ccf663d2de9cccb773aebe7b5531d`로 교체했다. forward, closeout,
+research와 terminal audit payload는 실행 직전 runtime HEAD, dirty 상태와 뉴욕
+거래일을 검사한다. progress runner는 명시적 `uv --directory`와 exact script
+절대경로를 사용한다.
 
 | 실행 시각 | launchd label | 역할 | 등록 PID |
 |---|---|---|---:|
@@ -181,15 +184,15 @@ terminal audit payload는 실행 직전 runtime HEAD, dirty 상태와 뉴욕 거
 | 2026-07-27 22:25 KST / 09:25 EDT | `ai.trading-agent.forward-premarket-readiness-20260727` | 최소 60개 장전 cycle, 최신 600초, 최신 후보 1개 이상 strict readiness | 42505 |
 | 2026-07-27 22:45 KST / 09:45 EDT | `ai.trading-agent.forward-progress-early-20260727` | 최소 8 cycle ranking/watch/retry/candidate strict progress | 77271 |
 | 2026-07-28 04:30 KST / 2026-07-27 15:30 EDT | `ai.trading-agent.forward-progress-late-20260727` | 최소 300 cycle strict progress와 미복구 retry/coverage 결손 조기 차단 | 77277 |
-| 2026-07-28 05:20 KST / 2026-07-27 16:20 EDT | `ai.trading-agent.forward-post-session-20260727` | watch terminal을 최대 16:35 EDT까지 기다린 뒤 strict local closeout | 42511 |
-| 2026-07-28 05:40 KST / 2026-07-27 16:40 EDT | `ai.trading-agent.post-closeout-research-20260727` | closeout receipt/report를 요구한 뒤 actual causal dataset, READY foundation, multi-strategy walk-forward와 독립 Reviewer 실행 | 75784 |
-| 2026-07-28 05:50 KST / 2026-07-27 16:50 EDT | `ai.trading-agent.actual-research-terminal-audit-20260727` | research receipt를 최대 17:05 EDT까지 기다린 뒤 exact persisted manifest, 1~3 READY foundation, completed trials와 독립 Reviewer terminal 재검증 | 75789 |
+| 2026-07-28 05:20 KST / 2026-07-27 16:20 EDT | `ai.trading-agent.forward-post-session-20260727` | watch terminal을 최대 16:35 EDT까지 기다린 뒤 최소 300개 동일-cardinality strict local closeout | 98137 |
+| 2026-07-28 05:40 KST / 2026-07-27 16:40 EDT | `ai.trading-agent.post-closeout-research-20260727` | strict 300-cycle closeout receipt/report를 요구한 뒤 actual causal dataset, READY foundation, multi-strategy walk-forward와 독립 Reviewer 실행 | 98143 |
+| 2026-07-28 05:50 KST / 2026-07-27 16:50 EDT | `ai.trading-agent.actual-research-terminal-audit-20260727` | research receipt를 최대 17:05 EDT까지 기다린 뒤 exact persisted manifest, 1~3 READY foundation, completed trials와 독립 Reviewer terminal 재검증 | 98148 |
 
 research run은 다음 identity를 동결한다.
 
 - run key: `actual-2026-07-27`
 - dataset producer:
-  `5ecad89ba8eb68319c7fce95290103a1ad83bc69`
+  `ca78cf6a4a5ccf663d2de9cccb773aebe7b5531d`
 - frozen strategy code:
   `70e7d94dd0f56bc40b9fe602de22657c38f8e844`
 - strategy bindings: 기존 v1 VWAP reclaim, HOD breakout, Gap-and-Go와 exact queue
@@ -209,3 +212,36 @@ session과 머신이 실행 시각까지 유지되어야 한다.
 
 executable Paper champion이 두 개 미만이므로 Alpaca Paper arm job은 만들지 않았고
 Allocation Manager도 활성화하지 않았다. 실제 자금 거래 권한은 없다.
+
+## strict closeout→actual research admission 수정
+
+7월 27일 closeout payload가 `--minimum-watch-cycles 1`을 사용하고, downstream
+planned actual research는 성공 receipt, `recovered|replayed`, failed-cycle 삭제
+`0`, gate 완화 `false`, 외부 operation `0`만 검사했다. 따라서 1-cycle closeout도
+plan·dataset·trial 경계로 들어갈 수 있었다.
+
+commit `ca78cf6a4a5ccf663d2de9cccb773aebe7b5531d`에서 다음 계약을 추가했다.
+
+- closeout이 선언한 minimum watch cycle은 `300~390`
+- watch/ranking/retry/candidate input cycle은 모두 정확히 한 번 보고
+- 네 cardinality는 서로 동일하고 선언 minimum 이상, 최대 `390`
+- minimum 완화, cardinality 불일치·누락·중복·비정수는 actual plan mutation 전에
+  `closeout_prerequisite_invalid`로 차단
+- quality gate, 실패 cycle, 기존 strict marker는 그대로 유지
+
+검증 결과:
+
+- focused: `30 passed`
+- Ruff 전체: pass
+- basedpyright 전체: `0 errors, 0 warnings, 0 notes`
+- 전체 pytest: `3470 passed`
+- 기존 Grok offline environment 테스트: 변경과 무관한 `5 failed`
+- no-excuse 검사: pass
+- CLI `--help`, 잘못된 binding exit `2`, actual-shaped strict happy path:
+  exit `0`, `ready`, selected session/trial `1/1`
+
+closeout payload는 minimum `300`으로 바꿨고 closeout/research/audit 세 job만 기존
+receipt·claim이 없는 것을 확인한 뒤 재등록했다. 새 PID는 `98137/98143/98148`이다.
+전체 일곱 job은 `state=running`, `runs=1`, payload와 wrapper mode `700`, 빈
+stdout/stderr mode `600`, receipt·claim 없음이었다. 이는 실행 가능 예약 증거이며
+clean actual session, READY foundation 또는 성과 증거는 아니다.
