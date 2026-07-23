@@ -184,7 +184,7 @@ def _build_selections_and_foundations(request, receipt, entitlement, queue):
     selections: list[IntradayHypothesisSelection] = []
     for binding in request.strategy_bindings:
         item = items.get(binding.queue_card_key)
-        if item is None or item.route is not HypothesisQueueRoute.STRATEGY_DESIGN:
+        if item is None or not _queue_item_accepts_binding(item, binding.strategy_version):
             raise IntradayResearchInputBindingError("queue_card_not_design_ready")
         foundation = build_actual_intraday_data_foundation(
             binding.strategy,
@@ -204,6 +204,20 @@ def _build_selections_and_foundations(request, receipt, entitlement, queue):
             )
         )
     return tuple(selections), tuple(foundations)
+
+
+def _queue_item_accepts_binding(item, strategy_version: str) -> bool:
+    if item.route is HypothesisQueueRoute.STRATEGY_DESIGN:
+        return not item.strategy_versions and not item.historical_trial_ids
+    return (
+        item.route
+        in {
+            HypothesisQueueRoute.HISTORICAL_REPLAY,
+            HypothesisQueueRoute.INDEPENDENT_REVIEW,
+            HypothesisQueueRoute.RECOVERY,
+        }
+        and item.strategy_versions == (strategy_version,)
+    )
 
 
 def _payload(model: BaseModel) -> str:

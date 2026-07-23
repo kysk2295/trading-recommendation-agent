@@ -4,6 +4,7 @@ import datetime as dt
 import stat
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,9 @@ from trading_agent.intraday_research_input_binding_models import IntradayResearc
 from trading_agent.lane_bootstrap import bootstrap_lane_control_plane
 from trading_agent.lane_registry_store import LaneRegistryStore
 from trading_agent.research_hypothesis_registration import register_research_hypothesis_manifest
+from trading_agent.source_backed_intraday_design import (
+    InvalidSourceBackedIntradayDesignError,
+)
 from trading_agent.source_driven_hypothesis_queue import (
     project_source_driven_hypothesis_queue,
     publish_source_driven_hypothesis_queue,
@@ -77,6 +81,59 @@ def test_actual_research_blocks_before_strategy_or_trial_when_current_session_is
     assert reader.trials() == ()
     assert not request.paths.dataset_root.exists()
     assert not request.paths.binding_root.exists()
+
+
+def test_actual_research_refreshes_same_frozen_version_with_new_clean_data(
+    tmp_path: Path,
+) -> None:
+    first_request, ledger = _request(tmp_path)
+    first = run_intraday_actual_research(first_request)
+    second_source = tmp_path / "2026-07-15"
+    write_closed_source_session(second_source, session_date=dt.date(2026, 7, 15))
+    refreshed_queue = project_source_driven_hypothesis_queue(ExperimentLedgerReader(ledger.path))
+    refreshed_queue_path, _ = publish_source_driven_hypothesis_queue(
+        tmp_path / "queue",
+        refreshed_queue,
+    )
+    with pytest.raises(InvalidSourceBackedIntradayDesignError):
+        _ = run_intraday_actual_research(
+            replace(
+                first_request,
+                registered_at=NOW + dt.timedelta(days=1),
+                observed_at=NOW + dt.timedelta(days=1),
+                paths=replace(
+                    first_request.paths,
+                    source_queue_artifact=refreshed_queue_path,
+                ),
+            )
+        )
+    assert len(ExperimentLedgerReader(ledger.path).trials()) == 1
+    second_request = replace(
+        first_request,
+        session_dirs=(*first_request.session_dirs, second_source),
+        required_session_dates=(dt.date(2026, 7, 15),),
+        registered_at=NOW + dt.timedelta(days=1),
+        observed_at=NOW + dt.timedelta(days=1),
+        max_bars=1_000,
+        paths=replace(
+            first_request.paths,
+            source_queue_artifact=refreshed_queue_path,
+        ),
+    )
+
+    second = run_intraday_actual_research(second_request)
+    replay = run_intraday_actual_research(second_request)
+
+    reader = ExperimentLedgerReader(ledger.path)
+    assert first.catalog.dataset.session_count == 1
+    assert second.catalog.dataset.session_count == 2
+    assert second.binding.input_sha256 != first.binding.input_sha256
+    assert second.loop.experiment_artifacts_created == 1
+    assert second.loop.review_artifacts_created == 1
+    assert replay.loop.experiment_artifacts_created == 0
+    assert replay.loop.review_artifacts_created == 0
+    assert len(reader.strategy_versions()) == 1
+    assert len(reader.trials()) == 2
 
 
 def test_actual_research_cli_exposes_full_vertical_and_rejects_bad_binding() -> None:

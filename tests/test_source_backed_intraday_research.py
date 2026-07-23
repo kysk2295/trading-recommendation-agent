@@ -114,8 +114,10 @@ def test_source_backed_design_rejects_reusing_stale_queue_for_another_version(tm
     queue = project_source_driven_hypothesis_queue(ExperimentLedgerReader(ledger.path))
     manifest = _research_manifest(queue.snapshot_id, queue.snapshot.items[0].card_key)
     _ = register_source_backed_intraday_design(manifest, queue, ledger)
+    refreshed_queue = project_source_driven_hypothesis_queue(ExperimentLedgerReader(ledger.path))
     stale = manifest.model_copy(
         update={
+            "source_queue_snapshot_id": refreshed_queue.snapshot_id,
             "hypotheses": (
                 manifest.hypotheses[0].model_copy(update={"strategy_version": "first_vwap_reclaim_source_v3"}),
             )
@@ -123,7 +125,7 @@ def test_source_backed_design_rejects_reusing_stale_queue_for_another_version(tm
     )
 
     try:
-        _ = register_source_backed_intraday_design(stale, queue, ledger)
+        _ = register_source_backed_intraday_design(stale, refreshed_queue, ledger)
     except InvalidSourceBackedIntradayDesignError:
         pass
     else:
