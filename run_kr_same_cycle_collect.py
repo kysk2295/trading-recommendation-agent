@@ -19,7 +19,12 @@ import run_kis_kr_ranking_collect
 import run_kr_volume_surge_derive
 import run_ls_nws_collect
 import run_opendart_collect
-from trading_agent.kis_auth import KisMode, load_kis_credentials
+from scr_backtest.kis_intraday import MissingKisCredentialsError
+from trading_agent.kis_auth import (
+    KisMode,
+    UnsafeSecretFileError,
+    load_kis_credentials,
+)
 from trading_agent.kr_source_cycle_orchestrator import (
     KrSourceCycleOrchestration,
     KrSourceCycleOrchestrationError,
@@ -34,8 +39,18 @@ from trading_agent.kr_theme_store import (
     KrThemeWriterLeaseUnavailableError,
     UnsupportedKrThemeSchemaError,
 )
-from trading_agent.ls_config import load_ls_credentials
-from trading_agent.opendart_config import load_opendart_credentials
+from trading_agent.ls_config import (
+    InvalidLsCredentialsError,
+    LsSecretEncodingError,
+    LsSecretFileError,
+    load_ls_credentials,
+)
+from trading_agent.opendart_config import (
+    InvalidOpenDartCredentialsError,
+    OpenDartSecretEncodingError,
+    OpenDartSecretFileError,
+    load_opendart_credentials,
+)
 from trading_agent.private_report import write_private_report
 
 _SAFE_ID: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,115}$")
@@ -91,7 +106,18 @@ def require_kr_same_cycle_source_preflight(
         _ = load_opendart_credentials()
         _ = load_ls_credentials()
         _ = load_kis_credentials(KisMode.LIVE)
-    except (OSError, RuntimeError, UnicodeError, ValueError):
+    except (
+        InvalidLsCredentialsError,
+        InvalidOpenDartCredentialsError,
+        LsSecretEncodingError,
+        LsSecretFileError,
+        MissingKisCredentialsError,
+        OpenDartSecretEncodingError,
+        OpenDartSecretFileError,
+        OSError,
+        UnicodeError,
+        UnsafeSecretFileError,
+    ):
         raise KrSameCycleSourcePreflightError from None
 
 

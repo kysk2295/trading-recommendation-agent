@@ -22,6 +22,44 @@ PRIVATE_DART_COMPANY = "Private Orchestrator Corp"
 PRIVATE_DART_REPORT = "Private orchestrator filing"
 
 
+def test_live_source_preflight_types_only_credential_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(run_kr_same_cycle_collect, "has_terminal_kr_source_runs", lambda *_args, **_kwargs: False)
+
+    def reject_credentials() -> object:
+        raise run_kr_same_cycle_collect.OpenDartSecretFileError(tmp_path / "missing.env")
+
+    monkeypatch.setattr(run_kr_same_cycle_collect, "load_opendart_credentials", reject_credentials)
+
+    with pytest.raises(run_kr_same_cycle_collect.KrSameCycleSourcePreflightError):
+        run_kr_same_cycle_collect.require_kr_same_cycle_source_preflight(
+            database=tmp_path / "kr-theme.sqlite3",
+            collection_cycle_id=CYCLE_ID,
+            collection_date=dt.date.fromisoformat(COLLECTION_DATE),
+        )
+
+
+def test_live_source_preflight_does_not_relabel_unrelated_runtime_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(run_kr_same_cycle_collect, "has_terminal_kr_source_runs", lambda *_args, **_kwargs: False)
+
+    def reject_unrelated() -> object:
+        raise RuntimeError("unexpected loader bug")
+
+    monkeypatch.setattr(run_kr_same_cycle_collect, "load_opendart_credentials", reject_unrelated)
+
+    with pytest.raises(RuntimeError, match="unexpected loader bug"):
+        run_kr_same_cycle_collect.require_kr_same_cycle_source_preflight(
+            database=tmp_path / "kr-theme.sqlite3",
+            collection_cycle_id=CYCLE_ID,
+            collection_date=dt.date.fromisoformat(COLLECTION_DATE),
+        )
+
+
 def test_fixture_cli_collects_four_sources_and_replays_without_any_stage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
