@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "session_date": "2026-07-23",
+  "observed_at": "2026-07-23T09:40:20+09:00",
+  "verification_commit": "db72cc155689bfd756cc7d39288a0a705301a5b2",
+  "typed_preflight_exit_code": 1,
+  "delivery_event_count": 39,
+  "delivery_attempt_count": 44,
+  "delivery_acknowledgement_count": 28,
+  "matching_preflight_incident_count": 1,
+  "matching_acknowledged_count": 1,
+  "replay_added_events": 0,
+  "replay_added_attempts": 0,
+  "replay_added_acknowledgements": 0,
+  "account_operation_count": 0,
+  "order_operation_count": 0,
+  "paper_mutation_count": 0,
+  "private_evidence_paths": [
+    "outputs/hermes/delivery.sqlite3",
+    "outputs/kr_theme/m3_live/2026-07-23/operator-typed-preflight-db72cc1/kr_same_cycle_opportunity_ko.md",
+    "outputs/kr_theme/m3_live/2026-07-23/kr_m3_shadow.events.log"
+  ],
+  "contains_credentials": false,
+  "contains_account_identifiers": false,
+  "contains_platform_message_identifiers": false
+}
