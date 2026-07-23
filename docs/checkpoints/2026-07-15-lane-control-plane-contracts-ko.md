@@ -39,6 +39,13 @@ lane registry schema v1은 다음 네 append-only 테이블을 가진다.
 
 `run_lane_control_plane_bootstrap.py`는 외부 API나 자격증명 없이 세 manifest와 현재 intraday 가설 scope 네 개를 등록한다. 선택적으로 기존 current-schema execution DB의 저장된 account fingerprint와 `bound_at`을 읽어 intraday 전용 binding을 만든다. resolved path는 로컬 SHA-256 입력으로만 사용하며 보고서에 쓰지 않는다.
 
+2026-07-23 actual Paper control-plane 준비에서 process umask에 따라 bootstrap 보고서가
+mode `644`로 생성되는 결손을 관찰했다. 보고서 writer를 공용 atomic private-report
+경계로 교체해 success·blocked·replay 모두 mode `600`을 강제하고 CLI 회귀
+`7 passed`, Ruff, basedpyright `0 errors, 0 warnings`로 확인했다. 기존 노출 파일은
+즉시 mode `600`으로 보정했으며 account fingerprint와 execution path는 계속
+보고서에 기록하지 않는다.
+
 - executable `--help`: 종료코드 0
 - registry-only 초기화: manifest 3/3, scope 4/4, binding `not_requested`, 종료코드 0
 - 임시 execution DB binding: 기존 manifest/scope replay 0건, binding `registered`, 종료코드 0

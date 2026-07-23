@@ -29,6 +29,7 @@ from trading_agent.lane_registry_store import (
     LaneRegistryWriterLeaseUnavailableError,
     UnsupportedLaneRegistrySchemaError,
 )
+from trading_agent.private_report import write_private_report
 
 REPORT_NAME = "lane_control_plane_bootstrap_ko.md"
 
@@ -88,7 +89,6 @@ def _write_report(
     result: str,
     details: tuple[str, ...],
 ) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
     lines = [
         "# Lane control-plane bootstrap",
         "",
@@ -98,7 +98,7 @@ def _write_report(
         *(f"- {detail}" for detail in details),
         "",
     ]
-    _ = (output_dir / REPORT_NAME).write_text("\n".join(lines), encoding="utf-8")
+    write_private_report(output_dir / REPORT_NAME, "\n".join(lines))
 
 
 if __name__ == "__main__":

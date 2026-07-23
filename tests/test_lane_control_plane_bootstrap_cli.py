@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import sqlite3
+import stat
 import subprocess
 from decimal import Decimal
 from pathlib import Path
@@ -21,6 +22,7 @@ PROJECT = Path(__file__).parents[1]
 SCRIPT = PROJECT / "run_lane_control_plane_bootstrap.py"
 UV = shutil.which("uv")
 assert UV is not None
+UV_PATH = Path(UV)
 
 
 def test_lane_bootstrap_help_is_available() -> None:
@@ -54,6 +56,7 @@ def test_registry_only_bootstrap_registers_default_contracts(tmp_path: Path) -> 
     assert "experiment scope 신규/전체: 4/4" in report
     assert "intraday account binding: not_requested" in report
     assert "외부 Alpaca mutation: 0건" in report
+    assert stat.S_IMODE((output / "lane_control_plane_bootstrap_ko.md").stat().st_mode) == 0o600
 
 
 def test_registry_bootstrap_replay_is_idempotent(tmp_path: Path) -> None:
@@ -189,7 +192,7 @@ def _report(output: Path) -> str:
 
 def _direct_execution_environment() -> dict[str, str]:
     environment = os.environ.copy()
-    environment["PATH"] = f"{Path(UV).parent}:/usr/bin:/bin"
+    environment["PATH"] = f"{UV_PATH.parent}:/usr/bin:/bin"
     return environment
 
 
