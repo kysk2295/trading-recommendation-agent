@@ -92,6 +92,36 @@ wrapper는 원자적 claim과 receipt를 사용하고 완료 뒤 자기 launchd 
 실행 결과가 성공인지, 아직 새 곡선이 없는지, provider 실패인지는 07:05 이후 receipt와
 private artifact를 다시 검증해 확정한다.
 
+## 다음 공식 게시 one-shot 실측
+
+예약 작업은 2026-07-24 07:05:11 KST에 exit `0`으로 끝났고 mode-600 atomic
+receipt를 남긴 뒤 launchd label을 제거했다. stdout은 성공 한 줄, stderr는
+0 bytes였으며 반복 실행은 없었다.
+
+- HTTP: `200`
+- raw bytes: `25,393`
+- raw payload SHA-256:
+  `fe59c184dc465c7c5438b90bb5fb51626005647f5f81607d163694ae44c01287`
+- request ID:
+  `4bf700fe52d75e1dda50277aabd85b747315222a22d8330e6354a14c31ea29e9`
+- raw receipt ID:
+  `001fbae46b6275fe4c6054032a94136cedba3b28170af4b916a2f51751c6e57a`
+- run ID:
+  `811627d6f9adbb84cbd4b69c98c3613e46aab1b0eb244399c598ebb5fd36d44b`
+- latest/previous curve date: `2026-07-23` / `2026-07-22`
+- maturity count: `14`
+- context ID:
+  `f7bf3a814e71c8f3c62864a22c431947c2c5c04c67d95f5b1a66c53eb3b36e03`
+- persisted artifact SHA-256:
+  `a1af4b879a9cdac55cebc0ae8636bc900531c00737712b9c1141e4d8229a3ea9`
+- raw receipt / terminal run: `1/1`
+
+같은 frozen runtime에 nonexistent fixture를 지정한 별도 output replay는 source를
+열지 않고 `replayed terminal: true`, `network access: 0`, `stored terminal
+query-only`로 끝났다. replay artifact의 content SHA는 위 persisted artifact와
+같았고 원본 DB의 receipt/run은 `1/1`을 유지했다. 공식 GET과 replay 모두
+credential, broker, account, order와 allocation mutation은 `0`이다.
+
 ## 검증
 
 - parser/store/client/artifact/CLI 신규: `14 passed`
