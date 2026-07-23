@@ -71,6 +71,25 @@ admission 결과는 다음과 같다.
 mtime도 변하지 않았다. exact replay는 exit `2`, artifact `1 -> 1`,
 `artifact created: false`, network access와 broker mutation `0`이었다.
 
+## 다음 정규장 예약 교체
+
+2026-07-24 09:35 EDT에 대기하던 기존 SIP smoke는 이 409 evidence를 읽지 않고 같은
+자격증명과 WebSocket을 다시 여는 runner였다. provider 접근 전인 2026-07-24
+00:48 KST에 해당 future job label만 제거하고 다음 at-most-once admission으로
+교체했다.
+
+- label: `ai.trading-agent.alpaca-sip-admission-20260724`
+- 실행 시각: 2026-07-24 09:34 EDT / 22:34 KST
+- frozen runtime:
+  `/private/tmp/trading-agent-sip-admission-20260724-9cfe56a`
+- runtime commit: `9cfe56a778afce914e825f3d3e043058c16e3044`
+- expected current result: exit `2`, `blocked/insufficient_subscription`
+- wrapper/log mode: `700 / 600`
+- atomic claim·완료 receipt: enabled
+
+기존 SIP smoke runner 파일과 과거 실패 원장은 삭제하지 않았다. US forward,
+KR finalizer, Hermes와 장후 closeout/research job은 변경·중단·재시작하지 않았다.
+
 ## 제한과 다음 운영 규칙
 
 이 결과는 현재 사용 가능한 자격 범위에서 SIP trade stream이 제공되지 않는다는
