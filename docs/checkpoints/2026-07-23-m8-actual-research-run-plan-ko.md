@@ -56,3 +56,12 @@ run key + candidate sessions + required date
 이 plan은 예약 상태를 성과나 readiness로 바꾸지 않는다. strict current-session gate가
 통과한 경우에만 동일 coordinator가 실제 causal CSV, READY foundation, trial과 독립
 Reviewer 증거를 만든다.
+
+## 운영 연결
+
+7월 23일과 24일 dataset 후속 research watcher는 이 CLI가 있는 frozen runtime
+`e095bef9cf3d90dd38ec6f31d1fc8009b3f92a4f`와 날짜별 run key를 사용하도록
+교체했다. 두 watcher는 같은 세 고정 strategy version을 사용하며 7월 24일은 두 날짜
+session을 누적 감사한다. 두 job은 run count `1`, state `running`으로 dataset
+terminal을 기다리고 있고, 기존 KR finalizer와 Hermes를 포함한 다른 실시간 job은
+변경하지 않았다.
