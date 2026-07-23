@@ -22,7 +22,7 @@
 
 ## 닫은 결함
 
-체크포인트 `aa8730c`와 후속 `293c28c`는 운영 결함을 닫는다.
+체크포인트 `aa8730c`, `293c28c`, `a8ee8dc`는 운영 결함을 닫는다.
 
 1. trial CLI는 명시 시각과 calendar 관측시각이 절대시각 기준 같은 초인 경우에만
    관측시각으로 올려 causal ordering을 보존한다. 다음 초 또는 더 먼 미래 evidence는
@@ -36,10 +36,19 @@
    STARTED append와 이미 검증된 exact event replay는 유지한다.
 5. collector가 complete terminal source cycle을 반환한 뒤 projection이 실패한 경우에는
    source preflight incident로 잘못 분류하지 않는다.
+6. generic preflight incident는 exact terminal replay를 먼저 확인한 뒤 OpenDART·LS·KIS
+   credential file 구조만 검증하는 전용 typed preflight 실패에서만 만든다. collector의
+   다른 예외는 이 상태로 축소하지 않는다.
 
 실제 delivery DB에서 event `38 -> 39`, attempt `43 -> 44`, acknowledgement
 `27 -> 28`을 확인했다. 같은 cycle 재실행 뒤 세 수는 변하지 않았고 KR preflight
 incident는 정확히 1건이었다. 메시지 본문, platform ID와 자격증명 값은 출력하지 않았다.
+
+재검증 가능한 redacted aggregate는
+`outputs/kr_theme/m3_live/2026-07-23/verification/kr_m3_preflight_delivery_attestation.json`에
+mode `600`으로 저장했다. 이 artifact는 private delivery DB, typed-preflight operator report,
+session event log의 상대경로와 집계 수만 포함하며 delivery ID, 메시지 본문, account ID와
+credential은 포함하지 않는다.
 
 15:32 KST에는 별도 one-shot finalizer
 `ai.trading-agent.kr-m3-finalize-20260723`가 exact post-session terminal, independent
@@ -52,8 +61,8 @@ Paper arm 또는 국내 주문 endpoint가 없다.
 - focused regression: `30 passed`
 - Ruff: 통과
 - basedpyright: `0 errors, 0 warnings, 0 notes`
-- 전체 pytest: 제품/시장 코드 `3274 passed`; 별도 Grok harness `84 passed, 5 failed`.
-  합계 `3358 passed, 5 failed`이며 실패 5개는 임시 repo에서 `uv run --offline`이
+- 전체 pytest: 제품/시장 코드 `3275 passed`; 별도 Grok harness `84 passed, 5 failed`.
+  합계 `3359 passed, 5 failed`이며 실패 5개는 임시 repo에서 `uv run --offline`이
   pytest·Ruff·basedpyright 실행환경을 해석하지 못한 현재 host 의존 경로다.
 - actual CLI replay: incident `1 -> 1`, delivery/attempt/ACK 추가 `0/0/0`
 - domestic account/order mutation: `0`
