@@ -58,6 +58,27 @@ failure `1`을 그대로 유지했다.
 clean session, causal CSV, READY foundation, trial 또는 Reviewer 성공 증거가 아니다.
 최소 두 executable Paper champion 전에는 Paper arm과 Allocation Manager를 열지 않는다.
 
+## closeout 이후 scheduled terminal
+
+실패한 closeout을 선행조건으로 받은 downstream도 성공이나 부분 연구 결과를 만들지
+않았다.
+
+- 05:16 KST planned actual research receipt: mode `600`, exit `1`
+- planned research report: `blocked`, external mutation `0`
+- actual run plan: 없음
+- causal dataset CSV/receipt: `0/0`
+- READY foundation와 v2 manifest: `0`
+- 신규 trial/review: `0/0`
+- 05:26 KST independent terminal audit receipt: mode `600`, exit `1`
+- terminal audit report: `blocked`
+- terminal audit JSON: `0`
+- automatic state/order authority/allocation change: 모두 `false`
+- 종료 뒤 closeout/research/audit launchd label: 모두 없음
+
+독립 audit은 없는 plan이나 실패 research receipt를 READY로 추정하지 않았다. 다음
+full-session chain은 새 runtime에서 clean source가 실제로 생길 때만 causal CSV,
+READY foundation, trial과 Reviewer 단계로 진입한다.
+
 ## 검증
 
 - focused KIS EOD/server recovery: `18 passed`
