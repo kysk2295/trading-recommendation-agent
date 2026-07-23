@@ -14,6 +14,7 @@ from trading_agent.models import BarInput
 from trading_agent.strategy_factory import StrategyMode
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
 PROMOTION_MIN_SESSIONS: Final = 20
 PROMOTION_MIN_TRADES: Final = 30
 DEMOTION_MIN_SESSIONS: Final = 5
@@ -31,21 +32,41 @@ class IntradayHypothesisSelection(BaseModel):
 
     strategy: StrategyMode
     hypothesis_id: str
+    strategy_version: str | None = None
+    queue_card_key: str | None = None
 
     @model_validator(mode="after")
     def validate_selection(self) -> Self:
-        if self.strategy is StrategyMode.ORB or _IDENTIFIER.fullmatch(self.hypothesis_id) is None:
+        source_backed = self.strategy_version is not None or self.queue_card_key is not None
+        if (
+            self.strategy is StrategyMode.ORB
+            or _IDENTIFIER.fullmatch(self.hypothesis_id) is None
+            or (
+                source_backed
+                and (
+                    self.strategy_version is None
+                    or _IDENTIFIER.fullmatch(self.strategy_version) is None
+                    or self.queue_card_key is None
+                    or _HEX64.fullmatch(self.queue_card_key) is None
+                )
+            )
+        ):
             raise InvalidIntradayResearchManifestError
         return self
+
+    @property
+    def is_source_backed(self) -> bool:
+        return self.strategy_version is not None
 
 
 class IntradayResearchManifest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[1] = 1
-    family: Literal["intraday_challengers_v1"]
+    schema_version: Literal[1, 2] = 1
+    family: Literal["intraday_challengers_v1", "source_backed_intraday_challengers_v2"]
     code_version: str
     hypotheses: tuple[IntradayHypothesisSelection, ...]
+    source_queue_snapshot_id: str | None = None
     registered_at: dt.datetime
     evaluator_version: Literal["intraday_walk_forward_v1"]
     minimum_training_sessions: int = Field(ge=0, le=20)
@@ -61,6 +82,7 @@ class IntradayResearchManifest(BaseModel):
         costs = self.per_side_fee_bps + self.per_side_slippage_bps
         strategies = self.strategies
         hypothesis_ids = tuple(item.hypothesis_id for item in self.hypotheses)
+        source_backed = self.schema_version == 2
         if (
             _IDENTIFIER.fullmatch(self.code_version) is None
             or not self.hypotheses
@@ -72,6 +94,21 @@ class IntradayResearchManifest(BaseModel):
             or self.registered_at.tzinfo is None
             or self.registered_at.utcoffset() is None
             or self.minimum_training_sessions >= self.max_sessions
+            or source_backed is not (self.family == "source_backed_intraday_challengers_v2")
+            or (
+                source_backed
+                and (
+                    self.source_queue_snapshot_id is None
+                    or _HEX64.fullmatch(self.source_queue_snapshot_id) is None
+                    or any(not item.is_source_backed for item in self.hypotheses)
+                )
+            )
+            or (
+                not source_backed
+                and (
+                    self.source_queue_snapshot_id is not None or any(item.is_source_backed for item in self.hypotheses)
+                )
+            )
         ):
             raise InvalidIntradayResearchManifestError
         return self

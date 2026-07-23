@@ -40,6 +40,7 @@ def test_intraday_research_loop_help_exposes_bounded_local_inputs() -> None:
     assert "--experiment-ledger" in completed.stdout
     assert "--artifact-root" in completed.stdout
     assert "--review-root" in completed.stdout
+    assert "--source-queue-artifact" in completed.stdout
     assert "--output-dir" in completed.stdout
 
 

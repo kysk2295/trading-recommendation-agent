@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "family": "source_backed_intraday_challengers_v2",
+  "code_version": "m8-source-backed-intraday-v2",
+  "hypotheses": [
+    {
+      "strategy": "vwap_reclaim",
+      "hypothesis_id": "H-MOM-VWAP-SOURCE-002",
+      "strategy_version": "first_vwap_reclaim_source_v2",
+      "queue_card_key": "c2940bb80c97523d86489d95ca91d1b8c1e2a350bef02c7fc8ddbf1d1127714d"
+    }
+  ],
+  "source_queue_snapshot_id": "e95a94497a42cb160bcdf3af8cd0e799d5eb426581bfee0998436987896d510f",
+  "registered_at": "2026-07-23T02:32:00Z",
+  "evaluator_version": "intraday_walk_forward_v1",
+  "minimum_training_sessions": 0,
+  "max_bars": 10,
+  "max_sessions": 1,
+  "per_side_fee_bps": 5,
+  "per_side_slippage_bps": 15,
+  "bootstrap_samples": 200,
+  "rss_limit_gib": 9.5
+}

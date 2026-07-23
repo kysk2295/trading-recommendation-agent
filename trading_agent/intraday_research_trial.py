@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from trading_agent.challenger_replay_runner import run_intraday_walk_forward
-from trading_agent.daily_research_contract import strategy_contract, strategy_version_identity
 from trading_agent.experiment_ledger_keys import experiment_trial_event_key
 from trading_agent.experiment_ledger_models import (
     ExperimentTrialEvent,
@@ -24,11 +23,13 @@ from trading_agent.intraday_research_artifacts import (
     publish_intraday_experiment_artifact,
 )
 from trading_agent.intraday_research_loop_models import (
+    IntradayHypothesisSelection,
     IntradayResearchManifest,
     IntradayWalkForwardError,
     IntradayWalkForwardRequest,
     IntradayWalkForwardResult,
 )
+from trading_agent.intraday_trial_design import resolve_intraday_trial_design
 from trading_agent.lane_contract_keys import experiment_scope_key
 from trading_agent.models import BarInput
 from trading_agent.strategy_factory import StrategyMode
@@ -55,9 +56,9 @@ class IntradayHistoricalTrialError(RuntimeError):
 
 def run_or_replay_intraday_trial(
     context: IntradayTrialExecutionContext,
-    strategy: StrategyMode,
+    selection: IntradayHypothesisSelection,
 ) -> tuple[IntradayExperimentArtifact, bool]:
-    registration = _trial_registration(context, strategy)
+    registration = _trial_registration(context, selection)
     started = ExperimentTrialEvent(
         trial_id=registration.trial_id,
         sequence=1,
@@ -83,7 +84,7 @@ def run_or_replay_intraday_trial(
     if len(events) != 1:
         raise IntradayHistoricalTrialError("invalid_trial_event_chain")
     try:
-        result = _run_walk_forward(context, strategy)
+        result = _run_walk_forward(context, selection.strategy)
     except IntradayWalkForwardError:
         failed = ExperimentTrialEvent(
             trial_id=registration.trial_id,
@@ -145,20 +146,23 @@ def _run_walk_forward(
 
 def _trial_registration(
     context: IntradayTrialExecutionContext,
-    strategy: StrategyMode,
+    selection: IntradayHypothesisSelection,
 ) -> ExperimentTrialRegistration:
-    contract = strategy_contract(strategy)
-    version = strategy_version_identity(strategy, context.manifest.code_version)
-    seed = f"{version}:{context.data_version}:{context.manifest_sha256}"
-    trial_id = f"m6-{strategy.value}-{hashlib.sha256(seed.encode()).hexdigest()[:16]}"
+    design = resolve_intraday_trial_design(
+        selection,
+        context.manifest.code_version,
+        ExperimentLedgerReader(context.experiment_ledger),
+    )
+    seed = f"{design.strategy_version}:{context.data_version}:{context.manifest_sha256}"
+    trial_id = f"m6-{selection.strategy.value}-{hashlib.sha256(seed.encode()).hexdigest()[:16]}"
     registered_at = context.manifest.registered_at + dt.timedelta(seconds=1)
     planned = _next_regular_session(registered_at)
     return ExperimentTrialRegistration(
         trial_id=trial_id,
-        strategy_version=version,
+        strategy_version=design.strategy_version,
         trial_kind=TrialKind.HISTORICAL_REPLAY,
-        experiment_scope=contract.experiment_scope,
-        experiment_scope_key=str(experiment_scope_key(contract.experiment_scope)),
+        experiment_scope=design.experiment_scope,
+        experiment_scope_key=str(experiment_scope_key(design.experiment_scope)),
         evaluator_version=context.manifest.evaluator_version,
         data_version=context.data_version,
         feed_entitlement="bounded local point-in-time intraday CSV; no provider or broker access",

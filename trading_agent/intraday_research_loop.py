@@ -18,6 +18,7 @@ from trading_agent.experiment_ledger_store import ExperimentLedgerReader, Experi
 from trading_agent.intraday_research_loop_models import IntradayResearchManifest, IntradayReviewerDecision
 from trading_agent.intraday_research_reviewer import IntradayReviewRequest, review_intraday_experiment
 from trading_agent.intraday_research_trial import IntradayTrialExecutionContext, run_or_replay_intraday_trial
+from trading_agent.lane_identity_models import LaneId
 from trading_agent.lane_registry_store import LaneRegistryReader
 from trading_agent.private_directory_identity import (
     InvalidPrivateDirectoryIdentityError,
@@ -27,6 +28,8 @@ from trading_agent.private_directory_identity import (
     require_private_directory,
 )
 from trading_agent.replay import load_bounded_bars
+from trading_agent.source_backed_intraday_design import register_source_backed_intraday_design
+from trading_agent.source_driven_hypothesis_queue import load_source_driven_hypothesis_queue
 
 
 class IntradayResearchLoopError(RuntimeError):
@@ -42,6 +45,7 @@ class IntradayResearchLoopPaths:
     experiment_ledger: Path
     artifact_root: Path
     review_root: Path
+    source_queue_artifact: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,9 +60,17 @@ def run_intraday_research_loop(
     manifest: IntradayResearchManifest,
     paths: IntradayResearchLoopPaths,
 ) -> IntradayResearchLoopResult:
-    if any(
-        strategy_contract(item.strategy).hypothesis_id != item.hypothesis_id
-        for item in manifest.hypotheses
+    if manifest.schema_version == 1 and any(
+        strategy_contract(item.strategy).hypothesis_id != item.hypothesis_id for item in manifest.hypotheses
+    ):
+        raise IntradayResearchLoopError
+    lane_manifests = tuple(
+        stored.manifest
+        for stored in LaneRegistryReader(paths.lane_registry).manifests()
+        if stored.manifest.lane_id is LaneId.INTRADAY_MOMENTUM
+    )
+    if len(lane_manifests) != 1 or any(
+        item.strategy.value not in lane_manifests[0].strategy_ids for item in manifest.hypotheses
     ):
         raise IntradayResearchLoopError
     bars = load_bounded_bars(
@@ -68,12 +80,22 @@ def run_intraday_research_loop(
     )
     data_version = _file_sha256(paths.input_csv)
     manifest_sha256 = hashlib.sha256(canonical_experiment_ledger_json(manifest).encode()).hexdigest()
-    _ = bootstrap_current_intraday_experiments(
-        lane_registry=LaneRegistryReader(paths.lane_registry),
-        experiment_ledger=ExperimentLedgerStore(paths.experiment_ledger),
-        code_version=manifest.code_version,
-        recorded_at=manifest.registered_at,
-    )
+    if manifest.schema_version == 1:
+        _ = bootstrap_current_intraday_experiments(
+            lane_registry=LaneRegistryReader(paths.lane_registry),
+            experiment_ledger=ExperimentLedgerStore(paths.experiment_ledger),
+            code_version=manifest.code_version,
+            recorded_at=manifest.registered_at,
+        )
+    else:
+        if paths.source_queue_artifact is None:
+            raise IntradayResearchLoopError
+        queue = load_source_driven_hypothesis_queue(paths.source_queue_artifact)
+        _ = register_source_backed_intraday_design(
+            manifest,
+            queue,
+            ExperimentLedgerStore(paths.experiment_ledger),
+        )
     context = IntradayTrialExecutionContext(
         manifest=manifest,
         experiment_ledger=paths.experiment_ledger,
@@ -86,8 +108,8 @@ def run_intraday_research_loop(
     review_created = 0
     decisions: list[IntradayReviewerDecision] = []
     with _heavy_empirical_lease(paths.experiment_ledger):
-        for strategy in manifest.strategies:
-            experiment, created = run_or_replay_intraday_trial(context, strategy)
+        for selection in manifest.hypotheses:
+            experiment, created = run_or_replay_intraday_trial(context, selection)
             experiment_created += int(created)
             review, created = review_intraday_experiment(
                 IntradayReviewRequest(
@@ -100,7 +122,7 @@ def run_intraday_research_loop(
             review_created += int(created)
             decisions.append(review.payload.decision)
     return IntradayResearchLoopResult(
-        trials_total=len(manifest.strategies),
+        trials_total=len(manifest.hypotheses),
         experiment_artifacts_created=experiment_created,
         review_artifacts_created=review_created,
         decisions=tuple(decisions),

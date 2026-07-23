@@ -32,9 +32,12 @@ from trading_agent.intraday_research_loop_models import (
 )
 from trading_agent.intraday_research_reviewer import InvalidIntradayResearchReviewError
 from trading_agent.intraday_research_trial import IntradayHistoricalTrialError
+from trading_agent.intraday_trial_design import InvalidIntradayTrialDesignError
 from trading_agent.lane_registry_store import InvalidLaneRegistrySourceError, UnsupportedLaneRegistrySchemaError
 from trading_agent.private_report import write_private_report
 from trading_agent.replay import BoundedReplaySourceError
+from trading_agent.source_backed_intraday_design import InvalidSourceBackedIntradayDesignError
+from trading_agent.source_driven_hypothesis_queue_models import InvalidSourceDrivenHypothesisQueueError
 
 REPORT_NAME = "intraday_research_loop_ko.md"
 
@@ -47,6 +50,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--experiment-ledger", type=Path, required=True)
     parser.add_argument("--artifact-root", type=Path, required=True)
     parser.add_argument("--review-root", type=Path, required=True)
+    parser.add_argument("--source-queue-artifact", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser.parse_args(argv)
 
@@ -63,6 +67,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 experiment_ledger=args.experiment_ledger,
                 artifact_root=args.artifact_root,
                 review_root=args.review_root,
+                source_queue_artifact=args.source_queue_artifact,
             ),
         )
     except (
@@ -74,10 +79,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         InvalidIntradayResearchArtifactError,
         InvalidIntradayResearchManifestError,
         InvalidIntradayResearchReviewError,
+        InvalidIntradayTrialDesignError,
         IntradayHistoricalTrialError,
         IntradayResearchLoopError,
         InvalidLaneRegistrySourceError,
         OSError,
+        InvalidSourceBackedIntradayDesignError,
+        InvalidSourceDrivenHypothesisQueueError,
         sqlite3.Error,
         UnsupportedExperimentLedgerSchemaError,
         UnsupportedLaneRegistrySchemaError,
