@@ -70,7 +70,8 @@ Paper arm 또는 국내 주문 endpoint가 없다.
 - Ruff: 통과
 - basedpyright: `0 errors, 0 warnings, 0 notes`
 - 전체 pytest: 제품/시장 코드 `3279 passed`; Grok 개발 harness를 포함한 전체
-  `3368 passed`
+  `3368 passed`. 실행 전 SHA·명령·raw pytest 출력·종료코드는
+  [검증 artifact](2026-07-23-full-pytest-95f0271.txt)에 보존했다.
 - actual CLI replay: incident `1 -> 1`, delivery/attempt/ACK 추가 `0/0/0`
 - fixture CLI happy/replay: exit `0/0`, projection run `1`, Opportunity `1`, report mode `600`
 - domestic account/order mutation: `0`
