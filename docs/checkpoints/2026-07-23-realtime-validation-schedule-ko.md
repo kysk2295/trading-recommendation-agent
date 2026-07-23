@@ -113,3 +113,36 @@ research PID는 `18088`, `18094`, run count `1`, state `running`이며 dataset j
 종료를 기다리고 있다. runner `zsh -n`, dry-run, bad input, mode `700`, frozen
 runtime clean SHA와 stdout/stderr mode `600`을 검증했다. 아직 plan file이 없는 것은
 dataset READY 전 queue를 조기에 고정하지 않는 의도한 상태다.
+
+## 7월 24일 current-schema lane 증거 연결
+
+원본 checkout의 Paper execution DB와 global experiment ledger는 query-only로
+감사했다. execution DB는 current schema, account-bound, intent/unresolved `0/0`이지만
+global experiment ledger는 schema v6이고 Hermes arm DB가 없었다. 원본을 수정하지
+않고 integration worktree에 SQLite backup을 만들고 experiment ledger 사본만
+v6→v7로 migration했다. migration 사본의 intraday 전략은 모두
+`experimental_shadow`이고 `PAPER_CHAMPION`은 0개라서 arm gateway는 의도대로
+`champion_missing`을 유지한다.
+
+7월 24일에는 d59 runtime의 네 전략 계약을 별도 current-schema experiment ledger에
+사전등록했다. ORB를 포함한 strategy version은
+`d59d2534a2561472c894bfe2acb56bd051dfca90`에 결속되고 effective session date는
+`2026-07-24`, lifecycle state는 `experimental_shadow`다. integration lane
+registry에는 account fingerprint를 출력하지 않고 기존 current-schema execution
+사본의 account binding만 추가했다.
+
+7월 24일 forward watcher는 다음 local-only 증거 경계를 함께 사용하도록 시작 전에
+교체했다.
+
+- integration Paper execution 사본
+- current lane registry와 신규 lane review ledger
+- d59 code-bound current-schema experiment ledger
+- lane forward-validation output
+
+교체 동안 7월 24일 preflight, SIP, finalizer, dataset, research watcher만 잠시
+suspend/resume했고 모든 PID를 유지했다. forward label은 새 PID `29095`, run count
+`1`, state `running`이며 기존 Hermes PID `31663`은 유지됐다. forward stdout/stderr의
+기존 mode `644`도 내용 변경 없이 `600`으로 보정했다. runner `zsh -n`, dry-run,
+bad input과 다섯 lane/experiment 인자를 검증했다. 이 예약은 Paper 주문이나 champion
+승격을 수행하지 않으며 실제 7월 24일 clean session의 snapshot·Reviewer·trial
+terminal을 그대로 보존한다.
