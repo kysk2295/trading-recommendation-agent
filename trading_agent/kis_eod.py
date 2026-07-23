@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from trading_agent.kis_provider import KisRankedStock
 from trading_agent.kis_scan import KisPaperScanner, ScanObservation
+
+LAST_BAR_MISSING_STATUS = "오류: 장마감 마지막 완료 봉 없음"
+LAST_BAR_RETRY_DELAYS_SECONDS = (2.0, 5.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,19 +39,43 @@ def catch_up_candidates(
     max_pages: int,
     session_date: dt.date,
     observed_at: dt.datetime,
+    last_bar_retry_delays_seconds: tuple[float, ...] = LAST_BAR_RETRY_DELAYS_SECONDS,
+    sleeper: Callable[[float], None] = time.sleep,
 ) -> EodCatchupRun:
-    return EodCatchupRun(
-        session_date,
-        observed_at,
-        tuple(
-            scanner.catch_up_after_close(
-                stock,
+    observations = [
+        scanner.catch_up_after_close(
+            stock,
+            max_pages=max_pages,
+            session_date=session_date,
+            now=observed_at,
+        )
+        for stock in candidates
+    ]
+    pending = tuple(
+        index
+        for index, observation in enumerate(observations)
+        if observation.status == LAST_BAR_MISSING_STATUS
+    )
+    for delay in last_bar_retry_delays_seconds:
+        if not pending:
+            break
+        sleeper(delay)
+        for index in pending:
+            observations[index] = scanner.catch_up_after_close(
+                candidates[index],
                 max_pages=max_pages,
                 session_date=session_date,
                 now=observed_at,
             )
-            for stock in candidates
-        ),
+        pending = tuple(
+            index
+            for index in pending
+            if observations[index].status == LAST_BAR_MISSING_STATUS
+        )
+    return EodCatchupRun(
+        session_date,
+        observed_at,
+        tuple(observations),
     )
 
 

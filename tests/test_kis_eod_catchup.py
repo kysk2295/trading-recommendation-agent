@@ -10,6 +10,7 @@ import httpx2
 from scr_backtest.kis_intraday import KisCredentials, KisMinutePayload, KisSession
 from trading_agent.bar_archive import track_candidates, tracked_candidates_for_session
 from trading_agent.engine import RecommendationEngine
+from trading_agent.kis_eod import catch_up_candidates
 from trading_agent.kis_provider import KisRankedStock
 from trading_agent.kis_scan import KisPaperScanner
 from trading_agent.models import Recommendation, RecommendationState
@@ -67,6 +68,79 @@ def test_eod_catchup_fails_closed_when_the_last_regular_bar_is_missing(tmp_path:
 
     assert observation.status == "오류: 장마감 마지막 완료 봉 없음"
     assert store.last_processed_bar("EOD") == dt.datetime(2026, 7, 10, 15, 58, tzinfo=NEW_YORK)
+
+
+def test_eod_candidate_batch_retries_only_the_missing_last_bar(tmp_path: Path) -> None:
+    session_date = dt.date(2026, 7, 10)
+    store = _active_store(tmp_path / "paper.sqlite3", session_date)
+    payloads = iter((_minute_payload("155800"), _minute_payload("155900")))
+    requests = 0
+    waits: list[float] = []
+
+    def respond(_: httpx2.Request) -> httpx2.Response:
+        nonlocal requests
+        requests += 1
+        return httpx2.Response(200, json=next(payloads))
+
+    with httpx2.Client(
+        base_url="https://openapi.koreainvestment.com:9443",
+        transport=httpx2.MockTransport(respond),
+    ) as client:
+        result = catch_up_candidates(
+            KisPaperScanner(
+                client,
+                KisSession(KisCredentials("key", "secret"), "token"),
+                _engine(store),
+            ),
+            (_stock(),),
+            max_pages=1,
+            session_date=session_date,
+            observed_at=dt.datetime(2026, 7, 10, 16, 1, 5, tzinfo=NEW_YORK),
+            last_bar_retry_delays_seconds=(2.0,),
+            sleeper=waits.append,
+        )
+
+    assert result.complete_count == 1
+    assert result.failure_count == 0
+    assert requests == 2
+    assert waits == [2.0]
+    assert store.last_processed_bar("EOD") == dt.datetime(2026, 7, 10, 15, 59, tzinfo=NEW_YORK)
+
+
+def test_eod_candidate_batch_preserves_failure_after_bounded_retries(tmp_path: Path) -> None:
+    session_date = dt.date(2026, 7, 10)
+    store = _active_store(tmp_path / "paper.sqlite3", session_date)
+    requests = 0
+    waits: list[float] = []
+
+    def respond(_: httpx2.Request) -> httpx2.Response:
+        nonlocal requests
+        requests += 1
+        return httpx2.Response(200, json=_minute_payload("155800"))
+
+    with httpx2.Client(
+        base_url="https://openapi.koreainvestment.com:9443",
+        transport=httpx2.MockTransport(respond),
+    ) as client:
+        result = catch_up_candidates(
+            KisPaperScanner(
+                client,
+                KisSession(KisCredentials("key", "secret"), "token"),
+                _engine(store),
+            ),
+            (_stock(),),
+            max_pages=1,
+            session_date=session_date,
+            observed_at=dt.datetime(2026, 7, 10, 16, 1, 5, tzinfo=NEW_YORK),
+            last_bar_retry_delays_seconds=(2.0, 5.0),
+            sleeper=waits.append,
+        )
+
+    assert result.complete_count == 0
+    assert result.failure_count == 1
+    assert requests == 3
+    assert waits == [2.0, 5.0]
+    assert result.observations[0].status == "오류: 장마감 마지막 완료 봉 없음"
 
 
 def test_tracked_candidates_can_be_loaded_by_session_after_the_close(tmp_path: Path) -> None:
