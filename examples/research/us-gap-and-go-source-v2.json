@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "research_sources": [
+    {
+      "schema_version": 1,
+      "source_id": "academic-momentum-1993",
+      "source_kind": "academic_paper",
+      "title": "Returns to Buying Winners and Selling Losers",
+      "source_url": "https://doi.org/10.1111/j.1540-6261.1993.tb04702.x",
+      "published_on": "1993-02-01",
+      "claim": "Intermediate-horizon relative strength motivates a testable momentum hypothesis.",
+      "limitations": "This study is not current-market, point-in-time, or net-cost evidence for this project.",
+      "retrieved_at": "2026-07-16T20:00:00Z",
+      "ledger_recorded_at": "2026-07-16T20:00:00Z"
+    },
+    {
+      "schema_version": 1,
+      "source_id": "technical-rules-1992",
+      "source_kind": "academic_paper",
+      "title": "Simple Technical Trading Rules and the Stochastic Properties of Stock Returns",
+      "source_url": "https://doi.org/10.1111/j.1540-6261.1992.tb04681.x",
+      "published_on": "1992-12-01",
+      "claim": "Trading-range break rules motivate testing a bounded new-high signal family.",
+      "limitations": "Historical index evidence does not establish implementability for current individual equities.",
+      "retrieved_at": "2026-07-16T20:00:00Z",
+      "ledger_recorded_at": "2026-07-16T20:00:00Z"
+    }
+  ],
+  "experiment_scope": {
+    "schema_version": 1,
+    "scope_kind": "single_lane",
+    "hypothesis_id": "H-MOM-GAP-SOURCE-002",
+    "primary_lane": "intraday_momentum",
+    "lanes": ["intraday_momentum"],
+    "registered_at": "2026-07-23T02:31:00Z"
+  },
+  "hypothesis": "Eligible high-relative-volume US equities that preserve at least half of a registered opening gap through the first five completed minutes may show positive cost-adjusted same-day continuation.",
+  "falsification_rule": "Reject the immutable version when bounded out-of-sample and shadow evidence fail its registered cost-adjusted comparison and coverage requirements.",
+  "research_source_ids": ["academic-momentum-1993", "technical-rules-1992"],
+  "economic_mechanism": "Underreaction and delayed participation may sustain an opening repricing when early selling does not close most of the registered gap.",
+  "counterfactual_baseline": "Matched eligible gap sessions that fail the registered five-minute retention condition under the same data and cost contract.",
+  "ledger_recorded_at": "2026-07-23T02:32:00Z"
+}

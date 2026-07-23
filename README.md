@@ -375,7 +375,9 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-23 KIS KR 실제 장중 market smoke 업데이트:** 열린 KRX 세션에서 당일 분봉·현재가 상태·호가 예상체결 production GET을 raw-first로 실제 실행했다. 첫 rank-1 종목의 3개 응답은 모두 HTTP 200이었지만, 실응답과 공식 KIS 예제가 `new_mkop_cls_code`를 `output1`에 두는 반면 local strict model이 `output2`에서 요구하는 오류를 발견했다. provider-shaped RED 뒤 model과 projection을 바로잡았고, 잘못된 위치 fallback은 열지 않았다. 대표 보통주 재검증은 production CLI exit 0, 신규 raw receipt 3건, 실제 raw snapshot replay `open/continuous`를 확인했다. 첫 후보의 0 상·하한가는 임의 보정하지 않고 계속 fail-closed했다. account/order endpoint와 mutation은 0건이다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-kis-kr-open-session-market-smoke-ko.md)에 있다.
 
-**2026-07-23 M8 source-driven hypothesis queue 업데이트:** 기존 global experiment ledger의 immutable research source/card를 query-only로 읽어 `evidence_review → strategy_design → historical_replay → active_research/independent_review/recovery`로 보내는 content-addressed queue를 추가했다. GitHub 공개 저장소, 뉴스, Reddit/X 공개 토론을 discovery source kind로 받을 수 있지만, 이런 출처만 있는 가설은 독립 근거 검토를 통과하기 전 전략 설계로 보내지 않는다. schema v7은 기존 source table을 재작성하지 않고 discovery 전용 append-only table만 추가한다. 큐는 항상 최신 immutable strategy version의 trial만 사용하므로 과거 version 완료 결과를 새 version에 재사용하지 않는다. lifecycle/allocation/order authority는 모두 false이며 provider·credential·broker import가 없다. 현재 운영 ledger에는 source-backed card가 0개라 production queue item은 아직 없고 자동 source connector·코드 생성은 후속 단계다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-m8-source-driven-hypothesis-queue-ko.md)에 있다.
+**2026-07-23 M8 source-driven hypothesis queue 업데이트:** 기존 global experiment ledger의 immutable research source/card를 query-only로 읽어 `evidence_review → strategy_design → historical_replay → active_research/independent_review/recovery`로 보내는 content-addressed queue를 추가했다. GitHub 공개 저장소, 뉴스, Reddit/X 공개 토론을 discovery source kind로 받을 수 있지만, 이런 출처만 있는 가설은 독립 근거 검토를 통과하기 전 전략 설계로 보내지 않는다. schema v7은 기존 source table을 재작성하지 않고 discovery 전용 append-only table만 추가한다. 큐는 항상 최신 immutable strategy version의 trial만 사용하므로 과거 version 완료 결과를 새 version에 재사용하지 않는다. lifecycle/allocation/order authority는 모두 false이며 provider·credential·broker import가 없다. 초기 운영 ledger에는 source-backed card가 0개였고, 아래 다중 전략 업데이트에서 독립 current-schema ledger에 세 card를 등록했다. 자동 source connector·코드 생성은 후속 단계다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-m8-source-driven-hypothesis-queue-ko.md)에 있다.
+
+**2026-07-23 M8 다중 전략 source queue 업데이트:** 기존 VWAP source card와 같은 두 공개 연구 출처·한계 계약을 재사용해 HOD breakout과 Gap-and-Go의 별도 immutable hypothesis card를 추가했다. current-schema 독립 운영 ledger에 세 manifest를 실제 CLI로 등록해 source 신규/재사용 `2/0 → 0/2 → 0/2`, card 신규 `1+1+1`, exact queue snapshot `507e9bb45d1865978be73eff7c9efa03072b567e4b33d751dfec86e4ba45703b`, `strategy_design` 3건을 확인했다. 원본 checkout의 구 schema global ledger는 query-only reader가 차단했으며 수정·migration하지 않았다. 세 card는 연구 설계 입력일 뿐 성과·Paper·allocation 권한이 아니다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-m8-multi-strategy-source-queue-ko.md)에 있다.
 
 **2026-07-23 M8 source-backed intraday 실행 업데이트:** `strategy_design` 큐 항목을 사람이 승인한 기존 VWAP/HOD/Gap-and-Go 템플릿에만 결합해 새 immutable strategy version을 등록하고, 기존 bounded M6 walk-forward와 독립 Reviewer까지 실행하는 v2 경로를 추가했다. queue snapshot/card/source 내용과 ledger 부모를 모두 다시 대조하며 오래된 queue를 다른 version 생성에 재사용하지 않는다. v1 bundle은 그대로 호환되고 v2는 exact content-addressed queue artifact가 없으면 ledger mutation 전에 차단된다. historical input은 최대 64 MiB 원본 bytes를 한 번만 읽어 파싱과 SHA-256에 함께 사용하며 v2 manifest의 사전등록 `input_sha256`과 다르면 version 등록 전에 차단된다. 또한 exact `DataFoundationManifest`가 해당 US day strategy의 `historical_research + minute_bar` capability·entitlement·역사 범위·완전성을 `READY`로 판정해야 하며 그 artifact hash를 trial 원장에 남긴다. committed VWAP 예제의 실제 CLI 첫 실행은 historical trial/review artifact `1/1`, exact replay는 `0/0`, Reviewer는 `hold`였으며 파일은 mode `600`이다. 이는 코드 자동생성·성과·승격·Paper 권한이 아니라 첫 source-to-experiment 수직축이다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-m8-source-backed-intraday-loop-ko.md)에 있다.
 
@@ -888,7 +890,17 @@ uv run python run_intraday_research_dataset.py \
 uv run python run_research_hypothesis_register.py \
   --manifest examples/research/us-vwap-reclaim-source-v2.json \
   --database outputs/experiment_control/source_intraday.sqlite3 \
-  --output-dir outputs/experiment_control/source_intraday/register
+  --output-dir outputs/experiment_control/source_intraday/register/vwap
+
+uv run python run_research_hypothesis_register.py \
+  --manifest examples/research/us-hod-breakout-source-v2.json \
+  --database outputs/experiment_control/source_intraday.sqlite3 \
+  --output-dir outputs/experiment_control/source_intraday/register/hod
+
+uv run python run_research_hypothesis_register.py \
+  --manifest examples/research/us-gap-and-go-source-v2.json \
+  --database outputs/experiment_control/source_intraday.sqlite3 \
+  --output-dir outputs/experiment_control/source_intraday/register/gap
 
 uv run python run_source_driven_hypothesis_queue.py \
   --database outputs/experiment_control/source_intraday.sqlite3 \
@@ -900,7 +912,9 @@ uv run python run_intraday_research_input_binding.py \
   --dataset-receipt outputs/experiment_control/source_intraday/datasets/intraday_point_in_time_<CSV_SHA256>_<RECEIPT_SHA256>.json \
   --entitlement-contract outputs/experiment_control/source_intraday/contracts/kis-us-candidate-minute-research-v1.json \
   --source-queue-artifact outputs/experiment_control/source_intraday/queue/source_hypothesis_queue_<QUEUE_SHA256>.json \
-  --strategy-binding vwap_reclaim,actual_vwap_reclaim_v1,<CARD_SHA256> \
+  --strategy-binding vwap_reclaim,actual_vwap_reclaim_v1,<VWAP_CARD_SHA256> \
+  --strategy-binding hod_breakout,actual_hod_breakout_v1,<HOD_CARD_SHA256> \
+  --strategy-binding gap_and_go,actual_gap_and_go_v1,<GAP_CARD_SHA256> \
   --code-version "$(git rev-parse HEAD)" \
   --registered-at <UTC_ISO8601> \
   --output-dir outputs/experiment_control/source_intraday/binding \
@@ -916,6 +930,8 @@ uv run python run_intraday_research_loop.py \
   --review-root outputs/experiment_control/source_intraday/reviews \
   --source-queue-artifact outputs/experiment_control/source_intraday/queue/source_hypothesis_queue_<QUEUE_SHA256>.json \
   --data-foundation-manifest outputs/experiment_control/source_intraday/binding/intraday_data_foundation_vwap_reclaim_<FOUNDATION_SHA256>.json \
+  --data-foundation-manifest outputs/experiment_control/source_intraday/binding/intraday_data_foundation_hod_breakout_<FOUNDATION_SHA256>.json \
+  --data-foundation-manifest outputs/experiment_control/source_intraday/binding/intraday_data_foundation_gap_and_go_<FOUNDATION_SHA256>.json \
   --output-dir outputs/experiment_control/source_intraday/latest
 ```
 
