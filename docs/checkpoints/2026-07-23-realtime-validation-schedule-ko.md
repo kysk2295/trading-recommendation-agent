@@ -290,6 +290,13 @@ ranking/watch/retry/candidate input의 동일한 `300~390` cardinality를 요구
 payload·wrapper `700`, stdout/stderr `600`을 확인했다. 나머지 네 예약과 실행 중인
 7월 23일 watch, KR finalizer, Hermes는 변경하지 않았다.
 
+23:24 KST에는 public strict closeout CLI도 기본값과 허용 하한을 `300`으로 고정한
+exact `cccb799c8e85b104abbafa3dc0e1b2cd3a9bf1d5` runtime으로 같은 세 job만 다시
+교체했다. 새 PID `9872/9878/9883`, 세 job `state=running`, `runs=1`,
+receipt/claim 없음, clean runtime, payload·wrapper `700`, 빈 stdout/stderr `600`을
+확인했다. 나머지 네 예약과 실행 중인 7월 23일 watch PID `62716`, Hermes PID
+`31663`은 변경하지 않았다.
+
 ## US forward 장전 strict readiness 예약
 
 commit `3d488137ce6d612ebea98dd0b862e1fe9843ef44`에 read-only
