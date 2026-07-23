@@ -84,6 +84,8 @@ US systematic `regime_rotation` vertical은 고정 ETF 6종(`GLD`, `IEF`, `IWM`,
 
 **2026-07-24 actual IEX completed-daily 업데이트:** 명시적 `iex|sip` feed와 source identity를 completed-daily schema v2에 결속하고 actual IEX 장후 GET을 실행했다. swing은 50종목·1600 bars를 보존했으나 고정 new-high/RVOL 신호가 없어 `no_recommendation`, trial 0건으로 닫혔다. systematic은 고정 6 ETF·1776 bars의 exact source에서 `mixed` 카드를 만들고 2026-07-24 `shadow_forward` trial 1건을 등록했다. private source replay는 credential 전에 exact SHA를 재사용하며 다른 runtime code SHA에서도 같은 session card/trial을 늘리지 않는다. exact `e510dab` frozen runtime의 정규장 start와 장후 finalize도 `2026-07-24 09:31/16:05 EDT` at-most-once job으로 등록했다. 이는 IEX-only shadow evidence이며 Paper Champion, 주문 또는 allocation 권한이 아니다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-24-m6-actual-iex-daily-shadow-ko.md)에 있다.
 
+**2026-07-24 systematic 독립 Reviewer 업데이트:** query-only Reviewer가 exact global trial registration/terminal chain, persisted card, content-addressed completed-daily source와 그 source에서 다시 계산한 shadow outcome을 대사하고 terminal의 card/source/outcome SHA 집합을 검증한다. 별도 mode-600 append-only ledger는 completed에 `continue_collection`, missed-session censor에 `data_quality_review`만 기록하며 자동 상태, 주문, allocation 권한은 모두 false다. actual 2026-07-24 trial은 아직 terminal 전이라 preflight review 0건이고, exact `5c78ee9` frozen runtime을 16:05 EDT finalizer 성공 receipt 뒤 16:12 EDT에 실행하도록 예약했다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-24-m6-systematic-independent-reviewer-schedule-ko.md)에 있다.
+
 **2026-07-16 업데이트:** source-bound 신고가·RVOL 가설 카드와 정확히 일치하는 신호 하나를 global `shadow_forward` trial 하나로 사전등록한다. `run_swing_shadow_trial.py`의 local-only `register → start → finalize → review` 순서는 query-only swing shadow 원장을 다시 대조해 terminal artifact hash를 확정하고, 별도 mode-600 append-only Reviewer 원장에는 `continue_collection`만 기록한다. 이 경로는 lifecycle 전이, champion, allocation, Paper 계좌·주문과 provider 연결을 만들지 않으며, `expired`는 0수익 대체가 아니라 명시적 no-entry 관찰이다.
 
 **2026-07-19 strategy authority 업데이트:** global experiment ledger schema v3에 전략 버전별 immutable `StrategyAuthorityBinding`을 추가했다. exact `StrategyLaneRef`, 최대 운영모드와 승인된 legacy 실행 lane을 한 번만 결합하고, 부모 전략 ID·lane·기록시각 불일치와 같은 버전의 mode 변경을 fail-closed한다. Alpaca Paper mode는 미국 day/swing에만 허용하며 KR lane은 multi-market experiment scope v2 전까지 legacy `LaneId`로 위장하지 않는다. 아직 champion 전이·allocation·risk·주문 권한은 열지 않았다.
@@ -718,6 +720,18 @@ uv run python run_us_systematic_regime.py \
 ```
 
 장후 첫 tick은 당일 카드와 다음 세션 trial을 등록한다. 대상 세션 장중 tick은 trial을 시작하고, 대상 세션 장후 tick은 open→close shadow outcome으로 terminal을 확정한 뒤 다음 카드를 등록한다. 같은 입력의 재실행은 카드·trial·event·outcome을 늘리지 않는다. private SQLite 경로는 symlink가 없는 canonical parent 아래에 두며 macOS 임시 경로는 `/tmp` alias 대신 `/private/tmp`를 사용한다.
+
+terminal 뒤 독립 검토는 source root의 exact content-addressed 일봉을 다시 읽으며, provider·credential·broker·계좌·주문 옵션이 없다. 특정 card를 지정하면 open/missing/변경 evidence를 nonzero로 차단하고, `--all-terminal`은 exact terminal card만 idempotent하게 검토한다.
+
+```bash
+uv run python run_us_systematic_regime_review.py \
+  --experiment-ledger /private/tmp/us-systematic-experiment.sqlite3 \
+  --systematic-database /private/tmp/us-systematic-regime.sqlite3 \
+  --source-root /private/tmp/us-systematic-regime-output \
+  --review-ledger /private/tmp/us-systematic-reviews.sqlite3 \
+  --output-dir /private/tmp/us-systematic-review-output \
+  --all-terminal
+```
 
 ### US swing 신고가·RVOL shadow
 
