@@ -6,6 +6,7 @@ import json
 import stat
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,21 @@ from trading_agent.replay import load_bounded_bar_source
 PROJECT = Path(__file__).resolve().parents[1]
 SCRIPT = PROJECT / "run_intraday_research_dataset.py"
 PRODUCER_COMMIT = "a" * 40
+
+
+def test_dataset_standalone_launcher_declares_transitive_http_dependency() -> None:
+    # Given: launchd or an operator may execute the PEP 723 script directly.
+    lines = SCRIPT.read_text(encoding="utf-8").splitlines()
+
+    # When: the isolated dependency declaration is parsed.
+    opening = lines.index("# /// script")
+    closing = lines.index("# ///", opening + 1)
+    metadata = tomllib.loads(
+        "\n".join(line.removeprefix("# ") for line in lines[opening + 1 : closing])
+    )
+
+    # Then: the transitive KIS model import can resolve its HTTP runtime.
+    assert "httpx2[http2,brotli,zstd]" in metadata["dependencies"]
 
 
 def test_materializer_binds_exact_producer_commit_to_receipt(tmp_path: Path) -> None:

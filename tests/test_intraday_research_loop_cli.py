@@ -5,6 +5,7 @@ import os
 import stat
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,21 @@ from trading_agent.lane_registry_store import LaneRegistryStore
 PROJECT = Path(__file__).resolve().parents[1]
 SCRIPT = PROJECT / "run_intraday_research_loop.py"
 EXAMPLE_MANIFEST = PROJECT / "examples" / "research" / "intraday-challenger-bundle-v1.json"
+
+
+def test_research_loop_standalone_launcher_declares_transitive_http_dependency() -> None:
+    # Given: launchd or an operator may execute the PEP 723 script directly.
+    lines = SCRIPT.read_text(encoding="utf-8").splitlines()
+
+    # When: the isolated dependency declaration is parsed.
+    opening = lines.index("# /// script")
+    closing = lines.index("# ///", opening + 1)
+    metadata = tomllib.loads(
+        "\n".join(line.removeprefix("# ") for line in lines[opening + 1 : closing])
+    )
+
+    # Then: the transitive KIS model import can resolve its HTTP runtime.
+    assert "httpx2[http2,brotli,zstd]" in metadata["dependencies"]
 
 
 def test_intraday_research_loop_help_exposes_bounded_local_inputs() -> None:
