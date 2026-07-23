@@ -261,6 +261,26 @@ shebang의 `uv`를 찾지 못한 wrapper 결손이며 watch 품질 결과는 아
 같은 명시적 `uv` 실행 계약으로 2026-07-27 early `8` cycle과 late `300` cycle
 감사도 별도 at-most-once job으로 등록했다.
 
+commit `3d76f891343503593a476c3ea80060cf82f0ff06`에서 공용
+`run_launchd_one_shot.py`가 command executable의 첫 shebang을 bounded read하고
+`/usr/bin/env` interpreter를 예약 artifact 생성 전에
+`explicit_interpreter_required`로 차단하도록 수정했다. 직접 `/bin/zsh` payload를
+쓰거나 명시적 `/Users/goyunseo/.local/bin/uv`를 command 첫 인자로 전달해야 한다.
+
+- actual failure 재현 RED: env shebang이 잘못 `prepared`
+- 수정 뒤 unsafe CLI: exit `1`, wrapper/log/receipt mutation `0`
+- explicit `uv --version` happy wrapper: exit `0`, receipt mode `600`
+- focused: `3 passed`
+- Ruff 전체: pass
+- basedpyright 전체: `0 errors, 0 warnings, 0 notes`
+- 전체 pytest: `3468 passed`
+- 기존 Grok offline environment 테스트: 변경과 무관한 `5 failed`
+- no-excuse 검사: pass
+
+7월 27일 일곱 runner를 새 경계로 다시 읽은 결과 forward/readiness/closeout/research/
+terminal audit은 `/bin/zsh`, early/late progress는 명시적
+`/Users/goyunseo/.local/bin/uv`를 사용해 모두 통과했다.
+
 ## US forward 장전 strict readiness 예약
 
 commit `3d488137ce6d612ebea98dd0b862e1fe9843ef44`에 read-only
