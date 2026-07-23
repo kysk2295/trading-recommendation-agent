@@ -81,3 +81,11 @@ foundation 중 하나라도 다르면 후속 loop는 실행하지 않는다. run
 `--dry-run` exit 0, unknown argument exit 2, mode 700을 확인했고 launchd의 run
 count 1·running 상태와 stdout/stderr mode 600을 확인했다. 이 예약은 주문 권한,
 lifecycle 자동 승격 또는 성과 증거가 아니다.
+
+이후 7월 24일 dataset job을 strict 누적 catalog runtime
+`322d90498e6e3fcdd6fd5e6952f0d5f3e6912c1b`로 교체했다. 7월 23일과 24일
+session directory를 모두 감사하지만 `required_session_date=2026-07-24`라서 당일
+세션 자체가 clean selection에 없으면 과거 표본만으로 dataset을 재발행하지 않는다.
+교체 중 후속 research watcher만 suspend/resume해 label 공백을 관측하지 않게 했고,
+후속 PID·run count는 유지됐다. catalog runner `zsh -n`, dry-run, bad input, mode
+700과 launchd run count 1·running, 외부 로그 mode 600을 확인했다.
