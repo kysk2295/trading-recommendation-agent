@@ -23,6 +23,9 @@ from trading_agent.intraday_actual_research_audit_models import (
 from trading_agent.intraday_actual_research_plan import (
     run_planned_intraday_actual_research,
 )
+from trading_agent.intraday_equal_risk_comparison_models import (
+    EqualRiskComparisonStatus,
+)
 from trading_agent.intraday_research_input_binding_models import (
     IntradayResearchStrategyBinding,
 )
@@ -76,7 +79,7 @@ def test_actual_research_audit_cli_proves_exact_terminal_chain(
     output = tmp_path / "audit"
     write_private_report(
         receipt,
-        "exit_code=0\ncompleted_at_epoch=1784024400\n",
+        "exit_code=0\ncompleted_at_epoch=1784786400\n",
     )
     write_private_report(
         report,
@@ -119,18 +122,19 @@ def test_actual_research_audit_cli_proves_exact_terminal_chain(
     assert audit["payload"]["dataset_input_sha256"] == planned.actual.catalog.dataset.input_sha256
     assert audit["payload"]["dataset_producer_commit_sha"] == request.dataset_producer_commit_sha
     assert audit["payload"]["strategy_code_version"] == request.code_version
-    assert audit["payload"]["foundation_sha256s"] == list(
-        planned.actual.binding.foundation_sha256s
-    )
+    assert audit["payload"]["foundation_sha256s"] == list(planned.actual.binding.foundation_sha256s)
     assert len(audit["payload"]["trial_ids"]) == 1
     assert len(audit["payload"]["review_artifact_ids"]) == 1
     assert audit["payload"]["reviewer_decisions"] == ["hold"]
+    assert audit["payload"]["comparison_artifact_id"] is None
+    assert audit["payload"]["comparison_status"] is None
     assert audit["payload"]["automatic_state_change_allowed"] is False
     assert audit["payload"]["order_authority_change_allowed"] is False
     assert audit["payload"]["allocation_change_allowed"] is False
-    assert "- result: ready" in (
-        output / "intraday_actual_research_audit_ko.md"
-    ).read_text(encoding="utf-8")
+    assert "- result: ready" in (output / "intraday_actual_research_audit_ko.md").read_text(encoding="utf-8")
+    assert "- equal-risk comparison: not_applicable" in (output / "intraday_actual_research_audit_ko.md").read_text(
+        encoding="utf-8"
+    )
     assert all(
         stat.S_IMODE(path.stat().st_mode) == 0o600
         for path in (*artifacts, output / "intraday_actual_research_audit_ko.md")
@@ -143,17 +147,12 @@ def test_actual_research_audit_preserves_three_strategy_foundation_order(
     request, ledger = _request(tmp_path)
     _ = register_research_hypothesis_manifest(HOD_SOURCE, ledger)
     _ = register_research_hypothesis_manifest(GAP_SOURCE, ledger)
-    queue = project_source_driven_hypothesis_queue(
-        ExperimentLedgerReader(ledger.path)
-    )
+    queue = project_source_driven_hypothesis_queue(ExperimentLedgerReader(ledger.path))
     queue_path, _ = publish_source_driven_hypothesis_queue(
         tmp_path / "queue-three",
         queue,
     )
-    cards = {
-        item.hypothesis_id: item.card_key
-        for item in queue.snapshot.items
-    }
+    cards = {item.hypothesis_id: item.card_key for item in queue.snapshot.items}
     bindings = (
         IntradayResearchStrategyBinding(
             strategy=StrategyMode.VWAP_RECLAIM,
@@ -186,7 +185,7 @@ def test_actual_research_audit_preserves_three_strategy_foundation_order(
     report = tmp_path / "research-three.md"
     write_private_report(
         receipt,
-        "exit_code=0\ncompleted_at_epoch=1784024400\n",
+        "exit_code=0\ncompleted_at_epoch=1784786400\n",
     )
     write_private_report(
         report,
@@ -202,21 +201,80 @@ def test_actual_research_audit_preserves_three_strategy_foundation_order(
             plan_path=planned.plan_path,
             research_receipt=receipt,
             research_report=report,
-            expected_dataset_producer_commit_sha=(
-                request.dataset_producer_commit_sha
-            ),
+            expected_dataset_producer_commit_sha=(request.dataset_producer_commit_sha),
             expected_code_version=request.code_version,
             output_root=tmp_path / "audit-three",
         )
     )
 
-    assert result.artifact.payload.foundation_sha256s == (
-        planned.actual.binding.foundation_sha256s
-    )
+    assert result.artifact.payload.foundation_sha256s == (planned.actual.binding.foundation_sha256s)
     assert len(result.artifact.payload.trial_ids) == 3
-    assert tuple(
-        item.value for item in result.artifact.payload.reviewer_decisions
-    ) == ("hold", "hold", "hold")
+    assert tuple(item.value for item in result.artifact.payload.reviewer_decisions) == ("hold", "hold", "hold")
+    assert result.artifact.payload.comparison_artifact_id is not None
+    assert result.artifact.payload.comparison_status is EqualRiskComparisonStatus.COLLECTING
+    comparisons = tuple((tmp_path / "audit-three").glob("intraday_equal_risk_comparison_*.json"))
+    assert len(comparisons) == 1
+    comparison = json.loads(comparisons[0].read_text(encoding="utf-8"))
+    assert comparison["artifact_id"] == (result.artifact.payload.comparison_artifact_id)
+    assert [item["trial_id"] for item in comparison["payload"]["candidates"]] == sorted(
+        result.artifact.payload.trial_ids
+    )
+    assert stat.S_IMODE(comparisons[0].stat().st_mode) == 0o600
+
+    early_receipt = tmp_path / "research-three-early.receipt"
+    write_private_report(
+        early_receipt,
+        "exit_code=0\ncompleted_at_epoch=1784024400\n",
+    )
+    with pytest.raises(
+        IntradayActualResearchAuditError,
+        match="invalid_terminal_evidence",
+    ):
+        _ = audit_intraday_actual_research(
+            IntradayActualResearchAuditRequest(
+                run_key="actual-three-2026-07-14",
+                plan_path=planned.plan_path,
+                research_receipt=early_receipt,
+                research_report=report,
+                expected_dataset_producer_commit_sha=(request.dataset_producer_commit_sha),
+                expected_code_version=request.code_version,
+                output_root=tmp_path / "audit-three-early",
+            )
+        )
+    assert not tuple((tmp_path / "audit-three-early").glob("intraday_equal_risk_comparison_*.json"))
+
+    cli_output = tmp_path / "audit-three-cli"
+    completed = subprocess.run(
+        (
+            sys.executable,
+            str(SCRIPT),
+            "--run-key",
+            "actual-three-2026-07-14",
+            "--plan",
+            str(planned.plan_path),
+            "--research-receipt",
+            str(receipt),
+            "--research-report",
+            str(report),
+            "--expected-dataset-producer-commit-sha",
+            request.dataset_producer_commit_sha,
+            "--expected-code-version",
+            request.code_version,
+            "--output-dir",
+            str(cli_output),
+        ),
+        cwd=PROJECT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0
+    assert completed.stdout == ""
+    assert completed.stderr == ""
+    assert "- equal-risk comparison: collecting" in (cli_output / "intraday_actual_research_audit_ko.md").read_text(
+        encoding="utf-8"
+    )
+    assert len(tuple(cli_output.glob("intraday_equal_risk_comparison_*.json"))) == 1
 
 
 def test_actual_research_audit_rejects_plan_producer_identity_drift(

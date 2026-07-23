@@ -5,7 +5,6 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.experiment_ledger_models import TrialEventKind
 from trading_agent.experiment_ledger_store import (
     ExperimentLedgerReader,
@@ -22,6 +21,7 @@ from trading_agent.intraday_actual_research_plan_models import (
     IntradayActualResearchRunPlan,
 )
 from trading_agent.intraday_research_artifacts import (
+    IntradayExperimentArtifact,
     InvalidIntradayResearchArtifactError,
     load_intraday_experiment_artifact,
 )
@@ -30,11 +30,9 @@ from trading_agent.intraday_research_reviewer import (
     IntradayReviewArtifact,
     InvalidIntradayResearchReviewError,
     evaluate_intraday_experiment,
+    load_intraday_review_artifact,
 )
-from trading_agent.private_immutable_file import (
-    InvalidPrivateImmutableFileError,
-    read_private_text,
-)
+from trading_agent.private_immutable_file import InvalidPrivateImmutableFileError
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +41,8 @@ class AuditedTrialEvidence:
     experiment_artifact_ids: tuple[str, ...]
     review_artifact_ids: tuple[str, ...]
     reviewer_decisions: tuple[IntradayReviewerDecision, ...]
+    experiments: tuple[IntradayExperimentArtifact, ...]
+    reviews: tuple[IntradayReviewArtifact, ...]
 
 
 def load_actual_research_trials(
@@ -75,7 +75,7 @@ def _load_trials(
     spec = plan.content.spec
     reader = ExperimentLedgerReader(spec.paths.experiment_ledger)
     reviews = tuple(
-        _load_review(path)
+        load_intraday_review_artifact(path)
         for path in _bounded_paths(
             spec.paths.review_root,
             "intraday_research_review_*.json",
@@ -109,20 +109,17 @@ def _load_trials(
         review_matches = tuple(
             item
             for item in reviews
-            if item.payload.trial_id == trial.trial_id
-            and item.payload.experiment_artifact_id == experiment_id
+            if item.payload.trial_id == trial.trial_id and item.payload.experiment_artifact_id == experiment_id
         )
         if (
             len(review_matches) != 1
             or experiment.payload.trial_id != trial.trial_id
             or experiment.payload.strategy_version != trial.strategy_version
-            or experiment.payload.evaluator_version
-            != trial.evaluator_version
+            or experiment.payload.evaluator_version != trial.evaluator_version
             or experiment.payload.data_version != dataset.input_sha256
             or experiment.payload.manifest_sha256 != binding.manifest_sha256
             or experiment.payload.result.strategy is not hypothesis.strategy
-            or experiment.payload.result.side_cost_bps
-            != binding.manifest.per_side_total_cost_bps
+            or experiment.payload.result.side_cost_bps != binding.manifest.per_side_total_cost_bps
         ):
             raise IntradayActualResearchAuditError("review_or_experiment_mismatch")
         review = review_matches[0]
@@ -132,9 +129,7 @@ def _load_trials(
             review.payload.reviewed_at,
         )
         if review.payload != expected_review:
-            raise IntradayActualResearchAuditError(
-                "review_or_experiment_mismatch"
-            )
+            raise IntradayActualResearchAuditError("review_or_experiment_mismatch")
         trials.append(trial)
         experiments.append(experiment)
         matched_reviews.append(review)
@@ -143,18 +138,9 @@ def _load_trials(
         experiment_artifact_ids=tuple(item.artifact_id for item in experiments),
         review_artifact_ids=tuple(item.artifact_id for item in matched_reviews),
         reviewer_decisions=tuple(item.payload.decision for item in matched_reviews),
+        experiments=tuple(experiments),
+        reviews=tuple(matched_reviews),
     )
-
-
-def _load_review(path: Path) -> IntradayReviewArtifact:
-    raw = read_private_text(path)
-    artifact = IntradayReviewArtifact.model_validate_json(raw)
-    if (
-        path.name != f"intraday_research_review_{artifact.artifact_id}.json"
-        or raw != canonical_experiment_ledger_json(artifact) + "\n"
-    ):
-        raise IntradayActualResearchAuditError("review_artifact_not_canonical")
-    return artifact
 
 
 def _bounded_paths(root: Path, pattern: str) -> tuple[Path, ...]:

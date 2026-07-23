@@ -36,22 +36,12 @@ def test_actual_research_audit_recomputes_independent_review(
         observed_at=NOW,
     )
     review_path = next(request.paths.review_root.glob("*.json"))
-    review = IntradayReviewArtifact.model_validate_json(
-        review_path.read_text(encoding="utf-8")
-    )
+    review = IntradayReviewArtifact.model_validate_json(review_path.read_text(encoding="utf-8"))
     stale_evidence = review.payload.evidence.model_copy(
-        update={
-            "observed_sessions": (
-                review.payload.evidence.observed_sessions + 1
-            )
-        }
+        update={"observed_sessions": (review.payload.evidence.observed_sessions + 1)}
     )
-    stale_payload = review.payload.model_copy(
-        update={"evidence": stale_evidence}
-    )
-    stale_id = hashlib.sha256(
-        canonical_experiment_ledger_json(stale_payload).encode()
-    ).hexdigest()
+    stale_payload = review.payload.model_copy(update={"evidence": stale_evidence})
+    stale_id = hashlib.sha256(canonical_experiment_ledger_json(stale_payload).encode()).hexdigest()
     stale_review = IntradayReviewArtifact(
         artifact_id=stale_id,
         payload=stale_payload,
@@ -65,7 +55,7 @@ def test_actual_research_audit_recomputes_independent_review(
     report = tmp_path / "research.md"
     write_private_report(
         receipt,
-        "exit_code=0\ncompleted_at_epoch=1784024400\n",
+        "exit_code=0\ncompleted_at_epoch=1784786400\n",
     )
     write_private_report(
         report,
@@ -85,9 +75,7 @@ def test_actual_research_audit_recomputes_independent_review(
                 plan_path=planned.plan_path,
                 research_receipt=receipt,
                 research_report=report,
-                expected_dataset_producer_commit_sha=(
-                    request.dataset_producer_commit_sha
-                ),
+                expected_dataset_producer_commit_sha=(request.dataset_producer_commit_sha),
                 expected_code_version=request.code_version,
                 output_root=tmp_path / "audit",
             )

@@ -35,9 +35,7 @@ REPORT_NAME = "intraday_actual_research_audit_ko.md"
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Audit exact actual intraday research terminal evidence"
-    )
+    parser = argparse.ArgumentParser(description="Audit exact actual intraday research terminal evidence")
     parser.add_argument("--run-key", required=True)
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--research-receipt", type=Path, required=True)
@@ -58,9 +56,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 plan_path=args.plan.resolve(strict=False),
                 research_receipt=args.research_receipt.resolve(strict=False),
                 research_report=args.research_report.resolve(strict=False),
-                expected_dataset_producer_commit_sha=(
-                    args.expected_dataset_producer_commit_sha
-                ),
+                expected_dataset_producer_commit_sha=(args.expected_dataset_producer_commit_sha),
                 expected_code_version=args.expected_code_version,
                 output_root=output_root,
             )
@@ -78,6 +74,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     payload = result.artifact.payload
     decisions = ", ".join(item.value for item in payload.reviewer_decisions)
+    comparison = "not_applicable" if payload.comparison_status is None else payload.comparison_status.value
     write_private_report(
         output_root / REPORT_NAME,
         "# Intraday actual research terminal audit\n\n"
@@ -92,6 +89,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         + f"- completed trials: {len(payload.trial_ids)}\n"
         + f"- independent reviews: {len(payload.review_artifact_ids)}\n"
         + f"- reviewer decisions: {decisions}\n"
+        + f"- equal-risk comparison: {comparison}\n"
         + "- automatic state change: false\n"
         + "- order authority change: false\n"
         + "- allocation change: false\n"

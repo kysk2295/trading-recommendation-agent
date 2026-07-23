@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import re
 from pathlib import Path
@@ -8,6 +9,7 @@ from typing import Final
 from pydantic import ValidationError
 
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
+from trading_agent.experiment_ledger_store import ExperimentLedgerReader
 from trading_agent.intraday_actual_research_audit_inputs import (
     load_actual_research_inputs,
 )
@@ -28,15 +30,17 @@ from trading_agent.intraday_actual_research_plan import (
 from trading_agent.intraday_actual_research_plan_models import (
     IntradayActualResearchRunPlan,
 )
+from trading_agent.intraday_equal_risk_comparison import (
+    EqualRiskComparisonRequest,
+    compare_intraday_equal_risk_trials,
+)
 from trading_agent.private_immutable_file import (
     InvalidPrivateImmutableFileError,
     publish_private_immutable_text,
     read_private_text,
 )
 
-_SUCCESS_RECEIPT: Final = re.compile(
-    r"exit_code=0\ncompleted_at_epoch=([1-9][0-9]*)\n"
-)
+_SUCCESS_RECEIPT: Final = re.compile(r"exit_code=0\ncompleted_at_epoch=([1-9][0-9]*)\n")
 
 
 def audit_intraday_actual_research(
@@ -49,6 +53,22 @@ def audit_intraday_actual_research(
         _require_ready_report(request.research_report, plan)
         dataset, binding = load_actual_research_inputs(plan)
         trials = load_actual_research_trials(plan, dataset, binding)
+        comparison = (
+            compare_intraday_equal_risk_trials(
+                EqualRiskComparisonRequest(
+                    ledger=ExperimentLedgerReader(plan.content.spec.paths.experiment_ledger),
+                    experiments=trials.experiments,
+                    reviews=trials.reviews,
+                    artifact_root=request.output_root,
+                    reviewed_at=dt.datetime.fromtimestamp(
+                        completed_at,
+                        tz=dt.UTC,
+                    ),
+                )
+            )[0]
+            if len(trials.trial_ids) >= 2
+            else None
+        )
         payload = IntradayActualResearchAuditPayload(
             run_key=request.run_key,
             plan_id=plan.plan_id,
@@ -63,16 +83,15 @@ def audit_intraday_actual_research(
             experiment_artifact_ids=trials.experiment_artifact_ids,
             review_artifact_ids=trials.review_artifact_ids,
             reviewer_decisions=trials.reviewer_decisions,
+            comparison_artifact_id=(None if comparison is None else comparison.artifact_id),
+            comparison_status=(None if comparison is None else comparison.payload.status),
         )
         artifact_id = _sha(canonical_experiment_ledger_json(payload))
         artifact = IntradayActualResearchAuditArtifact(
             artifact_id=artifact_id,
             payload=payload,
         )
-        artifact_path = (
-            request.output_root
-            / f"intraday_actual_research_audit_{artifact.artifact_id}.json"
-        )
+        artifact_path = request.output_root / f"intraday_actual_research_audit_{artifact.artifact_id}.json"
         created = publish_private_immutable_text(
             artifact_path,
             canonical_experiment_ledger_json(artifact) + "\n",
@@ -102,8 +121,7 @@ def _require_plan(
     spec = plan.content.spec
     if (
         spec.run_key != request.run_key
-        or spec.dataset_producer_commit_sha
-        != request.expected_dataset_producer_commit_sha
+        or spec.dataset_producer_commit_sha != request.expected_dataset_producer_commit_sha
         or spec.code_version != request.expected_code_version
     ):
         raise IntradayActualResearchAuditError("plan_identity_mismatch")
