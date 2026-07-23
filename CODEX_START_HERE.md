@@ -6,6 +6,7 @@
 
 ## 현재 상태
 
+- actual causal dataset과 downstream binding receipt는 schema v2에서 exact producer commit을 CSV·source-session SHA와 함께 보존한다. 7월 23·24일 dataset/catalog→planned research job은 clean `70e7d94` runtime에 고정됐으며, clean session 전에는 READY artifact나 trial을 만들지 않는다.
 - M8 source-backed intraday v2가 immutable research card의 `strategy_design` queue를 승인된 기존 intraday template, 새 strategy version, bounded historical replay와 독립 Reviewer까지 연결한다. stale queue의 다른 version 재사용, queue artifact 누락, 사전등록 SHA-256이 다른 input, strategy가 다르거나 `READY`가 아닌 historical data foundation은 version 등록 전에 차단한다. foundation hash는 trial evidence budget에도 남는다. committed fixture 첫 실행/replay는 trial·review `1/1 → 0/0`, decision `hold`, provider/account/order mutation 0건이다.
 - 실제 data 감사에서 KIS forward session 4개는 모두 기존 품질 게이트에 차단됐다. Alpaca SIP AAPL 20세션·7,800분봉은 canonical하지만 급등 후보 universe·관측시각·prior close·ADV·spread가 없어 challenger 성과 입력으로 사용하지 않았고 actual historical trial은 0건이다.
 - 2026-07-23 KR M3 production shadow에서 KIS current calendar GET, pre-open trial 복구와 Hermes source-preflight incident ACK를 실제 확인했다. OpenDART 설정 부재로 four-source cycle은 data-quality `CENSORED`이며 15:32 one-shot post-session finalizer가 대기한다. account/order mutation은 0건이다.
