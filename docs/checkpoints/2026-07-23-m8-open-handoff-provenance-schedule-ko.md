@@ -1,7 +1,7 @@
 # M8 정규장 handoff·provenance 분리·실시간 체인 체크포인트
 
 최초 작성: 2026-07-23 21:56 KST
-최종 갱신: 2026-07-23 22:25 KST
+최종 갱신: 2026-07-23 22:47 KST
 
 ## KR 장후 예약 실측
 
@@ -47,6 +47,39 @@ premarket collector가 provider operation 소요시간과 무관하게 항상 30
 - 후보와 실패 cycle은 삭제하지 않았다.
 - ranking/watch/retry/post-session 품질 gate는 완화하지 않았다.
 - 현재 실행 중인 7월 23일·24일 frozen runtime에는 코드를 주입하지 않았다.
+
+## 정규장 cycle cadence 결손 수정
+
+7월 23일 실제 watch의 첫 정규장 cycle은 22:32:41 KST, 두 번째는 22:33:58
+KST에 시작해 간격이 `76.7초`였다. 이후 cycle도 scan operation 소요시간
+약 5~17초와 고정 60초 sleep이 합쳐져 시작 간격이 약 65~77초였다. 따라서
+`--cycles 390 --interval-seconds 60`을 지정해도 정규장 안에 390개 start cadence를
+실행할 수 없었다.
+
+commit `5ecad89ba8eb68319c7fce95290103a1ad83bc69`에서 `run_cycles`가 monotonic
+clock으로 operation runtime을 측정하고 다음 sleep에서 차감하도록 수정했다. operation
+overrun은 음수 sleep 없이 즉시 다음 cycle로 진행하고 process는 계속 직렬 실행한다.
+현재 실행 중인 7월 23일·24일 frozen watch에는 코드를 주입하거나 재시작하지 않았다.
+
+검증 결과:
+
+- 실제 RED 근거: 첫 두 cycle 시작 간격 `76.7초`
+- 17초 operation 재현: 기존 60초 sleep에서 수정 뒤 `43초` sleep
+- focused watch tests: `36 passed`
+- CLI `--help`, cycles `0` exit `2`, 격리 2-cycle happy path: pass
+- 격리 happy start interval: `1.003초` / 설정 `1초`
+- Ruff 전체: pass
+- basedpyright 전체: `0 errors, 0 warnings, 0 notes`
+- 전체 pytest: `3467 passed`
+- 기존 Grok offline environment 테스트: 변경과 무관한 `5 failed`
+- no-excuse 검사: pass
+
+22:45 early progress original job은 제한된 launchd `PATH`에서 shebang의 `uv`를 찾지
+못해 `exit_code=127`로 실패했다. 실패 receipt는 보존했다. 명시적
+`/Users/goyunseo/.local/bin/uv` command의 새 label로 22:46에 재검증한 결과는
+`progress_clean`, ranking/watch/retry/candidate cycle `12/12/12/12`, KIS
+retry/recovery/repeated failure `36/36/0`, gate relaxed `false`, external mutation
+`0`이었다. retry receipt와 report는 mode `600`이고 종료 뒤 label은 제거됐다.
 
 ## dataset producer와 전략 버전 분리
 
@@ -119,27 +152,31 @@ credential, account, order mutation 경로가 없다.
 
 ## 2026-07-27 exact-runtime 실시간 체인
 
-forward, readiness와 closeout은 clean detached runtime
+readiness와 closeout은 clean detached runtime
 `/private/tmp/trading-agent-open-handoff-20260727-f917ffe`의 exact commit
-`f917ffeff52f8ab02cf40f8978e071a1c0ca073a`를 유지한다. research와 terminal
-audit은 clean detached runtime
-`/private/tmp/trading-agent-terminal-audit-20260727-20d8196`의 exact commit
-`20d81964b3200d4c16253409d58306333c9457be`로 교체했다. 각 payload는 실행 직전
-runtime HEAD, dirty 상태와 뉴욕 거래일을 다시 검사한다.
+`f917ffeff52f8ab02cf40f8978e071a1c0ca073a`를 유지한다. forward, early/late
+progress, research와 terminal audit은 clean detached runtime
+`/private/tmp/trading-agent-cycle-cadence-20260727-5ecad89`의 exact commit
+`5ecad89ba8eb68319c7fce95290103a1ad83bc69`로 교체했다. forward, research와
+terminal audit payload는 실행 직전 runtime HEAD, dirty 상태와 뉴욕 거래일을
+검사한다. progress runner는 명시적 `uv --directory`와 exact script 절대경로를
+사용한다.
 
 | 실행 시각 | launchd label | 역할 | 등록 PID |
 |---|---|---|---:|
-| 2026-07-27 16:59:30 KST / 03:59:30 EDT | `ai.trading-agent.us-forward-open-handoff-20260727` | 장전 5분 cycle에서 09:30 정규장으로 handoff한 뒤 390개 1분 cycle, retry, candidate, post-session chain 수집 | 42499 |
+| 2026-07-27 16:59:30 KST / 03:59:30 EDT | `ai.trading-agent.us-forward-open-handoff-20260727` | 장전 5분 cycle에서 09:30 정규장으로 handoff한 뒤 start-to-start 1분 cadence의 390 cycle, retry, candidate, post-session chain 수집 | 75778 |
 | 2026-07-27 22:25 KST / 09:25 EDT | `ai.trading-agent.forward-premarket-readiness-20260727` | 최소 60개 장전 cycle, 최신 600초, 최신 후보 1개 이상 strict readiness | 42505 |
+| 2026-07-27 22:45 KST / 09:45 EDT | `ai.trading-agent.forward-progress-early-20260727` | 최소 8 cycle ranking/watch/retry/candidate strict progress | 77271 |
+| 2026-07-28 04:30 KST / 2026-07-27 15:30 EDT | `ai.trading-agent.forward-progress-late-20260727` | 최소 300 cycle strict progress와 미복구 retry/coverage 결손 조기 차단 | 77277 |
 | 2026-07-28 05:20 KST / 2026-07-27 16:20 EDT | `ai.trading-agent.forward-post-session-20260727` | watch terminal을 최대 16:35 EDT까지 기다린 뒤 strict local closeout | 42511 |
-| 2026-07-28 05:40 KST / 2026-07-27 16:40 EDT | `ai.trading-agent.post-closeout-research-20260727` | closeout receipt/report를 요구한 뒤 actual causal dataset, READY foundation, multi-strategy walk-forward와 독립 Reviewer 실행 | 59790 |
-| 2026-07-28 05:50 KST / 2026-07-27 16:50 EDT | `ai.trading-agent.actual-research-terminal-audit-20260727` | research receipt를 최대 17:05 EDT까지 기다린 뒤 exact persisted manifest, 1~3 READY foundation, completed trials와 독립 Reviewer terminal 재검증 | 59796 |
+| 2026-07-28 05:40 KST / 2026-07-27 16:40 EDT | `ai.trading-agent.post-closeout-research-20260727` | closeout receipt/report를 요구한 뒤 actual causal dataset, READY foundation, multi-strategy walk-forward와 독립 Reviewer 실행 | 75784 |
+| 2026-07-28 05:50 KST / 2026-07-27 16:50 EDT | `ai.trading-agent.actual-research-terminal-audit-20260727` | research receipt를 최대 17:05 EDT까지 기다린 뒤 exact persisted manifest, 1~3 READY foundation, completed trials와 독립 Reviewer terminal 재검증 | 75789 |
 
 research run은 다음 identity를 동결한다.
 
 - run key: `actual-2026-07-27`
 - dataset producer:
-  `20d81964b3200d4c16253409d58306333c9457be`
+  `5ecad89ba8eb68319c7fce95290103a1ad83bc69`
 - frozen strategy code:
   `70e7d94dd0f56bc40b9fe602de22657c38f8e844`
 - strategy bindings: 기존 v1 VWAP reclaim, HOD breakout, Gap-and-Go와 exact queue
@@ -147,7 +184,7 @@ research run은 다음 identity를 동결한다.
 - required current session: `2026-07-27`
 - minimum clean sessions: `1`
 
-등록 직후 다섯 job은 모두 `state=running`, `runs=1`, receipt/claim은 없었다.
+등록 직후 일곱 job은 모두 `state=running`, `runs=1`, receipt/claim은 없었다.
 payload와 at-most-once wrapper는 mode `700`, stdout/stderr는 mode `600`이며 모든
 shell syntax 검사가 통과했다. 기존 7월 23일·24일 jobs와 Hermes PID `31663`은
 그대로 살아 있었고 원본 dirty checkout은 수정하지 않았다.

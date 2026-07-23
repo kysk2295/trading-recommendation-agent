@@ -241,6 +241,26 @@ focused `4 passed`, 전체 `3431 passed`, 전체 Ruff 통과, basedpyright
 필수 artifact 결손과 잘못된 minimum 입력은 각각 exit `0/0/1/2`였고 생성된
 happy/blocked 보고서는 mode `600`이었다.
 
+22:45 KST original early job은 실행됐지만 receipt `exit_code=127`, stderr
+`env: uv: No such file or directory`를 남겼다. 제한된 launchd `PATH`에서 PEP 723
+shebang의 `uv`를 찾지 못한 wrapper 결손이며 watch 품질 결과는 아니다. 실패 receipt를
+삭제하거나 같은 label을 재사용하지 않았다. 새
+`ai.trading-agent.forward-progress-early-retry-20260723` label은
+`/Users/goyunseo/.local/bin/uv`와 exact runtime을 명시해 22:46 KST에 한 번 실행됐다.
+
+- receipt: `exit_code=0`
+- result: `progress_clean`
+- watch/ranking/retry/candidate input cycles: `12/12/12/12`
+- KIS retries/recoveries/repeated failures: `36/36/0`
+- final eligibility: `pending_post_session`
+- quality gate relaxed: `false`
+- provider/account/order mutation: `0`
+- report, receipt, stdout/stderr mode: `600`
+- 종료 뒤 retry launchd label: 없음
+
+같은 명시적 `uv` 실행 계약으로 2026-07-27 early `8` cycle과 late `300` cycle
+감사도 별도 at-most-once job으로 등록했다.
+
 ## US forward 장전 strict readiness 예약
 
 commit `3d488137ce6d612ebea98dd0b862e1fe9843ef44`에 read-only
