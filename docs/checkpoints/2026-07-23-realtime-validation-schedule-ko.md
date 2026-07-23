@@ -146,3 +146,29 @@ suspend/resume했고 모든 PID를 유지했다. forward label은 새 PID `29095
 bad input과 다섯 lane/experiment 인자를 검증했다. 이 예약은 Paper 주문이나 champion
 승격을 수행하지 않으며 실제 7월 24일 clean session의 snapshot·Reviewer·trial
 terminal을 그대로 보존한다.
+
+## Paper smoke 사전 자격 감사 예약
+
+commit `0052a6bd1ec37712ab795a7330be53a5c1c32d6b`에 local-only
+`run_us_day_paper_smoke_eligibility.py`를 추가했다. exact session/lane에 대해 clean
+repository commit, 단일 `PAPER_CHAMPION`, Paper authority binding, lane risk/account
+binding, current execution schema와 account binding 일치, unresolved intent, pending
+trade-update receipt와 미복구 quarantine 부재를 확인한다. 성공해도
+`ready_to_request_arm`만 기록하며 arm을 생성·확인·소비하지 않는다.
+
+동일 commit의 clean detached runtime을 사용한 실제 integration control-store 감사
+결과는 `champion_missing`이었다. 보고서는 mode `600`이고 provider/account/order
+mutation은 `0`이다. 이 결과는 현재 네 전략이 모두 `experimental_shadow`라는 기존
+원장 상태와 일치하며, 자동 승격이나 가짜 champion을 만들지 않았다.
+
+`ai.trading-agent.paper-smoke-eligibility-20260724` one-shot을 7월 24일
+09:31 EDT에 실행하도록 등록했다. runner는 mode `700`, stdout/stderr는 mode `600`,
+frozen runtime SHA를 실행 직전에 다시 검증하며 terminal 직전에 자신의 launchd
+label을 제거한다. 등록 직후 PID `45555`, run count `1`, state `running`을 확인했다.
+wrapper `zsh -n`과 dry-run은 exit `0`, bad input은 exit `2`였다. 기존 forward,
+preflight, SIP, finalizer, dataset, research와 Hermes PID는 변경하지 않았다.
+
+CLI 검증은 focused `10 passed`, 전체 `3428 passed`, Ruff 통과,
+basedpyright `0 errors, 0 warnings, 0 notes`다. 격리 PEP 723 `--help`, invalid
+session과 완전한 임시 control-plane happy path를 실제 subprocess로 실행했고 각각
+exit `0/1/0`, stderr `0` bytes, 보고서 mode `600`을 확인했다.
