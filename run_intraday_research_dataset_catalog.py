@@ -29,6 +29,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--session-dir", type=Path, action="append", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--producer-commit-sha", required=True)
     parser.add_argument("--minimum-sessions", type=int, default=1)
     parser.add_argument("--max-sessions", type=int, default=60)
     parser.add_argument("--max-bars", type=int, default=100_000)
@@ -46,6 +47,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 minimum_sessions=args.minimum_sessions,
                 max_sessions=args.max_sessions,
                 max_bars=args.max_bars,
+                producer_commit_sha=args.producer_commit_sha,
                 required_session_dates=tuple(args.required_session_date),
             )
         )
@@ -68,6 +70,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         + f"- input sha256: {dataset.input_sha256}\n"
         + f"- catalog receipt sha256: {result.catalog_receipt_sha256}\n"
         + f"- bars: {dataset.bar_count}\n"
+        + "- producer commit bound: true\n"
         + f"- created: {str(result.created).lower()}\n"
         + "- quality gate: strict\n"
         + "- external mutation: 0\n",

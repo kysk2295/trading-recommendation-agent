@@ -10,6 +10,7 @@ import pytest
 
 from tests.intraday_research_input_binding_fixtures import (
     NOW,
+    PRODUCER_COMMIT,
     write_dataset,
     write_entitlement,
     write_queue,
@@ -73,6 +74,7 @@ def test_binding_publishes_ready_foundation_and_exact_v2_manifest(tmp_path: Path
     assert manifest.source_queue_snapshot_id is not None
     assert manifest.hypotheses[0].data_foundation_sha256 == foundation.sha256
     assert receipt["input_sha256"] == dataset.input_sha256
+    assert receipt["dataset_producer_commit_sha"] == PRODUCER_COMMIT
     assert receipt["foundation_sha256s"] == [foundation.sha256]
     assert receipt["manifest_sha256"] == first.manifest_sha256
     assert first.created is True

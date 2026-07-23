@@ -25,6 +25,7 @@ from trading_agent.source_driven_hypothesis_queue_models import (
 )
 
 NOW = dt.datetime(2026, 7, 23, 5, 30, tzinfo=dt.UTC)
+PRODUCER_COMMIT = "a" * 40
 PROJECT = Path(__file__).resolve().parents[1]
 KIS_ENTITLEMENT = (
     PROJECT / "examples" / "data" / "kis-us-candidate-minute-historical-research-v1.json"
@@ -40,6 +41,7 @@ def write_dataset(tmp_path: Path) -> IntradayResearchDatasetResult:
             output_root=tmp_path / "dataset",
             max_sessions=1,
             max_bars=500,
+            producer_commit_sha=PRODUCER_COMMIT,
         )
     )
 

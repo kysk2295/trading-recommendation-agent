@@ -17,6 +17,7 @@ class IntradayResearchDatasetCatalogRequest:
     minimum_sessions: int
     max_sessions: int
     max_bars: int
+    producer_commit_sha: str
     required_session_dates: tuple[dt.date, ...] = ()
 
 

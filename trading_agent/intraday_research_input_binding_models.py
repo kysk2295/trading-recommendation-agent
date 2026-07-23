@@ -60,9 +60,10 @@ class IntradayResearchInputBindingError(ValueError):
 class IntradayResearchInputBindingReceipt(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     input_sha256: str
     dataset_receipt_sha256: str
+    dataset_producer_commit_sha: str
     entitlement_contract_sha256: str
     source_queue_snapshot_id: str
     queue_card_keys: tuple[str, ...]

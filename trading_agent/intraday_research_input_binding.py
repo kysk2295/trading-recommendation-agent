@@ -88,6 +88,7 @@ def bind_intraday_research_input(
         binding_receipt = IntradayResearchInputBindingReceipt(
             input_sha256=source.sha256,
             dataset_receipt_sha256=receipt_sha,
+            dataset_producer_commit_sha=receipt.producer_commit_sha,
             entitlement_contract_sha256=_sha(entitlement_raw),
             source_queue_snapshot_id=queue.snapshot_id,
             queue_card_keys=tuple(item.queue_card_key or "" for item in selections),

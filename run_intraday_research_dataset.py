@@ -26,6 +26,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--session-dir", type=Path, action="append", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--producer-commit-sha", required=True)
     parser.add_argument("--max-sessions", type=int, default=60)
     parser.add_argument("--max-bars", type=int, default=100_000)
     return parser.parse_args(argv)
@@ -40,6 +41,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 output_root=args.output_dir,
                 max_sessions=args.max_sessions,
                 max_bars=args.max_bars,
+                producer_commit_sha=args.producer_commit_sha,
             )
         )
     except (IntradayResearchDatasetError, OSError, TypeError, ValueError):
@@ -61,6 +63,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         + f"- bars: {result.bar_count}\n"
         + f"- csv: {result.csv_path.name}\n"
         + f"- receipt: {result.receipt_path.name}\n"
+        + "- producer commit bound: true\n"
         + f"- created: {str(result.created).lower()}\n"
         + "- external mutation: 0\n",
     )

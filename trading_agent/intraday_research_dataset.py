@@ -5,7 +5,9 @@ import datetime as dt
 import hashlib
 import io
 import json
+import re
 from bisect import bisect_right
+from typing import Final
 
 from trading_agent.challenger_replay_models import (
     ReplayBar,
@@ -38,6 +40,7 @@ _CSV_HEADER = (
     "spread_bps",
     "catalyst",
 )
+_COMMIT_SHA: Final = re.compile(r"^[0-9a-f]{40}$")
 
 
 def materialize_intraday_research_dataset(
@@ -50,6 +53,7 @@ def materialize_intraday_research_dataset(
         or request.max_bars < 1
         or request.max_bars > 100_000
         or len(request.session_dirs) > request.max_sessions
+        or _COMMIT_SHA.fullmatch(request.producer_commit_sha) is None
     ):
         raise IntradayResearchDatasetError("invalid_budget")
     try:
@@ -62,6 +66,7 @@ def materialize_intraday_research_dataset(
         input_sha256 = hashlib.sha256(csv_payload.encode()).hexdigest()
         source_hashes = tuple(_source_sha256(source) for source in ordered)
         receipt = IntradayResearchDatasetReceipt(
+            producer_commit_sha=request.producer_commit_sha,
             input_sha256=input_sha256,
             source_session_sha256s=source_hashes,
             session_dates=tuple(source.session_date for source in ordered),

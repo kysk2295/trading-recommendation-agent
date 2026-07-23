@@ -69,6 +69,7 @@ def materialize_intraday_research_dataset_catalog(
                 output_root=request.output_root,
                 max_sessions=request.max_sessions,
                 max_bars=request.max_bars,
+                producer_commit_sha=request.producer_commit_sha,
             )
         )
         receipt = IntradayResearchDatasetCatalogReceipt(
