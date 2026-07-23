@@ -83,6 +83,33 @@ def test_get_uses_bounded_backoff_for_consecutive_server_errors() -> None:
     assert events[0].outcome == "recovered"
 
 
+def test_get_recovers_after_three_consecutive_server_errors() -> None:
+    statuses = iter((500, 500, 500, 200))
+    attempts = 0
+    delays: list[float] = []
+
+    def handle(_: httpx2.Request) -> httpx2.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx2.Response(next(statuses), json={"ok": True})
+
+    with httpx2.Client(
+        base_url="https://openapi.koreainvestment.com:9443",
+        transport=httpx2.MockTransport(handle),
+    ) as client:
+        response = get_with_server_retry(
+            client,
+            "/read-only",
+            params={"EXCD": "AMS", "SYMB": "DEMO"},
+            headers={"authorization": "Bearer redacted"},
+            sleeper=delays.append,
+        )
+
+    assert response.status_code == 200
+    assert attempts == 4
+    assert delays == [0.25, 0.75, 2.0]
+
+
 def test_get_never_follows_redirects_with_auth_headers() -> None:
     requests: list[httpx2.Request] = []
 
@@ -153,7 +180,7 @@ def test_get_stops_after_bounded_server_retries_and_does_not_retry_rate_limits()
         )
 
     assert repeated.status_code == 500
-    assert server_attempts == 3
+    assert server_attempts == 4
     assert limited.status_code == 429
     assert rate_attempts == 1
 

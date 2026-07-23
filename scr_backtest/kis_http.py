@@ -9,7 +9,7 @@ from typing import Final, Literal
 import httpx2
 
 RETRIABLE_SERVER_STATUSES: Final = frozenset((500, 502, 503, 504))
-SERVER_RETRY_DELAYS_SECONDS: Final = (0.25, 0.75)
+SERVER_RETRY_DELAYS_SECONDS: Final = (0.25, 0.75, 2.0)
 
 
 @dataclass(frozen=True, slots=True)
