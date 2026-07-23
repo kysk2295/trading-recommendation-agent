@@ -23,7 +23,7 @@ def test_cycle_runner_continues_after_a_failed_scan() -> None:
     exit_codes = run_cycles(
         lambda: next(pending),
         config,
-        CycleRuntime(waits.append),
+        CycleRuntime(waits.append, monotonic=lambda: 0.0),
     )
 
     assert exit_codes == (1, 0)
@@ -39,12 +39,41 @@ def test_cycle_runner_stops_before_an_operation_when_session_closes() -> None:
     exit_codes = run_cycles(
         lambda: operations.append(0) or 0,
         config,
-        CycleRuntime(waits.append, lambda: next(session_checks)),
+        CycleRuntime(
+            waits.append,
+            lambda: next(session_checks),
+            monotonic=lambda: 0.0,
+        ),
     )
 
     assert exit_codes == (0, 0)
     assert operations == [0, 0]
     assert waits == [60.0, 60.0]
+
+
+def test_cycle_runner_subtracts_operation_runtime_from_start_cadence() -> None:
+    elapsed = 0.0
+    waits: list[float] = []
+    config = WatchConfig(cycles=2, interval_seconds=60.0)
+
+    def operation() -> int:
+        nonlocal elapsed
+        elapsed += 17.0
+        return 0
+
+    def sleep(seconds: float) -> None:
+        nonlocal elapsed
+        waits.append(seconds)
+        elapsed += seconds
+
+    exit_codes = run_cycles(
+        operation,
+        config,
+        CycleRuntime(sleep, monotonic=lambda: elapsed),
+    )
+
+    assert exit_codes == (0, 0)
+    assert waits == [43.0]
 
 
 def test_cycle_audit_appends_failure_and_recovery(tmp_path: Path) -> None:

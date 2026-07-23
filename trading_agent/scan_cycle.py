@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,7 @@ class WatchConfig:
 class CycleRuntime:
     sleeper: Callable[[float], None]
     should_continue: Callable[[], bool] | None = None
+    monotonic: Callable[[], float] = time.monotonic
 
 
 def run_cycles(
@@ -31,9 +33,11 @@ def run_cycles(
     for cycle in range(config.cycles):
         if runtime.should_continue is not None and not runtime.should_continue():
             break
+        started_at = runtime.monotonic()
         exit_codes.append(operation())
         if cycle + 1 < config.cycles:
-            runtime.sleeper(config.interval_seconds)
+            operation_seconds = runtime.monotonic() - started_at
+            runtime.sleeper(max(0.0, config.interval_seconds - operation_seconds))
     return tuple(exit_codes)
 
 
