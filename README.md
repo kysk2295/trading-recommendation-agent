@@ -439,6 +439,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-23 KIS US repeated server-error 복구 업데이트:** 실제 4개 forward session의 strict quality 결손을 원본 audit으로 재대사해 2026-07-22 첫 16회는 이미 닫힌 scanner `duckdb` runtime 누락, 이후 공통 실패는 종목별 KIS GET의 `500 → 500` 미복구임을 확인했다. shared GET은 기존 server status에만 총 3회, 0.25초·0.75초 bounded backoff를 적용하고 `429`·redirect·transport error와 audit 의미는 유지한다. 품질 gate와 과거 실패 원장은 바꾸지 않았다. 새 SHA의 clean runtime으로 2026-07-24 full watch, Paper read-only preflight, SIP smoke, close terminal과 strict causal dataset job을 예약했다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-kis-server-retry-recovery-ko.md)에 있다.
 
+**2026-07-24 KIS US 네 번째 server attempt·clean-session rollover 업데이트:** 2026-07-23 actual forward의 cycle 232에서 `AMS/TSLZ` 분봉 GET이 기존 세 번의 시도를 모두 `500`으로 소진해 watch failure와 candidate context 결손을 만든 사실을 원본 retry/watch/candidate 원장으로 확인했다. 실패 cycle과 strict gate는 그대로 보존하고 공용 read-only GET의 `500/502/503/504`에 세 번째 `2.0초` bounded retry를 추가해 최초 요청 포함 최대 네 번만 시도한다. `429`·redirect·transport error는 완화하지 않았다. exact SHA `3c476d5`의 clean runtime과 별도 experimental-shadow ledger로 2026-07-24 full-session watch를 교체 예약했고, 2026-07-25 01:45/04:15 KST strict progress 감사와 기존 closeout→causal dataset→actual research 체인은 동일 forward label을 기다린다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-24-kis-forward-recovery-rollover-ko.md)에 있다.
+
 ### Single Writer, Multiple Readers
 
 - 실행 원장과 향후 broker paper 상태를 변경하는 프로세스는 하나뿐이다.
@@ -586,6 +588,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [Strict forward post-session closeout 체크포인트](docs/checkpoints/2026-07-23-forward-post-session-strict-closeout-ko.md)
 - [Strict closeout 기반 actual research handoff 체크포인트](docs/checkpoints/2026-07-23-post-closeout-research-handoff-ko.md)
 - [M8 정규장 handoff·provenance 분리·실시간 체인 체크포인트](docs/checkpoints/2026-07-23-m8-open-handoff-provenance-schedule-ko.md)
+- [KIS forward 연속 서버 오류 복구·다음 세션 rollover 체크포인트](docs/checkpoints/2026-07-24-kis-forward-recovery-rollover-ko.md)
 - [US news-catalyst shadow trial·Reviewer 체크포인트](docs/checkpoints/2026-07-21-us-news-catalyst-shadow-trial-reviewer-ko.md)
 - [US news-catalyst current-session feature observation 체크포인트](docs/checkpoints/2026-07-21-us-news-catalyst-feature-observation-ko.md)
 - [US news-catalyst frozen cohort collection 체크포인트](docs/checkpoints/2026-07-21-us-news-catalyst-frozen-cohort-collection-ko.md)
@@ -616,7 +619,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 ## 현재 가능한 일
 
 - KIS 실전 시세 서버의 NASDAQ·NYSE·AMEX 상승률·거래량 랭킹 조회
-- KIS 읽기 전용 GET의 일시적 500/502/503/504를 80ms 뒤 정확히 한 번 재시도하고 반복 오류·429는 fail-closed 처리
+- KIS 읽기 전용 GET의 일시적 500/502/503/504만 0.25초·0.75초·2.0초 뒤 bounded retry해 최초 요청 포함 최대 네 번 시도하고, 네 번의 반복 오류·429는 fail-closed 처리
 - 각 scan cycle의 재시도·복구·최종 실패 수와 안전한 endpoint/종목 상세를 별도 CSV로 감사하고 일일 연구 원장 checksum에 포함
 - 매 cycle의 상승률·거래량 원시 랭킹 행과 실제 선택 여부를 CSV에 누적
 - 선택 후보의 완료 정규장 1분봉을 최초 관찰 시각과 함께 SQLite에 중복 없이 보존
