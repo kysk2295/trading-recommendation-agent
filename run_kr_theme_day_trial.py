@@ -64,6 +64,7 @@ def main(
         if args.command == "register":
             registered_at = dt.datetime.fromisoformat(args.registered_at)
             calendar_snapshot = _calendar_snapshot(args.calendar_store, registered_at)
+            registered_at = _causal_registration_time(registered_at, calendar_snapshot.payload.observed_at)
             result = register_kr_theme_day_shadow_trial(
                 ledger,
                 KrThemeDayTrialRegistrationRequest(
@@ -125,6 +126,16 @@ def _calendar_snapshot(path: Path, registered_at: dt.datetime) -> KrSessionCalen
     if len(matches) != 1:
         raise InvalidKrThemeDayTrialError
     return matches[0]
+
+
+def _causal_registration_time(requested: dt.datetime, observed_at: dt.datetime) -> dt.datetime:
+    if observed_at <= requested:
+        return requested
+    requested_utc = requested.astimezone(dt.UTC)
+    observed_utc = observed_at.astimezone(dt.UTC)
+    if requested_utc.replace(microsecond=0) != observed_utc.replace(microsecond=0):
+        raise InvalidKrThemeDayTrialError
+    return observed_at
 
 
 def _created_reused(label: str, created: bool) -> str:

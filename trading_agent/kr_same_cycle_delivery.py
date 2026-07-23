@@ -15,11 +15,16 @@ from trading_agent.hermes_delivery_errors import (
     HermesDeliveryWriterLeaseUnavailableError,
     InvalidHermesDeliveryStoreError,
 )
-from trading_agent.hermes_delivery_models import HermesDeliveryKind
+from trading_agent.hermes_delivery_models import (
+    HERMES_DELIVERY_CONTRACT_VERSION,
+    HermesDeliveryKind,
+    hermes_delivery_id,
+)
 from trading_agent.hermes_delivery_projection import (
     HermesProjectionRecord,
     HermesProjectionResult,
     InvalidHermesProjectionSourceError,
+    delivery_event_from_projection_record,
     project_opportunity_snapshots,
     project_outcomes,
 )
@@ -34,6 +39,7 @@ from trading_agent.research_identity_models import AgentFamily, MarketId
 from trading_agent.signal_contract_models import OpportunitySnapshot
 
 _IDENTIFIER: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_KST: Final = dt.timezone(dt.timedelta(hours=9))
 
 
 class InvalidKrSameCycleDeliveryError(ValueError):
@@ -48,6 +54,14 @@ class KrSameCycleDeliveryRequest:
     strategy_version: str
     occurred_at: dt.datetime
     opportunities: tuple[OpportunitySnapshot, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class KrSourcePreflightDeliveryRequest:
+    collection_cycle_id: str
+    collection_date: dt.date
+    strategy_version: str
+    projected_at: dt.datetime
 
 
 def project_kr_same_cycle_delivery(
@@ -105,11 +119,78 @@ def project_kr_source_incident_if_available(
     source_store: KrThemeStore,
     delivery_store: HermesDeliveryStore,
     request: KrSourceCycleDeliveryRequest,
-) -> None:
+) -> bool:
     try:
         _ = project_kr_source_cycle_incident(source_store, delivery_store, request)
+        return True
     except InvalidKrSourceCycleDeliveryError:
-        return
+        return False
+
+
+def project_kr_source_preflight_incident(
+    store: HermesDeliveryStore,
+    request: KrSourcePreflightDeliveryRequest,
+) -> HermesProjectionResult:
+    if (
+        _IDENTIFIER.fullmatch(request.collection_cycle_id) is None
+        or _IDENTIFIER.fullmatch(request.strategy_version) is None
+        or request.projected_at.tzinfo is None
+        or request.projected_at.utcoffset() is None
+        or request.projected_at.astimezone(_KST).date() != request.collection_date
+    ):
+        raise InvalidKrSameCycleDeliveryError
+    material = json.dumps(
+        (
+            request.collection_cycle_id,
+            request.collection_date.isoformat(),
+            request.strategy_version,
+            "blocked_source_preflight",
+        ),
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(material.encode()).hexdigest()
+    source_event_id = f"kr-source-preflight-incident-{digest}"
+    delivery_id = hermes_delivery_id(source_event_id, HERMES_DELIVERY_CONTRACT_VERSION)
+    try:
+        matches = tuple(event for event in store.events() if event.delivery_id == delivery_id)
+        occurred_at = matches[0].occurred_at if len(matches) == 1 else request.projected_at
+        record = HermesProjectionRecord(
+            source_event_id=source_event_id,
+            root_source_event_id=None,
+            kind=HermesDeliveryKind.INCIDENT,
+            market_id=MarketId.KR_EQUITIES.value,
+            agent_family=AgentFamily.OPPORTUNITY_MANAGER.value,
+            lane_id=None,
+            strategy_version=request.strategy_version,
+            instrument_id=None,
+            occurred_at=occurred_at,
+            status="blocked_source_preflight",
+            evidence_refs=(f"kr-collection-cycle:{request.collection_cycle_id}",),
+            rendered_text=(
+                "KR Opportunity Manager: recommendation blocked before source collection; "
+                "required source preflight is incomplete."
+            ),
+            payload_sha256=digest,
+        )
+        if matches:
+            if len(matches) != 1 or matches[0] != delivery_event_from_projection_record(record):
+                raise InvalidKrSameCycleDeliveryError
+            return HermesProjectionResult(examined=1, inserted=0, replayed=1)
+        with store.writer() as writer:
+            return project_outcomes((record,), writer)
+    except (
+        HermesDeliveryConflictError,
+        HermesDeliveryWriterLeaseUnavailableError,
+        InvalidHermesDeliveryStoreError,
+        InvalidHermesProjectionSourceError,
+        OSError,
+        sqlite3.Error,
+        TypeError,
+        ValidationError,
+        ValueError,
+    ):
+        raise InvalidKrSameCycleDeliveryError from None
 
 
 def _validate_request(request: KrSameCycleDeliveryRequest) -> None:
@@ -141,6 +222,8 @@ __all__ = (
     "InvalidKrSameCycleDeliveryError",
     "KrSameCycleDeliveryRequest",
     "KrSourceCycleDeliveryRequest",
+    "KrSourcePreflightDeliveryRequest",
     "project_kr_same_cycle_delivery",
     "project_kr_source_incident_if_available",
+    "project_kr_source_preflight_incident",
 )

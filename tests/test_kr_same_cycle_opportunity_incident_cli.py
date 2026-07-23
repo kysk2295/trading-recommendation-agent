@@ -57,6 +57,37 @@ def test_incomplete_source_cycle_delivers_incident_once(
     assert events[0].status == "blocked_source_incomplete"
 
 
+def test_source_preflight_failure_delivers_incident_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _paths(tmp_path)
+    _register(paths["ledger"], tmp_path)
+    policy = _write_policy(tmp_path)
+
+    def reject_before_store(**_values: str | None) -> None:
+        raise typer.BadParameter("source preflight blocked")
+
+    monkeypatch.setattr(run_kr_same_cycle_opportunity.run_kr_same_cycle_collect, "main", reject_before_store)
+
+    first = run_kr_same_cycle_opportunity.main(
+        _argv(paths, policy),
+        clock=lambda: dt.datetime(2026, 7, 16, 10, 2, 30, tzinfo=KST),
+    )
+    second = run_kr_same_cycle_opportunity.main(
+        _argv(paths, policy),
+        clock=lambda: dt.datetime(2026, 7, 16, 10, 2, 30, tzinfo=KST),
+    )
+
+    events = HermesDeliveryStore(paths["delivery"]).events()
+    assert first == 1
+    assert second == 1
+    assert not paths["database"].exists()
+    assert len(events) == 1
+    assert events[0].kind is HermesDeliveryKind.INCIDENT
+    assert events[0].status == "blocked_source_preflight"
+
+
 def test_unregistered_research_cannot_deliver_preexisting_source_incident(tmp_path: Path) -> None:
     # Given: an incomplete source ledger but no registered strategy authority.
     paths = _paths(tmp_path)

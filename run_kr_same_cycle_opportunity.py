@@ -11,6 +11,7 @@ import datetime as dt
 import sqlite3
 import stat
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -29,8 +30,10 @@ from trading_agent.kr_same_cycle_delivery import (
     InvalidKrSameCycleDeliveryError,
     KrSameCycleDeliveryRequest,
     KrSourceCycleDeliveryRequest,
+    KrSourcePreflightDeliveryRequest,
     project_kr_same_cycle_delivery,
     project_kr_source_incident_if_available,
+    project_kr_source_preflight_incident,
 )
 from trading_agent.kr_same_cycle_opportunity_run import (
     InvalidKrSameCycleOpportunityRunError,
@@ -84,6 +87,7 @@ def main(
     args = parse_args(argv)
     opportunity_count = 0
     source_incident_enabled = False
+    incident_strategy_version: str | None = None
     try:
         _validate_targets(args)
         policy = load_kr_same_cycle_opportunity_policy(args.policy)
@@ -99,6 +103,7 @@ def main(
             ),
         )
         source_incident_enabled = True
+        incident_strategy_version = policy.producer_strategy_version
         run_kr_same_cycle_collect.main(
             collection_cycle_id=args.collection_cycle_id,
             collection_date=args.collection_date.isoformat(),
@@ -157,7 +162,7 @@ def main(
         ValueError,
     ):
         if source_incident_enabled:
-            project_kr_source_incident_if_available(
+            source_incident_projected = project_kr_source_incident_if_available(
                 KrThemeStore(args.database),
                 HermesDeliveryStore(args.delivery_database),
                 KrSourceCycleDeliveryRequest(
@@ -165,6 +170,17 @@ def main(
                     projected_at=clock(),
                 ),
             )
+            if not source_incident_projected and incident_strategy_version is not None:
+                with suppress(InvalidKrSameCycleDeliveryError):
+                    _ = project_kr_source_preflight_incident(
+                        HermesDeliveryStore(args.delivery_database),
+                        KrSourcePreflightDeliveryRequest(
+                            collection_cycle_id=args.collection_cycle_id,
+                            collection_date=args.collection_date,
+                            strategy_version=incident_strategy_version,
+                            projected_at=clock(),
+                        ),
+                    )
         _write_report(args.output_dir, result="blocked", opportunity_count=0)
         return 1
     result = "ready" if opportunity_count else "no_opportunity"

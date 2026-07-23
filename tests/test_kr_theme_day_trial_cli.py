@@ -3,11 +3,13 @@ from __future__ import annotations
 import datetime as dt
 import stat
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import run_kr_theme_day_trial as trial_cli
 from tests.test_kr_theme_day_trial import OPPORTUNITY_VERSION, _calendar_evidence, _register_authority
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
+from trading_agent.kis_kr_session_calendar import project_kis_kr_session_calendar
 from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStore
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -98,6 +100,28 @@ def test_kr_theme_day_trial_cli_registers_and_starts(tmp_path: Path) -> None:
     assert "event 신규/재사용: 1/0" in started_report
     assert "order authority: false" in started_report
     assert stat.S_IMODE((output / REPORT).stat().st_mode) == 0o600
+
+
+def test_kr_theme_day_trial_cli_preserves_causality_for_second_precision_registration(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "experiment.sqlite3"
+    output = tmp_path / "report"
+    calendar_store = KisKrSessionCalendarStore(tmp_path / "calendar.sqlite3")
+    receipt, _ = _calendar_evidence()
+    observed_at = dt.datetime(2026, 7, 19, 8, 31, 0, 259228, tzinfo=dt.timezone(dt.timedelta(hours=9)))
+    precise_receipt = replace(receipt, received_at=observed_at)
+    assert calendar_store.append(precise_receipt, project_kis_kr_session_calendar(precise_receipt)) is True
+    _register_authority(ExperimentLedgerStore(database))
+
+    result = trial_cli.main(
+        _register_args(database, output, calendar_store.path),
+        clock=lambda: observed_at + dt.timedelta(milliseconds=100),
+    )
+
+    assert result == 0
+    trial = ExperimentLedgerStore(database).multi_market_trials()[0].registration
+    assert trial.registered_at == observed_at
 
 
 def test_kr_theme_day_trial_cli_blocks_backdated_first_registration(tmp_path: Path) -> None:
