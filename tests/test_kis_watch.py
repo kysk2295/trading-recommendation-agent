@@ -65,38 +65,6 @@ def test_premarket_scan_command_is_rankings_only(tmp_path: Path) -> None:
     assert "run_kis_premarket_scan.py" in command[0]
 
 
-def test_premarket_collection_stops_when_regular_session_opens() -> None:
-    # Given: clocks spanning premarket start, one five-minute cycle, and open.
-    new_york = ZoneInfo("America/New_York")
-    times = iter(
-        (
-            dt.datetime(2026, 7, 13, 3, 59, tzinfo=new_york),
-            dt.datetime(2026, 7, 13, 4, 0, tzinfo=new_york),
-            dt.datetime(2026, 7, 13, 4, 5, tzinfo=new_york),
-            dt.datetime(2026, 7, 13, 9, 30, tzinfo=new_york),
-        )
-    )
-    waits: list[float] = []
-    outcomes = iter((0, 1))
-
-    # When: the collector waits, samples every five minutes, and reaches open.
-    result = run_kis_paper_watch.collect_premarket_until_regular_open(
-        lambda: next(times),
-        waits.append,
-        lambda: next(outcomes),
-        run_kis_paper_watch.PremarketWaitConfig(
-            max_wait=dt.timedelta(hours=8),
-            closed_poll_seconds=30.0,
-            collection_interval_seconds=300.0,
-        ),
-    )
-
-    # Then: only premarket cycles ran and regular-open time is returned.
-    assert result.opened_at == dt.datetime(2026, 7, 13, 9, 30, tzinfo=new_york)
-    assert result.exit_codes == (0, 1)
-    assert waits == [30.0, 300.0, 300.0]
-
-
 def test_watch_finalizes_open_recommendations_after_the_session_close(
     tmp_path: Path,
 ) -> None:

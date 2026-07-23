@@ -3,8 +3,10 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import assert_never
 
 from trading_agent.kis_live import premarket_session_is_open, regular_session_is_open
+from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +59,25 @@ def collect_premarket_until_regular_open(
             return PremarketWaitResult(None, tuple(exit_codes))
         if premarket_session_is_open(observed_at):
             exit_codes.append(operation())
-            delay = config.collection_interval_seconds
+            observed_at = clock()
+            if regular_session_is_open(observed_at):
+                return PremarketWaitResult(observed_at, tuple(exit_codes))
+            remaining = (deadline - observed_at).total_seconds()
+            if remaining <= 0.0:
+                return PremarketWaitResult(None, tuple(exit_codes))
+            bounds = regular_session_bounds(
+                observed_at.astimezone(NEW_YORK).date()
+            )
+            match bounds:
+                case (session_open, _):
+                    delay = min(
+                        config.collection_interval_seconds,
+                        (session_open - observed_at).total_seconds(),
+                    )
+                case None:
+                    delay = config.closed_poll_seconds
+                case unreachable:
+                    assert_never(unreachable)
         else:
             delay = config.closed_poll_seconds
         sleeper(min(delay, remaining))
