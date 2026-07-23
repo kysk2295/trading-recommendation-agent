@@ -154,4 +154,4 @@ def test_writer_migrates_v5_multi_market_rows_without_rewrite(tmp_path: Path) ->
 
     assert ExperimentLedgerStore(database).multi_market_strategy_versions()[0].registration == version
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (6,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (7,)

@@ -185,6 +185,27 @@ def test_research_source_and_hypothesis_card_have_canonical_immutable_keys() -> 
 
 
 @pytest.mark.parametrize(
+    "source_kind",
+    (
+        "open_source_repository",
+        "news_article",
+        "social_discussion",
+    ),
+)
+def test_research_source_accepts_discovery_source_kinds(source_kind: str) -> None:
+    source = ResearchSource.model_validate(
+        _research_source().model_dump(mode="python")
+        | {
+            "source_id": f"discovery-{source_kind}",
+            "source_kind": source_kind,
+            "source_url": f"https://example.com/{source_kind}",
+        }
+    )
+
+    assert source.source_kind.value == source_kind
+
+
+@pytest.mark.parametrize(
     ("field", "value"),
     (
         ("source_url", "http://doi.org/10.1111/j.1540-6261.1993.tb04702.x"),

@@ -8,12 +8,13 @@ from trading_agent.multi_market_experiment_schema import (
     CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5,
 )
 
-EXPERIMENT_LEDGER_SCHEMA_VERSION: Final = 6
+EXPERIMENT_LEDGER_SCHEMA_VERSION: Final = 7
 EXPERIMENT_LEDGER_SCHEMA_VERSION_V1: Final = 1
 EXPERIMENT_LEDGER_SCHEMA_VERSION_V2: Final = 2
 EXPERIMENT_LEDGER_SCHEMA_VERSION_V3: Final = 3
 EXPERIMENT_LEDGER_SCHEMA_VERSION_V4: Final = 4
 EXPERIMENT_LEDGER_SCHEMA_VERSION_V5: Final = 5
+EXPERIMENT_LEDGER_SCHEMA_VERSION_V6: Final = 6
 
 CREATE_EXPERIMENT_LEDGER_SCHEMA_V1: Final = """
 CREATE TABLE hypotheses (
@@ -172,6 +173,22 @@ CREATE TRIGGER strategy_authority_bindings_no_delete
 BEFORE DELETE ON strategy_authority_bindings BEGIN SELECT RAISE(ABORT, 'append-only'); END;
 """
 
+CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7: Final = """
+CREATE TABLE research_discovery_sources (
+  source_key TEXT PRIMARY KEY
+    CHECK(length(source_key) = 64 AND source_key NOT GLOB '*[^0-9a-f]*'),
+  source_id TEXT NOT NULL UNIQUE,
+  source_kind TEXT NOT NULL
+    CHECK(source_kind IN ('open_source_repository', 'news_article', 'social_discussion')),
+  source_url TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
+CREATE TRIGGER research_discovery_sources_no_update
+BEFORE UPDATE ON research_discovery_sources BEGIN SELECT RAISE(ABORT, 'append-only'); END;
+CREATE TRIGGER research_discovery_sources_no_delete
+BEFORE DELETE ON research_discovery_sources BEGIN SELECT RAISE(ABORT, 'append-only'); END;
+"""
+
 CREATE_EXPERIMENT_LEDGER_SCHEMA: Final = (
     CREATE_EXPERIMENT_LEDGER_SCHEMA_V1
     + CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2
@@ -179,4 +196,5 @@ CREATE_EXPERIMENT_LEDGER_SCHEMA: Final = (
     + CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4
     + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5
     + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6
+    + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7
 )

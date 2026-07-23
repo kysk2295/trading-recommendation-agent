@@ -54,6 +54,9 @@ class ResearchSourceKind(StrEnum):
     OFFICIAL_MARKET_RULE = "official_market_rule"
     OFFICIAL_PROVIDER_DOCUMENT = "official_provider_document"
     INTERNAL_OBSERVATION = "internal_observation"
+    OPEN_SOURCE_REPOSITORY = "open_source_repository"
+    NEWS_ARTICLE = "news_article"
+    SOCIAL_DISCUSSION = "social_discussion"
 
 
 class ResearchSource(BaseModel):

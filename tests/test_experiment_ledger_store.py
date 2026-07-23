@@ -40,6 +40,9 @@ from trading_agent.experiment_ledger_models import (
 )
 from trading_agent.experiment_ledger_schema import (
     CREATE_EXPERIMENT_LEDGER_SCHEMA_V1,
+    CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6,
+    CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4,
+    CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5,
     CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2,
     CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3,
     EXPERIMENT_LEDGER_SCHEMA_VERSION,
@@ -325,6 +328,36 @@ def test_registers_research_source_and_card_with_exact_replay(tmp_path: Path) ->
     assert reader.hypotheses()[0].registration == card.hypothesis
 
 
+def test_reader_rejects_cross_table_research_source_identity_collision(tmp_path: Path) -> None:
+    database = tmp_path / "experiment.sqlite3"
+    source = _research_source()
+    discovery = ResearchSource.model_validate(
+        source.model_dump(mode="python")
+        | {
+            "source_kind": ResearchSourceKind.OPEN_SOURCE_REPOSITORY,
+            "source_url": "https://github.com/example/public-strategy",
+        }
+    )
+    store = ExperimentLedgerStore(database)
+    with store.writer() as writer:
+        assert writer.register_research_source(source)
+    with sqlite3.connect(database) as connection:
+        _ = connection.execute(
+            "INSERT INTO research_discovery_sources VALUES (?, ?, ?, ?, ?)",
+            (
+                str(research_source_key(discovery)),
+                discovery.source_id,
+                discovery.source_kind.value,
+                discovery.source_url,
+                canonical_experiment_ledger_json(discovery),
+            ),
+        )
+        connection.commit()
+
+    with pytest.raises(InvalidExperimentLedgerSourceError):
+        _ = ExperimentLedgerReader(database).research_sources()
+
+
 def test_research_hypothesis_rejects_unknown_source(tmp_path: Path) -> None:
     store = ExperimentLedgerStore(tmp_path / "experiment.sqlite3")
 
@@ -383,7 +416,7 @@ def test_writer_migrates_v1_without_rewriting_existing_rows(tmp_path: Path) -> N
         version = connection.execute("PRAGMA user_version").fetchone()
 
     assert migrated_row == original_row
-    assert version == (6,)
+    assert version == (7,)
 
 
 def test_writer_migrates_v2_without_rewriting_existing_rows(tmp_path: Path) -> None:
@@ -412,7 +445,7 @@ def test_writer_migrates_v2_without_rewriting_existing_rows(tmp_path: Path) -> N
         version = connection.execute("PRAGMA user_version").fetchone()
 
     assert migrated_row == original_row
-    assert version == (6,)
+    assert version == (7,)
 
 
 def test_writer_migrates_v3_without_rewriting_existing_rows(tmp_path: Path) -> None:
@@ -445,11 +478,51 @@ def test_writer_migrates_v3_without_rewriting_existing_rows(tmp_path: Path) -> N
         version = connection.execute("PRAGMA user_version").fetchone()
 
     assert migrated_row == original_row
-    assert version == (6,)
+    assert version == (7,)
 
 
-def test_current_experiment_ledger_schema_is_v6() -> None:
-    assert EXPERIMENT_LEDGER_SCHEMA_VERSION == 6
+def test_current_experiment_ledger_schema_is_v7() -> None:
+    assert EXPERIMENT_LEDGER_SCHEMA_VERSION == 7
+
+
+def test_writer_migrates_v6_by_adding_discovery_sources_without_rewriting_rows(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "experiment.sqlite3"
+    source = _research_source()
+    original_row = (
+        str(research_source_key(source)),
+        source.source_id,
+        source.source_kind.value,
+        source.source_url,
+        canonical_experiment_ledger_json(source),
+    )
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            CREATE_EXPERIMENT_LEDGER_SCHEMA_V1
+            + CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2
+            + CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3
+            + CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4
+            + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5
+            + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6
+        )
+        _ = connection.execute("PRAGMA user_version = 6")
+        _ = connection.execute("INSERT INTO research_sources VALUES (?, ?, ?, ?, ?)", original_row)
+        connection.commit()
+
+    with ExperimentLedgerStore(database).writer():
+        pass
+
+    with sqlite3.connect(database) as connection:
+        migrated_row = connection.execute("SELECT * FROM research_sources").fetchone()
+        version = connection.execute("PRAGMA user_version").fetchone()
+        discovery_table = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='research_discovery_sources'"
+        ).fetchone()
+
+    assert migrated_row == original_row
+    assert version == (7,)
+    assert discovery_table == ("research_discovery_sources",)
 
 
 def test_writer_rolls_back_v1_migration_when_v2_ddl_fails(

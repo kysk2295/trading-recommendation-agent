@@ -35,6 +35,7 @@ from trading_agent.experiment_ledger_models import (
     HypothesisRegistration,
     ResearchHypothesisCard,
     ResearchSource,
+    ResearchSourceKind,
     StrategyLifecycleEvent,
     StrategyLifecycleEventKind,
     StrategyLifecycleState,
@@ -47,6 +48,7 @@ from trading_agent.experiment_ledger_schema import (
     CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6,
     CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4,
     CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5,
+    CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7,
     CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2,
     CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3,
     EXPERIMENT_LEDGER_SCHEMA_VERSION,
@@ -55,6 +57,7 @@ from trading_agent.experiment_ledger_schema import (
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V3,
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V4,
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V5,
+    EXPERIMENT_LEDGER_SCHEMA_VERSION_V6,
 )
 from trading_agent.lifecycle_authority_policy import (
     InvalidLifecycleAuthorityError,
@@ -168,6 +171,22 @@ _V6_SCHEMA_OBJECTS = _V5_SCHEMA_OBJECTS | frozenset(
         "multi_market_lifecycle_by_version_date",
         "multi_market_lifecycle_events_no_update",
         "multi_market_lifecycle_events_no_delete",
+    }
+)
+
+_V7_SCHEMA_OBJECTS = _V6_SCHEMA_OBJECTS | frozenset(
+    {
+        "research_discovery_sources",
+        "research_discovery_sources_no_update",
+        "research_discovery_sources_no_delete",
+    }
+)
+
+_DISCOVERY_SOURCE_KINDS = frozenset(
+    {
+        ResearchSourceKind.OPEN_SOURCE_REPOSITORY,
+        ResearchSourceKind.NEWS_ARTICLE,
+        ResearchSourceKind.SOCIAL_DISCUSSION,
     }
 )
 
@@ -288,7 +307,25 @@ class ExperimentLedgerReader:
                 """SELECT source_key, source_id, source_kind, source_url, payload_json
                 FROM research_sources ORDER BY rowid"""
             ).fetchall()
-        return tuple(_stored_research_source(row) for row in rows)
+            discovery_rows: list[tuple[str, str, str, str, str]] = connection.execute(
+                """SELECT source_key, source_id, source_kind, source_url, payload_json
+                FROM research_discovery_sources ORDER BY rowid"""
+            ).fetchall()
+        sources = tuple(_stored_research_source(row) for row in (*rows, *discovery_rows))
+        source_ids = tuple(stored.source.source_id for stored in sources)
+        source_keys = tuple(stored.source_key for stored in sources)
+        if len(set(source_ids)) != len(source_ids) or len(set(source_keys)) != len(source_keys):
+            raise InvalidExperimentLedgerSourceError
+        return tuple(
+            sorted(
+                sources,
+                key=lambda stored: (
+                    stored.source.ledger_recorded_at,
+                    stored.source.source_id,
+                    stored.source_key,
+                ),
+            )
+        )
 
     def research_hypothesis_cards(self) -> tuple[StoredResearchHypothesisCard, ...]:
         if not self.path.is_file():
@@ -524,11 +561,14 @@ class ExperimentLedgerWriter:
             if existing.source_key == key and existing.source == source:
                 return False
             raise ExperimentLedgerConflictError
+        if _research_source_by_key(self._connection, str(key)) is not None:
+            raise ExperimentLedgerConflictError
+        table = "research_discovery_sources" if source.source_kind in _DISCOVERY_SOURCE_KINDS else "research_sources"
         return self._insert_immutable(
-            table="research_sources",
+            table=table,
             key_column="source_key",
             key=key,
-            insert_sql="INSERT INTO research_sources VALUES (?, ?, ?, ?, ?)",
+            insert_sql=f"INSERT INTO {table} VALUES (?, ?, ?, ?, ?)",
             insert_values=(
                 key,
                 source.source_id,
@@ -889,24 +929,36 @@ def _research_source_by_id(
     connection: sqlite3.Connection,
     source_id: str,
 ) -> StoredResearchSource | None:
-    row: tuple[str, str, str, str, str] | None = connection.execute(
-        """SELECT source_key, source_id, source_kind, source_url, payload_json
-        FROM research_sources WHERE source_id = ?""",
-        (source_id,),
-    ).fetchone()
-    return None if row is None else _stored_research_source(row)
+    matches: list[StoredResearchSource] = []
+    for table in ("research_sources", "research_discovery_sources"):
+        row: tuple[str, str, str, str, str] | None = connection.execute(
+            f"SELECT source_key, source_id, source_kind, source_url, payload_json "
+            f"FROM {table} WHERE source_id = ?",
+            (source_id,),
+        ).fetchone()
+        if row is not None:
+            matches.append(_stored_research_source(row))
+    if len(matches) > 1:
+        raise InvalidExperimentLedgerSourceError
+    return matches[0] if matches else None
 
 
 def _research_source_by_key(
     connection: sqlite3.Connection,
     source_key: str,
 ) -> StoredResearchSource | None:
-    row: tuple[str, str, str, str, str] | None = connection.execute(
-        """SELECT source_key, source_id, source_kind, source_url, payload_json
-        FROM research_sources WHERE source_key = ?""",
-        (source_key,),
-    ).fetchone()
-    return None if row is None else _stored_research_source(row)
+    matches: list[StoredResearchSource] = []
+    for table in ("research_sources", "research_discovery_sources"):
+        row: tuple[str, str, str, str, str] | None = connection.execute(
+            f"SELECT source_key, source_id, source_kind, source_url, payload_json "
+            f"FROM {table} WHERE source_key = ?",
+            (source_key,),
+        ).fetchone()
+        if row is not None:
+            matches.append(_stored_research_source(row))
+    if len(matches) > 1:
+        raise InvalidExperimentLedgerSourceError
+    return matches[0] if matches else None
 
 
 def _research_hypothesis_card_by_hypothesis_id(
@@ -1421,7 +1473,8 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
             + CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3
             + CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4
             + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5
-            + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6,
+            + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6
+            + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1432,7 +1485,8 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
             ddl=CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3
             + CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4
             + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5
-            + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6,
+            + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6
+            + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1442,7 +1496,8 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
             connection,
             ddl=CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4
             + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5
-            + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6,
+            + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6
+            + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1450,7 +1505,9 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
         _require_v4_schema(connection)
         _apply_schema_transaction(
             connection,
-            ddl=CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5 + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6,
+            ddl=CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5
+            + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6
+            + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1458,7 +1515,15 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
         _require_v5_schema(connection)
         _apply_schema_transaction(
             connection,
-            ddl=CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6,
+            ddl=CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6 + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7,
+            version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
+        )
+        return
+    if current == EXPERIMENT_LEDGER_SCHEMA_VERSION_V6:
+        _require_v6_schema(connection)
+        _apply_schema_transaction(
+            connection,
+            ddl=CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1480,7 +1545,7 @@ def _require_current_schema(connection: sqlite3.Connection) -> None:
     actual_objects = frozenset(
         row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
     )
-    if actual_objects != _V6_SCHEMA_OBJECTS:
+    if actual_objects != _V7_SCHEMA_OBJECTS:
         raise InvalidExperimentLedgerSourceError
 
 
@@ -1536,4 +1601,15 @@ def _require_v5_schema(connection: sqlite3.Connection) -> None:
         row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
     )
     if actual_objects != _V5_SCHEMA_OBJECTS:
+        raise UnsupportedExperimentLedgerSchemaError
+
+
+def _require_v6_schema(connection: sqlite3.Connection) -> None:
+    version: tuple[int] | None = connection.execute("PRAGMA user_version").fetchone()
+    if version != (EXPERIMENT_LEDGER_SCHEMA_VERSION_V6,):
+        raise UnsupportedExperimentLedgerSchemaError
+    actual_objects = frozenset(
+        row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
+    )
+    if actual_objects != _V6_SCHEMA_OBJECTS:
         raise UnsupportedExperimentLedgerSchemaError

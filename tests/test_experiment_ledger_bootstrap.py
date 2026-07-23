@@ -138,6 +138,9 @@ def test_bootstrap_v2_authority_backfill_binds_at_current_request_time(
     with sqlite3.connect(experiment_ledger.path) as connection:
         connection.executescript(
             """
+            DROP TRIGGER research_discovery_sources_no_delete;
+            DROP TRIGGER research_discovery_sources_no_update;
+            DROP TABLE research_discovery_sources;
             DROP TRIGGER multi_market_lifecycle_events_no_delete;
             DROP TRIGGER multi_market_lifecycle_events_no_update;
             DROP INDEX multi_market_lifecycle_by_version_date;
@@ -240,6 +243,9 @@ def test_bootstrap_migrates_v1_ledger_before_appending_code_rollover(
     with sqlite3.connect(experiment_ledger.path) as connection:
         connection.executescript(
             """
+            DROP TRIGGER research_discovery_sources_no_delete;
+            DROP TRIGGER research_discovery_sources_no_update;
+            DROP TABLE research_discovery_sources;
             DROP TRIGGER multi_market_lifecycle_events_no_delete;
             DROP TRIGGER multi_market_lifecycle_events_no_update;
             DROP INDEX multi_market_lifecycle_by_version_date;
