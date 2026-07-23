@@ -52,7 +52,7 @@ def compare_intraday_equal_risk_trials(
     request: EqualRiskComparisonRequest,
 ) -> tuple[EqualRiskComparisonArtifact, bool]:
     try:
-        payload = _comparison_payload(request)
+        payload = build_equal_risk_comparison_payload(request)
         artifact = EqualRiskComparisonArtifact(
             artifact_id=hashlib.sha256(canonical_experiment_ledger_json(payload).encode()).hexdigest(),
             payload=payload,
@@ -76,7 +76,7 @@ def compare_intraday_equal_risk_trials(
         raise InvalidEqualRiskComparisonError from None
 
 
-def _comparison_payload(
+def build_equal_risk_comparison_payload(
     request: EqualRiskComparisonRequest,
 ) -> EqualRiskComparisonPayload:
     if not 2 <= len(request.experiments) <= 3 or len(request.reviews) != len(request.experiments):
@@ -153,5 +153,6 @@ def _comparison_payload(
 
 __all__ = (
     "EqualRiskComparisonRequest",
+    "build_equal_risk_comparison_payload",
     "compare_intraday_equal_risk_trials",
 )
