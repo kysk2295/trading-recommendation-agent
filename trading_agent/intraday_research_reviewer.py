@@ -91,13 +91,43 @@ class IntradayReviewRequest:
 
 
 def review_intraday_experiment(request: IntradayReviewRequest) -> tuple[IntradayReviewArtifact, bool]:
-    experiment = request.experiment
+    review_payload = evaluate_intraday_experiment(
+        request.ledger,
+        request.experiment,
+        request.reviewed_at,
+    )
+    identity = hashlib.sha256(
+        canonical_experiment_ledger_json(review_payload).encode()
+    ).hexdigest()
+    artifact = IntradayReviewArtifact(
+        artifact_id=identity,
+        payload=review_payload,
+    )
+    try:
+        created = publish_private_immutable_text(
+            request.review_root / f"intraday_research_review_{artifact.artifact_id}.json",
+            canonical_experiment_ledger_json(artifact) + "\n",
+        )
+        return artifact, created
+    except (InvalidPrivateImmutableFileError, TypeError, ValidationError, ValueError):
+        raise InvalidIntradayResearchReviewError from None
+
+
+def evaluate_intraday_experiment(
+    ledger: ExperimentLedgerReader,
+    experiment: IntradayExperimentArtifact,
+    reviewed_at: dt.datetime,
+) -> IntradayReviewPayload:
     payload = experiment.payload
-    matching = tuple(row for row in request.ledger.trials() if row.registration.trial_id == payload.trial_id)
+    matching = tuple(
+        row
+        for row in ledger.trials()
+        if row.registration.trial_id == payload.trial_id
+    )
     if len(matching) != 1:
         raise InvalidIntradayResearchReviewError
     trial = matching[0].registration
-    events = request.ledger.trial_events(payload.trial_id)
+    events = ledger.trial_events(payload.trial_id)
     if (
         trial.strategy_version != payload.strategy_version
         or trial.evaluator_version != payload.evaluator_version
@@ -122,21 +152,12 @@ def review_intraday_experiment(request: IntradayReviewRequest) -> tuple[Intraday
         strategy_version=payload.strategy_version,
         experiment_artifact_id=experiment.artifact_id,
         reviewer_version=INTRADAY_REVIEWER_VERSION,
-        reviewed_at=request.reviewed_at,
+        reviewed_at=reviewed_at,
         evidence=evidence,
         decision=decision,
         reason_codes=_reason_codes(decision, evidence),
     )
-    identity = hashlib.sha256(canonical_experiment_ledger_json(review_payload).encode()).hexdigest()
-    artifact = IntradayReviewArtifact(artifact_id=identity, payload=review_payload)
-    try:
-        created = publish_private_immutable_text(
-            request.review_root / f"intraday_research_review_{artifact.artifact_id}.json",
-            canonical_experiment_ledger_json(artifact) + "\n",
-        )
-        return artifact, created
-    except (InvalidPrivateImmutableFileError, TypeError, ValidationError, ValueError):
-        raise InvalidIntradayResearchReviewError from None
+    return review_payload
 
 
 def _reason_codes(
@@ -174,5 +195,6 @@ __all__ = (
     "IntradayReviewArtifact",
     "IntradayReviewRequest",
     "InvalidIntradayResearchReviewError",
+    "evaluate_intraday_experiment",
     "review_intraday_experiment",
 )

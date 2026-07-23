@@ -29,6 +29,7 @@ from trading_agent.intraday_research_loop_models import IntradayReviewerDecision
 from trading_agent.intraday_research_reviewer import (
     IntradayReviewArtifact,
     InvalidIntradayResearchReviewError,
+    evaluate_intraday_experiment,
 )
 from trading_agent.private_immutable_file import (
     InvalidPrivateImmutableFileError,
@@ -115,13 +116,28 @@ def _load_trials(
             len(review_matches) != 1
             or experiment.payload.trial_id != trial.trial_id
             or experiment.payload.strategy_version != trial.strategy_version
+            or experiment.payload.evaluator_version
+            != trial.evaluator_version
             or experiment.payload.data_version != dataset.input_sha256
             or experiment.payload.manifest_sha256 != binding.manifest_sha256
+            or experiment.payload.result.strategy is not hypothesis.strategy
+            or experiment.payload.result.side_cost_bps
+            != binding.manifest.per_side_total_cost_bps
         ):
             raise IntradayActualResearchAuditError("review_or_experiment_mismatch")
+        review = review_matches[0]
+        expected_review = evaluate_intraday_experiment(
+            reader,
+            experiment,
+            review.payload.reviewed_at,
+        )
+        if review.payload != expected_review:
+            raise IntradayActualResearchAuditError(
+                "review_or_experiment_mismatch"
+            )
         trials.append(trial)
         experiments.append(experiment)
-        matched_reviews.append(review_matches[0])
+        matched_reviews.append(review)
     return AuditedTrialEvidence(
         trial_ids=tuple(item.trial_id for item in trials),
         experiment_artifact_ids=tuple(item.artifact_id for item in experiments),
