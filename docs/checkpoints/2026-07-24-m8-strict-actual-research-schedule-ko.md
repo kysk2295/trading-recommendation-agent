@@ -76,3 +76,25 @@ nonzero receipt와 blocked report를 남긴다.
 trial을 발행하지 않는다. READY audit이 성공해도 Reviewer 기준은 별개이며 Paper
 champion이나 주문 권한을 자동 생성하지 않는다. executable Paper champion 두 개
 전에는 Allocation Manager를 계속 비활성으로 유지한다.
+
+## PEP 723 독립 실행 복구
+
+운영 수동 QA에서 project environment가 아닌 각 CLI의 PEP 723 isolated environment로
+실행하면 shared KIS model의 `httpx2` import가 누락되어 `--help`부터 실패하는 결손을
+확인했다. 예약 payload는 explicit project Python을 사용하므로 기존 frozen job의 실행
+계약은 바뀌지 않지만, 공개 CLI의 독립 복구·수동 재실행 계약은 깨진 상태였다.
+
+다음 세 작은 커밋으로 actual research vertical의 공개 표면을 모두 복구했다.
+
+- `5e6c4fd2e6e7e5293ec5f31c7b9626abb2109cb7`:
+  causal dataset과 multi-strategy research loop
+- `b67a4f929827cc19abfb260c56326fb4198f7679`:
+  actual coordinator, planned coordinator와 terminal audit
+- `172b0484c4e20e0de52703b38e833c5fa77f2a53`:
+  dataset catalog와 READY input binding
+
+PEP 723 metadata를 구조적으로 검사하는 회귀 테스트를 추가했다. 실제 isolated CLI
+QA에서 다섯 계층의 `--help`가 모두 exit `0`, invalid binding이 exit `2`였고, 완전한
+fixture는 causal CSV SHA, READY manifest, trial `1`, Reviewer `hold`까지 exit `0`으로
+완료했다. 전체 `3561 passed`, Ruff 통과, basedpyright `0 errors, 0 warnings,
+0 notes`였고 외부 provider, credential, account, order mutation은 `0`이다.
