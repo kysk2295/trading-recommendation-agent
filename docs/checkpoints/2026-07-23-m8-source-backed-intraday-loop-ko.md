@@ -27,6 +27,8 @@ VWAP reclaim, HOD breakout, Gap-and-Go 템플릿의 parameter/data/cost/portfoli
 - 이미 version이 있으면 완전히 같은 registration만 exact replay한다.
 - 과거 queue snapshot을 다른 strategy version 생성에 재사용하면 차단한다.
 - v2가 queue artifact 없이 실행되면 experiment ledger를 변경하기 전에 차단한다.
+- v2 manifest는 historical input의 SHA-256을 사전등록한다.
+- loader는 최대 64 MiB 원본 bytes를 한 번만 읽고 같은 bytes를 파싱·hash하므로 다른 input이나 실행 중 교체 결과를 승인된 trial로 기록하지 않는다.
 - v1 M6 bundle은 기존 bootstrap과 code-coupled version 계약을 그대로 유지한다.
 
 trial은 source card의 exact `ExperimentScope`와 새 strategy version을 사용한다. 결과는
@@ -41,6 +43,7 @@ CSV fixture로 확인했다.
 
 - CLI help: exit `0`, `--source-queue-artifact` 노출
 - v2 queue artifact 누락: exit `1`, blocked
+- v2 input SHA-256 불일치: version/trial 신규 `0/0`, blocked
 - source/card 등록과 queue projection: exit `0/0`
 - bounded loop 첫 실행: exit `0`, trial/review artifact 신규 `1/1`
 - exact replay: exit `0`, trial/review artifact 신규 `0/0`
@@ -51,7 +54,7 @@ CSV fixture로 확인했다.
 ## 검증
 
 - source-backed/queue/ledger/reviewer focused: `90 passed`
-- full pytest: `3386 passed`
+- full pytest: `3388 passed`
 - Ruff: pass
 - basedpyright: `0 errors, 0 warnings, 0 notes`
 
