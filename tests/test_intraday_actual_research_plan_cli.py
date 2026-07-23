@@ -151,10 +151,48 @@ def test_planned_actual_research_prerequisite_accepts_strict_closeout(
     cli._require_closeout_prerequisite(receipt, report)
 
 
-def _closeout_report(result: str) -> str:
+@pytest.mark.parametrize(
+    ("minimum_watch_cycles", "ranking_cycles"),
+    ((1, 300), (300, 299)),
+)
+def test_planned_actual_research_prerequisite_rejects_relaxed_closeout(
+    tmp_path: Path,
+    minimum_watch_cycles: int,
+    ranking_cycles: int,
+) -> None:
+    receipt = tmp_path / "closeout.receipt"
+    report = tmp_path / "forward_post_session_closeout_ko.md"
+    write_private_report(
+        receipt,
+        "exit_code=0\ncompleted_at_epoch=1784862960\n",
+    )
+    write_private_report(
+        report,
+        _closeout_report(
+            "recovered",
+            minimum_watch_cycles=minimum_watch_cycles,
+            ranking_cycles=ranking_cycles,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="closeout_prerequisite_invalid"):
+        cli._require_closeout_prerequisite(receipt, report)
+
+
+def _closeout_report(
+    result: str,
+    *,
+    minimum_watch_cycles: int = 300,
+    ranking_cycles: int = 300,
+) -> str:
     return (
         "# Forward post-session strict closeout\n\n"
         f"- result: {result}\n"
+        f"- minimum watch cycles: {minimum_watch_cycles}\n"
+        "- watch cycles: 300\n"
+        f"- ranking cycles: {ranking_cycles}\n"
+        "- retry cycles: 300\n"
+        "- candidate input cycles: 300\n"
         "- failed cycle deletion: 0\n"
         "- quality gate relaxed: false\n"
         "- provider, credential, account, or order operation: 0\n"

@@ -37,6 +37,13 @@ _STRICT_CLOSEOUT_MARKERS = (
     "- quality gate relaxed: false",
     "- provider, credential, account, or order operation: 0",
 )
+_MINIMUM_ACTUAL_RESEARCH_WATCH_CYCLES = 300
+_CYCLE_COUNT_LABELS = (
+    "watch cycles",
+    "ranking cycles",
+    "retry cycles",
+    "candidate input cycles",
+)
 
 
 class CloseoutPrerequisiteError(ValueError):
@@ -179,8 +186,37 @@ def _require_closeout_prerequisite(
         or len(results) != 1
         or results[0] not in _STRICT_CLOSEOUT_RESULTS
         or any(report_lines.count(marker) != 1 for marker in _STRICT_CLOSEOUT_MARKERS)
+        or not _strict_closeout_cycle_contract(report_lines)
     ):
         raise CloseoutPrerequisiteError("closeout_prerequisite_invalid")
+
+
+def _strict_closeout_cycle_contract(lines: list[str]) -> bool:
+    minimum = _single_report_integer(lines, "minimum watch cycles")
+    counts = tuple(
+        _single_report_integer(lines, label)
+        for label in _CYCLE_COUNT_LABELS
+    )
+    if minimum is None or any(value is None for value in counts):
+        return False
+    complete_counts = tuple(value for value in counts if value is not None)
+    return (
+        _MINIMUM_ACTUAL_RESEARCH_WATCH_CYCLES <= minimum <= 390
+        and len(set(complete_counts)) == 1
+        and minimum <= complete_counts[0] <= 390
+    )
+
+
+def _single_report_integer(lines: list[str], label: str) -> int | None:
+    prefix = f"- {label}: "
+    values = tuple(
+        line.removeprefix(prefix)
+        for line in lines
+        if line.startswith(prefix)
+    )
+    if len(values) != 1 or not values[0].isdigit():
+        return None
+    return int(values[0])
 
 
 def _strategy_binding(value: str) -> IntradayResearchStrategyBinding:
