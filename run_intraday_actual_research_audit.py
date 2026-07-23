@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["pydantic>=2.11"]
+# dependencies = ["httpx2[http2,brotli,zstd]", "pydantic>=2.11"]
 # ///
 #
 # ─── How to run ───
