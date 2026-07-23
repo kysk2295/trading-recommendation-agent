@@ -166,7 +166,7 @@ def _report(
             f"- terminal run count: {run_count}",
             f"- artifact created: {'yes' if created else 'no'}",
             f"- network access: {network_access}",
-            f"- provider operation: {'fixture query-only' if fixture else 'official Treasury GET-only'}",
+            f"- provider operation: {_provider_operation(result, fixture)}",
             "- credential use: none",
             "- broker, account, order, or allocation mutation: none",
             "",
@@ -177,6 +177,15 @@ def _report(
 def _failure(result: TreasuryYieldCollectionResult) -> str:
     failure = result.run.failure
     return "none" if failure is None else failure.value
+
+
+def _provider_operation(
+    result: TreasuryYieldCollectionResult,
+    fixture: bool,
+) -> str:
+    if result.replayed:
+        return "stored terminal query-only"
+    return "fixture query-only" if fixture else "official Treasury GET-only"
 
 
 if __name__ == "__main__":

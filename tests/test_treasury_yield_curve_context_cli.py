@@ -49,6 +49,7 @@ def test_fixture_cli_publishes_context_and_replays_without_network(
     assert "- curve count: 2" in report
     assert "- maturity count: 14" in report
     assert "- network access: 0" in report
+    assert "- provider operation: stored terminal query-only" in report
     assert "- broker, account, order, or allocation mutation: none" in report
     assert "4.08" not in report
     assert str(tmp_path) not in report
