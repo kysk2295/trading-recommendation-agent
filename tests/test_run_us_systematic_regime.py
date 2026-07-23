@@ -15,6 +15,7 @@ import run_us_systematic_regime as cli
 import trading_agent.systematic_regime_operating as operating
 from tests.test_systematic_regime_engine import _source
 from tests.test_systematic_regime_trial import CODE_VERSION, _extend_source
+from trading_agent.alpaca_bars import AlpacaDailyFeed
 from trading_agent.experiment_ledger_models import TrialEventKind
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.swing_shadow_models import SwingDailySource
@@ -27,7 +28,7 @@ from trading_agent.systematic_regime_store import (
     SystematicRegimeStore,
     SystematicRegimeWriter,
 )
-from trading_agent.us_equity_calendar import regular_session_bounds
+from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -215,10 +216,9 @@ def test_post_close_censors_a_pending_card_that_missed_its_session(
     assert cards.pending_cards() == ()
     assert cards.expired_cards() == pending
     assert pending[0] not in cards.cards()
-    assert tuple(
-        item.event.event_kind
-        for item in experiment.multi_market_trial_events(trial.trial_id)
-    ) == (TrialEventKind.CENSORED,)
+    assert tuple(item.event.event_kind for item in experiment.multi_market_trial_events(trial.trial_id)) == (
+        TrialEventKind.CENSORED,
+    )
 
 
 def test_regular_tick_migrates_an_existing_v1_store_before_reading(tmp_path: Path) -> None:
@@ -285,6 +285,10 @@ def test_cli_fixture_happy_path_writes_private_recommendation_card(tmp_path: Pat
     assert "account access: 0" in report_path.read_text(encoding="utf-8")
     assert stat.S_IMODE(card_path.stat().st_mode) == 0o600
     assert stat.S_IMODE(report_path.stat().st_mode) == 0o600
+    sources = tuple((output / "daily-sources").glob("*.json"))
+    assert len(sources) == 1
+    assert SwingDailySource.model_validate_json(sources[0].read_text(encoding="utf-8")) == source
+    assert stat.S_IMODE(sources[0].stat().st_mode) == 0o600
 
 
 def test_cli_historical_production_date_fails_before_credentials(
@@ -307,6 +311,8 @@ def test_cli_historical_production_date_fails_before_credentials(
         [
             "--session-date",
             "2026-07-20",
+            "--feed",
+            AlpacaDailyFeed.IEX.value,
             "--database",
             str(tmp_path / "systematic.sqlite3"),
             "--experiment-ledger",
@@ -319,6 +325,40 @@ def test_cli_historical_production_date_fails_before_credentials(
     )
 
     # Then: current-date validation blocks before credentials or provider access.
+    assert result == 1
+    assert credential_calls == 0
+
+
+def test_cli_current_production_requires_explicit_feed_before_credentials(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    credential_calls = 0
+
+    def forbidden_credentials(path: Path):
+        nonlocal credential_calls
+        _ = path
+        credential_calls += 1
+        raise AssertionError("missing feed must fail before credentials")
+
+    monkeypatch.setattr(cli, "load_private_alpaca_credentials", forbidden_credentials)
+    now = dt.datetime(2026, 7, 20, 16, 5, tzinfo=NEW_YORK)
+
+    result = cli.main(
+        [
+            "--session-date",
+            "2026-07-20",
+            "--database",
+            str(tmp_path / "systematic.sqlite3"),
+            "--experiment-ledger",
+            str(tmp_path / "experiment.sqlite3"),
+            "--output-dir",
+            str(tmp_path / "output"),
+        ],
+        now=now,
+        runtime_code_version=CODE_VERSION,
+    )
+
     assert result == 1
     assert credential_calls == 0
 
@@ -340,6 +380,7 @@ def test_cli_help_and_invalid_date_surface() -> None:
     # Then: argparse exposes help and rejects malformed input at its boundary.
     assert help_result.returncode == 0
     assert "--session-date" in help_result.stdout
+    assert "--feed" in help_result.stdout
     assert invalid.returncode == 2
 
 
@@ -354,10 +395,7 @@ def _write_fixture(root: Path, source: SwingDailySource) -> Path:
         "symbols": source.symbols,
         "bars_file": "bars.json",
     }
-    bars = [
-        bar.model_dump(mode="json", exclude={"observed_at"})
-        for bar in source.bars
-    ]
+    bars = [bar.model_dump(mode="json", exclude={"observed_at"}) for bar in source.bars]
     bars_payload = json.dumps(bars).encode()
     manifest["bars_sha256"] = hashlib.sha256(bars_payload).hexdigest()
     (fixture / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")

@@ -9,7 +9,7 @@ from typing import Final, Protocol, override
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from trading_agent.alpaca_bars import AlpacaDailyPageRequest
+from trading_agent.alpaca_bars import AlpacaDailyFeed, AlpacaDailyPageRequest
 from trading_agent.alpaca_http import AlpacaApiError
 from trading_agent.alpaca_models import AlpacaBarsPayload
 from trading_agent.data_capability_models import DataSourceId
@@ -109,6 +109,7 @@ def collect_current_systematic_daily_source(
     bars_client: _DailyBarsReader,
     session_date: dt.date,
     observed_at: dt.datetime,
+    feed: AlpacaDailyFeed,
     now: dt.datetime,
 ) -> SwingDailySource:
     try:
@@ -121,12 +122,13 @@ def collect_current_systematic_daily_source(
             bars_client,
             session_date=session_date,
             observed_at=observed_at,
+            feed=feed,
         )
         return _validate_source(
             SwingDailySource(
                 session_date=session_date,
                 observed_at=observed_at,
-                source_id=DataSourceId(provider="alpaca", feed="sip"),
+                source_id=DataSourceId(provider="alpaca", feed=feed.value),
                 universe_id=SYSTEMATIC_UNIVERSE_ID,
                 symbols=SYSTEMATIC_REGIME_UNIVERSE,
                 bars=bars,
@@ -143,6 +145,7 @@ def _collect_bars(
     *,
     session_date: dt.date,
     observed_at: dt.datetime,
+    feed: AlpacaDailyFeed,
 ) -> tuple[SwingDailyBar, ...]:
     first_date = session_date - dt.timedelta(days=SYSTEMATIC_LOOKBACK_CALENDAR_DAYS)
     page_token: str | None = None
@@ -156,6 +159,7 @@ def _collect_bars(
                 start_date=first_date,
                 end_date=session_date,
                 page_token=page_token,
+                feed=feed,
             )
         )
         for symbol, items in payload.bars.items():

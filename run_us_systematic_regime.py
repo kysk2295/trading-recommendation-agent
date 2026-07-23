@@ -15,7 +15,7 @@ from typing import override
 
 from pydantic import ValidationError
 
-from trading_agent.alpaca_bars import AlpacaBarsClient
+from trading_agent.alpaca_bars import AlpacaBarsClient, AlpacaDailyFeed
 from trading_agent.alpaca_http import (
     DEFAULT_ALPACA_SECRET_PATH,
     create_alpaca_client,
@@ -23,6 +23,7 @@ from trading_agent.alpaca_http import (
 from trading_agent.alpaca_private_credentials import load_private_alpaca_credentials
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.private_report import write_private_report
+from trading_agent.swing_shadow_cli_files import write_private_swing_source
 from trading_agent.systematic_regime_models import SystematicRecommendationCard
 from trading_agent.systematic_regime_operating import (
     SystematicOperatingPhase,
@@ -50,11 +51,10 @@ class UsSystematicRegimeCliError(ValueError):
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="완료 일봉 기반 US systematic risk-on/risk-off shadow vertical"
-    )
+    parser = argparse.ArgumentParser(description="완료 일봉 기반 US systematic risk-on/risk-off shadow vertical")
     parser.add_argument("--session-date", type=_date_argument, required=True)
     parser.add_argument("--fixture-root", type=Path)
+    parser.add_argument("--feed", choices=tuple(AlpacaDailyFeed))
     parser.add_argument(
         "--database",
         type=Path,
@@ -87,14 +87,14 @@ def main(
         _require_current_session(args.session_date, timestamp)
         phase = systematic_operating_phase(timestamp)
         source = _source(args, timestamp, phase)
+        if source is not None:
+            _ = write_private_swing_source(output, source)
         code_version = _current_code_version() if runtime_code_version is None else runtime_code_version
         store = SystematicRegimeStore(args.database.expanduser().resolve(strict=False))
         result = run_systematic_regime_tick(
             now=timestamp,
             code_version=code_version,
-            experiment_ledger=ExperimentLedgerStore(
-                args.experiment_ledger.expanduser().resolve(strict=False)
-            ),
+            experiment_ledger=ExperimentLedgerStore(args.experiment_ledger.expanduser().resolve(strict=False)),
             store=store,
             source=source,
         )
@@ -112,7 +112,12 @@ def _source(args: argparse.Namespace, now: dt.datetime, phase: SystematicOperati
     if phase is not SystematicOperatingPhase.POST_CLOSE:
         return None
     if args.fixture_root is not None:
+        if args.feed is not None:
+            raise UsSystematicRegimeCliError
         return load_systematic_daily_source(args.fixture_root, session_date=args.session_date)
+    if args.feed is None:
+        raise UsSystematicRegimeCliError
+    feed = AlpacaDailyFeed(args.feed)
     validate_current_systematic_collection(
         session_date=args.session_date,
         observed_at=now,
@@ -124,6 +129,7 @@ def _source(args: argparse.Namespace, now: dt.datetime, phase: SystematicOperati
             bars_client=AlpacaBarsClient(client, credentials, request_interval_seconds=1.0),
             session_date=args.session_date,
             observed_at=now,
+            feed=feed,
             now=now,
         )
 
@@ -131,8 +137,7 @@ def _source(args: argparse.Namespace, now: dt.datetime, phase: SystematicOperati
 def render_systematic_card(card: SystematicRecommendationCard) -> str:
     candidates = ", ".join(card.candidate_symbols) if card.candidate_symbols else "없음"
     signal_lines = tuple(
-        f"- {signal.symbol}: 조건부 진입 {signal.entry_price}, 손절 {signal.stop_price}, "
-        f"목표 {signal.targets[0].price}"
+        f"- {signal.symbol}: 조건부 진입 {signal.entry_price}, 손절 {signal.stop_price}, 목표 {signal.targets[0].price}"
         for signal in card.signals
     )
     return "\n".join(
@@ -192,11 +197,7 @@ def _date_argument(value: str) -> dt.date:
 
 
 def _require_current_session(session_date: dt.date, now: dt.datetime) -> None:
-    if (
-        now.tzinfo is None
-        or now.utcoffset() is None
-        or session_date != now.astimezone(NEW_YORK).date()
-    ):
+    if now.tzinfo is None or now.utcoffset() is None or session_date != now.astimezone(NEW_YORK).date():
         raise UsSystematicRegimeCliError
 
 

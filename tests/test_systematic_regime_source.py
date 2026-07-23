@@ -8,8 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from trading_agent.alpaca_bars import AlpacaDailyPageRequest
+from trading_agent.alpaca_bars import AlpacaDailyFeed, AlpacaDailyPageRequest
 from trading_agent.alpaca_models import AlpacaBarsPayload
+from trading_agent.data_capability_models import DataSourceId
 from trading_agent.systematic_regime_engine import SYSTEMATIC_REGIME_UNIVERSE
 from trading_agent.systematic_regime_source import (
     InvalidSystematicDailySourceError,
@@ -25,10 +26,7 @@ assert BOUNDS is not None
 OBSERVED_AT = BOUNDS[1] + dt.timedelta(minutes=5)
 COMMITTED_FIXTURE_SESSION = dt.date(2026, 7, 22)
 COMMITTED_FIXTURE = (
-    Path(__file__).resolve().parents[1]
-    / "examples"
-    / "us_systematic_regime"
-    / COMMITTED_FIXTURE_SESSION.isoformat()
+    Path(__file__).resolve().parents[1] / "examples" / "us_systematic_regime" / COMMITTED_FIXTURE_SESSION.isoformat()
 )
 
 
@@ -122,6 +120,7 @@ def test_production_collects_a_bounded_get_only_history() -> None:
         bars_client=FixtureClient(),
         session_date=SESSION,
         observed_at=OBSERVED_AT,
+        feed=AlpacaDailyFeed.IEX,
         now=OBSERVED_AT,
     )
 
@@ -130,6 +129,8 @@ def test_production_collects_a_bounded_get_only_history() -> None:
     assert requests[0].symbols == SYSTEMATIC_REGIME_UNIVERSE
     assert requests[0].start_date == SESSION - dt.timedelta(days=430)
     assert requests[0].end_date == SESSION
+    assert requests[0].feed is AlpacaDailyFeed.IEX
+    assert source.source_id == DataSourceId(provider="alpaca", feed="iex")
     assert source.bars_for("SPY")[-1].close == Decimal("100.5")
 
 
@@ -149,6 +150,7 @@ def test_production_collection_caps_unique_pagination_tokens() -> None:
             bars_client=EndlessClient(),
             session_date=SESSION,
             observed_at=OBSERVED_AT,
+            feed=AlpacaDailyFeed.SIP,
             now=OBSERVED_AT,
         )
     assert len(requests) < 25

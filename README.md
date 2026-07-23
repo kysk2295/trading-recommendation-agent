@@ -703,7 +703,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 
 ### US systematic regime shadow
 
-이 CLI는 현재 뉴욕 거래일의 장전·정규장·장후 shadow lifecycle tick만 처리한다. 장후에만 고정 ETF universe의 완료 일봉 source가 필요하며, fixture는 network·credential을 열지 않는다. production은 현재 NYSE post-close에서만 Alpaca market-data 일봉 GET을 사용한다. 어떤 phase에서도 Paper 계좌·주문·POST 또는 Allocation Manager를 호출하지 않는다.
+이 CLI는 현재 뉴욕 거래일의 장전·정규장·장후 shadow lifecycle tick만 처리한다. 장후에만 고정 ETF universe의 완료 일봉 source가 필요하며, fixture는 network·credential을 열지 않는다. production은 현재 NYSE post-close에서만 명시적 `--feed iex|sip`의 Alpaca market-data 일봉 GET을 사용하고 feed 생략·fixture와 feed 혼합·조용한 fallback을 자격증명 전에 차단한다. exact source identity와 bar payload는 content-addressed mode-600 JSON으로 보존된다. IEX-only evidence는 Challenger까지만 허용한다. 어떤 phase에서도 Paper 계좌·주문·POST 또는 Allocation Manager를 호출하지 않는다.
 
 ```bash
 uv run python run_us_systematic_regime.py \
