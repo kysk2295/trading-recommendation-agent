@@ -92,6 +92,72 @@ def test_source_preflight_failure_delivers_incident_once(
     assert events[0].status == "blocked_source_preflight"
 
 
+def test_source_preflight_prefers_existing_partial_source_incident(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _paths(tmp_path)
+    _register(paths["ledger"], tmp_path)
+    _seed_incomplete(paths["database"])
+    policy = _write_policy(tmp_path)
+
+    def reject_preflight(**_values: object) -> None:
+        raise run_kr_same_cycle_opportunity.run_kr_same_cycle_collect.KrSameCycleSourcePreflightError
+
+    monkeypatch.setattr(
+        run_kr_same_cycle_opportunity.run_kr_same_cycle_collect,
+        "require_kr_same_cycle_source_preflight",
+        reject_preflight,
+    )
+
+    first = run_kr_same_cycle_opportunity.main(
+        _argv(paths, policy)[:-2],
+        clock=lambda: dt.datetime(2026, 7, 16, 10, 2, 30, tzinfo=KST),
+    )
+    second = run_kr_same_cycle_opportunity.main(
+        _argv(paths, policy)[:-2],
+        clock=lambda: dt.datetime(2026, 7, 16, 10, 2, 30, tzinfo=KST),
+    )
+
+    events = HermesDeliveryStore(paths["delivery"]).events()
+    assert first == 1
+    assert second == 1
+    assert len(events) == 1
+    assert events[0].status == "blocked_source_incomplete"
+
+
+def test_source_preflight_delivery_failure_propagates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _paths(tmp_path)
+    _register(paths["ledger"], tmp_path)
+    policy = _write_policy(tmp_path)
+
+    def reject_preflight(**_values: object) -> None:
+        raise run_kr_same_cycle_opportunity.run_kr_same_cycle_collect.KrSameCycleSourcePreflightError
+
+    def reject_delivery(*_args: object, **_values: object) -> None:
+        raise run_kr_same_cycle_opportunity.InvalidKrSameCycleDeliveryError
+
+    monkeypatch.setattr(
+        run_kr_same_cycle_opportunity.run_kr_same_cycle_collect,
+        "require_kr_same_cycle_source_preflight",
+        reject_preflight,
+    )
+    monkeypatch.setattr(
+        run_kr_same_cycle_opportunity,
+        "project_kr_source_preflight_incident",
+        reject_delivery,
+    )
+
+    with pytest.raises(run_kr_same_cycle_opportunity.InvalidKrSameCycleDeliveryError):
+        run_kr_same_cycle_opportunity.main(
+            _argv(paths, policy)[:-2],
+            clock=lambda: dt.datetime(2026, 7, 16, 10, 2, 30, tzinfo=KST),
+        )
+
+
 def test_untyped_collector_failure_does_not_claim_preflight_incident(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

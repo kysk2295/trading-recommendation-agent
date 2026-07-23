@@ -11,7 +11,6 @@ import datetime as dt
 import sqlite3
 import stat
 from collections.abc import Callable, Sequence
-from contextlib import suppress
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -153,7 +152,15 @@ def main(
         )
     except run_kr_same_cycle_collect.KrSameCycleSourcePreflightError:
         if source_incident_enabled and incident_strategy_version is not None:
-            with suppress(InvalidKrSameCycleDeliveryError):
+            source_incident_projected = project_kr_source_incident_if_available(
+                KrThemeStore(args.database),
+                HermesDeliveryStore(args.delivery_database),
+                KrSourceCycleDeliveryRequest(
+                    collection_cycle_id=args.collection_cycle_id,
+                    projected_at=clock(),
+                ),
+            )
+            if not source_incident_projected:
                 _ = project_kr_source_preflight_incident(
                     HermesDeliveryStore(args.delivery_database),
                     KrSourcePreflightDeliveryRequest(

@@ -34,7 +34,12 @@ from trading_agent.kr_source_cycle_delivery import (
     KrSourceCycleDeliveryRequest,
     project_kr_source_cycle_incident,
 )
-from trading_agent.kr_theme_store import KrThemeStore
+from trading_agent.kr_theme_models import KrCatalystSource, KrCoverageStatus
+from trading_agent.kr_theme_store import (
+    InvalidKrThemeSourceError,
+    KrThemeStore,
+    UnsupportedKrThemeSchemaError,
+)
 from trading_agent.research_identity_models import AgentFamily, MarketId
 from trading_agent.signal_contract_models import OpportunitySnapshot
 
@@ -121,10 +126,23 @@ def project_kr_source_incident_if_available(
     request: KrSourceCycleDeliveryRequest,
 ) -> bool:
     try:
+        runs = source_store.source_runs(request.collection_cycle_id)
+        present_sources = frozenset(run.source for run in runs)
+        if not runs or (
+            present_sources == frozenset(KrCatalystSource)
+            and all(run.status is not KrCoverageStatus.FAILED for run in runs)
+        ):
+            return False
         _ = project_kr_source_cycle_incident(source_store, delivery_store, request)
         return True
-    except InvalidKrSourceCycleDeliveryError:
-        return False
+    except (
+        InvalidKrSourceCycleDeliveryError,
+        InvalidKrThemeSourceError,
+        OSError,
+        sqlite3.Error,
+        UnsupportedKrThemeSchemaError,
+    ):
+        raise InvalidKrSameCycleDeliveryError from None
 
 
 def project_kr_source_preflight_incident(
