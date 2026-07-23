@@ -73,6 +73,25 @@ provider operation도 `stored terminal query-only`로 기록한다.
 
 credential, broker, account, order와 allocation mutation은 모두 `0`이다.
 
+## 다음 공식 게시 후 one-shot
+
+최초 actual GET의 최신 curve가 `2026-07-22`였으므로 미국 재무부의 다음 일별
+게시를 검증하도록 `2026-07-24 07:05 KST` one-shot을 등록했다.
+
+- label: `ai.trading-agent.treasury-yield-close-20260723`
+- frozen runtime SHA:
+  `eb2663d32a965b410e1aceca65f35c76a4301777`
+- collection ID: `treasury-yield-close-20260723`
+- through date: `2026-07-23`
+- wrapper mode: `700`
+- stdout/stderr mode: `600`
+- 예약 직후 receipt: 아직 없음
+
+wrapper는 원자적 claim과 receipt를 사용하고 완료 뒤 자기 launchd label을 제거한다.
+따라서 이전 KR finalizer처럼 반복 실행하거나 최신 aggregate를 덮어쓰는 예약이 아니다.
+실행 결과가 성공인지, 아직 새 곡선이 없는지, provider 실패인지는 07:05 이후 receipt와
+private artifact를 다시 검증해 확정한다.
+
 ## 검증
 
 - parser/store/client/artifact/CLI 신규: `14 passed`
