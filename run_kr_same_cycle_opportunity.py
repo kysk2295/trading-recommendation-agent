@@ -87,7 +87,6 @@ def main(
     args = parse_args(argv)
     opportunity_count = 0
     source_incident_enabled = False
-    source_collection_completed = False
     incident_strategy_version: str | None = None
     try:
         _validate_targets(args)
@@ -105,6 +104,12 @@ def main(
         )
         source_incident_enabled = True
         incident_strategy_version = policy.producer_strategy_version
+        if args.fixture_root is None:
+            run_kr_same_cycle_collect.require_kr_same_cycle_source_preflight(
+                database=args.database,
+                collection_cycle_id=args.collection_cycle_id,
+                collection_date=args.collection_date,
+            )
         run_kr_same_cycle_collect.main(
             collection_cycle_id=args.collection_cycle_id,
             collection_date=args.collection_date.isoformat(),
@@ -112,7 +117,6 @@ def main(
             output_dir=str(args.collection_output_dir),
             fixture_root=(None if args.fixture_root is None else str(args.fixture_root)),
         )
-        source_collection_completed = True
         store = KrThemeStore(args.database)
         prepared_at = (
             clock() if args.fixture_root is None else _exact_cycle_completed_at(store, args.collection_cycle_id)
@@ -147,6 +151,20 @@ def main(
                 opportunities=opportunities,
             ),
         )
+    except run_kr_same_cycle_collect.KrSameCycleSourcePreflightError:
+        if source_incident_enabled and incident_strategy_version is not None:
+            with suppress(InvalidKrSameCycleDeliveryError):
+                _ = project_kr_source_preflight_incident(
+                    HermesDeliveryStore(args.delivery_database),
+                    KrSourcePreflightDeliveryRequest(
+                        collection_cycle_id=args.collection_cycle_id,
+                        collection_date=args.collection_date,
+                        strategy_version=incident_strategy_version,
+                        projected_at=clock(),
+                    ),
+                )
+        _write_report(args.output_dir, result="blocked", opportunity_count=0)
+        return 1
     except (
         InvalidExperimentLedgerSourceError,
         InvalidKrSameCycleDeliveryError,
@@ -164,7 +182,7 @@ def main(
         ValueError,
     ):
         if source_incident_enabled:
-            source_incident_projected = project_kr_source_incident_if_available(
+            _ = project_kr_source_incident_if_available(
                 KrThemeStore(args.database),
                 HermesDeliveryStore(args.delivery_database),
                 KrSourceCycleDeliveryRequest(
@@ -172,21 +190,6 @@ def main(
                     projected_at=clock(),
                 ),
             )
-            if (
-                not source_incident_projected
-                and not source_collection_completed
-                and incident_strategy_version is not None
-            ):
-                with suppress(InvalidKrSameCycleDeliveryError):
-                    _ = project_kr_source_preflight_incident(
-                        HermesDeliveryStore(args.delivery_database),
-                        KrSourcePreflightDeliveryRequest(
-                            collection_cycle_id=args.collection_cycle_id,
-                            collection_date=args.collection_date,
-                            strategy_version=incident_strategy_version,
-                            projected_at=clock(),
-                        ),
-                    )
         _write_report(args.output_dir, result="blocked", opportunity_count=0)
         return 1
     result = "ready" if opportunity_count else "no_opportunity"

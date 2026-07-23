@@ -65,17 +65,21 @@ def test_source_preflight_failure_delivers_incident_once(
     _register(paths["ledger"], tmp_path)
     policy = _write_policy(tmp_path)
 
-    def reject_before_store(**_values: str | None) -> None:
-        raise typer.BadParameter("source preflight blocked")
+    def reject_preflight(**_values: object) -> None:
+        raise run_kr_same_cycle_opportunity.run_kr_same_cycle_collect.KrSameCycleSourcePreflightError
 
-    monkeypatch.setattr(run_kr_same_cycle_opportunity.run_kr_same_cycle_collect, "main", reject_before_store)
+    monkeypatch.setattr(
+        run_kr_same_cycle_opportunity.run_kr_same_cycle_collect,
+        "require_kr_same_cycle_source_preflight",
+        reject_preflight,
+    )
 
     first = run_kr_same_cycle_opportunity.main(
-        _argv(paths, policy),
+        _argv(paths, policy)[:-2],
         clock=lambda: dt.datetime(2026, 7, 16, 10, 2, 30, tzinfo=KST),
     )
     second = run_kr_same_cycle_opportunity.main(
-        _argv(paths, policy),
+        _argv(paths, policy)[:-2],
         clock=lambda: dt.datetime(2026, 7, 16, 10, 2, 30, tzinfo=KST),
     )
 
@@ -86,6 +90,35 @@ def test_source_preflight_failure_delivers_incident_once(
     assert len(events) == 1
     assert events[0].kind is HermesDeliveryKind.INCIDENT
     assert events[0].status == "blocked_source_preflight"
+
+
+def test_untyped_collector_failure_does_not_claim_preflight_incident(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _paths(tmp_path)
+    _register(paths["ledger"], tmp_path)
+    policy = _write_policy(tmp_path)
+
+    monkeypatch.setattr(
+        run_kr_same_cycle_opportunity.run_kr_same_cycle_collect,
+        "require_kr_same_cycle_source_preflight",
+        lambda **_values: None,
+    )
+
+    def reject_collection(**_values: str | None) -> None:
+        raise typer.BadParameter("collector failed")
+
+    monkeypatch.setattr(run_kr_same_cycle_opportunity.run_kr_same_cycle_collect, "main", reject_collection)
+
+    result = run_kr_same_cycle_opportunity.main(
+        _argv(paths, policy)[:-2],
+        clock=lambda: dt.datetime(2026, 7, 16, 10, 2, 30, tzinfo=KST),
+    )
+
+    assert result == 1
+    assert not paths["database"].exists()
+    assert not paths["delivery"].exists()
 
 
 def test_projection_failure_after_complete_collection_is_not_preflight_incident(

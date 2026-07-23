@@ -19,6 +19,7 @@ import run_kis_kr_ranking_collect
 import run_kr_volume_surge_derive
 import run_ls_nws_collect
 import run_opendart_collect
+from trading_agent.kis_auth import KisMode, load_kis_credentials
 from trading_agent.kr_source_cycle_orchestrator import (
     KrSourceCycleOrchestration,
     KrSourceCycleOrchestrationError,
@@ -33,6 +34,8 @@ from trading_agent.kr_theme_store import (
     KrThemeWriterLeaseUnavailableError,
     UnsupportedKrThemeSchemaError,
 )
+from trading_agent.ls_config import load_ls_credentials
+from trading_agent.opendart_config import load_opendart_credentials
 from trading_agent.private_report import write_private_report
 
 _SAFE_ID: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,115}$")
@@ -59,11 +62,37 @@ class KrSameCycleCollectError(ValueError):
         return "KR same-cycle source collection을 안전하게 실행할 수 없습니다"
 
 
+class KrSameCycleSourcePreflightError(ValueError):
+    @override
+    def __str__(self) -> str:
+        return "KR same-cycle source credential preflight가 유효하지 않습니다"
+
+
 @dataclass(frozen=True, slots=True)
 class _FixtureManifests:
     opendart: Path
     ls_nws: Path
     kis_kr_ranking: Path
+
+
+def require_kr_same_cycle_source_preflight(
+    *,
+    database: Path,
+    collection_cycle_id: str,
+    collection_date: dt.date,
+) -> None:
+    if has_terminal_kr_source_runs(
+        KrThemeStore(database),
+        collection_cycle_id=collection_cycle_id,
+        collection_date=collection_date,
+    ):
+        return
+    try:
+        _ = load_opendart_credentials()
+        _ = load_ls_credentials()
+        _ = load_kis_credentials(KisMode.LIVE)
+    except (OSError, RuntimeError, UnicodeError, ValueError):
+        raise KrSameCycleSourcePreflightError from None
 
 
 def main(
