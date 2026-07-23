@@ -14,9 +14,11 @@ PROJECT = Path(__file__).resolve().parents[1]
         "run_intraday_actual_research.py",
         "run_planned_intraday_actual_research.py",
         "run_intraday_actual_research_audit.py",
+        "run_intraday_research_dataset_catalog.py",
+        "run_intraday_research_input_binding.py",
     ),
 )
-def test_actual_research_standalone_launcher_declares_http_dependency(
+def test_intraday_research_standalone_launcher_declares_http_dependency(
     script_name: str,
 ) -> None:
     lines = (PROJECT / script_name).read_text(encoding="utf-8").splitlines()
