@@ -373,6 +373,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-23 KR M3 실제 장중 preflight 업데이트:** 08:55 KIS calendar GET은 성공했지만 runner의 초 단위 `registered_at`이 subsecond snapshot보다 앞서 trial이 차단되는 결함을 실제 세션에서 발견했다. 같은 초 안에서만 causal timestamp를 보정했고, 추가로 미래 STARTED event를 막되 crash recovery를 위한 과거 exact start는 유지했다. 09:05 source cycle은 OpenDART 설정 부재로 provider 호출 전에 차단됐다. generic incident는 이제 exact terminal replay를 우선한 전용 OpenDART·LS·KIS credential preflight 실패에서만 생성하며 collector·projection 오류를 preflight로 오분류하지 않는다. partial source ledger가 있으면 source-specific incident를 우선하고, incident delivery 실패는 숨기지 않고 typed error로 전파한다. Hermes delivery/ACK까지 정확히 한 번 완료되고 replay에서 추가 event·attempt·ACK가 없음을 mode-600 redacted aggregate로 남겼다. 당일 결과는 성과 0이 아니라 data-quality `CENSORED`이며 account/order mutation과 Alpaca Paper POST/DELETE는 0건이다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-kr-m3-live-preflight-recovery-ko.md)에 있다.
 
+**2026-07-23 KIS KR 실제 장중 market smoke 업데이트:** 열린 KRX 세션에서 당일 분봉·현재가 상태·호가 예상체결 production GET을 raw-first로 실제 실행했다. 첫 rank-1 종목의 3개 응답은 모두 HTTP 200이었지만, 실응답과 공식 KIS 예제가 `new_mkop_cls_code`를 `output1`에 두는 반면 local strict model이 `output2`에서 요구하는 오류를 발견했다. provider-shaped RED 뒤 model과 projection을 바로잡았고, 잘못된 위치 fallback은 열지 않았다. 대표 보통주 재검증은 production CLI exit 0, 신규 raw receipt 3건, 실제 raw snapshot replay `open/continuous`를 확인했다. 첫 후보의 0 상·하한가는 임의 보정하지 않고 계속 fail-closed했다. account/order endpoint와 mutation은 0건이다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-kis-kr-open-session-market-smoke-ko.md)에 있다.
+
 ### Single Writer, Multiple Readers
 
 - 실행 원장과 향후 broker paper 상태를 변경하는 프로세스는 하나뿐이다.
