@@ -383,6 +383,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-23 실제 point-in-time 연구 데이터셋 업데이트:** strict forward-session loader를 통과한 여러 세션을 기존 M8 bounded research CSV로 materialize하는 local-only CLI를 추가했다. 세션 하나라도 품질 미달이면 부분 데이터셋 없이 전체를 차단하고, 완전한 종목 중에도 최초 candidate context가 관측된 시각 이후에 시작한 분봉만 사용한다. 각 bar에는 해당 시점 이전 최신 `prior_close`·ADV·spread context를 결합하며 중복 bar, 중복 거래일, 60세션·100,000 bar 초과를 차단한다. CSV SHA-256과 원본 session content SHA-256을 content-addressed mode-600 receipt에 함께 기록한다. 완전 fixture 1세션은 장중 최초 관측 전 6분을 제외한 384 causal bar로 성공했고, 기존 실제 4세션은 그대로 차단되어 신규 성과 trial은 0건이다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-m8-point-in-time-research-dataset-ko.md)에 있다.
 
+**2026-07-23 실시간 검증 예약 업데이트:** 실행 중인 US full-session watch는 유지하고 같은 frozen commit runtime에 current-setup Paper GET/WSS preflight observer, Alpaca SIP read-only stream smoke, 장마감 flat/reconciliation terminal finalizer와 strict causal dataset materializer를 별도 one-shot launchd job으로 연결했다. 기존 KR finalizer와 Hermes service도 변경하지 않았다. signed one-time Hermes arm이 없는 상태에서 Paper POST/DELETE job을 만들지 않았고, OpenDART private 설정이 없는 KR 다음 source cycle도 성공으로 가장해 예약하지 않았다. wrapper 구문·dry-run·bad input·mode와 실제 launchd 대기 상태를 검증했다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-realtime-validation-schedule-ko.md)에 있다.
+
 ### Single Writer, Multiple Readers
 
 - 실행 원장과 향후 broker paper 상태를 변경하는 프로세스는 하나뿐이다.
