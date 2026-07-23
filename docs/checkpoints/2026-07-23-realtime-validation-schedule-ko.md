@@ -202,3 +202,41 @@ focused `2 passed`, 전체 `3430 passed`, 전체 Ruff 통과, basedpyright
 `0 errors, 0 warnings, 0 notes`다. 7월 23일과 24일 US 예약 wrapper는 이미 모든
 terminal branch에서 자기 label을 제거하므로 실행 중인 PID를 재등록하지 않았다.
 사용자 지시대로 기존 KR finalizer와 Hermes service도 중단·변경·재시작하지 않았다.
+
+## US forward 정규장 진행 감사 예약
+
+commit `0103dd519f51c0e742a6870575d260c4dc5b67ab`에 local-only
+`run_forward_session_progress.py`를 추가했다. 최종 post-session metrics가 생기기
+전에도 regular-session의 ranking coverage, watch cycle, KIS retry/recovery,
+candidate input과 Paper recommendation store를 기존 strict quality loader로 함께
+감사한다. 필수 artifact 결손, cardinality 불일치, unrecovered·repeated retry,
+ranking/watch 실패와 최소 watch cycle 미달은 그대로 차단한다. recovered retry
+건수는 관찰 정보로 보존하며 품질 gate를 완화하거나 실패 cycle을 삭제하지 않는다.
+성공하더라도 final eligibility는 항상 `pending_post_session`이다.
+
+7월 23일 17:55 KST pre-open 관측에서는 별도 premarket watch cycle `12`,
+premarket ranking request `72`, failure `0/0`이었다. regular
+`watch_cycles.csv`와 ranking/retry/input artifact가 아직 없는 것은 정규장 시작 전의
+의도한 상태였으므로 실제 producer 결함으로 추정하지 않았다.
+
+같은 exact commit의 clean detached runtime을
+`/private/tmp/trading-agent-forward-progress-20260723-0103dd5`에 고정하고 다음
+at-most-once launchd job을 실제 등록했다.
+
+- `ai.trading-agent.forward-progress-early-20260723`: 2026-07-23 09:45 EDT
+  (22:45 KST), minimum watch cycle `8`
+- `ai.trading-agent.forward-progress-late-20260723`: 2026-07-23 15:30 EDT
+  (2026-07-24 04:30 KST), minimum watch cycle `300`
+
+두 job은 integration worktree의 실제 2026-07-23 session directory만 읽고 각각
+`progress/early`, `progress/late`에 mode-600 보고서를 쓴다. 등록 직후 PID는
+`84727`, `84825`, run count는 각각 `1`, state는 `running`이었다. wrapper는 mode
+`700`, stdout/stderr는 mode `600`, `zsh -n`은 통과했고 실행 전 receipt는 아직
+없었다. 기존 KR finalizer, dataset/research watcher와 Hermes service는
+중단·변경·재시작하지 않았다.
+
+TDD는 CLI가 없어서 실패하는 RED 뒤 실제 subprocess E2E를 GREEN으로 만들었다.
+focused `4 passed`, 전체 `3431 passed`, 전체 Ruff 통과, basedpyright
+`0 errors, 0 warnings, 0 notes`다. 격리 PEP 723 `--help`, 완전 fixture,
+필수 artifact 결손과 잘못된 minimum 입력은 각각 exit `0/0/1/2`였고 생성된
+happy/blocked 보고서는 mode `600`이었다.
