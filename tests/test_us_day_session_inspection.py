@@ -36,3 +36,27 @@ def test_preflight_and_recover_never_invoke_mutation_recovery(tmp_path: Path) ->
     assert preflight.admission_approved is True
     assert preflight.reasons == ()
     assert recovered.reconciliation_passed is True
+
+
+def test_recover_does_not_claim_broker_shadow_equality_without_shadow_evidence(
+    tmp_path: Path,
+) -> None:
+    # Given: broker/local reconciliation is ready but no shadow ledger enters the API.
+    order_admission = admission()
+    session = MutationRejectingPaperSession(order_admission)
+
+    @contextmanager
+    def opener(_: AlpacaPaperCredentials, __: ExecutionStore) -> Iterator[PaperOperatingSession]:
+        yield session
+
+    operations = DefaultUsDayReadOnlyOperations(
+        credentials_loader=lambda: AlpacaPaperCredentials("paper-key", "paper-secret"),
+        session_opener=opener,
+    )
+
+    # When: the production read-only recovery projects the session inspection.
+    recovered = operations.recover(tmp_path / "execution.sqlite3")
+
+    # Then: only reconciliation passes; broker/shadow equality remains unproven.
+    assert recovered.reconciliation_passed is True
+    assert recovered.broker_shadow_ledger_equal is False
