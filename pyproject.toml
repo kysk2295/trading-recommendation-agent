@@ -49,6 +49,7 @@ include = [
   "run_alfred_revision_panel.py",
   "run_fred_vintage_dates_collect.py",
   "run_alfred_revision_release_gate.py",
+  "run_macro_revision_data_foundation.py",
   "run_launchd_one_shot.py",
   "run_kis_eod_catchup.py",
   "run_adaptive_strategy_evaluation.py",
