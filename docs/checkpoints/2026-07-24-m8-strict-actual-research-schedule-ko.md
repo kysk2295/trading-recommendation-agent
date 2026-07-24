@@ -77,6 +77,31 @@ trial을 발행하지 않는다. READY audit이 성공해도 Reviewer 기준은 
 champion이나 주문 권한을 자동 생성하지 않는다. executable Paper champion 두 개
 전에는 Allocation Manager를 계속 비활성으로 유지한다.
 
+## 실행 전 strict 후속 예약 복구
+
+2026-07-24 14:31 KST 재감사에서 05:06 strict closeout job은 기존 PID `80298`,
+run count `1`, terminal exit 없음으로 유지됐지만, 그 뒤의 05:18 actual research와
+05:35 terminal audit label은 launchd에 없었다. 두 job의 completion receipt·claim,
+stdout·stderr 내용과 actual research artifact는 모두 없었으므로 이미 실행된
+결과를 덮거나 재해석할 상태가 아니었다. 앞서 의도적으로 폐기한 오래된
+`intraday-dataset-20260724`와 `intraday-research-20260724`는 복구하지 않았다.
+
+기존 exact `8ef5904` clean runtime과 mode-700 wrapper를 다시 검증한 뒤 최신 strict
+후속 두 label만 재등록했다.
+
+- `ai.trading-agent.post-closeout-research-20260724-v2`: PID `15780`
+- `ai.trading-agent.actual-research-terminal-audit-20260724-v2`: PID `15782`
+- 두 label: `state=running`, `runs=1`, terminal exit 없음
+- payload `zsh -n`: 통과
+- payload dry-run/bad input: `0/2`
+- stdout·stderr: 모두 mode `600`, `0 bytes`
+- closeout, forward, KR finalizer/verifier, Hermes 변경·재시작: `0`
+
+research payload는 기존대로 closeout의 exact exit-0 receipt와 strict report를
+요구하고, terminal audit은 research receipt와 persisted manifest·READY
+foundation·trial·review를 독립 검증한다. 예약 복구는 실패를 성공으로 만들거나
+dataset gate, Reviewer 또는 allocation 권한을 완화하지 않는다.
+
 ## Schema v2 comparison 후속 재감사 예약
 
 기존 2026-07-24 및 2026-07-27 research/audit payload는 실행 전 frozen 상태를
