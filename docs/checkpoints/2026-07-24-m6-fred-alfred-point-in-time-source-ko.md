@@ -72,6 +72,40 @@
 - evidence file `21`개 모두 mode `0600`
 - credential value가 evidence bytes에 존재하는 파일 `0`개
 
+## 현재 credential 재검증
+
+exact `d574cc9d19f900ff0998409a9de28bfa68c4de85` runtime에서 현재 owner-only
+mode-600 credential을 다시 읽어 최근 유효연방기금금리 `DFF`를 실제 수집했다.
+
+- FRED latest:
+  - observation range: `2026-07-01..2026-07-23`
+  - official GET/network: `1/1`
+  - observation: `22`, missing `0`
+  - capability: `complete`, completeness `10000 bps`
+  - snapshot ID:
+    `c823034399d81b972a3a7fb20a5a8f77e9a8700d3b019723257f21d3f6c77de9`
+  - snapshot file SHA-256:
+    `8ab3f71e548f48be08bb5d9307b59fa086743a710cce221b17e8304638badb24`
+- ALFRED point-in-time:
+  - observation range: `2026-07-01..2026-07-22`
+  - vintage: `2026-07-23`
+  - official GET/network: `1/1`
+  - observation: `22`, missing `0`
+  - capability: `complete`, completeness `10000 bps`
+  - snapshot ID:
+    `08fb874aa01d8da343b6fce25299ee8df37bbc253a9bfc23802b89ce7149a123`
+  - snapshot file SHA-256:
+    `3c29084c9b0c2c8b531abcfeb9d1482df8074ad38dab87db7df7ae8713db773c`
+- 두 mode 모두 존재하지 않는 credential path의 exact replay:
+  - exit `0`
+  - network `0`
+  - replayed terminal `true`
+  - artifact created `no`
+- capability/entitlement: `2/2`
+- 새 evidence: `15`개, 모두 mode `0600`
+- credential persisted in evidence: `0`
+- broker/account/order/allocation mutation: `0`
+
 ## 검증
 
 - 초기 RED: `trading_agent.fred_alfred_config` 부재로 collection error

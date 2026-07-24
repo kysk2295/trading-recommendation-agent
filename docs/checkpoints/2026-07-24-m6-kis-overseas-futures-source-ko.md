@@ -62,6 +62,29 @@ status 재시도 뒤 다음 actual evidence로 닫혔다.
 존재하지 않는 credential 경로의 exact replay는 exit 1, replayed `yes`, network `0`,
 receipt/run `1/1`을 유지했다.
 
+## query-only entitlement admission
+
+exact `d574cc9d19f900ff0998409a9de28bfa68c4de85`에서 저장된 terminal과 raw receipt만
+읽는 admission CLI를 추가했다. 실제 실패 본문은 UTF-8이지만 첫 `rt_cd` 키가 따옴표
+없이 내려온 비표준 JSON이었다. 엄격 JSON 파서 실패 뒤 제한된 ASCII `msg_cd` 필드만
+읽도록 TDD로 고쳐, 새 provider 요청 없이 다음 machine-readable 결과를 확정했다.
+
+- admission: `blocked`
+- reason: `cme_sub_entitlement_missing`
+- source request/run/receipt exact binding: 통과
+- canonical quote: `0`
+- network/credential read/broker mutation: `0/0/0`
+- admission ID:
+  `06df49d6764dbce427ae37c33660c7021a4d07feecd9c500970c9e9d5d92223c`
+- artifact file SHA-256:
+  `e0a1d2d984d3c4d9a83d4a1dcf9689939eaf0b52b27b8ea203db2c1ed3ab205c`
+- artifact/report mode: `600`
+- exact replay: exit `2`, artifact created `no`
+- focused: `7 passed`
+- full pytest: `3644 passed`
+- Ruff: 통과
+- basedpyright: `0 errors, 0 warnings`
+
 ## 남은 외부 조건
 
 실제 CME quote를 만들려면 현재 KIS 계정·앱의 CME SUB 거래소 시세 신청 상태가 먼저
