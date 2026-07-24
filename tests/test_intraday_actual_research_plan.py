@@ -129,6 +129,19 @@ def test_planned_actual_research_blocks_run_key_spec_drift_before_trial(
     assert len(reader.trials()) == 1
 
 
+def test_actual_research_plan_freezes_a_bounded_candidate_audit_window(
+    tmp_path: Path,
+) -> None:
+    request, _ = _request(tmp_path)
+    candidate_dirs = tuple(tmp_path / f"candidate-{index:03d}" for index in range(366))
+
+    spec = _spec(request, run_key="actual-2026-07-14").model_copy(
+        update={"session_dirs": candidate_dirs}
+    )
+
+    assert len(IntradayActualResearchRunSpec.model_validate(spec).session_dirs) == 366
+
+
 def _spec(request, *, run_key: str) -> IntradayActualResearchRunSpec:
     return IntradayActualResearchRunSpec(
         run_key=run_key,

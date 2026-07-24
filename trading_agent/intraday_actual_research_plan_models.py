@@ -9,6 +9,9 @@ from typing import Literal, Self, override
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
+from trading_agent.intraday_research_dataset_catalog_models import (
+    MAX_INTRADAY_RESEARCH_CANDIDATE_SESSIONS,
+)
 from trading_agent.intraday_research_input_binding_models import (
     IntradayResearchStrategyBinding,
 )
@@ -74,7 +77,7 @@ class IntradayActualResearchRunSpec(BaseModel):
         if (
             _RUN_KEY.fullmatch(self.run_key) is None
             or not self.session_dirs
-            or len(self.session_dirs) > 60
+            or len(self.session_dirs) > MAX_INTRADAY_RESEARCH_CANDIDATE_SESSIONS
             or len(set(self.session_dirs)) != len(self.session_dirs)
             or not all(path.is_absolute() for path in self.session_dirs)
             or not self.required_session_dates

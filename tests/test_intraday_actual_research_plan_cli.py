@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import subprocess
 import sys
 from pathlib import Path
@@ -11,6 +12,30 @@ from trading_agent.private_report import write_private_report
 
 PROJECT = Path(__file__).resolve().parents[1]
 SCRIPT = PROJECT / "run_planned_intraday_actual_research.py"
+
+
+def test_planned_actual_research_discovers_cumulative_session_candidates(
+    tmp_path: Path,
+) -> None:
+    # Given: prior, required, future, and unrelated children in one session root.
+    session_root = tmp_path / "live_sessions"
+    prior = session_root / "20260714"
+    required = session_root / "20260715"
+    future = session_root / "20260716"
+    malformed = session_root / "2026714"
+    unrelated = session_root / "latest"
+    for path in (prior, required, future, malformed, unrelated):
+        path.mkdir(parents=True)
+
+    # When: the operator resolves the root for the required session date.
+    discovered = cli._resolve_session_dirs(
+        (),
+        session_root,
+        (dt.date(2026, 7, 15),),
+    )
+
+    # Then: the plan candidate set accumulates through the required date only.
+    assert discovered == (prior.resolve(), required.resolve())
 
 
 def test_planned_actual_research_cli_exposes_plan_boundary_and_rejects_bad_binding() -> None:
@@ -38,6 +63,7 @@ def test_planned_actual_research_cli_exposes_plan_boundary_and_rejects_bad_bindi
     assert "--run-key" in help_result.stdout
     assert "--plan-dir" in help_result.stdout
     assert "--queue-dir" in help_result.stdout
+    assert "--session-root" in help_result.stdout
     assert "--required-session-date" in help_result.stdout
     assert "--strategy-binding" in help_result.stdout
     assert "--dataset-producer-commit-sha" in help_result.stdout

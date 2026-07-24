@@ -3,11 +3,13 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, override
+from typing import Final, Literal, override
 
 from pydantic import BaseModel, ConfigDict
 
 from trading_agent.intraday_research_dataset_models import IntradayResearchDatasetResult
+
+MAX_INTRADAY_RESEARCH_CANDIDATE_SESSIONS: Final = 366
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +66,7 @@ class IntradayResearchDatasetCatalogReceipt(BaseModel):
 
 
 __all__ = (
+    "MAX_INTRADAY_RESEARCH_CANDIDATE_SESSIONS",
     "IntradayResearchDatasetCatalogError",
     "IntradayResearchDatasetCatalogReceipt",
     "IntradayResearchDatasetCatalogRequest",

@@ -20,6 +20,9 @@ from trading_agent.intraday_actual_research_plan_models import (
     IntradayActualResearchPlanPaths,
     IntradayActualResearchRunSpec,
 )
+from trading_agent.intraday_actual_research_session_discovery import (
+    resolve_intraday_actual_research_session_dirs as _resolve_session_dirs,
+)
 from trading_agent.intraday_research_input_binding_models import (
     IntradayResearchStrategyBinding,
 )
@@ -58,7 +61,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--run-key", required=True)
     parser.add_argument("--plan-dir", type=Path, required=True)
     parser.add_argument("--queue-dir", type=Path, required=True)
-    parser.add_argument("--session-dir", type=Path, action="append", required=True)
+    session_source = parser.add_mutually_exclusive_group(required=True)
+    session_source.add_argument("--session-dir", type=Path, action="append")
+    session_source.add_argument("--session-root", type=Path)
     parser.add_argument(
         "--required-session-date",
         type=_session_date,
@@ -112,7 +117,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = run_planned_intraday_actual_research(
             IntradayActualResearchRunSpec(
                 run_key=args.run_key,
-                session_dirs=tuple(path.resolve(strict=False) for path in args.session_dir),
+                session_dirs=_resolve_session_dirs(
+                    tuple(args.session_dir or ()),
+                    args.session_root,
+                    tuple(args.required_session_date),
+                ),
                 required_session_dates=tuple(args.required_session_date),
                 strategy_bindings=tuple(args.strategy_binding),
                 dataset_producer_commit_sha=args.dataset_producer_commit_sha,

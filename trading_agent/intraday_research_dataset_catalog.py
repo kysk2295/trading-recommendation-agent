@@ -9,6 +9,7 @@ from trading_agent.challenger_replay_models import ReplaySourceRejectedError
 from trading_agent.challenger_replay_source import load_replay_source
 from trading_agent.intraday_research_dataset import materialize_intraday_research_dataset
 from trading_agent.intraday_research_dataset_catalog_models import (
+    MAX_INTRADAY_RESEARCH_CANDIDATE_SESSIONS,
     IntradayResearchDatasetCatalogError,
     IntradayResearchDatasetCatalogReceipt,
     IntradayResearchDatasetCatalogRequest,
@@ -116,7 +117,7 @@ def _validate_request(request: IntradayResearchDatasetCatalogRequest) -> None:
     names = tuple(path.name for path in request.session_dirs)
     if (
         not names
-        or len(names) > 366
+        or len(names) > MAX_INTRADAY_RESEARCH_CANDIDATE_SESSIONS
         or len(set(names)) != len(names)
         or request.minimum_sessions < 1
         or request.minimum_sessions > request.max_sessions
