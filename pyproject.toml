@@ -42,6 +42,7 @@ include = [
   "run_kis_paper_scan.py",
   "run_kis_paper_watch.py",
   "run_forward_session_progress.py",
+  "run_forward_runtime_readiness.py",
   "run_launchd_one_shot.py",
   "run_kis_eod_catchup.py",
   "run_adaptive_strategy_evaluation.py",
