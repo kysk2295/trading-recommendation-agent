@@ -86,3 +86,69 @@ available`로 보존했다.
 다중 series macro regime, 전략 성과, champion 또는 주문 권한은 아직 만들지
 않는다. 다음 운영 우선순위는 예약된 실제 forward의 clean strict closeout과 causal
 dataset·READY v2·독립 Reviewer 결과 검증이다.
+
+## FRED change calendar와 READY admission
+
+기능 커밋:
+`7538e8b360f2fe36c2bb84f366e8f7482c0195a5`
+
+공식
+[`fred/series/vintagedates`](https://fred.stlouisfed.org/docs/api/fred/series_vintagedates.html)
+GET을 별도 raw-first capability로 연결했다. 이 endpoint는 해당 series 값이 새로
+발표되거나 수정된 날짜만 반환하며, 데이터가 바뀌지 않은 release date와 미래
+no-data release date는 포함하지 않는다.
+
+- request identity: series, realtime start/end, limit, ascending sort
+- raw receipt: HTTP bytes를 parser 전에 mode `0600` immutable file로 확정
+- strict response: exact realtime range, `order_by=vintage_date`,
+  `sort_order=asc`, offset `0`, count·limit·정렬·중복·범위 대사
+- capability: `fred/series_vintage_dates`,
+  `global_macro/macro_release_date`, historical research·shadow forward
+- exact terminal replay: credential과 network를 열기 전에 receipt를 재투영
+
+actual DFF 결과:
+
+- realtime range: `2026-07-01..2026-07-24`
+- first official GET/network: `1/1`
+- vintage date count: `16`
+- capability: `complete`, completeness `10000 bps`
+- calendar snapshot ID:
+  `35a8a445595df1f59507e55f61773edc01352253b23001c5eb06dccffe299500`
+- calendar file SHA-256:
+  `0a8ae82da697cd5aa1fe5a7299616d5fe32c24accde82ec6c295bc4150533657`
+- missing credential exact replay: network `0`, artifact created `no`
+
+별도 query-only release gate는 canonical panel 파일과 calendar 파일을 다시 읽어
+파일명·본문·semantic ID, series 일치와 panel vintage 전체가 official change
+calendar에 포함되는지를 검증한다. 하나라도 빠지면 READY artifact를 만들지 않는다.
+
+- admitted vintage: `2026-07-22`, `2026-07-23`
+- admitted count: `2/2`
+- exact panel ID:
+  `f531cb32bd53b2b7e413055ae8b5b37e44b778657aa8ec768ed08c7585ad830a`
+- exact calendar ID:
+  `35a8a445595df1f59507e55f61773edc01352253b23001c5eb06dccffe299500`
+- assessment ID:
+  `26ed19eb3bf8b82ee5311cc329ee4fca230e0c1aca224facd374290ea2cc813a`
+- assessment file SHA-256:
+  `1a6ab2adcb52ef2dacd080ff13b307f7fa01c1f270818662f12306f3ed271cd7`
+- first/replay artifact created: `yes/no`
+- replay network/credential access: `0/0`
+- calendar/assessment evidence file: `8/3`, mode `0600` 아닌 파일 `0`
+- credential 값이 관련 evidence에 존재한 파일: `0`
+
+추가 TDD·검증:
+
+- RED: vintage dates CLI와 release gate module 부재
+- focused FRED·ALFRED panel·calendar·gate: `10 passed`
+- full pytest: `3653 passed in 235.15s`
+- Ruff: 통과
+- basedpyright: `0 errors, 0 warnings, 0 notes`
+- 두 isolated CLI `--help`: exit `0`
+- invalid range/missing calendar: exit `2`
+- actual calendar/gate happy·replay: exit `0/0`, artifact `yes/no`
+
+이 admission은 날짜 단위 release-or-revision causality를 증명한다. source가 공표한
+장중 시각이나 FRED 웹사이트에 실제 반영된 초 단위 시각은 증명하지 않으므로 intraday
+announcement 전략 입력으로 해석하지 않는다. broker·account·order·lifecycle과
+allocation mutation은 `0`이다.
