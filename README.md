@@ -437,6 +437,8 @@ uv run python run_us_scanner_research_evidence.py \
 
 **2026-07-24 M8 clean actual session 누적 업데이트:** strict catalog는 clean 후보를 누적할 수 있었지만 actual payload가 매 날짜 current `--session-dir` 하나만 넘겨 전략별 OOS artifact가 영구히 1-session에 머무는 성숙 차단을 수정했다. planned CLI의 새 `--session-root`는 required date까지 정확한 `YYYYMMDD` direct child를 최대 366개 후보로 plan에 동결하고, catalog는 blocked session을 audit에 보존한 채 최신 clean session만 기존 최대 60개 범위에서 선택한다. required current session이 blocked면 과거 clean session만으로 dataset·READY·trial을 만들지 않는다. exact `de5f395` runtime의 cumulative research/audit 네 job이 기존 시각에 교체 예약됐고 전체 `3593 passed`, Ruff, basedpyright `0/0`, CLI help/bad/happy/replay `0/2/0/0`을 통과했다. 아직 실제 clean session·DSR/PBO 성숙·성과 증거는 아니다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-24-m8-cumulative-clean-session-plan-ko.md)에 있다.
 
+**2026-07-24 M8 intraday 인접 파라미터 plateau 업데이트:** source-backed actual trial의 frozen registration과 schema-v2 중심 outcome trace를 대사하고, 전략별 사전 고정된 6개 한 축 인접값을 같은 causal CSV·OOS session·evaluator·편도 비용으로 순차 재평가하는 terminal evidence를 추가했다. 중심 20 OOS session·30 trades와 30 trades 이상 인접값 4개 전에는 `collecting`이고, 성숙 뒤 중심과 적격 인접값의 방향이 모두 양수로 유지될 때만 `plateau_ready`다. 성숙한 실패는 다른 전략의 `collecting`에 가리지 않고 `plateau_not_found`로 남는다. actual terminal audit은 content-addressed mode-600 plateau artifact ID·상태를 기존 exact chain에 결속하지만 lifecycle·Paper·주문·allocation 권한은 모두 false다. fixture는 1-session `collecting`, 전체 `3600 passed`, Ruff, basedpyright `0/0`, CLI help/bad/happy `0/1/0`을 통과했다. exact `2ae1a10db664ff9d2a61ca7f75f3423ae512f760` runtime의 후속 audit을 기존 누적 audit 뒤 2026-07-25 07:05 및 2026-07-28 06:40 KST에 별도 예약했으며 아직 성공 증거가 아니다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-24-m8-intraday-parameter-plateau-evidence-ko.md)에 있다.
+
 **2026-07-23 고정 전략 증거 갱신 업데이트:** 최초 source-backed trial 이후에도 최신 exact queue가 같은 단일 strategy version을 가리키고 causal dataset SHA가 새로 바뀐 경우에만 같은 고정 버전으로 새 walk-forward trial과 독립 review를 추가할 수 있다. 같은 데이터의 새 등록시각, 이전 queue로 새 데이터 실행, 다른 버전 주입과 active-research 중복 실행은 모두 mutation 전에 차단한다. 수동 CLI에서는 1세션 첫 실행, 같은 데이터 중복 차단, 2세션 누적 갱신을 순서대로 실행해 strategy version `1개`, trial `2개`와 mode-600 산출물을 확인했다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-m8-source-backed-evidence-refresh-ko.md)에 있다.
 
 **2026-07-23 actual research run plan 업데이트:** 날짜별 run key에 candidate session, required date, 같은 고정 전략 버전, runtime SHA, 등록시각, 비용·자원 예산과 모든 local output 경로를 immutable mode-600 plan으로 고정하는 CLI를 추가했다. 최초 실행만 현재 experiment ledger에서 exact source queue를 투영·보존하고, 같은 run key 재시작은 trial로 ledger 상태가 바뀐 뒤에도 기존 plan/queue를 재사용한다. 다음 run key는 최신 queue를 새로 고정하면서 같은 전략 버전에 새 data SHA 증거를 추가한다. run key의 인자 drift는 trial mutation 전에 차단한다. 수동 CLI first/replay는 exit `0/0`, plan create/reuse `true/false`, replay 신규 trial/review `0/0`이었다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-23-m8-actual-research-run-plan-ko.md)에 있다.
@@ -627,6 +629,7 @@ Paper Champion 최종 검토는 최소 60 적격 거래일·100건, 최근 60일
 - [M8 walk-forward OOS outcome trace 체크포인트](docs/checkpoints/2026-07-24-m8-walk-forward-outcome-trace-ko.md)
 - [M8 intraday DSR/PBO 진단 체크포인트](docs/checkpoints/2026-07-24-m8-intraday-overfit-diagnostics-ko.md)
 - [M8 actual terminal DSR/PBO audit 체크포인트](docs/checkpoints/2026-07-24-m8-terminal-overfit-audit-ko.md)
+- [M8 intraday 인접 파라미터 plateau 증거 체크포인트](docs/checkpoints/2026-07-24-m8-intraday-parameter-plateau-evidence-ko.md)
 - [M8 actual research outcome schema v2 예약 체크포인트](docs/checkpoints/2026-07-24-m8-actual-outcome-schema-schedule-ko.md)
 - [M8 clean actual session 누적 plan 체크포인트](docs/checkpoints/2026-07-24-m8-cumulative-clean-session-plan-ko.md)
 - [US news-catalyst shadow trial·Reviewer 체크포인트](docs/checkpoints/2026-07-21-us-news-catalyst-shadow-trial-reviewer-ko.md)
@@ -1420,7 +1423,7 @@ CSV replay:
   --session-date YYYY-MM-DD --strategy orb
 ```
 
-장마감 metrics가 성공하면 watch가 이 CLI도 순차 실행한다. 세션별 불변 JSON, 상위 `daily_research_ledger.jsonl`, 한국어 요약과 별도 종료코드를 남기며 코드·데이터·평가기·파라미터·비용·품질 계보를 함께 고정한다. 랭킹 6개 요청과 watch cycle이 완전하지 않거나 실패 cycle이 있으면 해당 날짜를 적격 forward day로 세지 않는다. 평균수익 CI는 뉴욕 거래일 전체를 블록으로 재표본화하며 원장 평가기 버전은 `paper_metrics_day_block_bootstrap_v2`다. 최소 60거래일·100건 외에도 broker ledger, DSR/PBO, 인접 파라미터 평탄성, SIP 검증이 없으므로 자동 승격과 자동 주문은 계속 금지한다.
+장마감 metrics가 성공하면 watch가 이 CLI도 순차 실행한다. 세션별 불변 JSON, 상위 `daily_research_ledger.jsonl`, 한국어 요약과 별도 종료코드를 남기며 코드·데이터·평가기·파라미터·비용·품질 계보를 함께 고정한다. 랭킹 6개 요청과 watch cycle이 완전하지 않거나 실패 cycle이 있으면 해당 날짜를 적격 forward day로 세지 않는다. 평균수익 CI는 뉴욕 거래일 전체를 블록으로 재표본화하며 원장 평가기 버전은 `paper_metrics_day_block_bootstrap_v2`다. actual terminal audit은 DSR/PBO와 인접 파라미터 plateau artifact를 만들 수 있지만 현재 실제 clean 표본은 성숙 문턱 전이고 broker ledger·SIP 검증도 없다. 따라서 자동 승격과 자동 주문은 계속 금지한다.
 
 적응형 전략 평가:
 
