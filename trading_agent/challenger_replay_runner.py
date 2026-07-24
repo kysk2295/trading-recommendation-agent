@@ -8,6 +8,11 @@ from pathlib import Path
 
 from trading_agent.challenger_replay_models import ReplayBar, ReplayContext, ReplaySource
 from trading_agent.engine import RecommendationEngine, finalize_due_recommendations
+from trading_agent.intraday_parameter_plateau_variants import (
+    IntradayParameterVariant,
+    build_parameter_variant_strategy,
+    parameter_variant_strategy,
+)
 from trading_agent.intraday_research_loop_models import (
     IntradayWalkForwardError,
     IntradayWalkForwardRequest,
@@ -52,7 +57,11 @@ def run_intraday_walk_forward(
     store = PaperStore(database)
     for _, rows in oos_sessions:
         _require_rss_below(request.rss_limit_gib)
-        engine = _engine(request.strategy, store)
+        engine = _engine(
+            request.strategy,
+            store,
+            request.parameter_variant,
+        )
         last_bars: dict[str, BarInput] = {}
         for bar in rows:
             _ = engine.process(bar)
@@ -149,10 +158,26 @@ def run_challenger_replay(
     return len(store.recommendations()), len(trades)
 
 
-def _engine(strategy: StrategyMode, store: PaperStore) -> RecommendationEngine:
+def _engine(
+    strategy: StrategyMode,
+    store: PaperStore,
+    parameter_variant: IntradayParameterVariant | None = None,
+) -> RecommendationEngine:
+    if (
+        parameter_variant is not None
+        and parameter_variant_strategy(parameter_variant) is not strategy
+    ):
+        raise IntradayWalkForwardError(
+            "parameter_variant_strategy_mismatch"
+        )
+    strategy_kernel = (
+        build_strategy(strategy, range_minutes=5)
+        if parameter_variant is None
+        else build_parameter_variant_strategy(parameter_variant)
+    )
     return RecommendationEngine(
         MomentumScanner(ScannerConfig()),
-        build_strategy(strategy, range_minutes=5),
+        strategy_kernel,
         RiskConfig(),
         store,
     )

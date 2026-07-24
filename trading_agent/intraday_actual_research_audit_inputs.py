@@ -34,6 +34,7 @@ from trading_agent.intraday_research_loop_models import (
     InvalidIntradayResearchManifestError,
     load_intraday_research_manifest,
 )
+from trading_agent.models import BarInput
 from trading_agent.private_immutable_file import (
     InvalidPrivateImmutableFileError,
     read_private_text,
@@ -46,6 +47,7 @@ class AuditedDatasetEvidence:
     input_sha256: str
     receipt_sha256: str
     producer_commit_sha: str
+    bars: tuple[BarInput, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +114,7 @@ def _load_dataset(plan: IntradayActualResearchRunPlan) -> AuditedDatasetEvidence
         input_sha256=receipt.input_sha256,
         receipt_sha256=receipt_sha,
         producer_commit_sha=receipt.producer_commit_sha,
+        bars=source.bars,
     )
 
 

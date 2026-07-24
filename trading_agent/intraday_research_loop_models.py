@@ -10,6 +10,9 @@ from typing import Final, Literal, Self, override
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from trading_agent.intraday_parameter_plateau_variants import (
+    IntradayParameterVariant,
+)
 from trading_agent.intraday_walk_forward_models import (
     INTRADAY_BOOTSTRAP_SEED,
     IntradaySessionOutcome,
@@ -165,6 +168,7 @@ class IntradayWalkForwardRequest:
     bootstrap_samples: int
     rss_limit_gib: float
     evaluator_version: Literal["intraday_walk_forward_v1", "intraday_walk_forward_v2"] = "intraday_walk_forward_v2"
+    parameter_variant: IntradayParameterVariant | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -38,6 +38,13 @@ from trading_agent.intraday_overfit_diagnostics import (
     IntradayOverfitDiagnosticsRequest,
     diagnose_intraday_overfit,
 )
+from trading_agent.intraday_parameter_plateau import (
+    IntradayParameterPlateauRequest,
+    diagnose_intraday_parameter_plateau,
+)
+from trading_agent.intraday_parameter_plateau_models import (
+    InvalidIntradayParameterPlateauError,
+)
 from trading_agent.private_immutable_file import (
     InvalidPrivateImmutableFileError,
     publish_private_immutable_text,
@@ -87,6 +94,16 @@ def audit_intraday_actual_research(
             if len(trials.trial_ids) == 3
             else None
         )
+        plateau = diagnose_intraday_parameter_plateau(
+            IntradayParameterPlateauRequest(
+                ledger=ledger,
+                manifest=binding.manifest,
+                bars=dataset.bars,
+                experiments=trials.experiments,
+                artifact_root=request.output_root,
+                reviewed_at=reviewed_at,
+            )
+        )[0]
         payload = IntradayActualResearchAuditPayload(
             run_key=request.run_key,
             plan_id=plan.plan_id,
@@ -111,6 +128,8 @@ def audit_intraday_actual_research(
                 if diagnostics is None
                 else diagnostics.payload.statistics.status
             ),
+            parameter_plateau_artifact_id=plateau.artifact_id,
+            parameter_plateau_status=plateau.payload.status,
         )
         artifact_id = _sha(canonical_experiment_ledger_json(payload))
         artifact = IntradayActualResearchAuditArtifact(
@@ -131,6 +150,7 @@ def audit_intraday_actual_research(
         raise
     except (
         IntradayActualResearchPlanError,
+        InvalidIntradayParameterPlateauError,
         InvalidPrivateImmutableFileError,
         OSError,
         TypeError,

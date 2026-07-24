@@ -15,6 +15,9 @@ from trading_agent.intraday_equal_risk_comparison_models import (
 from trading_agent.intraday_overfit_diagnostics_models import (
     IntradayOverfitDiagnosticsStatus,
 )
+from trading_agent.intraday_parameter_plateau_models import (
+    IntradayParameterPlateauStatus,
+)
 from trading_agent.intraday_research_loop_models import IntradayReviewerDecision
 
 _HEX40: Final = re.compile(r"^[0-9a-f]{40}$")
@@ -82,6 +85,8 @@ class IntradayActualResearchAuditPayload(BaseModel):
     comparison_status: EqualRiskComparisonStatus | None
     overfit_diagnostics_artifact_id: str | None = None
     overfit_diagnostics_status: IntradayOverfitDiagnosticsStatus | None = None
+    parameter_plateau_artifact_id: str | None = None
+    parameter_plateau_status: IntradayParameterPlateauStatus | None = None
     automatic_state_change_allowed: Literal[False] = False
     order_authority_change_allowed: Literal[False] = False
     allocation_change_allowed: Literal[False] = False
@@ -122,6 +127,17 @@ class IntradayActualResearchAuditPayload(BaseModel):
                 self.overfit_diagnostics_status is not None
             )
             is not diagnostics_required
+            or (
+                self.parameter_plateau_artifact_id is not None
+                and _HEX64.fullmatch(
+                    self.parameter_plateau_artifact_id
+                )
+                is None
+            )
+            or (
+                self.parameter_plateau_artifact_id is not None
+            )
+            is not (self.parameter_plateau_status is not None)
             or any(not value for value in self.trial_ids)
             or any(
                 len(set(values)) != cardinality

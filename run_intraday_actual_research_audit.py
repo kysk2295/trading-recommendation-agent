@@ -80,6 +80,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if payload.overfit_diagnostics_status is None
         else payload.overfit_diagnostics_status.value
     )
+    plateau = (
+        "not_applicable"
+        if payload.parameter_plateau_status is None
+        else payload.parameter_plateau_status.value
+    )
     write_private_report(
         output_root / REPORT_NAME,
         "# Intraday actual research terminal audit\n\n"
@@ -96,6 +101,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         + f"- reviewer decisions: {decisions}\n"
         + f"- equal-risk comparison: {comparison}\n"
         + f"- DSR/PBO diagnostics: {diagnostics}\n"
+        + f"- parameter plateau: {plateau}\n"
         + "- automatic state change: false\n"
         + "- order authority change: false\n"
         + "- allocation change: false\n"
