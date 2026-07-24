@@ -8,8 +8,18 @@ from dataclasses import dataclass, field
 from typing import Literal, Self, final, override
 
 import httpx2
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
+from trading_agent.kr_instrument import is_kr_instrument_symbol_v2
 from trading_agent.opendart_config import (
     OPENDART_BASE_URL,
     OpenDartCredentials,
@@ -19,7 +29,6 @@ _SAFE_REQUEST_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _CONTENT_TYPE = re.compile(r"^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$")
 _STATUS = re.compile(r"^[0-9]{3}$")
 _CORP_CODE = re.compile(r"^[0-9]{8}$")
-_STOCK_CODE = re.compile(r"^[0-9]{6}$")
 _RECEIPT_NUMBER = re.compile(r"^[0-9]{14}$")
 _RECEIPT_DATE = re.compile(r"^[0-9]{8}$")
 
@@ -88,6 +97,11 @@ class OpenDartDisclosure(BaseModel):
     rcept_dt: StrictStr
     rm: StrictStr
 
+    @field_validator("report_nm")
+    @classmethod
+    def normalize_report_name(cls, value: str) -> str:
+        return value.strip()
+
     @model_validator(mode="after")
     def validate_disclosure(self) -> Self:
         if _RECEIPT_DATE.fullmatch(self.rcept_dt) is None:
@@ -101,7 +115,7 @@ class OpenDartDisclosure(BaseModel):
             or _CORP_CODE.fullmatch(self.corp_code) is None
             or (
                 self.stock_code != ""
-                and _STOCK_CODE.fullmatch(self.stock_code) is None
+                and not is_kr_instrument_symbol_v2(self.stock_code)
             )
             or not _canonical_text(self.report_nm, max_length=2_000)
             or _RECEIPT_NUMBER.fullmatch(self.rcept_no) is None

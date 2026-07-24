@@ -24,6 +24,7 @@ def _success_payload(
     *,
     stock_code: str = "123456",
     receipt_date: str = "20260715",
+    report_name: str = "Synthetic supply agreement",
     extra_field: str | None = None,
 ) -> bytes:
     disclosure: dict[str, str] = {
@@ -31,7 +32,7 @@ def _success_payload(
         "corp_name": "Synthetic Corp",
         "corp_code": "00123456",
         "stock_code": stock_code,
-        "report_nm": "Synthetic supply agreement",
+        "report_nm": report_name,
         "rcept_no": "20260715000001",
         "flr_nm": "Synthetic Corp",
         "rcept_dt": receipt_date,
@@ -137,6 +138,22 @@ def test_parser_accepts_strict_success_and_preserves_official_fields() -> None:
     assert disclosure.rcept_dt == "20260715"
 
 
+def test_parser_normalizes_official_report_name_boundary_whitespace() -> None:
+    page = parse_opendart_disclosure_page(
+        _raw(_success_payload(report_name="Synthetic supply agreement "))
+    )
+
+    assert page.disclosures[0].report_nm == "Synthetic supply agreement"
+
+
+def test_parser_accepts_official_alphanumeric_stock_code() -> None:
+    page = parse_opendart_disclosure_page(
+        _raw(_success_payload(stock_code="1234A6"))
+    )
+
+    assert page.disclosures[0].stock_code == "1234A6"
+
+
 def test_parser_treats_official_no_data_status_as_success_zero() -> None:
     page = parse_opendart_disclosure_page(
         _raw(json.dumps({"status": "013", "message": "none"}).encode())
@@ -158,7 +175,7 @@ def test_parser_treats_official_no_data_status_as_success_zero() -> None:
             "opendart_020",
         ),
         (
-            _success_payload(stock_code="ABCDEF"),
+            _success_payload(stock_code="abc123"),
             "invalid_response",
         ),
         (
