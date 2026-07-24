@@ -1,9 +1,12 @@
 # M6 ALFRED multi-vintage revision panel 체크포인트
 
-상태: **query-only point-in-time panel 구현·actual DFF 두 vintage 검증 완료**
+상태: **query-only point-in-time panel과 exact READY data foundation actual 검증 완료**
 
 기능 커밋:
 `42a42f8671407425e9e1249ac1aebbc60f937cb3`
+
+data foundation 커밋:
+`dd0036825d10cd166d6919d945abf7f5066b3504`
 
 ## 제품 경계
 
@@ -152,3 +155,39 @@ calendar에 포함되는지를 검증한다. 하나라도 빠지면 READY artifa
 장중 시각이나 FRED 웹사이트에 실제 반영된 초 단위 시각은 증명하지 않으므로 intraday
 announcement 전략 입력으로 해석하지 않는다. broker·account·order·lifecycle과
 allocation mutation은 `0`이다.
+
+## exact Macro Revision Data Foundation
+
+generic capability READY만으로는 실제 연구에 사용한 panel·calendar·admission 파일의
+bytes를 식별할 수 없으므로 세 파일 SHA와 세 source capability를 하나의
+content-addressed foundation에 결합했다.
+
+- strategy lane: `us_equities/market_context/macro_revision_context`
+- requirement `3/3 READY`:
+  - `fred/series_observations` 최신 macro observation
+  - `alfred/vintage_observations` point-in-time macro observation
+  - `fred/series_vintage_dates` 공식 release-or-revision date
+- exact panel file SHA-256:
+  `a82aa22197a436af13df6790bc552bedda3b772f5d7e06cefc5858850eb5bea6`
+- exact calendar file SHA-256:
+  `0a8ae82da697cd5aa1fe5a7299616d5fe32c24accde82ec6c295bc4150533657`
+- exact admission file SHA-256:
+  `1a6ab2adcb52ef2dacd080ff13b307f7fa01c1f270818662f12306f3ed271cd7`
+- foundation ID:
+  `13e1b5343dfcc1a3efe00d54ffa26c8e0c03c65faa30819c3b91d586080c8ca5`
+- foundation file SHA-256:
+  `bb648cd77011d90ed7b168f58a4bf85fdd979911dbcc3673209413667b598236`
+- first/exact committed replay artifact created: `yes/no`
+- replay provider network/credential access: `0/0`
+- foundation/report mode: `0600/0600`
+- broker·account·order·lifecycle·allocation mutation: `0`
+
+TDD는 foundation module 부재 RED 뒤 exact identity와 SHA 위조 차단을 GREEN으로
+만들었다. 관련 회귀 `11 passed`, 전체 `3654 passed in 240.25s`, 전체 Ruff와
+basedpyright `0 errors, 0 warnings, 0 notes`가 통과했다. CLI `--help`, missing
+assessment bad input exit `2`·output `0`, actual happy/replay `yes/no`도 직접
+검증했다.
+
+이 foundation은 실제 DFF 두 vintage에 대한 재현 가능한 macro research 입력이다.
+다중 macro series의 regime 효과, 전략 성과, champion 또는 Paper 권한을 증명하지
+않는다.
