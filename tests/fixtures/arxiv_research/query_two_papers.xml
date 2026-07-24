@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/"
+      xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <id>https://arxiv.org/api/test-query</id>
+  <title>ArXiv Query: cat:q-fin.TR</title>
+  <updated>2026-07-24T00:00:00Z</updated>
+  <opensearch:totalResults>2</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <opensearch:itemsPerPage>2</opensearch:itemsPerPage>
+  <entry>
+    <id>https://arxiv.org/abs/2401.00001v2</id>
+    <updated>2024-02-01T00:00:00Z</updated>
+    <published>2024-01-01T00:00:00Z</published>
+    <title>Point-in-time market microstructure research</title>
+    <summary>A causal study with explicit transaction costs and out-of-sample evaluation.</summary>
+    <author><name>Ada Researcher</name></author>
+    <author><name>Grace Reviewer</name></author>
+    <category term="q-fin.TR"/>
+    <category term="stat.ME"/>
+    <link href="https://arxiv.org/abs/2401.00001v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2401.00001v2" rel="related" type="application/pdf"/>
+    <arxiv:doi>10.1000/example.1</arxiv:doi>
+  </entry>
+  <entry>
+    <id>https://arxiv.org/abs/2312.00002v1</id>
+    <updated>2023-12-02T00:00:00Z</updated>
+    <published>2023-12-02T00:00:00Z</published>
+    <title>Robust walk-forward validation under costs</title>
+    <summary>A preregistered comparison of trading rules across non-overlapping sessions.</summary>
+    <author><name>Lin Analyst</name></author>
+    <category term="q-fin.TR"/>
+    <link href="https://arxiv.org/abs/2312.00002v1" rel="alternate" type="text/html"/>
+  </entry>
+</feed>
