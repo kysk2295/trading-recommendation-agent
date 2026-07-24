@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import re
 import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
@@ -20,38 +19,22 @@ from trading_agent.intraday_actual_research_plan_models import (
     IntradayActualResearchPlanPaths,
     IntradayActualResearchRunSpec,
 )
+from trading_agent.intraday_actual_research_prerequisite import (
+    CloseoutPrerequisiteRequest,
+)
+from trading_agent.intraday_actual_research_prerequisite import (
+    require_closeout_prerequisite as _require_closeout_prerequisite,
+)
 from trading_agent.intraday_actual_research_session_discovery import (
     resolve_intraday_actual_research_session_dirs as _resolve_session_dirs,
 )
 from trading_agent.intraday_research_input_binding_models import (
     IntradayResearchStrategyBinding,
 )
-from trading_agent.private_immutable_file import read_private_text
 from trading_agent.private_report import write_private_report
 from trading_agent.strategy_factory import StrategyMode
 
 REPORT_NAME = "intraday_actual_research_ko.md"
-_SUCCESS_RECEIPT = re.compile(
-    r"exit_code=0\ncompleted_at_epoch=[1-9][0-9]*\n"
-)
-_STRICT_CLOSEOUT_RESULTS = {"- result: recovered", "- result: replayed"}
-_STRICT_CLOSEOUT_MARKERS = (
-    "- failed cycle deletion: 0",
-    "- quality gate relaxed: false",
-    "- provider, credential, account, or order operation: 0",
-)
-_MINIMUM_ACTUAL_RESEARCH_WATCH_CYCLES = 300
-_CYCLE_COUNT_LABELS = (
-    "watch cycles",
-    "ranking cycles",
-    "retry cycles",
-    "candidate input cycles",
-)
-
-
-class CloseoutPrerequisiteError(ValueError):
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -104,6 +87,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--rss-limit-gib", type=float, default=9.5)
     parser.add_argument("--prerequisite-receipt", type=Path)
     parser.add_argument("--prerequisite-report", type=Path)
+    parser.add_argument("--prerequisite-wait-until", type=_aware_datetime)
     return parser.parse_args(argv)
 
 
@@ -111,8 +95,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         _require_closeout_prerequisite(
-            args.prerequisite_receipt,
-            args.prerequisite_report,
+            CloseoutPrerequisiteRequest(
+                receipt=args.prerequisite_receipt,
+                report=args.prerequisite_report,
+                wait_until=args.prerequisite_wait_until,
+            )
         )
         result = run_planned_intraday_actual_research(
             IntradayActualResearchRunSpec(
@@ -186,57 +173,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         + "- external mutation: 0\n",
     )
     return 0
-
-
-def _require_closeout_prerequisite(
-    receipt: Path | None,
-    report: Path | None,
-) -> None:
-    if (receipt is None) != (report is None):
-        raise CloseoutPrerequisiteError("prerequisite_paths_incomplete")
-    if receipt is None or report is None:
-        return
-    receipt_payload = read_private_text(receipt)
-    report_lines = read_private_text(report).splitlines()
-    results = tuple(
-        line for line in report_lines if line.startswith("- result: ")
-    )
-    if (
-        _SUCCESS_RECEIPT.fullmatch(receipt_payload) is None
-        or len(results) != 1
-        or results[0] not in _STRICT_CLOSEOUT_RESULTS
-        or any(report_lines.count(marker) != 1 for marker in _STRICT_CLOSEOUT_MARKERS)
-        or not _strict_closeout_cycle_contract(report_lines)
-    ):
-        raise CloseoutPrerequisiteError("closeout_prerequisite_invalid")
-
-
-def _strict_closeout_cycle_contract(lines: list[str]) -> bool:
-    minimum = _single_report_integer(lines, "minimum watch cycles")
-    counts = tuple(
-        _single_report_integer(lines, label)
-        for label in _CYCLE_COUNT_LABELS
-    )
-    if minimum is None or any(value is None for value in counts):
-        return False
-    complete_counts = tuple(value for value in counts if value is not None)
-    return (
-        _MINIMUM_ACTUAL_RESEARCH_WATCH_CYCLES <= minimum <= 390
-        and len(set(complete_counts)) == 1
-        and minimum <= complete_counts[0] <= 390
-    )
-
-
-def _single_report_integer(lines: list[str], label: str) -> int | None:
-    prefix = f"- {label}: "
-    values = tuple(
-        line.removeprefix(prefix)
-        for line in lines
-        if line.startswith(prefix)
-    )
-    if len(values) != 1 or not values[0].isdigit():
-        return None
-    return int(values[0])
 
 
 def _strategy_binding(value: str) -> IntradayResearchStrategyBinding:
