@@ -1,0 +1,14 @@
+{
+  "realtime_start": "2026-07-01",
+  "realtime_end": "2026-07-24",
+  "order_by": "vintage_date",
+  "sort_order": "asc",
+  "count": 3,
+  "offset": 0,
+  "limit": 100,
+  "vintage_dates": [
+    "2026-07-01",
+    "2026-07-02",
+    "2026-07-03"
+  ]
+}
