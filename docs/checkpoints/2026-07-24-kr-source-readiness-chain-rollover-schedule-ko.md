@@ -61,10 +61,17 @@ porcelain-empty 상태를 실행 전에 다시 확인한다.
 | 2026-07-27 09:00 | 같은 KR M3 chain | shadow trial start |
 | 2026-07-27 09:05 | 같은 KR M3 chain | exact four-source cycle과 Opportunity projection |
 | 2026-07-27 15:32 | 같은 KR M3 chain | terminal, 독립 Reviewer와 lifecycle evidence |
+| 2026-07-27 15:45 | `ai.trading-agent.kr-m3-post-session-verify-20260727` | primary receipt와 네 post-session phase exact replay 검증 |
 
 두 label은 설치 직후 각각 `runs=1`, `state=running`, `last exit code=(never exited)`로
 대기함을 확인했다. runner/wrapper는 mode 700, stdout/stderr log와 policy/bundle은
 mode 600이다. KR chain은 receipt와 claim으로 한 번만 실행된다.
+
+2026-07-24 당일 chain에도 기존 PID나 label을 변경하지 않고
+`ai.trading-agent.kr-m3-post-session-verify-20260724`를 15:45에 추가했다. 이 작업은
+primary receipt exit 0과 mode 600을 먼저 요구하고 exact terminal·delivery·Reviewer·
+lifecycle replay가 모두 성공하며 report의 account/order mutation이 0일 때만 exit 0이다.
+당일과 7월 27일 검증 label도 설치 직후 각각 `runs=1`, `state=running`이었다.
 
 08:30 readiness 실패는 09:05 품질 게이트를 우회하지 않는다. OpenDART 설정이 그때도
 없거나 다른 source가 준비되지 않으면 실제 source cycle은 실패를 보존하고 15:32에
@@ -82,6 +89,8 @@ mode 600이다. KR chain은 receipt와 claim으로 한 번만 실행된다.
   actual missing-source `1`
 - KR runner: `zsh -n` pass, 이전 운영 runner에 날짜·epoch·SHA·version만 바꾼
   exact template comparison pass
+- 당일/다음-session post-session verifier: `zsh -n`, exact template comparison pass,
+  wrapper/payload/log mode `700/700/600`
 
 실제 자금, 국내 계좌, 주문 mutation과 Allocation Manager activation은 모두 0건이다.
 
