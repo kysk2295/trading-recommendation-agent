@@ -1,0 +1,26 @@
+{
+  "name": "trading-agent-observatory",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build src/client.ts --outdir public/assets --minify --sourcemap=external",
+    "check": "bun run typecheck && bun run lint && bun run test",
+    "dev": "bun --hot src/server.ts",
+    "lint": "biome check src tests",
+    "start": "bun src/server.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/zod-validator": "^0.7.4",
+    "hono": "^4.9.8",
+    "ky": "^1.10.0",
+    "postgres": "^3.4.7",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.2",
+    "@types/bun": "^1.2.21",
+    "typescript": "^5.9.2"
+  }
+}

@@ -11,9 +11,13 @@ build/
 dist/
 outputs/
 .superpowers/
+.omo/
 .worktrees/
 graphify-out/
 .DS_Store
+node_modules/
+dashboard/public/assets/client.js
+dashboard/public/assets/client.js.map
 *.parquet
 *.csv.gz
 .env

@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#080908" />
+    <meta
+      name="description"
+      content="한국·미국 시장 에이전트, 추천, 증거, 실증 연구 상태를 확인하는 비공개 관제 화면"
+    />
+    <title>Trading Agent Observatory</title>
+    <link rel="stylesheet" href="/assets/base.css" />
+    <link rel="stylesheet" href="/assets/layout.css" />
+    <link rel="stylesheet" href="/assets/components.css" />
+    <link rel="stylesheet" href="/assets/data-components.css" />
+    <link rel="stylesheet" href="/assets/responsive.css" />
+    <script type="module" src="/assets/client.js"></script>
+  </head>
+  <body>
+    <section class="access-gate" id="access-gate" aria-labelledby="access-title">
+      <div class="access-copy">
+        <p class="meta-label">PRIVATE OPERATIONS SURFACE</p>
+        <h1 id="access-title">
+          <span>시장은 열리고,</span>
+          <span>증거는 남는다.</span>
+        </h1>
+        <p>
+          <span>장중 에이전트와 추천 근거를 확인합니다.</span>
+          <span>계좌 정보와 비밀키는 저장하지 않습니다.</span>
+        </p>
+      </div>
+      <form class="access-form" id="access-form">
+        <label for="view-token">대시보드 접근 키</label>
+        <input
+          id="view-token"
+          name="view-token"
+          type="password"
+          autocomplete="off"
+          spellcheck="false"
+          required
+        />
+        <button id="access-button" type="submit">관제 화면 열기</button>
+        <p class="form-status" id="access-status" role="alert"></p>
+      </form>
+    </section>
+
+    <div class="app-shell" id="app-shell" hidden>
+      <header class="live-rail">
+        <div class="product-mark">
+          <span class="wordmark">TRA</span>
+          <div>
+            <h1>Trading Agent Observatory</h1>
+            <span>실시간 운영 관제</span>
+          </div>
+        </div>
+        <div class="freshness" aria-live="polite">
+          <span class="semantic-mark" id="freshness-mark"></span>
+          <span id="freshness-text">연결 대기 · snapshot 대기</span>
+        </div>
+        <div class="rail-actions">
+          <button class="quiet-button" id="refresh-button" type="button">지금 갱신</button>
+          <button class="quiet-button" id="signout-button" type="button">잠금</button>
+        </div>
+      </header>
+
+      <main>
+        <section class="session-deck" aria-labelledby="session-heading">
+          <div class="session-clock">
+            <p class="meta-label" id="session-heading">CURRENT MARKET CLOCK</p>
+            <time id="primary-clock">--:--:--</time>
+            <p id="primary-date">snapshot 연결 중</p>
+          </div>
+          <div class="market-stack" id="market-stack"></div>
+          <dl class="featured-metric">
+            <div>
+              <dt>Forward quality</dt>
+              <dd id="quality-value">대기</dd>
+            </div>
+            <div>
+              <dt>Session</dt>
+              <dd id="session-date">—</dd>
+            </div>
+          </dl>
+        </section>
+
+        <div class="dashboard-grid">
+          <div class="overview-column">
+            <section class="panel forward-panel" aria-labelledby="forward-title">
+              <div class="panel-heading">
+                <div>
+                  <p class="meta-label">CAUSAL FORWARD SESSION</p>
+                  <h2 id="forward-title">세션 품질 원장</h2>
+                </div>
+                <span class="status-word" id="forward-status">대기</span>
+              </div>
+              <dl class="metric-strip" id="metric-strip"></dl>
+              <div class="blocker-list" id="blocker-list"></div>
+            </section>
+
+            <section class="panel" aria-labelledby="agents-title">
+              <div class="panel-heading">
+                <div>
+                  <p class="meta-label">RUNTIME FLEET</p>
+                  <h2 id="agents-title">에이전트와 예약 작업</h2>
+                </div>
+                <span class="panel-note">실행·예약·종료 상태</span>
+              </div>
+              <div
+                class="table-scroll"
+                tabindex="0"
+                role="region"
+                aria-label="에이전트 상태 표 가로 스크롤"
+              >
+                <table class="state-ledger">
+                  <caption>현재 등록된 시장·연구 에이전트</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">에이전트</th>
+                      <th scope="col">상태</th>
+                      <th scope="col">작업 식별자</th>
+                    </tr>
+                  </thead>
+                  <tbody id="agent-rows"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="panel" aria-labelledby="recommendations-title">
+              <div class="panel-heading">
+                <div>
+                  <p class="meta-label">IMMUTABLE RECOMMENDATIONS</p>
+                  <h2 id="recommendations-title">추천과 결과</h2>
+                </div>
+                <span class="panel-note" id="recommendation-count">0건</span>
+              </div>
+              <div
+                class="table-scroll"
+                tabindex="0"
+                role="region"
+                aria-label="추천 결과 표 가로 스크롤"
+              >
+                <table class="recommendation-ledger">
+                  <caption>최근 추천의 진입·손절·목표·상태</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">종목 / 전략</th>
+                      <th scope="col">진입</th>
+                      <th scope="col">손절</th>
+                      <th scope="col">1R / 2R</th>
+                      <th scope="col">상태</th>
+                    </tr>
+                  </thead>
+                  <tbody id="recommendation-rows"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+
+          <aside class="evidence-column" aria-labelledby="evidence-title">
+            <section class="evidence-header">
+              <div>
+                <p class="meta-label">SOURCE-BACKED EVIDENCE</p>
+                <h2 id="evidence-title">신호와 근거</h2>
+              </div>
+              <nav class="filter-tabs" aria-label="증거 필터">
+                <button type="button" aria-pressed="true" data-filter="all">전체</button>
+                <button type="button" aria-pressed="false" data-filter="active">유효</button>
+              </nav>
+            </section>
+            <div class="evidence-stream" id="evidence-stream"></div>
+            <section class="research-terminal" aria-labelledby="research-title">
+              <p class="meta-label">RESEARCH FOUNDATION</p>
+              <h2 id="research-title">실제 데이터 연구</h2>
+              <p id="research-summary">snapshot 대기</p>
+              <dl>
+                <div>
+                  <dt>상태</dt>
+                  <dd id="research-status">—</dd>
+                </div>
+                <div>
+                  <dt>세션</dt>
+                  <dd id="research-date">—</dd>
+                </div>
+              </dl>
+            </section>
+          </aside>
+        </div>
+      </main>
+      <footer>
+        <span>Paper recommendation only</span>
+        <span>계좌·자격증명·원시 인증 응답 비공개</span>
+      </footer>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,145 @@
+@media (max-width: 1080px) {
+  .app-shell {
+    padding: 0 var(--space-6);
+  }
+
+  .session-deck {
+    grid-template-columns: 1.25fr 0.75fr;
+  }
+
+  .featured-metric {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, 1fr);
+    grid-template-rows: auto;
+    border-top: 1px solid var(--border-default);
+    border-left: 0;
+  }
+
+  .featured-metric > div + div {
+    border-top: 0;
+    border-left: 1px solid var(--border-default);
+  }
+
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .evidence-column {
+    padding-top: var(--space-8);
+    padding-left: 0;
+    border-top: 1px solid var(--border-default);
+    border-left: 0;
+  }
+
+  .evidence-stream {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .access-gate {
+    grid-template-columns: 1fr;
+  }
+
+  .access-copy {
+    min-height: 54dvh;
+    padding: var(--space-8) var(--space-6);
+    border-right: 0;
+    border-bottom: 1px solid var(--border-default);
+  }
+
+  .access-copy h1 {
+    font-size: clamp(2.6rem, 11.5vw, 4rem);
+  }
+
+  .access-form {
+    padding: var(--space-8) var(--space-6);
+  }
+
+  .app-shell {
+    padding: 0 var(--space-4);
+  }
+
+  .live-rail {
+    grid-template-columns: 1fr auto;
+    min-height: 64px;
+  }
+
+  .live-rail > .freshness {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    padding-bottom: var(--space-3);
+  }
+
+  .session-deck {
+    grid-template-columns: 1fr;
+    padding: var(--space-8) 0;
+  }
+
+  .session-clock {
+    min-height: 180px;
+  }
+
+  .market-stack {
+    border-top: 1px solid var(--border-default);
+    border-left: 0;
+  }
+
+  .featured-metric {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .featured-metric dd {
+    font-size: 0.95rem;
+    white-space: nowrap;
+  }
+
+  .dashboard-grid {
+    gap: var(--space-6);
+    padding-top: var(--space-6);
+  }
+
+  .overview-column,
+  .evidence-column {
+    gap: var(--space-6);
+  }
+
+  .metric-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .metric-strip > div + div {
+    border-left: 0;
+  }
+
+  .metric-strip > div:nth-child(even) {
+    border-left: 1px solid var(--border-default);
+  }
+
+  .metric-strip > div:nth-child(n + 3) {
+    border-top: 1px solid var(--border-default);
+  }
+
+  .evidence-header {
+    align-items: flex-end;
+  }
+
+  .evidence-stream {
+    display: flex;
+  }
+
+  footer {
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .showcase {
+    width: min(100% - 32px, 1280px);
+    padding: 48px 0;
+  }
+
+  .showcase-grid {
+    grid-template-columns: 1fr;
+  }
+}

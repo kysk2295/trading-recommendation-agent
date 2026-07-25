@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Observatory Primitive Showcase</title>
+    <link rel="stylesheet" href="/assets/base.css" />
+    <link rel="stylesheet" href="/assets/layout.css" />
+    <link rel="stylesheet" href="/assets/components.css" />
+    <link rel="stylesheet" href="/assets/data-components.css" />
+    <link rel="stylesheet" href="/assets/responsive.css" />
+    <link rel="stylesheet" href="/assets/showcase.css" />
+  </head>
+  <body>
+    <main class="showcase">
+      <header>
+        <p class="meta-label">PRIMITIVE SHOWCASE</p>
+        <h1><span>관제 화면의</span> <span>모든 상태</span></h1>
+        <p>
+          <span>모든 화면 크기에서 같은 의미를 유지합니다.</span>
+          <span>키보드로 모든 기능을 사용할 수 있습니다.</span>
+        </p>
+      </header>
+      <section class="showcase-grid">
+        <article class="panel showcase-access showcase-wide">
+          <p class="meta-label">ACCESS GATE</p>
+          <div class="access-state-grid">
+            <form class="access-state">
+              <label for="showcase-default">기본</label>
+              <input id="showcase-default" type="password" value="private-view-token" readonly />
+              <button type="button">열기</button>
+              <p role="alert"></p>
+            </form>
+            <form class="access-state is-focus">
+              <label for="showcase-focus">포커스</label>
+              <input id="showcase-focus" type="password" value="private-view-token" readonly />
+              <button type="button">열기</button>
+              <p role="alert"></p>
+            </form>
+            <form class="access-state" aria-busy="true">
+              <label for="showcase-pending">제출 중</label>
+              <input id="showcase-pending" type="password" value="private-view-token" readonly />
+              <button type="button" disabled>연결 중…</button>
+              <p role="alert">snapshot 확인 중</p>
+            </form>
+            <form class="access-state">
+              <label for="showcase-invalid">잘못된 키</label>
+              <input id="showcase-invalid" type="password" value="invalid" aria-invalid="true" readonly />
+              <button type="button">다시 열기</button>
+              <p role="alert">접근 키가 올바르지 않습니다.</p>
+            </form>
+            <form class="access-state">
+              <label for="showcase-unavailable">서버 연결 불가</label>
+              <input id="showcase-unavailable" type="password" value="private-view-token" readonly />
+              <button type="button">다시 시도</button>
+              <p role="alert">대시보드 서버에 연결하지 못했습니다.</p>
+            </form>
+          </div>
+        </article>
+        <article class="panel showcase-live">
+          <div class="panel-heading">
+            <div><p class="meta-label">LIVE RAIL</p><h2>연결 상태</h2></div>
+          </div>
+          <div class="freshness-state-list">
+            <div class="freshness"><span class="semantic-mark live"></span><span>실시간 · 12초 전</span></div>
+            <div class="freshness"><span class="semantic-mark delayed"></span><span>지연 · 72초 전</span></div>
+            <div class="freshness"><span class="semantic-mark disconnected"></span><span>연결 끊김 · 4분 전</span></div>
+          </div>
+        </article>
+        <article class="panel showcase-wide">
+          <p class="meta-label">METRIC STRIP</p>
+          <dl class="metric-strip showcase-metrics">
+            <div><dt>Watch cycles</dt><dd>345</dd></div>
+            <div><dt>Ranking</dt><dd>345</dd></div>
+            <div><dt>Retries</dt><dd>1,684</dd></div>
+            <div><dt>Recommendations</dt><dd>3</dd></div>
+            <div><dt>Unavailable</dt><dd>—</dd></div>
+          </dl>
+        </article>
+        <article class="panel showcase-wide">
+          <div class="panel-heading">
+            <div><p class="meta-label">STATE LEDGER</p><h2>원장 상태</h2></div>
+            <span class="state-text state-running">채워짐</span>
+          </div>
+          <div class="ledger-state-row" role="list" aria-label="원장 로딩, 비어 있음, 오류 상태">
+            <span role="listitem">로딩 · snapshot 확인 중</span>
+            <span role="listitem">비어 있음 · 등록 항목 0</span>
+            <span class="state-failed" role="listitem">오류 · source unavailable</span>
+          </div>
+          <div class="table-scroll" tabindex="0" role="region" aria-label="쇼케이스 원장 표">
+            <table class="state-ledger">
+              <caption>채워진 원장 예시</caption>
+              <thead><tr><th scope="col">에이전트</th><th scope="col">상태</th><th scope="col">작업</th></tr></thead>
+              <tbody><tr><td>KR M3 shadow</td><td class="state-running">실행 중</td><td class="job-label">ai.trading-agent.kr-m3</td></tr></tbody>
+            </table>
+          </div>
+        </article>
+        <article class="panel showcase-wide">
+          <div class="panel-heading">
+            <div><p class="meta-label">FILTER TABS</p><h2>증거 필터</h2></div>
+            <nav class="filter-tabs" aria-label="쇼케이스 증거 필터">
+              <button type="button" aria-pressed="true">전체</button>
+              <button type="button" aria-pressed="false">유효</button>
+            </nav>
+          </div>
+        </article>
+        <section class="evidence-state-grid showcase-wide" aria-label="증거 카드 상태">
+          <article class="evidence-item is-new">
+            <div class="evidence-topline"><span>LITZ · SETUP</span><time>10:04 ET</time></div>
+            <h2>LITZ SETUP: Opening range</h2>
+            <dl class="price-grid"><div><dt>진입</dt><dd>15.0475</dd></div><div><dt>손절</dt><dd>14.4500</dd></div><div><dt>목표</dt><dd>16.2426</dd></div></dl>
+            <p>완료 분봉 확인을 기다리는 조건부 설정.</p>
+            <small>evidence · candidate_input</small>
+          </article>
+          <article class="evidence-item">
+            <div class="evidence-topline"><span>CORD · ACTIVE</span><time>10:18 ET</time></div>
+            <h2>CORD BUY: Active breakout</h2>
+            <dl class="price-grid"><div><dt>진입</dt><dd>7.5938</dd></div><div><dt>손절</dt><dd>7.3700</dd></div><div><dt>목표</dt><dd>8.0414</dd></div></dl>
+            <p>완료 분봉과 거래량 조건을 통과한 유효 신호.</p>
+            <small>evidence · completed_bar · volume</small>
+          </article>
+          <article class="evidence-item">
+            <div class="evidence-topline"><span>DLR · TERMINAL</span><time>11:31 ET</time></div>
+            <h2>DLR EXIT: Target reached</h2>
+            <dl class="price-grid"><div><dt>진입</dt><dd>197.4887</dd></div><div><dt>손절</dt><dd>189.8700</dd></div><div><dt>결과</dt><dd>2R</dd></div></dl>
+            <p>종료된 추천과 실현 상태를 변경 없이 보존합니다.</p>
+            <small>evidence · terminal_result</small>
+          </article>
+          <article class="evidence-item is-unavailable">
+            <div class="evidence-topline"><span>— · UNAVAILABLE</span><time>—</time></div>
+            <h2>신호 근거를 사용할 수 없음</h2>
+            <dl class="price-grid"><div><dt>진입</dt><dd>—</dd></div><div><dt>손절</dt><dd>—</dd></div><div><dt>목표</dt><dd>—</dd></div></dl>
+            <p>source-backed evidence가 없어 fail-closed 처리되었습니다.</p>
+            <small>evidence · unavailable</small>
+          </article>
+        </section>
+        <article class="panel showcase-wide">
+          <p class="meta-label">EMPTY / ERROR</p>
+          <div class="empty-state">아직 게시된 추천이 없습니다.</div>
+          <div class="blocker-list"><p>watch_cycle_failures:70</p></div>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>
