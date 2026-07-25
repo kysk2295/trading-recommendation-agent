@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080908" />
     <meta
       name="description"
-      content="한국·미국 시장 에이전트, 추천, 증거, 실증 연구 상태를 확인하는 비공개 관제 화면"
+      content="한국·미국 시장 에이전트, 추천, 증거, 실증 연구 상태를 확인하는 실시간 관제 화면"
     />
     <title>Trading Agent Observatory</title>
     <link rel="stylesheet" href="/assets/base.css" />
@@ -17,34 +17,7 @@
     <script type="module" src="/assets/client.js"></script>
   </head>
   <body>
-    <section class="access-gate" id="access-gate" aria-labelledby="access-title">
-      <div class="access-copy">
-        <p class="meta-label">PRIVATE OPERATIONS SURFACE</p>
-        <h1 id="access-title">
-          <span>시장은 열리고,</span>
-          <span>증거는 남는다.</span>
-        </h1>
-        <p>
-          <span>장중 에이전트와 추천 근거를 확인합니다.</span>
-          <span>계좌 정보와 비밀키는 저장하지 않습니다.</span>
-        </p>
-      </div>
-      <form class="access-form" id="access-form">
-        <label for="view-token">대시보드 접근 키</label>
-        <input
-          id="view-token"
-          name="view-token"
-          type="password"
-          autocomplete="off"
-          spellcheck="false"
-          required
-        />
-        <button id="access-button" type="submit">관제 화면 열기</button>
-        <p class="form-status" id="access-status" role="alert"></p>
-      </form>
-    </section>
-
-    <div class="app-shell" id="app-shell" hidden>
+    <div class="app-shell" id="app-shell">
       <header class="live-rail">
         <div class="product-mark">
           <span class="wordmark">TRA</span>
@@ -59,7 +32,6 @@
         </div>
         <div class="rail-actions">
           <button class="quiet-button" id="refresh-button" type="button">지금 갱신</button>
-          <button class="quiet-button" id="signout-button" type="button">잠금</button>
         </div>
       </header>
 

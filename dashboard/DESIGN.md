@@ -11,7 +11,7 @@
 
 A quiet market operations room after the decorative screens have been removed. The signature is a thin acid-lime “live rail” that connects freshness, active agents, and current evidence while all other information remains neutral. The interface should feel exact, alert, and readable for hours.
 
-Design read: a private, data-dense trading observatory for one operator, with a technical and restrained language. `DESIGN_VARIANCE: 6`, `MOTION_INTENSITY: 3`, `VISUAL_DENSITY: 8`.
+Design read: a public-read, data-dense trading observatory with a technical and restrained language. Snapshot ingestion remains private. `DESIGN_VARIANCE: 6`, `MOTION_INTENSITY: 3`, `VISUAL_DENSITY: 8`.
 
 ## 2. Color
 
@@ -70,12 +70,6 @@ Base unit: 4px. Tokens: `--space-1` 4px, `--space-2` 8px, `--space-3` 12px, `--s
 
 ## 5. Components
 
-### Access Gate
-- Structure: semantic `form`, `label`, password `input`, submit `button`, status output.
-- States: default, focus, submitting, invalid, server unavailable.
-- Accessibility: visible label, autocomplete off, error announced with `role="alert"`.
-- Motion: opacity only, 180ms.
-
 ### Live Rail
 - Structure: `header` with product identity, freshness text, market clocks, refresh button.
 - States: live, delayed, disconnected.
@@ -105,7 +99,7 @@ Base unit: 4px. Tokens: `--space-1` 4px, `--space-2` 8px, `--space-3` 12px, `--s
 - Accessibility: `aria-pressed` and descriptive names.
 
 ### Primitive Showcase
-- `/showcase` renders access, live rail, ledger loading/empty/error/populated, metric strip, evidence states, and filter tabs at production styles.
+- `/showcase` renders live rail, ledger loading/empty/error/populated, metric strip, evidence states, and filter tabs at production styles.
 
 ## 6. Motion & Interaction
 
@@ -128,7 +122,7 @@ Strategy: tonal shift with sparse borders.
 
 - Minimum body size 14px and minimum interactive target 40px.
 - WCAG AA contrast for all persistent text.
-- Keyboard access for login, refresh, filters, and sign out.
+- Keyboard access for refresh and filters.
 - Never use color as the only state signal.
 - Live updates use polite announcements and do not steal focus.
 - Accepted debt at initial release: no screen-reader chart sonification because the first release uses tables and definition lists instead of canvas charts.

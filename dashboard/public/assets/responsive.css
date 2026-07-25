@@ -38,25 +38,6 @@
 }
 
 @media (max-width: 760px) {
-  .access-gate {
-    grid-template-columns: 1fr;
-  }
-
-  .access-copy {
-    min-height: 54dvh;
-    padding: var(--space-8) var(--space-6);
-    border-right: 0;
-    border-bottom: 1px solid var(--border-default);
-  }
-
-  .access-copy h1 {
-    font-size: clamp(2.6rem, 11.5vw, 4rem);
-  }
-
-  .access-form {
-    padding: var(--space-8) var(--space-6);
-  }
-
   .app-shell {
     padding: 0 var(--space-4);
   }

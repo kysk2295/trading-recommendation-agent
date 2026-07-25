@@ -1,42 +1,6 @@
-.access-form label {
-  color: var(--text-secondary);
-  font-size: 0.75rem;
-}
-
-.access-form input {
-  width: 100%;
-  min-height: 48px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface-canvas);
-  color: var(--text-primary);
-  font-family: "SFMono-Regular", Consolas, monospace;
-}
-
-.access-form button {
-  border: 1px solid var(--accent-primary);
-  border-radius: var(--radius);
-  background: var(--accent-primary);
-  color: var(--surface-canvas);
-  font-weight: 720;
-  transition: background 120ms ease-out, transform 120ms ease-out;
-}
-
-.access-form button:hover {
-  background: var(--accent-hover);
-}
-
-.access-form button:active,
 .quiet-button:active,
 .filter-tabs button:active {
   transform: scale(0.98);
-}
-
-.form-status {
-  min-height: 20px;
-  color: var(--status-error);
-  font-size: 0.75rem;
 }
 
 .wordmark {

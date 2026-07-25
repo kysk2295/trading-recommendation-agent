@@ -8,9 +8,9 @@ import type { SnapshotStore } from "./store";
 
 const MAX_SNAPSHOT_BYTES = 256 * 1024;
 
-export function createApp(store: SnapshotStore, ingestToken: string, viewToken: string): Hono {
-  if (ingestToken === viewToken || ingestToken.length < 24 || viewToken.length < 24) {
-    throw new ConfigurationError("dashboard tokens must be distinct and at least 24 characters");
+export function createApp(store: SnapshotStore, ingestToken: string): Hono {
+  if (ingestToken.length < 24) {
+    throw new ConfigurationError("dashboard ingest token must be at least 24 characters");
   }
   const app = new Hono();
   app.use(
@@ -58,9 +58,6 @@ export function createApp(store: SnapshotStore, ingestToken: string, viewToken: 
     },
   );
   app.get("/api/snapshot", async (context) => {
-    if (!authorized(context.req.header("authorization"), viewToken)) {
-      return context.json({ error: "unauthorized" }, 401);
-    }
     const snapshot = await store.latest();
     if (snapshot === null) {
       return context.json({ error: "snapshot_unavailable" }, 404);

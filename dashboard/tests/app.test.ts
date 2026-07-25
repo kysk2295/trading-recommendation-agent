@@ -3,7 +3,6 @@ import { createApp } from "../src/app";
 import { MemorySnapshotStore } from "../src/store";
 
 const INGEST_TOKEN = "ingest-token-with-adequate-length";
-const VIEW_TOKEN = "viewer-token-with-adequate-length";
 
 const snapshot = {
   schema_version: 1,
@@ -68,7 +67,7 @@ const snapshot = {
 
 describe("dashboard API", () => {
   test("reports public health without disclosing configuration", async () => {
-    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN, VIEW_TOKEN);
+    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN);
 
     const response = await app.request("/api/health");
 
@@ -77,25 +76,23 @@ describe("dashboard API", () => {
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
   });
 
-  test("requires different bearer tokens for ingest and viewing", async () => {
-    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN, VIEW_TOKEN);
+  test("protects ingestion while keeping snapshot reads public", async () => {
+    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN);
 
     const ingestDenied = await app.request("/api/ingest", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(snapshot),
     });
-    const viewDenied = await app.request("/api/snapshot", {
-      headers: { authorization: `Bearer ${INGEST_TOKEN}` },
-    });
+    const viewed = await app.request("/api/snapshot");
 
     expect(ingestDenied.status).toBe(401);
-    expect(viewDenied.status).toBe(401);
+    expect(viewed.status).toBe(404);
   });
 
   test("stores a strict redacted snapshot and returns it to the viewer", async () => {
     const store = new MemorySnapshotStore();
-    const app = createApp(store, INGEST_TOKEN, VIEW_TOKEN);
+    const app = createApp(store, INGEST_TOKEN);
 
     const ingested = await app.request("/api/ingest", {
       method: "POST",
@@ -105,9 +102,7 @@ describe("dashboard API", () => {
       },
       body: JSON.stringify(snapshot),
     });
-    const viewed = await app.request("/api/snapshot", {
-      headers: { authorization: `Bearer ${VIEW_TOKEN}` },
-    });
+    const viewed = await app.request("/api/snapshot");
 
     expect(ingested.status).toBe(202);
     expect(viewed.status).toBe(200);
@@ -115,7 +110,7 @@ describe("dashboard API", () => {
   });
 
   test("rejects fields outside the public schema", async () => {
-    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN, VIEW_TOKEN);
+    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN);
     const unsafe = { ...snapshot, account_id: "must-not-cross-boundary" };
 
     const response = await app.request("/api/ingest", {
@@ -131,11 +126,9 @@ describe("dashboard API", () => {
   });
 
   test("returns not found until the first publisher snapshot arrives", async () => {
-    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN, VIEW_TOKEN);
+    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN);
 
-    const response = await app.request("/api/snapshot", {
-      headers: { authorization: `Bearer ${VIEW_TOKEN}` },
-    });
+    const response = await app.request("/api/snapshot");
 
     expect(response.status).toBe(404);
   });
