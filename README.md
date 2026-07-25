@@ -92,6 +92,8 @@ US systematic `regime_rotation` vertical은 고정 ETF 6종(`GLD`, `IEF`, `IWM`,
 
 **2026-07-24 KR source readiness·chain rollover 업데이트:** network·계좌·주문 없이 OpenDART·LS NWS·KIS secret-file contract를 source별로 판정하는 pre-open readiness CLI와, 이전 exact immutable 운영 bundle에서 원래 manifest 없이 다음 clean code SHA의 두 KR shadow version·policy를 승계하는 chain rollover를 추가했다. actual ledger에서 exact `e910816` version 두 건을 만들고 replay 신규 0건, bundle SHA `732b705cc35730f7e16319f94a65bc8daa919d8bad402275dc3bbacd3e47eac5`를 mode 600으로 확정했다. 2026-07-27 08:30 readiness와 08:55 registration→09:00 start→09:05 source cycle→15:32 finalizer chain은 각각 at-most-once label로 실행 대기 중이다. 7월 24일과 27일 모두 15:45에 primary receipt와 terminal·delivery·Reviewer·lifecycle exact replay를 검사하는 별도 post-session verifier도 예약했다. 이후 7월 24일 수동 readiness에서 OpenDART·LS NWS·KIS와 required terminal source 네 개가 모두 `ready`임을 확인했으며, 이는 7월 27일 실행에서 다시 검증한다. 전체 `3610 passed`, Ruff와 basedpyright `0/0`이 통과했다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-24-kr-source-readiness-chain-rollover-schedule-ko.md)에 있다.
 
+**2026-07-25 실시간 운영 대시보드 업데이트:** 한국·미국 시장 시계, forward 품질, 예약·실행 에이전트, 추천·신호 근거와 실제 연구 기반 상태만 노출하는 private Observatory를 Railway Postgres에 배포했다. 로컬 publisher는 15초마다 strict redacted snapshot을 전송하며 launchd가 재시작을 관리한다. 조회 키는 세션 저장소에만 머물고 수집 키와 분리되며 계좌 식별자·자격증명·로컬 경로·원시 provider payload는 API schema 밖에서 거절된다. 운영 주소는 [Trading Agent Observatory](https://observatory-production-3172.up.railway.app)이며 로컬 조회 키는 `~/.config/trading-agent/dashboard-view-token.txt`의 mode-600 파일에 있다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-25-realtime-operations-dashboard-ko.md)에 있다.
+
 **2026-07-24 KR M3 장후 실측:** 15:32 KST 예약 finalizer는 exit `0`으로 terminal·delivery·독립 Reviewer·lifecycle 네 phase와 각 cycle 한 행을 성공 확정했다. 다만 entry/exit `0/0`, terminal `censored/no_shadow_entry_artifact`, Reviewer `data_quality_review`이므로 clean actual forward로 승격하지 않았다. 15:45 verifier는 nested PEP 723 실행이 launchd `PATH`에서 `uv`를 찾지 못해 exit `127`로 실패했고, 실패 receipt를 보존한 채 같은 frozen runtime·exact 입력을 절대 `uv run --script`로 재실행해 네 phase와 외부 mutation `0`을 검증했다. receipt·claim이 없는 7월 27일 verifier payload도 같은 절대경로로 교정했으며 대기 process는 재시작하지 않았다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-24-kr-m3-post-session-verification-ko.md)에 있다.
 
 **2026-07-24 KR Opportunity 장중 watch 업데이트:** `run_kr_same_cycle_opportunity_watch.py`는 기존 strict one-shot을 새 cycle ID와 분리된 collection/operator output으로 bounded 반복한다. source preflight 차단과 완전한 네 source cycle의 `no_opportunity`를 모두 삭제하지 않고 다음 시도로 넘기며, 정확히 하나의 Opportunity가 생긴 cycle ID만 stdout과 mode-600 watch report에 확정한다. 같은 세션 날짜와 aware deadline, poll 간격, 최대 시도 수를 동시에 요구하고 deadline 또는 시도 수 소진은 non-zero로 닫는다. exact `fbcb34d` runtime의 새 Opportunity/day version을 ledger에 등록하고 기존 one-shot process와 분리된 `ai.trading-agent.kr-m3-watch-20260727` chain을 09:05~15:20 KST 5분 간격·최대 75 cycle로 예약했다. 독립 장후 verifier도 15:45에 예약했으며 기존 process와 국내 계좌·주문 권한은 건드리지 않았다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-24-kr-opportunity-intraday-watch-schedule-ko.md)에 있다.
@@ -1531,11 +1533,13 @@ trading-recommendation-agent/
 ├── scr_backtest/         KIS 분봉 저수준 어댑터
 ├── tests/                인증·최신성·인과성·추천 회귀 테스트
 ├── docs/                 설계·실데이터 연결·런타임 감사
+├── dashboard/            Railway용 private 실시간 운영 관제
 ├── examples/             공급자 독립 분봉 예시
 ├── artifacts/            검증된 실행 결과 표본
 ├── outputs/              새 실행 결과, Git 제외
 ├── run_kis_paper_scan.py
 ├── run_kis_paper_watch.py
+├── run_dashboard_publisher.py
 ├── run_alpaca_minute_archive.py
 ├── run_alpaca_paper_bootstrap.py
 ├── run_alpaca_paper_entry_smoke.py
