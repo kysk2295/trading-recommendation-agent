@@ -15,9 +15,8 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
 import anyio
@@ -34,7 +33,7 @@ from trading_agent.dashboard_commands import (
     PairingTicketMessage,
     parse_dashboard_event,
 )
-from trading_agent.dashboard_models import DashboardSnapshot
+from trading_agent.dashboard_models_v2 import DashboardSnapshotV2
 from trading_agent.dashboard_relay import (
     DashboardRelayConnectionError,
     is_reconnectable_group,
@@ -44,17 +43,22 @@ from trading_agent.dashboard_relay import (
 )
 from trading_agent.dashboard_snapshot import (
     DashboardCredentialError,
-    JobRow,
-    collect_dashboard_snapshot,
     load_dashboard_credentials,
 )
+from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
 
 app = typer.Typer(help="로컬 산출물을 redacted 운영 snapshot으로 안전하게 전송합니다.")
 DEFAULT_OUTPUTS = Path(__file__).resolve().parent / "outputs"
 DEFAULT_CREDENTIALS = Path.home() / ".config" / "trading-agent" / "dashboard.env"
 MAX_RECONNECT_SECONDS = 60
+WATCH_DEBOUNCE_MS = 2_000
+WATCH_STEP_MS = 250
 HERMES_EXECUTABLE = Path(shutil.which("hermes") or Path.home() / ".local/bin/hermes")
 WORKTREE = Path(__file__).resolve().parent
+
+
+class SnapshotSocket(Protocol):
+    async def send(self, message: str) -> None: ...
 
 
 @app.command(help="로컬 산출물을 redacted 운영 snapshot으로 안전하게 전송합니다.")
@@ -72,13 +76,9 @@ def publish(
         config = load_dashboard_credentials(credentials)
     except DashboardCredentialError as error:
         raise typer.BadParameter(str(error), param_hint="--credentials") from error
-    snapshot = collect_dashboard_snapshot(outputs, jobs=_launchd_jobs())
+    snapshot = collect_dashboard_snapshot_v2(outputs)
     if dry_run:
-        rprint(
-            "[green]dashboard snapshot valid[/green] "
-            f"session={snapshot.forward.session_date} "
-            f"recommendations={len(snapshot.recommendations)}"
-        )
+        typer.echo(snapshot.model_dump_json())
         return
     try:
         anyio.run(
@@ -101,7 +101,7 @@ async def _relay(
     outputs: Path,
     dashboard_url: str,
     token: str,
-    initial_snapshot: DashboardSnapshot,
+    initial_snapshot: DashboardSnapshotV2,
     *,
     once: bool,
     pair_browser: bool,
@@ -136,14 +136,14 @@ async def _relay(
                 raise
             await anyio.sleep(_reconnect_delay_seconds(attempt))
             attempt += 1
-            snapshot = collect_dashboard_snapshot(outputs, jobs=_launchd_jobs())
+            snapshot = collect_dashboard_snapshot_v2(outputs)
 
 
 async def _run_relay(
     outputs: Path,
     dashboard_url: str,
     token: str,
-    initial_snapshot: DashboardSnapshot,
+    initial_snapshot: DashboardSnapshotV2,
     once: bool,
     pair_browser: bool,
 ) -> None:
@@ -212,12 +212,16 @@ async def _receive_events(
 
 
 async def _watch_output_events(
-    socket: ClientConnection,
+    socket: SnapshotSocket,
     outputs: Path,
     send_lock: anyio.Lock,
 ) -> None:
-    async for _changes in awatch(*_watch_roots(outputs), debounce=2_000, step=250):
-        snapshot = collect_dashboard_snapshot(outputs, jobs=_launchd_jobs())
+    async for _changes in awatch(
+        *_watch_roots(outputs),
+        debounce=WATCH_DEBOUNCE_MS,
+        step=WATCH_STEP_MS,
+    ):
+        snapshot = collect_dashboard_snapshot_v2(outputs)
         async with send_lock:
             await _send_snapshot(socket, snapshot)
 
@@ -234,8 +238,8 @@ async def _pair_browser_once(socket: ClientConnection, dashboard_url: str) -> No
 
 
 async def _send_snapshot(
-    socket: ClientConnection,
-    snapshot: DashboardSnapshot,
+    socket: SnapshotSocket,
+    snapshot: DashboardSnapshotV2,
 ) -> None:
     await socket.send(
         json.dumps(
@@ -255,8 +259,12 @@ def _publisher_url(dashboard_url: str) -> str:
 def _watch_roots(outputs: Path) -> tuple[Path, ...]:
     candidates = (
         outputs / "live_sessions",
+        outputs / "source_evidence",
         outputs / "experiment_control",
         outputs / "lane_control",
+        outputs / "derivatives",
+        outputs / "paper",
+        outputs / "system",
     )
     existing = tuple(path for path in candidates if path.is_dir())
     return existing or (outputs,)
@@ -264,32 +272,5 @@ def _watch_roots(outputs: Path) -> tuple[Path, ...]:
 
 def _reconnect_delay_seconds(attempt: int) -> int:
     return min(MAX_RECONNECT_SECONDS, 5 * 2 ** max(0, attempt))
-
-
-def _launchd_jobs() -> tuple[JobRow, ...]:
-    try:
-        result = subprocess.run(
-            ("launchctl", "list"),
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return ()
-    rows: list[JobRow] = []
-    for line in result.stdout.splitlines()[1:]:
-        columns = line.split("\t")
-        if len(columns) != 3 or not columns[2].startswith("ai.trading-agent."):
-            continue
-        pid = None if columns[0] == "-" else int(columns[0])
-        try:
-            exit_code = int(columns[1])
-        except ValueError:
-            continue
-        rows.append((columns[2], pid, exit_code))
-    return tuple(rows)
-
-
 if __name__ == "__main__":
     app()
