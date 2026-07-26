@@ -20,6 +20,7 @@ import { dashboardSnapshotV2Schema } from "./schema_v2";
 import type { NormalizedSnapshot } from "./snapshot_normalizer";
 import { parseAndNormalizeSnapshot } from "./snapshot_normalizer";
 import { type SnapshotSaveResult, saveSnapshotPair } from "./snapshot_pair_store";
+import { parseStoredInteractionPayloads } from "./stored_interaction_compat";
 
 export interface SnapshotStore extends AgentTaskEventStore, DirectedJobEventStore {
   save(snapshot: NormalizedSnapshot): Promise<SnapshotSaveResult>;
@@ -254,7 +255,7 @@ export class PostgresSnapshotStore implements SnapshotStore {
       ORDER BY created_at DESC
       LIMIT 40
     `;
-    return rows.map((row) => interactionSchema.parse(row.payload));
+    return parseStoredInteractionPayloads(rows.map((row) => row.payload));
   }
 
   async pendingInteractions(): Promise<readonly Interaction[]> {
@@ -266,7 +267,7 @@ export class PostgresSnapshotStore implements SnapshotStore {
       ORDER BY created_at ASC
       LIMIT 20
     `;
-    return rows.map((row) => interactionSchema.parse(row.payload));
+    return parseStoredInteractionPayloads(rows.map((row) => row.payload));
   }
 
   async appendAgentTaskEvent(event: AutonomousTaskReceipt): Promise<boolean> {
@@ -291,7 +292,7 @@ export class PostgresSnapshotStore implements SnapshotStore {
       SELECT payload FROM dashboard_interactions WHERE id = ${id}
     `;
     const row = rows[0];
-    return row === undefined ? null : interactionSchema.parse(row.payload);
+    return row === undefined ? null : (parseStoredInteractionPayloads([row.payload])[0] ?? null);
   }
 
   private async initialize(): Promise<void> {
