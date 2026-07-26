@@ -3,38 +3,32 @@ import type { EvidenceTraceDrawer } from "../evidence_trace";
 import { resolveEvidenceTrace } from "../evidence_trace";
 import { sourceStatePresentation } from "../render";
 import type { DashboardSnapshotV2 } from "../schema_v2";
+import {
+  type Capability,
+  PROVIDERS,
+  type Provider,
+  type ProviderEvidencePresentation,
+  providerEvidencePresentation,
+  providerQuoteNotice,
+} from "./data_source_evidence";
 import type { WorkspaceRenderer } from "./types";
 
-const PROVIDERS = [
-  "fred",
-  "alfred",
-  "treasury",
-  "cftc",
-  "opendart",
-  "kis",
-  "ls",
-  "alpaca",
-] as const;
-type Provider = (typeof PROVIDERS)[number];
-type Capability = DashboardSnapshotV2["workspaces"]["data_sources"]["capabilities"][number];
+export type { ProviderEvidencePath } from "./data_source_evidence";
+export {
+  providerCoverageText,
+  providerEvidencePresentation,
+  providerQuoteNotice,
+} from "./data_source_evidence";
 
 export const renderDataSources: WorkspaceRenderer = (snapshot, drawer) => {
   const workspace = snapshot.workspaces.data_sources;
   const fragment = document.createDocumentFragment();
-  fragment.append(renderSummary(workspace, snapshot, drawer));
   fragment.append(
-    renderProviderTable(workspace.capabilities, workspace.trace_id, snapshot, drawer),
+    renderSummary(workspace, snapshot, drawer),
+    renderProviderTable(workspace.capabilities, snapshot, drawer),
   );
   return fragment;
 };
-
-export function providerCoverageText(): string {
-  return "미게시 · normalized v2 snapshot에 provider coverage field가 없습니다";
-}
-
-export function providerQuoteNotice(entitlement: Capability["entitlement"]): string {
-  return `현재 quote 미표시 · ${entitlement} entitlement이며 redistribution permit이 snapshot에 없습니다`;
-}
 
 function renderSummary(
   workspace: DashboardSnapshotV2["workspaces"]["data_sources"],
@@ -67,7 +61,6 @@ function renderSummary(
 
 function renderProviderTable(
   capabilities: readonly Capability[],
-  rootTraceId: string,
   snapshot: DashboardSnapshotV2,
   drawer: EvidenceTraceDrawer,
 ): HTMLElement {
@@ -80,7 +73,7 @@ function renderProviderTable(
   viewport.setAttribute("role", "region");
   viewport.setAttribute("aria-label", "8개 provider capability 표");
   const table = document.createElement("table");
-  table.append(renderHead(), renderBody(capabilities, rootTraceId, snapshot, drawer));
+  table.append(renderHead(), renderBody(capabilities, snapshot, drawer));
   viewport.append(table);
   section.append(viewport);
   return section;
@@ -104,14 +97,23 @@ function renderHead(): HTMLTableSectionElement {
 
 function renderBody(
   capabilities: readonly Capability[],
-  rootTraceId: string,
   snapshot: DashboardSnapshotV2,
   drawer: EvidenceTraceDrawer,
 ): HTMLTableSectionElement {
   const body = document.createElement("tbody");
+  const traceIds = capabilities.map((capability) => capability.trace_id);
   for (const provider of PROVIDERS) {
     const capability = capabilities.find((candidate) => candidate.provider === provider);
-    body.append(renderProviderRow(provider, capability, rootTraceId, snapshot, drawer));
+    const trace =
+      capability === undefined
+        ? resolveEvidenceTrace(
+            `trace.data_sources.${provider}.missing`,
+            snapshot.traces.nodes,
+            snapshot.traces.edges,
+          )
+        : resolveEvidenceTrace(capability.trace_id, snapshot.traces.nodes, snapshot.traces.edges);
+    const display = providerEvidencePresentation(provider, capability, trace, traceIds);
+    body.append(renderProviderRow(provider, capability, display, snapshot, drawer));
   }
   return body;
 }
@@ -119,78 +121,48 @@ function renderBody(
 function renderProviderRow(
   provider: Provider,
   capability: Capability | undefined,
-  rootTraceId: string,
+  display: ProviderEvidencePresentation,
   snapshot: DashboardSnapshotV2,
   drawer: EvidenceTraceDrawer,
 ): HTMLTableRowElement {
+  const presentation = sourceStatePresentation(display.state);
   const row = document.createElement("tr");
-  if (capability === undefined) {
-    row.append(
-      textElement("th", provider.toUpperCase()),
-      textElement("td", "unavailable"),
-      textElement("td", "관측 없음"),
-      textElement("td", providerCoverageText()),
-      textElement("td", "Blocker · canonical capability 미게시"),
-      traceCell(traceButton(`${provider.toUpperCase()} missing`, rootTraceId, snapshot, drawer)),
-    );
-    return row;
-  }
-  const trace = resolveEvidenceTrace(
-    capability.trace_id,
-    snapshot.traces.nodes,
-    snapshot.traces.edges,
-  );
-  const presentation = sourceStatePresentation(capability.state);
+  row.dataset["sourceState"] = display.state;
   row.append(
-    textElement("th", capability.label),
-    textElement("td", capability.entitlement),
+    textElement("th", capability?.label ?? provider.toUpperCase()),
+    textElement("td", capability?.entitlement ?? "unavailable"),
     freshnessCell(capability, presentation.label, presentation.tone),
-    textElement("td", providerCoverageText()),
-    textElement(
-      "td",
-      receiptText(
-        trace.status,
-        trace.terminal?.label ?? null,
-        capability.state,
-        capability.entitlement,
+    textElement("td", display.coverage),
+    textElement("td", display.receipt),
+    traceCell(
+      traceButton(
+        capability?.label ?? `${provider.toUpperCase()} capability missing`,
+        display.traceId ?? `trace.data_sources.${provider}.missing`,
+        snapshot,
+        drawer,
       ),
     ),
-    traceCell(traceButton(capability.label, capability.trace_id, snapshot, drawer)),
   );
-  row.dataset["sourceState"] = capability.state;
-  row.setAttribute("aria-label", `${capability.label} ${presentation.label}`);
   return row;
 }
 
 function freshnessCell(
-  capability: Capability,
+  capability: Capability | undefined,
   stateLabel: string,
   tone: "neutral" | "success" | "warning" | "error",
 ): HTMLTableCellElement {
   const cell = document.createElement("td");
   cell.append(textElement("span", stateLabel, `state-badge state-${tone}`));
   cell.append(
-    capability.observed_at === null
-      ? textElement("span", "관측 없음")
+    capability?.observed_at === undefined || capability.observed_at === null
+      ? textElement("span", "관측 없음 · freshness age 미게시")
       : timeElement(capability.observed_at),
   );
-  cell.append(
-    textElement("small", providerQuoteNotice(capability.entitlement), "provider-quote-notice"),
-  );
+  if (capability !== undefined)
+    cell.append(
+      textElement("small", providerQuoteNotice(capability.entitlement), "provider-quote-notice"),
+    );
   return cell;
-}
-
-function receiptText(
-  status: "resolved" | "unavailable" | "corrupt",
-  terminal: string | null,
-  state: Capability["state"],
-  entitlement: Capability["entitlement"],
-): string {
-  const receipt = terminal === null ? status : `${status} · ${terminal}`;
-  if (state === "unavailable" || entitlement === "unavailable") {
-    return `${receipt} · Blocker: entitlement unavailable`;
-  }
-  return `${status} · receipt verified · Blocker: capability에 미게시`;
 }
 
 function traceCell(button: HTMLButtonElement): HTMLTableCellElement {

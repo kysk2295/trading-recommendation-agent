@@ -13,14 +13,14 @@ const PROVIDERS = [
 
 export function marketsDataSourcesFixture(): unknown {
   const observedAt = snapshotV2.generated_at;
-  const dataItems = PROVIDERS.map(([provider, entitlement, state]) => ({
+  const providerItems = PROVIDERS.map(([provider, entitlement, state]) => ({
     item_id: `source.${provider}`,
     kind: "metric" as const,
-    label: provider.toUpperCase(),
+    label: providerLabel(provider),
     state,
     value: entitlement,
     observed_at: state === "unavailable" ? null : observedAt,
-    trace_id: "trace-data",
+    trace_id: providerTraceId(provider),
   }));
   return {
     ...snapshotV2,
@@ -33,24 +33,8 @@ export function marketsDataSourcesFixture(): unknown {
         total_count: 3,
         projected_count: 3,
         items: [
-          {
-            item_id: "market.kr.session",
-            kind: "metric" as const,
-            label: "KR session",
-            state: "populated" as const,
-            value: "scheduled",
-            observed_at: observedAt,
-            trace_id: "trace-markets",
-          },
-          {
-            item_id: "market.us.session",
-            kind: "metric" as const,
-            label: "US session",
-            state: "stale" as const,
-            value: "closed",
-            observed_at: observedAt,
-            trace_id: "trace-markets",
-          },
+          marketSession("kr", "scheduled", "populated", observedAt),
+          marketSession("us", "closed", "stale", observedAt),
           {
             item_id: "market.us.quote",
             kind: "metric" as const,
@@ -68,7 +52,7 @@ export function marketsDataSourcesFixture(): unknown {
         summary: "Eight provider authority receipts",
         total_count: PROVIDERS.length,
         projected_count: PROVIDERS.length,
-        items: dataItems,
+        items: providerItems,
         capabilities: PROVIDERS.map(([provider, entitlement, state]) => ({
           capability_id: `${provider}.authoritative`,
           provider,
@@ -76,7 +60,7 @@ export function marketsDataSourcesFixture(): unknown {
           state,
           entitlement,
           observed_at: state === "unavailable" ? null : observedAt,
-          trace_id: "trace-data",
+          trace_id: providerTraceId(provider),
         })),
       },
     },
@@ -85,7 +69,9 @@ export function marketsDataSourcesFixture(): unknown {
         ...snapshotV2.traces.nodes,
         terminal("trace-markets-terminal", observedAt),
         terminal("trace-data-terminal", observedAt),
-        blocker("trace-data-blocker", observedAt),
+        calendarSource("kr", observedAt),
+        calendarSource("us", observedAt),
+        ...PROVIDERS.flatMap(([provider, , state]) => providerNodes(provider, state, observedAt)),
       ],
       edges: [
         ...snapshotV2.traces.edges,
@@ -95,33 +81,82 @@ export function marketsDataSourcesFixture(): unknown {
           kind: "reviewed_by",
         },
         { from_node_id: "trace-data", to_node_id: "trace-data-terminal", kind: "reviewed_by" },
-        { from_node_id: "trace-data", to_node_id: "trace-data-blocker", kind: "blocked_by" },
+        ...PROVIDERS.map(([provider, , state]) => providerEdge(provider, state)),
       ],
     },
-    projection: {
-      ...snapshotV2.projection,
-      total_count: 11,
-      projected_count: 11,
-    },
+    projection: { ...snapshotV2.projection, total_count: 11, projected_count: 11 },
   };
+}
+
+function marketSession(
+  market: "kr" | "us",
+  value: "scheduled" | "closed",
+  state: "populated" | "stale",
+  observedAt: string,
+) {
+  return {
+    item_id: `market.${market}.session`,
+    kind: "metric" as const,
+    label: `${market.toUpperCase()} session`,
+    state,
+    value,
+    observed_at: observedAt,
+    trace_id: `trace.markets.calendar.${market}`,
+  };
+}
+
+function calendarSource(market: "kr" | "us", observedAt: string) {
+  return {
+    node_id: `trace.markets.calendar.${market}`,
+    kind: "source_receipt" as const,
+    label: "Authoritative market calendar",
+    observed_at: observedAt,
+    safe_ref: null,
+    state: "accepted" as const,
+    source_namespace: "market_calendar.markets",
+  };
+}
+
+function providerNodes(provider: string, state: string, observedAt: string) {
+  const unavailable = state === "unavailable";
+  const source = {
+    node_id: providerTraceId(provider),
+    kind: "source_receipt" as const,
+    label: `${provider} authoritative receipt`,
+    observed_at: observedAt,
+    safe_ref: null,
+    state: unavailable ? ("unavailable" as const) : ("accepted" as const),
+    source_namespace: `provider.${provider}`,
+  };
+  const terminalKind = unavailable ? ("blocker_terminal" as const) : ("reviewer_decision" as const);
+  const terminal = {
+    node_id: `${providerTraceId(provider)}.terminal`,
+    kind: terminalKind,
+    label: unavailable ? `${provider} entitlement unavailable` : `${provider} provider review`,
+    observed_at: observedAt,
+    safe_ref: null,
+    state: unavailable ? ("blocked" as const) : ("accepted" as const),
+    source_namespace: `provider.${provider}`,
+  };
+  return [source, terminal];
+}
+
+function providerEdge(provider: string, state: string) {
+  return {
+    from_node_id: providerTraceId(provider),
+    to_node_id: `${providerTraceId(provider)}.terminal`,
+    kind: state === "unavailable" ? ("blocked_by" as const) : ("reviewed_by" as const),
+  };
+}
+
+function providerTraceId(provider: string): string {
+  return `trace.data_sources.${provider}`;
 }
 
 function providerLabel(provider: string): string {
   return provider === "fred"
     ? "FRED-권위있는장기식별자ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     : provider.toUpperCase();
-}
-
-function blocker(nodeId: string, observedAt: string) {
-  return {
-    node_id: nodeId,
-    kind: "blocker_terminal" as const,
-    label: "provider entitlement unavailable",
-    observed_at: observedAt,
-    safe_ref: null,
-    state: "blocked" as const,
-    source_namespace: "dashboard.fixture.authority",
-  };
 }
 
 function terminal(nodeId: string, observedAt: string) {

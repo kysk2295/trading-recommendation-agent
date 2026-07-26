@@ -6,6 +6,24 @@ import type { DashboardSnapshotV2 } from "../schema_v2";
 import type { WorkspaceRenderer } from "./types";
 
 type MarketItem = DashboardSnapshotV2["workspaces"]["markets"]["items"][number];
+type SourceState = MarketItem["state"];
+const CALENDAR_SESSIONS = [
+  { itemId: "market.kr.session", label: "KR session", values: ["scheduled", "closed"] },
+  { itemId: "market.us.session", label: "US session", values: ["open", "closed"] },
+] as const;
+
+export type MarketEvidencePath = {
+  readonly status: "resolved" | "unavailable" | "corrupt";
+  readonly startsAtSource: boolean;
+  readonly nodes: readonly {
+    readonly node_id: string;
+    readonly kind: string;
+    readonly state: string;
+    readonly source_namespace: string;
+  }[];
+};
+
+export type MarketEvidencePresentation = { readonly state: SourceState; readonly value: string };
 
 export const renderMarkets: WorkspaceRenderer = (snapshot, drawer) => {
   const workspace = snapshot.workspaces.markets;
@@ -16,12 +34,26 @@ export const renderMarkets: WorkspaceRenderer = (snapshot, drawer) => {
   return fragment;
 };
 
-export function marketFactValue(item: {
-  readonly item_id: string;
-  readonly value: string | null;
-}): string {
-  if (item.item_id.endsWith(".session")) return item.value ?? "사용 불가 · session receipt 없음";
-  return "사용 불가 · currentness, entitlement, redistribution proof가 snapshot에 없습니다";
+export function marketEvidencePresentation(
+  item: Pick<MarketItem, "item_id" | "label" | "state" | "value" | "observed_at" | "trace_id">,
+  trace: MarketEvidencePath,
+): MarketEvidencePresentation {
+  const contract = CALENDAR_SESSIONS.find((candidate) => candidate.itemId === item.item_id);
+  const hasValidValue = contract?.values.some((value) => value === item.value) ?? false;
+  const source = trace.nodes.find((node) => node.node_id === item.trace_id);
+  const authoritative =
+    contract?.label === item.label &&
+    hasValidValue &&
+    item.observed_at !== null &&
+    (item.state === "populated" || item.state === "stale") &&
+    trace.status === "resolved" &&
+    trace.startsAtSource &&
+    source?.kind === "source_receipt" &&
+    source.state === "accepted" &&
+    source.source_namespace === "market_calendar.markets";
+  return authoritative
+    ? { state: item.state, value: item.value ?? "사용 불가 · session value 없음" }
+    : { state: "unavailable", value: "사용 불가 · authoritative calendar/session evidence 없음" };
 }
 
 function renderSummary(
@@ -33,8 +65,14 @@ function renderSummary(
   const section = document.createElement("section");
   section.className = `source-state-panel market-summary state-${presentation.tone}`;
   section.dataset["sourceState"] = workspace.state;
+  const heading = document.createElement("div");
+  heading.className = "state-panel-heading";
+  heading.append(
+    textElement("h2", workspace.summary),
+    traceButton(presentation.label, workspace.trace_id, snapshot, drawer),
+  );
   section.append(
-    renderHeading(presentation.label, workspace.summary, workspace.trace_id, snapshot, drawer),
+    heading,
     textElement("p", presentation.guidance, "state-guidance"),
     renderMetadata(workspace.observed_at, workspace.freshness.age_seconds, workspace.blocker_code),
   );
@@ -68,13 +106,17 @@ function renderSession(
   snapshot: DashboardSnapshotV2,
   drawer: EvidenceTraceDrawer,
 ): HTMLElement {
-  const presentation = sourceStatePresentation(item.state);
+  const display = marketEvidencePresentation(
+    item,
+    resolveEvidenceTrace(item.trace_id, snapshot.traces.nodes, snapshot.traces.edges),
+  );
+  const presentation = sourceStatePresentation(display.state);
   const article = document.createElement("article");
   article.className = "market-session-card";
   article.append(
     textElement("p", presentation.label, `state-badge state-${presentation.tone}`),
     textElement("h3", item.label),
-    textElement("strong", marketFactValue(item), "market-session-value"),
+    textElement("strong", display.value, "market-session-value"),
     item.observed_at === null
       ? textElement("p", "관측 시각 없음", "market-observed")
       : timeElement(item.observed_at),
@@ -90,39 +132,25 @@ function renderContext(
 ): HTMLElement {
   const section = document.createElement("section");
   section.className = "market-context-section";
-  section.append(textElement("h2", "Market context and quote guard"));
-  const otherItems = items.filter((item) => !item.item_id.endsWith(".session"));
   section.append(
+    textElement("h2", "Market context and quote guard"),
     textElement(
       "p",
       "현재 quote는 entitlement, currentness, redistribution permit이 함께 있는 canonical snapshot에서만 표시합니다. 이 v2 projection은 calendar/session evidence만 게시합니다.",
       "state-guidance",
     ),
   );
-  for (const item of otherItems) {
+  for (const item of items.filter((value) => !value.item_id.endsWith(".session"))) {
     const row = document.createElement("div");
     row.className = "market-withheld-row";
     row.append(
       textElement("strong", item.label),
-      textElement("span", marketFactValue(item)),
+      textElement("span", "사용 불가 · current quote authority 없음"),
       traceButton(item.label, item.trace_id, snapshot, drawer),
     );
     section.append(row);
   }
   return section;
-}
-
-function renderHeading(
-  state: string,
-  summary: string,
-  traceId: string,
-  snapshot: DashboardSnapshotV2,
-  drawer: EvidenceTraceDrawer,
-): HTMLElement {
-  const heading = document.createElement("div");
-  heading.className = "state-panel-heading";
-  heading.append(textElement("h2", summary), traceButton(state, traceId, snapshot, drawer));
-  return heading;
 }
 
 function renderMetadata(
@@ -132,27 +160,22 @@ function renderMetadata(
 ): HTMLElement {
   const metadata = document.createElement("dl");
   metadata.className = "market-metadata";
-  metadata.append(
-    metadataValue(
-      "관측",
-      observedAt === null ? textElement("span", "없음") : timeElement(observedAt),
-    ),
-    metadataValue(
+  for (const [label, value] of [
+    ["관측", observedAt === null ? textElement("span", "없음") : timeElement(observedAt)],
+    [
       "신선도",
       textElement(
         "span",
         ageSeconds === null ? "계산 불가" : `${ageSeconds.toLocaleString("ko-KR")}초`,
       ),
-    ),
-    metadataValue("Blocker", textElement("code", blockerCode ?? "없음")),
-  );
+    ],
+    ["Blocker", textElement("code", blockerCode ?? "없음")],
+  ] as const) {
+    const group = document.createElement("div");
+    group.append(textElement("dt", label), value);
+    metadata.append(group);
+  }
   return metadata;
-}
-
-function metadataValue(label: string, value: HTMLElement): HTMLElement {
-  const group = document.createElement("div");
-  group.append(textElement("dt", label), value);
-  return group;
 }
 
 function traceButton(
