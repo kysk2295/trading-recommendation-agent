@@ -171,7 +171,7 @@ def trigger_fixture(
             "pinned_code_sha": "a" * 40,
             "allowed_read_roots": ("isolated_worktree", "source_evidence"),
             "allowed_write_roots": ("experiment",),
-            "allowed_tools": ("read_evidence", "write_candidate"),
+            "allowed_tools": ("read_evidence", "write_candidate", "run_tests"),
             "network_policy": "model_provider_only",
             "requested_read_paths": ("source_evidence",),
             "requested_write_paths": ("experiment/candidate.json",),

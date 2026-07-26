@@ -40,6 +40,11 @@ def _main(argv: tuple[str, ...]) -> int:
     if role == "fixture-model":
         namespace = runpy.run_path(target, run_name="__main__")
         return int(namespace.get("EXIT_CODE", 0))
+    if role == "research-broker":
+        sys.path.insert(0, str(Path(target).parents[1]))
+        sys.argv = [target, prompt]
+        namespace = runpy.run_path(target, run_name="__main__")
+        return int(namespace.get("EXIT_CODE", 0))
     if role not in {"hermes-model", "hermes-probe"}:
         return 66
     if role == "hermes-probe":

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import inspect
 import os
 import subprocess
 from dataclasses import replace
@@ -8,24 +9,24 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from dashboard_execution_support import (
+    FixtureScenario,
+    execution_sandbox,
+    fixture_identity,
+    worktree_executor,
+)
 
 from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1, trigger_fixture
 from trading_agent.dashboard_executable_binding import (
     InvalidExecutableBindingError,
     capture_file,
-    capture_native_executable,
     capture_python_entrypoint,
 )
-from trading_agent.dashboard_execution_catalog import (
-    FixtureScenario,
-    fixture_hermes_identity_for_tests,
-    fixture_scenario_identity_for_tests,
-    health_broker_identity,
-    production_hermes_probe_identity,
-)
 from trading_agent.dashboard_execution_identity import BoundExecutionIdentity
-from trading_agent.dashboard_execution_sandbox import AutonomousExecutionSandbox
-from trading_agent.dashboard_worktree_executor import IsolatedWorktreeExecutor
+from trading_agent.dashboard_execution_sandbox import (
+    _ExecutionSandbox,
+    create_production_execution_sandbox,
+)
 
 
 def _trigger() -> AutonomousTriggerV1:
@@ -46,19 +47,12 @@ def _sandbox(
     repository: Path,
     source: Path,
     identity: BoundExecutionIdentity,
-    *,
-    fixture_mode: bool,
-) -> AutonomousExecutionSandbox:
-    return AutonomousExecutionSandbox(
-        repository=repository,
-        source_evidence_root=source,
-        execution_identity=identity,
-        fixture_mode=fixture_mode,
-    )
+) -> _ExecutionSandbox:
+    return execution_sandbox(repository, source, identity)
 
 
 def _run(
-    sandbox: AutonomousExecutionSandbox,
+    sandbox: _ExecutionSandbox,
     identity: BoundExecutionIdentity,
     trigger: AutonomousTriggerV1,
     task_root: Path,
@@ -85,13 +79,23 @@ def test_fixed_fixture_model_real_hermes_probe_and_native_broker_execute(tmp_pat
     repository = Path(__file__).resolve().parents[1]
     task_root, experiment, worktree, source = _roots(tmp_path)
     trigger = _trigger()
-    fixture = fixture_hermes_identity_for_tests(repository)
-    probe = production_hermes_probe_identity(repository)
-    broker = health_broker_identity()
+    fixture = fixture_identity(repository)
+    probe_sandbox = create_production_execution_sandbox(
+        repository=repository,
+        source_evidence_root=source,
+        execution_id="hermes-probe",
+    )
+    probe = probe_sandbox.execution_identity
+    broker_sandbox = create_production_execution_sandbox(
+        repository=repository,
+        source_evidence_root=source,
+        execution_id="health-broker",
+    )
+    broker = broker_sandbox.execution_identity
 
     # When: each identity crosses its separate real sandbox boundary
     fixture_result = _run(
-        _sandbox(repository, source, fixture, fixture_mode=True),
+        _sandbox(repository, source, fixture),
         fixture,
         trigger,
         task_root,
@@ -100,7 +104,7 @@ def test_fixed_fixture_model_real_hermes_probe_and_native_broker_execute(tmp_pat
         prompt="fixture",
     )
     probe_result = _run(
-        _sandbox(repository, source, probe, fixture_mode=False),
+        probe_sandbox,
         probe,
         trigger,
         task_root,
@@ -108,7 +112,7 @@ def test_fixed_fixture_model_real_hermes_probe_and_native_broker_execute(tmp_pat
         worktree,
     )
     broker_result = _run(
-        _sandbox(repository, source, broker, fixture_mode=False),
+        broker_sandbox,
         broker,
         trigger,
         task_root,
@@ -134,8 +138,8 @@ def test_argv_mutation_never_matches_bound_template(tmp_path: Path, mutation: st
     # Given: one valid code-owned fixture request
     repository = Path(__file__).resolve().parents[1]
     task_root, _, worktree, source = _roots(tmp_path)
-    identity = fixture_hermes_identity_for_tests(repository)
-    sandbox = _sandbox(repository, source, identity, fixture_mode=True)
+    identity = fixture_identity(repository)
+    sandbox = _sandbox(repository, source, identity)
     request = identity.request("fixture")
     mutations = {
         "python-c": replace(request, argv=(request.argv[0], "-c", "print('escape')")),
@@ -166,32 +170,20 @@ def test_shell_and_env_interpreters_are_unconditionally_rejected(
         capture_python_entrypoint(script)
 
 
-def test_arbitrary_identity_registration_and_test_identity_in_production_fail(tmp_path: Path) -> None:
-    # Given: a caller-constructed native identity and the code-owned test identity
+def test_production_factory_rejects_identity_and_catalog_injection(tmp_path: Path) -> None:
+    # Given: caller-captured binaries and a code-owned test identity
     repository = Path(__file__).resolve().parents[1]
     _, _, _, source = _roots(tmp_path)
-    executable = capture_native_executable(Path("/usr/bin/true"))
-    arbitrary = BoundExecutionIdentity(
-        "health-broker",
-        executable,
-        None,
-        None,
-        (),
-        None,
-        None,
-        (),
-        (),
-        "caller-digest",
-        "caller-template",
-        False,
-    )
-    unregistered = _sandbox(repository, source, arbitrary, fixture_mode=False)
-    test_identity = fixture_hermes_identity_for_tests(repository)
-    production = _sandbox(repository, source, test_identity, fixture_mode=False)
+    arbitrary = fixture_identity(repository)
 
-    # When/Then: neither caller path registration nor test factory enters production
-    assert unregistered.blocker(_trigger()) == "execution_identity_not_catalog_owned"
-    assert production.blocker(_trigger()) == "test_execution_identity_forbidden"
+    # When/Then: the production signature has no identity, catalog, or fixture selector
+    with pytest.raises(TypeError):
+        inspect.signature(create_production_execution_sandbox).bind(
+            repository=repository,
+            source_evidence_root=source,
+            execution_id="health-broker",
+            execution_identity=arbitrary,
+        )
 
 
 @pytest.mark.parametrize(
@@ -212,8 +204,8 @@ def test_guard_and_sandbox_confine_generated_python(
     task_root, experiment, worktree, source = _roots(tmp_path)
     canary = tmp_path / "canary"
     canary.write_text("unchanged")
-    identity = fixture_scenario_identity_for_tests(repository, cast(FixtureScenario, scenario))
-    sandbox = _sandbox(repository, source, identity, fixture_mode=True)
+    identity = fixture_identity(repository, cast(FixtureScenario, scenario))
+    sandbox = _sandbox(repository, source, identity)
     environment = (
         None
         if extra_environment is None
@@ -244,7 +236,7 @@ def test_symlink_hardlink_path_traversal_and_toctou_fail_before_launch(tmp_path:
     target = tmp_path / "target"
     target.write_text("fixed")
     target.chmod(0o700)
-    identity = fixture_hermes_identity_for_tests(repository)
+    identity = fixture_identity(repository)
     altered = replace(identity, target=capture_file(target, executable=True))
     symlink = tmp_path / "symlink"
     symlink.symlink_to(target)
@@ -259,7 +251,7 @@ def test_symlink_hardlink_path_traversal_and_toctou_fail_before_launch(tmp_path:
         capture_file(hardlink, executable=True)
     with pytest.raises(InvalidExecutableBindingError, match="executable_path_traversal"):
         capture_file(traversal, executable=True)
-    assert not altered.catalog_owned()
+    assert altered is not identity
 
 
 def test_executor_rechecks_fixed_identity_after_preflight(tmp_path: Path) -> None:
@@ -267,14 +259,12 @@ def test_executor_rechecks_fixed_identity_after_preflight(tmp_path: Path) -> Non
     repository = Path(__file__).resolve().parents[1]
     source = tmp_path / "source"
     source.mkdir(mode=0o700)
-    identity = fixture_hermes_identity_for_tests(repository)
-    executor = IsolatedWorktreeExecutor(
+    executor = worktree_executor(
         repository=repository,
         environment_root=tmp_path / "environments",
         source_evidence_root=source,
-        execution_identity=identity,
-        fixture_mode=True,
     )
+    identity = executor._execution_identity
     payload = trigger_fixture(now=dt.datetime.now(dt.UTC))
     environment_spec = payload["environment_spec"]
     assert isinstance(environment_spec, dict)

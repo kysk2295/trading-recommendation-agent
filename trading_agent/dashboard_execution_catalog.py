@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, assert_never
 
 from trading_agent.dashboard_executable_binding import (
     FileIdentity,
@@ -14,58 +15,102 @@ from trading_agent.dashboard_executable_binding import (
 )
 from trading_agent.dashboard_execution_identity import (
     BoundExecutionIdentity,
-    bind_native_identity,
-    bind_python_identity,
+    _build_native_identity,
+    _build_python_identity,
 )
 
-FixtureScenario = Literal["model", "exec-escape", "filesystem-escape", "network-escape"]
+ProductionExecutionId = Literal[
+    "hermes-model",
+    "hermes-probe",
+    "health-broker",
+    "research-broker",
+]
+_PRODUCTION_IDS: tuple[ProductionExecutionId, ...] = (
+    "hermes-model",
+    "hermes-probe",
+    "health-broker",
+    "research-broker",
+)
 _WRAPPER_EXEC = re.compile(r'^exec "([^"]+)" "\$@"$')
-_FIXTURE_TARGETS: dict[FixtureScenario, str] = {
-    "model": "fake_hermes.py",
-    "exec-escape": "fake_hermes_exec_escape.py",
-    "filesystem-escape": "fake_hermes_filesystem_escape.py",
-    "network-escape": "fake_hermes_network_escape.py",
-}
 
 
-def production_hermes_identity(repository: Path) -> BoundExecutionIdentity:
-    return _production_hermes_identity(repository, "hermes-model")
+@dataclass(frozen=True, slots=True)
+class _SealedProductionSelection:
+    execution_id: ProductionExecutionId
+    identity: BoundExecutionIdentity
+    descriptor: BoundExecutionIdentity
+
+    def validate(self, candidate: BoundExecutionIdentity) -> None:
+        if candidate is not self.identity or candidate != self.descriptor:
+            raise InvalidExecutableBindingError("execution_identity_not_sealed")
+        candidate.revalidate()
 
 
-def production_hermes_probe_identity(repository: Path) -> BoundExecutionIdentity:
-    return _production_hermes_identity(repository, "hermes-probe")
+@dataclass(frozen=True, slots=True)
+class _SealedProductionCatalog:
+    entries: tuple[_SealedProductionSelection, ...]
+
+    def select(self, execution_id: ProductionExecutionId) -> _SealedProductionSelection:
+        for entry in self.entries:
+            if entry.execution_id == execution_id:
+                return entry
+        raise InvalidExecutableBindingError("production_execution_id_forbidden")
 
 
-def fixture_hermes_identity_for_tests(repository: Path) -> BoundExecutionIdentity:
-    return fixture_scenario_identity_for_tests(repository, "model")
+def _create_selector():
+    repository = Path(__file__).resolve().parents[1]
+    catalog = _SealedProductionCatalog(
+        tuple(
+            _SealedProductionSelection(
+                fixed_id,
+                _build_descriptor(repository, fixed_id),
+                _build_descriptor(repository, fixed_id),
+            )
+            for fixed_id in _PRODUCTION_IDS
+        )
+    )
+
+    def select(
+        requested_repository: Path,
+        execution_id: ProductionExecutionId,
+    ) -> _SealedProductionSelection:
+        if requested_repository.resolve(strict=True) != repository:
+            raise InvalidExecutableBindingError("production_repository_forbidden")
+        return catalog.select(execution_id)
+
+    return select
 
 
-def fixture_scenario_identity_for_tests(
+def _build_descriptor(
     repository: Path,
-    scenario: FixtureScenario,
+    execution_id: ProductionExecutionId,
 ) -> BoundExecutionIdentity:
-    target = capture_file(
-        repository / "tests" / "fixtures" / "dashboard" / _FIXTURE_TARGETS[scenario],
-        executable=True,
-    )
-    interpreter = capture_native_executable(Path(sys.executable).resolve(strict=True))
-    return bind_python_identity(
-        "fixture-model",
-        repository,
-        interpreter,
-        target,
-        None,
-        (interpreter.path.parents[1], repository),
-        readable_literals=(),
-        test_only=True,
-    )
+    match execution_id:
+        case "health-broker":
+            return _build_native_identity(capture_native_executable(Path("/usr/bin/true")))
+        case "research-broker":
+            interpreter = capture_native_executable(Path(sys.executable).resolve(strict=True))
+            target = capture_file(
+                repository / "trading_agent" / "dashboard_research_broker.py",
+                executable=True,
+            )
+            return _build_python_identity(
+                "research-broker",
+                repository,
+                interpreter,
+                target,
+                None,
+                (interpreter.path.parents[1], repository),
+                readable_literals=(),
+                test_only=False,
+            )
+        case "hermes-model" | "hermes-probe":
+            return _build_hermes_descriptor(repository, execution_id)
+        case unexpected:
+            assert_never(unexpected)
 
 
-def health_broker_identity() -> BoundExecutionIdentity:
-    return bind_native_identity(capture_native_executable(Path("/usr/bin/true")))
-
-
-def _production_hermes_identity(
+def _build_hermes_descriptor(
     repository: Path,
     role: Literal["hermes-model", "hermes-probe"],
 ) -> BoundExecutionIdentity:
@@ -76,7 +121,7 @@ def _production_hermes_identity(
     if direct_path.resolve(strict=True) != expected_direct:
         raise InvalidExecutableBindingError("hermes_wrapper_target_forbidden")
     entrypoint, interpreter = capture_python_entrypoint(direct_path)
-    return bind_python_identity(
+    return _build_python_identity(
         role,
         repository,
         interpreter,
@@ -97,11 +142,6 @@ def _wrapper_target(wrapper: FileIdentity) -> Path:
     return Path(matches[0].group(1))
 
 
-__all__ = (
-    "FixtureScenario",
-    "fixture_hermes_identity_for_tests",
-    "fixture_scenario_identity_for_tests",
-    "health_broker_identity",
-    "production_hermes_identity",
-    "production_hermes_probe_identity",
-)
+_select_production_execution = _create_selector()
+
+__all__ = ("ProductionExecutionId",)

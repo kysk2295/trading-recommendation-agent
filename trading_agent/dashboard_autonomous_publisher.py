@@ -18,17 +18,15 @@ from trading_agent.dashboard_autonomous_research import (
     AutonomousTaskReceiptV1,
     AutonomousTriggerV1,
 )
-from trading_agent.dashboard_execution_catalog import (
-    fixture_hermes_identity_for_tests,
-    production_hermes_identity,
-)
-from trading_agent.dashboard_execution_identity import BoundExecutionIdentity
 from trading_agent.dashboard_invalid_trigger_store import RejectedTriggerStore
 from trading_agent.dashboard_trigger_authority import (
     PersistedTriggerAuthorityResolver,
     TriggerAuthorityStore,
 )
-from trading_agent.dashboard_worktree_executor import IsolatedWorktreeExecutor
+from trading_agent.dashboard_worktree_executor import (
+    AutonomousTaskExecutor,
+    IsolatedWorktreeExecutor,
+)
 from trading_agent.experiment_ledger_store import ExperimentLedgerReader
 from trading_agent.lane_review_store import LaneReviewReader
 from trading_agent.private_query_file import (
@@ -83,8 +81,6 @@ def execute_autonomous_fixture(
     return run_autonomous_trigger(
         trigger,
         state_root=state_root,
-        execution_identity=production_hermes_identity(REPOSITORY),
-        fixture_mode=False,
         receipts=[],
     )
 
@@ -116,8 +112,6 @@ async def stream_autonomous_trigger_event(
         lambda: run_autonomous_trigger(
             trigger,
             state_root=DEFAULT_AUTONOMOUS_STATE,
-            execution_identity=production_hermes_identity(REPOSITORY),
-            fixture_mode=False,
             receipts=receipts,
         )
     )
@@ -146,20 +140,26 @@ def run_autonomous_trigger(
     trigger: AutonomousTriggerV1,
     *,
     state_root: Path,
-    execution_identity: BoundExecutionIdentity,
-    fixture_mode: bool,
     receipts: list[AutonomousTaskReceiptV1],
+) -> AutonomousOutcome:
+    executor = IsolatedWorktreeExecutor(
+        repository=REPOSITORY,
+        environment_root=state_root / "environments",
+        source_evidence_root=state_root / "authorities",
+    )
+    return _handle_autonomous_trigger(trigger, state_root, receipts, executor)
+
+
+def _handle_autonomous_trigger(
+    trigger: AutonomousTriggerV1,
+    state_root: Path,
+    receipts: list[AutonomousTaskReceiptV1],
+    executor: AutonomousTaskExecutor,
 ) -> AutonomousOutcome:
     authority_store = TriggerAuthorityStore(state_root / "authorities")
     plane = AutonomousControlPlane(
         state_root=state_root,
-        executor=IsolatedWorktreeExecutor(
-            repository=REPOSITORY,
-            environment_root=state_root / "environments",
-            source_evidence_root=state_root / "authorities",
-            execution_identity=execution_identity,
-            fixture_mode=fixture_mode,
-        ),
+        executor=executor,
         policy=DEFAULT_AUTONOMOUS_POLICY,
         authority_resolver=ProductionTriggerAuthorityResolver(
             persisted=PersistedTriggerAuthorityResolver(authority_store),
@@ -173,26 +173,10 @@ def run_autonomous_trigger(
     return plane.handle(trigger)
 
 
-def run_autonomous_trigger_for_tests(
-    trigger: AutonomousTriggerV1,
-    *,
-    state_root: Path,
-    receipts: list[AutonomousTaskReceiptV1],
-) -> AutonomousOutcome:
-    return run_autonomous_trigger(
-        trigger,
-        state_root=state_root,
-        execution_identity=fixture_hermes_identity_for_tests(REPOSITORY),
-        fixture_mode=True,
-        receipts=receipts,
-    )
-
-
 __all__ = (
     "DEFAULT_AUTONOMOUS_STATE",
     "InvalidAutonomousTriggerFixtureError",
     "autonomous_trigger_paths",
     "execute_autonomous_fixture",
-    "run_autonomous_trigger_for_tests",
     "stream_autonomous_trigger_event",
 )

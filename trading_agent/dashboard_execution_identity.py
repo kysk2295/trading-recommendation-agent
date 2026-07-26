@@ -12,13 +12,25 @@ from trading_agent.dashboard_executable_binding import (
     revalidate,
     tree_sha256,
 )
+from trading_agent.dashboard_research_broker_contract import (
+    BrokerOperation,
+    InvalidResearchBrokerCommandError,
+    decode_broker_command,
+    encode_broker_command,
+)
 
-ExecutionRole = Literal["hermes-model", "hermes-probe", "fixture-model", "health-broker"]
-_REGISTERED_IDENTITY_DIGESTS: set[str] = set()
+ExecutionRole = Literal[
+    "hermes-model",
+    "hermes-probe",
+    "fixture-model",
+    "health-broker",
+    "research-broker",
+]
 
 
 @dataclass(frozen=True, slots=True)
 class BoundExecutionRequest:
+    identity: BoundExecutionIdentity
     role: ExecutionRole
     identity_digest: str
     template_digest: str
@@ -47,6 +59,8 @@ class BoundExecutionIdentity:
                 if prompt:
                     raise InvalidExecutableBindingError("broker_arguments_forbidden")
                 argv = (str(self.executable.path),)
+            case "research-broker":
+                raise InvalidExecutableBindingError("broker_request_required")
             case "hermes-probe":
                 if prompt:
                     raise InvalidExecutableBindingError("execution_probe_arguments_forbidden")
@@ -74,10 +88,39 @@ class BoundExecutionIdentity:
             case unexpected:
                 assert_never(unexpected)
         return BoundExecutionRequest(
+            self,
             self.role,
             self.identity_digest,
             self.template_digest,
             prompt,
+            argv,
+        )
+
+    def broker_request(
+        self,
+        operation: BrokerOperation,
+        parameters: tuple[str, ...],
+    ) -> BoundExecutionRequest:
+        if self.role != "research-broker" or self.launcher is None or self.target is None:
+            raise InvalidExecutableBindingError("research_broker_identity_required")
+        try:
+            payload = encode_broker_command(operation, parameters)
+        except InvalidResearchBrokerCommandError as error:
+            raise InvalidExecutableBindingError(error.reason) from error
+        argv = (
+            str(self.executable.path),
+            str(self.launcher.path),
+            self.role,
+            str(self.target.path),
+            payload,
+        )
+        operation_template_digest = _digest((self.template_digest, operation))
+        return BoundExecutionRequest(
+            self,
+            self.role,
+            self.identity_digest,
+            operation_template_digest,
+            payload,
             argv,
         )
 
@@ -93,19 +136,22 @@ class BoundExecutionIdentity:
             raise InvalidExecutableBindingError("trusted_package_identity_changed")
 
     def accepts(self, request: BoundExecutionRequest) -> bool:
-        if not self.catalog_owned():
+        if request.identity is not self:
             return False
         try:
-            expected = self.request(request.prompt)
+            if self.role == "research-broker":
+                operation, parameters = decode_broker_command(request.prompt)
+                expected = self.broker_request(operation, parameters)
+            else:
+                expected = self.request(request.prompt)
         except InvalidExecutableBindingError:
+            return False
+        except InvalidResearchBrokerCommandError:
             return False
         return request == expected
 
-    def catalog_owned(self) -> bool:
-        return self.identity_digest in _REGISTERED_IDENTITY_DIGESTS and self.identity_digest == _identity_digest(self)
 
-
-def bind_native_identity(executable: FileIdentity) -> BoundExecutionIdentity:
+def _build_native_identity(executable: FileIdentity) -> BoundExecutionIdentity:
     template_digest = _digest(("health-broker", str(executable.path)))
     identity = BoundExecutionIdentity(
         "health-broker",
@@ -135,12 +181,11 @@ def bind_native_identity(executable: FileIdentity) -> BoundExecutionIdentity:
         identity.template_digest,
         identity.test_only,
     )
-    _REGISTERED_IDENTITY_DIGESTS.add(identity.identity_digest)
     return identity
 
 
-def bind_python_identity(
-    role: Literal["hermes-model", "hermes-probe", "fixture-model"],
+def _build_python_identity(
+    role: Literal["hermes-model", "hermes-probe", "fixture-model", "research-broker"],
     repository: Path,
     interpreter: FileIdentity,
     target: FileIdentity,
@@ -194,7 +239,6 @@ def bind_python_identity(
         identity.template_digest,
         identity.test_only,
     )
-    _REGISTERED_IDENTITY_DIGESTS.add(identity.identity_digest)
     return identity
 
 
@@ -219,7 +263,6 @@ def _identity_digest(identity: BoundExecutionIdentity) -> str:
 __all__ = (
     "BoundExecutionIdentity",
     "BoundExecutionRequest",
+    "BrokerOperation",
     "ExecutionRole",
-    "bind_native_identity",
-    "bind_python_identity",
 )

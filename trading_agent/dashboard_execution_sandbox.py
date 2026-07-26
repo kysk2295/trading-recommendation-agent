@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -8,26 +9,30 @@ from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1
 from trading_agent.dashboard_executable_binding import (
     InvalidExecutableBindingError,
 )
+from trading_agent.dashboard_execution_catalog import (
+    ProductionExecutionId,
+    _select_production_execution,
+)
 from trading_agent.dashboard_execution_identity import (
     BoundExecutionIdentity,
     BoundExecutionRequest,
 )
 
+IdentityValidator = Callable[[BoundExecutionIdentity], None]
+
 
 @dataclass(frozen=True, slots=True)
-class AutonomousExecutionSandbox:
+class _ExecutionSandbox:
     repository: Path
     source_evidence_root: Path
     execution_identity: BoundExecutionIdentity
     fixture_mode: bool
+    identity_validator: IdentityValidator
     _binding_error: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.execution_identity.catalog_owned():
-            object.__setattr__(self, "_binding_error", "execution_identity_not_catalog_owned")
-            return
         try:
-            self.execution_identity.revalidate()
+            self.identity_validator(self.execution_identity)
         except InvalidExecutableBindingError as error:
             object.__setattr__(self, "_binding_error", error.reason)
 
@@ -36,7 +41,10 @@ class AutonomousExecutionSandbox:
             return "read_root_policy_forbidden"
         if trigger.environment_spec.allowed_write_roots != ("experiment",):
             return "write_root_policy_forbidden"
-        if any(tool not in {"read_evidence", "write_candidate"} for tool in trigger.environment_spec.allowed_tools):
+        if any(
+            tool not in {"read_evidence", "write_candidate", "run_tests"}
+            for tool in trigger.environment_spec.allowed_tools
+        ):
             return "tool_policy_forbidden"
         if trigger.environment_spec.requested_tool_argv:
             return "tool_argv_forbidden"
@@ -48,11 +56,13 @@ class AutonomousExecutionSandbox:
             return "network_target_forbidden"
         if self._binding_error is not None:
             return self._binding_error
-        if self.execution_identity.test_only and not self.fixture_mode:
-            return "test_execution_identity_forbidden"
         if trigger.environment_spec.network_policy == "public_read_only":
             return "network_policy_forbidden"
-        if trigger.environment_spec.network_policy == "model_provider_only" and not self.fixture_mode:
+        if (
+            trigger.environment_spec.network_policy == "model_provider_only"
+            and not self.fixture_mode
+            and self.execution_identity.role in {"hermes-model", "hermes-probe"}
+        ):
             return "provider_proxy_required"
         if not self.source_evidence_root.is_dir() or self.source_evidence_root.is_symlink():
             return "source_evidence_root_invalid"
@@ -122,10 +132,15 @@ class AutonomousExecutionSandbox:
             "DASHBOARD_AUTONOMOUS_CHANNEL": "1",
             "DASHBOARD_EXPERIMENT_ROOT": str(experiment.resolve(strict=True)),
             "DASHBOARD_MEMORY_NAMESPACE": f"research-family:{trigger.agent_family_id}:memory-v1",
-            "DASHBOARD_NETWORK_POLICY": "none" if self.fixture_mode else trigger.environment_spec.network_policy,
+            "DASHBOARD_NETWORK_POLICY": (
+                trigger.environment_spec.network_policy
+                if self.execution_identity.role in {"hermes-model", "hermes-probe"}
+                else "none"
+            ),
             "DASHBOARD_PINNED_TARGET": (
                 "" if self.execution_identity.target is None else str(self.execution_identity.target.path)
             ),
+            "DASHBOARD_SOURCE_EVIDENCE_ROOT": str(self.source_evidence_root.resolve(strict=True)),
             "HOME": str(home.resolve(strict=True)),
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
@@ -152,7 +167,31 @@ class AutonomousExecutionSandbox:
     def _revalidate_bindings(self) -> None:
         if self._binding_error is not None:
             raise InvalidExecutableBindingError(self._binding_error)
-        self.execution_identity.revalidate()
+        self.identity_validator(self.execution_identity)
+
+
+def _create_production_sandbox_factory():
+    selector = _select_production_execution
+
+    def create(
+        *,
+        repository: Path,
+        source_evidence_root: Path,
+        execution_id: ProductionExecutionId,
+    ) -> _ExecutionSandbox:
+        selection = selector(repository, execution_id)
+        return _ExecutionSandbox(
+            repository=repository.resolve(strict=True),
+            source_evidence_root=source_evidence_root.resolve(strict=False),
+            execution_identity=selection.identity,
+            fixture_mode=False,
+            identity_validator=selection.validate,
+        )
+
+    return create
+
+
+create_production_execution_sandbox = _create_production_sandbox_factory()
 
 
 def _write_path_allowed(value: str) -> bool:
@@ -166,6 +205,6 @@ def _write_path_allowed(value: str) -> bool:
 
 
 __all__ = (
-    "AutonomousExecutionSandbox",
     "InvalidExecutableBindingError",
+    "create_production_execution_sandbox",
 )

@@ -6,13 +6,14 @@ import os
 import subprocess
 from pathlib import Path
 
+from dashboard_execution_support import worktree_executor
+
 from trading_agent.dashboard_agent_control_plane import (
     AutonomousControlPlane,
     AutonomousPolicy,
 )
 from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1, trigger_fixture
-from trading_agent.dashboard_execution_catalog import fixture_hermes_identity_for_tests
-from trading_agent.dashboard_worktree_executor import ExecutionResult, IsolatedWorktreeExecutor
+from trading_agent.dashboard_worktree_executor import ExecutionResult
 
 
 class _FakeExecutor:
@@ -128,12 +129,10 @@ def test_fake_hermes_runs_in_clean_pinned_worktree_and_cleans_up(tmp_path: Path)
     assert isinstance(environment, dict)
     environment["pinned_code_sha"] = code_sha
     trigger = AutonomousTriggerV1.model_validate(payload)
-    executor = IsolatedWorktreeExecutor(
+    executor = worktree_executor(
         repository=repository,
         environment_root=tmp_path / "environments",
         source_evidence_root=tmp_path / "authority",
-        execution_identity=fixture_hermes_identity_for_tests(repository),
-        fixture_mode=True,
     )
     (tmp_path / "authority").mkdir(mode=0o700)
 

@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from dashboard_execution_support import worktree_executor
 
 from trading_agent.dashboard_agent_control_plane import (
     AutonomousControlPlane,
@@ -14,8 +15,7 @@ from trading_agent.dashboard_agent_control_plane import (
     FaultSeam,
 )
 from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1, trigger_fixture
-from trading_agent.dashboard_execution_catalog import fixture_hermes_identity_for_tests
-from trading_agent.dashboard_worktree_executor import ExecutionResult, IsolatedWorktreeExecutor
+from trading_agent.dashboard_worktree_executor import ExecutionResult
 
 
 class _CountingExecutor:
@@ -207,12 +207,10 @@ def test_forbidden_isolation_attempt_blocks_before_process_or_mutation(
     trigger = AutonomousTriggerV1.model_validate(payload)
     source_root = tmp_path / "authorities"
     source_root.mkdir(mode=0o700)
-    executor = IsolatedWorktreeExecutor(
+    executor = worktree_executor(
         repository=repository,
         environment_root=tmp_path / "environments",
         source_evidence_root=source_root,
-        execution_identity=fixture_hermes_identity_for_tests(repository),
-        fixture_mode=True,
     )
     plane = AutonomousControlPlane(
         state_root=tmp_path / "state",

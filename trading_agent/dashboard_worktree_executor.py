@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 import hashlib
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
 
-from trading_agent.dashboard_agent_family import AGENT_FAMILY_REGISTRY
 from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1
-from trading_agent.dashboard_execution_identity import BoundExecutionIdentity
-from trading_agent.dashboard_execution_sandbox import AutonomousExecutionSandbox
+from trading_agent.dashboard_execution_catalog import ProductionExecutionId
+from trading_agent.dashboard_execution_sandbox import (
+    _ExecutionSandbox,
+    create_production_execution_sandbox,
+)
+from trading_agent.dashboard_isolated_worktree_support import (
+    autonomous_prompt,
+    cleanup_isolated_worktree,
+    experiment_hashes,
+    isolated_worktree_clean,
+)
 from trading_agent.dashboard_outbound_redaction import redact_outbound_text
+from trading_agent.dashboard_research_broker_contract import InvalidResearchBrokerCommandError
 
 ExecutionState = Literal["completed", "failed", "uncertain"]
 
@@ -33,28 +41,27 @@ class AutonomousTaskExecutor(Protocol):
     def execute(self, trigger: AutonomousTriggerV1, task_id: str) -> ExecutionResult: ...
 
 
-class IsolatedWorktreeExecutor:
+class _IsolatedWorktreeExecutorCore:
     def __init__(
         self,
         *,
         repository: Path,
         environment_root: Path,
-        source_evidence_root: Path,
-        execution_identity: BoundExecutionIdentity,
-        fixture_mode: bool = False,
+        sandbox: _ExecutionSandbox,
+        broker_sandbox: _ExecutionSandbox,
     ) -> None:
         self._repository = repository.resolve()
         self._environment_root = environment_root.resolve()
-        self._execution_identity = execution_identity
-        self._sandbox = AutonomousExecutionSandbox(
-            repository=self._repository,
-            source_evidence_root=source_evidence_root.resolve(strict=False),
-            execution_identity=execution_identity,
-            fixture_mode=fixture_mode,
-        )
+        self._execution_identity = sandbox.execution_identity
+        self._sandbox = sandbox
+        self._broker_sandbox = broker_sandbox
 
     def preflight(self, trigger: AutonomousTriggerV1) -> str | None:
-        return self._sandbox.blocker(trigger)
+        if not {"read_evidence", "write_candidate", "run_tests"}.issubset(
+            trigger.environment_spec.allowed_tools
+        ):
+            return "required_research_tools_missing"
+        return self._sandbox.blocker(trigger) or self._broker_sandbox.blocker(trigger)
 
     def execute(self, trigger: AutonomousTriggerV1, task_id: str) -> ExecutionResult:
         task_root = self._environment_root / task_id
@@ -86,8 +93,19 @@ class IsolatedWorktreeExecutor:
             else:
                 worktree_added = True
                 environment = self._sandbox.environment(trigger, experiment)
+                broker_environment = self._broker_sandbox.environment(trigger, experiment)
+                query = self._run_broker(
+                    trigger,
+                    task_root,
+                    worktree,
+                    broker_environment,
+                    "evidence-query",
+                    trigger.evidence_refs,
+                )
+                if query.returncode != 0:
+                    raise InvalidResearchBrokerCommandError("evidence_query_failed")
                 command = self._sandbox.argv(
-                    self._execution_identity.request(self._prompt(trigger)),
+                    self._execution_identity.request(autonomous_prompt(trigger)),
                     task_root,
                     worktree,
                 )
@@ -100,7 +118,7 @@ class IsolatedWorktreeExecutor:
                     timeout=trigger.budget_envelope.max_runtime_seconds,
                 )
                 process_started = True
-                clean = self._is_clean(worktree)
+                clean = isolated_worktree_clean(worktree)
                 stdout = completed.stdout[:64 * 1024]
                 result_hash = hashlib.sha256(stdout).hexdigest() if stdout else None
                 if completed.returncode != 0 or not stdout or not clean:
@@ -116,18 +134,45 @@ class IsolatedWorktreeExecutor:
                         worktree_clean=clean,
                     )
                 else:
-                    result = ExecutionResult(
-                        state="completed",
-                        result_summary=redact_outbound_text(stdout.decode("utf-8", errors="replace").strip()),
-                        result_sha256=result_hash,
-                        evidence_sha256=self._experiment_hashes(experiment),
-                        cleanup_completed=False,
-                        process_started=True,
-                        worktree_clean=True,
+                    registered = self._run_broker(
+                        trigger,
+                        task_root,
+                        worktree,
+                        broker_environment,
+                        "hypothesis-register",
+                        (trigger.trigger_id, trigger.agent_family_id, trigger.payload_sha256),
                     )
+                    tested = self._run_broker(
+                        trigger,
+                        task_root,
+                        worktree,
+                        broker_environment,
+                        "experiment-run",
+                        (trigger.trigger_id,),
+                    )
+                    if registered.returncode != 0 or tested.returncode != 0:
+                        result = self._failed(
+                            "research_broker_failed",
+                            cleanup=False,
+                            process_started=True,
+                        )
+                    else:
+                        result = ExecutionResult(
+                            state="completed",
+                            result_summary=redact_outbound_text(
+                                stdout.decode("utf-8", errors="replace").strip()
+                            ),
+                            result_sha256=result_hash,
+                            evidence_sha256=experiment_hashes(experiment),
+                            cleanup_completed=False,
+                            process_started=True,
+                            worktree_clean=True,
+                        )
         except subprocess.TimeoutExpired:
             process_started = True
             result = self._failed("autonomous_process_timeout", cleanup=False, process_started=True)
+        except InvalidResearchBrokerCommandError as error:
+            result = self._failed(error.reason, cleanup=False, process_started=process_started)
         except OSError:
             result = self._failed(
                 "autonomous_process_start_failed",
@@ -135,7 +180,12 @@ class IsolatedWorktreeExecutor:
                 process_started=process_started,
             )
         finally:
-            cleanup = self._cleanup(task_root, worktree, worktree_added)
+            cleanup = cleanup_isolated_worktree(
+                self._repository,
+                task_root,
+                worktree,
+                worktree_added,
+            )
         return ExecutionResult(
             state=result.state,
             result_summary=result.result_summary,
@@ -146,49 +196,25 @@ class IsolatedWorktreeExecutor:
             worktree_clean=result.worktree_clean,
         )
 
-    @staticmethod
-    def _prompt(trigger: AutonomousTriggerV1) -> str:
-        role = next(item.role for item in AGENT_FAMILY_REGISTRY if item.family_id == trigger.agent_family_id)
-        return (
-            f"Role: {role}. Family identity: {trigger.agent_family_id}. "
-            f"Memory namespace: research-family:{trigger.agent_family_id}:memory-v1. "
-            "This is a separate autonomous task session; never resume an interactive session. "
-            "Read only source-bound evidence, write candidate evidence only in the declared experiment root, "
-            "and do not mutate providers, Paper state, lifecycle authority, deployment, or the integration worktree. "
-            f"Trigger type: {trigger.trigger_type}. Evidence refs: {','.join(trigger.evidence_refs)}."
-        )
-
-    @staticmethod
-    def _is_clean(worktree: Path) -> bool:
-        checked = subprocess.run(
-            ("git", "-C", str(worktree), "status", "--porcelain=v1", "--untracked-files=all"),
+    def _run_broker(
+        self,
+        trigger: AutonomousTriggerV1,
+        task_root: Path,
+        worktree: Path,
+        environment: dict[str, str],
+        operation: Literal["evidence-query", "hypothesis-register", "experiment-run"],
+        parameters: tuple[str, ...],
+    ) -> subprocess.CompletedProcess[bytes]:
+        identity = self._broker_sandbox.execution_identity
+        request = identity.broker_request(operation, parameters)
+        return subprocess.run(
+            self._broker_sandbox.argv(request, task_root, worktree),
+            cwd=worktree,
+            env=environment,
             check=False,
             capture_output=True,
-            timeout=30,
+            timeout=min(trigger.budget_envelope.max_runtime_seconds, 30),
         )
-        return checked.returncode == 0 and not checked.stdout
-
-    @staticmethod
-    def _experiment_hashes(experiment: Path) -> tuple[str, ...]:
-        return tuple(
-            hashlib.sha256(path.read_bytes()).hexdigest()
-            for path in sorted(experiment.rglob("*"))
-            if path.is_file() and not path.is_symlink()
-        )
-
-    def _cleanup(self, task_root: Path, worktree: Path, worktree_added: bool) -> bool:
-        if worktree_added:
-            removed = subprocess.run(
-                ("git", "-C", str(self._repository), "worktree", "remove", "--force", str(worktree)),
-                check=False,
-                capture_output=True,
-                timeout=60,
-            )
-            if removed.returncode != 0:
-                return False
-        if task_root.exists():
-            shutil.rmtree(task_root)
-        return not task_root.exists()
 
     @staticmethod
     def _failed(
@@ -206,6 +232,33 @@ class IsolatedWorktreeExecutor:
             process_started=process_started,
             worktree_clean=False,
         )
+
+
+class IsolatedWorktreeExecutor(_IsolatedWorktreeExecutorCore):
+    def __init__(
+        self,
+        *,
+        repository: Path,
+        environment_root: Path,
+        source_evidence_root: Path,
+        execution_id: ProductionExecutionId = "hermes-model",
+    ) -> None:
+        super().__init__(
+            repository=repository,
+            environment_root=environment_root,
+            sandbox=create_production_execution_sandbox(
+                repository=repository,
+                source_evidence_root=source_evidence_root,
+                execution_id=execution_id,
+            ),
+            broker_sandbox=create_production_execution_sandbox(
+                repository=repository,
+                source_evidence_root=source_evidence_root,
+                execution_id="research-broker",
+            ),
+        )
+
+
 __all__ = (
     "AutonomousTaskExecutor",
     "ExecutionResult",

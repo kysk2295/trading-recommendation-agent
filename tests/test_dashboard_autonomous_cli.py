@@ -4,10 +4,10 @@ import datetime as dt
 import subprocess
 from pathlib import Path
 
+from dashboard_execution_support import run_autonomous_trigger
 from typer.testing import CliRunner
 
 import run_dashboard_publisher
-from trading_agent.dashboard_autonomous_publisher import run_autonomous_trigger_for_tests
 from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1, trigger_fixture
 from trading_agent.dashboard_trigger_authority import (
     TriggerAuthorityStore,
@@ -22,8 +22,8 @@ def test_test_only_runner_happy_duplicate_and_production_cli_missing_authority(t
     assert TriggerAuthorityStore(state_root / "authorities").append(authority_record_for(trigger))
 
     # When: the explicit test runner handles success/replay and production CLI handles no authority
-    first = run_autonomous_trigger_for_tests(trigger, state_root=state_root, receipts=[])
-    duplicate = run_autonomous_trigger_for_tests(trigger, state_root=state_root, receipts=[])
+    first = run_autonomous_trigger(trigger, state_root=state_root, receipts=[])
+    duplicate = run_autonomous_trigger(trigger, state_root=state_root, receipts=[])
     runner = CliRunner()
     missing_path, _ = _trigger_path(tmp_path / "missing")
     missing = runner.invoke(
