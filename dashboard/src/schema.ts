@@ -22,15 +22,17 @@ const forwardSchema = z.strictObject({
   incidents: z.array(z.string().max(160)).max(80),
 });
 
+export const agentIdSchema = z.enum([
+  "kr-theme",
+  "us-intraday",
+  "us-systematic",
+  "us-swing",
+  "research",
+  "delivery",
+]);
+
 const agentSchema = z.strictObject({
-  agent_id: z.enum([
-    "kr-theme",
-    "us-intraday",
-    "us-systematic",
-    "us-swing",
-    "research",
-    "delivery",
-  ]),
+  agent_id: agentIdSchema,
   label: z.string().min(1).max(30),
   state: z.enum(["running", "armed", "idle", "failed"]),
   scheduled_label: z.string().min(1).max(180),
@@ -68,6 +70,22 @@ const researchSchema = z.strictObject({
   summary: z.string().min(1).max(160),
 });
 
+const moneySchema = z.string().regex(/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/);
+
+const accountSchema = z.strictObject({
+  status: z.enum(["verified", "incomplete", "unavailable"]),
+  session_date: z.iso.date().nullable(),
+  observed_at: z.iso.datetime({ offset: true }).nullable(),
+  currency: z.literal("USD"),
+  equity: moneySchema.nullable(),
+  daily_pnl: moneySchema.nullable(),
+  realized_pnl: moneySchema.nullable(),
+  unrealized_pnl: moneySchema.nullable(),
+  planned_open_risk: moneySchema.nullable(),
+  open_positions: z.number().int().nonnegative(),
+  open_orders: z.number().int().nonnegative(),
+});
+
 export const dashboardSnapshotSchema = z.strictObject({
   schema_version: z.literal(1),
   generated_at: z.iso.datetime({ offset: true }),
@@ -78,6 +96,8 @@ export const dashboardSnapshotSchema = z.strictObject({
   recommendations: z.array(recommendationSchema).max(12),
   signals: z.array(signalSchema).max(12),
   research: researchSchema,
+  account: accountSchema,
 });
 
+export type AgentId = z.infer<typeof agentIdSchema>;
 export type DashboardSnapshot = z.infer<typeof dashboardSnapshotSchema>;

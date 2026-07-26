@@ -7,7 +7,7 @@ import sqlite3
 import stat
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Final, Literal
+from typing import Final, Literal, override
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
@@ -17,6 +17,7 @@ from trading_agent.daily_research_sources import load_session_quality
 from trading_agent.dashboard_agents import agent_views
 from trading_agent.dashboard_evidence import recommendations, research_view, signals
 from trading_agent.dashboard_models import (
+    AccountView,
     DashboardCredentialError,
     DashboardCredentials,
     DashboardSnapshot,
@@ -24,11 +25,23 @@ from trading_agent.dashboard_models import (
     JobRow,
     MarketView,
 )
+from trading_agent.lane_policy_models import LaneId
+from trading_agent.lane_registry_store import (
+    InvalidLaneRegistrySourceError,
+    LaneRegistryReader,
+    UnsupportedLaneRegistrySchemaError,
+)
 
 SEOUL: Final = ZoneInfo("Asia/Seoul")
 NEW_YORK: Final = ZoneInfo("America/New_York")
 SESSION_DIRECTORY = re.compile(r"^\d{8}$")
 MAX_CREDENTIAL_BYTES: Final = 4_096
+
+
+class DashboardSnapshotTimeError(ValueError):
+    @override
+    def __str__(self) -> str:
+        return "dashboard snapshot time must be timezone-aware"
 
 
 def collect_dashboard_snapshot(
@@ -39,7 +52,7 @@ def collect_dashboard_snapshot(
 ) -> DashboardSnapshot:
     observed_at = dt.datetime.now(dt.UTC) if now is None else now
     if observed_at.tzinfo is None:
-        raise ValueError("dashboard snapshot time must be timezone-aware")
+        raise DashboardSnapshotTimeError
     seoul_now = observed_at.astimezone(SEOUL)
     session = _latest_session(outputs / "live_sessions", seoul_now.date())
     return DashboardSnapshot(
@@ -53,6 +66,7 @@ def collect_dashboard_snapshot(
         recommendations=recommendations(session),
         signals=signals(session),
         research=research_view(outputs),
+        account=_account_view(outputs / "lane_control" / "lane_registry.sqlite3"),
     )
 
 
@@ -193,6 +207,50 @@ def _market_view(
         else:
             state = "after"
     return MarketView(market_id=market_id, label=label, local_time=local_time, state=state)
+
+
+def _account_view(registry_path: Path) -> AccountView:
+    unavailable = AccountView(
+        status="unavailable",
+        session_date=None,
+        observed_at=None,
+        equity=None,
+        daily_pnl=None,
+        realized_pnl=None,
+        unrealized_pnl=None,
+        planned_open_risk=None,
+        open_positions=0,
+        open_orders=0,
+    )
+    try:
+        snapshots = tuple(
+            item.snapshot
+            for item in LaneRegistryReader(registry_path).daily_snapshots()
+            if item.snapshot.lane_id is LaneId.INTRADAY_MOMENTUM
+        )
+    except (
+        InvalidLaneRegistrySourceError,
+        OSError,
+        sqlite3.Error,
+        UnsupportedLaneRegistrySchemaError,
+        ValueError,
+    ):
+        return unavailable
+    if not snapshots:
+        return unavailable
+    latest = max(snapshots, key=lambda item: (item.session_date, item.finalized_at))
+    return AccountView(
+        status="verified" if latest.data_quality_complete else "incomplete",
+        session_date=latest.session_date,
+        observed_at=latest.finalized_at,
+        equity=latest.conservative_equity,
+        daily_pnl=latest.realized_pnl + latest.unrealized_pnl,
+        realized_pnl=latest.realized_pnl,
+        unrealized_pnl=latest.unrealized_pnl,
+        planned_open_risk=latest.planned_open_risk,
+        open_positions=latest.open_position_count,
+        open_orders=latest.open_order_count,
+    )
 
 
 __all__ = (

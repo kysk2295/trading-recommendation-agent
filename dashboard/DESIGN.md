@@ -11,7 +11,7 @@
 
 A quiet market operations room after the decorative screens have been removed. The signature is a thin acid-lime “live rail” that connects freshness, active agents, and current evidence while all other information remains neutral. The interface should feel exact, alert, and readable for hours.
 
-Design read: a public-read, data-dense trading observatory with a technical and restrained language. Snapshot ingestion remains private. `DESIGN_VARIANCE: 6`, `MOTION_INTENSITY: 3`, `VISUAL_DENSITY: 8`.
+Design read: a public-read, data-dense trading observatory with a technical and restrained language. Snapshot ingestion remains private. The browser surface is strictly read-only and contains no pairing, question, command, or process-control affordance. `DESIGN_VARIANCE: 6`, `MOTION_INTENSITY: 3`, `VISUAL_DENSITY: 8`.
 
 ## 2. Color
 
@@ -98,15 +98,31 @@ Base unit: 4px. Tokens: `--space-1` 4px, `--space-2` 8px, `--space-3` 12px, `--s
 - States: default, hover, active, focus.
 - Accessibility: `aria-pressed` and descriptive names.
 
+### Paper Account Ledger
+- Structure: featured equity and daily PnL, followed by realized PnL, unrealized PnL, planned open
+  risk, open positions, and open orders.
+- States: verified, verification incomplete, unavailable.
+- Provenance: displays the paper broker and finalized session date, never the account identifier.
+- Safety: account fingerprint, account number, credentials, buying power from unverified live
+  responses, raw broker payloads, and request headers never cross the snapshot boundary.
+- Truthfulness: values come only from the finalized lane daily ledger. Incomplete data remains
+  visible with a warning label and is never presented as live broker truth.
+- Cost: one public WebSocket carries snapshot events. The local relay uses filesystem
+  notifications, so idle operation performs zero HTTP or database polls and invokes no paid AI
+  model.
+
 ### Primitive Showcase
-- `/showcase` renders live rail, ledger loading/empty/error/populated, metric strip, evidence states, and filter tabs at production styles.
+- `/showcase` renders live rail, ledger loading/empty/error/populated, metric strip, evidence
+  states, filter tabs, and the paper account ledger at production styles.
 
 ## 6. Motion & Interaction
 
 - Micro: 120ms ease-out for hover and press.
 - Standard: 220ms ease-in-out for panel changes.
 - New evidence: 320ms cubic-bezier(0.16, 1, 0.3, 1), opacity and translate only.
-- Poll every 10 seconds; user refresh is immediate and does not reload the page.
+- Push snapshot changes over one same-origin WebSocket. Reconnect only after a disconnect with
+  bounded exponential delay from 1 to 60 seconds. The macOS relay publishes an initial snapshot,
+  then sends only on filesystem change; it has no periodic HTTP loop.
 - Respect `prefers-reduced-motion`; remove all transforms and transitions.
 
 ## 7. Depth & Surface

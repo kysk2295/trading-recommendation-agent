@@ -3,6 +3,13 @@ const priceFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 4,
   minimumFractionDigits: 2,
 });
+const dollarFormatter = new Intl.NumberFormat("en-US", {
+  currency: "USD",
+  maximumFractionDigits: 2,
+  minimumFractionDigits: 2,
+  signDisplay: "auto",
+  style: "currency",
+});
 
 export function count(value: number): string {
   return numberFormatter.format(value);
@@ -15,6 +22,14 @@ export function price(value: number): string {
 export function priceText(value: string): string {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? price(parsed) : value;
+}
+
+export function dollars(value: string | null): string {
+  if (value === null) {
+    return "—";
+  }
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? dollarFormatter.format(parsed) : "—";
 }
 
 export function shortTime(value: string): string {
@@ -41,11 +56,14 @@ export function stateLabel(state: string): string {
     armed: "예약",
     blocked: "차단",
     closed: "휴장",
+    completed: "완료",
+    incomplete: "검증 미완료",
     failed: "실패",
     idle: "대기",
     open: "개장",
     pending: "대기",
     pre: "장전",
+    queued: "접수",
     ready: "준비",
     running: "실행 중",
     setup: "조건 대기",
@@ -54,12 +72,13 @@ export function stateLabel(state: string): string {
     target_2r: "2R 도달",
     time_exit: "시간 청산",
     unavailable: "자료 없음",
+    verified: "검증됨",
   };
   return labels[state] ?? state;
 }
 
 export function statusClass(state: string): string {
-  if (["running", "ready", "open", "target_1r", "target_2r"].includes(state)) {
+  if (["completed", "ready", "open", "target_1r", "target_2r", "verified"].includes(state)) {
     return "state-ready";
   }
   if (["failed", "blocked", "stopped"].includes(state)) {

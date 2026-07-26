@@ -1,16 +1,28 @@
 import ky, { HTTPError, TimeoutError } from "ky";
 import { requiredElement } from "./dom";
+import { DashboardRealtimeClient } from "./realtime_client";
 import type { EvidenceFilter } from "./render";
 import { renderSnapshot } from "./render";
 import type { DashboardSnapshot } from "./schema";
 import { dashboardSnapshotSchema } from "./schema";
 
-const POLL_INTERVAL_MS = 10_000;
 const refreshButton = requiredElement("refresh-button", HTMLButtonElement);
 const freshnessText = requiredElement("freshness-text", HTMLElement);
 const freshnessMark = requiredElement("freshness-mark", HTMLElement);
 let snapshot: DashboardSnapshot | null = null;
 let filter: EvidenceFilter = "all";
+let realtimeConnected = false;
+const realtime = new DashboardRealtimeClient({
+  onSnapshot: (nextSnapshot) => {
+    snapshot = nextSnapshot;
+    renderCurrent();
+    updateFreshness();
+  },
+  onConnection: (state) => {
+    realtimeConnected = state === "connected";
+    updateFreshness();
+  },
+});
 
 refreshButton.addEventListener("click", () => void refreshSnapshot());
 
@@ -24,22 +36,21 @@ for (const candidate of document.querySelectorAll<HTMLButtonElement>("[data-filt
     for (const button of document.querySelectorAll<HTMLButtonElement>("[data-filter]")) {
       button.setAttribute("aria-pressed", String(button === candidate));
     }
-    if (snapshot !== null) {
-      renderSnapshot(snapshot, filter);
-    }
+    renderCurrent();
   });
 }
 
 async function refreshSnapshot(): Promise<void> {
   try {
-    const payload = await ky
-      .get("/api/snapshot", {
-        retry: { limit: 1, methods: ["get"] },
-        timeout: 8_000,
-      })
-      .json<unknown>();
-    snapshot = dashboardSnapshotSchema.parse(payload);
-    renderSnapshot(snapshot, filter);
+    snapshot = dashboardSnapshotSchema.parse(
+      await ky
+        .get("/api/snapshot", {
+          retry: { limit: 1, methods: ["get"] },
+          timeout: 8_000,
+        })
+        .json<unknown>(),
+    );
+    renderCurrent();
     updateFreshness();
   } catch (error: unknown) {
     if (error instanceof HTTPError || error instanceof TimeoutError || error instanceof TypeError) {
@@ -51,6 +62,12 @@ async function refreshSnapshot(): Promise<void> {
   }
 }
 
+function renderCurrent(): void {
+  if (snapshot !== null) {
+    renderSnapshot(snapshot, filter);
+  }
+}
+
 function updateFreshness(): void {
   if (snapshot === null) {
     return;
@@ -59,8 +76,13 @@ function updateFreshness(): void {
     0,
     Math.round((Date.now() - new Date(snapshot.generated_at).getTime()) / 1_000),
   );
-  const state = seconds < 45 ? "live" : seconds < 180 ? "delayed" : "disconnected";
-  const label = state === "live" ? "실시간" : state === "delayed" ? "지연" : "연결 끊김";
+  const state = !realtimeConnected ? "disconnected" : seconds < 180 ? "live" : "delayed";
+  const label =
+    state === "live"
+      ? "이벤트 연결됨"
+      : state === "delayed"
+        ? "이벤트 연결 · 자료 지연"
+        : "연결 끊김";
   freshnessText.textContent = `${label} · ${seconds}초 전 snapshot`;
   freshnessMark.className = `semantic-mark ${state}`;
 }
@@ -82,6 +104,6 @@ function updateClock(): void {
 }
 
 window.setInterval(updateClock, 1_000);
-window.setInterval(() => void refreshSnapshot(), POLL_INTERVAL_MS);
 updateClock();
 void refreshSnapshot();
+realtime.start();

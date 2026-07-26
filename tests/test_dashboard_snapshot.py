@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -13,6 +14,17 @@ from trading_agent.dashboard_snapshot import (
     collect_dashboard_snapshot,
     load_dashboard_credentials,
 )
+from trading_agent.lane_contract_keys import (
+    experiment_scope_key,
+    lane_manifest_key,
+)
+from trading_agent.lane_contract_models import LaneDailySnapshot
+from trading_agent.lane_defaults import (
+    CURRENT_INTRADAY_EXPERIMENT_SCOPES,
+    INTRADAY_MANIFEST,
+)
+from trading_agent.lane_policy_models import LaneId
+from trading_agent.lane_registry_store import LaneRegistryStore
 
 SEOUL = ZoneInfo("Asia/Seoul")
 
@@ -53,6 +65,54 @@ def test_snapshot_uses_latest_non_future_session_and_only_public_fields(
         str(tmp_path),
     ):
         assert forbidden not in serialized.lower()
+
+
+def test_snapshot_projects_latest_verified_account_pnl_without_identity(
+    tmp_path: Path,
+) -> None:
+    outputs = tmp_path / "outputs"
+    registry = LaneRegistryStore(outputs / "lane_control" / "lane_registry.sqlite3")
+    scope = CURRENT_INTRADAY_EXPERIMENT_SCOPES[0]
+    daily = LaneDailySnapshot(
+        lane_id=LaneId.INTRADAY_MOMENTUM,
+        session_date=dt.date(2026, 7, 24),
+        finalized_at=dt.datetime(2026, 7, 24, 20, 5, tzinfo=dt.UTC),
+        manifest_key=lane_manifest_key(INTRADAY_MANIFEST),
+        experiment_scope_keys=(experiment_scope_key(scope),),
+        source_ledger_generation=42,
+        source_ledger_sha256="a" * 64,
+        champion_strategy_versions=(),
+        data_quality_complete=True,
+        allocation_eligible=False,
+        incidents=(),
+        conservative_equity=Decimal("100125.25"),
+        realized_pnl=Decimal("125.25"),
+        unrealized_pnl=Decimal("-20.50"),
+        planned_open_risk=Decimal("0"),
+        open_order_count=0,
+        open_position_count=0,
+    )
+    with registry.writer() as writer:
+        _ = writer.register_manifest(INTRADAY_MANIFEST)
+        _ = writer.register_experiment_scope(scope)
+        assert writer.append_daily_snapshot(daily) is True
+
+    snapshot = collect_dashboard_snapshot(
+        outputs,
+        now=dt.datetime(2026, 7, 25, 12, 0, tzinfo=SEOUL),
+    )
+    payload = snapshot.model_dump(mode="json")
+
+    assert snapshot.account.status == "verified"
+    assert snapshot.account.session_date == dt.date(2026, 7, 24)
+    assert snapshot.account.equity == Decimal("100125.25")
+    assert snapshot.account.daily_pnl == Decimal("104.75")
+    assert snapshot.account.realized_pnl == Decimal("125.25")
+    assert snapshot.account.unrealized_pnl == Decimal("-20.50")
+    assert snapshot.account.open_positions == 0
+    serialized = json.dumps(payload)
+    assert "account_fingerprint" not in serialized
+    assert "account_id" not in serialized
 
 
 def test_snapshot_preserves_failed_cycles_as_blockers(tmp_path: Path) -> None:

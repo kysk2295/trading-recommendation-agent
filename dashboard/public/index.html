@@ -69,6 +69,36 @@
               <div class="blocker-list" id="blocker-list"></div>
             </section>
 
+            <section class="panel account-panel" aria-labelledby="account-title">
+              <div class="panel-heading">
+                <div>
+                  <p class="meta-label">PAPER ACCOUNT LEDGER</p>
+                  <h2 id="account-title">계좌 성과</h2>
+                </div>
+                <span class="status-word" id="account-status">자료 대기</span>
+              </div>
+              <div class="account-hero">
+                <dl>
+                  <div>
+                    <dt>평가기준액</dt>
+                    <dd id="account-equity">—</dd>
+                  </div>
+                  <div>
+                    <dt>일간 PnL</dt>
+                    <dd id="account-daily-pnl">—</dd>
+                  </div>
+                </dl>
+                <div class="account-provenance">
+                  <span>Alpaca Paper · 검증 원장</span>
+                  <span>세션 <time id="account-session">—</time></span>
+                </div>
+              </div>
+              <dl class="account-metrics" id="account-metrics"></dl>
+              <p class="account-disclosure">
+                계좌 식별정보 없이 확정된 일일 원장의 평가액·손익·노출만 표시합니다.
+              </p>
+            </section>
+
             <section class="panel" aria-labelledby="agents-title">
               <div class="panel-heading">
                 <div>
@@ -160,7 +190,7 @@
       </main>
       <footer>
         <span>Paper recommendation only</span>
-        <span>계좌·자격증명·원시 인증 응답 비공개</span>
+        <span>계좌 식별정보·자격증명·원시 인증 응답 비공개</span>
       </footer>
     </div>
   </body>

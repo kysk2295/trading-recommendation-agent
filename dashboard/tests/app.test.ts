@@ -63,6 +63,19 @@ const snapshot = {
     session_date: "2026-07-24",
     summary: "실제 causal 연구 기반 게이트 차단",
   },
+  account: {
+    status: "incomplete",
+    session_date: "2026-07-24",
+    observed_at: "2026-07-24T20:01:15Z",
+    currency: "USD",
+    equity: "100000",
+    daily_pnl: "0",
+    realized_pnl: "0",
+    unrealized_pnl: "0",
+    planned_open_risk: "0",
+    open_positions: 0,
+    open_orders: 0,
+  },
 } as const;
 
 describe("dashboard API", () => {
@@ -74,6 +87,22 @@ describe("dashboard API", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  test("serves a read-only observatory with account PnL and no operator controls", async () => {
+    // Given: the public read-only observatory application.
+    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN);
+
+    // When: a browser opens the dashboard shell.
+    const response = await app.request("/");
+    const html = await response.text();
+
+    // Then: account telemetry is visible and remote-control surfaces are absent.
+    expect(response.status).toBe(200);
+    expect(html).toContain('id="account-equity"');
+    expect(html).toContain('id="account-daily-pnl"');
+    expect(html).not.toContain('id="operator-pair-form"');
+    expect(html).not.toContain('id="interaction-form"');
   });
 
   test("protects ingestion while keeping snapshot reads public", async () => {
@@ -131,5 +160,21 @@ describe("dashboard API", () => {
     const response = await app.request("/api/snapshot");
 
     expect(response.status).toBe(404);
+  });
+
+  test("does not expose operator, interaction, or command routes", async () => {
+    // Given: the browser surface is intentionally read-only.
+    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN);
+
+    // When: a visitor probes every former command surface.
+    const responses = await Promise.all([
+      app.request("/api/operator/session"),
+      app.request("/api/agents/us-intraday/interactions"),
+      app.request("/api/operator/agents/us-intraday/view"),
+      app.request("/api/worker/interactions/3f454e79-608d-4c83-88d6-10f3db79dc35/result"),
+    ]);
+
+    // Then: none of those routes exist.
+    expect(responses.map((response) => response.status)).toEqual([404, 404, 404, 404]);
   });
 });

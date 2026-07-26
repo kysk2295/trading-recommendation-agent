@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Literal, override
 
 from pydantic import BaseModel, ConfigDict, SecretStr
@@ -15,8 +16,6 @@ AgentId = Literal[
     "research",
     "delivery",
 ]
-
-
 class MarketView(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -90,6 +89,22 @@ class ResearchView(BaseModel):
     summary: str
 
 
+class AccountView(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: Literal["verified", "incomplete", "unavailable"]
+    session_date: dt.date | None
+    observed_at: dt.datetime | None
+    currency: Literal["USD"] = "USD"
+    equity: Decimal | None
+    daily_pnl: Decimal | None
+    realized_pnl: Decimal | None
+    unrealized_pnl: Decimal | None
+    planned_open_risk: Decimal | None
+    open_positions: int
+    open_orders: int
+
+
 class DashboardSnapshot(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -102,6 +117,7 @@ class DashboardSnapshot(BaseModel):
     recommendations: tuple[RecommendationView, ...]
     signals: tuple[SignalView, ...]
     research: ResearchView
+    account: AccountView
 
 
 @dataclass(frozen=True, slots=True)

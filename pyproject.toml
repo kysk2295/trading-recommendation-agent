@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Paper-only US momentum research and recommendation agent"
 requires-python = ">=3.12"
 dependencies = [
+  "anyio>=4.9,<5",
   "duckdb==1.5.4",
   "httpx2[http2,brotli,zstd]",
   "ijson==3.5.0",
@@ -11,6 +12,7 @@ dependencies = [
   "pydantic>=2.11",
   "rich>=13.9",
   "typer>=0.15",
+  "watchfiles>=1.1,<2",
   "websockets>=16,<17",
 ]
 

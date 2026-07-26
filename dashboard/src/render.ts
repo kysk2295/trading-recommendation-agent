@@ -1,5 +1,14 @@
 import { requiredElement, textElement } from "./dom";
-import { count, marketTime, price, priceText, shortTime, stateLabel, statusClass } from "./format";
+import {
+  count,
+  dollars,
+  marketTime,
+  price,
+  priceText,
+  shortTime,
+  stateLabel,
+  statusClass,
+} from "./format";
 import type { DashboardSnapshot } from "./schema";
 
 export type EvidenceFilter = "all" | "active";
@@ -8,10 +17,44 @@ const knownSignalKeys = new Set<string>();
 export function renderSnapshot(snapshot: DashboardSnapshot, filter: EvidenceFilter): void {
   renderMarkets(snapshot);
   renderForward(snapshot);
+  renderAccount(snapshot);
   renderAgents(snapshot);
   renderRecommendations(snapshot);
   renderSignals(snapshot, filter);
   renderResearch(snapshot);
+}
+
+function renderAccount(snapshot: DashboardSnapshot): void {
+  const account = snapshot.account;
+  const status = requiredElement("account-status", HTMLElement);
+  status.textContent = stateLabel(account.status);
+  status.className = `status-word ${statusClass(account.status)}`;
+  requiredElement("account-session", HTMLElement).textContent = account.session_date ?? "—";
+  requiredElement("account-equity", HTMLElement).textContent = dollars(account.equity);
+  const daily = requiredElement("account-daily-pnl", HTMLElement);
+  daily.textContent = dollars(account.daily_pnl);
+  daily.className = pnlClass(account.daily_pnl);
+  const metrics = [
+    ["실현 PnL", dollars(account.realized_pnl), pnlClass(account.realized_pnl)],
+    ["미실현 PnL", dollars(account.unrealized_pnl), pnlClass(account.unrealized_pnl)],
+    ["계획 오픈 리스크", dollars(account.planned_open_risk), ""],
+    ["포지션", count(account.open_positions), ""],
+    ["미체결 주문", count(account.open_orders), ""],
+  ] as const;
+  requiredElement("account-metrics", HTMLDListElement).replaceChildren(
+    ...metrics.map(([label, value, className]) => {
+      const group = document.createElement("div");
+      group.append(textElement("dt", label), textElement("dd", value, className));
+      return group;
+    }),
+  );
+}
+
+function pnlClass(value: string | null): string {
+  if (value === null || Number.parseFloat(value) === 0) {
+    return "";
+  }
+  return Number.parseFloat(value) > 0 ? "pnl-positive" : "pnl-negative";
 }
 
 function renderMarkets(snapshot: DashboardSnapshot): void {

@@ -1,3 +1,4 @@
+import { websocket } from "hono/bun";
 import { createApp } from "./app";
 import type { SnapshotStore } from "./store";
 import { MemorySnapshotStore, PostgresSnapshotStore } from "./store";
@@ -28,4 +29,5 @@ function requiredEnvironment(name: string): string {
 export default {
   port: parsedPort,
   fetch: app.fetch,
+  websocket,
 };

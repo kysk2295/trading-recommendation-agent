@@ -1,8 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { serveStatic } from "hono/bun";
+import { serveStatic, upgradeWebSocket } from "hono/bun";
 import { secureHeaders } from "hono/secure-headers";
+import { DashboardRealtimeHub } from "./realtime";
 import { dashboardSnapshotSchema } from "./schema";
 import type { SnapshotStore } from "./store";
 
@@ -13,6 +14,48 @@ export function createApp(store: SnapshotStore, ingestToken: string): Hono {
     throw new ConfigurationError("dashboard ingest token must be at least 24 characters");
   }
   const app = new Hono();
+  const realtime = new DashboardRealtimeHub(store);
+  app.get(
+    "/api/realtime/view",
+    upgradeWebSocket(() => ({
+      onOpen: (_event, socket) => {
+        void realtime.connectViewer(socket);
+      },
+      onClose: (_event, socket) => {
+        realtime.disconnectViewer(socket);
+      },
+      onError: (_event, socket) => {
+        realtime.disconnectViewer(socket);
+      },
+    })),
+  );
+  app.get(
+    "/api/realtime/publish",
+    async (context, next) => {
+      if (!authorized(context.req.header("authorization"), ingestToken)) {
+        return context.json({ error: "unauthorized" }, 401);
+      }
+      await next();
+    },
+    upgradeWebSocket(() => ({
+      onOpen: (_event, socket) => {
+        realtime.connectPublisher(socket);
+      },
+      onMessage: (event, socket) => {
+        if (typeof event.data !== "string") {
+          socket.close(1003, "text_messages_only");
+          return;
+        }
+        void realtime.handlePublisherMessage(socket, event.data);
+      },
+      onClose: (_event, socket) => {
+        realtime.disconnectPublisher(socket);
+      },
+      onError: (_event, socket) => {
+        realtime.disconnectPublisher(socket);
+      },
+    })),
+  );
   app.use(
     "*",
     secureHeaders({
@@ -54,6 +97,7 @@ export function createApp(store: SnapshotStore, ingestToken: string): Hono {
         return context.json({ error: "invalid_snapshot" }, 400);
       }
       await store.save(parsed.data);
+      realtime.broadcastSnapshot(parsed.data);
       return context.json({ accepted: true }, 202);
     },
   );
@@ -67,6 +111,7 @@ export function createApp(store: SnapshotStore, ingestToken: string): Hono {
   });
   app.use("/assets/*", serveStatic({ root: "./public" }));
   app.get("/showcase", serveStatic({ path: "./public/showcase.html" }));
+  app.all("/api/*", (context) => context.json({ error: "not_found" }, 404));
   app.get("*", serveStatic({ path: "./public/index.html" }));
   return app;
 }
