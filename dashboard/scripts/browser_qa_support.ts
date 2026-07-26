@@ -1,16 +1,34 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "playwright";
 
+type AxeFinding = {
+  readonly id: string;
+  readonly nodes: readonly { readonly target: unknown }[];
+};
+
+type AxeScan = {
+  readonly violations: readonly AxeFinding[];
+  readonly incomplete: readonly AxeFinding[];
+};
+
+type AxeCounts = {
+  readonly violations: number;
+  readonly incomplete: number;
+  readonly violationKeys: readonly string[];
+  readonly incompleteKeys: readonly string[];
+};
+
 export class BrowserQaError extends Error {
   override readonly name = "BrowserQaError";
 }
 
 export async function analyzeAtScrollPositions(
   page: Page,
-): Promise<{ readonly violations: number; readonly incomplete: number }> {
+): Promise<AxeCounts & { readonly scrollPositions: number }> {
   const scrollBody = page.locator(".workspace-scroll-body");
+  const hasScrollBody = (await scrollBody.count()) === 1;
   const positions =
-    (await scrollBody.count()) === 1
+    hasScrollBody
       ? await scrollBody.evaluate((element) => {
           const height = Math.max(element.clientHeight, 1);
           return Array.from({ length: Math.ceil(element.scrollHeight / height) + 1 }, (_, index) =>
@@ -18,32 +36,51 @@ export async function analyzeAtScrollPositions(
           );
         })
       : [0];
-  const violations = new Set<string>();
-  let persistentIncomplete: Set<string> | undefined;
+  const scans: AxeScan[] = [];
   for (const position of positions) {
-    if ((await scrollBody.count()) === 1) {
+    if (hasScrollBody) {
       await scrollBody.evaluate(async (element, offset) => {
         element.scrollTop = offset;
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
       }, position);
     }
-    const result = await new AxeBuilder({ page }).analyze();
-    for (const violation of result.violations) {
-      for (const node of violation.nodes) {
-        violations.add(`${violation.id}:${JSON.stringify(node.target)}`);
-      }
+    const materializedStyle = hasScrollBody
+      ? await page.addStyleTag({
+          url: new URL("/__qa__/materialize.css", page.url()).toString(),
+        })
+      : undefined;
+    try {
+      scans.push(await new AxeBuilder({ page }).analyze());
+    } finally {
+      await materializedStyle?.evaluate((element) => element.parentNode?.removeChild(element));
     }
-    const currentIncomplete = new Set(
-      result.incomplete.flatMap((finding) =>
-        finding.nodes.map((node) => `${finding.id}:${JSON.stringify(node.target)}`),
-      ),
-    );
-    persistentIncomplete =
-      persistentIncomplete === undefined
-        ? currentIncomplete
-        : new Set([...persistentIncomplete].filter((finding) => currentIncomplete.has(finding)));
   }
-  return { violations: violations.size, incomplete: persistentIncomplete?.size ?? 0 };
+  return { ...aggregateAxeFindings(scans), scrollPositions: positions.length };
+}
+
+export function aggregateAxeFindings(scans: readonly AxeScan[]): AxeCounts {
+  const violations = new Set<string>();
+  const incomplete = new Set<string>();
+  for (const scan of scans) {
+    addFindings(violations, scan.violations);
+    addFindings(incomplete, scan.incomplete);
+  }
+  return {
+    violations: violations.size,
+    incomplete: incomplete.size,
+    violationKeys: [...violations].sort(),
+    incompleteKeys: [...incomplete].sort(),
+  };
+}
+
+function addFindings(target: Set<string>, findings: readonly AxeFinding[]): void {
+  for (const finding of findings) {
+    for (const node of finding.nodes) {
+      target.add(`${finding.id}:${JSON.stringify(node.target)}`);
+    }
+  }
 }
 
 export async function resetScrollableContent(page: Page): Promise<void> {

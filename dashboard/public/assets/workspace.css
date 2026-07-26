@@ -71,6 +71,11 @@
   overflow-wrap: anywhere;
 }
 
+.system-family-registry article strong {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
 .system-family-boundary {
   max-inline-size: 68ch;
   color: var(--text-tertiary);
