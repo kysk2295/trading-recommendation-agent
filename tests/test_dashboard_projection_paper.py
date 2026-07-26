@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import datetime as dt
-from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 
+import pytest
+
+from tests.dashboard_paper_projection_fixtures import (
+    LifecycleFixture,
+    MissingStage,
+    append_daily_snapshot,
+    append_finalized_lifecycle,
+    safety_plan,
+)
 from trading_agent.dashboard_projection_paper import project_finalized_paper
-from trading_agent.execution_store import ExecutionStore
-from trading_agent.lane_contract_keys import experiment_scope_key, lane_manifest_key
-from trading_agent.lane_contract_models import LaneDailySnapshot
-from trading_agent.lane_defaults import CURRENT_INTRADAY_EXPERIMENT_SCOPES, INTRADAY_MANIFEST
-from trading_agent.lane_policy_models import LaneId
-from trading_agent.lane_registry_store import LaneRegistryStore
-from trading_agent.paper_execution_models import AccountFingerprint
+from trading_agent.paper_safety_models import PaperSafetyPhase
 
 NOW = dt.datetime(2026, 7, 26, 3, tzinfo=dt.UTC)
 
@@ -19,7 +22,7 @@ NOW = dt.datetime(2026, 7, 26, 3, tzinfo=dt.UTC)
 def test_finalized_zero_positions_and_orders_are_valid_empty_sections(tmp_path: Path) -> None:
     # Given a complete finalized append-only Paper daily ledger
     outputs = tmp_path / "outputs"
-    _append_snapshot(outputs, complete=True, open_orders=0, open_positions=0)
+    append_finalized_lifecycle(outputs)
 
     # When the read-only Paper projection is built
     projection = project_finalized_paper(outputs, now=NOW)
@@ -38,7 +41,7 @@ def test_finalized_zero_positions_and_orders_are_valid_empty_sections(tmp_path: 
 def test_incomplete_paper_verification_never_projects_values(tmp_path: Path) -> None:
     # Given an append-only daily snapshot whose verification is incomplete
     outputs = tmp_path / "outputs"
-    _append_snapshot(outputs, complete=False, open_orders=0, open_positions=0)
+    append_daily_snapshot(outputs, complete=False)
 
     # When the Paper workspace is projected
     projection = project_finalized_paper(outputs, now=NOW)
@@ -53,22 +56,7 @@ def test_incomplete_paper_verification_never_projects_values(tmp_path: Path) -> 
 def test_paper_lifecycle_uses_exact_finalized_execution_generation(tmp_path: Path) -> None:
     # Given an initialized append-only execution ledger sealed into the daily snapshot
     outputs = tmp_path / "outputs"
-    execution_path = outputs / "paper" / "execution.sqlite3"
-    store = ExecutionStore(execution_path)
-    with store.writer() as writer:
-        assert writer.bind_account(
-            AccountFingerprint("b" * 64),
-            dt.datetime(2026, 7, 25, 13, 30, tzinfo=dt.UTC),
-        )
-    identity = store.ledger_snapshot_identity()
-    _append_snapshot(
-        outputs,
-        complete=True,
-        open_orders=0,
-        open_positions=0,
-        source_generation=identity.generation,
-        source_sha256=identity.sha256,
-    )
+    append_finalized_lifecycle(outputs)
 
     # When the finalized Paper projection reads both ledgers
     projection = project_finalized_paper(outputs, now=NOW)
@@ -81,37 +69,90 @@ def test_paper_lifecycle_uses_exact_finalized_execution_generation(tmp_path: Pat
     assert items["paper.lifecycle.protective_oco"].state == "empty"
 
 
-def _append_snapshot(
-    outputs: Path,
-    *,
-    complete: bool,
-    open_orders: int,
-    open_positions: int,
-    source_generation: int = 42,
-    source_sha256: str = "a" * 64,
+@pytest.mark.parametrize(
+    ("missing", "blocker_code"),
+    (
+        ("reconcile", "paper_reconcile_pending"),
+        ("cutoff", "paper_cutoff_pending"),
+        ("eod_flat", "paper_eod_flat_pending"),
+    ),
+)
+def test_paper_lifecycle_requires_each_finalized_stage_receipt(
+    tmp_path: Path,
+    missing: MissingStage,
+    blocker_code: str,
 ) -> None:
-    registry = LaneRegistryStore(outputs / "lane_control" / "lane_registry.sqlite3")
-    scope = CURRENT_INTRADAY_EXPERIMENT_SCOPES[0]
-    snapshot = LaneDailySnapshot(
-        lane_id=LaneId.INTRADAY_MOMENTUM,
-        session_date=dt.date(2026, 7, 25),
-        finalized_at=dt.datetime(2026, 7, 25, 20, 5, tzinfo=dt.UTC),
-        manifest_key=lane_manifest_key(INTRADAY_MANIFEST),
-        experiment_scope_keys=(experiment_scope_key(scope),),
-        source_ledger_generation=source_generation,
-        source_ledger_sha256=source_sha256,
-        champion_strategy_versions=(),
-        data_quality_complete=complete,
-        allocation_eligible=False,
-        incidents=(),
-        conservative_equity=Decimal("100125.25"),
-        realized_pnl=Decimal("125.25"),
-        unrealized_pnl=Decimal("-20.50"),
-        planned_open_risk=Decimal("0"),
-        open_order_count=open_orders,
-        open_position_count=open_positions,
-    )
-    with registry.writer() as writer:
-        _ = writer.register_manifest(INTRADAY_MANIFEST)
-        _ = writer.register_experiment_scope(scope)
-        assert writer.append_daily_snapshot(snapshot)
+    # Given an exact finalized execution generation missing one lifecycle stage receipt
+    outputs = tmp_path / "outputs"
+    append_finalized_lifecycle(outputs, LifecycleFixture(missing=missing))
+
+    # When the Paper workspace projects the finalized lifecycle
+    projection = project_finalized_paper(outputs, now=NOW)
+
+    # Then the missing stage blocks with its precise reason and emits no finalized value
+    assert projection.workspace.state == "blocked"
+    assert projection.workspace.blocker_code == blocker_code
+    assert projection.workspace.items == ()
+
+
+@pytest.mark.parametrize(
+    ("fixture", "state", "blocker_code"),
+    (
+        (
+            LifecycleFixture(cutoff_at=dt.datetime(2026, 7, 25, 19, 35, tzinfo=dt.UTC)),
+            "corrupt",
+            "paper_lifecycle_invalid",
+        ),
+        (
+            LifecycleFixture(eod_at=dt.datetime(2026, 7, 25, 20, 10, tzinfo=dt.UTC)),
+            "corrupt",
+            "paper_lifecycle_invalid",
+        ),
+        (
+            LifecycleFixture(
+                eod_at=dt.datetime(2026, 7, 24, 19, 50, tzinfo=dt.UTC),
+                eod_session_date=dt.date(2026, 7, 24),
+            ),
+            "blocked",
+            "paper_eod_flat_pending",
+        ),
+    ),
+)
+def test_paper_lifecycle_rejects_out_of_order_future_or_disconnected_stage(
+    tmp_path: Path,
+    fixture: LifecycleFixture,
+    state: Literal["blocked", "corrupt"],
+    blocker_code: str,
+) -> None:
+    # Given stage receipts that cannot form one ordered finalized lifecycle
+    outputs = tmp_path / "outputs"
+    append_finalized_lifecycle(outputs, fixture)
+
+    # When the Paper workspace joins the stage receipts
+    projection = project_finalized_paper(outputs, now=NOW)
+
+    # Then the lifecycle fails closed without a synthesized final state
+    assert projection.workspace.state == state
+    assert projection.workspace.blocker_code == blocker_code
+    assert projection.workspace.items == ()
+
+
+def test_paper_lifecycle_rejects_post_snapshot_generation(tmp_path: Path) -> None:
+    # Given a complete lifecycle followed by a receipt outside the finalized ledger identity
+    outputs = tmp_path / "outputs"
+    store = append_finalized_lifecycle(outputs)
+    with store.writer() as writer:
+        _ = writer.save_paper_safety_plan(
+            safety_plan(
+                PaperSafetyPhase.KILL_SWITCH,
+                dt.datetime(2026, 7, 25, 19, 55, tzinfo=dt.UTC),
+            )
+        )
+
+    # When the Paper workspace compares the current ledger with the finalized generation
+    projection = project_finalized_paper(outputs, now=NOW)
+
+    # Then the mixed generation is rejected before any finalized stage is shown
+    assert projection.workspace.state == "corrupt"
+    assert projection.workspace.blocker_code == "paper_epoch_mismatch"
+    assert projection.workspace.items == ()

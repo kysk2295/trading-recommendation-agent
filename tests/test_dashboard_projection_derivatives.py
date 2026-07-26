@@ -21,6 +21,7 @@ from trading_agent.dashboard_derivatives_current_quote import (
     CurrentOptionQuoteAuthority,
     read_current_option_quotes,
 )
+from trading_agent.dashboard_derivatives_section import DerivativesSection
 from trading_agent.dashboard_projection_derivatives import project_derivatives
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 
@@ -74,6 +75,34 @@ def test_corrupt_volatility_artifact_fails_closed(tmp_path: Path) -> None:
 
 def test_current_quote_requires_bound_healthy_realtime_authority(tmp_path: Path) -> None:
     # Given OPRA chain/catalog stores plus an exact fresh redistribution authority receipt
+    authority_quote_at = dt.datetime(2026, 7, 23, 14, 31, tzinfo=dt.UTC)
+    section = _licensed_quote_section(tmp_path, quote_at=authority_quote_at)
+
+    # When the read-only current quote section is projected
+    # Then the bound fresh quote is current and every authority conjunct is explicit
+    assert section.state == "populated"
+    assert {item.value for item in section.items[:4]} == {
+        "entitlement:active_realtime",
+        "redistribution:allowed",
+        "capability:healthy_current",
+        "quote:fresh",
+    }
+    assert any(item.item_id.startswith("derivative.quote.") for item in section.items[4:])
+
+
+def test_fresh_authority_never_launders_stale_underlying_quote(tmp_path: Path) -> None:
+    # Given a fresh licensed authority whose exact chain contains an older quote timestamp
+    stale_quote_at = dt.datetime(2026, 7, 23, 14, 20, tzinfo=dt.UTC)
+    section = _licensed_quote_section(tmp_path, quote_at=stale_quote_at)
+
+    # When the current quote section binds the payload to its authority receipt
+    # Then the mismatched stale quote is research-only and no quote value is emitted
+    assert section.state == "blocked"
+    assert section.blocker_code == "current_quote_source_mismatch"
+    assert section.items == ()
+
+
+def _licensed_quote_section(tmp_path: Path, *, quote_at: dt.datetime) -> DerivativesSection:
     observed_at = dt.datetime(2026, 7, 23, 14, 31, 30, tzinfo=dt.UTC)
     outputs = tmp_path / "outputs"
     chain_request = OptionChainRequest(
@@ -98,7 +127,7 @@ def test_current_quote_requires_bound_healthy_realtime_authority(tmp_path: Path)
     chain_store.preflight_write()
     catalog_store.preflight_write()
     chain = collect_alpaca_option_chain(
-        _ChainFetcher(observed_at),
+        _ChainFetcher(observed_at, quote_at),
         chain_store,
         chain_request,
         _clock=iter((observed_at - dt.timedelta(seconds=2), observed_at)).__next__,
@@ -128,23 +157,13 @@ def test_current_quote_requires_bound_healthy_realtime_authority(tmp_path: Path)
     )
     authority_path.chmod(0o600)
 
-    # When the read-only current quote section is projected
-    section = read_current_option_quotes(outputs, observed_at)
-
-    # Then the bound fresh quote is current and every authority conjunct is explicit
-    assert section.state == "populated"
-    assert {item.value for item in section.items[:4]} == {
-        "entitlement:active_realtime",
-        "redistribution:allowed",
-        "capability:healthy_current",
-        "quote:fresh",
-    }
-    assert any(item.item_id.startswith("derivative.quote.") for item in section.items[4:])
+    return read_current_option_quotes(outputs, observed_at)
 
 
 class _ChainFetcher:
-    def __init__(self, observed_at: dt.datetime) -> None:
+    def __init__(self, observed_at: dt.datetime, quote_at: dt.datetime) -> None:
         self._observed_at = observed_at
+        self._quote_at = quote_at
 
     def fetch_page(
         self,
@@ -152,6 +171,8 @@ class _ChainFetcher:
         page_index: int,
         page_token: str | None,
     ) -> OptionChainRawResponse:
+        payload = (Path(__file__).parent / "fixtures/alpaca_option_chain/page-001.json").read_bytes()
+        quote_at = self._quote_at.isoformat().replace("+00:00", "Z").encode()
         return OptionChainRawResponse(
             request_id=request.request_id,
             page_index=page_index,
@@ -159,7 +180,7 @@ class _ChainFetcher:
             received_at=self._observed_at - dt.timedelta(seconds=1),
             status_code=200,
             content_type="application/json",
-            raw_payload=(Path(__file__).parent / "fixtures/alpaca_option_chain/page-001.json").read_bytes(),
+            raw_payload=payload.replace(b"2026-07-23T14:31:00Z", quote_at),
         )
 
 

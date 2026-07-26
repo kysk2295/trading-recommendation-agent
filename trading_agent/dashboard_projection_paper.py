@@ -126,33 +126,6 @@ def project_finalized_paper(outputs: Path, *, now: dt.datetime) -> WorkspaceProj
             observed_at=latest.finalized_at,
             trace_id=source_id,
         ),
-        WorkspaceItemV2(
-            item_id="paper.lifecycle.reconcile",
-            kind="paper",
-            label="Final reconciliation",
-            state=item_state,
-            value="finalized",
-            observed_at=latest.finalized_at,
-            trace_id=source_id,
-        ),
-        WorkspaceItemV2(
-            item_id="paper.lifecycle.cutoff",
-            kind="paper",
-            label="Entry cutoff",
-            state=item_state,
-            value="finalized",
-            observed_at=latest.finalized_at,
-            trace_id=source_id,
-        ),
-        WorkspaceItemV2(
-            item_id="paper.lifecycle.eod_flat",
-            kind="paper",
-            label="EOD flat",
-            state=item_state,
-            value="finalized",
-            observed_at=latest.finalized_at,
-            trace_id=source_id,
-        ),
         *lifecycle.items,
     )
     source_ref = hashlib.sha256(latest.source_ledger_sha256.encode()).hexdigest()

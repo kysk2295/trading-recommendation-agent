@@ -2,18 +2,13 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
+from tests.dashboard_paper_projection_fixtures import append_finalized_lifecycle
 from trading_agent.dashboard_projection_receipts import RECEIPT_FILENAME
 from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
-from trading_agent.lane_contract_keys import experiment_scope_key, lane_manifest_key
-from trading_agent.lane_contract_models import LaneDailySnapshot
-from trading_agent.lane_defaults import CURRENT_INTRADAY_EXPERIMENT_SCOPES, INTRADAY_MANIFEST
-from trading_agent.lane_policy_models import LaneId
-from trading_agent.lane_registry_store import LaneRegistryStore
 
 NOW = dt.datetime(2026, 7, 26, 3, tzinfo=dt.UTC)
 
@@ -46,31 +41,8 @@ def test_v2_snapshot_reports_all_missing_authorities_section_locally(tmp_path: P
 def test_v2_snapshot_projects_finalized_paper_values_and_sha(tmp_path: Path) -> None:
     # Given an authoritative finalized lane ledger
     outputs = tmp_path / "outputs"
-    registry = LaneRegistryStore(outputs / "lane_control" / "lane_registry.sqlite3")
-    scope = CURRENT_INTRADAY_EXPERIMENT_SCOPES[0]
-    daily = LaneDailySnapshot(
-        lane_id=LaneId.INTRADAY_MOMENTUM,
-        session_date=dt.date(2026, 7, 25),
-        finalized_at=dt.datetime(2026, 7, 25, 20, 5, tzinfo=dt.UTC),
-        manifest_key=lane_manifest_key(INTRADAY_MANIFEST),
-        experiment_scope_keys=(experiment_scope_key(scope),),
-        source_ledger_generation=42,
-        source_ledger_sha256="a" * 64,
-        champion_strategy_versions=(),
-        data_quality_complete=True,
-        allocation_eligible=False,
-        incidents=(),
-        conservative_equity=Decimal("100125.25"),
-        realized_pnl=Decimal("125.25"),
-        unrealized_pnl=Decimal("-20.50"),
-        planned_open_risk=Decimal("0"),
-        open_order_count=0,
-        open_position_count=0,
-    )
-    with registry.writer() as writer:
-        _ = writer.register_manifest(INTRADAY_MANIFEST)
-        _ = writer.register_experiment_scope(scope)
-        assert writer.append_daily_snapshot(daily)
+    execution = append_finalized_lifecycle(outputs)
+    identity = execution.ledger_snapshot_identity()
 
     # When it is projected
     snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW)
@@ -84,7 +56,10 @@ def test_v2_snapshot_projects_finalized_paper_values_and_sha(tmp_path: Path) -> 
     assert values["paper.positions"] == "0 records"
     assert values["paper.orders"] == "0 records"
     assert values["paper.lifecycle.eod_flat"] == "finalized"
-    assert any(node.safe_ref == "a" * 64 and node.kind == "paper_receipt" for node in snapshot.traces.nodes)
+    assert any(
+        node.safe_ref == identity.sha256 and node.kind == "paper_receipt"
+        for node in snapshot.traces.nodes
+    )
 
 
 @pytest.mark.parametrize("mutation", ["malformed", "permissions", "future", "mixed", "stale"])

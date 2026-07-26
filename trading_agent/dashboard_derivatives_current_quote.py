@@ -104,24 +104,34 @@ def read_current_option_quotes(outputs: Path, now: dt.datetime) -> DerivativesSe
         ValueError,
     ):
         return _corrupt(now)
+    quotes = tuple(snapshot.latest_quote for snapshot in chain.snapshots if snapshot.latest_quote is not None)
+    quote_source_bound = bool(quotes) and all(quote.timestamp == authority.quote_observed_at for quote in quotes)
     current = (
         authority.entitlement == "active_realtime"
         and authority.redistribution == "allowed"
         and authority.capability_health == "healthy"
+        and authority.capability_observed_at <= now
+        and authority.quote_observed_at <= now
         and now - authority.capability_observed_at <= dt.timedelta(seconds=authority.capability_ttl_seconds)
         and now - authority.quote_observed_at <= dt.timedelta(seconds=authority.quote_ttl_seconds)
+        and quote_source_bound
     )
     if not current:
         source = _node(authority, "blocked")
+        blocker_label = (
+            "Current quote source does not match authority"
+            if not quote_source_bound
+            else "Current quote authority is not licensed and fresh"
+        )
         terminal = _blocker(
             node_id=f"{source.node_id}.blocker",
-            label="Current quote authority is not licensed and fresh",
+            label=blocker_label,
             observed_at=authority.quote_observed_at,
             safe_ref=authority.safe_ref,
         )
         return DerivativesSection(
             "blocked",
-            "current_quote_not_licensed",
+            "current_quote_source_mismatch" if not quote_source_bound else "current_quote_not_licensed",
             authority.quote_observed_at,
             (),
             (source, terminal),

@@ -8,9 +8,19 @@ from typing import Literal
 
 from trading_agent.broker_order_projection import BrokerOrderLedgerState
 from trading_agent.dashboard_models_v2 import WorkspaceItemV2
+from trading_agent.execution_ledger_reader import ReconciliationLedger
 from trading_agent.execution_store import ExecutionStore
 from trading_agent.lane_contract_models import LaneDailySnapshot
 from trading_agent.paper_execution_models import IntentId
+from trading_agent.paper_mutation_ledger_models import (
+    PaperMutationEventType,
+    PaperMutationOperation,
+)
+from trading_agent.paper_mutation_store import StoredPaperMutationIntent
+from trading_agent.paper_protective_oco_store import StoredProtectiveOcoPlan
+from trading_agent.paper_safety_models import PaperSafetyPhase
+from trading_agent.paper_safety_store import StoredPaperSafetyPlan
+from trading_agent.us_equity_calendar import NEW_YORK
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,17 +30,13 @@ class PaperLifecycleProjection:
     items: tuple[WorkspaceItemV2, ...]
 
 
-class InvalidPaperLifecycleTimestampError(ValueError):
-    pass
-
-
 def project_paper_lifecycle(
     outputs: Path,
     snapshot: LaneDailySnapshot,
 ) -> PaperLifecycleProjection:
     path = outputs / "paper" / "execution.sqlite3"
     if not path.exists():
-        return PaperLifecycleProjection("empty", None, ())
+        return PaperLifecycleProjection("blocked", "paper_reconcile_pending", ())
     try:
         reader = ExecutionStore(path)
         if not reader.is_initialized():
@@ -39,8 +45,6 @@ def project_paper_lifecycle(
         if identity.generation != snapshot.source_ledger_generation or identity.sha256 != snapshot.source_ledger_sha256:
             return PaperLifecycleProjection("corrupt", "paper_epoch_mismatch", ())
         ledger = reader.reconciliation_ledger()
-        if reader.ledger_snapshot_identity() != identity:
-            return PaperLifecycleProjection("corrupt", "paper_epoch_mismatch", ())
         if any(state.anomaly_reasons for state in ledger.order_states):
             return PaperLifecycleProjection("corrupt", "paper_lifecycle_invalid", ())
         if (
@@ -64,10 +68,46 @@ def project_paper_lifecycle(
         if any(intent_id not in protected_ids for intent_id in ledger.filled_intent_ids):
             return PaperLifecycleProjection("blocked", "protective_oco_missing", ())
         if any(
-            plan.plan.session_date != snapshot.session_date or plan.plan.observed_at > snapshot.finalized_at
-            for plan in ledger.paper_safety_plans
+            not _protective_plan_terminal(plan, ledger, snapshot.finalized_at)
+            for plan in plans
+            if plan.plan.parent_intent_id in ledger.filled_intent_ids
+        ):
+            return PaperLifecycleProjection("blocked", "protective_oco_missing", ())
+        recoveries = reader.paper_stream_recoveries()
+        current_recoveries = tuple(
+            recovery
+            for recovery in recoveries
+            if ledger.account_fingerprint == recovery.account_fingerprint
+            and _instant(recovery.completed_at).astimezone(NEW_YORK).date() == snapshot.session_date
+        )
+        if not current_recoveries:
+            return PaperLifecycleProjection("blocked", "paper_reconcile_pending", ())
+        if any(
+            not recovery.execution_detail_complete or _instant(recovery.completed_at) > snapshot.finalized_at
+            for recovery in current_recoveries
         ):
             return PaperLifecycleProjection("corrupt", "paper_lifecycle_invalid", ())
+        reconciled_at = max(_instant(recovery.completed_at) for recovery in current_recoveries)
+        cutoff_plans = _stage_plans(ledger, snapshot, PaperSafetyPhase.ENTRY_CUTOFF)
+        if not cutoff_plans:
+            return PaperLifecycleProjection("blocked", "paper_cutoff_pending", ())
+        eod_plans = _stage_plans(ledger, snapshot, PaperSafetyPhase.EOD_FLATTEN)
+        if not eod_plans:
+            return PaperLifecycleProjection("blocked", "paper_eod_flat_pending", ())
+        cutoff = max(cutoff_plans, key=lambda item: item.plan.observed_at)
+        eod = max(eod_plans, key=lambda item: item.plan.observed_at)
+        if (
+            cutoff.plan.observed_at > snapshot.finalized_at
+            or eod.plan.observed_at > snapshot.finalized_at
+            or not reconciled_at <= cutoff.plan.observed_at <= eod.plan.observed_at
+        ):
+            return PaperLifecycleProjection("corrupt", "paper_lifecycle_invalid", ())
+        if not _stage_terminal(cutoff, ledger, snapshot.finalized_at):
+            return PaperLifecycleProjection("blocked", "paper_cutoff_pending", ())
+        if not _stage_terminal(eod, ledger, snapshot.finalized_at):
+            return PaperLifecycleProjection("blocked", "paper_eod_flat_pending", ())
+        if reader.ledger_snapshot_identity() != identity:
+            return PaperLifecycleProjection("corrupt", "paper_epoch_mismatch", ())
     except (OSError, RuntimeError, sqlite3.Error, ValueError):
         return PaperLifecycleProjection("corrupt", "paper_finalized_ledger_invalid", ())
     observed_at = snapshot.finalized_at
@@ -91,6 +131,33 @@ def project_paper_lifecycle(
             observed_at=observed_at,
             trace_id=source_id,
         ),
+        WorkspaceItemV2(
+            item_id="paper.lifecycle.reconcile",
+            kind="paper",
+            label="Final reconciliation",
+            state="populated",
+            value="finalized",
+            observed_at=reconciled_at,
+            trace_id=source_id,
+        ),
+        WorkspaceItemV2(
+            item_id="paper.lifecycle.cutoff",
+            kind="paper",
+            label="Entry cutoff",
+            state="populated",
+            value="finalized",
+            observed_at=cutoff.plan.observed_at,
+            trace_id=source_id,
+        ),
+        WorkspaceItemV2(
+            item_id="paper.lifecycle.eod_flat",
+            kind="paper",
+            label="EOD flat",
+            state="populated",
+            value="finalized",
+            observed_at=eod.plan.observed_at,
+            trace_id=source_id,
+        ),
         *(
             WorkspaceItemV2(
                 item_id=f"paper.order.{index}",
@@ -104,7 +171,83 @@ def project_paper_lifecycle(
             for index, intent in enumerate(ledger.intents[:8])
         ),
     )
-    return PaperLifecycleProjection("populated" if intents or plans else "empty", None, items)
+    return PaperLifecycleProjection("populated", None, items)
+
+
+def _stage_plans(
+    ledger: ReconciliationLedger,
+    snapshot: LaneDailySnapshot,
+    phase: PaperSafetyPhase,
+) -> tuple[StoredPaperSafetyPlan, ...]:
+    return tuple(
+        plan
+        for plan in ledger.paper_safety_plans
+        if plan.plan.account_fingerprint == ledger.account_fingerprint
+        and plan.plan.session_date == snapshot.session_date
+        and plan.plan.phase is phase
+    )
+
+
+def _stage_terminal(
+    plan: StoredPaperSafetyPlan,
+    ledger: ReconciliationLedger,
+    finalized_at: dt.datetime,
+) -> bool:
+    for sequence, _action in enumerate(plan.plan.actions):
+        intents = tuple(
+            stored
+            for stored in ledger.paper_mutation_intents
+            if stored.intent.safety_plan_key == plan.plan_key and stored.intent.action_sequence == sequence
+        )
+        if len(intents) != 1:
+            return False
+        intent = intents[0]
+        if intent.intent.created_at < plan.plan.observed_at or not _mutation_terminal(
+            intent,
+            ledger,
+            finalized_at,
+        ):
+            return False
+    return True
+
+
+def _protective_plan_terminal(
+    plan: StoredProtectiveOcoPlan,
+    ledger: ReconciliationLedger,
+    finalized_at: dt.datetime,
+) -> bool:
+    intents = tuple(
+        stored
+        for stored in ledger.paper_mutation_intents
+        if stored.intent.protective_plan_key == plan.plan_key
+        and stored.intent.operation is PaperMutationOperation.SUBMIT_PROTECTIVE_OCO
+    )
+    return (
+        len(intents) == 1
+        and intents[0].intent.created_at >= _instant(plan.planned_at)
+        and _mutation_terminal(intents[0], ledger, finalized_at)
+    )
+
+
+def _mutation_terminal(
+    intent: StoredPaperMutationIntent,
+    ledger: ReconciliationLedger,
+    finalized_at: dt.datetime,
+) -> bool:
+    events = tuple(
+        stored.event for stored in ledger.paper_mutation_events if stored.mutation_key == intent.mutation_key
+    )
+    return (
+        bool(events)
+        and intent.intent.created_at <= finalized_at
+        and events[-1].occurred_at >= intent.intent.created_at
+        and events[-1].occurred_at <= finalized_at
+        and events[-1].event_type
+        in (
+            PaperMutationEventType.ACKNOWLEDGED,
+            PaperMutationEventType.RECOVERED_ACKNOWLEDGED,
+        )
+    )
 
 
 def _order_value(
@@ -119,7 +262,7 @@ def _order_value(
 def _instant(value: str) -> dt.datetime:
     instant = dt.datetime.fromisoformat(value)
     if instant.tzinfo is None or instant.utcoffset() is None:
-        raise InvalidPaperLifecycleTimestampError
+        raise ValueError
     return instant
 
 
