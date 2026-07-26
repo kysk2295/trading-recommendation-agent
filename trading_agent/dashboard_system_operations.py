@@ -18,7 +18,12 @@ from trading_agent.dashboard_system_operation_receipts import (
     OperationReceipt,
     RailwayReceipt,
     RelayReceipt,
+    StageReceipt,
     read_operation_receipts,
+)
+from trading_agent.dashboard_system_trace import (
+    invalid_system_operations_projection,
+    system_operation_node,
 )
 
 
@@ -28,7 +33,11 @@ def project_system_operations(outputs: Path, *, now: dt.datetime) -> WorkspacePr
         case tuple() as receipts:
             return _project(receipts, now)
         case str() as reason:
-            return _invalid(reason, now)
+            return invalid_system_operations_projection(
+                reason,
+                now,
+                unavailable=False,
+            )
         case unreachable:
             assert_never(unreachable)
 
@@ -38,20 +47,31 @@ def _project(
     now: dt.datetime,
 ) -> WorkspaceProjection:
     if not receipts:
-        return _invalid("system_operations_missing", now, unavailable=True)
-    parts = tuple(_item(receipt, now) for receipt in receipts[:50])
+        return invalid_system_operations_projection(
+            "launchd_receipt_missing",
+            now,
+            unavailable=True,
+        )
+    parts = tuple(_item(receipt, now) for receipt in receipts[:13])
     blocker = next((part[3] for part in parts if part[3] is not None), None)
+    latest_observation = max(item.observed_at for item in receipts)
     trace_id = next(
         (part[0].trace_id for part in parts if part[3] is not None),
         parts[0][0].trace_id,
     )
     return WorkspaceProjection(
         SourceStateV2(
-            state="blocked" if blocker is not None else "populated",
-            observed_at=max(item.observed_at for item in receipts),
+            state=(
+                "unavailable"
+                if blocker == "stage_code_unknown"
+                else "blocked"
+                if blocker is not None
+                else "populated"
+            ),
+            observed_at=latest_observation,
             freshness=FreshnessV2(
                 policy_id="typed-system-operations-v2",
-                age_seconds=0,
+                age_seconds=max(0, int((now - latest_observation).total_seconds())),
                 as_of=now,
             ),
             blocker_code=blocker,
@@ -82,24 +102,68 @@ def _item(
             failed = receipt.status == "failed" or (
                 receipt.last_exit_code is not None and receipt.last_exit_code != 0
             )
-            blocker = "launchd_pid_stale" if stale else "launchd_job_failed" if failed else None
-            value = receipt.status
+            unverified_exit = (
+                receipt.status == "exited"
+                and receipt.terminal_receipt_sha256 is None
+            )
+            blocker = (
+                "launchd_pid_stale"
+                if stale
+                else "launchd_job_failed"
+                if failed
+                else "launchd_exit_unverified"
+                if unverified_exit
+                else None
+            )
+            detail = (
+                f" · {receipt.schedule}" if receipt.schedule is not None else ""
+            )
+            process = (
+                " · PID receipt current"
+                if receipt.pid is not None and not stale
+                else f" · exit {receipt.last_exit_code}"
+                if receipt.last_exit_code is not None
+                else ""
+            )
+            value = f"{receipt.status}{detail}{process}"
             terminal_kind: Literal["process_receipt", "deployment_receipt"] = "process_receipt"
             label = receipt.job_id
             safe_ref = receipt.receipt_sha256
+            category = "launchd"
+        case StageReceipt():
+            known_code = receipt.result_code in {
+                "stage_passed",
+                "stage_failed",
+                "stage_blocked",
+            }
+            blocker = (
+                "stage_terminal_missing"
+                if receipt.terminal_receipt_sha256 is None
+                else "stage_code_unknown"
+                if not known_code
+                else "stage_failed"
+                if receipt.outcome != "passed"
+                else None
+            )
+            value = receipt.result_code
+            terminal_kind = "process_receipt"
+            label = receipt.stage_id.replace("-", " ").capitalize()
+            safe_ref = receipt.receipt_sha256
+            category = "stage"
         case RailwayReceipt():
             mismatch = receipt.code_sha256 != receipt.expected_code_sha256
             blocker = (
                 "deployment_sha_mismatch"
                 if mismatch
                 else "railway_health_failed"
-                if receipt.health == "unhealthy" or receipt.service_count != 1
+                if receipt.health != "healthy" or receipt.service_count != 1
                 else None
             )
             value = receipt.health
             terminal_kind = "deployment_receipt"
             label = "Railway deployment"
             safe_ref = receipt.receipt_sha256
+            category = "railway"
         case RelayReceipt():
             stale = now - receipt.observed_at > dt.timedelta(minutes=5)
             blocker = (
@@ -113,13 +177,20 @@ def _item(
             terminal_kind = "process_receipt"
             label = "Event relay"
             safe_ref = receipt.receipt_sha256
+            category = "relay"
         case unreachable:
             assert_never(unreachable)
     source_id = f"trace.system.operation.{receipt.evidence_id}"
     terminal_id = f"{source_id}.terminal"
     nodes = (
-        _node(source_id, "source_receipt", receipt.observed_at, safe_ref, "accepted"),
-        _node(
+        system_operation_node(
+            source_id,
+            "source_receipt",
+            receipt.observed_at,
+            safe_ref,
+            "accepted",
+        ),
+        system_operation_node(
             terminal_id,
             "blocker_terminal" if blocker is not None else terminal_kind,
             receipt.observed_at,
@@ -129,10 +200,16 @@ def _item(
     )
     return (
         WorkspaceItemV2(
-            item_id=f"system.operation.{receipt.evidence_id}",
+            item_id=f"system.operation.{category}.{receipt.evidence_id}",
             kind="system",
             label=label,
-            state="blocked" if blocker is not None else "populated",
+            state=(
+                "unavailable"
+                if blocker in {"stage_code_unknown", "launchd_exit_unverified"}
+                else "blocked"
+                if blocker is not None
+                else "populated"
+            ),
             value=value,
             observed_at=receipt.observed_at,
             trace_id=source_id,
@@ -146,68 +223,6 @@ def _item(
             ),
         ),
         blocker,
-    )
-
-
-def _invalid(
-    reason: str,
-    now: dt.datetime,
-    *,
-    unavailable: bool = False,
-) -> WorkspaceProjection:
-    source_id = "trace.system.operations"
-    safe_ref = "0" * 64
-    return WorkspaceProjection(
-        SourceStateV2(
-            state="unavailable" if unavailable else "corrupt",
-            observed_at=None if unavailable else now,
-            freshness=FreshnessV2(
-                policy_id="typed-system-operations-v2",
-                age_seconds=None,
-                as_of=now,
-            ),
-            blocker_code=reason,
-            summary="Typed system operations evidence unavailable",
-            total_count=0,
-            projected_count=0,
-            truncated=False,
-            trace_id=source_id,
-            items=(),
-        ),
-        (
-            _node(source_id, "source_receipt", now, safe_ref, "unavailable"),
-            _node(f"{source_id}.blocker", "blocker_terminal", now, safe_ref, "blocked"),
-        ),
-        (
-            TraceEdgeV2(
-                from_node_id=source_id,
-                to_node_id=f"{source_id}.blocker",
-                kind="blocked_by",
-            ),
-        ),
-    )
-
-
-def _node(
-    node_id: str,
-    kind: Literal[
-        "source_receipt",
-        "process_receipt",
-        "deployment_receipt",
-        "blocker_terminal",
-    ],
-    observed_at: dt.datetime,
-    safe_ref: str,
-    state: Literal["accepted", "blocked", "unavailable"],
-) -> TraceNodeV2:
-    return TraceNodeV2(
-        node_id=node_id,
-        kind=kind,
-        label="Typed system operation evidence",
-        observed_at=observed_at,
-        safe_ref=safe_ref,
-        state=state,
-        source_namespace="system.operations",
     )
 
 

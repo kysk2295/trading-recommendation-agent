@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
+from trading_agent.dashboard_system_control_receipts import AUTONOMOUS_CONTROL_FILE
 from trading_agent.dashboard_system_evidence import MILESTONE_FILE, MILESTONE_IDS
 from trading_agent.dashboard_system_operations import OPERATIONS_FILE
 
@@ -21,6 +22,7 @@ def test_system_projects_exactly_m0_through_m10_from_typed_evidence(
     root.mkdir(parents=True)
     _write_milestones(root, NOW)
     _write_operations(root, NOW)
+    _write_autonomous_control(root, NOW)
 
     # When system evidence is projected
     snapshot = collect_dashboard_snapshot_v2(tmp_path / "outputs", now=NOW)
@@ -37,7 +39,7 @@ def test_system_projects_exactly_m0_through_m10_from_typed_evidence(
     )
     assert system.state == "populated"
     assert tuple(item.label for item in system.items[:11]) == MILESTONE_IDS
-    assert len(system.items) == 14
+    assert len(system.items) == 23
 
 
 @pytest.mark.parametrize(
@@ -167,6 +169,39 @@ def _write_milestones(root: Path, now: dt.datetime) -> None:
         for index, milestone in enumerate(MILESTONE_IDS)
     )
     path = root / MILESTONE_FILE
+    path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+    path.chmod(0o600)
+
+
+def _write_autonomous_control(root: Path, now: dt.datetime) -> None:
+    rows = (
+        {
+            "schema_version": 1,
+            "evidence_type": "autonomous_control",
+            "evidence_id": f"autonomous-{component}",
+            "component": component,
+            "agent_family_id": "systematic_quant",
+            "trigger_type": "new_data",
+            "observed_at": now.isoformat(),
+            "state": "passed",
+            "blocker_code": None,
+            "receipt_sha256": f"{index + 10:064x}",
+        }
+        for index, component in enumerate(
+            (
+                "scheduler",
+                "trigger",
+                "claim",
+                "budget",
+                "cooldown",
+                "concurrency",
+                "failure_budget",
+                "worktree",
+                "cleanup",
+            )
+        )
+    )
+    path = root / AUTONOMOUS_CONTROL_FILE
     path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
     path.chmod(0o600)
 

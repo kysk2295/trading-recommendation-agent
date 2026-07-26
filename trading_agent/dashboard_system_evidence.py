@@ -19,10 +19,9 @@ from trading_agent.dashboard_system_milestone_receipts import (
     MilestoneReceipt,
     read_milestone_receipts,
 )
-from trading_agent.dashboard_system_operations import project_system_operations
 
 
-def project_system_evidence(outputs: Path, *, now: dt.datetime) -> WorkspaceProjection:
+def project_milestone_evidence(outputs: Path, *, now: dt.datetime) -> WorkspaceProjection:
     result = read_milestone_receipts(outputs / "system" / MILESTONE_FILE, now)
     match result:
         case tuple() as receipts:
@@ -31,46 +30,7 @@ def project_system_evidence(outputs: Path, *, now: dt.datetime) -> WorkspaceProj
             milestones = _invalid(reason, now)
         case unreachable:
             assert_never(unreachable)
-    operations = project_system_operations(outputs, now=now)
-    blocker = milestones.workspace.blocker_code or operations.workspace.blocker_code
-    items = milestones.workspace.items + operations.workspace.items
-    state = (
-        "corrupt"
-        if "corrupt" in {milestones.workspace.state, operations.workspace.state}
-        else "blocked"
-        if blocker is not None
-        else "populated"
-    )
-    return WorkspaceProjection(
-        milestones.workspace.model_copy(
-            update={
-                "state": state,
-                "observed_at": max(
-                    value
-                    for value in (
-                        milestones.workspace.observed_at,
-                        operations.workspace.observed_at,
-                        now,
-                    )
-                    if value is not None
-                ),
-                "blocker_code": blocker,
-                "summary": "Typed M0-M10 and system operations evidence projected",
-                "total_count": len(items),
-                "projected_count": len(items),
-                "trace_id": (
-                    milestones.workspace.trace_id
-                    if milestones.workspace.blocker_code is not None
-                    else operations.workspace.trace_id
-                    if operations.workspace.blocker_code is not None
-                    else milestones.workspace.trace_id
-                ),
-                "items": items,
-            }
-        ),
-        milestones.nodes + operations.nodes,
-        milestones.edges + operations.edges,
-    )
+    return milestones
 
 
 def _project(receipts: tuple[MilestoneReceipt, ...], now: dt.datetime) -> WorkspaceProjection:
@@ -78,7 +38,7 @@ def _project(receipts: tuple[MilestoneReceipt, ...], now: dt.datetime) -> Worksp
     item_parts = tuple(_milestone_item(milestone_id, by_id.get(milestone_id), now) for milestone_id in MILESTONE_IDS)
     missing = len(receipts) != len(MILESTONE_IDS)
     failed = any(receipt.status != "passed" for receipt in receipts)
-    blocked = missing or failed
+    terminal_blocked = missing or failed
     root_id = "trace.system.milestones"
     terminal_id = f"{root_id}.terminal"
     safe_ref = hashlib.sha256("".join(MILESTONE_IDS).encode()).hexdigest()
@@ -86,24 +46,36 @@ def _project(receipts: tuple[MilestoneReceipt, ...], now: dt.datetime) -> Worksp
         _node(root_id, "source_receipt", now, safe_ref, "accepted"),
         _node(
             terminal_id,
-            "blocker_terminal" if blocked else "process_receipt",
+            "blocker_terminal" if terminal_blocked else "process_receipt",
             now,
             safe_ref,
-            "blocked" if blocked else "accepted",
+            "blocked" if terminal_blocked else "accepted",
         ),
     )
     root_edges = (
         TraceEdgeV2(
             from_node_id=root_id,
             to_node_id=terminal_id,
-            kind="blocked_by" if blocked else "executed_as",
+            kind="blocked_by" if terminal_blocked else "executed_as",
         ),
+    )
+    latest_observation = max(
+        (receipt.observed_at for receipt in receipts),
+        default=None,
     )
     return WorkspaceProjection(
         SourceStateV2(
-            state="blocked" if blocked else "populated",
-            observed_at=max((receipt.observed_at for receipt in receipts), default=now),
-            freshness=FreshnessV2(policy_id="system-milestones-v2", age_seconds=0, as_of=now),
+            state="unavailable" if missing else "blocked" if failed else "populated",
+            observed_at=latest_observation,
+            freshness=FreshnessV2(
+                policy_id="system-milestones-v2",
+                age_seconds=(
+                    None
+                    if latest_observation is None
+                    else max(0, int((now - latest_observation).total_seconds()))
+                ),
+                as_of=now,
+            ),
             blocker_code=(
                 "milestone_authority_missing"
                 if missing
@@ -138,7 +110,7 @@ def _milestone_item(
                 kind="system",
                 label=milestone_id,
                 state="unavailable",
-                value=None,
+                value="milestone_authority_missing",
                 observed_at=None,
                 trace_id=source_id,
             ),
@@ -208,3 +180,17 @@ def _node(
         state=state,
         source_namespace="system.milestones",
     )
+
+
+def project_system_evidence(outputs: Path, *, now: dt.datetime) -> WorkspaceProjection:
+    from trading_agent.dashboard_projection_system import project_system
+
+    return project_system(outputs, now=now)
+
+
+__all__ = (
+    "MILESTONE_FILE",
+    "MILESTONE_IDS",
+    "project_milestone_evidence",
+    "project_system_evidence",
+)
