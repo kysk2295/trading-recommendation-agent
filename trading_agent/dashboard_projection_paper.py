@@ -31,7 +31,8 @@ from trading_agent.lane_registry_store import (
 
 def project_finalized_paper(outputs: Path, *, now: dt.datetime) -> WorkspaceProjection:
     path = outputs / "lane_control" / "lane_registry.sqlite3"
-    if path.with_name(f"{path.name}-wal").exists():
+    wal_path = path.with_name(f"{path.name}-wal")
+    if wal_path.exists() and wal_path.stat().st_size > 0:
         return blocked_projection(
             "paper",
             now=now,

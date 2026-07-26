@@ -12,10 +12,14 @@ import sqlite3
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import override
 
 import httpx2
 
 from trading_agent.alpaca_paper_config import load_alpaca_paper_credentials
+from trading_agent.dashboard_paper_finalized_terminal_writer import (
+    publish_finalized_paper_terminal,
+)
 from trading_agent.execution_store import ExecutionStore
 from trading_agent.intraday_lane_daily_snapshot import (
     finalize_intraday_lane_day,
@@ -30,6 +34,12 @@ from trading_agent.paper_runtime_session import (
 
 REPORT_NAME = "intraday_lane_daily_snapshot_ko.md"
 BLOCKED_REASON = "장종료·평탄·immutable 계보 조건을 확인하지 못했습니다"
+
+
+class InvalidPaperFinalizationPublicationError(RuntimeError):
+    @override
+    def __str__(self) -> str:
+        return "Paper finalizer terminal 발행 경로 또는 checkpoint가 유효하지 않습니다"
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +98,13 @@ def main(
             readiness,
             evaluated_at=clock(),
         )
+        _checkpoint_sqlite(args.execution_database)
+        _checkpoint_sqlite(args.lane_registry)
+        _ = publish_finalized_paper_terminal(
+            _paper_outputs(args.execution_database, args.lane_registry),
+            result.snapshot,
+            execution,
+        )
     except (
         httpx2.HTTPError,
         OSError,
@@ -109,6 +126,25 @@ def main(
         data_quality_complete=snapshot.data_quality_complete,
     )
     return 0 if _write_report(args.output_dir, report) else 2
+
+
+def _paper_outputs(execution_database: Path, lane_registry: Path) -> Path:
+    outputs = execution_database.resolve(strict=False).parent.parent
+    if (
+        execution_database.resolve(strict=False)
+        != outputs / "paper" / "execution.sqlite3"
+        or lane_registry.resolve(strict=False)
+        != outputs / "lane_control" / "lane_registry.sqlite3"
+    ):
+        raise InvalidPaperFinalizationPublicationError
+    return outputs
+
+
+def _checkpoint_sqlite(path: Path) -> None:
+    with sqlite3.connect(path, timeout=0.0) as connection:
+        result = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    if result is None or result[0] != 0:
+        raise InvalidPaperFinalizationPublicationError
 
 
 def _blocked_report(

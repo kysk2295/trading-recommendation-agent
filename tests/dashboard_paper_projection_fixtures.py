@@ -7,14 +7,12 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
-from trading_agent.dashboard_paper_finalized_terminal import (
-    TERMINAL_FILENAME,
-    FinalizedPaperTerminalReceipt,
+from trading_agent.dashboard_paper_finalized_terminal_writer import (
+    publish_finalized_paper_terminal,
 )
 from trading_agent.execution_store import ExecutionStore
 from trading_agent.lane_contract_keys import (
     experiment_scope_key,
-    lane_daily_snapshot_key,
     lane_manifest_key,
 )
 from trading_agent.lane_contract_models import LaneDailySnapshot
@@ -89,8 +87,8 @@ def append_finalized_lifecycle(
         source_generation=identity.generation,
         source_sha256=identity.sha256,
     )
-    if store.paper_stream_recoveries():
-        write_finalized_terminal(outputs, snapshot, store)
+    if fixture == COMPLETE_LIFECYCLE:
+        assert publish_finalized_paper_terminal(outputs, snapshot, store)
     return store
 
 
@@ -199,30 +197,7 @@ def append_swing_snapshot(
         _ = writer.register_manifest(SWING_MANIFEST)
         _ = writer.register_experiment_scope(scope)
         assert writer.append_daily_snapshot(snapshot)
-    write_finalized_terminal(outputs, snapshot, store)
-
-
-def write_finalized_terminal(
-    outputs: Path,
-    snapshot: LaneDailySnapshot,
-    store: ExecutionStore,
-) -> None:
-    recovery = store.paper_stream_recoveries()[-1]
-    receipt = FinalizedPaperTerminalReceipt(
-        lane_id=snapshot.lane_id,
-        session_date=snapshot.session_date,
-        manifest_key=snapshot.manifest_key,
-        snapshot_key=str(lane_daily_snapshot_key(snapshot)),
-        source_ledger_generation=snapshot.source_ledger_generation,
-        source_ledger_sha256=snapshot.source_ledger_sha256,
-        strategy_versions=snapshot.champion_strategy_versions,
-        recovery_snapshot_sha256=recovery.snapshot_sha256,
-        observed_at=snapshot.finalized_at,
-    )
-    path = outputs / "paper" / TERMINAL_FILENAME
-    existing = path.read_text() if path.exists() else ""
-    path.write_text(f"{existing}{receipt.model_dump_json()}\n")
-    path.chmod(0o600)
+    assert publish_finalized_paper_terminal(outputs, snapshot, store)
 
 
 def safety_plan(phase: PaperSafetyPhase, observed_at: dt.datetime) -> PaperSafetyPlan:
