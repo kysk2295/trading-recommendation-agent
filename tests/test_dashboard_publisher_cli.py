@@ -9,20 +9,22 @@ from pathlib import Path
 import anyio
 import pytest
 from typer.testing import CliRunner
-from watchfiles import Change
 from websockets.exceptions import WebSocketException
 
 import run_dashboard_publisher
 from trading_agent.dashboard_commands import InteractionPayload
+from trading_agent.dashboard_native_watch import watch_native_changes
 from trading_agent.dashboard_relay import is_reconnectable_group, pairing_url, run_interaction
 
 
 class _SendSocket:
     def __init__(self) -> None:
         self.messages: list[str] = []
+        self.sent = anyio.Event()
 
     async def send(self, message: str) -> None:
         self.messages.append(message)
+        self.sent.set()
 
 
 def test_dashboard_publisher_help() -> None:
@@ -129,18 +131,15 @@ def test_publisher_uses_websocket_events_without_periodic_http_or_sleep() -> Non
     assert "httpx2" not in imported_roots
     assert "post" not in called_names
     assert "websockets" in imported_roots
-    assert "watchfiles" in imported_roots
+    assert "watchfiles" not in imported_roots
+    assert run_dashboard_publisher.watch_native_changes is watch_native_changes
 
 
 def test_publisher_converts_dashboard_urls_to_publish_websockets() -> None:
-    assert (
-        run_dashboard_publisher._publisher_url("https://observatory.example")
-        == "wss://observatory.example/api/realtime/publish"
-    )
-    assert (
-        run_dashboard_publisher._publisher_url("http://localhost:3100")
-        == "ws://localhost:3100/api/realtime/publish"
-    )
+    https_url = run_dashboard_publisher._publisher_url("https://observatory.example")
+    http_url = run_dashboard_publisher._publisher_url("http://localhost:3100")
+    assert https_url == "wss://observatory.example/api/realtime/publish"
+    assert http_url == "ws://localhost:3100/api/realtime/publish"
     assert (
         pairing_url(
             "https://observatory.example",
@@ -179,7 +178,7 @@ def test_publisher_watches_account_ledger_without_periodic_broker_reads(
 async def test_publisher_watch_roots_coalesce_one_mutation_each(
     tmp_path: Path,
 ) -> None:
-    # Given every stable root and an injectable event source
+    # Given every stable root and the production native event source
     for name in (
         "live_sessions",
         "source_evidence",
@@ -193,31 +192,26 @@ async def test_publisher_watch_roots_coalesce_one_mutation_each(
     roots = run_dashboard_publisher._watch_roots(tmp_path)
     socket = _SendSocket()
 
-    observed_paths: tuple[Path, ...] = ()
-
-    # When real files in every declared root change in one coalesced burst
-    async def one_batch(
-        *paths: Path,
-        **_settings: int,
-    ) -> AsyncIterator[set[tuple[Change, str]]]:
-        nonlocal observed_paths
-        observed_paths = paths
-        changed: set[tuple[Change, str]] = set()
-        for root in paths:
+    async def mutate_all_roots() -> None:
+        await anyio.sleep(0.1)
+        for root in roots:
             mutation = root / "mutation.receipt"
             mutation.write_text(root.name, encoding="utf-8")
-            changed.add((Change.added, str(mutation)))
-        yield changed
 
-    await run_dashboard_publisher._watch_output_events(
-        socket,
-        tmp_path,
-        anyio.Lock(),
-        one_batch,
-    )
+    # When real OS file mutations arrive in one burst
+    with anyio.fail_after(8):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(
+                run_dashboard_publisher._watch_output_events,
+                socket,
+                tmp_path,
+                anyio.Lock(),
+            )
+            tasks.start_soon(mutate_all_roots)
+            await socket.sent.wait()
+            tasks.cancel_scope.cancel()
 
     # Then the publisher rebuilds and sends exactly one coalesced snapshot event
-    assert observed_paths == roots
     assert all((root / "mutation.receipt").read_text(encoding="utf-8") == root.name for root in roots)
     assert len(socket.messages) == 1
     assert json.loads(socket.messages[0])["snapshot"]["schema_version"] == 2
@@ -235,21 +229,25 @@ async def test_publisher_idle_watch_does_no_projection_or_send(
     async def idle_watch(
         *_paths: Path,
         **_settings: int,
-    ) -> AsyncIterator[set[tuple[Change, str]]]:
+    ) -> AsyncIterator[frozenset[Path]]:
         await anyio.Event().wait()
-        yield set()
+        yield frozenset()
 
     def counted_projection(_outputs: Path):
         nonlocal projections
         projections += 1
         return run_dashboard_publisher.collect_dashboard_snapshot_v2(_outputs)
 
-    monkeypatch.setattr(run_dashboard_publisher, "awatch", idle_watch)
     monkeypatch.setattr(run_dashboard_publisher, "collect_dashboard_snapshot_v2", counted_projection)
 
     # When idleness is observed for a bounded interval
     with anyio.move_on_after(0.05):
-        await run_dashboard_publisher._watch_output_events(socket, tmp_path, anyio.Lock())
+        await run_dashboard_publisher._watch_output_events(
+            socket,
+            tmp_path,
+            anyio.Lock(),
+            idle_watch,
+        )
 
     # Then no snapshot/database projection, send, HTTP poll, or model call occurs
     assert projections == 0

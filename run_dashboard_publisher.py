@@ -6,7 +6,6 @@
 #   "pydantic>=2.11",
 #   "rich>=13.9",
 #   "typer>=0.15",
-#   "watchfiles>=1.1,<2",
 #   "websockets>=16,<17",
 # ]
 # ///
@@ -25,7 +24,6 @@ import typer
 from anyio.abc import TaskGroup
 from pydantic import ValidationError
 from rich import print as rprint
-from watchfiles import Change, awatch
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import WebSocketException
 
@@ -35,6 +33,7 @@ from trading_agent.dashboard_commands import (
     parse_dashboard_event,
 )
 from trading_agent.dashboard_models_v2 import DashboardSnapshotV2
+from trading_agent.dashboard_native_watch import watch_native_changes
 from trading_agent.dashboard_relay import (
     DashboardRelayConnectionError,
     is_reconnectable_group,
@@ -68,7 +67,7 @@ class WatchFactory(Protocol):
         *paths: Path,
         debounce: int,
         step: int,
-    ) -> AsyncIterator[set[tuple[Change, str]]]: ...
+    ) -> AsyncIterator[frozenset[Path]]: ...
 
 
 @app.command(help="로컬 산출물을 redacted 운영 snapshot으로 안전하게 전송합니다.")
@@ -227,7 +226,7 @@ async def _watch_output_events(
     send_lock: anyio.Lock,
     watcher: WatchFactory | None = None,
 ) -> None:
-    event_source = awatch if watcher is None else watcher
+    event_source = watch_native_changes if watcher is None else watcher
     async for _changes in event_source(
         *_watch_roots(outputs),
         debounce=WATCH_DEBOUNCE_MS,
