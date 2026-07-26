@@ -137,6 +137,7 @@ def operations(mutation: str = "") -> tuple[JsonRow, ...]:
 @dataclass(frozen=True, slots=True)
 class SystemAuthorityTestSigner:
     verifier: SystemAuthorityVerifier
+    public_key: bytes = field(repr=False)
     _private_key: Ed25519PrivateKey = field(repr=False)
 
     def sign(self, row: JsonRow) -> JsonRow:
@@ -171,7 +172,11 @@ def system_authority_signer(
         relay_service_id="publisher-relay",
         public_key=public_key,
     )
-    return SystemAuthorityTestSigner(verifier=verifier, _private_key=private_key)
+    return SystemAuthorityTestSigner(
+        verifier=verifier,
+        public_key=public_key,
+        _private_key=private_key,
+    )
 
 
 def current_authority(

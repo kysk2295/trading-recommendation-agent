@@ -22,7 +22,7 @@ from trading_agent.dashboard_system_current_authority import (
     SYSTEM_CURRENT_AUTHORITY_ROOT,
     RailwayCurrentAuthority,
     RelayCurrentAuthority,
-    SystemAuthorityVerifier,
+    SystemAuthorityVerifierInput,
     SystemCurrentAuthority,
     read_system_current_authority,
 )
@@ -152,7 +152,7 @@ def read_operation_receipts(
     path: Path,
     now: dt.datetime,
     *,
-    authority_verifier: SystemAuthorityVerifier | None,
+    authority_verifier: SystemAuthorityVerifierInput,
 ) -> tuple[OperationReceipt, ...] | str:
     if not path.exists():
         return ()

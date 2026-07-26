@@ -13,7 +13,9 @@ from trading_agent.dashboard_models_v2 import (
     WorkspaceItemV2,
 )
 from trading_agent.dashboard_projection_common import WorkspaceProjection
-from trading_agent.dashboard_system_current_authority import SystemAuthorityVerifier
+from trading_agent.dashboard_system_current_authority import (
+    SystemAuthorityVerifierInput,
+)
 from trading_agent.dashboard_system_milestone_receipts import (
     MILESTONE_FILE,
     MILESTONE_IDS,
@@ -187,7 +189,7 @@ def project_system_evidence(
     outputs: Path,
     *,
     now: dt.datetime,
-    authority_verifier: SystemAuthorityVerifier | None = None,
+    authority_verifier: SystemAuthorityVerifierInput = None,
 ) -> WorkspaceProjection:
     from trading_agent.dashboard_projection_system import project_system
 

@@ -31,7 +31,9 @@ from trading_agent.dashboard_projection_receipts import (
     read_projection_receipts,
 )
 from trading_agent.dashboard_projection_sources import project_data_sources
-from trading_agent.dashboard_system_current_authority import SystemAuthorityVerifier
+from trading_agent.dashboard_system_current_authority import (
+    SystemAuthorityVerifierInput,
+)
 from trading_agent.dashboard_system_evidence import project_system_evidence
 
 ROOT_BY_WORKSPACE: Final[dict[WorkspaceName, str]] = {
@@ -57,7 +59,7 @@ def collect_dashboard_snapshot_v2(
     outputs: Path,
     *,
     now: dt.datetime | None = None,
-    system_authority_verifier: SystemAuthorityVerifier | None = None,
+    system_authority_verifier: SystemAuthorityVerifierInput = None,
 ) -> DashboardSnapshotV2:
     generated_at = dt.datetime.now(dt.UTC) if now is None else now
     if generated_at.tzinfo is None or generated_at.utcoffset() is None:

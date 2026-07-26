@@ -15,6 +15,9 @@ from trading_agent.dashboard_autonomous_publisher import (
 from trading_agent.dashboard_models_v2 import DashboardSnapshotV2
 from trading_agent.dashboard_native_watch import watch_native_changes
 from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
+from trading_agent.dashboard_system_current_authority import (
+    SystemAuthorityVerifierInput,
+)
 
 MAX_RECONNECT_SECONDS = 60
 WATCH_DEBOUNCE_MS = 2_000
@@ -49,6 +52,7 @@ async def watch_output_events(
     outputs: Path,
     send_lock: anyio.Lock,
     watcher: WatchFactory | None = None,
+    system_authority_verifier: SystemAuthorityVerifierInput = None,
 ) -> None:
     event_source = watch_native_changes if watcher is None else watcher
     async for changes in event_source(
@@ -62,7 +66,10 @@ async def watch_output_events(
                 trigger_path,
                 send_lock,
             )
-        snapshot = collect_dashboard_snapshot_v2(outputs)
+        snapshot = collect_dashboard_snapshot_v2(
+            outputs,
+            system_authority_verifier=system_authority_verifier,
+        )
         async with send_lock:
             await send_snapshot(socket, snapshot)
 

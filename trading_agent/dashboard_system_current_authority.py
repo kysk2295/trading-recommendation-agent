@@ -156,14 +156,32 @@ class SystemAuthorityVerifier:
         return None
 
 
+SystemAuthorityVerifierFailureReason = Literal[
+    "system_current_authority_verifier_missing",
+    "system_current_authority_verifier_invalid",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class UnavailableSystemAuthorityVerifier:
+    reason: SystemAuthorityVerifierFailureReason
+
+
+SystemAuthorityVerifierInput = (
+    SystemAuthorityVerifier | UnavailableSystemAuthorityVerifier | None
+)
+
+
 def read_system_current_authority(
     path: Path,
     now: dt.datetime,
     *,
-    verifier: SystemAuthorityVerifier | None,
+    verifier: SystemAuthorityVerifierInput,
 ) -> tuple[SystemCurrentAuthority, ...] | str:
     if verifier is None:
         return "system_current_authority_verifier_missing"
+    if isinstance(verifier, UnavailableSystemAuthorityVerifier):
+        return verifier.reason
     if not path.exists():
         return "system_current_authority_missing"
     try:
@@ -196,7 +214,10 @@ __all__ = (
     "RailwayCurrentAuthority",
     "RelayCurrentAuthority",
     "SystemAuthorityVerifier",
+    "SystemAuthorityVerifierFailureReason",
+    "SystemAuthorityVerifierInput",
     "SystemCurrentAuthority",
+    "UnavailableSystemAuthorityVerifier",
     "canonical_authority_payload",
     "read_system_current_authority",
 )

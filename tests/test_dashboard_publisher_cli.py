@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import datetime as dt
+import inspect
 import json
 import threading
 from collections.abc import AsyncIterator
@@ -57,7 +58,15 @@ def test_dashboard_publisher_help() -> None:
     assert "redacted" in result.stdout
     assert "--once" in result.stdout
     assert "--pair-browser" in result.stdout
+    assert "--system-authority-" in result.stdout
+    assert "Ed25519" in result.stdout
     assert "--interval-seconds" not in result.stdout
+
+
+def test_publisher_watch_requires_explicit_system_authority_verifier() -> None:
+    parameters = inspect.signature(run_dashboard_publisher._watch_output_events).parameters
+
+    assert "system_authority_verifier" in parameters
 
 
 def test_dashboard_conversation_reset_help_bad_and_happy_path(tmp_path: Path) -> None:
