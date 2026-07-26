@@ -3,9 +3,10 @@
 > Execution source of truth: `.omo/plans/dashboard-v2.md`. This document expands Todo 1 into
 > file-level vertical sequencing; it does not replace the approved OpenAgent plan.
 
-**Goal:** implement and deploy the nine-workspace Ember Operations Workstation using only strict,
-redacted, read-only projections of authoritative evidence, while preserving public reads, private
-operator commands, Paper-only safety, exactly-once paid execution, event-driven delivery, and
+**Goal:** implement and deploy the nine-workspace Ember Operations Workstation for exactly six
+LLM-backed research families with persistent conversation, user-directed tool work and autonomous
+research, using strict redacted projections while preserving public reads, private operator
+commands, Paper-only safety, per-claim at-most-once paid execution, event-driven delivery, and
 rolling v1 rollback.
 
 **Architecture:** Python owns point-in-time read models and redaction. Hono/Postgres accepts strict
@@ -26,7 +27,7 @@ For each step:
 4. rerun the same command to green;
 5. run the full vertical gate after refactor;
 6. capture artifact output under the parent Todo's fixed directory:
-   `.omo/evidence/dashboard-v2/task-2/` through `task-13/` as mapped by the dependency table.
+   `.omo/evidence/dashboard-v2/task-2/` through `task-14/` as mapped by the dependency table.
 
 Do not weaken an assertion, add sleeps, invent fixture success data, or treat a missing source as
 empty. Strict test fixtures label all demonstration/showcase values and never enter production
@@ -71,14 +72,15 @@ dev server and not Lighthouse CLI. The final accessibility harness must run axe 
 | 3 | primitive showcase + QA harness | design contract, v2 types | `feat(dashboard): build workstation primitives` |
 | 4 | read-only projector/watch inventory | v2 schema | `feat(dashboard): project redacted snapshot v2` |
 | 5 | nine-workspace shell + Evidence Trace | v2 types, primitives | `feat(dashboard): add nine-workspace shell` |
-| 6 | persistent exactly-once Command Center | v2 schema/projector, shell | `feat(dashboard): persist Hermes agent sessions` |
-| 7 | Markets + Data Sources | projector, shell | `feat(dashboard): connect markets and data sources` |
-| 8 | Research + Strategies | projector, shell | `feat(dashboard): connect research and strategies` |
-| 9 | Derivatives + Paper | projector, shell | `feat(dashboard): connect derivatives and paper` |
-| 10 | System | projector, shell | `feat(dashboard): connect system operations` |
-| 11 | cross-surface hardening | all workspaces | `test(dashboard): harden dashboard v2 release gates` |
-| 12 | rolling live rollout evidence | hardening | `docs(dashboard): record dashboard v2 deployment` |
-| 13 | v1 ingest removal | live rollback/recovery proof | `refactor(dashboard): complete snapshot v2 migration` |
+| 6 | six-family dual-channel control plane | v2 schema/projector | `feat(research): add autonomous agent control plane` |
+| 7 | persistent Command Center + directed jobs | control plane, shell | `feat(dashboard): persist Hermes agent sessions` |
+| 8 | Markets + Data Sources | projector, shell | `feat(dashboard): connect markets and data sources` |
+| 9 | Research + Strategies | control plane, projector, shell | `feat(dashboard): connect research and strategies` |
+| 10 | Derivatives + Paper | projector, shell | `feat(dashboard): connect derivatives and paper` |
+| 11 | System | control plane, projector, shell | `feat(dashboard): connect system operations` |
+| 12 | cross-surface hardening | all workspaces | `test(dashboard): harden dashboard v2 release gates` |
+| 13 | rolling live rollout evidence | hardening | `docs(dashboard): record dashboard v2 deployment` |
+| 14 | v1 ingest removal | live rollback/recovery proof | `refactor(dashboard): complete snapshot v2 migration` |
 
 Shared files (`dashboard/src/schema.ts`, `render.ts`, `client.ts`, `store.ts`,
 `trading_agent/dashboard_models_v2.py`, `dashboard_snapshot_v2.py`) change only in the earliest
@@ -314,7 +316,109 @@ workspace by mouse and keyboard, checks source-to-terminal resolution, traps/ret
 on Escape, and stresses long CJK/unbroken SHA/table content. An invalid hash safely selects
 `#command-center`. Missing trace renders corrupt/unavailable and never throws.
 
-## 7. Vertical 5 — persistent exactly-once Command Center
+## 7. Vertical 5 — six-family dual-channel agent control plane
+
+**Exact files**
+
+- Create: `trading_agent/dashboard_agent_registry.py`,
+  `dashboard_agent_control_plane.py`, `dashboard_autonomous_research.py`,
+  `dashboard_agent_tool_jobs.py`.
+- Modify: `trading_agent/dashboard_models_v2.py`,
+  `dashboard_projection_agents.py`, `dashboard_snapshot_v2.py`,
+  `run_dashboard_publisher.py`.
+- Create: `tests/test_dashboard_agent_registry.py`,
+  `test_dashboard_agent_control_plane.py`, `test_dashboard_autonomous_research.py`,
+  `test_dashboard_agent_tool_jobs.py`.
+- Modify: `tests/test_dashboard_models_v2.py`,
+  `test_dashboard_projection_agents.py`, `test_dashboard_snapshot_v2.py`,
+  `test_dashboard_publisher_cli.py`.
+- Modify: `dashboard/src/schema.ts`, `realtime.ts`, `store.ts`,
+  `workspaces/command_center.ts`, `workspaces/research.ts`,
+  `workspaces/strategies.ts`, `workspaces/system.ts`.
+- Create: `dashboard/tests/agent_control_plane.test.ts`,
+  `dashboard/tests/e2e/agent-channels.spec.ts`.
+
+**Red**
+
+```bash
+uv run pytest -q tests/test_dashboard_agent_registry.py \
+  tests/test_dashboard_agent_control_plane.py \
+  tests/test_dashboard_autonomous_research.py \
+  tests/test_dashboard_agent_tool_jobs.py
+cd dashboard
+bun test tests/agent_control_plane.test.ts
+```
+
+Expected failures prove the registry does not yet enforce exactly the six IDs, launchd groups can
+be mistaken for identity, the three capability flags and two channels are absent, and there is no
+strict autonomous trigger/claim/policy/worktree/tool/receipt contract.
+
+**Green and fault-injection QA**
+
+- Register exactly `opportunity_manager`, `day_trading`, `swing_trading`, `systematic_quant`,
+  `derivatives_research`, `market_context`; reject missing/extra/duplicate IDs. Keep
+  `allocation_manager` absent until persisted authority proves at least two independent champions.
+  Reject KR theme/US intraday/US systematic/US swing/research/delivery launchd aliases;
+  `delivery` is never an agent.
+- Prove every family advertises persistent conversation, directed tool execution and autonomous
+  research. Reviewer, Lifecycle, Execution and Loop Engineer remain typed control-plane roles.
+- Implement `AutonomousTriggerV1` with the exact addendum fields and only the five authorized types.
+  Claim `(family, policy_version, dedupe_key)` durably before launch. Invalid, unauthorized,
+  duplicate, budget-exhausted, cooldown, concurrency and rolling-failure cases launch zero models
+  and append a typed terminal/blocker receipt.
+- Run each accepted autonomous task in a pinned isolated git worktree/experiment environment with
+  allowlisted roots/tools/network, append-only step/evidence/result/cleanup receipts and outbound
+  redaction. The integration worktree must remain byte-for-byte unchanged by the fixture task.
+- Inject crash at trigger authorization, claim, process launch, tool step, result persistence and
+  event send. Each claim launches at most one process, terminates `failed|uncertain`, and never
+  performs automatic paid retry.
+- Block promotion without Independent Reviewer plus lifecycle decisions. Assert forbidden provider
+  mutation and live-money calls are zero; assert Alpaca Paper mutation is zero without the existing
+  Paper gate chain.
+
+```bash
+uv run pytest -q tests/test_dashboard_agent_registry.py \
+  tests/test_dashboard_agent_control_plane.py \
+  tests/test_dashboard_autonomous_research.py \
+  tests/test_dashboard_agent_tool_jobs.py \
+  tests/test_dashboard_models_v2.py tests/test_dashboard_projection_agents.py \
+  tests/test_dashboard_snapshot_v2.py tests/test_dashboard_publisher_cli.py
+uv run ruff check trading_agent/dashboard_agent_registry.py \
+  trading_agent/dashboard_agent_control_plane.py \
+  trading_agent/dashboard_autonomous_research.py \
+  trading_agent/dashboard_agent_tool_jobs.py \
+  trading_agent/dashboard_models_v2.py trading_agent/dashboard_projection_agents.py \
+  trading_agent/dashboard_snapshot_v2.py run_dashboard_publisher.py \
+  tests/test_dashboard_agent_*.py tests/test_dashboard_autonomous_research.py
+uv run basedpyright trading_agent/dashboard_agent_registry.py \
+  trading_agent/dashboard_agent_control_plane.py \
+  trading_agent/dashboard_autonomous_research.py \
+  trading_agent/dashboard_agent_tool_jobs.py \
+  trading_agent/dashboard_models_v2.py trading_agent/dashboard_projection_agents.py \
+  trading_agent/dashboard_snapshot_v2.py run_dashboard_publisher.py \
+  tests/test_dashboard_agent_*.py tests/test_dashboard_autonomous_research.py
+uv run run_dashboard_publisher.py autonomous-agent --help
+uv run run_dashboard_publisher.py autonomous-agent \
+  --trigger-fixture tests/fixtures/dashboard/invalid-autonomous-trigger.json \
+  --dry-run
+uv run run_dashboard_publisher.py autonomous-agent \
+  --trigger-fixture tests/fixtures/dashboard/authorized-new-data-trigger.json \
+  --fake-hermes --dry-run --expect-cleanup
+cd dashboard
+bun run check
+bun run build
+bun run scripts/run-browser-qa.ts --route '/#command-center' \
+  --agent-channels --routes '/#research,/#strategies,/#system' \
+  --axe --keyboard --network-artifact
+```
+
+Binary observables are
+`AGENT_REGISTRY_OK primary=6 allocation=conditional launchd_aliases=0 capabilities=18`,
+`AUTONOMOUS_BLOCKED model_processes=0 receipt=1`,
+`AUTONOMOUS_OK claims=1 model_processes=1 duplicate_launches=0 evidence=append_only cleanup=1`,
+and `AGENT_CHANNELS_OK conversation=1 directed=1 autonomous=1 leaks=0`.
+
+## 8. Vertical 6 — persistent Command Center and directed tool jobs
 
 **Exact files**
 
@@ -351,6 +455,8 @@ protection, or final outbound validator.
 - Fake Hermes executable emits a strict first-session result and counts process launches.
 - First same-agent submit launches once and creates 0600 binding/claim; second submit launches exact
   `--resume` once; a different agent is isolated; restart retains receipts.
+- A research/analysis/hypothesis/experiment/allowed-code message creates a typed directed job whose
+  allowlisted steps stream progress, evidence and result; generic text-only completion fails.
 - Inject faults at claim, running-send, process-start, process-exit, and terminal-send. Duplicate
   delivery/reconnect always keeps launch count `<=1` and never auto retries.
 - Test 0644, symlink, multiple hard link, corrupt/missing resume, unknown agent, timeout, forbidden
@@ -373,10 +479,10 @@ cd dashboard
 bun run check
 bun run build
 bun run scripts/run-browser-qa.ts --route '/#command-center' --command-center \
-  --axe --keyboard --public-private
+  --agent-channels --directed-job-stream --axe --keyboard --public-private
 ```
 
-## 8. Vertical 6 — Markets and Data Sources
+## 9. Vertical 7 — Markets and Data Sources
 
 **Exact files**
 
@@ -416,7 +522,7 @@ bun run scripts/run-browser-qa.ts --routes '/#markets,/#data-sources' \
 No current quote is rendered without real-time entitlement, allowed redistribution, current
 capability health, and freshness. No weekday/clock guess may render a market open.
 
-## 9. Vertical 7 — Research and Strategies
+## 10. Vertical 8 — Research and Strategies
 
 **Exact files**
 
@@ -460,7 +566,7 @@ bun run scripts/run-browser-qa.ts --routes '/#research,/#strategies' \
 Replay/backtest labels never imply profitability. Missing dataset SHA or Reviewer blocks promotion;
 the UI does not infer a champion from score.
 
-## 10. Vertical 8 — Derivatives and Paper
+## 11. Vertical 9 — Derivatives and Paper
 
 **Exact files**
 
@@ -506,7 +612,7 @@ bun run scripts/run-browser-qa.ts --routes '/#derivatives,/#paper' \
 Security QA submits to every public route and expects `404` or `401` with no storage/event change.
 No release step calls a broker mutation endpoint.
 
-## 11. Vertical 9 — System
+## 12. Vertical 10 — System
 
 **Exact files**
 
@@ -549,7 +655,7 @@ bun run scripts/run-browser-qa.ts --route '/#system' --widths 375,768,1280 \
 PID without a fresh typed receipt is never healthy. Arbitrary stdout/stderr and prose cannot
 establish milestone success.
 
-## 12. Cross-surface browser, accessibility, CLI, security, and cost QA
+## 13. Cross-surface browser, accessibility, CLI, security, and cost QA
 
 **Exact files**
 
@@ -571,7 +677,9 @@ bun run build
 bun run scripts/run-browser-qa.ts --all-workspaces --all-states \
   --widths 375,768,1280 --trace-traversal --axe --keyboard \
   --reduced-motion --zoom 200 --cjk-stress --idle-seconds 300 \
-  --public-private --network-artifact
+  --public-private --agent-channels --directed-job-stream \
+  --authorized-autonomous-trigger --duplicate-trigger-count 2 \
+  --blocked-trigger-matrix --network-artifact
 cd ..
 uv run pytest -q tests/test_dashboard_*.py
 uv run ruff check trading_agent/dashboard_*.py tests/test_dashboard_*.py \
@@ -581,21 +689,34 @@ uv run basedpyright trading_agent/dashboard_*.py tests/test_dashboard_*.py \
 uv run run_dashboard_publisher.py --help
 ```
 
-The five-minute idle artifact must show zero periodic data/DB HTTP requests and zero Hermes
-processes. The security scan recursively checks snapshot/interactions/DOM/localStorage/sessionStorage
-and captured logs for credential, account, header, raw payload, Unix/macOS/Windows path, session ID,
-and binding canaries. The browser golden journey is:
+The five-minute true-idle artifact, collected while there is no user input and no authorized
+autonomous trigger, must show zero periodic data/DB HTTP requests, zero interactive processes and
+zero autonomous processes. This does not prohibit the separately authorized trigger scenario from
+calling a model. The security scan recursively checks snapshot/interactions/DOM/localStorage/
+sessionStorage and captured logs for credential, account, header, raw payload,
+Unix/macOS/Windows path, session ID, worktree path and binding canaries. The browser golden journey
+is:
 
 1. keyless public snapshot and all nine workspaces;
 2. open/close a trace from every workspace;
 3. public command rejected;
 4. single-use operator pairing sets `Secure; HttpOnly; SameSite`;
-5. one explicit read-only submit creates one process and queued → running → terminal events;
-6. reconnect does not create another process;
-7. reduced motion, keyboard, 200% zoom, and CJK stress remain usable;
-8. all browser/server processes are terminated and a cleanup receipt is captured.
+5. one explicit read-only message creates one interaction claim and at most one process with
+   queued → running → terminal events;
+6. one directed tool message streams allowlisted progress/evidence/result and cannot terminate as
+   generic text only;
+7. one authorized new-data trigger plus two duplicates creates one autonomous claim and at most
+   one process; each invalid/budget/cooldown/concurrency/failure-budget trigger creates zero;
+8. autonomous code work leaves the integration worktree unchanged and records isolated-worktree
+   cleanup; Reviewer/lifecycle absence changes no promotion authority;
+9. reconnect and every interactive/autonomous crash seam create no replacement paid process;
+10. reduced motion, keyboard, 200% zoom, and CJK stress remain usable;
+11. all browser/server/task processes are terminated and cleanup receipts are captured.
 
-## 13. Rolling Railway rollout
+Required output is
+`COST_SAFETY_OK idle_http_db=0 idle_interactive=0 idle_autonomous=0 interaction_claims=1 directed_evidence=1 autonomous_claims=1 duplicate_launches=0 blocked_launches=0 paid_retries=0 worktree_leaks=0 promotion_without_review=0 provider_mutations=0 secret_leaks=0`.
+
+## 14. Rolling Railway rollout
 
 Only these discovered targets are valid:
 
@@ -660,35 +781,35 @@ railway up dashboard --path-as-root --detach --json \
   --message "dashboard-v2-compat:${DASHBOARD_COMPAT_SHA}" |
   uv run tests/dashboard_v2_railway_harness.py capture-start \
     --expected-sha "$DASHBOARD_COMPAT_SHA" \
-    --output .omo/evidence/dashboard-v2/task-12/compat-deploy-start.json
+    --output .omo/evidence/dashboard-v2/task-13/compat-deploy-start.json
 uv run tests/dashboard_v2_railway_harness.py wait \
   --project-id ee149dc8-82b8-46e7-8ef7-582400fed6f9 \
   --environment-id 8b37a20f-6b0d-4137-a787-ad90b4b482b9 \
   --service-id a7cae053-9289-4120-b5ac-7a0aefc36778 \
-  --start-receipt .omo/evidence/dashboard-v2/task-12/compat-deploy-start.json \
+  --start-receipt .omo/evidence/dashboard-v2/task-13/compat-deploy-start.json \
   --expected-sha "$DASHBOARD_COMPAT_SHA" --timeout-seconds 900 --poll-seconds 10 \
-  --output .omo/evidence/dashboard-v2/task-12/compat-deploy-terminal.json
+  --output .omo/evidence/dashboard-v2/task-13/compat-deploy-terminal.json
 railway service status \
   --project ee149dc8-82b8-46e7-8ef7-582400fed6f9 \
   --environment 8b37a20f-6b0d-4137-a787-ad90b4b482b9 \
   --service a7cae053-9289-4120-b5ac-7a0aefc36778 \
   --json | uv run tests/dashboard_v2_railway_harness.py assert-status \
   --expected-sha "$DASHBOARD_COMPAT_SHA" --expected-status SUCCESS \
-  --output .omo/evidence/dashboard-v2/task-12/compat-service-status.json
+  --output .omo/evidence/dashboard-v2/task-13/compat-service-status.json
 DASHBOARD_V2_URL="$(uv run tests/dashboard_v2_railway_harness.py production-url \
-  --status-receipt .omo/evidence/dashboard-v2/task-12/compat-service-status.json)"
+  --status-receipt .omo/evidence/dashboard-v2/task-13/compat-service-status.json)"
 curl --fail --silent --show-error "$DASHBOARD_V2_URL/api/health" |
   uv run tests/dashboard_v2_railway_harness.py assert-health \
-  --output .omo/evidence/dashboard-v2/task-12/compat-health.json
+  --output .omo/evidence/dashboard-v2/task-13/compat-health.json
 curl --fail --silent --show-error "$DASHBOARD_V2_URL/api/snapshot" |
   uv run tests/dashboard_v2_railway_harness.py assert-snapshot \
   --accepted-schema 1 --accepted-schema 2 --redacted \
-  --output .omo/evidence/dashboard-v2/task-12/compat-snapshot.json
+  --output .omo/evidence/dashboard-v2/task-13/compat-snapshot.json
 cd dashboard
 bun run scripts/live-dashboard-qa.ts --base-url "$DASHBOARD_V2_URL" \
   --expect-viewer-event --expect-public-command-status 401 \
   --expect-private-boundary --idle-seconds 300 \
-  --output ../.omo/evidence/dashboard-v2/task-12/compat-live-qa.json
+  --output ../.omo/evidence/dashboard-v2/task-13/compat-live-qa.json
 cd ..
 ```
 
@@ -698,12 +819,27 @@ cd ..
 deployment status, never product HTTP/DB data, and prints
 `RAILWAY_DEPLOY_OK status=SUCCESS sha=64_HEX services=2`; FAILED/CRASHED/REMOVED, timeout,
 SHA mismatch, or service-count drift exits nonzero. The live QA prints
-`LIVE_COMPAT_OK health=200 viewer_events=1 public_command=401 idle_data_requests=0 hermes_processes=0`.
+`LIVE_COMPAT_OK health=200 viewer_events=1 public_command=401 true_idle_data_requests=0 true_idle_interactive=0 true_idle_autonomous=0`.
 
 After compatibility proof, switch the Mac mini publisher to strict v2 with the exact publisher
 command from Vertical 3 and rerun `assert-snapshot --accepted-schema 2 --redacted` plus
-`live-dashboard-qa.ts`; the binary observable is
-`LIVE_V2_OK schema=2 viewer_events=1 explicit_submits=1 hermes_processes=1 leaks=0`.
+the following live check using an allowlisted harmless test trigger (no provider or Paper
+mutation):
+
+```bash
+cd dashboard
+bun run scripts/live-dashboard-qa.ts --base-url "$DASHBOARD_V2_URL" \
+  --expect-viewer-event --expect-public-command-status 401 \
+  --expect-private-boundary --idle-seconds 300 \
+  --expect-authorized-autonomous-event \
+  --autonomous-trigger-fixture ../tests/fixtures/dashboard/authorized-new-data-trigger.json \
+  --duplicate-trigger-count 2 \
+  --output ../.omo/evidence/dashboard-v2/task-13/v2-live-agent-qa.json
+cd ..
+```
+
+The binary observable is
+`LIVE_V2_OK schema=2 viewer_events=1 explicit_messages=1 interactive_processes=1 autonomous_events=1 autonomous_claims=1 duplicate_launches=0 leaks=0`.
 
 **Exact compatibility rollback and recovery**
 
@@ -715,7 +851,7 @@ command or Paper mutation runs.
 set +x
 DASHBOARD_V2_SHA="$(git rev-parse HEAD)"
 DASHBOARD_COMPAT_SHA="$(uv run tests/dashboard_v2_railway_harness.py compatibility-sha \
-  --receipt .omo/evidence/dashboard-v2/task-12/compat-deploy-terminal.json)"
+  --receipt .omo/evidence/dashboard-v2/task-13/compat-deploy-terminal.json)"
 DASHBOARD_ROLLBACK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dashboard-v2-rollback.XXXXXX")"
 git worktree add --detach "$DASHBOARD_ROLLBACK_ROOT/source" "$DASHBOARD_COMPAT_SHA"
 railway up "$DASHBOARD_ROLLBACK_ROOT/source/dashboard" --path-as-root --detach --json \
@@ -725,43 +861,43 @@ railway up "$DASHBOARD_ROLLBACK_ROOT/source/dashboard" --path-as-root --detach -
   --message "dashboard-v2-rollback:${DASHBOARD_COMPAT_SHA}" |
   uv run tests/dashboard_v2_railway_harness.py capture-start \
     --expected-sha "$DASHBOARD_COMPAT_SHA" \
-    --output .omo/evidence/dashboard-v2/task-12/rollback-deploy-start.json
+    --output .omo/evidence/dashboard-v2/task-13/rollback-deploy-start.json
 uv run tests/dashboard_v2_railway_harness.py wait \
   --project-id ee149dc8-82b8-46e7-8ef7-582400fed6f9 \
   --environment-id 8b37a20f-6b0d-4137-a787-ad90b4b482b9 \
   --service-id a7cae053-9289-4120-b5ac-7a0aefc36778 \
-  --start-receipt .omo/evidence/dashboard-v2/task-12/rollback-deploy-start.json \
+  --start-receipt .omo/evidence/dashboard-v2/task-13/rollback-deploy-start.json \
   --expected-sha "$DASHBOARD_COMPAT_SHA" --timeout-seconds 900 --poll-seconds 10 \
-  --output .omo/evidence/dashboard-v2/task-12/rollback-deploy-terminal.json
+  --output .omo/evidence/dashboard-v2/task-13/rollback-deploy-terminal.json
 uv run tests/dashboard_v2_railway_harness.py verify-retained-v1 \
   --base-url "$DASHBOARD_V2_URL" --require-no-publisher-republish \
-  --output .omo/evidence/dashboard-v2/task-12/rollback-v1-read.json
+  --output .omo/evidence/dashboard-v2/task-13/rollback-v1-read.json
 railway redeploy --from-source --yes --json \
   --project ee149dc8-82b8-46e7-8ef7-582400fed6f9 \
   --environment 8b37a20f-6b0d-4137-a787-ad90b4b482b9 \
   --service a7cae053-9289-4120-b5ac-7a0aefc36778 |
   uv run tests/dashboard_v2_railway_harness.py capture-start \
     --expected-sha "$DASHBOARD_V2_SHA" \
-    --output .omo/evidence/dashboard-v2/task-12/recovery-deploy-start.json
+    --output .omo/evidence/dashboard-v2/task-13/recovery-deploy-start.json
 uv run tests/dashboard_v2_railway_harness.py wait \
   --project-id ee149dc8-82b8-46e7-8ef7-582400fed6f9 \
   --environment-id 8b37a20f-6b0d-4137-a787-ad90b4b482b9 \
   --service-id a7cae053-9289-4120-b5ac-7a0aefc36778 \
-  --start-receipt .omo/evidence/dashboard-v2/task-12/recovery-deploy-start.json \
+  --start-receipt .omo/evidence/dashboard-v2/task-13/recovery-deploy-start.json \
   --expected-sha "$DASHBOARD_V2_SHA" --timeout-seconds 900 --poll-seconds 10 \
-  --output .omo/evidence/dashboard-v2/task-12/recovery-deploy-terminal.json
+  --output .omo/evidence/dashboard-v2/task-13/recovery-deploy-terminal.json
 railway service status \
   --project ee149dc8-82b8-46e7-8ef7-582400fed6f9 \
   --environment 8b37a20f-6b0d-4137-a787-ad90b4b482b9 \
   --service a7cae053-9289-4120-b5ac-7a0aefc36778 \
   --json | uv run tests/dashboard_v2_railway_harness.py assert-status \
   --expected-sha "$DASHBOARD_V2_SHA" --expected-status SUCCESS \
-  --output .omo/evidence/dashboard-v2/task-12/recovery-service-status.json
+  --output .omo/evidence/dashboard-v2/task-13/recovery-service-status.json
 uv run tests/dashboard_v2_railway_harness.py verify-recovery \
   --base-url "$DASHBOARD_V2_URL" --expected-schema 2 \
   --exact-service-id a7cae053-9289-4120-b5ac-7a0aefc36778 \
   --exact-service-id 21b11148-2386-47a4-b2dd-2a8dfbce94bd \
-  --output .omo/evidence/dashboard-v2/task-12/recovery-live.json
+  --output .omo/evidence/dashboard-v2/task-13/recovery-live.json
 git worktree remove "$DASHBOARD_ROLLBACK_ROOT/source"
 rmdir "$DASHBOARD_ROLLBACK_ROOT"
 ```
@@ -772,7 +908,7 @@ Required observables are
 missing retained v1, public command success, leakage, dirty integration worktree, or failed
 temporary-worktree cleanup blocks release.
 
-## 14. Remove v1 ingest acceptance
+## 15. Remove v1 ingest acceptance
 
 This begins only after the live compatibility rollback and v2 recovery artifacts pass.
 
@@ -830,35 +966,38 @@ railway up dashboard --path-as-root --detach --json \
   --message "dashboard-v2-final:${DASHBOARD_FINAL_SHA}" |
   uv run tests/dashboard_v2_railway_harness.py capture-start \
     --expected-sha "$DASHBOARD_FINAL_SHA" \
-    --output .omo/evidence/dashboard-v2/task-13/final-deploy-start.json
+    --output .omo/evidence/dashboard-v2/task-14/final-deploy-start.json
 uv run tests/dashboard_v2_railway_harness.py wait \
   --project-id ee149dc8-82b8-46e7-8ef7-582400fed6f9 \
   --environment-id 8b37a20f-6b0d-4137-a787-ad90b4b482b9 \
   --service-id a7cae053-9289-4120-b5ac-7a0aefc36778 \
-  --start-receipt .omo/evidence/dashboard-v2/task-13/final-deploy-start.json \
+  --start-receipt .omo/evidence/dashboard-v2/task-14/final-deploy-start.json \
   --expected-sha "$DASHBOARD_FINAL_SHA" --timeout-seconds 900 --poll-seconds 10 \
-  --output .omo/evidence/dashboard-v2/task-13/final-deploy-terminal.json
+  --output .omo/evidence/dashboard-v2/task-14/final-deploy-terminal.json
 railway service status \
   --project ee149dc8-82b8-46e7-8ef7-582400fed6f9 \
   --environment 8b37a20f-6b0d-4137-a787-ad90b4b482b9 \
   --service a7cae053-9289-4120-b5ac-7a0aefc36778 \
   --json | uv run tests/dashboard_v2_railway_harness.py assert-status \
   --expected-sha "$DASHBOARD_FINAL_SHA" --expected-status SUCCESS \
-  --output .omo/evidence/dashboard-v2/task-13/final-service-status.json
+  --output .omo/evidence/dashboard-v2/task-14/final-service-status.json
 DASHBOARD_V2_URL="$(uv run tests/dashboard_v2_railway_harness.py production-url \
-  --status-receipt .omo/evidence/dashboard-v2/task-13/final-service-status.json)"
+  --status-receipt .omo/evidence/dashboard-v2/task-14/final-service-status.json)"
 curl --fail --silent --show-error "$DASHBOARD_V2_URL/api/health" |
   uv run tests/dashboard_v2_railway_harness.py assert-health \
-  --output .omo/evidence/dashboard-v2/task-13/final-health.json
+  --output .omo/evidence/dashboard-v2/task-14/final-health.json
 curl --fail --silent --show-error "$DASHBOARD_V2_URL/api/snapshot" |
   uv run tests/dashboard_v2_railway_harness.py assert-snapshot \
   --accepted-schema 2 --redacted \
-  --output .omo/evidence/dashboard-v2/task-13/final-snapshot.json
+  --output .omo/evidence/dashboard-v2/task-14/final-snapshot.json
 cd dashboard
 bun run scripts/live-dashboard-qa.ts --base-url "$DASHBOARD_V2_URL" \
   --expect-viewer-event --expect-public-command-status 401 \
   --expect-private-boundary --idle-seconds 300 \
-  --output ../.omo/evidence/dashboard-v2/task-13/final-live-qa.json
+  --expect-authorized-autonomous-event \
+  --autonomous-trigger-fixture ../tests/fixtures/dashboard/authorized-new-data-trigger.json \
+  --duplicate-trigger-count 2 \
+  --output ../.omo/evidence/dashboard-v2/task-14/final-live-qa.json
 cd ..
 railway service list \
   --project ee149dc8-82b8-46e7-8ef7-582400fed6f9 \
@@ -869,11 +1008,11 @@ railway service list \
 ```
 
 Required output is
-`FINAL_V2_OK schema=2 health=200 viewer_events=1 public_command=401 idle_data_requests=0 hermes_processes=0 services=2`.
+`FINAL_V2_OK schema=2 health=200 viewer_events=1 public_command=401 true_idle_data_requests=0 true_idle_interactive=0 true_idle_autonomous=0 autonomous_event_delivery=1 services=2`.
 V1/unknown ingest must return 400 with no overwrite while the retained down-projection remains
 present for the documented compatibility rollback reader.
 
-## 15. Atomic commit protocol and completion packet
+## 16. Atomic commit protocol and completion packet
 
 Before every commit:
 

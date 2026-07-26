@@ -2,8 +2,10 @@
 
 Date: 2026-07-26
 
-Status: approved implementation contract
+Status: visual/schema contract approved; agent-execution acceptance reopened and corrected
 Primary design contract: `dashboard/DESIGN.md`
+Agent execution authority:
+`docs/superpowers/specs/2026-07-26-dashboard-v2-agent-execution-contract-addendum.md`
 
 ## 1. Outcome and non-goals
 
@@ -14,10 +16,16 @@ authoritative receipt/read model and opens an Evidence Trace. When authority is 
 the section renders the exact unavailable, blocked, error, corrupt, stale, or empty condition; it
 does not invent a value.
 
-V2 does not add live-money trading, a provider mutation path, a direct public order control,
-periodic polling, a Railway worker, automatic model execution, a paid retry, or a second design
-system. The referenced finance pages are inspiration only; no logo, mark, wording, branded asset,
-or copied layout ships.
+V2 does not add live-money trading, a provider mutation shortcut, a direct public order control,
+periodic dashboard polling, a Railway model worker, an automatic paid retry, or a second design
+system. Authorized Autonomous Research triggers may execute models on the Mac mini under the
+separate addendum. The referenced finance pages are inspiration only; no logo, mark, wording,
+branded asset, or copied layout ships.
+
+The
+[Dashboard v2 Agent Execution Contract Addendum](2026-07-26-dashboard-v2-agent-execution-contract-addendum.md)
+corrects and supersedes the earlier dashboard-wide explicit-submit-only language while preserving
+accepted schema, showcase, and visual work.
 
 ## 2. Locked system boundaries
 
@@ -86,8 +94,38 @@ never sends a partially redacted response.
   polling.
 - No 10-second, 15-second, or other periodic HTTP/DB request, hidden refresh timer, scheduled
   snapshot query, or model heartbeat is permitted.
-- Model work begins only after explicit user submit. One interaction UUID can launch at most one
-  Hermes process. There are no automatic paid retries.
+- Interactive model work begins after one explicit user message; one interaction UUID can launch
+  at most one Hermes process. Autonomous model work begins only from an authorized typed trigger.
+  Neither channel performs an automatic paid retry.
+
+### 2.5 Agent identity and dual execution
+
+Primary LLM-backed product families are exactly `opportunity_manager`, `day_trading`,
+`swing_trading`, `systematic_quant`, `derivatives_research`, and `market_context`.
+`allocation_manager` is conditional only after at least two independent champions. Independent
+Reviewer, Lifecycle Controller, Execution Engine, and Loop Engineer are control-plane roles, and
+delivery is transport rather than an agent. The current launchd KR theme, US intraday, US
+systematic, US swing, research, and delivery groups must never be used as aliases or identity
+authority for the six families.
+
+Each family must provide all three capabilities: persistent `hermes --resume` conversation,
+user-directed research/analysis/hypothesis/experiment/allowed-code tool execution with streaming
+progress/evidence/result, and autonomous LLM research from strict new-data/market-event/
+experiment-result/Reviewer-feedback/approved-schedule triggers. The two channels are:
+
+- **Interactive Hermes channel:** one explicit user message, one durable interaction claim,
+  at most one process, persistent family conversation, directed-job child receipts, and no paid
+  retry after crash or uncertainty.
+- **Autonomous Research channel:** no user submit is required; each authorized trigger has a
+  separate task session and receipt chain, durable dedupe, budget/cooldown/concurrency/failure
+  budget gates, isolated git worktree/experiment environment, append-only evidence, allowlisted
+  tools, outbound redaction, and no retry after crash or uncertainty.
+
+The channels share family identity and a versioned long-term memory namespace, but never share a
+process/session ID or claim. Railway receives only redacted projections and typed streaming events.
+Autonomous output is candidate evidence and cannot promote without Independent Reviewer and
+Lifecycle Controller decisions. It cannot mutate providers outside existing Paper gates and
+cannot use live money.
 
 ## 3. Canonical v2 contract
 
@@ -178,9 +216,10 @@ They may guide `watchfiles`, but the resolved absolute path never crosses the pr
 
 | Workspace / fields | Authoritative reader and model | Stable watch root / event | Freshness or point-in-time rule | Cap | State mapping and blocker code | Trace terminal | Prohibited fields | Module ownership |
 | --- | --- | --- | --- | ---: | --- | --- | --- | --- |
-| Command Center: public agent roster (`agent_id`, label, role, runtime state) | launchd typed receipt adapter + `AgentViewV2` | launchd event inventory; `outputs/system` parent | latest typed receipt at snapshot time; PID alone never current | 12 agents | no typed receipt `unavailable/agent_runtime_receipt_missing`; stale receipt `stale/agent_runtime_receipt_stale`; failed exit `blocked/agent_runtime_failed` | `process_receipt` or `blocker_terminal` | PID command, argv, plist/log path, environment | `trading_agent/dashboard_agents.py`, new `trading_agent/dashboard_projection_agents.py` |
+| Command Center: exact six-family roster (`agent_family_id`, label, three-capability readiness) | dedicated family registry + `AgentViewV2`; launchd remains runtime evidence only | agent registry and typed channel receipts | latest family/channel receipt at snapshot time; process groups and PID never define identity | exactly 6 families | missing family `unavailable/agent_family_missing`; launchd alias attempt `corrupt/agent_identity_mapping_invalid`; missing capability `blocked/agent_capability_missing` | channel `process_receipt` or `blocker_terminal` | PID command, argv, plist/log path, environment, launchd-derived identity | new `trading_agent/dashboard_agent_registry.py`, `trading_agent/dashboard_projection_agents.py` |
 | Command Center: interaction receipt (`id`, agent, state, redacted command/response times) | Railway immutable interaction store and CAS model | authenticated publisher/operator WebSocket event; no filesystem poll | point-in-time CAS state ordered by `updated_at`; no state regression | 50 recent/private | public viewer `unavailable/operator_session_required`; relay absent `blocked/publisher_relay_offline`; uncertain local seam `blocked/execution_uncertain` | `process_receipt` or `blocker_terminal` | Hermes session ID, binding key/path, raw stdout/stderr, operator secret | `dashboard/src/store.ts`, `dashboard/src/realtime.ts`, `trading_agent/dashboard_commands.py`, new `trading_agent/dashboard_hermes_sessions.py` |
-| Command Center: binding/claim health (existence only, never IDs) | owner-only binding and claim readers | owner-only dashboard-Hermes state root, watched locally | exact interaction UUID claim and terminal receipt; restart-safe | 12 agent summaries | unsafe mode/link/symlink `corrupt/local_state_permissions_invalid`; missing resume `blocked/hermes_resume_missing`; duplicate `corrupt/duplicate_execution_claim` | `process_receipt` or `blocker_terminal` | session ID, local filename/path, claim payload, account data | new `trading_agent/dashboard_hermes_sessions.py`, new `trading_agent/dashboard_execution_claims.py` |
+| Command Center: binding/claim health (existence only, never IDs) | owner-only binding and claim readers | owner-only dashboard-Hermes state root, watched locally | exact interaction UUID claim and terminal receipt; restart-safe | exactly 6 family summaries | unsafe mode/link/symlink `corrupt/local_state_permissions_invalid`; missing resume `blocked/hermes_resume_missing`; duplicate `corrupt/duplicate_execution_claim` | `process_receipt` or `blocker_terminal` | session ID, local filename/path, claim payload, account data | new `trading_agent/dashboard_hermes_sessions.py`, new `trading_agent/dashboard_execution_claims.py` |
+| Command Center: directed/autonomous job stream | local control-plane claims, trigger policy, step/evidence/result receipts | stable owner-only receipt roots; event-driven publisher | CAS state and append-only steps for exact causation ID; no terminal regression | 50 jobs/channel | invalid trigger `blocked/autonomous_trigger_invalid`; budget/cooldown/concurrency/failure gate `blocked/autonomous_policy_gate`; text-only tool completion `corrupt/directed_job_evidence_missing` | `process_receipt`, Reviewer/lifecycle receipt, or blocker | prompt/session/worktree/path, raw tool/provider payload, secret/account | new `trading_agent/dashboard_agent_control_plane.py`, `dashboard_autonomous_research.py`, `dashboard_projection_agents.py` |
 | Overview: market/session posture | `KisKrSessionCalendarStore` plus new strict `DashboardUsSessionReceiptReader` and `MarketSessionViewV2` | `outputs/live_sessions`, calendar receipt parents | latest completed session/bar for its market; missing authority is unavailable | 2 markets | missing calendar `unavailable/market_calendar_missing`; stale calendar `stale/market_calendar_stale`; closed is populated state, not error | typed `source_receipt` decision or `blocker_terminal` | raw provider payload, credential state, account identity | `trading_agent/kis_kr_session_calendar_store.py`, new `trading_agent/dashboard_market_calendar.py`, new `trading_agent/dashboard_projection_overview.py` |
 | Overview: blocker digest | all nine workspace `SourceState` results | snapshot rebuild event | same snapshot ID only; never join across epochs | 12 blockers | zero blockers after successful reads `empty`; read failure stays section-local; mismatched snapshot `corrupt/mixed_snapshot_epoch` | underlying terminal for each blocker | raw exception/log/path | new `trading_agent/dashboard_projection_overview.py` |
 | Overview: research/Paper/system summaries | exact workspace projections, not independent readers | same canonical v2 object | same `snapshot_id`; summary cannot be fresher than source workspace | 3 summaries | mirrors section state; never converts unavailable to zero/healthy | referenced workspace terminal | extra values not present in underlying workspace | TypeScript normalizer/render owner in `dashboard/src/schema.ts`, `dashboard/src/workspaces/overview.ts` |
@@ -249,6 +288,9 @@ They may guide `watchfiles`, but the resolved absolute path never crosses the pr
   and explicit CLI dry-run. It keeps one WebSocket and no polling.
 - `dashboard_hermes_sessions.py` and `dashboard_execution_claims.py`: local-only owner-mode-600
   binding and exactly-once claim/terminal receipts. Their values never enter v2.
+- `dashboard_agent_registry.py`, `dashboard_agent_control_plane.py`, and
+  `dashboard_autonomous_research.py`: exact six-family identity, strict trigger/claim/policy
+  state machine, isolated task environment, allowlisted tool execution and append-only receipts.
 
 ### 5.2 Dashboard TypeScript
 
@@ -293,9 +335,13 @@ At no point does a v1 parser “best effort” parse v2 or vice versa. An older 
 overwrite a newer canonical v2 snapshot after publisher cutover. Snapshot selection compares
 schema rollout epoch and generated time, not arrival order alone.
 
-## 7. Exactly-once Hermes execution
+## 7. Dual-channel agent execution
 
-### 7.1 Binding
+The addendum is authoritative for full state schemas, trigger fields, memory/session separation,
+worktree isolation, budget/safety gates, Railway events and QA. This section retains the
+Interactive Hermes details and does not restrict authorized Autonomous Research execution.
+
+### 7.1 Interactive binding
 
 - Bind only a public `agent_id` to a local Hermes session ID in an owner-owned regular file with
   exact mode `0600`, one hard link, no symlink, atomic replace, directory fsync, and an exclusive
@@ -307,7 +353,7 @@ schema rollout epoch and generated time, not arrival order alone.
 - Different public agent IDs never share one binding. Railway receives neither the session ID nor
   any binding metadata.
 
-### 7.2 Claim and terminal receipt
+### 7.2 Interactive claim and terminal receipt
 
 - Before process launch, atomically claim the Railway interaction UUID in a durable local store.
 - Claim states are `claimed`, `process_started`, and terminal `completed | failed | uncertain`.
@@ -320,16 +366,26 @@ schema rollout epoch and generated time, not arrival order alone.
   `queued -> running -> completed|failed|uncertain`. Late/duplicate messages cannot regress or
   replace a terminal result.
 
-### 7.3 Outbound redaction and Paper gate
+### 7.3 Shared outbound redaction and Paper gate
 
 Hermes stdout, stderr-derived messages, timeout text, and exceptions are bounded locally, normalized
 to approved text, scanned for secret/account/session/path/header/raw-payload canaries, then
 validated by the strict outbound schema. On any hit the publisher sends only
 `outbound_redaction_failed`.
 
-Commands default to research/read-only. Any request that could mutate Paper must go through the
-existing operator session and exact Paper URL/arm/risk/reconcile/OCO/cutoff/EOD-flat chain. The
-dashboard adds no shortcut, generic tool invocation, or automatic approval.
+Tools default to research/read-only allowlists. Any interactive or autonomous request that could
+mutate Paper must go through the existing operator session and exact Paper URL/arm/risk/reconcile/
+OCO/cutoff/EOD-flat chain. The dashboard adds no shortcut or automatic approval; all other provider
+mutation and all live-money execution remain forbidden.
+
+### 7.4 Autonomous Research claim and terminal receipt
+
+Only strict typed triggers from the addendum can enter `observed -> authorized|rejected ->
+claimed -> running -> completed|failed|uncertain|blocked`. The durable family/policy/dedupe claim
+precedes model launch. Budget, cooldown, global/family concurrency, rolling failure budget,
+isolated pinned worktree/environment, tool allowlist and outbound redaction are mandatory. Crash
+or uncertain launch never produces an automatic paid retry. Independent Reviewer and lifecycle
+receipts are mandatory before any promotion or authority change.
 
 ## 8. Railway rollout and rollback contract
 
@@ -373,6 +429,9 @@ Extra-service drift is a hard blocker `railway_service_count_drift`, not accepte
   missing file/DB, SQLite error, schema error, or hash mismatch maps to unavailable/error/corrupt.
 - **Paid duplicate execution:** duplicate interaction delivery, reconnect, late result, and every
   crash seam preserve an invocation count of zero or one and never auto retry.
+- **Autonomous duplicate execution:** duplicate trigger/replay/reconnect shares one durable
+  family/policy/dedupe claim; invalid or policy-blocked triggers launch zero models; crash seams
+  preserve one process maximum and no paid retry.
 - **Derivatives entitlement:** current quote/IV language requires entitlement, redistribution,
   current capability health, and freshness. Expired, delayed, derived-only, or research artifacts
   are research-only/unavailable.
@@ -390,6 +449,12 @@ Extra-service drift is a hard blocker `railway_service_count_drift`, not accepte
 Implementation is accepted only when:
 
 - all nine routes and all eight canonical states are exercised by strict fixtures;
+- the family registry contains exactly the six primary IDs, keeps `allocation_manager`
+  conditional after two independent champions, rejects launchd-group identity mapping, and proves
+  all three capabilities for every family;
+- Interactive Hermes and Autonomous Research state machines, directed tool streaming, strict
+  triggers, dedupe, budgets, cooldown, concurrency, failure budget, isolated worktree cleanup,
+  append-only evidence, Reviewer/lifecycle promotion gates and Paper/provider safety are exercised;
 - every displayed value/state has a non-dangling source-to-terminal trace;
 - source caps, freshness, point-in-time rules, watch roots, and module ownership match this matrix;
 - font binaries and unmodified OFL license artifacts are same-origin and hash-pinned;
@@ -397,7 +462,9 @@ Implementation is accepted only when:
   structure, reduced motion, CJK/unbroken strings, and axe with zero violations/incomplete;
 - dashboard typecheck, Biome, Bun tests/build and changed-Python pytest, Ruff, basedpyright, and
   no-excuse audits pass;
-- CLI help, malformed input, redacted happy dry-run, leakage, idle, duplicate execution,
+- CLI help, malformed input, redacted happy dry-run, leakage, true-idle, interactive/autonomous
+  duplicate execution, authorized and blocked triggers, directed tool evidence,
   entitlement, stale receipt, and rollback scenarios produce captured artifacts;
 - the exact deployed SHA is healthy, public/private boundaries hold, viewer and explicit private
-  read-only command events are observed, and Railway still has exactly two services.
+  read-only command and authorized autonomous events are observed, true idle has zero model calls,
+  and Railway still has exactly two services.

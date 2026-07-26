@@ -170,7 +170,7 @@ queries. Safe-area insets are applied to the mobile header and launcher.
 
 | Name / route | Job | Required content |
 | --- | --- | --- |
-| Command Center / `#command-center` | act | persistent agent conversations, operator boundary, exactly-once receipt lifecycle; default route |
+| Command Center / `#command-center` | act | six-family conversations, directed tool jobs, autonomous research jobs, operator boundary, receipt lifecycle; default route |
 | Overview / `#overview` | orient | market/session posture, blockers, active research/Paper/System summaries; no duplicated full tables |
 | Markets / `#markets` | observe | completed-bar/session context, licensed quote capability, bounded market tables/charts |
 | Data Sources / `#data-sources` | verify inputs | FRED/ALFRED, Treasury, CFTC, OpenDART, KIS, LS, Alpaca capability, entitlement, freshness, coverage, receipt, blocker |
@@ -220,7 +220,8 @@ lower cap in the master spec wins.
 | `StateBadge` | icon plus text | neutral/success/warning/error semantics only; never a decorative dot |
 | `BlockerNotice` | blocker code, plain-language effect, observation time, trace control | blocked/unavailable/corrupt; never contains raw exception, payload, or path |
 | `TruncationNotice` | count metadata and user-action disclosure | shown whenever `truncated=true`; does not trigger an automatic fetch |
-| `CommandComposer` | agent selection, labeled textarea, submit, live result | locked/ready/relay-offline/queued/running/completed/failed/uncertain; one explicit submit, one claim, no paid retry |
+| `CommandComposer` | family selection, labeled textarea, submit, live result | locked/ready/relay-offline/queued/running/completed/failed/uncertain; one explicit message, one claim, no paid retry |
+| `AgentChannelStack` | conversation, directed job, autonomous job | never merges autonomous trigger activity into conversation; streams typed progress/evidence/result |
 | `InteractionTimeline` | ordered immutable receipts | empty/queued/running/completed/failed/uncertain; private only |
 | `EvidenceTraceDrawer` | dialog heading, graph/list toggle, close, node detail | open from every value/state, trap focus, Escape close, return focus, route change closes safely |
 | `SkeletonBlock` | content-shaped neutral blocks | `aria-hidden`; parent announces loading once; no shimmer or loop |
@@ -314,11 +315,26 @@ primary content never creates page-level horizontal scrolling.
 - The public dashboard exposes no order control. KIS, LS, and other providers remain read-only.
   Any Alpaca Paper request remains outside this surface and must pass the exact Paper base URL,
   arm, risk, reconcile, protective OCO, cutoff, and EOD-flat gates.
-- Idle behavior is one initial GET, one viewer WebSocket, one publisher WebSocket, and
-  `watchfiles`-driven rebuilds. There is no periodic HTTP/DB polling, hidden refresh timer, new
-  Railway worker, automatic model call, or paid retry.
-- One explicit command submit has one interaction UUID, one durable local claim, and at most one
-  Hermes process. Uncertain delivery or process state never launches a replacement.
+- Product identities are exactly `opportunity_manager`, `day_trading`, `swing_trading`,
+  `systematic_quant`, `derivatives_research`, and `market_context`. Every identity provides
+  persistent `hermes --resume` conversation, user-directed allowlisted tool jobs with streaming
+  progress/evidence/result, and autonomous typed-trigger research with separate task sessions.
+  `allocation_manager` is conditional after at least two independent champions; Reviewer,
+  Lifecycle, Execution and Loop Engineer are control-plane roles. Launchd KR theme/US intraday/US
+  systematic/US swing/research/delivery groups never define these identities; delivery is not an
+  agent.
+- The two execution channels are Interactive Hermes and Autonomous Research. Interactive messages
+  have one interaction UUID, one durable claim, and at most one Hermes process. Autonomous tasks
+  require typed new-data/market-event/experiment-result/Reviewer-feedback/approved-schedule
+  triggers, durable dedupe, budget/cooldown/concurrency/failure gates, isolated worktrees,
+  append-only evidence, tool allowlists and outbound redaction. Neither channel auto-retries a
+  paid process after crash or uncertainty.
+- True idle means no user input and no authorized autonomous trigger. It has zero periodic HTTP/DB
+  requests and zero model calls; dashboard periodic model polling is always forbidden. An
+  authorized autonomous trigger may call a model without submit. Railway only stores redacted
+  projections/streaming events and never runs the model.
+- Autonomous output cannot promote a strategy without Independent Reviewer and lifecycle gates,
+  cannot mutate providers outside existing Paper gates, and can never open live-money execution.
 
 ### Accepted debt
 
