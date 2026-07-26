@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
+from trading_agent.dashboard_paper_finalized_terminal import (
+    TERMINAL_FILENAME,
+    FinalizedPaperTerminalReceipt,
+)
 from trading_agent.execution_store import ExecutionStore
-from trading_agent.lane_contract_keys import experiment_scope_key, lane_manifest_key
+from trading_agent.lane_contract_keys import (
+    experiment_scope_key,
+    lane_daily_snapshot_key,
+    lane_manifest_key,
+)
 from trading_agent.lane_contract_models import LaneDailySnapshot
 from trading_agent.lane_defaults import (
     CURRENT_INTRADAY_EXPERIMENT_SCOPES,
@@ -76,6 +85,12 @@ def append_finalized_lifecycle(
         source_generation=identity.generation,
         source_sha256=identity.sha256,
     )
+    snapshot = finalized_snapshot(
+        source_generation=identity.generation,
+        source_sha256=identity.sha256,
+    )
+    if store.paper_stream_recoveries():
+        write_finalized_terminal(outputs, snapshot, store)
     return store
 
 
@@ -133,6 +148,32 @@ def append_swing_snapshot(
     open_positions: int,
     open_orders: int,
 ) -> None:
+    store = ExecutionStore(outputs / "paper" / "execution.sqlite3")
+    recovery_at = dt.datetime(2026, 7, 25, 19, 40, tzinfo=dt.UTC) + dt.timedelta(
+        minutes=len(store.paper_stream_recoveries())
+    )
+    with store.writer() as writer:
+        _ = writer.bind_account(
+            FINGERPRINT,
+            dt.datetime(2026, 7, 25, 13, 30, tzinfo=dt.UTC),
+        )
+        _ = writer.append_paper_stream_recovery(
+            PaperStreamRecoveryObservation(
+                account_fingerprint=FINGERPRINT,
+                connection_epoch="dashboard-swing-finalized",
+                started_at=recovery_at - dt.timedelta(seconds=1),
+                completed_at=recovery_at,
+                snapshot_json=json.dumps(
+                    {
+                        "orders": [{} for _ in range(open_orders)],
+                        "positions": [{} for _ in range(open_positions)],
+                    },
+                    separators=(",", ":"),
+                ),
+                execution_detail_complete=True,
+            )
+        )
+    identity = store.ledger_snapshot_identity()
     registry = LaneRegistryStore(outputs / "lane_control" / "lane_registry.sqlite3")
     scope = SWING_RESEARCH_CONTRACT.experiment_scope
     snapshot = LaneDailySnapshot(
@@ -141,8 +182,8 @@ def append_swing_snapshot(
         finalized_at=FINALIZED_AT,
         manifest_key=lane_manifest_key(SWING_MANIFEST),
         experiment_scope_keys=(experiment_scope_key(scope),),
-        source_ledger_generation=7,
-        source_ledger_sha256="c" * 64,
+        source_ledger_generation=identity.generation,
+        source_ledger_sha256=identity.sha256,
         champion_strategy_versions=(),
         data_quality_complete=True,
         allocation_eligible=False,
@@ -158,6 +199,30 @@ def append_swing_snapshot(
         _ = writer.register_manifest(SWING_MANIFEST)
         _ = writer.register_experiment_scope(scope)
         assert writer.append_daily_snapshot(snapshot)
+    write_finalized_terminal(outputs, snapshot, store)
+
+
+def write_finalized_terminal(
+    outputs: Path,
+    snapshot: LaneDailySnapshot,
+    store: ExecutionStore,
+) -> None:
+    recovery = store.paper_stream_recoveries()[-1]
+    receipt = FinalizedPaperTerminalReceipt(
+        lane_id=snapshot.lane_id,
+        session_date=snapshot.session_date,
+        manifest_key=snapshot.manifest_key,
+        snapshot_key=str(lane_daily_snapshot_key(snapshot)),
+        source_ledger_generation=snapshot.source_ledger_generation,
+        source_ledger_sha256=snapshot.source_ledger_sha256,
+        strategy_versions=snapshot.champion_strategy_versions,
+        recovery_snapshot_sha256=recovery.snapshot_sha256,
+        observed_at=snapshot.finalized_at,
+    )
+    path = outputs / "paper" / TERMINAL_FILENAME
+    existing = path.read_text() if path.exists() else ""
+    path.write_text(f"{existing}{receipt.model_dump_json()}\n")
+    path.chmod(0o600)
 
 
 def safety_plan(phase: PaperSafetyPhase, observed_at: dt.datetime) -> PaperSafetyPlan:

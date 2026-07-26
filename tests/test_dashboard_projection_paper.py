@@ -17,6 +17,8 @@ from tests.dashboard_paper_projection_fixtures import (
     safety_plan,
 )
 from trading_agent.dashboard_projection_paper import project_finalized_paper
+from trading_agent.lane_contract_keys import lane_daily_snapshot_key
+from trading_agent.lane_contract_models import LaneDailySnapshot
 from trading_agent.paper_safety_models import PaperSafetyPhase
 
 NOW = dt.datetime(2026, 7, 26, 3, tzinfo=dt.UTC)
@@ -57,6 +59,28 @@ def test_finalized_nonzero_positions_and_orders_preserve_authoritative_counts(
     assert items["paper.positions"].value == "2 records"
     assert items["paper.orders"].state == "populated"
     assert items["paper.orders"].value == "3 records"
+    assert projection.workspace.state == "populated"
+
+
+def test_rekeyed_arbitrary_snapshot_generation_never_replaces_execution_identity(
+    tmp_path: Path,
+) -> None:
+    # Given a valid swing snapshot rekeyed around an arbitrary ledger generation
+    outputs = tmp_path / "outputs"
+    append_swing_snapshot(outputs, open_positions=2, open_orders=3)
+    _rewrite_finalized_snapshot(
+        outputs,
+        updates={"source_ledger_generation": 999},
+        rekey=True,
+    )
+
+    # When lifecycle generation is checked against the actual execution DB
+    projection = project_finalized_paper(outputs, now=NOW)
+
+    # Then the mixed epoch fails before any finalized value is shown
+    assert projection.workspace.state == "corrupt"
+    assert projection.workspace.blocker_code == "paper_epoch_mismatch"
+    assert projection.workspace.items == ()
 
 
 def test_finalized_count_payload_must_match_immutable_snapshot_key(
@@ -132,6 +156,7 @@ def _rewrite_finalized_snapshot(
     *,
     updates: dict[str, int] | None = None,
     missing: str | None = None,
+    rekey: bool = False,
 ) -> None:
     path = outputs / "lane_control" / "lane_registry.sqlite3"
     with sqlite3.connect(path) as connection:
@@ -140,9 +165,12 @@ def _rewrite_finalized_snapshot(
         if missing is not None:
             del payload[missing]
         _ = connection.execute("DROP TRIGGER lane_daily_snapshots_no_update")
+        snapshot_key = connection.execute("SELECT snapshot_key FROM lane_daily_snapshots").fetchone()[0]
+        if rekey:
+            snapshot_key = str(lane_daily_snapshot_key(LaneDailySnapshot.model_validate(payload)))
         _ = connection.execute(
-            "UPDATE lane_daily_snapshots SET payload_json = ?",
-            (json.dumps(payload),),
+            "UPDATE lane_daily_snapshots SET snapshot_key = ?, payload_json = ?",
+            (snapshot_key, json.dumps(payload)),
         )
         connection.commit()
         _ = connection.execute("PRAGMA journal_mode = DELETE").fetchone()

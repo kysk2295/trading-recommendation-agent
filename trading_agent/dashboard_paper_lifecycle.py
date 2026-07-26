@@ -11,6 +11,7 @@ from trading_agent.dashboard_models_v2 import WorkspaceItemV2
 from trading_agent.execution_ledger_reader import ReconciliationLedger
 from trading_agent.execution_store import ExecutionStore
 from trading_agent.lane_contract_models import LaneDailySnapshot
+from trading_agent.lane_identity_models import LaneId
 from trading_agent.paper_execution_models import IntentId
 from trading_agent.paper_mutation_ledger_models import (
     PaperMutationEventType,
@@ -88,24 +89,30 @@ def project_paper_lifecycle(
         ):
             return PaperLifecycleProjection("corrupt", "paper_lifecycle_invalid", ())
         reconciled_at = max(_instant(recovery.completed_at) for recovery in current_recoveries)
-        cutoff_plans = _stage_plans(ledger, snapshot, PaperSafetyPhase.ENTRY_CUTOFF)
-        if not cutoff_plans:
-            return PaperLifecycleProjection("blocked", "paper_cutoff_pending", ())
-        eod_plans = _stage_plans(ledger, snapshot, PaperSafetyPhase.EOD_FLATTEN)
-        if not eod_plans:
-            return PaperLifecycleProjection("blocked", "paper_eod_flat_pending", ())
-        cutoff = max(cutoff_plans, key=lambda item: item.plan.observed_at)
-        eod = max(eod_plans, key=lambda item: item.plan.observed_at)
-        if (
-            cutoff.plan.observed_at > snapshot.finalized_at
-            or eod.plan.observed_at > snapshot.finalized_at
-            or not reconciled_at <= cutoff.plan.observed_at <= eod.plan.observed_at
-        ):
-            return PaperLifecycleProjection("corrupt", "paper_lifecycle_invalid", ())
-        if not _stage_terminal(cutoff, ledger, snapshot.finalized_at):
-            return PaperLifecycleProjection("blocked", "paper_cutoff_pending", ())
-        if not _stage_terminal(eod, ledger, snapshot.finalized_at):
-            return PaperLifecycleProjection("blocked", "paper_eod_flat_pending", ())
+        stage_items = (_stage_item("reconcile", "Final reconciliation", reconciled_at),)
+        if snapshot.lane_id is LaneId.INTRADAY_MOMENTUM:
+            cutoff_plans = _stage_plans(ledger, snapshot, PaperSafetyPhase.ENTRY_CUTOFF)
+            if not cutoff_plans:
+                return PaperLifecycleProjection("blocked", "paper_cutoff_pending", ())
+            eod_plans = _stage_plans(ledger, snapshot, PaperSafetyPhase.EOD_FLATTEN)
+            if not eod_plans:
+                return PaperLifecycleProjection("blocked", "paper_eod_flat_pending", ())
+            cutoff = max(cutoff_plans, key=lambda item: item.plan.observed_at)
+            eod = max(eod_plans, key=lambda item: item.plan.observed_at)
+            if (
+                cutoff.plan.observed_at > snapshot.finalized_at
+                or eod.plan.observed_at > snapshot.finalized_at
+                or not reconciled_at <= cutoff.plan.observed_at <= eod.plan.observed_at
+            ):
+                return PaperLifecycleProjection("corrupt", "paper_lifecycle_invalid", ())
+            if not _stage_terminal(cutoff, ledger, snapshot.finalized_at):
+                return PaperLifecycleProjection("blocked", "paper_cutoff_pending", ())
+            if not _stage_terminal(eod, ledger, snapshot.finalized_at):
+                return PaperLifecycleProjection("blocked", "paper_eod_flat_pending", ())
+            stage_items += (
+                _stage_item("cutoff", "Entry cutoff", cutoff.plan.observed_at),
+                _stage_item("eod_flat", "EOD flat", eod.plan.observed_at),
+            )
         if reader.ledger_snapshot_identity() != identity:
             return PaperLifecycleProjection("corrupt", "paper_epoch_mismatch", ())
     except (OSError, RuntimeError, sqlite3.Error, ValueError):
@@ -131,33 +138,7 @@ def project_paper_lifecycle(
             observed_at=observed_at,
             trace_id=source_id,
         ),
-        WorkspaceItemV2(
-            item_id="paper.lifecycle.reconcile",
-            kind="paper",
-            label="Final reconciliation",
-            state="populated",
-            value="finalized",
-            observed_at=reconciled_at,
-            trace_id=source_id,
-        ),
-        WorkspaceItemV2(
-            item_id="paper.lifecycle.cutoff",
-            kind="paper",
-            label="Entry cutoff",
-            state="populated",
-            value="finalized",
-            observed_at=cutoff.plan.observed_at,
-            trace_id=source_id,
-        ),
-        WorkspaceItemV2(
-            item_id="paper.lifecycle.eod_flat",
-            kind="paper",
-            label="EOD flat",
-            state="populated",
-            value="finalized",
-            observed_at=eod.plan.observed_at,
-            trace_id=source_id,
-        ),
+        *stage_items,
         *(
             WorkspaceItemV2(
                 item_id=f"paper.order.{index}",
@@ -172,6 +153,22 @@ def project_paper_lifecycle(
         ),
     )
     return PaperLifecycleProjection("populated", None, items)
+
+
+def _stage_item(
+    item_id: str,
+    label: str,
+    observed_at: dt.datetime,
+) -> WorkspaceItemV2:
+    return WorkspaceItemV2(
+        item_id=f"paper.lifecycle.{item_id}",
+        kind="paper",
+        label=label,
+        state="populated",
+        value="finalized",
+        observed_at=observed_at,
+        trace_id="trace.paper.source",
+    )
 
 
 def _stage_plans(

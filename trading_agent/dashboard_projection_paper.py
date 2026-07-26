@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import sqlite3
 from pathlib import Path
 
@@ -11,6 +10,10 @@ from trading_agent.dashboard_models_v2 import (
     TraceEdgeV2,
     TraceNodeV2,
     WorkspaceItemV2,
+)
+from trading_agent.dashboard_paper_finalized_terminal import (
+    FinalizedPaperAuthorityFailure,
+    read_finalized_paper_authority,
 )
 from trading_agent.dashboard_paper_lifecycle import project_paper_lifecycle
 from trading_agent.dashboard_projection_common import (
@@ -99,17 +102,29 @@ def project_finalized_paper(outputs: Path, *, now: dt.datetime) -> WorkspaceProj
             state="blocked",
             blocker_code="paper_verification_incomplete",
         )
-    lifecycle_items: tuple[WorkspaceItemV2, ...] = ()
-    if latest.lane_id is LaneId.INTRADAY_MOMENTUM:
-        lifecycle = project_paper_lifecycle(outputs, latest)
-        if lifecycle.blocker_code is not None:
-            return blocked_projection(
-                "paper",
-                now=now,
-                state="corrupt" if lifecycle.state == "corrupt" else "blocked",
-                blocker_code=lifecycle.blocker_code,
-            )
-        lifecycle_items = lifecycle.items
+    if not (outputs / "paper" / "execution.sqlite3").is_file():
+        return blocked_projection(
+            "paper",
+            now=now,
+            state="unavailable",
+            blocker_code="paper_finalized_execution_missing",
+        )
+    lifecycle = project_paper_lifecycle(outputs, latest)
+    if lifecycle.blocker_code is not None:
+        return blocked_projection(
+            "paper",
+            now=now,
+            state="corrupt" if lifecycle.state == "corrupt" else "blocked",
+            blocker_code=lifecycle.blocker_code,
+        )
+    authority = read_finalized_paper_authority(outputs, latest, now)
+    if isinstance(authority, FinalizedPaperAuthorityFailure):
+        return blocked_projection(
+            "paper",
+            now=now,
+            state=authority.state,
+            blocker_code=authority.blocker_code,
+        )
     source_id = "trace.paper.source"
     terminal_id = "trace.paper.finalized"
     age = max(0, int((now - latest.finalized_at).total_seconds()))
@@ -153,9 +168,9 @@ def project_finalized_paper(outputs: Path, *, now: dt.datetime) -> WorkspaceProj
             observed_at=latest.finalized_at,
             trace_id=source_id,
         ),
-        *lifecycle_items,
+        *lifecycle.items,
     )
-    source_ref = hashlib.sha256(latest.source_ledger_sha256.encode()).hexdigest()
+    source_ref = str(lane_daily_snapshot_key(latest))
     nodes = (
         TraceNodeV2(
             node_id=source_id,
@@ -170,8 +185,8 @@ def project_finalized_paper(outputs: Path, *, now: dt.datetime) -> WorkspaceProj
             node_id=terminal_id,
             kind="paper_receipt",
             label="Finalized Paper receipt",
-            observed_at=latest.finalized_at,
-            safe_ref=latest.source_ledger_sha256,
+            observed_at=authority.receipt.observed_at,
+            safe_ref=authority.safe_ref,
             state="accepted",
             source_namespace="paper.finalized",
         ),

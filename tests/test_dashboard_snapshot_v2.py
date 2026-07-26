@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 
 from tests.dashboard_paper_projection_fixtures import append_finalized_lifecycle
+from trading_agent.dashboard_paper_finalized_terminal import (
+    TERMINAL_FILENAME,
+    FinalizedPaperTerminalReceipt,
+)
 from trading_agent.dashboard_projection_receipts import RECEIPT_FILENAME
 from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
 
@@ -41,8 +46,7 @@ def test_v2_snapshot_reports_all_missing_authorities_section_locally(tmp_path: P
 def test_v2_snapshot_projects_finalized_paper_values_and_sha(tmp_path: Path) -> None:
     # Given an authoritative finalized lane ledger
     outputs = tmp_path / "outputs"
-    execution = append_finalized_lifecycle(outputs)
-    identity = execution.ledger_snapshot_identity()
+    append_finalized_lifecycle(outputs)
 
     # When it is projected
     snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW)
@@ -56,16 +60,15 @@ def test_v2_snapshot_projects_finalized_paper_values_and_sha(tmp_path: Path) -> 
     assert values["paper.positions"] == "0 records"
     assert values["paper.orders"] == "0 records"
     assert values["paper.lifecycle.eod_flat"] == "finalized"
-    assert any(
-        node.safe_ref == identity.sha256 and node.kind == "paper_receipt"
-        for node in snapshot.traces.nodes
+    receipt = FinalizedPaperTerminalReceipt.model_validate_json(
+        (outputs / "paper" / TERMINAL_FILENAME).read_text().strip()
     )
+    terminal_ref = hashlib.sha256(receipt.model_dump_json().encode()).hexdigest()
+    assert any(node.safe_ref == terminal_ref and node.kind == "paper_receipt" for node in snapshot.traces.nodes)
 
 
 @pytest.mark.parametrize("mutation", ["malformed", "permissions", "future", "mixed", "stale"])
-def test_v2_generic_receipt_never_controls_research_state(
-    tmp_path: Path, mutation: str
-) -> None:
+def test_v2_generic_receipt_never_controls_research_state(tmp_path: Path, mutation: str) -> None:
     # Given one hostile, stale, or future generic research receipt
     outputs = tmp_path / "outputs"
     root = outputs / "experiment_control"
@@ -105,8 +108,7 @@ def test_v2_receipts_are_bounded_and_reject_leakage(tmp_path: Path) -> None:
     root = outputs / "experiment_control"
     root.mkdir(parents=True)
     rows = [
-        {**_receipt(observed_at=NOW), "item_id": f"research.{index:03d}", "value": str(index)}
-        for index in range(30)
+        {**_receipt(observed_at=NOW), "item_id": f"research.{index:03d}", "value": str(index)} for index in range(30)
     ]
     rows.append({**_receipt(observed_at=NOW), "item_id": "research.secret", "value": "api_key=canary"})
     path = root / RECEIPT_FILENAME
