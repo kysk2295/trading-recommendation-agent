@@ -9,6 +9,27 @@ import type {
   InteractionMode,
 } from "./schema";
 
+export type OperatorReceiptSnapshot = Readonly<{
+  interactions: readonly Interaction[];
+  directedJobs: readonly DirectedJobEvent[];
+  autonomousTasks: readonly AutonomousTaskReceipt[];
+}>;
+
+export interface OperatorCallbacks {
+  readonly onSession: (authenticated: boolean) => void;
+  readonly onConnection: (state: "connected" | "disconnected") => void;
+  readonly onInteraction: (interaction: Interaction) => void;
+  readonly onDirectedJob: (event: DirectedJobEvent) => void;
+  readonly onAutonomousJob: (event: AutonomousTaskReceipt) => void;
+}
+
+export interface OperatorRuntime {
+  start(): Promise<void>;
+  submit(agentId: AgentId, mode: InteractionMode, command: string): Promise<Interaction>;
+}
+
+export type OperatorFactory = (callbacks: OperatorCallbacks) => OperatorRuntime;
+
 const agentIds = [
   "opportunity_manager",
   "day_trading",
@@ -40,7 +61,8 @@ export class AgentWorkspace {
   private readonly interactions = new Map<string, Interaction>();
   private readonly directed = new Map<string, DirectedJobEvent>();
   private readonly autonomous = new Map<string, AutonomousTaskReceipt>();
-  private readonly operator: OperatorClient;
+  private readonly operator: OperatorRuntime;
+  private readonly subscribers = new Set<(snapshot: OperatorReceiptSnapshot) => void>();
   private host: HTMLElement | null = null;
   private selected: AgentId = "opportunity_manager";
   private authenticated = false;
@@ -48,8 +70,8 @@ export class AgentWorkspace {
   private submitting = false;
   private started = false;
 
-  constructor() {
-    this.operator = new OperatorClient({
+  constructor(factory: OperatorFactory = (callbacks) => new OperatorClient(callbacks)) {
+    this.operator = factory({
       onSession: (authenticated) => {
         this.authenticated = authenticated;
         this.render();
@@ -63,14 +85,17 @@ export class AgentWorkspace {
           interaction.id,
           latestInteraction(this.interactions.get(interaction.id), interaction),
         );
+        this.publishReceipts();
         this.render();
       },
       onDirectedJob: (event) => {
         this.directed.set(`${event.interaction_id}:${event.sequence}:${event.kind}`, event);
+        this.publishReceipts();
         this.render();
       },
       onAutonomousJob: (event) => {
         this.autonomous.set(`${event.public_task_id}:${event.sequence}`, event);
+        this.publishReceipts();
         this.render();
       },
     });
@@ -79,10 +104,26 @@ export class AgentWorkspace {
   mount(host: HTMLElement): void {
     this.host = host;
     this.render();
-    if (!this.started) {
-      this.started = true;
-      void this.operator.start();
-    }
+    this.ensureStarted();
+  }
+
+  ensureStarted(): void {
+    if (this.started) return;
+    this.started = true;
+    void this.operator.start();
+  }
+
+  receiptSnapshot(): OperatorReceiptSnapshot {
+    return {
+      interactions: [...this.interactions.values()],
+      directedJobs: [...this.directed.values()],
+      autonomousTasks: [...this.autonomous.values()],
+    };
+  }
+
+  subscribe(listener: (snapshot: OperatorReceiptSnapshot) => void): () => void {
+    this.subscribers.add(listener);
+    return () => this.subscribers.delete(listener);
   }
 
   private render(): void {
@@ -185,10 +226,16 @@ export class AgentWorkspace {
     try {
       const interaction = await this.operator.submit(this.selected, mode, command);
       this.interactions.set(interaction.id, interaction);
+      this.publishReceipts();
     } finally {
       this.submitting = false;
       this.render();
     }
+  }
+
+  private publishReceipts(): void {
+    const snapshot = this.receiptSnapshot();
+    for (const listener of this.subscribers) listener(snapshot);
   }
 
   private renderTimeline(): HTMLElement {

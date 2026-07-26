@@ -142,6 +142,23 @@ export function autonomousReceiptPresentation(
     : { state: "blocked", reason: "reviewer" };
 }
 
+export function receiptBlockers(
+  task: AutonomousTaskReceipt,
+  tasks: readonly AutonomousTaskReceipt[],
+): readonly ("cleanup" | "reviewer" | "lifecycle")[] {
+  const cleanup = tasks.some(
+    (candidate) =>
+      candidate.public_task_id === task.public_task_id &&
+      candidate.kind === "cleanup" &&
+      candidate.state === "completed",
+  );
+  return [
+    cleanup ? null : "cleanup",
+    task.reviewer_state === "accepted" ? null : "reviewer",
+    task.lifecycle_state === "unchanged" ? "lifecycle" : null,
+  ].filter((value): value is "cleanup" | "reviewer" | "lifecycle" => value !== null);
+}
+
 function missing(stage: CausalStage): CausalTracePresentation {
   return { state: "blocked", missingStage: stage, datasetSha: null };
 }

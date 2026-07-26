@@ -7,6 +7,7 @@ import {
   familyRoster,
   originReceipts,
   promotionGate,
+  receiptBlockers,
 } from "../src/workspaces/research_strategies_evidence";
 
 const sha = "a".repeat(64);
@@ -158,6 +159,7 @@ describe("Research and Strategies causal evidence", () => {
       ["autonomous_research", "populated", 1],
     ]);
     expect(autonomousReceiptPresentation(task)).toEqual({ state: "blocked", reason: "reviewer" });
+    expect(receiptBlockers(task, [task])).toEqual(["cleanup", "reviewer", "lifecycle"]);
   });
 });
 

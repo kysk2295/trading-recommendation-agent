@@ -3,9 +3,9 @@ import type { EvidenceTraceDrawer } from "../evidence_trace";
 import { resolveEvidenceTrace } from "../evidence_trace";
 import type { DashboardSnapshotV2 } from "../schema_v2";
 import {
-  autonomousReceiptPresentation,
   originReceipts,
   type ReceiptOriginInputs,
+  receiptBlockers,
 } from "./research_strategies_evidence";
 
 export function renderAutonomousLedger(
@@ -31,17 +31,9 @@ export function renderAutonomousLedger(
     );
   }
   for (const task of receipts.autonomousTasks) {
-    const gate = autonomousReceiptPresentation(task);
-    section.append(
-      authorityRow(
-        `${task.trigger_type} · ${task.kind} · ${task.state}`,
-        `Autonomous receipt blocked · ${gate.reason} terminal missing; cleanup/budget authority is not inferred`,
-        workspace.trace_id,
-        snapshot,
-        drawer,
-      ),
-    );
+    section.append(autonomousReceiptRow(task, receipts.autonomousTasks));
   }
+  for (const event of receipts.directedJobs) section.append(directedReceiptRow(event));
   if (receipts.autonomousTasks.length === 0) {
     section.append(
       authorityRow(
@@ -54,6 +46,50 @@ export function renderAutonomousLedger(
     );
   }
   return section;
+}
+
+function directedReceiptRow(event: ReceiptOriginInputs["directedJobs"][number]): HTMLElement {
+  const detail = [
+    `${event.agent_family_id} · ${event.job_kind}/${event.kind} · ${event.state}`,
+    `evidence:${event.evidence_sha256 ?? "unavailable"}`,
+    `result:${event.result_sha256 ?? "unavailable"}`,
+    "cleanup:unavailable · reviewer:unavailable · lifecycle:unavailable",
+  ].join(" · ");
+  return receiptRow("Directed receipt", detail, event.summary);
+}
+
+function autonomousReceiptRow(
+  task: ReceiptOriginInputs["autonomousTasks"][number],
+  tasks: ReceiptOriginInputs["autonomousTasks"],
+): HTMLElement {
+  const missing = receiptBlockers(task, tasks);
+  const detail = [
+    `${task.agent_family_id} · ${task.trigger_type}/${task.kind} · ${task.state}`,
+    `budget:${task.consumed_tokens} tokens · cost:${task.consumed_cost_microusd}μUSD`,
+    `evidence:${task.evidence_refs.join(",") || "unavailable"}`,
+    `result:${task.result_sha256 ?? "unavailable"}`,
+    `reviewer:${task.reviewer_state} · lifecycle:${task.lifecycle_state}`,
+    missing.length === 0 ? "terminals resolved" : `Blocked · ${missing.join(", ")} missing`,
+  ].join(" · ");
+  return receiptRow("Autonomous receipt", detail, task.summary);
+}
+
+function receiptRow(label: string, detail: string, summary: string | null): HTMLElement {
+  const row = document.createElement("article");
+  row.append(
+    textElement("strong", label),
+    textElement("p", detail),
+    ...(summary === null ? [] : [textElement("p", summary)]),
+    unavailableTraceButton(),
+  );
+  return row;
+}
+
+function unavailableTraceButton(): HTMLButtonElement {
+  const button = buttonElement("Trace unavailable", "trace-button");
+  button.disabled = true;
+  button.title = "Receipt has no canonical Evidence Trace authority";
+  return button;
 }
 
 export function authorityRow(

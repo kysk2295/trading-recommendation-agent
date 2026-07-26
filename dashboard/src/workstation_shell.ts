@@ -17,6 +17,11 @@ export class WorkstationShell {
   private snapshot: DashboardSnapshotV2 | null = null;
 
   constructor() {
+    this.agents.subscribe(() => {
+      if (this.activeWorkspace.key === "research" || this.activeWorkspace.key === "strategies") {
+        this.renderActive();
+      }
+    });
     this.buildLauncherMenu();
     this.bindLauncher();
     initializeWorkspaceTabs((workspace) => this.activate(workspace));
@@ -75,7 +80,12 @@ export class WorkstationShell {
     if (this.snapshot === null) return;
     const renderer = WORKSPACE_RENDERERS[this.activeWorkspace.key];
     this.content.setAttribute("aria-busy", "false");
-    this.content.replaceChildren(renderer(this.snapshot, this.drawer));
+    if (this.activeWorkspace.key === "research" || this.activeWorkspace.key === "strategies") {
+      this.agents.ensureStarted();
+    }
+    this.content.replaceChildren(
+      renderer(this.snapshot, this.drawer, { receipts: this.agents.receiptSnapshot() }),
+    );
     if (this.activeWorkspace.id === "command-center") {
       this.agents.mount(requiredElement("command-center-agent-workspace", HTMLElement));
     }
