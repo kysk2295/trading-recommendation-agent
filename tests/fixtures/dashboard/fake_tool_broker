@@ -1,4 +1,0 @@
-#!/bin/zsh
-
-set -eu
-print -r -- "broker-ok:$1"

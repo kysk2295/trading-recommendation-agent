@@ -18,6 +18,11 @@ from trading_agent.dashboard_autonomous_research import (
     AutonomousTaskReceiptV1,
     AutonomousTriggerV1,
 )
+from trading_agent.dashboard_execution_catalog import (
+    fixture_hermes_identity_for_tests,
+    production_hermes_identity,
+)
+from trading_agent.dashboard_execution_identity import BoundExecutionIdentity
 from trading_agent.dashboard_invalid_trigger_store import RejectedTriggerStore
 from trading_agent.dashboard_trigger_authority import (
     PersistedTriggerAuthorityResolver,
@@ -33,7 +38,6 @@ from trading_agent.private_query_file import (
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 DEFAULT_AUTONOMOUS_STATE = Path.home() / ".cache" / "trading-agent" / "dashboard-autonomous"
-FAKE_HERMES_EXECUTABLE = REPOSITORY / "tests" / "fixtures" / "dashboard" / "fake_hermes"
 DEFAULT_AUTONOMOUS_POLICY: Final = AutonomousPolicy(
     max_trigger_age_seconds=900,
     max_daily_tokens_per_family=100_000,
@@ -58,8 +62,6 @@ def execute_autonomous_fixture(
     trigger_path: Path,
     *,
     state_root: Path,
-    hermes_executable: Path,
-    fake_hermes: bool,
 ) -> AutonomousOutcome:
     try:
         raw = read_private_text_query_only(trigger_path)
@@ -81,7 +83,8 @@ def execute_autonomous_fixture(
     return run_autonomous_trigger(
         trigger,
         state_root=state_root,
-        hermes_executable=FAKE_HERMES_EXECUTABLE if fake_hermes else hermes_executable,
+        execution_identity=production_hermes_identity(REPOSITORY),
+        fixture_mode=False,
         receipts=[],
     )
 
@@ -90,8 +93,6 @@ async def stream_autonomous_trigger_event(
     socket: AgentTaskEventSocket,
     trigger_path: Path,
     send_lock: anyio.Lock,
-    *,
-    hermes_executable: Path,
 ) -> None:
     try:
         raw = read_private_text_query_only(trigger_path)
@@ -115,7 +116,8 @@ async def stream_autonomous_trigger_event(
         lambda: run_autonomous_trigger(
             trigger,
             state_root=DEFAULT_AUTONOMOUS_STATE,
-            hermes_executable=hermes_executable,
+            execution_identity=production_hermes_identity(REPOSITORY),
+            fixture_mode=False,
             receipts=receipts,
         )
     )
@@ -144,7 +146,8 @@ def run_autonomous_trigger(
     trigger: AutonomousTriggerV1,
     *,
     state_root: Path,
-    hermes_executable: Path,
+    execution_identity: BoundExecutionIdentity,
+    fixture_mode: bool,
     receipts: list[AutonomousTaskReceiptV1],
 ) -> AutonomousOutcome:
     authority_store = TriggerAuthorityStore(state_root / "authorities")
@@ -154,8 +157,8 @@ def run_autonomous_trigger(
             repository=REPOSITORY,
             environment_root=state_root / "environments",
             source_evidence_root=state_root / "authorities",
-            hermes_executable=hermes_executable,
-            fixture_mode=hermes_executable.resolve() == FAKE_HERMES_EXECUTABLE.resolve(),
+            execution_identity=execution_identity,
+            fixture_mode=fixture_mode,
         ),
         policy=DEFAULT_AUTONOMOUS_POLICY,
         authority_resolver=ProductionTriggerAuthorityResolver(
@@ -170,10 +173,26 @@ def run_autonomous_trigger(
     return plane.handle(trigger)
 
 
+def run_autonomous_trigger_for_tests(
+    trigger: AutonomousTriggerV1,
+    *,
+    state_root: Path,
+    receipts: list[AutonomousTaskReceiptV1],
+) -> AutonomousOutcome:
+    return run_autonomous_trigger(
+        trigger,
+        state_root=state_root,
+        execution_identity=fixture_hermes_identity_for_tests(REPOSITORY),
+        fixture_mode=True,
+        receipts=receipts,
+    )
+
+
 __all__ = (
     "DEFAULT_AUTONOMOUS_STATE",
     "InvalidAutonomousTriggerFixtureError",
     "autonomous_trigger_paths",
     "execute_autonomous_fixture",
+    "run_autonomous_trigger_for_tests",
     "stream_autonomous_trigger_event",
 )

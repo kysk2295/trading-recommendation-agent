@@ -48,7 +48,6 @@ async def watch_output_events(
     socket: SnapshotSocket,
     outputs: Path,
     send_lock: anyio.Lock,
-    hermes_executable: Path,
     watcher: WatchFactory | None = None,
 ) -> None:
     event_source = watch_native_changes if watcher is None else watcher
@@ -62,7 +61,6 @@ async def watch_output_events(
                 socket,
                 trigger_path,
                 send_lock,
-                hermes_executable=hermes_executable,
             )
         snapshot = collect_dashboard_snapshot_v2(outputs)
         async with send_lock:

@@ -89,8 +89,6 @@ def publisher_default(
 def autonomous_agent(
     trigger_fixture: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
     state_root: Annotated[Path, typer.Option()] = DEFAULT_AUTONOMOUS_STATE,
-    hermes_executable: Annotated[Path, typer.Option()] = HERMES_EXECUTABLE,
-    fake_hermes: Annotated[bool, typer.Option(help="유료 호출 없는 로컬 fake process 사용")] = False,
     dry_run: Annotated[bool, typer.Option(help="외부 relay 전송 없이 로컬 control plane만 검증")] = False,
     expect_cleanup: Annotated[bool, typer.Option(help="격리 환경 cleanup receipt 필수")] = False,
 ) -> None:
@@ -99,8 +97,6 @@ def autonomous_agent(
         outcome = execute_autonomous_fixture(
             trigger_fixture,
             state_root=state_root,
-            hermes_executable=hermes_executable,
-            fake_hermes=fake_hermes,
         )
     except InvalidAutonomousTriggerFixtureError as error:
         raise typer.BadParameter("invalid_autonomous_trigger", param_hint="--trigger-fixture") from error
@@ -268,7 +264,7 @@ async def _watch_output_events(
     send_lock: anyio.Lock,
     watcher: WatchFactory | None = None,
 ) -> None:
-    await watch_output_events(socket, outputs, send_lock, HERMES_EXECUTABLE, watcher)
+    await watch_output_events(socket, outputs, send_lock, watcher)
 
 
 async def _pair_browser_once(socket: ClientConnection, dashboard_url: str) -> None:

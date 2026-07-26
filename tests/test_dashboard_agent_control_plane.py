@@ -11,6 +11,7 @@ from trading_agent.dashboard_agent_control_plane import (
     AutonomousPolicy,
 )
 from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1, trigger_fixture
+from trading_agent.dashboard_execution_catalog import fixture_hermes_identity_for_tests
 from trading_agent.dashboard_worktree_executor import ExecutionResult, IsolatedWorktreeExecutor
 
 
@@ -131,7 +132,7 @@ def test_fake_hermes_runs_in_clean_pinned_worktree_and_cleans_up(tmp_path: Path)
         repository=repository,
         environment_root=tmp_path / "environments",
         source_evidence_root=tmp_path / "authority",
-        hermes_executable=repository / "tests" / "fixtures" / "dashboard" / "fake_hermes",
+        execution_identity=fixture_hermes_identity_for_tests(repository),
         fixture_mode=True,
     )
     (tmp_path / "authority").mkdir(mode=0o700)

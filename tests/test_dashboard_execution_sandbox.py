@@ -3,15 +3,28 @@ from __future__ import annotations
 import datetime as dt
 import os
 import subprocess
+from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1, trigger_fixture
-from trading_agent.dashboard_execution_sandbox import (
-    AutonomousExecutionSandbox,
+from trading_agent.dashboard_executable_binding import (
     InvalidExecutableBindingError,
+    capture_file,
+    capture_native_executable,
+    capture_python_entrypoint,
 )
+from trading_agent.dashboard_execution_catalog import (
+    FixtureScenario,
+    fixture_hermes_identity_for_tests,
+    fixture_scenario_identity_for_tests,
+    health_broker_identity,
+    production_hermes_probe_identity,
+)
+from trading_agent.dashboard_execution_identity import BoundExecutionIdentity
+from trading_agent.dashboard_execution_sandbox import AutonomousExecutionSandbox
 from trading_agent.dashboard_worktree_executor import IsolatedWorktreeExecutor
 
 
@@ -30,170 +43,236 @@ def _roots(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
 
 
 def _sandbox(
+    repository: Path,
     source: Path,
+    identity: BoundExecutionIdentity,
     *,
-    hermes: Path,
-    tools: tuple[Path, ...] = (),
+    fixture_mode: bool,
 ) -> AutonomousExecutionSandbox:
     return AutonomousExecutionSandbox(
-        repository=Path(__file__).resolve().parents[1],
+        repository=repository,
         source_evidence_root=source,
-        hermes_executable=hermes,
-        fixture_mode=True,
-        allowed_tool_executables=tools,
+        execution_identity=identity,
+        fixture_mode=fixture_mode,
     )
 
 
-def test_real_sandbox_runs_pinned_fake_hermes_and_explicit_tool_broker(tmp_path: Path) -> None:
-    # Given: exact regular-file bindings for fake Hermes and one harmless broker
-    repository = Path(__file__).resolve().parents[1]
-    hermes = repository / "tests" / "fixtures" / "dashboard" / "fake_hermes"
-    broker = repository / "tests" / "fixtures" / "dashboard" / "fake_tool_broker"
-    task_root, experiment, worktree, source = _roots(tmp_path)
-    sandbox = _sandbox(source, hermes=hermes, tools=(broker,))
-    trigger = _trigger()
+def _run(
+    sandbox: AutonomousExecutionSandbox,
+    identity: BoundExecutionIdentity,
+    trigger: AutonomousTriggerV1,
+    task_root: Path,
+    experiment: Path,
+    worktree: Path,
+    *,
+    prompt: str = "",
+    extra_environment: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[bytes]:
     environment = sandbox.environment(trigger, experiment)
-    hermes_argv = sandbox.argv((str(hermes), "-z", "fixture"), task_root, worktree)
-    broker_argv = sandbox.argv((str(broker), "probe"), task_root, worktree)
-    profile = hermes_argv[2]
-    assert "(allow process*)" not in profile
-    assert '(subpath "/bin")' not in profile
-    assert '(subpath "/usr/bin")' not in profile
-    assert f'(allow process-exec (literal "{hermes.resolve()}"))' in profile
-    assert '(allow process-exec (literal "/bin/zsh"))' in profile
-
-    # When: both commands cross the real macOS sandbox-exec boundary
-    hermes_result = subprocess.run(
-        hermes_argv,
-        cwd=worktree,
-        env=environment,
-        check=False,
-        capture_output=True,
-    )
-    broker_result = subprocess.run(
-        broker_argv,
+    if extra_environment is not None:
+        environment.update(extra_environment)
+    return subprocess.run(
+        sandbox.argv(identity.request(prompt), task_root, worktree),
         cwd=worktree,
         env=environment,
         check=False,
         capture_output=True,
     )
 
-    # Then: pinned legitimate execution succeeds without a shell child
-    assert hermes_result.returncode == 0
-    assert hermes_result.stdout == b"candidate evidence recorded\n"
-    assert (experiment / "candidate.json").read_text() == '{"candidate":"verified"}\n'
+
+def test_fixed_fixture_model_real_hermes_probe_and_native_broker_execute(tmp_path: Path) -> None:
+    # Given: three code-owned identities with immutable argv templates
+    repository = Path(__file__).resolve().parents[1]
+    task_root, experiment, worktree, source = _roots(tmp_path)
+    trigger = _trigger()
+    fixture = fixture_hermes_identity_for_tests(repository)
+    probe = production_hermes_probe_identity(repository)
+    broker = health_broker_identity()
+
+    # When: each identity crosses its separate real sandbox boundary
+    fixture_result = _run(
+        _sandbox(repository, source, fixture, fixture_mode=True),
+        fixture,
+        trigger,
+        task_root,
+        experiment,
+        worktree,
+        prompt="fixture",
+    )
+    probe_result = _run(
+        _sandbox(repository, source, probe, fixture_mode=False),
+        probe,
+        trigger,
+        task_root,
+        experiment,
+        worktree,
+    )
+    broker_result = _run(
+        _sandbox(repository, source, broker, fixture_mode=False),
+        broker,
+        trigger,
+        task_root,
+        experiment,
+        worktree,
+    )
+
+    # Then: the fixed model, resolved real Hermes entrypoint, and native broker succeed
+    assert fixture_result.returncode == 0
+    assert fixture_result.stdout == b"candidate evidence recorded\n"
+    assert (experiment / "candidate.json").read_text() == '{"candidate": "verified"}\n'
+    assert probe_result.returncode == 0
+    assert b"Hermes Agent" in probe_result.stdout
     assert broker_result.returncode == 0
-    assert broker_result.stdout == b"broker-ok:probe\n"
+    assert broker_result.stdout == b""
 
 
 @pytest.mark.parametrize(
-    ("case", "expected"),
-    [
-        ("shell", "executable_not_registered"),
-        ("env-shell", "executable_not_registered"),
-        ("symlink", "executable_symlink_forbidden"),
-        ("traversal", "executable_path_traversal"),
-        ("unregistered", "executable_not_registered"),
-    ],
+    "mutation",
+    ["python-c", "python-m", "script", "appended", "digest", "role"],
 )
-def test_unregistered_or_aliased_commands_are_typed_blockers_without_mutation(
-    tmp_path: Path,
-    case: str,
-    expected: str,
-) -> None:
-    # Given: a sandbox with one exact broker binding and a host canary
+def test_argv_mutation_never_matches_bound_template(tmp_path: Path, mutation: str) -> None:
+    # Given: one valid code-owned fixture request
     repository = Path(__file__).resolve().parents[1]
-    hermes = repository / "tests" / "fixtures" / "dashboard" / "fake_hermes"
-    broker = repository / "tests" / "fixtures" / "dashboard" / "fake_tool_broker"
     task_root, _, worktree, source = _roots(tmp_path)
-    sandbox = _sandbox(source, hermes=hermes, tools=(broker,))
-    canary = tmp_path / "canary"
-    canary.write_text("unchanged")
-    alias = tmp_path / "broker-link"
-    alias.symlink_to(broker)
-    commands = {
-        "shell": ("/bin/sh", "-c", f"echo changed > {canary}"),
-        "env-shell": ("/usr/bin/env", "sh", "-c", f"echo changed > {canary}"),
-        "symlink": (str(alias), "probe"),
-        "traversal": (str(broker.parent / ".." / "dashboard" / broker.name), "probe"),
-        "unregistered": ("/usr/bin/true",),
+    identity = fixture_hermes_identity_for_tests(repository)
+    sandbox = _sandbox(repository, source, identity, fixture_mode=True)
+    request = identity.request("fixture")
+    mutations = {
+        "python-c": replace(request, argv=(request.argv[0], "-c", "print('escape')")),
+        "python-m": replace(request, argv=(request.argv[0], "-m", "http.server")),
+        "script": replace(request, argv=(request.argv[0], "/tmp/substitute.py")),
+        "appended": replace(request, argv=(*request.argv, "--extra")),
+        "digest": replace(request, template_digest="0" * 64),
+        "role": replace(request, role="health-broker"),
     }
 
-    # When: an unregistered or aliased executable is requested
-    with pytest.raises(InvalidExecutableBindingError, match=expected):
-        sandbox.argv(commands[case], task_root, worktree)
-
-    # Then: the typed blocker occurs before stdout or host mutation
-    assert canary.read_text() == "unchanged"
+    # When/Then: direct Python roles and every altered field fail before sandbox launch
+    with pytest.raises(InvalidExecutableBindingError, match="execution_request_not_bound"):
+        sandbox.argv(mutations[mutation], task_root, worktree)
 
 
-def test_hardlink_binding_and_post_preflight_substitution_are_rejected(tmp_path: Path) -> None:
-    # Given: a hardlinked tool and a separately pinned script
+@pytest.mark.parametrize("interpreter", ["/bin/sh", "/bin/bash", "/bin/zsh", "/usr/bin/env"])
+def test_shell_and_env_interpreters_are_unconditionally_rejected(
+    tmp_path: Path,
+    interpreter: str,
+) -> None:
+    # Given: a safe-mode script whose interpreter is a shell or env
+    script = tmp_path / "candidate"
+    script.write_text(f"#!{interpreter}\nexit 0\n")
+    script.chmod(0o700)
+
+    # When/Then: identity construction rejects it regardless of hash and mode
+    with pytest.raises(InvalidExecutableBindingError, match="shell_interpreter_forbidden"):
+        capture_python_entrypoint(script)
+
+
+def test_arbitrary_identity_registration_and_test_identity_in_production_fail(tmp_path: Path) -> None:
+    # Given: a caller-constructed native identity and the code-owned test identity
     repository = Path(__file__).resolve().parents[1]
-    hermes = repository / "tests" / "fixtures" / "dashboard" / "fake_hermes"
-    broker = tmp_path / "broker"
-    broker.write_text("#!/bin/zsh\nprint -r -- original\n")
-    broker.chmod(0o700)
-    hardlink = tmp_path / "broker-hardlink"
-    os.link(broker, hardlink)
+    _, _, _, source = _roots(tmp_path)
+    executable = capture_native_executable(Path("/usr/bin/true"))
+    arbitrary = BoundExecutionIdentity(
+        "health-broker",
+        executable,
+        None,
+        None,
+        (),
+        None,
+        None,
+        (),
+        (),
+        "caller-digest",
+        "caller-template",
+        False,
+    )
+    unregistered = _sandbox(repository, source, arbitrary, fixture_mode=False)
+    test_identity = fixture_hermes_identity_for_tests(repository)
+    production = _sandbox(repository, source, test_identity, fixture_mode=False)
+
+    # When/Then: neither caller path registration nor test factory enters production
+    assert unregistered.blocker(_trigger()) == "execution_identity_not_catalog_owned"
+    assert production.blocker(_trigger()) == "test_execution_identity_forbidden"
+
+
+@pytest.mark.parametrize(
+    ("scenario", "extra_environment"),
+    [
+        ("exec-escape", None),
+        ("filesystem-escape", {"DASHBOARD_ESCAPE_CANARY": "{canary}"}),
+        ("network-escape", None),
+    ],
+)
+def test_guard_and_sandbox_confine_generated_python(
+    tmp_path: Path,
+    scenario: str,
+    extra_environment: dict[str, str] | None,
+) -> None:
+    # Given: fixed test code attempting same-Python exec, host write, or network
+    repository = Path(__file__).resolve().parents[1]
     task_root, experiment, worktree, source = _roots(tmp_path)
-    hardlink_sandbox = _sandbox(source, hermes=hermes, tools=(hardlink,))
-    assert hardlink_sandbox.blocker(_trigger()) == "executable_hardlink_forbidden"
-    with pytest.raises(InvalidExecutableBindingError, match="executable_hardlink_forbidden"):
-        hardlink_sandbox.argv((str(hardlink),), task_root, worktree)
-
-    # When: an initially valid pinned executable changes after preflight
-    hardlink.unlink()
-    sandbox = _sandbox(source, hermes=broker)
-    assert sandbox.blocker(_trigger()) is None
-    broker.write_text("#!/bin/zsh\nprint -r -- substituted\n")
-    broker.chmod(0o700)
-
-    # Then: descriptor metadata/hash recheck rejects it before environment creation
-    with pytest.raises(InvalidExecutableBindingError, match="executable_identity_changed"):
-        sandbox.environment(_trigger(), experiment)
-
-
-def test_registered_broker_cannot_spawn_child_shell(tmp_path: Path) -> None:
-    # Given: a registered broker whose body attempts a forbidden child shell
-    repository = Path(__file__).resolve().parents[1]
-    hermes = repository / "tests" / "fixtures" / "dashboard" / "fake_hermes"
-    broker = tmp_path / "malicious-broker"
     canary = tmp_path / "canary"
     canary.write_text("unchanged")
-    broker.write_text(f"#!/bin/zsh\n/bin/sh -c 'echo changed > {canary}'\n")
-    broker.chmod(0o700)
-    task_root, experiment, worktree, source = _roots(tmp_path)
-    sandbox = _sandbox(source, hermes=hermes, tools=(broker,))
-
-    # When: the registered parent crosses the real sandbox boundary
-    result = subprocess.run(
-        sandbox.argv((str(broker),), task_root, worktree),
-        cwd=worktree,
-        env=sandbox.environment(_trigger(), experiment),
-        check=False,
-        capture_output=True,
+    identity = fixture_scenario_identity_for_tests(repository, cast(FixtureScenario, scenario))
+    sandbox = _sandbox(repository, source, identity, fixture_mode=True)
+    environment = (
+        None
+        if extra_environment is None
+        else {key: value.format(canary=canary) for key, value in extra_environment.items()}
     )
 
-    # Then: process-exec for /bin/sh is denied and the canary is unchanged
+    # When: the code crosses the guarded Python and OS sandbox boundary
+    result = _run(
+        sandbox,
+        identity,
+        _trigger(),
+        task_root,
+        experiment,
+        worktree,
+        prompt="escape",
+        extra_environment=environment,
+    )
+
+    # Then: it exits nonzero without stdout, host mutation, or surviving environment
     assert result.returncode != 0
     assert result.stdout == b""
     assert canary.read_text() == "unchanged"
 
 
-def test_executor_rechecks_binding_after_preflight_before_process_launch(tmp_path: Path) -> None:
-    # Given: the real executor completed preflight against one exact executable identity
+def test_symlink_hardlink_path_traversal_and_toctou_fail_before_launch(tmp_path: Path) -> None:
+    # Given: link aliases, traversal, and a catalog identity altered after capture
     repository = Path(__file__).resolve().parents[1]
-    hermes = tmp_path / "hermes"
-    hermes.write_text("#!/bin/zsh\nprint -r -- original\n")
-    hermes.chmod(0o700)
+    target = tmp_path / "target"
+    target.write_text("fixed")
+    target.chmod(0o700)
+    identity = fixture_hermes_identity_for_tests(repository)
+    altered = replace(identity, target=capture_file(target, executable=True))
+    symlink = tmp_path / "symlink"
+    symlink.symlink_to(target)
+    hardlink = tmp_path / "hardlink"
+    os.link(target, hardlink)
+    traversal = tmp_path / "nested" / ".." / "target"
+
+    # When/Then: every alias and caller substitution is rejected deterministically
+    with pytest.raises(InvalidExecutableBindingError, match="executable_symlink_forbidden"):
+        capture_file(symlink, executable=True)
+    with pytest.raises(InvalidExecutableBindingError, match="executable_hardlink_forbidden"):
+        capture_file(hardlink, executable=True)
+    with pytest.raises(InvalidExecutableBindingError, match="executable_path_traversal"):
+        capture_file(traversal, executable=True)
+    assert not altered.catalog_owned()
+
+
+def test_executor_rechecks_fixed_identity_after_preflight(tmp_path: Path) -> None:
+    # Given: an executor whose fixed identity passes preflight
+    repository = Path(__file__).resolve().parents[1]
     source = tmp_path / "source"
     source.mkdir(mode=0o700)
+    identity = fixture_hermes_identity_for_tests(repository)
     executor = IsolatedWorktreeExecutor(
         repository=repository,
         environment_root=tmp_path / "environments",
         source_evidence_root=source,
-        hermes_executable=hermes,
+        execution_identity=identity,
         fixture_mode=True,
     )
     payload = trigger_fixture(now=dt.datetime.now(dt.UTC))
@@ -208,12 +287,9 @@ def test_executor_rechecks_binding_after_preflight_before_process_launch(tmp_pat
     trigger = AutonomousTriggerV1.model_validate(payload)
     assert executor.preflight(trigger) is None
 
-    # When: the executable is substituted before execute
-    hermes.write_text("#!/bin/zsh\nprint -r -- substituted\n")
-    hermes.chmod(0o700)
+    # When: caller substitution creates an unregistered identity after preflight
+    executor.__dict__["_execution_identity"] = replace(identity, identity_digest="0" * 64)
 
-    # Then: the executor's descriptor/hash recheck aborts before a model process launches
-    with pytest.raises(InvalidExecutableBindingError, match="executable_identity_changed"):
+    # Then: the sandbox retains its original binding and rejects the substituted request
+    with pytest.raises(InvalidExecutableBindingError, match="execution_request_not_bound"):
         executor.execute(trigger, "substitution-probe")
-    environments = tmp_path / "environments"
-    assert not environments.exists() or not tuple(environments.iterdir())

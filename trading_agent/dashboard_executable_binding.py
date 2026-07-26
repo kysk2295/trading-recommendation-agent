@@ -5,21 +5,17 @@ import stat
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-from typing import Final
 
-_FORBIDDEN_EXECUTABLES: Final = frozenset({Path("/bin/sh"), Path("/usr/bin/env")})
+_SHELL_NAMES = frozenset({"ash", "bash", "csh", "dash", "env", "fish", "ksh", "sh", "tcsh", "zsh"})
 
 
-@dataclass(frozen=True, slots=True)
 class InvalidExecutableBindingError(RuntimeError):
-    reason: str
-
-    def __str__(self) -> str:
-        return self.reason
-
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 @dataclass(frozen=True, slots=True)
-class ExecutableIdentity:
+class FileIdentity:
     path: Path
     device: int
     inode: int
@@ -27,10 +23,9 @@ class ExecutableIdentity:
     mode: int
     size: int
     sha256: str
-    interpreter: Path | None
 
 
-def capture_executable(path: Path) -> ExecutableIdentity:
+def capture_file(path: Path, *, executable: bool) -> FileIdentity:
     if path.is_symlink():
         raise InvalidExecutableBindingError("executable_symlink_forbidden")
     if ".." in path.parts:
@@ -50,35 +45,75 @@ def capture_executable(path: Path) -> ExecutableIdentity:
             raise InvalidExecutableBindingError("executable_owner_forbidden")
         if metadata.st_mode & 0o022:
             raise InvalidExecutableBindingError("executable_writable_by_others")
-        if not metadata.st_mode & 0o111:
+        if executable and not metadata.st_mode & 0o111:
             raise InvalidExecutableBindingError("executable_not_executable")
         digest = _descriptor_sha256(descriptor)
-        interpreter = _interpreter_path(descriptor)
     finally:
         os.close(descriptor)
-    if normalized in _FORBIDDEN_EXECUTABLES:
-        raise InvalidExecutableBindingError("executable_forbidden")
-    if interpreter is not None:
-        _ = capture_interpreter(interpreter)
-    return ExecutableIdentity(
-        path=normalized,
-        device=metadata.st_dev,
-        inode=metadata.st_ino,
-        owner=metadata.st_uid,
-        mode=stat.S_IMODE(metadata.st_mode),
-        size=metadata.st_size,
-        sha256=digest,
-        interpreter=interpreter,
+    return FileIdentity(
+        normalized,
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_uid,
+        stat.S_IMODE(metadata.st_mode),
+        metadata.st_size,
+        digest,
     )
 
 
-def capture_interpreter(path: Path) -> ExecutableIdentity:
-    if path in _FORBIDDEN_EXECUTABLES:
-        raise InvalidExecutableBindingError("executable_interpreter_forbidden")
-    identity = capture_executable(path)
-    if identity.interpreter is not None:
-        raise InvalidExecutableBindingError("nested_executable_interpreter_forbidden")
+def capture_native_executable(path: Path) -> FileIdentity:
+    identity = capture_file(path, executable=True)
+    if identity.path.name in _SHELL_NAMES:
+        raise InvalidExecutableBindingError("shell_executable_forbidden")
+    if identity.path.read_bytes()[:2] == b"#!":
+        raise InvalidExecutableBindingError("script_executable_forbidden")
     return identity
+
+
+def capture_python_entrypoint(path: Path) -> tuple[FileIdentity, FileIdentity]:
+    entrypoint = capture_file(path, executable=True)
+    first_line = entrypoint.path.read_bytes().splitlines()[:1]
+    if not first_line or not first_line[0].startswith(b"#!"):
+        raise InvalidExecutableBindingError("python_entrypoint_shebang_missing")
+    try:
+        parts = first_line[0][2:].decode("utf-8", errors="strict").strip().split()
+    except UnicodeDecodeError as error:
+        raise InvalidExecutableBindingError("python_entrypoint_shebang_invalid") from error
+    if len(parts) != 1:
+        raise InvalidExecutableBindingError("python_entrypoint_shebang_invalid")
+    interpreter_path = Path(parts[0])
+    if not interpreter_path.is_absolute() or interpreter_path.name in _SHELL_NAMES:
+        raise InvalidExecutableBindingError("shell_interpreter_forbidden")
+    try:
+        interpreter_realpath = interpreter_path.resolve(strict=True)
+    except OSError as error:
+        raise InvalidExecutableBindingError("python_interpreter_unavailable") from error
+    interpreter = capture_native_executable(interpreter_realpath)
+    if not interpreter.path.name.startswith("python"):
+        raise InvalidExecutableBindingError("python_interpreter_required")
+    return entrypoint, interpreter
+
+
+def revalidate(identity: FileIdentity, *, executable: bool) -> None:
+    if capture_file(identity.path, executable=executable) != identity:
+        raise InvalidExecutableBindingError("executable_identity_changed")
+
+
+def tree_sha256(root: Path) -> str:
+    try:
+        normalized = root.resolve(strict=True)
+    except OSError as error:
+        raise InvalidExecutableBindingError("trusted_package_unavailable") from error
+    digest = sha256()
+    files = tuple(sorted(path for path in normalized.rglob("*.py") if path.is_file() and not path.is_symlink()))
+    if not files:
+        raise InvalidExecutableBindingError("trusted_package_empty")
+    for path in files:
+        relative = path.relative_to(normalized).as_posix().encode()
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        digest.update(sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
 
 
 def _descriptor_sha256(descriptor: int) -> str:
@@ -89,23 +124,12 @@ def _descriptor_sha256(descriptor: int) -> str:
     return digest.hexdigest()
 
 
-def _interpreter_path(descriptor: int) -> Path | None:
-    os.lseek(descriptor, 0, os.SEEK_SET)
-    first_line = os.read(descriptor, 4 * 1024).splitlines()[:1]
-    if not first_line or not first_line[0].startswith(b"#!"):
-        return None
-    try:
-        shebang = first_line[0][2:].decode("utf-8", errors="strict").strip().split()
-        if len(shebang) != 1 or not Path(shebang[0]).is_absolute():
-            raise InvalidExecutableBindingError("executable_interpreter_forbidden")
-        return Path(shebang[0]).resolve(strict=True)
-    except (OSError, UnicodeDecodeError) as error:
-        raise InvalidExecutableBindingError("executable_interpreter_forbidden") from error
-
-
 __all__ = (
-    "ExecutableIdentity",
+    "FileIdentity",
     "InvalidExecutableBindingError",
-    "capture_executable",
-    "capture_interpreter",
+    "capture_file",
+    "capture_native_executable",
+    "capture_python_entrypoint",
+    "revalidate",
+    "tree_sha256",
 )

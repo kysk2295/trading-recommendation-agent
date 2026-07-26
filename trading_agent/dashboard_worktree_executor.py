@@ -9,6 +9,7 @@ from typing import Literal, Protocol
 
 from trading_agent.dashboard_agent_family import AGENT_FAMILY_REGISTRY
 from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1
+from trading_agent.dashboard_execution_identity import BoundExecutionIdentity
 from trading_agent.dashboard_execution_sandbox import AutonomousExecutionSandbox
 from trading_agent.dashboard_outbound_redaction import redact_outbound_text
 
@@ -39,19 +40,17 @@ class IsolatedWorktreeExecutor:
         repository: Path,
         environment_root: Path,
         source_evidence_root: Path,
-        hermes_executable: Path,
+        execution_identity: BoundExecutionIdentity,
         fixture_mode: bool = False,
-        allowed_tool_executables: tuple[Path, ...] = (),
     ) -> None:
         self._repository = repository.resolve()
         self._environment_root = environment_root.resolve()
-        self._hermes = hermes_executable
+        self._execution_identity = execution_identity
         self._sandbox = AutonomousExecutionSandbox(
             repository=self._repository,
             source_evidence_root=source_evidence_root.resolve(strict=False),
-            hermes_executable=self._hermes,
+            execution_identity=execution_identity,
             fixture_mode=fixture_mode,
-            allowed_tool_executables=allowed_tool_executables,
         )
 
     def preflight(self, trigger: AutonomousTriggerV1) -> str | None:
@@ -87,7 +86,11 @@ class IsolatedWorktreeExecutor:
             else:
                 worktree_added = True
                 environment = self._sandbox.environment(trigger, experiment)
-                command = self._sandbox.argv(self._argv(trigger), task_root, worktree)
+                command = self._sandbox.argv(
+                    self._execution_identity.request(self._prompt(trigger)),
+                    task_root,
+                    worktree,
+                )
                 completed = subprocess.run(
                     command,
                     cwd=worktree,
@@ -143,24 +146,16 @@ class IsolatedWorktreeExecutor:
             worktree_clean=result.worktree_clean,
         )
 
-    def _argv(self, trigger: AutonomousTriggerV1) -> tuple[str, ...]:
+    @staticmethod
+    def _prompt(trigger: AutonomousTriggerV1) -> str:
         role = next(item.role for item in AGENT_FAMILY_REGISTRY if item.family_id == trigger.agent_family_id)
-        prompt = (
+        return (
             f"Role: {role}. Family identity: {trigger.agent_family_id}. "
             f"Memory namespace: research-family:{trigger.agent_family_id}:memory-v1. "
             "This is a separate autonomous task session; never resume an interactive session. "
             "Read only source-bound evidence, write candidate evidence only in the declared experiment root, "
             "and do not mutate providers, Paper state, lifecycle authority, deployment, or the integration worktree. "
             f"Trigger type: {trigger.trigger_type}. Evidence refs: {','.join(trigger.evidence_refs)}."
-        )
-        return (
-            str(self._hermes),
-            "--ignore-user-config",
-            "--ignore-rules",
-            "-t",
-            "",
-            "-z",
-            prompt,
         )
 
     @staticmethod

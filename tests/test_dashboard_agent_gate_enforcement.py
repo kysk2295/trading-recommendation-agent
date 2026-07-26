@@ -14,6 +14,7 @@ from trading_agent.dashboard_agent_control_plane import (
     FaultSeam,
 )
 from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1, trigger_fixture
+from trading_agent.dashboard_execution_catalog import fixture_hermes_identity_for_tests
 from trading_agent.dashboard_worktree_executor import ExecutionResult, IsolatedWorktreeExecutor
 
 
@@ -210,7 +211,7 @@ def test_forbidden_isolation_attempt_blocks_before_process_or_mutation(
         repository=repository,
         environment_root=tmp_path / "environments",
         source_evidence_root=source_root,
-        hermes_executable=repository / "tests" / "fixtures" / "dashboard" / "fake_hermes",
+        execution_identity=fixture_hermes_identity_for_tests(repository),
         fixture_mode=True,
     )
     plane = AutonomousControlPlane(

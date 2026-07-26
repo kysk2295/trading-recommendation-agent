@@ -7,6 +7,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 import run_dashboard_publisher
+from trading_agent.dashboard_autonomous_publisher import run_autonomous_trigger_for_tests
 from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1, trigger_fixture
 from trading_agent.dashboard_trigger_authority import (
     TriggerAuthorityStore,
@@ -14,25 +15,16 @@ from trading_agent.dashboard_trigger_authority import (
 )
 
 
-def test_autonomous_cli_happy_duplicate_and_missing_authority(tmp_path: Path) -> None:
+def test_test_only_runner_happy_duplicate_and_production_cli_missing_authority(tmp_path: Path) -> None:
     # Given: one typed trigger and its exact persisted source authority
-    trigger_path, trigger = _trigger_path(tmp_path)
+    _, trigger = _trigger_path(tmp_path)
     state_root = tmp_path / "state"
     assert TriggerAuthorityStore(state_root / "authorities").append(authority_record_for(trigger))
-    args = [
-        "autonomous-agent",
-        "--trigger-fixture",
-        str(trigger_path),
-        "--state-root",
-        str(state_root),
-        "--fake-hermes",
-        "--expect-cleanup",
-    ]
 
-    # When: the real CLI handles the event, its duplicate, and an unauthorized copy
+    # When: the explicit test runner handles success/replay and production CLI handles no authority
+    first = run_autonomous_trigger_for_tests(trigger, state_root=state_root, receipts=[])
+    duplicate = run_autonomous_trigger_for_tests(trigger, state_root=state_root, receipts=[])
     runner = CliRunner()
-    first = runner.invoke(run_dashboard_publisher.app, args)
-    duplicate = runner.invoke(run_dashboard_publisher.app, args)
     missing_path, _ = _trigger_path(tmp_path / "missing")
     missing = runner.invoke(
         run_dashboard_publisher.app,
@@ -42,17 +34,18 @@ def test_autonomous_cli_happy_duplicate_and_missing_authority(tmp_path: Path) ->
             str(missing_path),
             "--state-root",
             str(tmp_path / "missing-state"),
-            "--fake-hermes",
         ],
     )
 
     # Then: one model process completes and replay/missing authority launch zero
-    assert first.exit_code == 0
-    assert "AUTONOMOUS_OK claims=1 model_processes=1" in first.stdout
-    assert duplicate.exit_code == 0
-    assert "AUTONOMOUS_BLOCKED model_processes=0 receipt=1" in duplicate.stdout
+    assert first.state == "completed"
+    assert first.model_processes == 1
+    assert duplicate.model_processes == 0
     assert missing.exit_code == 0
     assert "AUTONOMOUS_BLOCKED model_processes=0 receipt=1" in missing.stdout
+    help_result = runner.invoke(run_dashboard_publisher.app, ["autonomous-agent", "--help"])
+    assert "--fake-hermes" not in help_result.stdout
+    assert "--hermes-executable" not in help_result.stdout
 
 
 def test_autonomous_cli_invalid_trigger_appends_typed_rejection(tmp_path: Path) -> None:
@@ -71,7 +64,6 @@ def test_autonomous_cli_invalid_trigger_appends_typed_rejection(tmp_path: Path) 
             str(trigger_path),
             "--state-root",
             str(state_root),
-            "--fake-hermes",
         ],
     )
 
