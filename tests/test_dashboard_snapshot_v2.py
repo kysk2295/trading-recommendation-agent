@@ -78,12 +78,12 @@ def test_v2_snapshot_projects_finalized_paper_values_and_sha(tmp_path: Path) -> 
     # Then exact finalized values and immutable evidence SHA are emitted
     paper = snapshot.workspaces.paper
     assert paper.state == "populated"
-    assert {item.item_id: item.value for item in paper.items} == {
-        "paper.daily_pnl": "104.75",
-        "paper.equity": "100125.25",
-        "paper.open_orders": "0",
-        "paper.open_positions": "0",
-    }
+    values = {item.item_id: item.value for item in paper.items}
+    assert values["paper.daily_pnl"] == "104.75"
+    assert values["paper.equity"] == "100125.25"
+    assert values["paper.positions"] == "0 records"
+    assert values["paper.orders"] == "0 records"
+    assert values["paper.lifecycle.eod_flat"] == "finalized"
     assert any(node.safe_ref == "a" * 64 and node.kind == "paper_receipt" for node in snapshot.traces.nodes)
 
 

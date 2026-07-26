@@ -12,6 +12,7 @@ from trading_agent.dashboard_models_v2 import (
     TraceNodeV2,
     WorkspaceItemV2,
 )
+from trading_agent.dashboard_paper_lifecycle import project_paper_lifecycle
 from trading_agent.dashboard_projection_common import (
     WorkspaceProjection,
     blocked_projection,
@@ -74,28 +75,85 @@ def project_finalized_paper(outputs: Path, *, now: dt.datetime) -> WorkspaceProj
             state="blocked",
             blocker_code="paper_verification_incomplete",
         )
+    lifecycle = project_paper_lifecycle(outputs, latest)
+    if lifecycle.blocker_code is not None:
+        return blocked_projection(
+            "paper",
+            now=now,
+            state="corrupt" if lifecycle.state == "corrupt" else "blocked",
+            blocker_code=lifecycle.blocker_code,
+        )
     source_id = "trace.paper.source"
     terminal_id = "trace.paper.finalized"
     age = max(0, int((now - latest.finalized_at).total_seconds()))
     stale = age > 3 * 86_400
     item_state = "stale" if stale else "populated"
     values = (
-        ("paper.daily_pnl", "Daily PnL", latest.realized_pnl + latest.unrealized_pnl),
-        ("paper.equity", "Conservative equity", latest.conservative_equity),
-        ("paper.open_orders", "Open orders", latest.open_order_count),
-        ("paper.open_positions", "Open positions", latest.open_position_count),
+        ("paper.daily_pnl", "Finalized daily PnL", latest.realized_pnl + latest.unrealized_pnl),
+        ("paper.realized_pnl", "Finalized realized PnL", latest.realized_pnl),
+        ("paper.unrealized_pnl", "Finalized unrealized PnL", latest.unrealized_pnl),
+        ("paper.equity", "Finalized conservative equity", latest.conservative_equity),
+        ("paper.planned_open_risk", "Finalized planned open risk", latest.planned_open_risk),
     )
-    items = tuple(
+    items = (
+        *(
+            WorkspaceItemV2(
+                item_id=item_id,
+                kind="paper",
+                label=label,
+                state=item_state,
+                value=str(value),
+                observed_at=latest.finalized_at,
+                trace_id=source_id,
+            )
+            for item_id, label, value in values
+        ),
         WorkspaceItemV2(
-            item_id=item_id,
+            item_id="paper.positions",
             kind="paper",
-            label=label,
-            state=item_state,
-            value=str(value),
+            label="Finalized positions",
+            state="empty",
+            value="0 records",
             observed_at=latest.finalized_at,
             trace_id=source_id,
-        )
-        for item_id, label, value in values
+        ),
+        WorkspaceItemV2(
+            item_id="paper.orders",
+            kind="paper",
+            label="Finalized open orders",
+            state="empty",
+            value="0 records",
+            observed_at=latest.finalized_at,
+            trace_id=source_id,
+        ),
+        WorkspaceItemV2(
+            item_id="paper.lifecycle.reconcile",
+            kind="paper",
+            label="Final reconciliation",
+            state=item_state,
+            value="finalized",
+            observed_at=latest.finalized_at,
+            trace_id=source_id,
+        ),
+        WorkspaceItemV2(
+            item_id="paper.lifecycle.cutoff",
+            kind="paper",
+            label="Entry cutoff",
+            state=item_state,
+            value="finalized",
+            observed_at=latest.finalized_at,
+            trace_id=source_id,
+        ),
+        WorkspaceItemV2(
+            item_id="paper.lifecycle.eod_flat",
+            kind="paper",
+            label="EOD flat",
+            state=item_state,
+            value="finalized",
+            observed_at=latest.finalized_at,
+            trace_id=source_id,
+        ),
+        *lifecycle.items,
     )
     source_ref = hashlib.sha256(latest.source_ledger_sha256.encode()).hexdigest()
     nodes = (
