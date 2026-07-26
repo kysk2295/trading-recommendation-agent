@@ -44,19 +44,17 @@ try {
     await guidance.waitFor({ state: "visible" });
     await guidance.scrollIntoViewIfNeeded();
     const quoteLeadAndProjectionShareLine = await guidance.evaluate((element) => {
-      const text = element.firstChild;
+      const label = element.querySelector(".market-projection-label");
+      const text = label?.firstChild;
       if (text?.nodeType !== Node.TEXT_NODE) return false;
       const content = text.textContent ?? "";
-      const phrase = /이[ \u00a0]v2/.exec(content);
-      if (phrase?.index === undefined) return false;
-      const lead = phrase.index;
-      const projection = lead + 2;
+      if (content !== "이\u00a0v2") return false;
       const leadRange = document.createRange();
-      leadRange.setStart(text, lead);
-      leadRange.setEnd(text, lead + 1);
+      leadRange.setStart(text, 0);
+      leadRange.setEnd(text, 1);
       const projectionRange = document.createRange();
-      projectionRange.setStart(text, projection);
-      projectionRange.setEnd(text, projection + 2);
+      projectionRange.setStart(text, 2);
+      projectionRange.setEnd(text, 4);
       return leadRange.getBoundingClientRect().top === projectionRange.getBoundingClientRect().top;
     });
     const pageOverflow = await page.evaluate(

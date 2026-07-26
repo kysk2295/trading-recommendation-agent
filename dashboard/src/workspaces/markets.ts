@@ -132,14 +132,14 @@ function renderContext(
 ): HTMLElement {
   const section = document.createElement("section");
   section.className = "market-context-section";
-  section.append(
-    textElement("h2", "Market context and quote guard"),
-    textElement(
-      "p",
-      "현재 quote는 entitlement, currentness, redistribution permit이 함께 있는 canonical snapshot에서만 표시합니다. 이\u00a0v2 projection은 calendar/session evidence만 게시합니다.",
-      "state-guidance",
-    ),
+  const guidance = document.createElement("p");
+  guidance.className = "state-guidance";
+  guidance.append(
+    "현재 quote는 entitlement, currentness, redistribution permit이 함께 있는 canonical snapshot에서만 표시합니다. ",
+    textElement("span", "이\u00a0v2", "market-projection-label"),
+    " projection은 calendar/session evidence만 게시합니다.",
   );
+  section.append(textElement("h2", "Market context and quote guard"), guidance);
   for (const item of items.filter((value) => !value.item_id.endsWith(".session"))) {
     const row = document.createElement("div");
     row.className = "market-withheld-row";

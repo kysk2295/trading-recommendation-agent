@@ -132,6 +132,10 @@
   font-size: var(--type-h2);
 }
 
+.market-projection-label {
+  white-space: nowrap;
+}
+
 .market-session-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
