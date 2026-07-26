@@ -28,7 +28,13 @@ from trading_agent.dashboard_directed_research_models import (
 )
 from trading_agent.dashboard_execution_claims import InteractiveClaimStore
 from trading_agent.dashboard_native_watch import watch_native_changes
-from trading_agent.dashboard_publisher_events import watch_roots
+from trading_agent.dashboard_publisher_events import (
+    publisher_url,
+    reconnect_delay_seconds,
+    watch_output_events,
+    watch_roots,
+)
+from trading_agent.dashboard_publisher_pairing import forward_pairing_signals
 from trading_agent.dashboard_relay import is_reconnectable_group, pairing_url, run_interaction
 
 
@@ -83,7 +89,7 @@ def test_dashboard_publisher_help() -> None:
 
 
 def test_publisher_watch_requires_explicit_system_authority_verifier() -> None:
-    parameters = inspect.signature(run_dashboard_publisher._watch_output_events).parameters
+    parameters = inspect.signature(watch_output_events).parameters
 
     assert "system_authority_verifier" in parameters
 
@@ -333,8 +339,8 @@ def test_publisher_uses_websocket_events_without_periodic_http_or_sleep() -> Non
 
 
 def test_publisher_converts_dashboard_urls_to_publish_websockets() -> None:
-    https_url = run_dashboard_publisher._publisher_url("https://observatory.example")
-    http_url = run_dashboard_publisher._publisher_url("http://localhost:3100")
+    https_url = publisher_url("https://observatory.example")
+    http_url = publisher_url("http://localhost:3100")
     assert https_url == "wss://observatory.example/api/realtime/publish"
     assert http_url == "ws://localhost:3100/api/realtime/publish"
     assert (
@@ -382,24 +388,29 @@ async def test_resident_publisher_sigusr1_coalesces_one_ticket_request_and_keeps
         opened.append(url)
 
     # When: two operator signals arrive before the one ticket response.
-    await run_dashboard_publisher._forward_pairing_signals(
+    await forward_pairing_signals(
         signals(),
-        socket,
-        anyio.Lock(),
-        pairing,
+        run_dashboard_publisher.PairingRequestRuntime(socket, anyio.Lock(), pairing),
     )
     async with anyio.create_task_group() as tasks:
-        await run_dashboard_publisher._receive_events(
-            socket,
-            "https://observatory.example",
-            False,
-            Path("outputs"),
-            anyio.Lock(),
-            anyio.CapacityLimiter(1),
-            tasks,
-            pairing,
-            open_browser,
+        receiver = run_dashboard_publisher.PublisherEventReceiver(
+            run_dashboard_publisher.PairingTicketHandler(
+                "https://observatory.example",
+                False,
+                pairing,
+                open_browser,
+            ),
+            run_dashboard_publisher.InteractionRuntime(
+                Path("outputs"),
+                anyio.Lock(),
+                anyio.CapacityLimiter(1),
+                tasks,
+                Path("hermes"),
+                Path("worktree"),
+                Path("state"),
+            ),
         )
+        await run_dashboard_publisher._receive_events(socket, receiver)
 
     # Then: the resident socket requests one ticket, opens it once, and writes neither ticket nor path.
     assert socket.messages == ['{"type":"pairing_request"}']
@@ -461,7 +472,7 @@ async def test_publisher_watch_roots_coalesce_one_mutation_each(
     with anyio.fail_after(8):
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(
-                run_dashboard_publisher._watch_output_events,
+                watch_output_events,
                 socket,
                 tmp_path,
                 anyio.Lock(),
@@ -497,11 +508,11 @@ async def test_publisher_idle_watch_does_no_projection_or_send(
         projections += 1
         return run_dashboard_publisher.collect_dashboard_snapshot_v2(_outputs)
 
-    monkeypatch.setattr(run_dashboard_publisher, "collect_dashboard_snapshot_v2", counted_projection)
+    monkeypatch.setattr("trading_agent.dashboard_publisher_events.collect_dashboard_snapshot_v2", counted_projection)
 
     # When idleness is observed for a bounded interval
     with anyio.move_on_after(0.05):
-        await run_dashboard_publisher._watch_output_events(
+        await watch_output_events(
             socket,
             tmp_path,
             anyio.Lock(),
@@ -514,7 +525,7 @@ async def test_publisher_idle_watch_does_no_projection_or_send(
 
 
 def test_publisher_bounds_reconnect_backoff() -> None:
-    assert [run_dashboard_publisher._reconnect_delay_seconds(index) for index in range(7)] == [
+    assert [reconnect_delay_seconds(index) for index in range(7)] == [
         5,
         10,
         20,

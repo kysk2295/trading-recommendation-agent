@@ -3,33 +3,32 @@
 from __future__ import annotations
 
 import shutil
-import signal
-from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Protocol
+from typing import Annotated
 
 import anyio
 import typer
-from anyio.abc import TaskGroup
 from pydantic import ValidationError
 from rich import print as rprint
 from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import WebSocketException
 
-from trading_agent.dashboard_commands import (
-    DashboardInteractionMessage,
-    PairingTicketMessage,
-    parse_dashboard_event,
-)
+from trading_agent.dashboard_commands import PairingTicketMessage, parse_dashboard_event
 from trading_agent.dashboard_models_v2 import DashboardSnapshotV2
 from trading_agent.dashboard_publisher_cli import register_execution_commands
-from trading_agent.dashboard_publisher_events import (
-    SnapshotSocket,
-    WatchFactory,
-    publisher_url,
-    reconnect_delay_seconds,
-    watch_output_events,
+from trading_agent.dashboard_publisher_events import watch_output_events
+from trading_agent.dashboard_publisher_pairing import (
+    InteractionRuntime,
+    PairingRequestRuntime,
+    PairingRequestState,
+    PairingTicketHandler,
+    PublisherEventReceiver,
+)
+from trading_agent.dashboard_publisher_pairing import (
+    receive_events as _receive_events,
+)
+from trading_agent.dashboard_publisher_pairing import (
+    watch_pairing_signal as _watch_pairing_signal,
 )
 from trading_agent.dashboard_publisher_relay_runtime import relay_snapshots
 from trading_agent.dashboard_relay import (
@@ -37,7 +36,6 @@ from trading_agent.dashboard_relay import (
     is_reconnectable_group,
     open_pairing_url,
     pairing_url,
-    run_interaction,
 )
 from trading_agent.dashboard_snapshot import (
     DashboardCredentialError,
@@ -63,23 +61,7 @@ DEFAULT_SYSTEM_AUTHORITY_CONFIG = (
 DEFAULT_INTERACTIVE_STATE = Path.home() / ".local" / "state" / "trading-agent" / "dashboard-interactive"
 HERMES_EXECUTABLE = Path(shutil.which("hermes") or Path.home() / ".local/bin/hermes")
 WORKTREE = Path(__file__).resolve().parent
-_publisher_url = publisher_url
-_reconnect_delay_seconds = reconnect_delay_seconds
 register_execution_commands(app, DEFAULT_INTERACTIVE_STATE)
-
-
-@dataclass(slots=True)
-class PairingRequestState:
-    pending: bool = False
-
-
-BrowserOpener = Callable[[str], Awaitable[None]]
-
-
-class PublisherEventSocket(Protocol):
-    def __aiter__(self) -> AsyncIterator[str | bytes]: ...
-
-    async def send(self, message: str) -> None: ...
 
 
 @app.callback()
@@ -204,10 +186,23 @@ async def _run_event_connection(
     send_lock = anyio.Lock()
     limiter = anyio.CapacityLimiter(1)
     pairing = PairingRequestState()
+    pairing_runtime = PairingRequestRuntime(socket, send_lock, pairing)
     try:
         async with anyio.create_task_group() as tasks:
+            receiver = PublisherEventReceiver(
+                PairingTicketHandler(dashboard_url, pair_browser, pairing, open_pairing_url),
+                InteractionRuntime(
+                    outputs,
+                    send_lock,
+                    limiter,
+                    tasks,
+                    HERMES_EXECUTABLE,
+                    WORKTREE,
+                    DEFAULT_INTERACTIVE_STATE,
+                ),
+            )
             tasks.start_soon(
-                _watch_output_events,
+                watch_output_events,
                 socket,
                 outputs,
                 send_lock,
@@ -217,102 +212,16 @@ async def _run_event_connection(
             tasks.start_soon(
                 _receive_events,
                 socket,
-                dashboard_url,
-                pair_browser,
-                outputs,
-                send_lock,
-                limiter,
-                tasks,
-                pairing,
-                open_pairing_url,
+                receiver,
             )
             tasks.start_soon(
                 _watch_pairing_signal,
-                socket,
-                send_lock,
-                pairing,
+                pairing_runtime,
             )
     except BaseExceptionGroup as error:
         if is_reconnectable_group(error):
             raise DashboardRelayConnectionError from error
         raise
-
-
-async def _receive_events(
-    socket: PublisherEventSocket,
-    dashboard_url: str,
-    pair_browser: bool,
-    outputs: Path,
-    send_lock: anyio.Lock,
-    limiter: anyio.CapacityLimiter,
-    tasks: TaskGroup,
-    pairing: PairingRequestState,
-    browser_opener: BrowserOpener,
-) -> None:
-    async for raw in socket:
-        if not isinstance(raw, str):
-            continue
-        event = parse_dashboard_event(raw)
-        if isinstance(event, PairingTicketMessage):
-            if pair_browser or pairing.pending:
-                signal_requested = pairing.pending
-                try:
-                    await browser_opener(pairing_url(dashboard_url, event.path))
-                finally:
-                    if signal_requested:
-                        pairing.pending = False
-            continue
-        if isinstance(event, DashboardInteractionMessage):
-            tasks.start_soon(
-                run_interaction,
-                socket,
-                event.interaction,
-                send_lock,
-                limiter,
-                HERMES_EXECUTABLE,
-                WORKTREE,
-                DEFAULT_INTERACTIVE_STATE,
-                outputs / "source_evidence",
-            )
-
-
-async def _watch_pairing_signal(
-    socket: PublisherEventSocket,
-    send_lock: anyio.Lock,
-    pairing: PairingRequestState,
-) -> None:
-    with anyio.open_signal_receiver(signal.SIGUSR1) as signals:
-        await _forward_pairing_signals(signals, socket, send_lock, pairing)
-
-
-async def _forward_pairing_signals(
-    signals: AsyncIterator[signal.Signals],
-    socket: PublisherEventSocket,
-    send_lock: anyio.Lock,
-    pairing: PairingRequestState,
-) -> None:
-    async for _received_signal in signals:
-        if pairing.pending:
-            continue
-        pairing.pending = True
-        async with send_lock:
-            await socket.send('{"type":"pairing_request"}')
-
-
-async def _watch_output_events(
-    socket: SnapshotSocket,
-    outputs: Path,
-    send_lock: anyio.Lock,
-    watcher: WatchFactory | None = None,
-    system_authority_verifier: SystemAuthorityVerifierInput = None,
-) -> None:
-    await watch_output_events(
-        socket,
-        outputs,
-        send_lock,
-        watcher,
-        system_authority_verifier,
-    )
 
 
 async def _pair_browser_once(socket: ClientConnection, dashboard_url: str) -> None:
