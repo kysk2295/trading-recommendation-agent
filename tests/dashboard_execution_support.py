@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import copy
+import subprocess
 import sys
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from trading_agent.dashboard_autonomous_publisher import _handle_autonomous_trigger
 from trading_agent.dashboard_autonomous_research import (
@@ -15,13 +16,16 @@ from trading_agent.dashboard_executable_binding import (
     capture_file,
     capture_native_executable,
 )
+from trading_agent.dashboard_execution_catalog import ProductionExecutionId
 from trading_agent.dashboard_execution_identity import (
     BoundExecutionIdentity,
+    BrokerOperation,
     _build_python_identity,
 )
-from trading_agent.dashboard_execution_sandbox import (
-    _ExecutionSandbox,
-    create_production_execution_sandbox,
+from trading_agent.dashboard_execution_sandbox import _ExecutionSandbox
+from trading_agent.dashboard_production_execution_boundary import (
+    ProductionExecutionBoundary,
+    create_production_execution_boundary,
 )
 from trading_agent.dashboard_worktree_executor import _IsolatedWorktreeExecutorCore
 
@@ -76,6 +80,47 @@ def execution_sandbox(
     )
 
 
+class _TestExecutionBoundary:
+    def __init__(self, sandbox: _ExecutionSandbox) -> None:
+        self._sandbox = sandbox
+
+    def blocker(self, trigger: AutonomousTriggerV1) -> str | None:
+        return self._sandbox.blocker(trigger)
+
+    def run_model(
+        self,
+        trigger: AutonomousTriggerV1,
+        task_root: Path,
+        experiment: Path,
+        worktree: Path,
+        prompt: str,
+        timeout: int,
+    ) -> subprocess.CompletedProcess[bytes]:
+        identity = self._sandbox.execution_identity
+        command = self._sandbox.argv(identity.request(prompt), task_root, worktree)
+        self._sandbox._revalidate_bindings()
+        return subprocess.run(
+            command,
+            cwd=worktree,
+            env=self._sandbox.environment(trigger, experiment),
+            check=False,
+            capture_output=True,
+            timeout=timeout,
+        )
+
+    def run_broker(
+        self,
+        trigger: AutonomousTriggerV1,
+        task_root: Path,
+        experiment: Path,
+        worktree: Path,
+        operation: BrokerOperation,
+        parameters: tuple[str, ...],
+        timeout: int,
+    ) -> subprocess.CompletedProcess[bytes]:
+        raise InvalidExecutableBindingError("test_model_boundary_has_no_broker")
+
+
 def worktree_executor(
     *,
     repository: Path,
@@ -83,16 +128,27 @@ def worktree_executor(
     source_evidence_root: Path,
 ) -> _IsolatedWorktreeExecutorCore:
     identity = fixture_identity(repository)
+    model_boundary: ProductionExecutionBoundary = _TestExecutionBoundary(
+        execution_sandbox(repository, source_evidence_root, identity)
+    )
     return _IsolatedWorktreeExecutorCore(
         repository=repository,
         environment_root=environment_root,
-        sandbox=execution_sandbox(repository, source_evidence_root, identity),
-        broker_sandbox=create_production_execution_sandbox(
+        sandbox=model_boundary,
+        broker_sandbox=create_production_execution_boundary(
             repository=repository,
             source_evidence_root=source_evidence_root,
-            execution_id="research-broker",
+            execution_id=ProductionExecutionId.RESEARCH_BROKER,
         ),
     )
+
+
+def replace_model_identity(
+    executor: _IsolatedWorktreeExecutorCore,
+    identity: BoundExecutionIdentity,
+) -> None:
+    boundary = cast(_TestExecutionBoundary, executor._sandbox)
+    object.__setattr__(boundary._sandbox, "execution_identity", identity)
 
 
 def run_autonomous_trigger(
@@ -118,6 +174,7 @@ __all__ = (
     "FixtureScenario",
     "execution_sandbox",
     "fixture_identity",
+    "replace_model_identity",
     "run_autonomous_trigger",
     "worktree_executor",
 )

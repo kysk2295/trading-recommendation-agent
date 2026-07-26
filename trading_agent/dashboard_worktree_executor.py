@@ -8,10 +8,6 @@ from typing import Literal, Protocol
 
 from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1
 from trading_agent.dashboard_execution_catalog import ProductionExecutionId
-from trading_agent.dashboard_execution_sandbox import (
-    _ExecutionSandbox,
-    create_production_execution_sandbox,
-)
 from trading_agent.dashboard_isolated_worktree_support import (
     autonomous_prompt,
     cleanup_isolated_worktree,
@@ -19,6 +15,10 @@ from trading_agent.dashboard_isolated_worktree_support import (
     isolated_worktree_clean,
 )
 from trading_agent.dashboard_outbound_redaction import redact_outbound_text
+from trading_agent.dashboard_production_execution_boundary import (
+    ProductionExecutionBoundary,
+    create_production_execution_boundary,
+)
 from trading_agent.dashboard_research_broker_contract import InvalidResearchBrokerCommandError
 
 ExecutionState = Literal["completed", "failed", "uncertain"]
@@ -47,12 +47,11 @@ class _IsolatedWorktreeExecutorCore:
         *,
         repository: Path,
         environment_root: Path,
-        sandbox: _ExecutionSandbox,
-        broker_sandbox: _ExecutionSandbox,
+        sandbox: ProductionExecutionBoundary,
+        broker_sandbox: ProductionExecutionBoundary,
     ) -> None:
         self._repository = repository.resolve()
         self._environment_root = environment_root.resolve()
-        self._execution_identity = sandbox.execution_identity
         self._sandbox = sandbox
         self._broker_sandbox = broker_sandbox
 
@@ -92,30 +91,22 @@ class _IsolatedWorktreeExecutorCore:
                 result = self._failed("isolated_worktree_setup_failed", cleanup=False)
             else:
                 worktree_added = True
-                environment = self._sandbox.environment(trigger, experiment)
-                broker_environment = self._broker_sandbox.environment(trigger, experiment)
                 query = self._run_broker(
                     trigger,
                     task_root,
                     worktree,
-                    broker_environment,
                     "evidence-query",
                     trigger.evidence_refs,
                 )
                 if query.returncode != 0:
                     raise InvalidResearchBrokerCommandError("evidence_query_failed")
-                command = self._sandbox.argv(
-                    self._execution_identity.request(autonomous_prompt(trigger)),
+                completed = self._sandbox.run_model(
+                    trigger,
                     task_root,
+                    experiment,
                     worktree,
-                )
-                completed = subprocess.run(
-                    command,
-                    cwd=worktree,
-                    env=environment,
-                    check=False,
-                    capture_output=True,
-                    timeout=trigger.budget_envelope.max_runtime_seconds,
+                    autonomous_prompt(trigger),
+                    trigger.budget_envelope.max_runtime_seconds,
                 )
                 process_started = True
                 clean = isolated_worktree_clean(worktree)
@@ -138,7 +129,6 @@ class _IsolatedWorktreeExecutorCore:
                         trigger,
                         task_root,
                         worktree,
-                        broker_environment,
                         "hypothesis-register",
                         (trigger.trigger_id, trigger.agent_family_id, trigger.payload_sha256),
                     )
@@ -146,7 +136,6 @@ class _IsolatedWorktreeExecutorCore:
                         trigger,
                         task_root,
                         worktree,
-                        broker_environment,
                         "experiment-run",
                         (trigger.trigger_id,),
                     )
@@ -201,19 +190,17 @@ class _IsolatedWorktreeExecutorCore:
         trigger: AutonomousTriggerV1,
         task_root: Path,
         worktree: Path,
-        environment: dict[str, str],
         operation: Literal["evidence-query", "hypothesis-register", "experiment-run"],
         parameters: tuple[str, ...],
     ) -> subprocess.CompletedProcess[bytes]:
-        identity = self._broker_sandbox.execution_identity
-        request = identity.broker_request(operation, parameters)
-        return subprocess.run(
-            self._broker_sandbox.argv(request, task_root, worktree),
-            cwd=worktree,
-            env=environment,
-            check=False,
-            capture_output=True,
-            timeout=min(trigger.budget_envelope.max_runtime_seconds, 30),
+        return self._broker_sandbox.run_broker(
+            trigger,
+            task_root,
+            task_root / "experiment",
+            worktree,
+            operation,
+            parameters,
+            min(trigger.budget_envelope.max_runtime_seconds, 30),
         )
 
     @staticmethod
@@ -241,20 +228,20 @@ class IsolatedWorktreeExecutor(_IsolatedWorktreeExecutorCore):
         repository: Path,
         environment_root: Path,
         source_evidence_root: Path,
-        execution_id: ProductionExecutionId = "hermes-model",
+        execution_id: ProductionExecutionId = ProductionExecutionId.HERMES_MODEL,
     ) -> None:
         super().__init__(
             repository=repository,
             environment_root=environment_root,
-            sandbox=create_production_execution_sandbox(
+            sandbox=create_production_execution_boundary(
                 repository=repository,
                 source_evidence_root=source_evidence_root,
                 execution_id=execution_id,
             ),
-            broker_sandbox=create_production_execution_sandbox(
+            broker_sandbox=create_production_execution_boundary(
                 repository=repository,
                 source_evidence_root=source_evidence_root,
-                execution_id="research-broker",
+                execution_id=ProductionExecutionId.RESEARCH_BROKER,
             ),
         )
 

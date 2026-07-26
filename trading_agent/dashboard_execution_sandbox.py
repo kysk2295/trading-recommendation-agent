@@ -9,10 +9,6 @@ from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1
 from trading_agent.dashboard_executable_binding import (
     InvalidExecutableBindingError,
 )
-from trading_agent.dashboard_execution_catalog import (
-    ProductionExecutionId,
-    _select_production_execution,
-)
 from trading_agent.dashboard_execution_identity import (
     BoundExecutionIdentity,
     BoundExecutionRequest,
@@ -170,30 +166,6 @@ class _ExecutionSandbox:
         self.identity_validator(self.execution_identity)
 
 
-def _create_production_sandbox_factory():
-    selector = _select_production_execution
-
-    def create(
-        *,
-        repository: Path,
-        source_evidence_root: Path,
-        execution_id: ProductionExecutionId,
-    ) -> _ExecutionSandbox:
-        selection = selector(repository, execution_id)
-        return _ExecutionSandbox(
-            repository=repository.resolve(strict=True),
-            source_evidence_root=source_evidence_root.resolve(strict=False),
-            execution_identity=selection.identity,
-            fixture_mode=False,
-            identity_validator=selection.validate,
-        )
-
-    return create
-
-
-create_production_execution_sandbox = _create_production_sandbox_factory()
-
-
 def _write_path_allowed(value: str) -> bool:
     requested = Path(value)
     return (
@@ -206,5 +178,4 @@ def _write_path_allowed(value: str) -> bool:
 
 __all__ = (
     "InvalidExecutableBindingError",
-    "create_production_execution_sandbox",
 )

@@ -13,6 +13,7 @@ from dashboard_execution_support import (
     FixtureScenario,
     execution_sandbox,
     fixture_identity,
+    replace_model_identity,
     worktree_executor,
 )
 
@@ -22,10 +23,11 @@ from trading_agent.dashboard_executable_binding import (
     capture_file,
     capture_python_entrypoint,
 )
+from trading_agent.dashboard_execution_catalog import ProductionExecutionId
 from trading_agent.dashboard_execution_identity import BoundExecutionIdentity
-from trading_agent.dashboard_execution_sandbox import (
-    _ExecutionSandbox,
-    create_production_execution_sandbox,
+from trading_agent.dashboard_execution_sandbox import _ExecutionSandbox
+from trading_agent.dashboard_production_execution_boundary import (
+    create_production_execution_boundary,
 )
 
 
@@ -80,18 +82,16 @@ def test_fixed_fixture_model_real_hermes_probe_and_native_broker_execute(tmp_pat
     task_root, experiment, worktree, source = _roots(tmp_path)
     trigger = _trigger()
     fixture = fixture_identity(repository)
-    probe_sandbox = create_production_execution_sandbox(
+    probe_sandbox = create_production_execution_boundary(
         repository=repository,
         source_evidence_root=source,
-        execution_id="hermes-probe",
+        execution_id=ProductionExecutionId.HERMES_PROBE,
     )
-    probe = probe_sandbox.execution_identity
-    broker_sandbox = create_production_execution_sandbox(
+    broker_sandbox = create_production_execution_boundary(
         repository=repository,
         source_evidence_root=source,
-        execution_id="health-broker",
+        execution_id=ProductionExecutionId.HEALTH_BROKER,
     )
-    broker = broker_sandbox.execution_identity
 
     # When: each identity crosses its separate real sandbox boundary
     fixture_result = _run(
@@ -103,21 +103,21 @@ def test_fixed_fixture_model_real_hermes_probe_and_native_broker_execute(tmp_pat
         worktree,
         prompt="fixture",
     )
-    probe_result = _run(
-        probe_sandbox,
-        probe,
+    probe_result = probe_sandbox.run_model(
         trigger,
         task_root,
         experiment,
         worktree,
+        "",
+        30,
     )
-    broker_result = _run(
-        broker_sandbox,
-        broker,
+    broker_result = broker_sandbox.run_model(
         trigger,
         task_root,
         experiment,
         worktree,
+        "",
+        30,
     )
 
     # Then: the fixed model, resolved real Hermes entrypoint, and native broker succeed
@@ -178,10 +178,10 @@ def test_production_factory_rejects_identity_and_catalog_injection(tmp_path: Pat
 
     # When/Then: the production signature has no identity, catalog, or fixture selector
     with pytest.raises(TypeError):
-        inspect.signature(create_production_execution_sandbox).bind(
+        inspect.signature(create_production_execution_boundary).bind(
             repository=repository,
             source_evidence_root=source,
-            execution_id="health-broker",
+            execution_id=ProductionExecutionId.HEALTH_BROKER,
             execution_identity=arbitrary,
         )
 
@@ -264,7 +264,7 @@ def test_executor_rechecks_fixed_identity_after_preflight(tmp_path: Path) -> Non
         environment_root=tmp_path / "environments",
         source_evidence_root=source,
     )
-    identity = executor._execution_identity
+    identity = fixture_identity(repository)
     payload = trigger_fixture(now=dt.datetime.now(dt.UTC))
     environment_spec = payload["environment_spec"]
     assert isinstance(environment_spec, dict)
@@ -278,8 +278,11 @@ def test_executor_rechecks_fixed_identity_after_preflight(tmp_path: Path) -> Non
     assert executor.preflight(trigger) is None
 
     # When: caller substitution creates an unregistered identity after preflight
-    executor.__dict__["_execution_identity"] = replace(identity, identity_digest="0" * 64)
+    replace_model_identity(
+        executor,
+        replace(identity, identity_digest="0" * 64),
+    )
 
     # Then: the sandbox retains its original binding and rejects the substituted request
-    with pytest.raises(InvalidExecutableBindingError, match="execution_request_not_bound"):
+    with pytest.raises(InvalidExecutableBindingError, match="test_execution_identity_not_sealed"):
         executor.execute(trigger, "substitution-probe")
