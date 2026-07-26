@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -10,6 +9,7 @@ from typing import Literal, Protocol
 
 from trading_agent.dashboard_agent_family import AGENT_FAMILY_REGISTRY
 from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1
+from trading_agent.dashboard_execution_sandbox import AutonomousExecutionSandbox
 from trading_agent.dashboard_outbound_redaction import redact_outbound_text
 
 ExecutionState = Literal["completed", "failed", "uncertain"]
@@ -27,6 +27,8 @@ class ExecutionResult:
 
 
 class AutonomousTaskExecutor(Protocol):
+    def preflight(self, trigger: AutonomousTriggerV1) -> str | None: ...
+
     def execute(self, trigger: AutonomousTriggerV1, task_id: str) -> ExecutionResult: ...
 
 
@@ -36,11 +38,22 @@ class IsolatedWorktreeExecutor:
         *,
         repository: Path,
         environment_root: Path,
+        source_evidence_root: Path,
         hermes_executable: Path,
+        fixture_mode: bool = False,
     ) -> None:
         self._repository = repository.resolve()
         self._environment_root = environment_root.resolve()
         self._hermes = hermes_executable.resolve()
+        self._sandbox = AutonomousExecutionSandbox(
+            repository=self._repository,
+            source_evidence_root=source_evidence_root.resolve(strict=False),
+            hermes_executable=self._hermes,
+            fixture_mode=fixture_mode,
+        )
+
+    def preflight(self, trigger: AutonomousTriggerV1) -> str | None:
+        return self._sandbox.blocker(trigger)
 
     def execute(self, trigger: AutonomousTriggerV1, task_id: str) -> ExecutionResult:
         task_root = self._environment_root / task_id
@@ -72,9 +85,9 @@ class IsolatedWorktreeExecutor:
             else:
                 worktree_added = True
                 completed = subprocess.run(
-                    self._argv(trigger),
+                    self._sandbox.argv(self._argv(trigger), task_root, worktree),
                     cwd=worktree,
-                    env=self._environment(trigger, experiment),
+                    env=self._sandbox.environment(trigger, experiment),
                     check=False,
                     capture_output=True,
                     timeout=trigger.budget_envelope.max_runtime_seconds,
@@ -136,27 +149,15 @@ class IsolatedWorktreeExecutor:
             "and do not mutate providers, Paper state, lifecycle authority, deployment, or the integration worktree. "
             f"Trigger type: {trigger.trigger_type}. Evidence refs: {','.join(trigger.evidence_refs)}."
         )
-        toolsets = "file,memory"
-        if "run_tests" in trigger.environment_spec.allowed_tools:
-            toolsets = "file,terminal,memory"
-        return (str(self._hermes), "-t", toolsets, "-z", prompt)
-
-    def _environment(self, trigger: AutonomousTriggerV1, experiment: Path) -> dict[str, str]:
-        environment = {
-            key: value
-            for key in ("HOME", "LANG", "LC_ALL", "PATH", "TMPDIR")
-            if (value := os.environ.get(key)) is not None
-        }
-        environment.update(
-            {
-                "DASHBOARD_AGENT_FAMILY": trigger.agent_family_id,
-                "DASHBOARD_AUTONOMOUS_CHANNEL": "1",
-                "DASHBOARD_EXPERIMENT_ROOT": str(experiment),
-                "DASHBOARD_MEMORY_NAMESPACE": f"research-family:{trigger.agent_family_id}:memory-v1",
-                "DASHBOARD_NETWORK_POLICY": trigger.environment_spec.network_policy,
-            }
+        return (
+            str(self._hermes),
+            "--ignore-user-config",
+            "--ignore-rules",
+            "-t",
+            "",
+            "-z",
+            prompt,
         )
-        return environment
 
     @staticmethod
     def _is_clean(worktree: Path) -> bool:
@@ -206,8 +207,6 @@ class IsolatedWorktreeExecutor:
             process_started=process_started,
             worktree_clean=False,
         )
-
-
 __all__ = (
     "AutonomousTaskExecutor",
     "ExecutionResult",

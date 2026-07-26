@@ -1,22 +1,21 @@
 import postgres from "postgres";
+import type { AgentTaskEventStore } from "./agent_task_event_store";
+import { MemoryAgentTaskEventStore, PostgresAgentTaskEventStore } from "./agent_task_event_store";
+import { initializeDashboardStore } from "./dashboard_store_schema";
 import type {
   AutonomousTaskReceipt,
   DashboardSnapshotV1,
   Interaction,
   InteractionState,
 } from "./schema";
-import {
-  autonomousTaskReceiptSchema,
-  dashboardSnapshotV1Schema,
-  interactionSchema,
-} from "./schema";
+import { dashboardSnapshotV1Schema, interactionSchema } from "./schema";
 import type { DashboardSnapshotV2 } from "./schema_v2";
 import { dashboardSnapshotV2Schema } from "./schema_v2";
 import type { NormalizedSnapshot } from "./snapshot_normalizer";
 import { parseAndNormalizeSnapshot } from "./snapshot_normalizer";
 import { type SnapshotSaveResult, saveSnapshotPair } from "./snapshot_pair_store";
 
-export interface SnapshotStore {
+export interface SnapshotStore extends AgentTaskEventStore {
   save(snapshot: NormalizedSnapshot): Promise<SnapshotSaveResult>;
   latest(): Promise<DashboardSnapshotV2 | null>;
   latestV1(): Promise<DashboardSnapshotV1 | null>;
@@ -35,7 +34,7 @@ export interface SnapshotStore {
 export class MemorySnapshotStore implements SnapshotStore {
   private snapshot: NormalizedSnapshot | null = null;
   private readonly interactions: Interaction[] = [];
-  private readonly agentTaskEvents: AutonomousTaskReceipt[] = [];
+  private readonly agentTaskEvents = new MemoryAgentTaskEventStore();
 
   async save(snapshot: NormalizedSnapshot): Promise<SnapshotSaveResult> {
     let next = this.snapshot;
@@ -100,18 +99,11 @@ export class MemorySnapshotStore implements SnapshotStore {
   }
 
   async appendAgentTaskEvent(event: AutonomousTaskReceipt): Promise<boolean> {
-    if (this.agentTaskEvents.some((candidate) => candidate.event_id === event.event_id)) {
-      return false;
-    }
-    this.agentTaskEvents.push(event);
-    return true;
+    return this.agentTaskEvents.appendAgentTaskEvent(event);
   }
 
   async listAgentTaskEvents(): Promise<readonly AutonomousTaskReceipt[]> {
-    return [...this.agentTaskEvents].sort(
-      (left, right) =>
-        left.occurred_at.localeCompare(right.occurred_at) || left.sequence - right.sequence,
-    );
+    return this.agentTaskEvents.listAgentTaskEvents();
   }
 }
 
@@ -123,13 +115,10 @@ type InteractionRow = {
   readonly payload: unknown;
 };
 
-type AgentTaskEventRow = {
-  readonly payload: unknown;
-};
-
 export class PostgresSnapshotStore implements SnapshotStore {
   private readonly sql: ReturnType<typeof postgres>;
   private readonly ready: Promise<void>;
+  private readonly agentTaskEvents: PostgresAgentTaskEventStore;
 
   constructor(databaseUrl: string) {
     this.sql = postgres(databaseUrl, {
@@ -138,6 +127,7 @@ export class PostgresSnapshotStore implements SnapshotStore {
       connect_timeout: 10,
     });
     this.ready = this.initialize();
+    this.agentTaskEvents = new PostgresAgentTaskEventStore(this.sql, this.ready);
   }
 
   async save(snapshot: NormalizedSnapshot): Promise<SnapshotSaveResult> {
@@ -263,25 +253,11 @@ export class PostgresSnapshotStore implements SnapshotStore {
   }
 
   async appendAgentTaskEvent(event: AutonomousTaskReceipt): Promise<boolean> {
-    await this.ready;
-    const rows = await this.sql`
-      INSERT INTO dashboard_agent_task_events (event_id, occurred_at, payload)
-      VALUES (${event.event_id}, ${event.occurred_at}, ${this.sql.json(event)})
-      ON CONFLICT (event_id) DO NOTHING
-      RETURNING event_id
-    `;
-    return rows.length === 1;
+    return this.agentTaskEvents.appendAgentTaskEvent(event);
   }
 
   async listAgentTaskEvents(): Promise<readonly AutonomousTaskReceipt[]> {
-    await this.ready;
-    const rows = await this.sql<AgentTaskEventRow[]>`
-      SELECT payload
-      FROM dashboard_agent_task_events
-      ORDER BY occurred_at ASC, event_id ASC
-      LIMIT 200
-    `;
-    return rows.map((row) => autonomousTaskReceiptSchema.parse(row.payload));
+    return this.agentTaskEvents.listAgentTaskEvents();
   }
 
   private async interaction(id: string): Promise<Interaction | null> {
@@ -294,34 +270,6 @@ export class PostgresSnapshotStore implements SnapshotStore {
   }
 
   private async initialize(): Promise<void> {
-    await this.sql`
-      CREATE TABLE IF NOT EXISTS dashboard_snapshots (
-        singleton_id SMALLINT PRIMARY KEY CHECK (singleton_id = 1),
-        generated_at TIMESTAMPTZ NOT NULL,
-        payload JSONB NOT NULL
-      )
-    `;
-    await this.sql`
-      CREATE TABLE IF NOT EXISTS dashboard_interactions (
-        id UUID PRIMARY KEY,
-        state TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        payload JSONB NOT NULL
-      )
-    `;
-    await this.sql`
-      CREATE TABLE IF NOT EXISTS dashboard_snapshots_v2 (
-        singleton_id SMALLINT PRIMARY KEY CHECK (singleton_id = 2),
-        generated_at TIMESTAMPTZ NOT NULL,
-        payload JSONB NOT NULL
-      )
-    `;
-    await this.sql`
-      CREATE TABLE IF NOT EXISTS dashboard_agent_task_events (
-        event_id TEXT PRIMARY KEY,
-        occurred_at TIMESTAMPTZ NOT NULL,
-        payload JSONB NOT NULL
-      )
-    `;
+    await initializeDashboardStore(this.sql);
   }
 }

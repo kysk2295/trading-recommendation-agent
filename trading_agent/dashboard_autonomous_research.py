@@ -71,6 +71,10 @@ class AutonomousEnvironmentSpecV1(BaseModel):
     allowed_write_roots: tuple[Literal["experiment"], ...] = Field(min_length=1, max_length=1)
     allowed_tools: tuple[AutonomousTool, ...] = Field(min_length=1, max_length=4)
     network_policy: NetworkPolicy
+    requested_read_paths: tuple[str, ...] = Field(default=("source_evidence",), max_length=16)
+    requested_write_paths: tuple[str, ...] = Field(default=("experiment/candidate.json",), max_length=16)
+    requested_tool_argv: tuple[str, ...] = Field(default=(), max_length=16)
+    requested_network_targets: tuple[str, ...] = Field(default=(), max_length=8)
 
     @model_validator(mode="after")
     def require_isolated_roots(self) -> Self:
@@ -167,8 +171,12 @@ def trigger_fixture(
             "pinned_code_sha": "a" * 40,
             "allowed_read_roots": ("isolated_worktree", "source_evidence"),
             "allowed_write_roots": ("experiment",),
-            "allowed_tools": ("read_evidence", "write_candidate", "run_tests"),
+            "allowed_tools": ("read_evidence", "write_candidate"),
             "network_policy": "model_provider_only",
+            "requested_read_paths": ("source_evidence",),
+            "requested_write_paths": ("experiment/candidate.json",),
+            "requested_tool_argv": (),
+            "requested_network_targets": (),
         },
         "payload_sha256": "f" * 64,
     }

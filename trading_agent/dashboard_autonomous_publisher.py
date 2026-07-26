@@ -13,11 +13,19 @@ from trading_agent.dashboard_agent_control_plane import (
     AutonomousOutcome,
     AutonomousPolicy,
 )
+from trading_agent.dashboard_authority_adapters import ProductionTriggerAuthorityResolver
 from trading_agent.dashboard_autonomous_research import (
     AutonomousTaskReceiptV1,
     AutonomousTriggerV1,
 )
+from trading_agent.dashboard_invalid_trigger_store import RejectedTriggerStore
+from trading_agent.dashboard_trigger_authority import (
+    PersistedTriggerAuthorityResolver,
+    TriggerAuthorityStore,
+)
 from trading_agent.dashboard_worktree_executor import IsolatedWorktreeExecutor
+from trading_agent.experiment_ledger_store import ExperimentLedgerReader
+from trading_agent.lane_review_store import LaneReviewReader
 from trading_agent.private_query_file import (
     InvalidPrivateQueryFileError,
     read_private_text_query_only,
@@ -54,8 +62,21 @@ def execute_autonomous_fixture(
     fake_hermes: bool,
 ) -> AutonomousOutcome:
     try:
-        trigger = AutonomousTriggerV1.model_validate_json(read_private_text_query_only(trigger_path))
-    except (InvalidPrivateQueryFileError, ValidationError) as error:
+        raw = read_private_text_query_only(trigger_path)
+    except InvalidPrivateQueryFileError as error:
+        _ = RejectedTriggerStore(state_root / "rejected").append_path(
+            trigger_path,
+            "invalid_trigger_source",
+        )
+        raise InvalidAutonomousTriggerFixtureError from error
+    try:
+        trigger = AutonomousTriggerV1.model_validate_json(raw)
+    except ValidationError as error:
+        _ = RejectedTriggerStore(state_root / "rejected").append_path(
+            trigger_path,
+            "invalid_trigger_schema",
+            raw=raw,
+        )
         raise InvalidAutonomousTriggerFixtureError from error
     return run_autonomous_trigger(
         trigger,
@@ -73,8 +94,21 @@ async def stream_autonomous_trigger_event(
     hermes_executable: Path,
 ) -> None:
     try:
-        trigger = AutonomousTriggerV1.model_validate_json(read_private_text_query_only(trigger_path))
-    except (InvalidPrivateQueryFileError, ValidationError):
+        raw = read_private_text_query_only(trigger_path)
+    except InvalidPrivateQueryFileError:
+        _ = RejectedTriggerStore(DEFAULT_AUTONOMOUS_STATE / "rejected").append_path(
+            trigger_path,
+            "invalid_trigger_source",
+        )
+        return
+    try:
+        trigger = AutonomousTriggerV1.model_validate_json(raw)
+    except ValidationError:
+        _ = RejectedTriggerStore(DEFAULT_AUTONOMOUS_STATE / "rejected").append_path(
+            trigger_path,
+            "invalid_trigger_schema",
+            raw=raw,
+        )
         return
     receipts: list[AutonomousTaskReceiptV1] = []
     await run_sync_in_worker_thread(
@@ -113,14 +147,24 @@ def run_autonomous_trigger(
     hermes_executable: Path,
     receipts: list[AutonomousTaskReceiptV1],
 ) -> AutonomousOutcome:
+    authority_store = TriggerAuthorityStore(state_root / "authorities")
     plane = AutonomousControlPlane(
         state_root=state_root,
         executor=IsolatedWorktreeExecutor(
             repository=REPOSITORY,
             environment_root=state_root / "environments",
+            source_evidence_root=state_root / "authorities",
             hermes_executable=hermes_executable,
+            fixture_mode=hermes_executable.resolve() == FAKE_HERMES_EXECUTABLE.resolve(),
         ),
         policy=DEFAULT_AUTONOMOUS_POLICY,
+        authority_resolver=ProductionTriggerAuthorityResolver(
+            persisted=PersistedTriggerAuthorityResolver(authority_store),
+            experiments=ExperimentLedgerReader(
+                REPOSITORY / "outputs" / "experiment_control" / "experiment_ledger.sqlite3"
+            ),
+            reviews=LaneReviewReader(REPOSITORY / "outputs" / "lane_control" / "lane_review.sqlite3"),
+        ),
         event_sink=receipts.append,
     )
     return plane.handle(trigger)

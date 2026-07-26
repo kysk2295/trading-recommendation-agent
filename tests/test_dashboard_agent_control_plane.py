@@ -19,6 +19,10 @@ class _FakeExecutor:
         self.launches = 0
         self.state = state
 
+    def preflight(self, trigger: AutonomousTriggerV1) -> str | None:
+        del trigger
+        return None
+
     def execute(self, trigger: AutonomousTriggerV1, task_id: str) -> ExecutionResult:
         self.launches += 1
         return ExecutionResult(
@@ -32,6 +36,12 @@ class _FakeExecutor:
         )
 
 
+class _AllowAuthority:
+    def blocker(self, trigger: AutonomousTriggerV1, now: dt.datetime) -> str | None:
+        del trigger, now
+        return None
+
+
 def test_authorized_trigger_and_duplicates_launch_one_process(tmp_path: Path) -> None:
     # Given: a durable local control plane and one typed trigger
     now = dt.datetime(2026, 7, 26, 8, tzinfo=dt.UTC)
@@ -41,6 +51,7 @@ def test_authorized_trigger_and_duplicates_launch_one_process(tmp_path: Path) ->
         state_root=tmp_path / "state",
         executor=executor,
         policy=AutonomousPolicy.permissive_for_tests(),
+        authority_resolver=_AllowAuthority(),
     )
 
     # When: the authorized event is delivered three times
@@ -50,8 +61,8 @@ def test_authorized_trigger_and_duplicates_launch_one_process(tmp_path: Path) ->
 
     # Then: CAS preserves one paid-process claim and immutable receipts
     assert first.state == "completed"
-    assert duplicate_one.state == "duplicate"
-    assert duplicate_two.state == "duplicate"
+    assert duplicate_one.state == "completed"
+    assert duplicate_two.state == "completed"
     assert executor.launches == 1
     assert first.claim_created
     assert not duplicate_one.claim_created
@@ -80,6 +91,7 @@ def test_stale_and_budget_blockers_launch_zero_and_append_one_receipt(tmp_path: 
             rolling_failure_window_seconds=3_600,
             max_rolling_failures=1,
         ),
+        authority_resolver=_AllowAuthority(),
     )
 
     # When: policy evaluates the stale trigger
@@ -118,8 +130,11 @@ def test_fake_hermes_runs_in_clean_pinned_worktree_and_cleans_up(tmp_path: Path)
     executor = IsolatedWorktreeExecutor(
         repository=repository,
         environment_root=tmp_path / "environments",
-        hermes_executable=Path("/bin/echo"),
+        source_evidence_root=tmp_path / "authority",
+        hermes_executable=repository / "tests" / "fixtures" / "dashboard" / "fake_hermes",
+        fixture_mode=True,
     )
+    (tmp_path / "authority").mkdir(mode=0o700)
 
     # When: one separate autonomous task session runs
     result = executor.execute(trigger, "f" * 32)
@@ -157,6 +172,7 @@ def test_budget_cooldown_and_failure_gates_never_launch_replacement(tmp_path: Pa
             rolling_failure_window_seconds=3_600,
             max_rolling_failures=1,
         ),
+        authority_resolver=_AllowAuthority(),
     )
     assert plane.handle(first, now=now).state == "completed"
     second_payload = trigger_fixture(now=now + dt.timedelta(seconds=1))
@@ -186,6 +202,7 @@ def test_budget_cooldown_and_failure_gates_never_launch_replacement(tmp_path: Pa
             rolling_failure_window_seconds=3_600,
             max_rolling_failures=1,
         ),
+        authority_resolver=_AllowAuthority(),
     )
     assert failure_plane.handle(first, now=now).state == "failed"
 

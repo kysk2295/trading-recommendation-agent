@@ -107,11 +107,11 @@ def autonomous_agent(
     if expect_cleanup and not outcome.cleanup_completed:
         typer.echo("AUTONOMOUS_BLOCKED model_processes=0 receipt=1")
         raise typer.Exit(code=1)
-    if outcome.state == "completed":
+    if outcome.state == "completed" and outcome.claim_created:
         typer.echo("AUTONOMOUS_OK claims=1 model_processes=1 duplicate_launches=0 evidence=append_only cleanup=1")
         return
     typer.echo(f"AUTONOMOUS_BLOCKED model_processes={outcome.model_processes} receipt=1")
-    if outcome.state not in {"blocked", "duplicate"}:
+    if outcome.claim_created or outcome.state not in {"blocked", "completed", "failed", "uncertain"}:
         raise typer.Exit(code=1)
 
 
