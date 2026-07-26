@@ -3,7 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Observatory Primitive Showcase</title>
+    <meta name="description" content="Ember Operations Workstation v2 primitive showcase" />
+    <title>Ember Operations Workstation — Primitive Showcase</title>
+    <link rel="preload" href="/assets/fonts/PretendardVariable.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/assets/fonts/IBMPlexMono-Regular.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="/assets/base.css" />
     <link rel="stylesheet" href="/assets/layout.css" />
     <link rel="stylesheet" href="/assets/components.css" />
@@ -13,150 +16,98 @@
     <link rel="stylesheet" href="/assets/showcase.css" />
   </head>
   <body>
-    <main class="showcase">
-      <header>
-        <p class="meta-label">PRIMITIVE SHOWCASE</p>
-        <h1><span>관제 화면의</span> <span>모든 상태</span></h1>
-        <p>
-          <span>모든 화면 크기에서 같은 의미를 유지합니다.</span>
-          <span>키보드로 모든 기능을 사용할 수 있습니다.</span>
+    <main class="v2-showcase" aria-labelledby="showcase-title">
+      <header class="showcase-intro">
+        <p class="eyebrow">EMBER OPERATIONS WORKSTATION / V2</p>
+        <h1 id="showcase-title">Primitive showcase</h1>
+        <p class="intro-copy">
+          Demonstration-only fixtures for the read-only research workstation. These values are isolated to
+          <code>/showcase</code> and never appear on the production dashboard.
         </p>
+        <p class="fixture-notice" role="note">DEMONSTRATION DATA — NOT A MARKET VALUE, RECOMMENDATION, OR PAPER RESULT.</p>
       </header>
-      <section class="showcase-grid">
-        <article class="panel showcase-live">
-          <div class="panel-heading">
-            <div><p class="meta-label">LIVE RAIL</p><h2>연결 상태</h2></div>
-          </div>
-          <div class="freshness-state-list">
-            <div class="freshness"><span class="semantic-mark live"></span><span>실시간 · 12초 전</span></div>
-            <div class="freshness"><span class="semantic-mark delayed"></span><span>자료 지연 · 192초 전</span></div>
-            <div class="freshness"><span class="semantic-mark disconnected"></span><span>연결 끊김 · 4분 전</span></div>
-          </div>
-        </article>
-        <article class="panel showcase-wide">
-          <p class="meta-label">METRIC STRIP</p>
-          <dl class="metric-strip showcase-metrics">
-            <div><dt>Watch cycles</dt><dd>345</dd></div>
-            <div><dt>Ranking</dt><dd>345</dd></div>
-            <div><dt>Retries</dt><dd>1,684</dd></div>
-            <div><dt>Recommendations</dt><dd>3</dd></div>
-            <div><dt>Unavailable</dt><dd>—</dd></div>
-          </dl>
-        </article>
-        <article class="panel showcase-wide">
-          <div class="panel-heading">
-            <div><p class="meta-label">WORKSPACE TABS</p><h2>상위 작업 공간</h2></div>
-          </div>
-          <nav class="workspace-tabs showcase-tabs" aria-label="쇼케이스 작업 공간" role="tablist">
-            <button type="button" role="tab" aria-selected="false"><span>01</span> 개요</button>
-            <button type="button" role="tab" aria-selected="true"><span>02</span> 에이전트</button>
-            <button type="button" role="tab" aria-selected="false"><span>03</span> 계좌·PnL</button>
-            <button type="button" role="tab" aria-selected="false"><span>04</span> 추천·근거</button>
-          </nav>
-        </article>
-        <article class="panel showcase-wide">
-          <div class="selected-agent">
-            <div><p class="meta-label">CAUSAL RESEARCH</p><h2>데이터 연구</h2></div>
-            <span class="status-word state-ready">명령 채널 연결됨</span>
-          </div>
-          <form class="interaction-form">
-            <label for="showcase-command">이 에이전트에게 내릴 명령</label>
-            <textarea id="showcase-command" rows="3">실제 데이터 결손을 산출물 근거로 분석해줘.</textarea>
-            <div class="composer-actions">
-              <p>Ctrl+Enter로 전송 · 명령 1건당 Hermes 1회 실행</p>
-              <button type="button">명령 보내기</button>
-            </div>
-          </form>
-        </article>
-        <article class="panel showcase-wide">
-          <div class="panel-heading">
-            <div><p class="meta-label">STATE LEDGER</p><h2>원장 상태</h2></div>
-            <span class="state-text state-running">채워짐</span>
-          </div>
-          <div class="ledger-state-row" role="list" aria-label="원장 로딩, 비어 있음, 오류 상태">
-            <span role="listitem">로딩 · snapshot 확인 중</span>
-            <span role="listitem">비어 있음 · 등록 항목 0</span>
-            <span class="state-failed" role="listitem">오류 · source unavailable</span>
-          </div>
-          <div class="table-scroll" tabindex="0" role="region" aria-label="쇼케이스 원장 표">
-            <table class="state-ledger">
-              <caption>채워진 원장 예시</caption>
-              <thead><tr><th scope="col">에이전트</th><th scope="col">상태</th><th scope="col">작업</th></tr></thead>
-              <tbody><tr><td>KR M3 shadow</td><td class="state-running">실행 중</td><td class="job-label">ai.trading-agent.kr-m3</td></tr></tbody>
-            </table>
-          </div>
-        </article>
-        <article class="panel showcase-wide">
-          <div class="panel-heading">
-            <div><p class="meta-label">FILTER TABS</p><h2>증거 필터</h2></div>
-            <nav class="filter-tabs" aria-label="쇼케이스 증거 필터">
-              <button type="button" aria-pressed="true">전체</button>
-              <button type="button" aria-pressed="false">유효</button>
-            </nav>
-          </div>
-        </article>
-        <section class="evidence-state-grid showcase-wide" aria-label="증거 카드 상태">
-          <article class="evidence-item is-new">
-            <div class="evidence-topline"><span>LITZ · SETUP</span><time>10:04 ET</time></div>
-            <h2>LITZ SETUP: Opening range</h2>
-            <dl class="price-grid"><div><dt>진입</dt><dd>15.0475</dd></div><div><dt>손절</dt><dd>14.4500</dd></div><div><dt>목표</dt><dd>16.2426</dd></div></dl>
-            <p>완료 분봉 확인을 기다리는 조건부 설정.</p>
-            <small>evidence · candidate_input</small>
-          </article>
-          <article class="evidence-item">
-            <div class="evidence-topline"><span>CORD · ACTIVE</span><time>10:18 ET</time></div>
-            <h2>CORD BUY: Active breakout</h2>
-            <dl class="price-grid"><div><dt>진입</dt><dd>7.5938</dd></div><div><dt>손절</dt><dd>7.3700</dd></div><div><dt>목표</dt><dd>8.0414</dd></div></dl>
-            <p>완료 분봉과 거래량 조건을 통과한 유효 신호.</p>
-            <small>evidence · completed_bar · volume</small>
-          </article>
-          <article class="evidence-item">
-            <div class="evidence-topline"><span>DLR · TERMINAL</span><time>11:31 ET</time></div>
-            <h2>DLR EXIT: Target reached</h2>
-            <dl class="price-grid"><div><dt>진입</dt><dd>197.4887</dd></div><div><dt>손절</dt><dd>189.8700</dd></div><div><dt>결과</dt><dd>2R</dd></div></dl>
-            <p>종료된 추천과 실현 상태를 변경 없이 보존합니다.</p>
-            <small>evidence · terminal_result</small>
-          </article>
-          <article class="evidence-item is-unavailable">
-            <div class="evidence-topline"><span>— · UNAVAILABLE</span><time>—</time></div>
-            <h2>신호 근거를 사용할 수 없음</h2>
-            <dl class="price-grid"><div><dt>진입</dt><dd>—</dd></div><div><dt>손절</dt><dd>—</dd></div><div><dt>목표</dt><dd>—</dd></div></dl>
-            <p>source-backed evidence가 없어 fail-closed 처리되었습니다.</p>
-            <small>evidence · unavailable</small>
-          </article>
+
+      <section class="showcase-section" aria-labelledby="navigation-heading">
+        <div class="section-heading"><p class="eyebrow">01 / WORKSPACE NAV</p><h2 id="navigation-heading">Navigation item</h2></div>
+        <nav class="primitive-nav" aria-label="Demonstration workspaces">
+          <a href="#navigation-heading" aria-current="page"><span class="nav-index">01</span><span>Command Center</span><span class="nav-state">current</span></a>
+          <a href="#states-heading"><span class="nav-index">02</span><span>Data Sources</span><span class="nav-state">unavailable</span></a>
+          <a href="#strategy-heading"><span class="nav-index">03</span><span>Strategies</span><span class="nav-state">review</span></a>
+        </nav>
+      </section>
+
+      <section class="showcase-section" aria-labelledby="states-heading">
+        <div class="section-heading"><p class="eyebrow">02 / SOURCE STATE PANEL</p><h2 id="states-heading">Truthful source states</h2></div>
+        <div class="state-plate-grid">
+          <article class="state-plate" data-state="loading" aria-busy="true"><div><p class="state-label">Loading</p><p>Projection is waiting for its first bounded reader result.</p></div><button class="trace-trigger" type="button" data-trace-state="loading">Trace loading</button></article>
+          <article class="state-plate" data-state="empty"><div><p class="state-label">Empty</p><p>0 records after a successful point-in-time read.</p></div><button class="trace-trigger" type="button" data-trace-state="empty">Trace empty</button></article>
+          <article class="state-plate" data-state="error"><div><p class="state-label">Error</p><p>Read failed: <code>demo_reader_timeout</code>. Retry on a new event.</p></div><button class="trace-trigger" type="button" data-trace-state="error">Trace error</button></article>
+          <article class="state-plate" data-state="blocked"><div><p class="state-label">Blocked</p><p><code>demo_completed_bar_missing</code> prevents use.</p></div><button class="trace-trigger" type="button" data-trace-state="blocked">Trace blocker</button></article>
+          <article class="state-plate" data-state="unavailable"><div><p class="state-label">Unavailable</p><p>Required authority or entitlement has no current receipt.</p></div><button class="trace-trigger" type="button" data-trace-state="unavailable">Trace unavailable</button></article>
+          <article class="state-plate" data-state="corrupt"><div><p class="state-label">Corrupt</p><p><code>demo_lineage_invalid</code> failed closed.</p></div><button class="trace-trigger" type="button" data-trace-state="corrupt">Trace corruption</button></article>
+          <article class="state-plate" data-state="stale"><div><p class="state-label">Stale</p><p>Observed 4h 12m ago; the value is not actionable.</p></div><button class="trace-trigger" type="button" data-trace-state="stale">Trace stale</button></article>
+          <article class="state-plate" data-state="populated"><div><p class="state-label">Populated</p><p>Schema, freshness, and redaction checks passed.</p></div><button class="trace-trigger" type="button" data-trace-state="populated">Trace populated</button></article>
+        </div>
+      </section>
+
+      <section class="showcase-section" aria-labelledby="metrics-heading">
+        <div class="section-heading"><p class="eyebrow">03 / METRIC CELL</p><h2 id="metrics-heading">Bounded metrics</h2></div>
+        <ul class="metric-block">
+          <li><dl><dt>Projected records</dt><dd>24</dd><div><time datetime="2026-07-26T00:00:00Z">OBS 00:00 UTC</time><button class="trace-trigger" type="button" data-trace-state="populated">Trace</button></div></dl></li>
+          <li><dl><dt>Freshness age</dt><dd>18s</dd><div><time datetime="2026-07-26T00:00:00Z">POLICY DEMO-30S</time><button class="trace-trigger" type="button" data-trace-state="stale">Trace</button></div></dl></li>
+          <li><dl><dt>Gate status</dt><dd>Blocked</dd><div><time datetime="2026-07-26T00:00:00Z">DEMO-RISK-GATE</time><button class="trace-trigger" type="button" data-trace-state="blocked">Trace</button></div></dl></li>
+          <li><dl><dt>Authority</dt><dd>Unavailable</dd><div><time datetime="2026-07-26T00:00:00Z">NO RECEIPT</time><button class="trace-trigger" type="button" data-trace-state="unavailable">Trace</button></div></dl></li>
+        </ul>
+      </section>
+
+      <section class="showcase-section" aria-labelledby="ledger-heading">
+        <div class="section-heading"><p class="eyebrow">04 / LEDGER TABLE</p><h2 id="ledger-heading">Dense, bounded table</h2></div>
+        <p class="section-note">200-row stress fixture; this local viewport owns horizontal and vertical table overflow.</p>
+        <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: the native overflow viewport is intentionally keyboard-scrollable -->
+        <section class="table-viewport" tabindex="0" aria-label="Demonstration 200-row evidence ledger">
+          <table>
+            <caption>Demonstration evidence ledger, 200 rows</caption>
+            <thead><tr><th scope="col">Trace ID</th><th scope="col">State</th><th scope="col">Observed</th><th scope="col">Summary</th><th scope="col">Evidence</th></tr></thead>
+            <tbody id="stress-rows"></tbody>
+          </table>
         </section>
-        <article class="panel showcase-wide">
-          <p class="meta-label">EMPTY / ERROR</p>
-          <div class="empty-state">아직 게시된 추천이 없습니다.</div>
-          <div class="blocker-list"><p>watch_cycle_failures:70</p></div>
-        </article>
-        <article class="panel showcase-wide">
-          <div class="panel-heading">
-            <div><p class="meta-label">PAPER ACCOUNT LEDGER</p><h2>계좌 성과</h2></div>
-            <span class="status-word state-armed">검증 미완료</span>
-          </div>
-          <div class="account-hero">
-            <dl>
-              <div><dt>평가기준액</dt><dd>$100,000.00</dd></div>
-              <div><dt>일간 PnL</dt><dd>$0.00</dd></div>
-            </dl>
-            <div class="account-provenance">
-              <span>Alpaca Paper · 검증 원장</span>
-              <span>세션 2026-07-24</span>
-            </div>
-          </div>
-          <dl class="account-metrics">
-            <div><dt>실현 PnL</dt><dd>$0.00</dd></div>
-            <div><dt>미실현 PnL</dt><dd>$0.00</dd></div>
-            <div><dt>계획 오픈 리스크</dt><dd>$0.00</dd></div>
-            <div><dt>포지션</dt><dd>0</dd></div>
-            <div><dt>미체결 주문</dt><dd>0</dd></div>
-          </dl>
-          <p class="account-disclosure">
-            계좌 식별정보 없이 확정된 일일 원장의 평가액·손익·노출만 표시합니다.
-          </p>
-        </article>
+        <p class="truncation-notice">Showing 200 of 200 demonstration records · <strong>truncated: false</strong></p>
+      </section>
+
+      <section class="showcase-section" aria-labelledby="chart-heading">
+        <div class="section-heading"><p class="eyebrow">05 / COMPACT CHART</p><h2 id="chart-heading">Completed observations only</h2></div>
+        <figure class="compact-chart">
+          <svg viewBox="0 0 720 190" role="img" aria-labelledby="chart-title chart-desc"><title id="chart-title">Demonstration completed-observation chart</title><desc id="chart-desc">Six bounded observations, with the selected point highlighted in ember.</desc><path class="chart-grid" d="M24 30H696M24 95H696M24 160H696" /><polyline class="chart-line" points="24,140 158,108 292,122 426,65 560,88 696,40" /><a class="chart-datum" href="#chart-data" aria-label="Observation one, 42"><circle cx="24" cy="140" r="6" /></a><a class="chart-datum" href="#chart-data" aria-label="Observation two, 47"><circle cx="158" cy="108" r="6" /></a><a class="chart-datum" href="#chart-data" aria-label="Observation three, 45"><circle cx="292" cy="122" r="6" /></a><a class="chart-datum is-selected" href="#chart-data" aria-label="Selected observation four, 54"><circle cx="426" cy="65" r="7" /></a><a class="chart-datum" href="#chart-data" aria-label="Observation five, 50"><circle cx="560" cy="88" r="6" /></a><a class="chart-datum" href="#chart-data" aria-label="Observation six, 58"><circle cx="696" cy="40" r="6" /></a></svg>
+          <figcaption>DEMO-SERIES / selected datum is keyboard focusable; no intraday or entitlement claim.</figcaption>
+        </figure>
+        <details class="chart-fallback"><summary>Open accessible chart data table</summary><!-- biome-ignore lint/a11y/noNoninteractiveTabindex: the native overflow viewport is intentionally keyboard-scrollable --><section id="chart-data" class="table-viewport" tabindex="0" aria-label="Chart data fallback"><table><caption>Chart data fallback</caption><thead><tr><th scope="col">Observation</th><th scope="col">Value</th></tr></thead><tbody><tr><td>01</td><td>42</td></tr><tr><td>02</td><td>47</td></tr><tr><td>03</td><td>45</td></tr><tr><td>04</td><td>54</td></tr><tr><td>05</td><td>50</td></tr><tr><td>06</td><td>58</td></tr></tbody></table></section></details>
+      </section>
+
+      <section class="showcase-section" aria-labelledby="source-heading">
+        <div class="section-heading"><p class="eyebrow">06 / SOURCE CAPABILITY</p><h2 id="source-heading">Capability row</h2></div>
+        <ul class="capability-list"><li><strong>DEMO Treasury</strong><span>daily curve · populated</span><time datetime="2026-07-25">2026-07-25</time><button class="trace-trigger" type="button" data-trace-state="populated">Trace</button></li><li><strong>DEMO Market Feed</strong><span>entitlement absent · unavailable</span><time>NO RECEIPT</time><button class="trace-trigger" type="button" data-trace-state="unavailable">Trace</button></li><li><strong>DEMO Research Catalog</strong><span>lineage check · corrupt</span><time>CHECK FAILED</time><button class="trace-trigger" type="button" data-trace-state="corrupt">Trace</button></li></ul>
+      </section>
+
+      <section class="showcase-section" aria-labelledby="strategy-heading">
+        <div class="section-heading"><p class="eyebrow">07 / HYPOTHESIS &amp; STRATEGY</p><h2 id="strategy-heading">Evidence-first lane row</h2></div>
+        <ol class="strategy-lanes"><li><span class="lane-index">H-01</span><div><strong>DEMO causal hypothesis</strong><p>Source binding present; no recommendation is implied.</p></div><span class="state-label">review</span><button class="trace-trigger" type="button" data-trace-state="populated">Trace</button></li><li><span class="lane-index">S-04</span><div><strong>DEMO strategy version</strong><p>Reviewer terminal has not accepted a lifecycle promotion.</p></div><span class="state-label">blocked</span><button class="trace-trigger" type="button" data-trace-state="blocked">Trace</button></li></ol>
+      </section>
+
+      <section class="showcase-section" aria-labelledby="command-heading">
+        <div class="section-heading"><p class="eyebrow">08 / COMMAND COMPOSER</p><h2 id="command-heading">Explicit command and immutable receipts</h2></div>
+        <form class="command-composer"><label for="demo-command">Read-only operator request</label><textarea id="demo-command" maxlength="2000" rows="4">Summarize the latest bounded demonstration evidence.</textarea><div class="showcase-composer-actions"><p>DEMO ONLY · one explicit submit · no automatic paid retry</p><button class="ember-button" type="button">Queue demonstration request</button></div></form>
+        <ol class="timeline" aria-label="Demonstration interaction timeline"><li><time datetime="2026-07-26T00:00:00Z">00:00:01 UTC</time><div><strong>Queued</strong><p>DEMO-INTERACTION-01 is immutable and bounded.</p></div></li><li><time datetime="2026-07-26T00:00:04Z">00:00:04 UTC</time><div><strong>Completed</strong><p>Redacted terminal receipt available to the operator.</p></div></li></ol>
+      </section>
+
+      <section class="showcase-section" aria-labelledby="system-heading">
+        <div class="section-heading"><p class="eyebrow">09 / SYSTEM STAGES</p><h2 id="system-heading">M0–M10 stage row</h2></div>
+        <ol class="stage-row" aria-label="Demonstration M0 through M10 stages"><li> M0</li><li> M1</li><li> M2</li><li> M3</li><li> M4</li><li> M5</li><li> M6</li><li> M7</li><li> M8</li><li> M9</li><li class="stage-blocked">M10</li></ol>
+        <p class="section-note">M10 is blocked in this fixture until a typed terminal receipt resolves.</p>
       </section>
     </main>
+
+    <dialog class="trace-drawer" aria-labelledby="trace-title"><form method="dialog"><button class="drawer-close" type="submit" aria-label="Close Evidence Trace">Close</button></form><p class="eyebrow">EVIDENCE TRACE</p><h2 id="trace-title">Trace: <span id="trace-state">populated</span></h2><p id="trace-summary">An ordered evidence list is the source of truth.</p><ol class="trace-list"><li><strong>Source receipt</strong><code>DEMO-RECEIPT-4F3A…7B92</code></li><li><strong>Observation</strong><code>DEMO-OBSERVATION-1C62…A00E</code></li><li><strong id="trace-terminal">Reviewer decision</strong><code>DEMO-TERMINAL-93E1…443A</code></li></ol><p class="drawer-note">Escape closes this drawer and returns focus to its trace control.</p></dialog>
+
+    <script src="/assets/showcase.js"></script>
   </body>
 </html>

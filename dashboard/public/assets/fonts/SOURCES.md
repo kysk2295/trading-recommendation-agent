@@ -1,0 +1,5 @@
+# Dashboard v2 font provenance
+
+- Pretendard Variable is the unmodified `web/variable/woff2/PretendardVariable.woff2` asset from [`orioncactus/pretendard` v1.3.9](https://github.com/orioncactus/pretendard/releases/tag/v1.3.9), SHA-256 `9599f12fd42fc0bce1cd50b47a0c022e108d7aa64dd0d1bb0ed44f3282d900b4`.
+- IBM Plex Mono Regular, Medium, and SemiBold are the unmodified WOFF2 assets from [`IBM/plex` v6.4.0](https://github.com/IBM/plex/tree/v6.4.0/IBM-Plex-Mono/fonts/complete/woff2). SHA-256: Regular `49ce58b41a0e1cb921c0f58d9a5b8b96a2cc21437c7066f3ba4f24873076d131`; Medium `8c2c290cbd998fa1f647e4572aca6ebbd72589551b0f3f9f8bb8628fbb8219d5`; SemiBold `ed5eaca7522336959d6c3810bd9bb78424f0d964082d581bfbea169ee08d14e3`.
+- SIL Open Font License 1.1 texts are checked in beside the runtime assets under `../licenses/`, with only line-ending and trailing-whitespace normalization (Pretendard SHA-256 `85fce85e25260b03777bf10373d3bd9363b9da96d9e0ca86a280dd37ed7667a0`; IBM Plex SHA-256 `d741e57d5f865e294df801f96b7b5161a88b211df65887e4358d271c9fc5fb4f`).
