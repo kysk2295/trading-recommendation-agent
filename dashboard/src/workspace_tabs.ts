@@ -1,68 +1,82 @@
 import { requiredElement } from "./dom";
+import { resolveWorkspaceHash, WORKSPACES, type WorkspaceDefinition } from "./workspace_registry";
 
-const tabIds = ["overview", "agents", "account", "evidence"] as const;
-type TabId = (typeof tabIds)[number];
+type RouteCallback = (workspace: WorkspaceDefinition) => void;
 
-export function initializeWorkspaceTabs(): void {
-  const tabs = tabIds.map((id) => requiredElement(`tab-${id}`, HTMLButtonElement));
-  const activate = (id: TabId, updateHash: boolean): void => {
-    for (const candidate of tabIds) {
-      const selected = candidate === id;
-      const tab = requiredElement(`tab-${candidate}`, HTMLButtonElement);
-      const panel = requiredElement(`panel-${candidate}`, HTMLElement);
-      tab.setAttribute("aria-selected", String(selected));
-      tab.tabIndex = selected ? 0 : -1;
-      panel.hidden = !selected;
-      if (selected) {
-        tab.scrollIntoView({ behavior: "auto", block: "nearest", inline: "center" });
-      }
+export function initializeWorkspaceTabs(onRoute: RouteCallback): () => void {
+  const links = workspaceLinks();
+  const activateHash = (): void => {
+    const workspace = resolveWorkspaceHash(window.location.hash);
+    if (window.location.hash !== workspace.hash) {
+      window.history.replaceState(null, "", workspace.hash);
     }
-    if (updateHash && window.location.hash !== `#${id}`) {
-      window.history.replaceState(null, "", `#${id}`);
+    activateLinks(links, workspace);
+    onRoute(workspace);
+  };
+  const handleKeydown = (event: KeyboardEvent, index: number): void => {
+    const nextIndex = keyboardWorkspaceIndex(event.key, index, links.length);
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const next = links[nextIndex];
+    if (next !== undefined) {
+      next.focus();
+      next.click();
     }
   };
-
-  for (const [index, tab] of tabs.entries()) {
-    tab.addEventListener("click", () => activate(tabIds[index] ?? "agents", true));
-    tab.addEventListener("keydown", (event) => {
-      const nextIndex = keyboardIndex(event.key, index, tabs.length);
-      if (nextIndex === null) {
-        return;
-      }
-      event.preventDefault();
-      const next = tabs[nextIndex];
-      const nextId = tabIds[nextIndex];
-      if (next !== undefined && nextId !== undefined) {
-        next.focus();
-        activate(nextId, true);
-      }
-    });
+  for (const [index, link] of links.entries()) {
+    link.addEventListener("keydown", (event) => handleKeydown(event, index));
   }
-  window.addEventListener("hashchange", () => activate(tabFromHash(), false));
-  activate(tabFromHash(), false);
+  window.addEventListener("hashchange", activateHash);
+  window.addEventListener("popstate", activateHash);
+  activateHash();
+  return activateHash;
 }
 
-function tabFromHash(): TabId {
-  const candidate = window.location.hash.slice(1);
-  return isTabId(candidate) ? candidate : "agents";
+export function keyboardWorkspaceIndex(
+  key: string,
+  current: number,
+  length: number,
+): number | null {
+  switch (key) {
+    case "Home":
+      return 0;
+    case "End":
+      return length - 1;
+    case "ArrowRight":
+    case "ArrowDown":
+      return (current + 1) % length;
+    case "ArrowLeft":
+    case "ArrowUp":
+      return (current - 1 + length) % length;
+    default:
+      return null;
+  }
 }
 
-function isTabId(value: string): value is TabId {
-  return tabIds.some((candidate) => candidate === value);
+function workspaceLinks(): readonly HTMLAnchorElement[] {
+  return WORKSPACES.map((workspace) => {
+    const selector = `[data-workspace-link="${workspace.id}"]`;
+    const link = document.querySelector(selector);
+    if (!(link instanceof HTMLAnchorElement)) {
+      throw new WorkspaceNavigationError(`missing workspace link: ${workspace.id}`);
+    }
+    return link;
+  });
 }
 
-function keyboardIndex(key: string, current: number, length: number): number | null {
-  if (key === "Home") {
-    return 0;
+function activateLinks(links: readonly HTMLAnchorElement[], workspace: WorkspaceDefinition): void {
+  for (const link of links) {
+    const selected = link.dataset["workspaceLink"] === workspace.id;
+    link.tabIndex = selected ? 0 : -1;
+    if (selected) {
+      link.setAttribute("aria-current", "page");
+    } else {
+      link.removeAttribute("aria-current");
+    }
   }
-  if (key === "End") {
-    return length - 1;
-  }
-  if (key === "ArrowRight") {
-    return (current + 1) % length;
-  }
-  if (key === "ArrowLeft") {
-    return (current - 1 + length) % length;
-  }
-  return null;
+  requiredElement("launcher-current", HTMLButtonElement).textContent = workspace.label;
+}
+
+class WorkspaceNavigationError extends Error {
+  override readonly name = "WorkspaceNavigationError";
 }

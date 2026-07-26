@@ -1,20 +1,41 @@
+@font-face {
+  font-family: "Pretendard";
+  src: url("/assets/fonts/PretendardVariable.woff2") format("woff2-variations");
+  font-display: swap;
+  font-weight: 45 920;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/assets/fonts/IBMPlexMono-Regular.woff2") format("woff2");
+  font-display: swap;
+  font-weight: 400;
+}
+
 :root {
   color-scheme: dark;
-  --surface-canvas: #080908;
-  --surface-primary: #0f110f;
-  --surface-secondary: #151815;
-  --surface-elevated: #1b1e1b;
-  --text-primary: #f3f5ed;
-  --text-secondary: #a3a99e;
-  --text-tertiary: #8b9388;
-  --border-default: #2d322d;
-  --border-strong: #454c45;
-  --accent-primary: #d9ff43;
-  --accent-hover: #e7ff86;
-  --status-good: #9ee37d;
-  --status-warning: #f2c66d;
-  --status-error: #ff7a70;
-  --focus-ring: #d9ff43;
+  --surface-canvas: #070706;
+  --surface-shell: #0b0b09;
+  --surface-primary: #10100d;
+  --surface-secondary: #171611;
+  --surface-elevated: #1e1c16;
+  --surface-scrim: rgba(7, 7, 6, 0.76);
+  --text-primary: #f3f0e7;
+  --text-secondary: #bbb4a6;
+  --text-tertiary: #918a7d;
+  --text-inverse: #120b06;
+  --border-subtle: #24221c;
+  --border-default: #343127;
+  --border-strong: #514b3c;
+  --ember-soft: #30170a;
+  --ember-500: #ff6b1a;
+  --ember-400: #ff8547;
+  --ember-600: #dd4f08;
+  --status-success: #71c995;
+  --status-warning: #e6b85c;
+  --status-error: #f1786e;
+  --status-neutral: #a9a293;
+  --focus-ring: #ff8547;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -23,8 +44,23 @@
   --space-6: 24px;
   --space-8: 32px;
   --space-10: 40px;
-  --radius: 4px;
-  font-family: "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --space-12: 48px;
+  --control-sm: 32px;
+  --control-md: 40px;
+  --control-touch: 44px;
+  --radius-inner: 2px;
+  --radius-control: 4px;
+  --radius-panel: 6px;
+  --type-h1: 1.5rem;
+  --type-h2: 1rem;
+  --type-h3: 0.875rem;
+  --type-body: 0.875rem;
+  --type-small: 0.75rem;
+  --type-meta: 0.6875rem;
+  --motion-micro: 120ms ease-out;
+  --motion-standard: 180ms cubic-bezier(0.2, 0, 0, 1);
+  --motion-drawer: 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  font-family: "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
@@ -33,14 +69,12 @@
   box-sizing: border-box;
 }
 
-html {
-  min-width: 320px;
-  background: var(--surface-canvas);
-}
-
+html,
 body {
-  min-height: 100dvh;
+  min-inline-size: 320px;
+  block-size: 100%;
   margin: 0;
+  overflow: hidden;
   background: var(--surface-canvas);
   color: var(--text-primary);
 }
@@ -49,18 +83,28 @@ button,
 input,
 select,
 textarea {
+  color: inherit;
   font: inherit;
 }
 
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
 button {
-  min-height: 40px;
+  border: 0;
   cursor: pointer;
 }
 
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
 button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
+a:focus-visible,
+[tabindex]:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
@@ -70,59 +114,48 @@ h2,
 h3,
 p,
 dl,
-dd {
+dd,
+figure,
+ol {
   margin: 0;
 }
 
 h1 {
-  letter-spacing: -0.045em;
+  font-size: var(--type-h1);
+  font-weight: 720;
+  letter-spacing: -0.025em;
+  line-height: 1.12;
 }
 
 h2 {
-  font-size: 1rem;
+  font-size: var(--type-h2);
   font-weight: 680;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.012em;
+  line-height: 1.25;
 }
 
-h3 {
-  margin: 0;
-  font-size: 0.875rem;
-  font-weight: 680;
+p {
+  line-height: 1.5;
 }
 
-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-caption {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-[hidden] {
-  display: none !important;
+code,
+time,
+.meta-label,
+.value-cell {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  font-variant-numeric: tabular-nums slashed-zero;
 }
 
 .meta-label {
   color: var(--text-tertiary);
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 0.6875rem;
-  font-weight: 650;
-  letter-spacing: 0.085em;
-  line-height: 1.3;
+  font-size: var(--type-meta);
+  font-weight: 620;
+  letter-spacing: 0.065em;
+  line-height: 1.35;
 }
 
-.empty-state {
-  padding: var(--space-8) var(--space-4);
-  color: var(--text-tertiary);
-  text-align: center;
+[hidden] {
+  display: none !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

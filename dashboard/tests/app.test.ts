@@ -92,7 +92,7 @@ describe("dashboard API", () => {
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
   });
 
-  test("serves tabbed observatory and agent command workspace without an access-key field", async () => {
+  test("serves the nine-workspace shell without an access-key field", async () => {
     // Given: the public observatory application with a protected command boundary.
     const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN, OPERATOR_TOKEN);
 
@@ -100,14 +100,12 @@ describe("dashboard API", () => {
     const response = await app.request("/");
     const html = await response.text();
 
-    // Then: focused workspaces and the command composer are visible without a token input.
+    // Then: nine routes and the trace drawer are present without a token input.
     expect(response.status).toBe(200);
-    expect(html).toContain('role="tablist"');
-    expect(html).toContain('id="tab-agents"');
-    expect(html).toContain('id="tab-account"');
-    expect(html).toContain('id="interaction-form"');
-    expect(html).toContain('id="account-equity"');
-    expect(html).toContain('id="account-daily-pnl"');
+    expect(html).toContain('id="workspace-nav"');
+    expect(html).toContain('href="#command-center"');
+    expect(html).toContain('href="#system"');
+    expect(html).toContain('id="evidence-trace-dialog"');
     expect(html).not.toContain('type="password"');
   });
 

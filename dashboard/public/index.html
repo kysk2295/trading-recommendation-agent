@@ -3,12 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#080908" />
+    <meta name="theme-color" content="#070706" />
     <meta
       name="description"
-      content="한국·미국 시장 에이전트, 추천, 증거, 실증 연구 상태를 확인하는 실시간 관제 화면"
+      content="권위 있는 연구·Paper·운영 증거를 추적하는 Ember Operations Workstation"
     />
-    <title>Trading Agent Observatory</title>
+    <title>Ember Operations Workstation</title>
+    <link
+      rel="preload"
+      href="/assets/fonts/PretendardVariable.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/assets/fonts/IBMPlexMono-Regular.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
     <link rel="stylesheet" href="/assets/base.css" />
     <link rel="stylesheet" href="/assets/layout.css" />
     <link rel="stylesheet" href="/assets/components.css" />
@@ -18,295 +32,130 @@
     <script type="module" src="/assets/client.js"></script>
   </head>
   <body>
-    <div class="app-shell" id="app-shell">
-      <header class="live-rail">
-        <div class="product-mark">
-          <span class="wordmark">TRA</span>
-          <div>
-            <h1>Trading Agent Observatory</h1>
-            <span>실시간 운영 관제</span>
-          </div>
+    <div class="workstation-shell" id="app-shell">
+      <aside class="workspace-sidebar" aria-label="워크스테이션">
+        <a class="product-mark" href="#command-center" aria-label="Command Center로 이동">
+          <span class="product-monogram" aria-hidden="true">EO</span>
+          <span>
+            <strong>EMBER OPS</strong>
+            <small>Research workstation</small>
+          </span>
+        </a>
+        <nav class="workspace-nav" id="workspace-nav" aria-label="작업 공간">
+          <a href="#command-center" data-workspace-link="command-center">
+            <span aria-hidden="true">01</span><strong>Command Center</strong>
+          </a>
+          <a href="#overview" data-workspace-link="overview">
+            <span aria-hidden="true">02</span><strong>Overview</strong>
+          </a>
+          <a href="#markets" data-workspace-link="markets">
+            <span aria-hidden="true">03</span><strong>Markets</strong>
+          </a>
+          <a href="#data-sources" data-workspace-link="data-sources">
+            <span aria-hidden="true">04</span><strong>Data Sources</strong>
+          </a>
+          <a href="#research" data-workspace-link="research">
+            <span aria-hidden="true">05</span><strong>Research</strong>
+          </a>
+          <a href="#strategies" data-workspace-link="strategies">
+            <span aria-hidden="true">06</span><strong>Strategies</strong>
+          </a>
+          <a href="#derivatives" data-workspace-link="derivatives">
+            <span aria-hidden="true">07</span><strong>Derivatives</strong>
+          </a>
+          <a href="#paper" data-workspace-link="paper">
+            <span aria-hidden="true">08</span><strong>Paper</strong>
+          </a>
+          <a href="#system" data-workspace-link="system">
+            <span aria-hidden="true">09</span><strong>System</strong>
+          </a>
+        </nav>
+        <p class="paper-boundary">READ-ONLY · ALPACA PAPER</p>
+      </aside>
+
+      <header class="context-header">
+        <div>
+          <p class="meta-label">ACTIVE WORKSPACE</p>
+          <strong id="active-workspace-label">Command Center</strong>
         </div>
-        <div class="freshness" aria-live="polite">
-          <span class="semantic-mark" id="freshness-mark"></span>
-          <span id="freshness-text">연결 대기 · snapshot 대기</span>
-        </div>
-        <div class="rail-actions">
+        <div class="connection-state" aria-live="polite">
+          <span id="freshness-text">snapshot 연결 대기</span>
           <button class="quiet-button" id="refresh-button" type="button">지금 갱신</button>
         </div>
       </header>
 
-      <div class="workspace-tabs-shell">
-        <nav class="workspace-tabs" aria-label="대시보드 작업 공간" role="tablist">
-          <button
-            id="tab-overview"
-            type="button"
-            role="tab"
-            aria-selected="false"
-            aria-controls="panel-overview"
-            tabindex="-1"
-            data-workspace-tab="overview"
-          >
-            <span>01</span> 개요
-          </button>
-          <button
-            id="tab-agents"
-            type="button"
-            role="tab"
-            aria-selected="true"
-            aria-controls="panel-agents"
-            data-workspace-tab="agents"
-          >
-            <span>02</span> 에이전트
-          </button>
-          <button
-            id="tab-account"
-            type="button"
-            role="tab"
-            aria-selected="false"
-            aria-controls="panel-account"
-            tabindex="-1"
-            data-workspace-tab="account"
-          >
-            <span>03</span> 계좌·PnL
-          </button>
-          <button
-            id="tab-evidence"
-            type="button"
-            role="tab"
-            aria-selected="false"
-            aria-controls="panel-evidence"
-            tabindex="-1"
-            data-workspace-tab="evidence"
-          >
-            <span>04</span> 추천·근거
-          </button>
-        </nav>
-        <span class="overflow-cue workspace-overflow-cue" aria-hidden="true">더 보기 →</span>
-      </div>
-
-      <main class="workspace-main">
-        <section
-          id="panel-overview"
-          class="workspace-panel"
-          role="tabpanel"
-          aria-labelledby="tab-overview"
-          tabindex="0"
-          hidden
-          data-workspace-panel="overview"
-        >
-          <header class="workspace-intro">
+      <main class="workspace-scroll-body" id="workspace-main" tabindex="-1">
+        <section class="workspace-view" id="workspace-view" aria-labelledby="workspace-heading">
+          <header class="workspace-heading">
             <div>
-              <p class="meta-label">MARKET OPERATIONS</p>
-              <h2>시장과 forward 세션</h2>
+              <p class="meta-label" id="workspace-kicker">ACT · COMMAND CENTER</p>
+              <h1 id="workspace-heading" tabindex="-1">Command Center</h1>
             </div>
-            <p>현재 시장 시계, 세션 품질, 차단 원인과 연구 기반을 한 화면에서 확인합니다.</p>
+            <p id="workspace-description">대화, 지시형 도구 작업, 자율 연구 증거를 분리해 확인합니다.</p>
           </header>
-          <section class="session-deck" aria-labelledby="session-heading">
-            <div class="session-clock">
-              <p class="meta-label" id="session-heading">CURRENT MARKET CLOCK</p>
-              <time id="primary-clock">--:--:--</time>
-              <p id="primary-date">snapshot 연결 중</p>
-            </div>
-            <div class="market-stack" id="market-stack"></div>
-            <dl class="featured-metric">
-              <div>
-                <dt>Forward quality</dt>
-                <dd id="quality-value">대기</dd>
-              </div>
-              <div>
-                <dt>Session</dt>
-                <dd id="session-date">—</dd>
-              </div>
-            </dl>
-          </section>
-          <div class="overview-workspace-grid">
-            <section class="panel forward-panel" aria-labelledby="forward-title">
-              <div class="panel-heading">
-                <div>
-                  <p class="meta-label">CAUSAL FORWARD SESSION</p>
-                  <h2 id="forward-title">세션 품질 원장</h2>
-                </div>
-                <span class="status-word" id="forward-status">대기</span>
-              </div>
-              <dl class="metric-strip" id="metric-strip"></dl>
-              <div class="blocker-list" id="blocker-list"></div>
-            </section>
-            <section class="research-terminal" aria-labelledby="research-title">
-              <p class="meta-label">RESEARCH FOUNDATION</p>
-              <h2 id="research-title">실제 데이터 연구</h2>
-              <p id="research-summary">snapshot 대기</p>
-              <dl>
-                <div><dt>상태</dt><dd id="research-status">—</dd></div>
-                <div><dt>세션</dt><dd id="research-date">—</dd></div>
-              </dl>
-            </section>
-          </div>
-        </section>
-
-        <section
-          id="panel-agents"
-          class="workspace-panel"
-          role="tabpanel"
-          aria-labelledby="tab-agents"
-          tabindex="0"
-          data-workspace-panel="agents"
-        >
-          <header class="workspace-intro agent-intro">
-            <div>
-              <p class="meta-label">AGENT COMMAND CENTER</p>
-              <h2>에이전트에게 목표를 전달하세요</h2>
-            </div>
-            <div class="operator-state" id="operator-status" aria-live="polite">
-              기기 연결 확인 중
-            </div>
-          </header>
-          <div class="agent-workspace">
-            <nav class="agent-rail" id="agent-selector" aria-label="명령 대상 에이전트"></nav>
-            <section class="command-console" aria-labelledby="selected-agent-title">
-              <header class="selected-agent">
-                <div>
-                  <p class="meta-label" id="selected-agent-scope">RUNTIME AGENT</p>
-                  <h2 id="selected-agent-title">에이전트 선택</h2>
-                </div>
-                <span class="status-word" id="selected-agent-state">자료 대기</span>
-              </header>
-              <p class="selected-agent-job" id="selected-agent-job">snapshot 연결 중</p>
-              <form id="interaction-form" class="interaction-form">
-                <label for="interaction-command">이 에이전트에게 내릴 명령</label>
-                <textarea
-                  id="interaction-command"
-                  name="command"
-                  rows="5"
-                  maxlength="2000"
-                  placeholder="예: 오늘 한국장 추천이 나오지 않은 실제 원인을 산출물 근거로 분석해줘."
-                  disabled
-                ></textarea>
-                <div class="composer-actions">
-                  <p id="interaction-guidance">
-                    조회는 공개입니다. 명령은 이 Mac과 안전하게 연결된 기기에서만 실행됩니다.
-                  </p>
-                  <button id="interaction-submit" type="submit" disabled>명령 보내기</button>
-                </div>
-              </form>
-              <section class="interaction-history" aria-labelledby="interaction-history-title">
-                <div class="interaction-history-heading">
-                  <div>
-                    <p class="meta-label">COMMAND / RESPONSE</p>
-                    <h2 id="interaction-history-title">명령과 응답</h2>
-                  </div>
-                  <span>이벤트 수신 · 자동 재시도 없음</span>
-                </div>
-                <div id="interaction-stream" class="interaction-stream" aria-live="polite">
-                  <p class="empty-state">아직 이 에이전트에게 보낸 명령이 없습니다.</p>
-                </div>
-              </section>
-            </section>
-          </div>
-        </section>
-
-        <section
-          id="panel-account"
-          class="workspace-panel"
-          role="tabpanel"
-          aria-labelledby="tab-account"
-          tabindex="0"
-          hidden
-          data-workspace-panel="account"
-        >
-          <header class="workspace-intro">
-            <div>
-              <p class="meta-label">PAPER PERFORMANCE</p>
-              <h2>계좌와 손익 원장</h2>
-            </div>
-            <p>확정된 Paper 일일 원장만 표시하며 계좌 식별정보는 브라우저로 보내지 않습니다.</p>
-          </header>
-          <section class="panel account-panel" aria-labelledby="account-title">
-            <div class="panel-heading">
-              <div>
-                <p class="meta-label">PAPER ACCOUNT LEDGER</p>
-                <h2 id="account-title">계좌 성과</h2>
-              </div>
-              <span class="status-word" id="account-status">자료 대기</span>
-            </div>
-            <div class="account-hero">
-              <dl>
-                <div><dt>평가기준액</dt><dd id="account-equity">—</dd></div>
-                <div><dt>일간 PnL</dt><dd id="account-daily-pnl">—</dd></div>
-              </dl>
-              <div class="account-provenance">
-                <span>Alpaca Paper · 검증 원장</span>
-                <span>세션 <time id="account-session">—</time></span>
-              </div>
-            </div>
-            <dl class="account-metrics" id="account-metrics"></dl>
-            <p class="account-disclosure">
-              계좌 식별정보 없이 확정된 일일 원장의 평가액·손익·노출만 표시합니다.
-            </p>
-          </section>
-        </section>
-
-        <section
-          id="panel-evidence"
-          class="workspace-panel"
-          role="tabpanel"
-          aria-labelledby="tab-evidence"
-          tabindex="0"
-          hidden
-          data-workspace-panel="evidence"
-        >
-          <header class="workspace-intro">
-            <div>
-              <p class="meta-label">DECISIONS & PROVENANCE</p>
-              <h2>추천과 source-backed 근거</h2>
-            </div>
-            <p>추천 가격, 결과와 그 판단에 사용된 유효 증거를 분리해 읽을 수 있습니다.</p>
-          </header>
-          <div class="evidence-workspace-grid">
-            <section class="panel" aria-labelledby="recommendations-title">
-              <div class="panel-heading">
-                <div>
-                  <p class="meta-label">IMMUTABLE RECOMMENDATIONS</p>
-                  <h2 id="recommendations-title">추천과 결과</h2>
-                </div>
-                <span class="panel-note" id="recommendation-count">0건</span>
-              </div>
-              <div class="table-scroll" tabindex="0" role="region" aria-label="추천 결과 표">
-                <table class="recommendation-ledger">
-                  <caption>최근 추천의 진입·손절·목표·상태</caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">종목 / 전략</th>
-                      <th scope="col">진입</th>
-                      <th scope="col">손절</th>
-                      <th scope="col">1R / 2R</th>
-                      <th scope="col">상태</th>
-                    </tr>
-                  </thead>
-                  <tbody id="recommendation-rows"></tbody>
-                </table>
+          <div class="workspace-content" id="workspace-content" aria-live="polite" aria-busy="true">
+            <section class="source-state-panel state-neutral" data-source-state="loading">
+              <p class="meta-label">LOADING</p>
+              <h2>권위 있는 snapshot을 기다리는 중</h2>
+              <div class="skeleton-stack" aria-hidden="true">
+                <span></span><span></span><span></span>
               </div>
             </section>
-            <aside class="evidence-column" aria-labelledby="evidence-title">
-              <section class="evidence-header">
-                <div>
-                  <p class="meta-label">SOURCE-BACKED EVIDENCE</p>
-                  <h2 id="evidence-title">신호와 근거</h2>
-                </div>
-                <nav class="filter-tabs" aria-label="증거 필터">
-                  <button type="button" aria-pressed="true" data-filter="all">전체</button>
-                  <button type="button" aria-pressed="false" data-filter="active">유효</button>
-                </nav>
-              </section>
-              <div class="evidence-stream" id="evidence-stream"></div>
-            </aside>
           </div>
         </section>
       </main>
-      <footer>
-        <span>Paper recommendation only</span>
-        <span>계좌 식별정보·자격증명·원시 인증 응답 비공개</span>
+
+      <aside class="context-rail" aria-labelledby="context-rail-title">
+        <div>
+          <p class="meta-label">EVIDENCE CONTEXT</p>
+          <h2 id="context-rail-title">선택된 값 없음</h2>
+        </div>
+        <p id="context-rail-copy">
+          값이나 상태의 Evidence Trace 버튼을 선택하면 출처부터 terminal까지 확인할 수 있습니다.
+        </p>
+        <dl class="context-summary">
+          <div><dt>Snapshot</dt><dd id="snapshot-id">대기</dd></div>
+          <div><dt>Observed</dt><dd id="snapshot-time">—</dd></div>
+          <div><dt>Connection</dt><dd id="connection-label">연결 중</dd></div>
+        </dl>
+      </aside>
+
+      <footer class="status-strip" aria-label="워크스테이션 상태">
+        <span>Public read · private operator boundary</span>
+        <span>실데이터 부재는 unavailable로 표시</span>
       </footer>
+
+      <nav class="mobile-launcher" aria-label="모바일 작업 공간">
+        <button id="launcher-previous" type="button" aria-label="이전 작업 공간">이전</button>
+        <button id="launcher-current" type="button" aria-haspopup="true" aria-expanded="false">
+          Command Center
+        </button>
+        <button id="launcher-next" type="button" aria-label="다음 작업 공간">다음</button>
+      </nav>
+
+      <div class="launcher-menu" id="launcher-menu" hidden>
+        <nav aria-label="작업 공간 선택"></nav>
+      </div>
+
+      <dialog
+        class="evidence-trace-dialog"
+        id="evidence-trace-dialog"
+        aria-labelledby="trace-heading"
+      >
+        <div class="trace-drawer">
+          <header>
+            <div>
+              <p class="meta-label">EVIDENCE TRACE</p>
+              <h2 id="trace-heading" tabindex="-1">증거 경로</h2>
+            </div>
+            <button class="icon-button" id="trace-close" type="button" aria-label="Evidence Trace 닫기">
+              닫기
+            </button>
+          </header>
+          <p id="trace-summary" class="trace-summary"></p>
+          <ol id="trace-list" class="trace-list"></ol>
+        </div>
+      </dialog>
     </div>
   </body>
 </html>

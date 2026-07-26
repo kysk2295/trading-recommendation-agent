@@ -1,49 +1,30 @@
 import ky, { HTTPError, TimeoutError } from "ky";
-import { AgentWorkspace } from "./agent_workspace";
 import { requiredElement } from "./dom";
 import { DashboardRealtimeClient } from "./realtime_client";
-import type { EvidenceFilter } from "./render";
-import { renderSnapshot } from "./render";
 import type { DashboardSnapshot } from "./schema";
 import { dashboardSnapshotSchema } from "./schema";
-import { projectSnapshotForV1Render } from "./snapshot_render_adapter";
-import { initializeWorkspaceTabs } from "./workspace_tabs";
+import { WorkstationShell } from "./workstation_shell";
 
-const refreshButton = requiredElement("refresh-button", HTMLButtonElement);
-const freshnessText = requiredElement("freshness-text", HTMLElement);
-const freshnessMark = requiredElement("freshness-mark", HTMLElement);
+const shell = new WorkstationShell();
 let snapshot: DashboardSnapshot | null = null;
-let filter: EvidenceFilter = "all";
 let realtimeConnected = false;
-initializeWorkspaceTabs();
-const agentWorkspace = new AgentWorkspace();
+
 const realtime = new DashboardRealtimeClient({
   onSnapshot: (nextSnapshot) => {
     snapshot = nextSnapshot;
-    renderCurrent();
+    shell.updateSnapshot(nextSnapshot);
     updateFreshness();
   },
   onConnection: (state) => {
     realtimeConnected = state === "connected";
+    shell.updateConnection(realtimeConnected);
     updateFreshness();
   },
 });
 
-refreshButton.addEventListener("click", () => void refreshSnapshot());
-
-for (const candidate of document.querySelectorAll<HTMLButtonElement>("[data-filter]")) {
-  candidate.addEventListener("click", () => {
-    const next = candidate.dataset["filter"];
-    if (next !== "all" && next !== "active") {
-      return;
-    }
-    filter = next;
-    for (const button of document.querySelectorAll<HTMLButtonElement>("[data-filter]")) {
-      button.setAttribute("aria-pressed", String(button === candidate));
-    }
-    renderCurrent();
-  });
-}
+requiredElement("refresh-button", HTMLButtonElement).addEventListener("click", () => {
+  void refreshSnapshot();
+});
 
 async function refreshSnapshot(): Promise<void> {
   try {
@@ -55,63 +36,39 @@ async function refreshSnapshot(): Promise<void> {
         })
         .json<unknown>(),
     );
-    renderCurrent();
+    shell.updateSnapshot(snapshot);
     updateFreshness();
   } catch (error: unknown) {
+    if (error instanceof HTTPError && error.response.status === 404) {
+      shell.renderUnavailable("아직 게시된 snapshot이 없습니다.");
+      setFreshness("snapshot unavailable");
+      return;
+    }
     if (error instanceof HTTPError || error instanceof TimeoutError || error instanceof TypeError) {
-      freshnessMark.className = "semantic-mark disconnected";
-      freshnessText.textContent = "연결 끊김";
+      shell.renderUnavailable("snapshot을 읽을 수 없습니다.");
+      setFreshness("연결 끊김");
       return;
     }
     throw error;
   }
 }
 
-function renderCurrent(): void {
-  if (snapshot !== null) {
-    const renderSnapshotV1 = projectSnapshotForV1Render(snapshot);
-    renderSnapshot(renderSnapshotV1, filter);
-    agentWorkspace.updateAgents(renderSnapshotV1.agents);
-  }
-}
-
 function updateFreshness(): void {
   if (snapshot === null) {
+    setFreshness(realtimeConnected ? "이벤트 연결 · snapshot 대기" : "연결 중");
     return;
   }
   const seconds = Math.max(
     0,
     Math.round((Date.now() - new Date(snapshot.generated_at).getTime()) / 1_000),
   );
-  const state = !realtimeConnected ? "disconnected" : seconds < 180 ? "live" : "delayed";
-  const label =
-    state === "live"
-      ? "이벤트 연결됨"
-      : state === "delayed"
-        ? "이벤트 연결 · 자료 지연"
-        : "연결 끊김";
-  freshnessText.textContent = `${label} · ${seconds}초 전 snapshot`;
-  freshnessMark.className = `semantic-mark ${state}`;
+  const connection = realtimeConnected ? "이벤트 연결" : "연결 끊김";
+  setFreshness(`${connection} · ${seconds.toLocaleString("ko-KR")}초 전`);
 }
 
-function updateClock(): void {
-  const now = new Date();
-  requiredElement("primary-clock", HTMLTimeElement).textContent = new Intl.DateTimeFormat("ko-KR", {
-    hour: "2-digit",
-    hour12: false,
-    minute: "2-digit",
-    second: "2-digit",
-    timeZone: "Asia/Seoul",
-  }).format(now);
-  requiredElement("primary-date", HTMLElement).textContent = new Intl.DateTimeFormat("ko-KR", {
-    dateStyle: "full",
-    timeZone: "Asia/Seoul",
-  }).format(now);
-  updateFreshness();
+function setFreshness(value: string): void {
+  requiredElement("freshness-text", HTMLElement).textContent = value;
 }
 
-window.setInterval(updateClock, 1_000);
-updateClock();
 void refreshSnapshot();
 realtime.start();
-agentWorkspace.start();

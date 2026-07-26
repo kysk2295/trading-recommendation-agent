@@ -22,6 +22,28 @@ export function textElement(tag: string, text: string, className?: string): HTML
   return element;
 }
 
-class DomContractError extends Error {
+export function buttonElement(label: string, className: string): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.textContent = label;
+  return button;
+}
+
+export function timeElement(value: string | null): HTMLTimeElement {
+  const time = document.createElement("time");
+  if (value === null) {
+    time.textContent = "관측 시각 없음";
+    return time;
+  }
+  time.dateTime = value;
+  time.textContent = new Intl.DateTimeFormat("ko-KR", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+  return time;
+}
+
+export class DomContractError extends Error {
   override readonly name = "DomContractError";
 }

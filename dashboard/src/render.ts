@@ -1,223 +1,259 @@
-import { requiredElement, textElement } from "./dom";
-import {
-  count,
-  dollars,
-  marketTime,
-  price,
-  priceText,
-  shortTime,
-  stateLabel,
-  statusClass,
-} from "./format";
-import type { DashboardSnapshotV1 } from "./schema";
+import { renderCompactChart } from "./compact_chart";
+import { buttonElement, textElement, timeElement } from "./dom";
+import type { EvidenceTraceDrawer } from "./evidence_trace";
+import { resolveEvidenceTrace } from "./evidence_trace";
+import type { DashboardSnapshotV2 } from "./schema_v2";
+import { elementCell, tableCell, tableHead } from "./ui_table";
+import type { WorkspaceDefinition, WorkspaceKey } from "./workspace_registry";
 
-export type EvidenceFilter = "all" | "active";
-const knownSignalKeys = new Set<string>();
+export type SourceStateName = DashboardSnapshotV2["workspaces"]["overview"]["state"] | "loading";
+type SourceTone = "neutral" | "success" | "warning" | "error";
 
-export function renderSnapshot(snapshot: DashboardSnapshotV1, filter: EvidenceFilter): void {
-  renderMarkets(snapshot);
-  renderForward(snapshot);
-  renderAccount(snapshot);
-  renderRecommendations(snapshot);
-  renderSignals(snapshot, filter);
-  renderResearch(snapshot);
-}
+export type StatePresentation = {
+  readonly label: string;
+  readonly tone: SourceTone;
+  readonly guidance: string;
+};
 
-function renderAccount(snapshot: DashboardSnapshotV1): void {
-  const account = snapshot.account;
-  const status = requiredElement("account-status", HTMLElement);
-  status.textContent = stateLabel(account.status);
-  status.className = `status-word ${statusClass(account.status)}`;
-  requiredElement("account-session", HTMLElement).textContent = account.session_date ?? "—";
-  requiredElement("account-equity", HTMLElement).textContent = dollars(account.equity);
-  const daily = requiredElement("account-daily-pnl", HTMLElement);
-  daily.textContent = dollars(account.daily_pnl);
-  daily.className = pnlClass(account.daily_pnl);
-  const metrics = [
-    ["실현 PnL", dollars(account.realized_pnl), pnlClass(account.realized_pnl)],
-    ["미실현 PnL", dollars(account.unrealized_pnl), pnlClass(account.unrealized_pnl)],
-    ["계획 오픈 리스크", dollars(account.planned_open_risk), ""],
-    ["포지션", count(account.open_positions), ""],
-    ["미체결 주문", count(account.open_orders), ""],
-  ] as const;
-  requiredElement("account-metrics", HTMLDListElement).replaceChildren(
-    ...metrics.map(([label, value, className]) => {
-      const group = document.createElement("div");
-      group.append(textElement("dt", label), textElement("dd", value, className));
-      return group;
-    }),
-  );
-}
+type WorkspaceProjection = DashboardSnapshotV2["workspaces"][WorkspaceKey];
+export type WorkspaceItem = WorkspaceProjection["items"][number];
 
-function pnlClass(value: string | null): string {
-  if (value === null || Number.parseFloat(value) === 0) {
-    return "";
+export function renderWorkspace(
+  definition: WorkspaceDefinition,
+  snapshot: DashboardSnapshotV2,
+  drawer: EvidenceTraceDrawer,
+): DocumentFragment {
+  const workspace = snapshot.workspaces[definition.key];
+  const fragment = document.createDocumentFragment();
+  fragment.append(renderSourcePanel(workspace, snapshot, drawer));
+  if (workspace.items.length > 0) {
+    if (definition.id === "markets" || definition.id === "derivatives") {
+      const chart = renderCompactChart(workspace.items);
+      if (chart !== null) fragment.append(chart);
+    }
+    fragment.append(renderItemTable(workspace.items, snapshot, drawer));
   }
-  return Number.parseFloat(value) > 0 ? "pnl-positive" : "pnl-negative";
-}
-
-function renderMarkets(snapshot: DashboardSnapshotV1): void {
-  const stack = requiredElement("market-stack", HTMLDivElement);
-  stack.replaceChildren(
-    ...snapshot.markets.map((market) => {
-      const row = document.createElement("article");
-      row.className = "market-row";
-      const identity = document.createElement("div");
-      identity.append(
-        textElement("strong", `${market.label} 시장`),
-        textElement("span", stateLabel(market.state), `state-text ${statusClass(market.state)}`),
-      );
-      const time = document.createElement("time");
-      time.dateTime = market.local_time;
-      time.textContent = marketTime(market.local_time);
-      row.append(identity, time);
-      return row;
-    }),
-  );
-}
-
-function renderForward(snapshot: DashboardSnapshotV1): void {
-  const forward = snapshot.forward;
-  const eligibleLabel = forward.eligible ? "READY" : "BLOCKED";
-  const quality = requiredElement("quality-value", HTMLElement);
-  quality.textContent = eligibleLabel;
-  quality.className = forward.eligible ? "state-ready" : "state-failed";
-  requiredElement("session-date", HTMLElement).textContent = forward.session_date ?? "—";
-  const status = requiredElement("forward-status", HTMLElement);
-  status.textContent = forward.eligible ? "품질 통과" : "품질 차단";
-  status.className = `status-word ${forward.eligible ? "state-ready" : "state-failed"}`;
-  const metrics = [
-    ["Watch", forward.watch_cycles],
-    ["Ranking", forward.ranking_cycles],
-    ["Failed", forward.failed_watch_cycles],
-    ["Retries", forward.read_retries],
-    ["Recommendations", forward.recommendations],
-  ] as const;
-  const strip = requiredElement("metric-strip", HTMLDListElement);
-  strip.replaceChildren(
-    ...metrics.map(([label, value]) => {
-      const group = document.createElement("div");
-      group.append(textElement("dt", label), textElement("dd", count(value)));
-      return group;
-    }),
-  );
-  const blockers = requiredElement("blocker-list", HTMLDivElement);
-  blockers.replaceChildren(...forward.blockers.map((blocker) => textElement("p", blocker)));
-}
-
-function renderRecommendations(snapshot: DashboardSnapshotV1): void {
-  const body = requiredElement("recommendation-rows", HTMLTableSectionElement);
-  requiredElement("recommendation-count", HTMLElement).textContent =
-    `${count(snapshot.recommendations.length)}건`;
-  if (snapshot.recommendations.length === 0) {
-    body.replaceChildren(emptyRow("이 세션에 게시된 추천이 없습니다.", 5));
-    return;
+  if (definition.key === "command_center") {
+    fragment.append(renderAgents(snapshot.workspaces.command_center.agents, snapshot, drawer));
   }
-  body.replaceChildren(
-    ...snapshot.recommendations.map((recommendation) => {
-      const identity = document.createElement("div");
-      identity.className = "symbol-cell";
-      identity.append(
-        textElement("strong", recommendation.symbol),
-        textElement("span", recommendation.strategy),
-      );
+  if (definition.key === "data_sources") {
+    fragment.append(
+      renderCapabilities(snapshot.workspaces.data_sources.capabilities, snapshot, drawer),
+    );
+  }
+  return fragment;
+}
+
+export function sourceStatePresentation(state: SourceStateName): StatePresentation {
+  switch (state) {
+    case "loading":
+      return { label: "불러오는 중", tone: "neutral", guidance: "권위 있는 읽기 결과 대기" };
+    case "empty":
+      return { label: "비어 있음", tone: "neutral", guidance: "읽기 성공 · 0 records" };
+    case "error":
+      return { label: "읽기 오류", tone: "error", guidance: "새 이벤트에서 다시 평가" };
+    case "blocked":
+      return { label: "차단됨", tone: "error", guidance: "명시된 gate가 사용을 차단" };
+    case "unavailable":
+      return { label: "사용 불가", tone: "neutral", guidance: "권위 또는 receipt 없음" };
+    case "corrupt":
+      return { label: "무결성 실패", tone: "error", guidance: "검증 실패 · fail closed" };
+    case "stale":
+      return { label: "기한 경과", tone: "warning", guidance: "신선도 기준 초과" };
+    case "populated":
+      return { label: "검증됨", tone: "success", guidance: "읽기·schema·신선도 통과" };
+    default:
+      return assertNever(state);
+  }
+}
+
+function renderSourcePanel(
+  workspace: WorkspaceProjection,
+  snapshot: DashboardSnapshotV2,
+  drawer: EvidenceTraceDrawer,
+): HTMLElement {
+  const presentation = sourceStatePresentation(workspace.state);
+  const panel = document.createElement("section");
+  panel.className = `source-state-panel state-${presentation.tone}`;
+  panel.dataset["sourceState"] = workspace.state;
+  if (workspace.state === "loading") panel.setAttribute("aria-busy", "true");
+  const heading = document.createElement("div");
+  heading.className = "state-panel-heading";
+  heading.append(
+    textElement("span", presentation.label, `state-badge state-${presentation.tone}`),
+    traceButton(workspace.summary, workspace.trace_id, snapshot, drawer),
+  );
+  panel.append(
+    heading,
+    textElement("h2", workspace.summary),
+    textElement("p", presentation.guidance, "state-guidance"),
+  );
+  if (workspace.blocker_code !== null) {
+    panel.append(renderBlocker(workspace.blocker_code));
+  }
+  const metadata = document.createElement("dl");
+  metadata.className = "source-metadata";
+  metadata.append(
+    metadataGroup("관측", timeElement(workspace.observed_at)),
+    metadataGroup("신선도", textElement("span", freshnessText(workspace.freshness.age_seconds))),
+    metadataGroup("표시", textElement("span", countText(workspace))),
+  );
+  panel.append(metadata);
+  return panel;
+}
+
+function renderItemTable(
+  items: readonly WorkspaceItem[],
+  snapshot: DashboardSnapshotV2,
+  drawer: EvidenceTraceDrawer,
+): HTMLElement {
+  const viewport = document.createElement("div");
+  viewport.className = "table-viewport";
+  viewport.tabIndex = 0;
+  viewport.setAttribute("role", "region");
+  viewport.setAttribute("aria-label", "권위 있는 workspace 항목 표");
+  const table = document.createElement("table");
+  table.append(
+    tableHead(["항목", "값", "상태", "관측", "Evidence Trace"]),
+    tableBody(items, snapshot, drawer),
+  );
+  const caption = textElement("caption", "권위 있는 workspace 항목과 Evidence Trace");
+  table.prepend(caption);
+  viewport.append(table);
+  return viewport;
+}
+
+function tableBody(
+  items: readonly WorkspaceItem[],
+  snapshot: DashboardSnapshotV2,
+  drawer: EvidenceTraceDrawer,
+): HTMLTableSectionElement {
+  const body = document.createElement("tbody");
+  body.append(
+    ...items.map((item) => {
+      const presentation = sourceStatePresentation(item.state);
       const row = document.createElement("tr");
-      const identityCell = document.createElement("td");
-      identityCell.append(identity);
       row.append(
-        identityCell,
-        cell(price(recommendation.entry), "price-cell"),
-        cell(price(recommendation.stop), "price-cell"),
-        cell(
-          `${price(recommendation.target_1r)} / ${price(recommendation.target_2r)}`,
-          "price-cell",
-        ),
-        cell(stateLabel(recommendation.state), `state-text ${statusClass(recommendation.state)}`),
+        tableCell(item.label),
+        tableCell(item.value ?? "값 없음", "value-cell"),
+        tableCell(presentation.label, `state-${presentation.tone}`),
+        elementCell(timeElement(item.observed_at)),
+        elementCell(traceButton(item.label, item.trace_id, snapshot, drawer)),
       );
       return row;
     }),
   );
+  return body;
 }
 
-function renderSignals(snapshot: DashboardSnapshotV1, filter: EvidenceFilter): void {
-  const now = Date.now();
-  const signals = snapshot.signals.filter(
-    (signal) => filter === "all" || new Date(signal.valid_until).getTime() > now,
+function renderAgents(
+  agents: DashboardSnapshotV2["workspaces"]["command_center"]["agents"],
+  snapshot: DashboardSnapshotV2,
+  drawer: EvidenceTraceDrawer,
+): HTMLElement {
+  return renderBoundedRows(
+    "가족별 실행 채널",
+    agents.map((agent) => ({
+      label: agent.label,
+      detail: `${agent.role} · ${agent.runtime_state}`,
+      traceId: agent.trace_id,
+    })),
+    snapshot,
+    drawer,
   );
-  const stream = requiredElement("evidence-stream", HTMLDivElement);
-  if (signals.length === 0) {
-    stream.replaceChildren(textElement("div", "조건에 맞는 신호가 없습니다.", "empty-state"));
-    return;
-  }
-  stream.replaceChildren(
-    ...signals.map((signal) => {
-      const signalKey = `${signal.symbol}:${signal.strategy}:${signal.observed_at}`;
-      const article = document.createElement("article");
-      article.className = "evidence-item";
-      if (!knownSignalKeys.has(signalKey)) {
-        article.classList.add("is-new");
-      }
-      const topline = document.createElement("div");
-      topline.className = "evidence-topline";
-      const time = document.createElement("time");
-      time.dateTime = signal.observed_at;
-      time.textContent = shortTime(signal.observed_at);
-      topline.append(textElement("span", `${signal.symbol} · ${signal.side.toUpperCase()}`), time);
-      const levels = document.createElement("dl");
-      levels.className = "price-grid";
-      levels.append(
-        priceGroup("진입", priceText(signal.entry_price)),
-        priceGroup("손절", priceText(signal.stop_price)),
-        priceGroup("목표", priceText(signal.targets.at(-1) ?? "—")),
-      );
-      article.append(
-        topline,
-        textElement("h3", `${signal.symbol} ${signal.side.toUpperCase()}: ${signal.strategy}`),
-        levels,
-        textElement("p", signal.rationale),
-        textElement(
-          "small",
-          signal.evidence_namespaces.length === 0
-            ? "evidence · 없음"
-            : `evidence · ${signal.evidence_namespaces.join(" · ")}`,
-        ),
-      );
-      return article;
-    }),
+}
+
+function renderCapabilities(
+  capabilities: DashboardSnapshotV2["workspaces"]["data_sources"]["capabilities"],
+  snapshot: DashboardSnapshotV2,
+  drawer: EvidenceTraceDrawer,
+): HTMLElement {
+  return renderBoundedRows(
+    "공급자 capability",
+    capabilities.map((capability) => ({
+      label: capability.label,
+      detail: `${capability.provider} · ${capability.entitlement} · ${capability.state}`,
+      traceId: capability.trace_id,
+    })),
+    snapshot,
+    drawer,
   );
-  for (const signal of snapshot.signals) {
-    knownSignalKeys.add(`${signal.symbol}:${signal.strategy}:${signal.observed_at}`);
+}
+
+function renderBoundedRows(
+  title: string,
+  rows: readonly { readonly label: string; readonly detail: string; readonly traceId: string }[],
+  snapshot: DashboardSnapshotV2,
+  drawer: EvidenceTraceDrawer,
+): HTMLElement {
+  const section = document.createElement("section");
+  section.className = "bounded-list";
+  section.append(textElement("h2", title));
+  if (rows.length === 0) {
+    section.append(textElement("p", "권위 있는 항목이 없습니다.", "empty-state"));
+    return section;
   }
-}
-
-function renderResearch(snapshot: DashboardSnapshotV1): void {
-  const research = snapshot.research;
-  requiredElement("research-summary", HTMLElement).textContent = research.summary;
-  const status = requiredElement("research-status", HTMLElement);
-  status.textContent = stateLabel(research.status);
-  status.className = statusClass(research.status);
-  requiredElement("research-date", HTMLElement).textContent = research.session_date ?? "—";
-}
-
-function cell(value: string, className?: string): HTMLTableCellElement {
-  const element = document.createElement("td");
-  element.textContent = value;
-  if (className !== undefined) {
-    element.className = className;
+  for (const row of rows) {
+    const article = document.createElement("article");
+    article.append(
+      textElement("strong", row.label),
+      textElement("p", row.detail),
+      traceButton(row.label, row.traceId, snapshot, drawer),
+    );
+    section.append(article);
   }
-  return element;
+  return section;
 }
 
-function emptyRow(value: string, columns: number): HTMLTableRowElement {
-  const row = document.createElement("tr");
-  const item = cell(value, "empty-state");
-  item.colSpan = columns;
-  row.append(item);
-  return row;
+function traceButton(
+  label: string,
+  traceId: string,
+  snapshot: DashboardSnapshotV2,
+  drawer: EvidenceTraceDrawer,
+): HTMLButtonElement {
+  const button = buttonElement("Trace", "trace-button");
+  button.setAttribute("aria-label", `${label} Evidence Trace 열기`);
+  button.dataset["traceId"] = traceId;
+  button.addEventListener("click", () => {
+    drawer.open(
+      label,
+      resolveEvidenceTrace(traceId, snapshot.traces.nodes, snapshot.traces.edges),
+      button,
+    );
+  });
+  return button;
 }
 
-function priceGroup(label: string, value: string): HTMLDivElement {
+function renderBlocker(code: string): HTMLElement {
+  const blocker = document.createElement("div");
+  blocker.className = "blocker-notice";
+  blocker.append(textElement("strong", "사용 차단"), textElement("code", code));
+  return blocker;
+}
+
+function metadataGroup(label: string, value: HTMLElement): HTMLDivElement {
   const group = document.createElement("div");
-  group.append(textElement("dt", label), textElement("dd", value));
+  group.append(textElement("dt", label), value);
   return group;
+}
+
+function freshnessText(ageSeconds: number | null): string {
+  return ageSeconds === null ? "나이 계산 불가" : `${ageSeconds.toLocaleString("ko-KR")}초`;
+}
+
+function countText(value: {
+  readonly projected_count: number;
+  readonly total_count: number;
+  readonly truncated: boolean;
+}): string {
+  const suffix = value.truncated ? " · 일부 표시" : "";
+  return `${value.projected_count}/${value.total_count}${suffix}`;
+}
+
+function assertNever(value: never): never {
+  throw new RenderStateError(`unknown source state: ${String(value)}`);
+}
+
+class RenderStateError extends Error {
+  override readonly name = "RenderStateError";
 }

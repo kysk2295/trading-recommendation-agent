@@ -1,164 +1,167 @@
-@media (max-width: 1080px) {
-  .app-shell {
-    padding: 0 var(--space-6);
+@media (max-width: 1179px) {
+  .workstation-shell {
+    grid-template-columns: 72px minmax(0, 1fr);
+    grid-template-rows: 56px minmax(0, 1fr) 28px;
   }
 
-  .session-deck {
-    grid-template-columns: 1.25fr 0.75fr;
+  .workspace-sidebar {
+    grid-column: 1;
   }
 
-  .featured-metric {
-    grid-column: 1 / -1;
-    grid-template-columns: repeat(2, 1fr);
-    grid-template-rows: auto;
-    border-top: 1px solid var(--border-default);
-    border-left: 0;
+  .product-mark {
+    justify-content: center;
+    min-block-size: 56px;
+    padding-inline: var(--space-2);
   }
 
-  .featured-metric > div + div {
-    border-top: 0;
-    border-left: 1px solid var(--border-default);
+  .product-mark > span:last-child,
+  .workspace-nav a strong,
+  .paper-boundary {
+    display: none;
   }
 
-  .dashboard-grid {
+  .workspace-nav {
+    padding-inline: var(--space-2);
+  }
+
+  .workspace-nav a {
     grid-template-columns: 1fr;
+    justify-items: center;
+    padding-inline: var(--space-2);
   }
 
-  .evidence-column {
-    padding-top: var(--space-8);
-    padding-left: 0;
-    border-top: 1px solid var(--border-default);
-    border-left: 0;
+  .context-header,
+  .workspace-scroll-body,
+  .status-strip {
+    grid-column: 2;
   }
 
-  .evidence-stream {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .context-rail {
+    display: none;
+  }
+
+  .status-strip {
+    grid-column: 2;
   }
 }
 
-@media (max-width: 760px) {
-  .app-shell {
-    padding: 0 var(--space-4);
+@media (max-width: 767px) {
+  .workstation-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: calc(52px + env(safe-area-inset-top)) minmax(0, 1fr)
+      calc(56px + env(safe-area-inset-bottom));
   }
 
-  .live-rail {
-    grid-template-columns: 1fr auto;
-    min-height: 64px;
+  .workspace-sidebar,
+  .status-strip {
+    display: none;
   }
 
-  .live-rail > .freshness {
+  .context-header {
+    grid-column: 1;
+    grid-row: 1;
+    min-block-size: calc(52px + env(safe-area-inset-top));
+    padding-block-start: env(safe-area-inset-top);
+    padding-inline: var(--space-4);
+  }
+
+  .context-header .meta-label,
+  .connection-state > span {
+    display: none;
+  }
+
+  .context-header strong {
+    font-size: var(--type-body);
+  }
+
+  .quiet-button {
+    min-block-size: var(--control-touch);
+  }
+
+  .workspace-scroll-body {
+    grid-column: 1;
+    grid-row: 2;
+    scrollbar-gutter: auto;
+  }
+
+  .workspace-view {
+    padding: var(--space-5) var(--space-4) var(--space-8);
+  }
+
+  .workspace-heading {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3);
+    padding-block-end: var(--space-5);
+  }
+
+  .workspace-heading > p {
+    max-inline-size: 100%;
+  }
+
+  .workspace-content {
+    gap: var(--space-4);
+    padding-block-start: var(--space-4);
+  }
+
+  .source-state-panel {
+    padding: var(--space-4);
+  }
+
+  .source-metadata {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .source-metadata div + div {
+    padding-block-start: var(--space-2);
+    padding-inline-start: 0;
+    border-inline-start: 0;
+  }
+
+  .bounded-list article {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .bounded-list article p {
     grid-column: 1 / -1;
     grid-row: 2;
-    padding-bottom: var(--space-3);
   }
 
-  .session-deck {
-    grid-template-columns: 1fr;
-    padding: var(--space-8) 0;
-  }
-
-  .session-clock {
-    min-height: 180px;
-  }
-
-  .market-stack {
-    border-top: 1px solid var(--border-default);
-    border-left: 0;
-  }
-
-  .featured-metric {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .featured-metric dd {
-    font-size: 0.95rem;
-    white-space: nowrap;
-  }
-
-  .dashboard-grid {
-    gap: var(--space-6);
-    padding-top: var(--space-6);
-  }
-
-  .overview-column,
-  .evidence-column {
-    gap: var(--space-6);
-  }
-
-  .metric-strip {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .metric-strip > div + div {
-    border-left: 0;
-  }
-
-  .metric-strip > div:nth-child(even) {
-    border-left: 1px solid var(--border-default);
-  }
-
-  .metric-strip > div:nth-child(n + 3) {
-    border-top: 1px solid var(--border-default);
-  }
-
-  .evidence-header {
-    align-items: flex-end;
-  }
-
-  .evidence-stream {
-    display: flex;
-  }
-
-  .table-scroll::before {
-    position: sticky;
-    left: 0;
-    z-index: 1;
-    display: block;
-    width: max-content;
-    padding: var(--space-2) var(--space-3);
-    background: var(--surface-primary);
-    color: var(--text-tertiary);
-    content: "가로 스크롤 →";
-    font-family: "SFMono-Regular", Consolas, monospace;
-    font-size: 0.625rem;
-  }
-
-  .account-hero {
-    grid-template-columns: 1fr;
-  }
-
-  .account-provenance {
-    align-items: flex-start;
-  }
-
-  .account-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .account-metrics > div + div {
-    border-left: 0;
-  }
-
-  .account-metrics > div:nth-child(even) {
-    border-left: 1px solid var(--border-default);
-  }
-
-  .account-metrics > div:nth-child(n + 3) {
-    border-top: 1px solid var(--border-default);
-  }
-
-  footer {
-    flex-direction: column;
+  .mobile-launcher {
+    z-index: 10;
+    display: grid;
+    grid-column: 1;
+    grid-row: 3;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     gap: var(--space-2);
+    align-items: center;
+    padding: var(--space-2) var(--space-3) calc(var(--space-2) + env(safe-area-inset-bottom));
+    border-block-start: 1px solid var(--border-default);
+    background: var(--surface-shell);
   }
 
-  .showcase {
-    width: min(100% - 32px, 1280px);
-    padding: 48px 0;
+  .mobile-launcher button {
+    min-block-size: var(--control-touch);
   }
 
-  .showcase-grid {
-    grid-template-columns: 1fr;
+  .mobile-launcher button:first-child,
+  .mobile-launcher button:last-child {
+    inline-size: 56px;
+    padding-inline: var(--space-2);
+  }
+
+  .launcher-menu {
+    display: block;
+  }
+
+  .evidence-trace-dialog {
+    inline-size: 100%;
+  }
+}
+
+@media (max-width: 420px) {
+  .launcher-menu nav {
+    grid-template-columns: minmax(0, 1fr);
+    max-block-size: 52dvb;
+    overflow-y: auto;
   }
 }
