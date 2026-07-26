@@ -22,6 +22,17 @@ test("FRED source evidence requires its exact provider terminal contract", () =>
   expect(accepted).toMatchObject({ state: "populated", receipt: "Receipt · FRED source receipt" });
 
   for (const [item, path] of [
+    [capability, mutateSource(healthy, "unavailable")],
+    [unavailable, mutateSource(blocked, "accepted")],
+  ] as const) {
+    const display = providerEvidencePresentation("fred", item, path, [capability.trace_id]);
+    expect(display).toMatchObject({
+      state: "unavailable",
+      receipt: "Blocker · FRED provider terminal authority 검증 실패",
+    });
+  }
+
+  for (const [item, path] of [
     [capability, { ...healthy, terminal: null }],
     [
       capability,
@@ -100,6 +111,17 @@ function mutateBlocked(
 ): ProviderEvidencePath {
   const blocker = { ...terminal(path), ...patch };
   return { ...path, nodes: [first(path.nodes), blocker], edges, terminal: blocker };
+}
+
+function mutateSource(path: ProviderEvidencePath, state: string): ProviderEvidencePath {
+  const source = { ...first(path.nodes), state };
+  const terminal = path.terminal;
+  return {
+    ...path,
+    nodes: [source, ...path.nodes.slice(1)],
+    terminal:
+      terminal !== null && terminal.node_id === source.node_id ? { ...terminal, state } : terminal,
+  };
 }
 
 function terminal(path: ProviderEvidencePath) {

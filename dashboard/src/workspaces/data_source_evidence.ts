@@ -70,10 +70,11 @@ export function providerEvidencePresentation(
   const source = trace.nodes.find((node) => node.node_id === capability.trace_id);
   const needsBlocker = ["error", "blocked", "unavailable", "corrupt"].includes(capability.state);
   const terminal = trace.terminal;
+  const expectedSourceState = capability.state === "unavailable" ? "unavailable" : "accepted";
   const sourceMatches =
     source?.kind === "source_receipt" &&
     source.source_namespace === `provider.${provider}` &&
-    (source.state === "accepted" || source.state === "unavailable");
+    source.state === expectedSourceState;
   const terminalMatches = needsBlocker
     ? terminal !== null &&
       terminal.node_id === `${capability.trace_id}.blocker` &&
