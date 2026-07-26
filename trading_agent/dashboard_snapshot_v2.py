@@ -142,6 +142,8 @@ def collect_dashboard_snapshot_v2(
                 "market-calendar-reader-v2",
                 "lane-registry-reader-v1",
                 "system-milestone-reader-v2",
+                "system-current-authority-reader-v1",
+                "system-autonomous-control-reader-v2",
                 "system-operations-reader-v2",
                 "treasury-yield-reader-v1",
             ),

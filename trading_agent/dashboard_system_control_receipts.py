@@ -4,15 +4,15 @@ import datetime as dt
 import os
 import re
 import stat
+from itertools import pairwise
 from pathlib import Path
-from typing import Final, Literal, Self
+from typing import Annotated, Final, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import Field, TypeAdapter, ValidationError
 
-from trading_agent.dashboard_agent_family import AgentFamilyId
-from trading_agent.dashboard_autonomous_research import TriggerType
+from trading_agent.dashboard_system_control_models import AutonomousControlReceipt
 
-AUTONOMOUS_CONTROL_FILE: Final = "autonomous-control.v1.jsonl"
+AUTONOMOUS_CONTROL_FILE: Final = "autonomous-control.v2.jsonl"
 CONTROL_COMPONENTS: Final = (
     "scheduler",
     "trigger",
@@ -35,42 +35,15 @@ ControlComponent = Literal[
     "worktree",
     "cleanup",
 ]
-ControlState = Literal[
-    "passed",
-    "authorized",
-    "claimed",
-    "running",
-    "completed",
-    "blocked",
-    "failed",
-    "uncertain",
-]
 _FORBIDDEN = re.compile(
     r"(?i)(api[_-]?key|secret|token|credential|authorization|account[_-]?id|"
     r"/users/|/home/|worktree[_-]?id|session[_-]?id|raw[_-]?(?:log|payload|header)|environment)"
 )
 
 
-class AutonomousControlReceipt(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-
-    schema_version: Literal[1]
-    evidence_type: Literal["autonomous_control"]
-    evidence_id: str = Field(pattern=r"^[a-zA-Z0-9_.:-]{1,100}$")
-    component: ControlComponent
-    agent_family_id: AgentFamilyId
-    trigger_type: TriggerType
-    observed_at: AwareDatetime
-    state: ControlState
-    blocker_code: str | None = Field(default=None, pattern=r"^[a-z0-9_]{3,80}$")
-    receipt_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-
-    @model_validator(mode="after")
-    def validate_terminal(self) -> Self:
-        blocked = self.state in {"blocked", "failed", "uncertain"}
-        if blocked != (self.blocker_code is not None):
-            raise ValueError
-        return self
+_ADAPTER = TypeAdapter(
+    Annotated[AutonomousControlReceipt, Field(discriminator="component")]
+)
 
 
 def read_autonomous_control_receipts(
@@ -93,7 +66,7 @@ def read_autonomous_control_receipts(
         if not payload or len(payload) > 128 * 1024:
             return "autonomous_control_invalid"
         receipts = tuple(
-            AutonomousControlReceipt.model_validate_json(line)
+            _ADAPTER.validate_json(line)
             for line in payload.splitlines()
         )
     except (OSError, ValidationError, ValueError):
@@ -103,12 +76,29 @@ def read_autonomous_control_receipts(
     if any(_FORBIDDEN.search(receipt.evidence_id) is not None for receipt in receipts):
         return "autonomous_control_forbidden_content"
     components = tuple(receipt.component for receipt in receipts)
+    for component in CONTROL_COMPONENTS:
+        if component not in components:
+            return f"autonomous_{component}_missing"
     if components != CONTROL_COMPONENTS:
         return "autonomous_control_components_invalid"
     if len({receipt.agent_family_id for receipt in receipts}) != 1:
         return "autonomous_control_family_conflict"
+    if len({receipt.trigger_type for receipt in receipts}) != 1:
+        return "autonomous_control_trigger_conflict"
     if any(receipt.observed_at > now + dt.timedelta(minutes=5) for receipt in receipts):
         return "autonomous_control_future"
+    if len({receipt.run_id for receipt in receipts}) != 1:
+        return "autonomous_control_run_conflict"
+    for previous, current in pairwise(receipts):
+        if current.previous_receipt_sha256 != previous.receipt_sha256:
+            return "autonomous_control_link_mismatch"
+        if current.observed_at < previous.observed_at:
+            return "autonomous_control_event_order_invalid"
+    blocked = False
+    for receipt in receipts[:-1]:
+        if blocked and receipt.state != "blocked":
+            return "autonomous_control_terminal_violation"
+        blocked = blocked or receipt.state == "blocked"
     return receipts
 
 

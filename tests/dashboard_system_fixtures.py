@@ -75,7 +75,7 @@ def operations(mutation: str = "") -> tuple[JsonRow, ...]:
         "deployment_id": "deploy-1",
         "observed_at": NOW.isoformat(),
         "code_sha256": "d" * 64,
-        "expected_code_sha256": "d" * 64,
+        "source_root_sha256": "2" * 64,
         "health": "healthy",
         "service_count": 1,
         "receipt_sha256": "e" * 64,
@@ -88,6 +88,7 @@ def operations(mutation: str = "") -> tuple[JsonRow, ...]:
         "observed_at": NOW.isoformat(),
         "state": "connected",
         "owner_sha256": "f" * 64,
+        "source_root_sha256": "3" * 64,
         "receipt_sha256": "1" * 64,
     }
     if mutation == "stale_pid":
@@ -115,43 +116,108 @@ def operations(mutation: str = "") -> tuple[JsonRow, ...]:
         stage["terminal_receipt_sha256"] = None
     if mutation == "railway_unreachable":
         railway["health"] = "unreachable"
+    if mutation == "railway_stale":
+        railway["observed_at"] = (NOW - dt.timedelta(minutes=6)).isoformat()
     if mutation == "relay_stale":
         relay["observed_at"] = (NOW - dt.timedelta(minutes=6)).isoformat()
     return launchd, stage, railway, relay
 
 
+def current_authority() -> JsonRow:
+    return {
+        "schema_version": 1,
+        "evidence_type": "system_current_authority",
+        "observed_at": NOW.isoformat(),
+        "railway_deployment_id": "deploy-1",
+        "railway_code_sha256": "d" * 64,
+        "railway_receipt_sha256": "e" * 64,
+        "railway_source_root_sha256": "2" * 64,
+        "relay_transition_id": "transition-1",
+        "relay_owner_sha256": "f" * 64,
+        "relay_receipt_sha256": "1" * 64,
+        "relay_source_root_sha256": "3" * 64,
+        "receipt_sha256": "4" * 64,
+    }
+
+
+def write_current_authority(system: Path) -> None:
+    root = system.parent / "source_evidence"
+    root.mkdir(parents=True, exist_ok=True)
+    write_rows(root / "system-current-authority.v1.json", (current_authority(),))
+
+
 def control_receipts(mutation: str = "") -> tuple[JsonRow, ...]:
-    components = (
-        "scheduler",
-        "trigger",
-        "claim",
-        "budget",
-        "cooldown",
-        "concurrency",
-        "failure_budget",
-        "worktree",
-        "cleanup",
+    rows = [dict(row) for row in typed_control_receipts()]
+    if mutation == "cleanup_failed":
+        rows[-1].update(
+            state="failed",
+            blocker_code="autonomous_cleanup_failed",
+        )
+    if mutation == "budget_blocked":
+        rows[3].update(
+            state="blocked",
+            blocker_code="family_token_budget_exhausted",
+        )
+        for row in rows[4:8]:
+            row.update(
+                state="blocked",
+                blocker_code="family_token_budget_exhausted",
+            )
+        rows[4]["cooldown_until"] = (NOW + dt.timedelta(minutes=1)).isoformat()
+        rows[5]["active_count"] = rows[5]["max_concurrency"]
+        rows[6]["failure_count"] = rows[6]["max_failures"]
+    return tuple(rows)
+
+
+def typed_control_receipts(now: dt.datetime = NOW) -> tuple[JsonRow, ...]:
+    fields: tuple[dict[str, JsonValue], ...] = (
+        {"state": "scheduled", "schedule_id": "schedule-1"},
+        {"state": "accepted", "trigger_id": "trigger-1"},
+        {"state": "claimed", "claim_id": "claim-1"},
+        {"state": "authorized", "token_budget": 1000, "tokens_remaining": 900},
+        {
+            "state": "passed",
+            "cooldown_until": (now - dt.timedelta(seconds=1)).isoformat(),
+        },
+        {"state": "passed", "active_count": 1, "max_concurrency": 2},
+        {"state": "passed", "failure_count": 0, "max_failures": 2},
+        {"state": "authorized", "isolation_receipt_sha256": "8" * 64},
+        {"state": "completed", "terminal_receipt_sha256": "9" * 64},
     )
     rows: list[JsonRow] = []
-    for index, component in enumerate(components):
-        state = "passed"
-        blocker_code = None
-        if mutation == "cleanup_failed" and component == "cleanup":
-            state, blocker_code = "failed", "autonomous_cleanup_failed"
-        if mutation == "budget_blocked" and component == "budget":
-            state, blocker_code = "blocked", "family_token_budget_exhausted"
-        rows.append(
-            {
-                "schema_version": 1,
-                "evidence_type": "autonomous_control",
-                "evidence_id": f"autonomous-{component}",
-                "component": component,
-                "agent_family_id": "systematic_quant",
-                "trigger_type": "new_data",
-                "observed_at": NOW.isoformat(),
-                "state": state,
-                "blocker_code": blocker_code,
-                "receipt_sha256": f"{index + 2:064x}",
-            }
+    previous: str | None = None
+    for index, (component, specific) in enumerate(
+        zip(
+            (
+                "scheduler",
+                "trigger",
+                "claim",
+                "budget",
+                "cooldown",
+                "concurrency",
+                "failure_budget",
+                "worktree",
+                "cleanup",
+            ),
+            fields,
+            strict=True,
         )
+    ):
+        receipt_sha256 = f"{index + 10:064x}"
+        row: JsonRow = {
+            "schema_version": 2,
+            "evidence_type": "autonomous_control",
+            "evidence_id": f"autonomous-{component}",
+            "component": component,
+            "run_id": "autonomous-run-1",
+            "agent_family_id": "systematic_quant",
+            "trigger_type": "new_data",
+            "observed_at": now.isoformat(),
+            "blocker_code": None,
+            "previous_receipt_sha256": previous,
+            "receipt_sha256": receipt_sha256,
+            **specific,
+        }
+        rows.append(row)
+        previous = receipt_sha256
     return tuple(rows)

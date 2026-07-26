@@ -11,6 +11,7 @@ from dashboard_system_fixtures import (
     milestones,
     operations,
     system_root,
+    write_current_authority,
     write_rows,
 )
 
@@ -26,6 +27,7 @@ def test_complete_system_projection_keeps_exact_milestones_and_typed_operations(
     root = system_root(tmp_path)
     write_rows(root / MILESTONE_FILE, milestones())
     write_rows(root / OPERATIONS_FILE, operations())
+    write_current_authority(root)
     write_rows(root / AUTONOMOUS_CONTROL_FILE, control_receipts())
 
     projection = project_system(tmp_path / "outputs", now=NOW)
@@ -66,6 +68,7 @@ def test_complete_system_projection_keeps_exact_milestones_and_typed_operations(
         ("stage_failed", "stage_failed"),
         ("stage_terminal_missing", "stage_terminal_missing"),
         ("railway_unreachable", "railway_health_failed"),
+        ("railway_stale", "railway_receipt_stale"),
         ("relay_stale", "relay_receipt_stale"),
         ("cleanup_failed", "autonomous_cleanup_failed"),
         ("budget_blocked", "family_token_budget_exhausted"),
@@ -79,6 +82,7 @@ def test_adverse_system_receipts_fail_closed(
     root = system_root(tmp_path)
     write_rows(root / MILESTONE_FILE, milestones())
     write_rows(root / OPERATIONS_FILE, operations(mutation))
+    write_current_authority(root)
     write_rows(root / AUTONOMOUS_CONTROL_FILE, control_receipts(mutation))
 
     projection = project_system(tmp_path / "outputs", now=NOW)
@@ -112,6 +116,7 @@ def test_launchd_alias_and_private_fields_never_project(
     write_rows(root / MILESTONE_FILE, milestones())
     row: JsonRow = {**operations()[0], **hostile}
     write_rows(root / OPERATIONS_FILE, (row, *operations()[1:]))
+    write_current_authority(root)
     write_rows(root / AUTONOMOUS_CONTROL_FILE, control_receipts())
 
     projection = project_system(tmp_path / "outputs", now=NOW)
@@ -134,6 +139,7 @@ def test_missing_authority_is_unavailable(tmp_path: Path, source: str) -> None:
         write_rows(root / MILESTONE_FILE, milestones())
     if source != "operations":
         write_rows(root / OPERATIONS_FILE, operations())
+        write_current_authority(root)
     if source != "autonomous":
         write_rows(root / AUTONOMOUS_CONTROL_FILE, control_receipts())
 
@@ -146,21 +152,25 @@ def test_missing_authority_is_unavailable(tmp_path: Path, source: str) -> None:
 def test_future_corrupt_and_oversized_receipts_are_bounded(tmp_path: Path) -> None:
     root = system_root(tmp_path)
     write_rows(root / MILESTONE_FILE, milestones())
-    rows = tuple(
-        {
-            **control_receipts()[0],
-            "evidence_id": f"control-{index}",
-            "observed_at": (
-                NOW + dt.timedelta(hours=1) if index == 30 else NOW
-            ).isoformat(),
-        }
-        for index in range(31)
-    )
+    rows = list(control_receipts())
+    rows[-1] = {
+        **rows[-1],
+        "observed_at": (NOW + dt.timedelta(hours=1)).isoformat(),
+    }
     write_rows(root / OPERATIONS_FILE, operations())
-    write_rows(root / AUTONOMOUS_CONTROL_FILE, rows)
+    write_current_authority(root)
+    write_rows(root / AUTONOMOUS_CONTROL_FILE, tuple(rows))
 
-    projection = project_system(tmp_path / "outputs", now=NOW)
+    future_projection = project_system(tmp_path / "outputs", now=NOW)
 
-    assert projection.workspace.state == "corrupt"
-    assert projection.workspace.projected_count <= 24
-    assert len(projection.workspace.items) <= 24
+    assert future_projection.workspace.state == "corrupt"
+    assert future_projection.workspace.projected_count <= 24
+    assert len(future_projection.workspace.items) <= 24
+
+    path = root / AUTONOMOUS_CONTROL_FILE
+    path.write_bytes(b" " * (128 * 1024 + 1))
+    path.chmod(0o600)
+    oversized_projection = project_system(tmp_path / "outputs", now=NOW)
+
+    assert oversized_projection.workspace.state == "corrupt"
+    assert oversized_projection.workspace.projected_count <= 24

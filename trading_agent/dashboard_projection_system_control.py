@@ -40,7 +40,11 @@ def project_autonomous_control(outputs: Path, *, now: dt.datetime) -> WorkspaceP
         case tuple() as receipts:
             return _project(receipts, now)
         case str() as reason:
-            return _invalid(reason, now, corrupt=True)
+            return _invalid(
+                reason,
+                now,
+                corrupt=not reason.endswith("_missing"),
+            )
         case unreachable:
             assert_never(unreachable)
 
@@ -88,7 +92,11 @@ def _item(
     tuple[TraceEdgeV2, ...],
     str | None,
 ]:
-    blocker = receipt.blocker_code
+    blocker = (
+        "autonomous_cleanup_incomplete"
+        if receipt.component == "cleanup" and receipt.state == "running"
+        else receipt.blocker_code
+    )
     source_id = f"trace.system.autonomous.{receipt.component}"
     terminal_id = f"{source_id}.terminal"
     state = "blocked" if blocker is not None else "populated"

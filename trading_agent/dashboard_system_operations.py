@@ -36,7 +36,7 @@ def project_system_operations(outputs: Path, *, now: dt.datetime) -> WorkspacePr
             return invalid_system_operations_projection(
                 reason,
                 now,
-                unavailable=False,
+                unavailable=reason.endswith("_missing"),
             )
         case unreachable:
             assert_never(unreachable)
@@ -151,10 +151,10 @@ def _item(
             safe_ref = receipt.receipt_sha256
             category = "stage"
         case RailwayReceipt():
-            mismatch = receipt.code_sha256 != receipt.expected_code_sha256
+            stale = now - receipt.observed_at > dt.timedelta(minutes=5)
             blocker = (
-                "deployment_sha_mismatch"
-                if mismatch
+                "railway_receipt_stale"
+                if stale
                 else "railway_health_failed"
                 if receipt.health != "healthy" or receipt.service_count != 1
                 else None

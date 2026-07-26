@@ -17,6 +17,13 @@ from pydantic import (
     model_validator,
 )
 
+from trading_agent.dashboard_system_current_authority import (
+    SYSTEM_CURRENT_AUTHORITY_FILE,
+    SYSTEM_CURRENT_AUTHORITY_ROOT,
+    SystemCurrentAuthority,
+    read_system_current_authority,
+)
+
 OPERATIONS_FILE: Final = "system-operations.v2.jsonl"
 _FORBIDDEN = re.compile(
     r"(?i)(api[_-]?key|secret|token|credential|authorization|account[_-]?id|"
@@ -111,7 +118,7 @@ class RailwayReceipt(BaseModel):
     deployment_id: str = Field(pattern=r"^[a-zA-Z0-9_.:-]{1,100}$")
     observed_at: AwareDatetime
     code_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    expected_code_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    source_root_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     health: Literal["healthy", "unhealthy", "unreachable"]
     service_count: int = Field(ge=1, le=12)
     receipt_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -127,6 +134,7 @@ class RelayReceipt(BaseModel):
     observed_at: AwareDatetime
     state: Literal["connected", "disconnected"]
     owner_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    source_root_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     receipt_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
@@ -172,6 +180,17 @@ def read_operation_receipts(
         return "railway_receipt_missing"
     if "relay" not in evidence_types:
         return "relay_receipt_missing"
+    authority = read_system_current_authority(
+        path.parent.parent
+        / SYSTEM_CURRENT_AUTHORITY_ROOT
+        / SYSTEM_CURRENT_AUTHORITY_FILE,
+        now,
+    )
+    if isinstance(authority, str):
+        return authority
+    authority_error = _validate_current_authority(receipts, authority)
+    if authority_error is not None:
+        return authority_error
     relay_receipts = tuple(
         item for item in receipts if isinstance(item, RelayReceipt)
     )
@@ -180,6 +199,37 @@ def read_operation_receipts(
     ):
         return "relay_event_order_invalid"
     return receipts
+
+
+def _validate_current_authority(
+    receipts: tuple[OperationReceipt, ...],
+    authority: SystemCurrentAuthority,
+) -> str | None:
+    railway = tuple(item for item in receipts if isinstance(item, RailwayReceipt))
+    relay = tuple(item for item in receipts if isinstance(item, RelayReceipt))
+    if len(railway) != 1:
+        return "railway_current_receipt_conflict"
+    if len(relay) != 1:
+        return "relay_current_receipt_conflict"
+    current_railway = railway[0]
+    if current_railway.deployment_id != authority.railway_deployment_id:
+        return "railway_current_deployment_mismatch"
+    if current_railway.code_sha256 != authority.railway_code_sha256:
+        return "railway_current_code_mismatch"
+    if current_railway.receipt_sha256 != authority.railway_receipt_sha256:
+        return "railway_current_receipt_mismatch"
+    if current_railway.source_root_sha256 != authority.railway_source_root_sha256:
+        return "railway_current_source_mismatch"
+    current_relay = relay[0]
+    if current_relay.transition_id != authority.relay_transition_id:
+        return "relay_current_transition_mismatch"
+    if current_relay.owner_sha256 != authority.relay_owner_sha256:
+        return "relay_current_owner_mismatch"
+    if current_relay.receipt_sha256 != authority.relay_receipt_sha256:
+        return "relay_current_receipt_mismatch"
+    if current_relay.source_root_sha256 != authority.relay_source_root_sha256:
+        return "relay_current_source_mismatch"
+    return None
 
 __all__ = (
     "OPERATIONS_FILE",

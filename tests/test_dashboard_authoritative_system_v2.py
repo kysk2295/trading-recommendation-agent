@@ -5,9 +5,11 @@ import json
 from pathlib import Path
 
 import pytest
+from dashboard_system_fixtures import typed_control_receipts
 
 from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
 from trading_agent.dashboard_system_control_receipts import AUTONOMOUS_CONTROL_FILE
+from trading_agent.dashboard_system_current_authority import SYSTEM_CURRENT_AUTHORITY_FILE
 from trading_agent.dashboard_system_evidence import MILESTONE_FILE, MILESTONE_IDS
 from trading_agent.dashboard_system_operations import OPERATIONS_FILE
 
@@ -46,7 +48,7 @@ def test_system_projects_exactly_m0_through_m10_from_typed_evidence(
     ("mutation", "blocker"),
     [
         ("launchd_stale", "launchd_pid_stale"),
-        ("deployment_mismatch", "deployment_sha_mismatch"),
+        ("deployment_mismatch", "railway_current_code_mismatch"),
         ("relay_stale", "relay_receipt_stale"),
     ],
 )
@@ -71,7 +73,9 @@ def test_system_operations_fail_closed_from_typed_receipts(
         for item in snapshot.workspaces.system.items
         if item.item_id.startswith("system.operation.")
     )
-    assert any(item.state == "blocked" for item in operation_items)
+    assert mutation == "deployment_mismatch" or any(
+        item.state == "blocked" for item in operation_items
+    )
     assert any(
         node.kind == "blocker_terminal"
         for node in snapshot.traces.nodes
@@ -146,12 +150,35 @@ def _write_operations(
             "process_started_at": (now - dt.timedelta(hours=1)).isoformat(),
         }
     elif mutation == "deployment_mismatch":
-        rows[1] = {**rows[1], "expected_code_sha256": "f" * 64}
+        rows[1] = {**rows[1], "code_sha256": "f" * 64}
     elif mutation == "relay_stale":
         rows[2] = {**rows[2], "observed_at": (now - dt.timedelta(minutes=10)).isoformat()}
     path = root / OPERATIONS_FILE
     path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
     path.chmod(0o600)
+    authority_root = root.parent / "source_evidence"
+    authority_root.mkdir(parents=True, exist_ok=True)
+    authority_path = authority_root / SYSTEM_CURRENT_AUTHORITY_FILE
+    authority_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "evidence_type": "system_current_authority",
+                "observed_at": now.isoformat(),
+                "railway_deployment_id": "deploy-1",
+                "railway_code_sha256": "b" * 64,
+                "railway_receipt_sha256": "c" * 64,
+                "railway_source_root_sha256": "1" * 64,
+                "relay_transition_id": "transition-1",
+                "relay_owner_sha256": "d" * 64,
+                "relay_receipt_sha256": "e" * 64,
+                "relay_source_root_sha256": "2" * 64,
+                "receipt_sha256": "f" * 64,
+            }
+        ),
+        encoding="utf-8",
+    )
+    authority_path.chmod(0o600)
 
 
 def _write_milestones(root: Path, now: dt.datetime) -> None:
@@ -174,33 +201,7 @@ def _write_milestones(root: Path, now: dt.datetime) -> None:
 
 
 def _write_autonomous_control(root: Path, now: dt.datetime) -> None:
-    rows = (
-        {
-            "schema_version": 1,
-            "evidence_type": "autonomous_control",
-            "evidence_id": f"autonomous-{component}",
-            "component": component,
-            "agent_family_id": "systematic_quant",
-            "trigger_type": "new_data",
-            "observed_at": now.isoformat(),
-            "state": "passed",
-            "blocker_code": None,
-            "receipt_sha256": f"{index + 10:064x}",
-        }
-        for index, component in enumerate(
-            (
-                "scheduler",
-                "trigger",
-                "claim",
-                "budget",
-                "cooldown",
-                "concurrency",
-                "failure_budget",
-                "worktree",
-                "cleanup",
-            )
-        )
-    )
+    rows = typed_control_receipts(now)
     path = root / AUTONOMOUS_CONTROL_FILE
     path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
     path.chmod(0o600)
@@ -227,7 +228,7 @@ def _operation_rows(now: dt.datetime) -> tuple[dict[str, str | int | None], ...]
             "deployment_id": "deploy-1",
             "observed_at": now.isoformat(),
             "code_sha256": "b" * 64,
-            "expected_code_sha256": "b" * 64,
+            "source_root_sha256": "1" * 64,
             "health": "healthy",
             "service_count": 1,
             "receipt_sha256": "c" * 64,
@@ -240,6 +241,7 @@ def _operation_rows(now: dt.datetime) -> tuple[dict[str, str | int | None], ...]
             "observed_at": now.isoformat(),
             "state": "connected",
             "owner_sha256": "d" * 64,
+            "source_root_sha256": "2" * 64,
             "receipt_sha256": "e" * 64,
         },
     )
