@@ -9,12 +9,17 @@ from typing import Literal
 from trading_agent.execution_store import ExecutionStore
 from trading_agent.lane_contract_keys import experiment_scope_key, lane_manifest_key
 from trading_agent.lane_contract_models import LaneDailySnapshot
-from trading_agent.lane_defaults import CURRENT_INTRADAY_EXPERIMENT_SCOPES, INTRADAY_MANIFEST
+from trading_agent.lane_defaults import (
+    CURRENT_INTRADAY_EXPERIMENT_SCOPES,
+    INTRADAY_MANIFEST,
+    SWING_MANIFEST,
+)
 from trading_agent.lane_policy_models import LaneId
 from trading_agent.lane_registry_store import LaneRegistryStore
 from trading_agent.paper_execution_models import AccountFingerprint
 from trading_agent.paper_safety_models import PaperSafetyPhase, PaperSafetyPlan
 from trading_agent.paper_stream_recovery_models import PaperStreamRecoveryObservation
+from trading_agent.swing_research_contract import SWING_RESEARCH_CONTRACT
 
 FINALIZED_AT = dt.datetime(2026, 7, 25, 20, 5, tzinfo=dt.UTC)
 FINGERPRINT = AccountFingerprint("b" * 64)
@@ -120,6 +125,39 @@ def finalized_snapshot(
         open_order_count=0,
         open_position_count=0,
     )
+
+
+def append_swing_snapshot(
+    outputs: Path,
+    *,
+    open_positions: int,
+    open_orders: int,
+) -> None:
+    registry = LaneRegistryStore(outputs / "lane_control" / "lane_registry.sqlite3")
+    scope = SWING_RESEARCH_CONTRACT.experiment_scope
+    snapshot = LaneDailySnapshot(
+        lane_id=LaneId.SWING_MOMENTUM,
+        session_date=dt.date(2026, 7, 25),
+        finalized_at=FINALIZED_AT,
+        manifest_key=lane_manifest_key(SWING_MANIFEST),
+        experiment_scope_keys=(experiment_scope_key(scope),),
+        source_ledger_generation=7,
+        source_ledger_sha256="c" * 64,
+        champion_strategy_versions=(),
+        data_quality_complete=True,
+        allocation_eligible=False,
+        incidents=(),
+        conservative_equity=Decimal("30000"),
+        realized_pnl=Decimal("125.25"),
+        unrealized_pnl=Decimal("-20.50"),
+        planned_open_risk=Decimal("10"),
+        open_order_count=open_orders,
+        open_position_count=open_positions,
+    )
+    with registry.writer() as writer:
+        _ = writer.register_manifest(SWING_MANIFEST)
+        _ = writer.register_experiment_scope(scope)
+        assert writer.append_daily_snapshot(snapshot)
 
 
 def safety_plan(phase: PaperSafetyPhase, observed_at: dt.datetime) -> PaperSafetyPlan:

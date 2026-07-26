@@ -17,8 +17,8 @@ from trading_agent.dashboard_projection_common import (
     WorkspaceProjection,
     blocked_projection,
 )
-from trading_agent.lane_contract_keys import lane_daily_snapshot_key
-from trading_agent.lane_policy_models import LaneId
+from trading_agent.lane_contract_keys import lane_daily_snapshot_key, lane_manifest_key
+from trading_agent.lane_policy_models import LaneId, LaneOrderAuthority
 from trading_agent.lane_registry_store import (
     InvalidLaneRegistrySourceError,
     LaneRegistryReader,
@@ -36,12 +36,32 @@ def project_finalized_paper(outputs: Path, *, now: dt.datetime) -> WorkspaceProj
             blocker_code="paper_source_wal_active",
         )
     try:
-        stored_snapshots = tuple(
+        reader = LaneRegistryReader(path)
+        manifests = {
+            str(item.manifest_key): item.manifest
+            for item in reader.manifests()
+            if item.manifest.execution_policy.order_authority
+            in (LaneOrderAuthority.ALPACA_PAPER, LaneOrderAuthority.SHADOW_ONLY)
+        }
+        candidates = tuple(
             item
-            for item in LaneRegistryReader(path).daily_snapshots()
-            if item.snapshot.lane_id is LaneId.INTRADAY_MOMENTUM
+            for item in reader.daily_snapshots()
+            if item.snapshot.lane_id in (LaneId.INTRADAY_MOMENTUM, LaneId.SWING_MOMENTUM)
         )
-        if any(item.snapshot_key != lane_daily_snapshot_key(item.snapshot) for item in stored_snapshots):
+        if any(
+            item.snapshot_key != lane_daily_snapshot_key(item.snapshot)
+            or item.snapshot.manifest_key not in manifests
+            or manifests[item.snapshot.manifest_key].lane_id is not item.snapshot.lane_id
+            or lane_manifest_key(manifests[item.snapshot.manifest_key]) != item.snapshot.manifest_key
+            for item in candidates
+        ):
+            raise ValueError
+        latest_session = max(
+            (item.snapshot.session_date for item in candidates),
+            default=None,
+        )
+        stored_snapshots = tuple(item for item in candidates if item.snapshot.session_date == latest_session)
+        if len(stored_snapshots) > 1:
             raise ValueError
         snapshots = tuple(item.snapshot for item in stored_snapshots)
     except (
@@ -79,14 +99,17 @@ def project_finalized_paper(outputs: Path, *, now: dt.datetime) -> WorkspaceProj
             state="blocked",
             blocker_code="paper_verification_incomplete",
         )
-    lifecycle = project_paper_lifecycle(outputs, latest)
-    if lifecycle.blocker_code is not None:
-        return blocked_projection(
-            "paper",
-            now=now,
-            state="corrupt" if lifecycle.state == "corrupt" else "blocked",
-            blocker_code=lifecycle.blocker_code,
-        )
+    lifecycle_items: tuple[WorkspaceItemV2, ...] = ()
+    if latest.lane_id is LaneId.INTRADAY_MOMENTUM:
+        lifecycle = project_paper_lifecycle(outputs, latest)
+        if lifecycle.blocker_code is not None:
+            return blocked_projection(
+                "paper",
+                now=now,
+                state="corrupt" if lifecycle.state == "corrupt" else "blocked",
+                blocker_code=lifecycle.blocker_code,
+            )
+        lifecycle_items = lifecycle.items
     source_id = "trace.paper.source"
     terminal_id = "trace.paper.finalized"
     age = max(0, int((now - latest.finalized_at).total_seconds()))
@@ -130,7 +153,7 @@ def project_finalized_paper(outputs: Path, *, now: dt.datetime) -> WorkspaceProj
             observed_at=latest.finalized_at,
             trace_id=source_id,
         ),
-        *lifecycle.items,
+        *lifecycle_items,
     )
     source_ref = hashlib.sha256(latest.source_ledger_sha256.encode()).hexdigest()
     nodes = (
