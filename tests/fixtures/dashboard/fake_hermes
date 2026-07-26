@@ -1,0 +1,5 @@
+#!/bin/zsh
+
+set -eu
+/usr/bin/printf '{"candidate":"verified"}\n' > "${DASHBOARD_EXPERIMENT_ROOT}/candidate.json"
+/usr/bin/printf 'candidate evidence recorded\n'

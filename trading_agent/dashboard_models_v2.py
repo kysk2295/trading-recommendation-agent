@@ -11,7 +11,14 @@ from trading_agent.dashboard_models_v2_validation import (
 )
 
 SourceStateName = Literal["loading", "empty", "error", "blocked", "unavailable", "corrupt", "stale", "populated"]
-PublicAgentId = Literal["kr-theme", "us-intraday", "us-systematic", "us-swing", "research", "delivery"]
+PublicAgentId = Literal[
+    "opportunity_manager",
+    "day_trading",
+    "swing_trading",
+    "systematic_quant",
+    "derivatives_research",
+    "market_context",
+]
 
 
 class StrictDashboardModelV2(BaseModel):
@@ -71,6 +78,11 @@ class PublicAgentViewV2(StrictDashboardModelV2):
     agent_id: PublicAgentId
     label: str = Field(min_length=1, max_length=40)
     role: str = Field(min_length=1, max_length=80)
+    capabilities: tuple[
+        Literal["conversation"],
+        Literal["directed_tool"],
+        Literal["autonomous_research"],
+    ]
     runtime_state: Literal["running", "armed", "idle", "failed", "unavailable"]
     trace_id: str = Field(pattern=r"^[a-zA-Z0-9_.:-]{1,100}$")
 

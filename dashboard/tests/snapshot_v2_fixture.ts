@@ -95,12 +95,12 @@ const workspaceKinds = {
 } as const;
 
 const agentIds = [
-  "kr-theme",
-  "us-intraday",
-  "us-systematic",
-  "us-swing",
-  "research",
-  "delivery",
+  "opportunity_manager",
+  "day_trading",
+  "swing_trading",
+  "systematic_quant",
+  "derivatives_research",
+  "market_context",
 ] as const;
 const providers = [
   "fred",
@@ -142,6 +142,7 @@ export const nearMaximumSnapshotV2 = {
         agent_id: agentIds[index % agentIds.length],
         label: "A".repeat(40),
         role: "R".repeat(80),
+        capabilities: ["conversation", "directed_tool", "autonomous_research"] as const,
         runtime_state: "idle" as const,
         trace_id: traceIds.command_center,
       })),

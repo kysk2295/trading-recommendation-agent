@@ -111,6 +111,58 @@ export const interactionReceiptSchema = z.strictObject({
   interaction: interactionSchema,
 });
 
+export const researchFamilyIdSchema = z.enum([
+  "opportunity_manager",
+  "day_trading",
+  "swing_trading",
+  "systematic_quant",
+  "derivatives_research",
+  "market_context",
+]);
+
+export const autonomousTaskReceiptSchema = z.strictObject({
+  schema_version: z.literal(1),
+  public_task_id: z.string().regex(/^[a-f0-9]{32}$/),
+  event_id: z.string().regex(/^[a-f0-9]{64}$/),
+  agent_family_id: researchFamilyIdSchema,
+  channel: z.literal("autonomous_research"),
+  trigger_type: z.enum([
+    "new_data",
+    "market_event",
+    "experiment_result",
+    "reviewer_feedback",
+    "approved_schedule",
+  ]),
+  policy_version: z.string().regex(/^[a-zA-Z0-9_.:-]{3,80}$/),
+  code_version: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/),
+  sequence: z.number().int().nonnegative().max(10_000),
+  kind: z.enum(["blocker", "claim", "progress", "evidence", "result", "cleanup"]),
+  state: z.enum(["claimed", "running", "completed", "failed", "uncertain", "blocked", "duplicate"]),
+  occurred_at: z.iso.datetime({ offset: true }),
+  reason: z
+    .string()
+    .regex(/^[a-z0-9_]{3,80}$/)
+    .nullable(),
+  evidence_refs: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(32),
+  result_sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .nullable(),
+  summary: z.string().max(240).nullable(),
+  consumed_tokens: z.number().int().nonnegative().max(1_000_000),
+  consumed_cost_microusd: z.number().int().nonnegative().max(100_000_000),
+  redaction_status: z.literal("passed"),
+  reviewer_state: z.enum(["pending", "accepted", "rejected", "needs_evidence"]),
+  lifecycle_state: z.literal("unchanged"),
+});
+
+export const autonomousTaskEventSchema = z.strictObject({
+  type: z.literal("agent_task_event"),
+  task: autonomousTaskReceiptSchema,
+});
+
+export type AutonomousTaskReceipt = z.infer<typeof autonomousTaskReceiptSchema>;
+
 export const operatorSessionSchema = z.strictObject({
   authenticated: z.boolean(),
 });

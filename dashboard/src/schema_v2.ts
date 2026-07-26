@@ -42,15 +42,20 @@ const workspaceItemSchema = z
 
 const publicAgentSchema = z.strictObject({
   agent_id: z.enum([
-    "kr-theme",
-    "us-intraday",
-    "us-systematic",
-    "us-swing",
-    "research",
-    "delivery",
+    "opportunity_manager",
+    "day_trading",
+    "swing_trading",
+    "systematic_quant",
+    "derivatives_research",
+    "market_context",
   ]),
   label: z.string().min(1).max(40),
   role: z.string().min(1).max(80),
+  capabilities: z.tuple([
+    z.literal("conversation"),
+    z.literal("directed_tool"),
+    z.literal("autonomous_research"),
+  ]),
   runtime_state: z.enum(["running", "armed", "idle", "failed", "unavailable"]),
   trace_id: boundedIdSchema,
 });

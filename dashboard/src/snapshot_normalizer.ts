@@ -84,12 +84,7 @@ export function downProjectV1(snapshot: DashboardSnapshotV2): DashboardSnapshotV
           : [snapshot.workspaces.overview.blocker_code],
       incidents: [],
     },
-    agents: snapshot.workspaces.command_center.agents.map((agent) => ({
-      agent_id: agent.agent_id,
-      label: agent.label,
-      state: rollbackAgentState(agent.runtime_state),
-      scheduled_label: agent.role,
-    })),
+    agents: [],
     recommendations: [],
     signals: [],
     research: {
@@ -124,13 +119,7 @@ function normalizeV1(snapshot: DashboardSnapshotV1): DashboardSnapshotV2 {
     workspaces: {
       command_center: {
         ...base,
-        agents: snapshot.agents.map((agent) => ({
-          agent_id: agent.agent_id,
-          label: agent.label,
-          role: agent.scheduled_label,
-          runtime_state: agent.state,
-          trace_id: traceId,
-        })),
+        agents: [],
       },
       overview: base,
       markets: base,
@@ -205,18 +194,6 @@ function hasForbiddenKey(value: unknown): boolean {
   return Object.entries(value).some(
     ([key, nested]) => forbiddenKey.test(key) || hasForbiddenKey(nested),
   );
-}
-
-function rollbackAgentState(state: "running" | "armed" | "idle" | "failed" | "unavailable") {
-  switch (state) {
-    case "running":
-    case "armed":
-    case "idle":
-    case "failed":
-      return state;
-    case "unavailable":
-      return "idle";
-  }
 }
 
 function rollbackResearchState(

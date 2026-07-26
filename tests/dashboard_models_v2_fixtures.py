@@ -25,9 +25,10 @@ def snapshot_payload() -> dict[str, ModelInput]:
     command = cast(dict[str, ModelInput], workspaces["command_center"])
     command["agents"] = [
         {
-            "agent_id": "research",
-            "label": "research",
-            "role": "research",
+            "agent_id": "systematic_quant",
+            "label": "Systematic Quant",
+            "role": "systematic experiment research",
+            "capabilities": ["conversation", "directed_tool", "autonomous_research"],
             "runtime_state": "idle",
             "trace_id": _TRACE_IDS["command_center"],
         }

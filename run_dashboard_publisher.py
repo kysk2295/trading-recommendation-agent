@@ -12,12 +12,9 @@
 
 from __future__ import annotations
 
-import json
 import shutil
-from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Annotated, Protocol
-from urllib.parse import urlsplit, urlunsplit
+from typing import Annotated
 
 import anyio
 import typer
@@ -27,13 +24,31 @@ from rich import print as rprint
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import WebSocketException
 
+from trading_agent.dashboard_autonomous_publisher import (
+    DEFAULT_AUTONOMOUS_STATE,
+    InvalidAutonomousTriggerFixtureError,
+    execute_autonomous_fixture,
+)
 from trading_agent.dashboard_commands import (
     DashboardInteractionMessage,
     PairingTicketMessage,
     parse_dashboard_event,
 )
 from trading_agent.dashboard_models_v2 import DashboardSnapshotV2
-from trading_agent.dashboard_native_watch import watch_native_changes
+from trading_agent.dashboard_publisher_events import (
+    SnapshotSocket,
+    WatchFactory,
+    watch_output_events,
+)
+from trading_agent.dashboard_publisher_events import (
+    publisher_url as _publisher_url,
+)
+from trading_agent.dashboard_publisher_events import (
+    reconnect_delay_seconds as _reconnect_delay_seconds,
+)
+from trading_agent.dashboard_publisher_events import (
+    send_snapshot as _send_snapshot,
+)
 from trading_agent.dashboard_relay import (
     DashboardRelayConnectionError,
     is_reconnectable_group,
@@ -47,27 +62,57 @@ from trading_agent.dashboard_snapshot import (
 )
 from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
 
-app = typer.Typer(help="로컬 산출물을 redacted 운영 snapshot으로 안전하게 전송합니다.")
+app = typer.Typer(
+    help="로컬 산출물을 redacted 운영 snapshot으로 안전하게 전송합니다.",
+    invoke_without_command=True,
+)
 DEFAULT_OUTPUTS = Path(__file__).resolve().parent / "outputs"
 DEFAULT_CREDENTIALS = Path.home() / ".config" / "trading-agent" / "dashboard.env"
-MAX_RECONNECT_SECONDS = 60
-WATCH_DEBOUNCE_MS = 2_000
-WATCH_STEP_MS = 250
 HERMES_EXECUTABLE = Path(shutil.which("hermes") or Path.home() / ".local/bin/hermes")
 WORKTREE = Path(__file__).resolve().parent
 
 
-class SnapshotSocket(Protocol):
-    async def send(self, message: str) -> None: ...
+@app.callback()
+def publisher_default(
+    context: typer.Context,
+    outputs: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_OUTPUTS,
+    credentials: Annotated[Path, typer.Option()] = DEFAULT_CREDENTIALS,
+    once: Annotated[bool, typer.Option(help="한 번 전송한 뒤 종료")] = False,
+    dry_run: Annotated[bool, typer.Option(help="외부 전송 없이 snapshot 경계만 검증")] = False,
+    pair_browser: Annotated[bool, typer.Option(help="일회용 운영자 브라우저 연결")] = False,
+) -> None:
+    if context.invoked_subcommand is None:
+        publish(outputs, credentials, once, dry_run, pair_browser)
 
 
-class WatchFactory(Protocol):
-    def __call__(
-        self,
-        *paths: Path,
-        debounce: int,
-        step: int,
-    ) -> AsyncIterator[frozenset[Path]]: ...
+@app.command("autonomous-agent", help="typed trigger 한 건을 격리된 autonomous 연구 task로 실행합니다.")
+def autonomous_agent(
+    trigger_fixture: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    state_root: Annotated[Path, typer.Option()] = DEFAULT_AUTONOMOUS_STATE,
+    hermes_executable: Annotated[Path, typer.Option()] = HERMES_EXECUTABLE,
+    fake_hermes: Annotated[bool, typer.Option(help="유료 호출 없는 로컬 fake process 사용")] = False,
+    dry_run: Annotated[bool, typer.Option(help="외부 relay 전송 없이 로컬 control plane만 검증")] = False,
+    expect_cleanup: Annotated[bool, typer.Option(help="격리 환경 cleanup receipt 필수")] = False,
+) -> None:
+    del dry_run
+    try:
+        outcome = execute_autonomous_fixture(
+            trigger_fixture,
+            state_root=state_root,
+            hermes_executable=hermes_executable,
+            fake_hermes=fake_hermes,
+        )
+    except InvalidAutonomousTriggerFixtureError as error:
+        raise typer.BadParameter("invalid_autonomous_trigger", param_hint="--trigger-fixture") from error
+    if expect_cleanup and not outcome.cleanup_completed:
+        typer.echo("AUTONOMOUS_BLOCKED model_processes=0 receipt=1")
+        raise typer.Exit(code=1)
+    if outcome.state == "completed":
+        typer.echo("AUTONOMOUS_OK claims=1 model_processes=1 duplicate_launches=0 evidence=append_only cleanup=1")
+        return
+    typer.echo(f"AUTONOMOUS_BLOCKED model_processes={outcome.model_processes} receipt=1")
+    if outcome.state not in {"blocked", "duplicate"}:
+        raise typer.Exit(code=1)
 
 
 @app.command(help="로컬 산출물을 redacted 운영 snapshot으로 안전하게 전송합니다.")
@@ -76,10 +121,7 @@ def publish(
     credentials: Annotated[Path, typer.Option()] = DEFAULT_CREDENTIALS,
     once: Annotated[bool, typer.Option(help="한 번 전송한 뒤 종료")] = False,
     dry_run: Annotated[bool, typer.Option(help="외부 전송 없이 snapshot 경계만 검증")] = False,
-    pair_browser: Annotated[
-        bool,
-        typer.Option(help="이 Mac의 브라우저를 일회용 운영자 세션으로 연결"),
-    ] = False,
+    pair_browser: Annotated[bool, typer.Option(help="일회용 운영자 브라우저 연결")] = False,
 ) -> None:
     try:
         config = load_dashboard_credentials(credentials)
@@ -226,15 +268,7 @@ async def _watch_output_events(
     send_lock: anyio.Lock,
     watcher: WatchFactory | None = None,
 ) -> None:
-    event_source = watch_native_changes if watcher is None else watcher
-    async for _changes in event_source(
-        *_watch_roots(outputs),
-        debounce=WATCH_DEBOUNCE_MS,
-        step=WATCH_STEP_MS,
-    ):
-        snapshot = collect_dashboard_snapshot_v2(outputs)
-        async with send_lock:
-            await _send_snapshot(socket, snapshot)
+    await watch_output_events(socket, outputs, send_lock, HERMES_EXECUTABLE, watcher)
 
 
 async def _pair_browser_once(socket: ClientConnection, dashboard_url: str) -> None:
@@ -248,41 +282,5 @@ async def _pair_browser_once(socket: ClientConnection, dashboard_url: str) -> No
             return
 
 
-async def _send_snapshot(
-    socket: SnapshotSocket,
-    snapshot: DashboardSnapshotV2,
-) -> None:
-    await socket.send(
-        json.dumps(
-            {"type": "snapshot", "snapshot": snapshot.model_dump(mode="json")},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-    )
-
-
-def _publisher_url(dashboard_url: str) -> str:
-    parsed = urlsplit(dashboard_url)
-    scheme = "wss" if parsed.scheme == "https" else "ws"
-    return urlunsplit((scheme, parsed.netloc, "/api/realtime/publish", "", ""))
-
-
-def _watch_roots(outputs: Path) -> tuple[Path, ...]:
-    root = outputs.resolve()
-    candidates = (
-        root / "live_sessions",
-        root / "source_evidence",
-        root / "experiment_control",
-        root / "lane_control",
-        root / "derivatives",
-        root / "paper",
-        root / "system",
-    )
-    existing = tuple(path for path in candidates if path.is_dir())
-    return existing or (root,)
-
-
-def _reconnect_delay_seconds(attempt: int) -> int:
-    return min(MAX_RECONNECT_SECONDS, 5 * 2 ** max(0, attempt))
 if __name__ == "__main__":
     app()

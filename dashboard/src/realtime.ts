@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { PairingTickets } from "./operator_auth";
 import type { Interaction } from "./schema";
-import { dashboardSnapshotV1Schema, interactionStateSchema } from "./schema";
+import {
+  autonomousTaskEventSchema,
+  dashboardSnapshotV1Schema,
+  interactionStateSchema,
+} from "./schema";
 import type { DashboardSnapshotV2 } from "./schema_v2";
 import { parseAndNormalizeSnapshot } from "./snapshot_normalizer";
 import type { SnapshotStore } from "./store";
@@ -20,6 +24,7 @@ const publisherMessageSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("pairing_request"),
   }),
+  autonomousTaskEventSchema,
 ]);
 
 export interface RealtimePeer {
@@ -45,6 +50,9 @@ export class DashboardRealtimeHub {
     if (latest !== null) {
       send(peer, { type: "snapshot", snapshot: latest });
     }
+    for (const task of await this.store.listAgentTaskEvents()) {
+      send(peer, { type: "agent_task_event", task });
+    }
   }
 
   disconnectViewer(peer: RealtimePeer): void {
@@ -55,6 +63,9 @@ export class DashboardRealtimeHub {
     this.operators.set(identity(peer), peer);
     for (const interaction of await this.store.listInteractions()) {
       send(peer, { type: "interaction", interaction });
+    }
+    for (const task of await this.store.listAgentTaskEvents()) {
+      send(peer, { type: "agent_task_event", task });
     }
   }
 
@@ -124,6 +135,14 @@ export class DashboardRealtimeHub {
       case "pairing_request": {
         const ticket = this.pairingTickets.issue();
         send(peer, { type: "pairing_ticket", path: `/operator/pair/${ticket}` });
+        return;
+      }
+      case "agent_task_event": {
+        const created = await this.store.appendAgentTaskEvent(payload.task);
+        if (created) {
+          this.broadcast(this.viewers, payload);
+          this.broadcast(this.operators, payload);
+        }
         return;
       }
     }

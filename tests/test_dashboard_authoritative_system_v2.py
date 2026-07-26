@@ -27,7 +27,14 @@ def test_system_projects_exactly_m0_through_m10_from_typed_evidence(
     system = snapshot.workspaces.system
 
     # Then exactly eleven milestones precede the three typed operations
-    assert snapshot.workspaces.command_center.agents == ()
+    assert tuple(agent.agent_id for agent in snapshot.workspaces.command_center.agents) == (
+        "opportunity_manager",
+        "day_trading",
+        "swing_trading",
+        "systematic_quant",
+        "derivatives_research",
+        "market_context",
+    )
     assert system.state == "populated"
     assert tuple(item.label for item in system.items[:11]) == MILESTONE_IDS
     assert len(system.items) == 14

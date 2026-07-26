@@ -5,12 +5,14 @@ import uuid
 from pathlib import Path
 from typing import Final, override
 
+from trading_agent.dashboard_agent_family import AGENT_FAMILY_REGISTRY
 from trading_agent.dashboard_market_calendar import project_market_calendar
 from trading_agent.dashboard_models_v2 import (
     CommandCenterV2,
     DashboardSnapshotV2,
     DataSourcesV2,
     ProjectionMetadataV2,
+    PublicAgentViewV2,
     TraceGraphV2,
     WorkspacesV2,
 )
@@ -88,7 +90,20 @@ def collect_dashboard_snapshot_v2(
     command = projections["command_center"].workspace
     sources = projections["data_sources"].workspace
     workspaces = WorkspacesV2(
-        command_center=CommandCenterV2(**command.model_dump(), agents=()),
+        command_center=CommandCenterV2(
+            **command.model_dump(),
+            agents=tuple(
+                PublicAgentViewV2(
+                    agent_id=family.family_id,
+                    label=family.family_id.replace("_", " ").title(),
+                    role=family.role,
+                    capabilities=family.capabilities,
+                    runtime_state="unavailable",
+                    trace_id=command.trace_id,
+                )
+                for family in AGENT_FAMILY_REGISTRY
+            ),
+        ),
         overview=projections["overview"].workspace,
         markets=projections["markets"].workspace,
         data_sources=DataSourcesV2(

@@ -14,6 +14,7 @@ from websockets.exceptions import WebSocketException
 import run_dashboard_publisher
 from trading_agent.dashboard_commands import InteractionPayload
 from trading_agent.dashboard_native_watch import watch_native_changes
+from trading_agent.dashboard_publisher_events import watch_roots
 from trading_agent.dashboard_relay import is_reconnectable_group, pairing_url, run_interaction
 
 
@@ -132,7 +133,8 @@ def test_publisher_uses_websocket_events_without_periodic_http_or_sleep() -> Non
     assert "post" not in called_names
     assert "websockets" in imported_roots
     assert "watchfiles" not in imported_roots
-    assert run_dashboard_publisher.watch_native_changes is watch_native_changes
+    assert run_dashboard_publisher.watch_output_events.__module__ == "trading_agent.dashboard_publisher_events"
+    assert watch_native_changes.__module__ == "trading_agent.dashboard_native_watch"
 
 
 def test_publisher_converts_dashboard_urls_to_publish_websockets() -> None:
@@ -163,7 +165,7 @@ def test_publisher_watches_account_ledger_without_periodic_broker_reads(
     ):
         (tmp_path / name).mkdir()
 
-    assert run_dashboard_publisher._watch_roots(tmp_path) == (
+    assert watch_roots(tmp_path) == (
         tmp_path / "live_sessions",
         tmp_path / "source_evidence",
         tmp_path / "experiment_control",
@@ -189,7 +191,7 @@ async def test_publisher_watch_roots_coalesce_one_mutation_each(
         "system",
     ):
         (tmp_path / name).mkdir()
-    roots = run_dashboard_publisher._watch_roots(tmp_path)
+    roots = watch_roots(tmp_path)
     socket = _SendSocket()
 
     async def mutate_all_roots() -> None:
