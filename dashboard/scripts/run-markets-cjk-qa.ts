@@ -5,6 +5,7 @@ import ky from "ky";
 import { chromium } from "playwright";
 import { dashboardSnapshotV2Schema } from "../src/schema_v2";
 import { marketsDataSourcesFixture } from "../tests/e2e/markets_data_sources_fixture";
+import { cjkFixtureGeneratedAt } from "./markets_cjk_fixture";
 
 type CjkFinding = {
   readonly width: number;
@@ -29,6 +30,8 @@ const output = requiredOption(values.output, "--output");
 const baseUrl = new URL(values["base-url"]).toString().replace(/\/$/, "");
 const ingestToken = requiredEnvironment("DASHBOARD_INGEST_TOKEN");
 const screenshotDirectory = join(dirname(output), "screenshots");
+const fixtureBaseEpochMs = Date.now();
+const viewportWidths = [375, 768, 1280] as const;
 await mkdir(screenshotDirectory, { recursive: true });
 
 const browser = await chromium.launch({ channel: "chrome", headless: true });
@@ -36,9 +39,9 @@ const page = await browser.newPage();
 const findings: CjkFinding[] = [];
 
 try {
-  for (const width of [375, 768, 1280]) {
+  for (const [ordinal, width] of viewportWidths.entries()) {
     await page.setViewportSize({ width, height: 900 });
-    await publishMarketsFixture(width);
+    await publishMarketsFixture(cjkFixtureGeneratedAt(fixtureBaseEpochMs, ordinal));
     await page.goto(`${baseUrl}/#markets`, { waitUntil: "networkidle" });
     const guidance = page.locator(".market-context-section .state-guidance");
     await guidance.waitFor({ state: "visible" });
@@ -83,9 +86,8 @@ try {
   await browser.close();
 }
 
-async function publishMarketsFixture(width: number): Promise<void> {
+async function publishMarketsFixture(generatedAt: string): Promise<void> {
   const fixture = dashboardSnapshotV2Schema.parse(marketsDataSourcesFixture());
-  const generatedAt = new Date(Date.now() + width).toISOString();
   await ky.post(`${baseUrl}/api/ingest`, {
     headers: { authorization: `Bearer ${ingestToken}` },
     json: { ...fixture, generated_at: generatedAt },

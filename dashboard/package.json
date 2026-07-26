@@ -6,7 +6,7 @@
     "build": "bun build src/client.ts --outdir public/assets --minify --sourcemap=external",
     "check": "bun run typecheck && bun run lint && bun run test",
     "dev": "bun --hot src/server.ts",
-    "lint": "biome check src tests",
+    "lint": "biome check src tests scripts/run-markets-cjk-qa.ts scripts/markets_cjk_fixture.ts",
     "start": "bun src/server.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
