@@ -126,6 +126,24 @@
     grid-row: 2;
   }
 
+  .market-metadata {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .market-withheld-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .market-withheld-row span {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .provider-table-viewport {
+    margin-inline: calc(var(--space-4) * -1);
+    padding-inline: var(--space-4);
+  }
+
   .mobile-launcher {
     z-index: 10;
     display: grid;

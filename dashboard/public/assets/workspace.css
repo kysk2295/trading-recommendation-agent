@@ -36,6 +36,122 @@
   min-inline-size: 0;
 }
 
+.market-summary,
+.data-sources-summary,
+.market-session-section,
+.market-context-section,
+.provider-capability-section {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 220px;
+}
+
+.market-session-section,
+.market-context-section,
+.provider-capability-section {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.market-session-section > h2,
+.market-context-section > h2,
+.provider-capability-section > h2 {
+  color: var(--text-primary);
+  font-size: var(--type-h2);
+}
+
+.market-session-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+  gap: var(--space-3);
+}
+
+.market-session-card {
+  display: grid;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-panel);
+  background: var(--surface-secondary);
+}
+
+.market-session-card h3,
+.market-session-value,
+.market-session-card time,
+.market-observed,
+.market-withheld-row span,
+.market-metadata code {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.market-session-value {
+  color: var(--text-primary);
+  font-size: var(--type-h2);
+}
+
+.market-session-card time,
+.market-observed,
+.provider-quote-notice {
+  color: var(--text-secondary);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--type-small);
+}
+
+.market-metadata {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  padding-block-start: var(--space-3);
+  border-block-start: 1px solid var(--border-subtle);
+}
+
+.market-metadata div {
+  display: grid;
+  gap: var(--space-1);
+  min-inline-size: 0;
+}
+
+.market-metadata dt {
+  color: var(--text-tertiary);
+  font-size: var(--type-small);
+}
+
+.market-withheld-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.5fr) auto;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-3);
+  border-block-start: 1px solid var(--border-subtle);
+}
+
+.market-withheld-row strong {
+  overflow-wrap: anywhere;
+}
+
+.provider-table-viewport td {
+  min-inline-size: 10rem;
+  vertical-align: top;
+}
+
+.provider-table-viewport th:first-child {
+  min-inline-size: 7rem;
+}
+
+.provider-quote-notice {
+  display: block;
+  max-inline-size: 34ch;
+  margin-block-start: var(--space-1);
+  overflow-wrap: anywhere;
+}
+
+.source-count {
+  color: var(--text-secondary);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--type-small);
+}
+
 .launcher-menu {
   position: fixed;
   z-index: 20;
