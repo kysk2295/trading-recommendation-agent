@@ -92,7 +92,7 @@ US systematic `regime_rotation` vertical은 고정 ETF 6종(`GLD`, `IEF`, `IWM`,
 
 **2026-07-24 KR source readiness·chain rollover 업데이트:** network·계좌·주문 없이 OpenDART·LS NWS·KIS secret-file contract를 source별로 판정하는 pre-open readiness CLI와, 이전 exact immutable 운영 bundle에서 원래 manifest 없이 다음 clean code SHA의 두 KR shadow version·policy를 승계하는 chain rollover를 추가했다. actual ledger에서 exact `e910816` version 두 건을 만들고 replay 신규 0건, bundle SHA `732b705cc35730f7e16319f94a65bc8daa919d8bad402275dc3bbacd3e47eac5`를 mode 600으로 확정했다. 2026-07-27 08:30 readiness와 08:55 registration→09:00 start→09:05 source cycle→15:32 finalizer chain은 각각 at-most-once label로 실행 대기 중이다. 7월 24일과 27일 모두 15:45에 primary receipt와 terminal·delivery·Reviewer·lifecycle exact replay를 검사하는 별도 post-session verifier도 예약했다. 이후 7월 24일 수동 readiness에서 OpenDART·LS NWS·KIS와 required terminal source 네 개가 모두 `ready`임을 확인했으며, 이는 7월 27일 실행에서 다시 검증한다. 전체 `3610 passed`, Ruff와 basedpyright `0/0`이 통과했다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-24-kr-source-readiness-chain-rollover-schedule-ko.md)에 있다.
 
-**2026-07-25 실시간 운영 대시보드 업데이트:** 한국·미국 시장 시계, forward 품질, 예약·실행 에이전트, 추천·신호 근거와 실제 연구 기반 상태만 노출하는 private Observatory를 Railway Postgres에 배포했다. 로컬 publisher는 15초마다 strict redacted snapshot을 전송하며 launchd가 재시작을 관리한다. 조회 키는 세션 저장소에만 머물고 수집 키와 분리되며 계좌 식별자·자격증명·로컬 경로·원시 provider payload는 API schema 밖에서 거절된다. 운영 주소는 [Trading Agent Observatory](https://observatory-production-3172.up.railway.app)이며 로컬 조회 키는 `~/.config/trading-agent/dashboard-view-token.txt`의 mode-600 파일에 있다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-25-realtime-operations-dashboard-ko.md)에 있다.
+**2026-07-25 실시간 운영 대시보드 업데이트:** 한국·미국 시장 시계, forward 품질, 예약·실행 에이전트, 추천·신호 근거, 실제 연구 기반과 확정 Paper 계좌 PnL을 노출하는 read-only Observatory를 Railway Postgres에 배포했다. 최초 로컬 publisher의 15초 HTTP 전송은 2026-07-26 비용 감사에서 중지하고, `live_sessions`·`experiment_control`·`lane_control` 파일 변경 때만 전송하는 인증 WebSocket 릴레이로 교체했다. 브라우저도 10초 GET을 제거하고 public WebSocket 이벤트만 수신하므로 유휴 HTTP/DB polling은 0회다. 운영 제어·질문·명령 경로는 없으며 계좌 식별자·자격증명·로컬 경로·원시 provider payload는 API schema 밖에서 거절된다. 운영 주소는 [Trading Agent Observatory](https://observatory-production-3172.up.railway.app)이며 공개 조회에는 키가 필요 없다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-25-realtime-operations-dashboard-ko.md)에 있다.
 
 **2026-07-26 공개 열람 대시보드 업데이트:** 운영 주소를 열면 접근키 입력 없이 Observatory가 즉시 표시되도록 snapshot GET과 화면을 public-read로 전환했다. publisher ingest는 기존 Bearer token과 strict redacted schema로 계속 보호한다. 데스크톱·태블릿·모바일 실제 화면과 키 없는 GET, 인증 없는 ingest `401`을 검증했다. 상세 근거는 [체크포인트](docs/checkpoints/2026-07-26-public-operations-dashboard-ko.md)에 있다.
 
@@ -1535,7 +1535,7 @@ trading-recommendation-agent/
 ├── scr_backtest/         KIS 분봉 저수준 어댑터
 ├── tests/                인증·최신성·인과성·추천 회귀 테스트
 ├── docs/                 설계·실데이터 연결·런타임 감사
-├── dashboard/            Railway용 private 실시간 운영 관제
+├── dashboard/            Railway용 public-read 실시간 운영 관제
 ├── examples/             공급자 독립 분봉 예시
 ├── artifacts/            검증된 실행 결과 표본
 ├── outputs/              새 실행 결과, Git 제외
