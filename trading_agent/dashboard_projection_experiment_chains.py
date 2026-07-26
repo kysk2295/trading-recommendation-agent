@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 from dataclasses import dataclass
-from itertools import pairwise
-from typing import assert_never
+from typing import Never, assert_never, cast
 
+from trading_agent.dashboard_projection_experiment_authority import safe_ref, strict_stages
 from trading_agent.dashboard_reviewer_lifecycle import ReviewerLifecycleAuthorityReader
 from trading_agent.experiment_ledger_models import TrialEventKind
 from trading_agent.experiment_ledger_store import (
@@ -134,7 +133,7 @@ def _chain(
         "source_ref": None,
         "hypothesis_ref": None,
         "dataset_sha": None,
-        "code_ref": _safe_ref(registration.code_version),
+        "code_ref": safe_ref(registration.code_version),
         "code_version": registration.code_version,
         "trial_ref": None,
         "terminal_ref": None,
@@ -201,7 +200,9 @@ def _chain(
                 "trial_started_at": events[0].event.occurred_at,
                 "terminal_at": terminal.event.occurred_at,
             }
-    if not _strict_stages(base, now):
+        case unreachable:
+            assert_never(cast(Never, unreachable))
+    if not strict_stages(base, now):
         return ExperimentChain(**base, blocker="timestamp_order_invalid")
     if terminal_ref is None:
         return ExperimentChain(**base, blocker="trial_terminal_missing")
@@ -223,7 +224,7 @@ def _chain(
         "observed_at": review.event.reviewed_at,
         "reviewed_at": review.event.reviewed_at,
     }
-    if not _strict_stages(base, now):
+    if not strict_stages(base, now):
         return ExperimentChain(**base, blocker="timestamp_order_invalid")
     lifecycles = tuple(
         lifecycle
@@ -238,35 +239,9 @@ def _chain(
         "observed_at": lifecycle.event.decided_at,
         "lifecycle_at": lifecycle.event.decided_at,
     }
-    if not _strict_stages(final, now):
+    if not strict_stages(final, now):
         return ExperimentChain(**final, blocker="timestamp_order_invalid")
     return ExperimentChain(
         **(final),
         blocker=None,
-    )
-
-
-def _safe_ref(value: str) -> str | None:
-    if len(value) == 40 and all(character in "0123456789abcdef" for character in value):
-        return hashlib.sha256(value.encode()).hexdigest()
-    return None
-
-
-def _strict_stages(values: dict[str, str | dt.datetime | None], now: dt.datetime) -> bool:
-    timestamps = tuple(
-        value
-        for key in (
-            "source_at",
-            "hypothesis_at",
-            "code_at",
-            "trial_at",
-            "trial_started_at",
-            "terminal_at",
-            "reviewed_at",
-            "lifecycle_at",
-        )
-        if isinstance((value := values[key]), dt.datetime)
-    )
-    return all(left < right for left, right in pairwise(timestamps)) and all(
-        timestamp <= now for timestamp in timestamps
     )

@@ -57,7 +57,7 @@ def _project(workspace: Workspace, outputs: Path, now: dt.datetime) -> Workspace
         UnsupportedLaneReviewSchemaError,
     ):
         return blocked_projection(workspace, now=now, state="corrupt", blocker_code=_invalid_lineage(workspace))
-    if any(chain.observed_at > now + dt.timedelta(minutes=5) for chain in chains):
+    if any(chain.observed_at > now for chain in chains):
         return blocked_projection(workspace, now=now, state="corrupt", blocker_code="research_future_observation")
     if not chains:
         return blocked_projection(workspace, now=now, state="blocked", blocker_code="source_card_missing")
