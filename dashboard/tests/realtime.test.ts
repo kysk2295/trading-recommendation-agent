@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { PairingTickets } from "../src/operator_auth";
 import { DashboardRealtimeHub, type RealtimePeer } from "../src/realtime";
 import { MemorySnapshotStore } from "../src/store";
+import { snapshotV2 } from "./snapshot_v2_fixture";
 
 const snapshot = {
   schema_version: 1,
@@ -79,17 +80,39 @@ describe("event-driven dashboard relay", () => {
 
     await hub.connectViewer(viewer);
     hub.connectPublisher(publisher);
-    await hub.handlePublisherMessage(publisher, JSON.stringify({ type: "snapshot", snapshot }));
+    await hub.handlePublisherMessage(
+      publisher,
+      JSON.stringify({ type: "snapshot", snapshot: snapshotV2 }),
+    );
 
     expect(viewer.messages.map((message) => JSON.parse(message))).toMatchObject([
       {
         type: "snapshot",
         snapshot: {
           schema_version: 2,
-          projection: { source_schema_version: 1 },
+          projection: { source_schema_version: 2 },
         },
       },
     ]);
+  });
+
+  test("rejects v1 publisher snapshots without overwriting canonical v2", async () => {
+    // Given: a relay with a current v2 snapshot and an active publisher.
+    const store = new MemorySnapshotStore();
+    const hub = new DashboardRealtimeHub(store);
+    const publisher = new FakePeer();
+    hub.connectPublisher(publisher);
+    await hub.handlePublisherMessage(
+      publisher,
+      JSON.stringify({ type: "snapshot", snapshot: snapshotV2 }),
+    );
+
+    // When: the publisher sends a legacy v1 snapshot.
+    await hub.handlePublisherMessage(publisher, JSON.stringify({ type: "snapshot", snapshot }));
+
+    // Then: the connection is rejected and canonical storage remains v2.
+    expect(publisher.closed).toEqual({ code: 1003, reason: "invalid_message" });
+    expect(JSON.stringify(await store.latest())).toBe(JSON.stringify(snapshotV2));
   });
 
   test("rejects invalid publisher messages without mutating the snapshot store", async () => {

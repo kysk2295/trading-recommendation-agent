@@ -10,12 +10,11 @@ const OPERATOR_TOKEN = "operator-token-with-adequate-length";
 
 describe("rolling snapshot storage", () => {
   test("retains a strict v1 rollback payload after v2 ingest", async () => {
-    // Given: a store populated through the v1 compatibility path.
+    // Given: an empty rolling store.
     const store = new MemorySnapshotStore();
     const app = createApp(store, INGEST_TOKEN, OPERATOR_TOKEN);
-    await ingest(app, snapshotV1);
 
-    // When: the publisher advances to v2.
+    // When: the publisher ingests canonical v2.
     await ingest(app, snapshotV2);
 
     // Then: the rollback location remains readable by the original v1 schema.
@@ -32,8 +31,8 @@ describe("rolling snapshot storage", () => {
     const delayed = await ingest(app, snapshotV1);
     const viewed = await app.request("/api/snapshot");
 
-    // Then: the stale write is rejected and v2 remains current.
-    expect(delayed.status).toBe(409);
+    // Then: v1 is rejected at the boundary and v2 remains current.
+    expect(delayed.status).toBe(400);
     expect(await viewed.json()).toEqual(snapshotV2);
   });
 
@@ -48,7 +47,7 @@ describe("rolling snapshot storage", () => {
     const delayed = await ingest(app, duplicateTimeV1);
 
     // Then: the v2 epoch wins deterministically.
-    expect(delayed.status).toBe(409);
+    expect(delayed.status).toBe(400);
   });
 
   test("rejects an equal instant expressed with a different offset", async () => {
@@ -62,7 +61,7 @@ describe("rolling snapshot storage", () => {
     const result = await ingest(app, sameInstantV1);
 
     // Then: lower-version v1 cannot win an equal-instant collision.
-    expect(result.status).toBe(409);
+    expect(result.status).toBe(400);
   });
 
   test("rejects an older instant whose offset string sorts later", async () => {
@@ -76,7 +75,7 @@ describe("rolling snapshot storage", () => {
     const result = await ingest(app, olderV1);
 
     // Then: instant ordering still rejects it.
-    expect(result.status).toBe(409);
+    expect(result.status).toBe(400);
   });
 });
 

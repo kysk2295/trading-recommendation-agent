@@ -10,12 +10,7 @@ import {
   setOperatorCookie,
 } from "./operator_auth";
 import { DashboardRealtimeHub } from "./realtime";
-import {
-  agentIdSchema,
-  dashboardSnapshotV1Schema,
-  interactionCreateSchema,
-  interactionSchema,
-} from "./schema";
+import { agentIdSchema, interactionCreateSchema, interactionSchema } from "./schema";
 import { parseAndNormalizeSnapshot } from "./snapshot_normalizer";
 import type { SnapshotStore } from "./store";
 
@@ -192,7 +187,7 @@ export function createApp(
         }
         throw error;
       }
-      const parsed = parseAndNormalizeSnapshot(payload, dashboardSnapshotV1Schema);
+      const parsed = parseAndNormalizeSnapshot(payload);
       if (!parsed.ok) {
         return context.json({ error: "invalid_snapshot" }, 400);
       }

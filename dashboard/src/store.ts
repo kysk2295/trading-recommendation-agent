@@ -18,7 +18,6 @@ import { dashboardSnapshotV1Schema, interactionSchema } from "./schema";
 import type { DashboardSnapshotV2 } from "./schema_v2";
 import { dashboardSnapshotV2Schema } from "./schema_v2";
 import type { NormalizedSnapshot } from "./snapshot_normalizer";
-import { parseAndNormalizeSnapshot } from "./snapshot_normalizer";
 import { type SnapshotSaveResult, saveSnapshotPair } from "./snapshot_pair_store";
 import { parseStoredInteractionPayloads } from "./stored_interaction_compat";
 
@@ -34,8 +33,6 @@ export interface SnapshotStore extends AgentTaskEventStore, DirectedJobEventStor
   ): Promise<Interaction | null>;
   listInteractions(): Promise<readonly Interaction[]>;
   pendingInteractions(): Promise<readonly Interaction[]>;
-  appendAgentTaskEvent(event: AutonomousTaskReceipt): Promise<boolean>;
-  listAgentTaskEvents(): Promise<readonly AutonomousTaskReceipt[]>;
 }
 
 export class MemorySnapshotStore implements SnapshotStore {
@@ -46,7 +43,7 @@ export class MemorySnapshotStore implements SnapshotStore {
 
   async save(snapshot: NormalizedSnapshot): Promise<SnapshotSaveResult> {
     let next = this.snapshot;
-    const result = await saveSnapshotPair(
+    return saveSnapshotPair(
       {
         lock: async () => {},
         readCanonical: async () => this.snapshot?.canonical ?? null,
@@ -59,16 +56,13 @@ export class MemorySnapshotStore implements SnapshotStore {
       },
       snapshot,
     );
-    return result;
   }
 
-  async latest(): Promise<DashboardSnapshotV2 | null> {
-    return this.snapshot?.canonical ?? null;
-  }
+  latest = (): Promise<DashboardSnapshotV2 | null> =>
+    Promise.resolve(this.snapshot?.canonical ?? null);
 
-  async latestV1(): Promise<DashboardSnapshotV1 | null> {
-    return this.snapshot?.rollbackV1 ?? null;
-  }
+  latestV1 = (): Promise<DashboardSnapshotV1 | null> =>
+    Promise.resolve(this.snapshot?.rollbackV1 ?? null);
 
   async createInteraction(interaction: Interaction): Promise<void> {
     this.interactions.push(interaction);
@@ -123,13 +117,7 @@ export class MemorySnapshotStore implements SnapshotStore {
   }
 }
 
-type SnapshotRow = {
-  readonly payload: unknown;
-};
-
-type InteractionRow = {
-  readonly payload: unknown;
-};
+type PayloadRow = { readonly payload: unknown };
 
 export class PostgresSnapshotStore implements SnapshotStore {
   private readonly sql: ReturnType<typeof postgres>;
@@ -143,7 +131,7 @@ export class PostgresSnapshotStore implements SnapshotStore {
       idle_timeout: 20,
       connect_timeout: 10,
     });
-    this.ready = this.initialize();
+    this.ready = initializeDashboardStore(this.sql);
     this.agentTaskEvents = new PostgresAgentTaskEventStore(this.sql, this.ready);
     this.directedJobEvents = new PostgresDirectedJobEventStore(this.sql, this.ready);
   }
@@ -157,7 +145,7 @@ export class PostgresSnapshotStore implements SnapshotStore {
             await transaction`SELECT pg_advisory_xact_lock(2026072602)`;
           },
           readCanonical: async () => {
-            const rows = await transaction<SnapshotRow[]>`
+            const rows = await transaction<PayloadRow[]>`
             SELECT payload FROM dashboard_snapshots_v2 WHERE singleton_id = 2
           `;
             const row = rows[0];
@@ -187,24 +175,16 @@ export class PostgresSnapshotStore implements SnapshotStore {
 
   async latest(): Promise<DashboardSnapshotV2 | null> {
     await this.ready;
-    const rows = await this.sql<SnapshotRow[]>`
+    const rows = await this.sql<PayloadRow[]>`
       SELECT payload FROM dashboard_snapshots_v2 WHERE singleton_id = 2
     `;
     const row = rows[0];
-    if (row !== undefined) {
-      return dashboardSnapshotV2Schema.parse(row.payload);
-    }
-    const legacy = await this.latestV1();
-    if (legacy === null) {
-      return null;
-    }
-    const normalized = parseAndNormalizeSnapshot(legacy, dashboardSnapshotV1Schema);
-    return normalized.ok ? normalized.value.canonical : null;
+    return row === undefined ? null : dashboardSnapshotV2Schema.parse(row.payload);
   }
 
   async latestV1(): Promise<DashboardSnapshotV1 | null> {
     await this.ready;
-    const rows = await this.sql<SnapshotRow[]>`
+    const rows = await this.sql<PayloadRow[]>`
       SELECT payload FROM dashboard_snapshots WHERE singleton_id = 1
     `;
     const row = rows[0];
@@ -249,7 +229,7 @@ export class PostgresSnapshotStore implements SnapshotStore {
 
   async listInteractions(): Promise<readonly Interaction[]> {
     await this.ready;
-    const rows = await this.sql<InteractionRow[]>`
+    const rows = await this.sql<PayloadRow[]>`
       SELECT payload
       FROM dashboard_interactions
       ORDER BY created_at DESC
@@ -260,7 +240,7 @@ export class PostgresSnapshotStore implements SnapshotStore {
 
   async pendingInteractions(): Promise<readonly Interaction[]> {
     await this.ready;
-    const rows = await this.sql<InteractionRow[]>`
+    const rows = await this.sql<PayloadRow[]>`
       SELECT payload
       FROM dashboard_interactions
       WHERE state IN ('queued', 'running')
@@ -288,14 +268,10 @@ export class PostgresSnapshotStore implements SnapshotStore {
 
   private async interaction(id: string): Promise<Interaction | null> {
     await this.ready;
-    const rows = await this.sql<InteractionRow[]>`
+    const rows = await this.sql<PayloadRow[]>`
       SELECT payload FROM dashboard_interactions WHERE id = ${id}
     `;
     const row = rows[0];
     return row === undefined ? null : (parseStoredInteractionPayloads([row.payload])[0] ?? null);
-  }
-
-  private async initialize(): Promise<void> {
-    await initializeDashboardStore(this.sql);
   }
 }

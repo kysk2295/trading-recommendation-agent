@@ -3,6 +3,7 @@ import { createApp } from "../src/app";
 import { PairingTickets } from "../src/operator_auth";
 import { dashboardSnapshotV1Schema } from "../src/schema";
 import { MemorySnapshotStore } from "../src/store";
+import { snapshotV2 } from "./snapshot_v2_fixture";
 
 const INGEST_TOKEN = "ingest-token-with-adequate-length";
 const OPERATOR_TOKEN = "operator-token-with-adequate-length";
@@ -133,17 +134,35 @@ describe("dashboard API", () => {
         authorization: `Bearer ${INGEST_TOKEN}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify(snapshot),
+      body: JSON.stringify(snapshotV2),
     });
     const viewed = await app.request("/api/snapshot");
 
     expect(ingested.status).toBe(202);
     expect(viewed.status).toBe(200);
-    expect(await viewed.json()).toMatchObject({
-      schema_version: 2,
-      projection: { source_schema_version: 1 },
+    expect(await viewed.json()).toEqual(snapshotV2);
+    expect(dashboardSnapshotV1Schema.safeParse(await store.latestV1()).success).toBe(true);
+  });
+
+  test("rejects v1 without creating canonical or rollback state", async () => {
+    // Given: an empty strict-v2 ingest store.
+    const store = new MemorySnapshotStore();
+    const app = createApp(store, INGEST_TOKEN, OPERATOR_TOKEN);
+
+    // When: a valid legacy v1 payload is submitted.
+    const rejected = await app.request("/api/ingest", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${INGEST_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(snapshot),
     });
-    expect(await store.latestV1()).toEqual(dashboardSnapshotV1Schema.parse(snapshot));
+
+    // Then: the request fails without creating either singleton.
+    expect(rejected.status).toBe(400);
+    expect(await store.latest()).toBeNull();
+    expect(await store.latestV1()).toBeNull();
   });
 
   test("rejects fields outside the public schema", async () => {

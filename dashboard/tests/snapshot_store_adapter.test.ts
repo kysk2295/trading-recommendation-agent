@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import type { DashboardSnapshotV1 } from "../src/schema";
-import { dashboardSnapshotV1Schema } from "../src/schema";
 import type { DashboardSnapshotV2 } from "../src/schema_v2";
 import { parseAndNormalizeSnapshot } from "../src/snapshot_normalizer";
 import { type SnapshotPairTransaction, saveSnapshotPair } from "../src/snapshot_pair_store";
@@ -76,7 +75,7 @@ async function runTransaction(
 
 describe("snapshot pair transaction adapter", () => {
   test("locks before reading and stages both versions in one transaction", async () => {
-    const normalized = parseAndNormalizeSnapshot(snapshotV2, dashboardSnapshotV1Schema);
+    const normalized = parseAndNormalizeSnapshot(snapshotV2);
     expect(normalized.ok).toBe(true);
     if (!normalized.ok) return;
     const transaction = new FakeTransaction(null);
@@ -90,7 +89,7 @@ describe("snapshot pair transaction adapter", () => {
   });
 
   test("surfaces paired-write failure before a transaction can commit", async () => {
-    const normalized = parseAndNormalizeSnapshot(snapshotV2, dashboardSnapshotV1Schema);
+    const normalized = parseAndNormalizeSnapshot(snapshotV2);
     expect(normalized.ok).toBe(true);
     if (!normalized.ok) return;
     const transaction = new FakeTransaction(null, true);

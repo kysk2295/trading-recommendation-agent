@@ -5,14 +5,11 @@ import { snapshotV1 } from "./snapshot_v1_fixture";
 import { snapshotV2 } from "./snapshot_v2_fixture";
 
 describe("snapshot compatibility projections", () => {
-  test("preserves the original v1 payload exactly as the rollback artifact", () => {
-    const normalized = parseAndNormalizeSnapshot(snapshotV1, dashboardSnapshotV1Schema);
+  test("rejects strict v1 while its original rollback parser remains available", () => {
+    const normalized = parseAndNormalizeSnapshot(snapshotV1);
 
-    expect(normalized.ok).toBe(true);
-    if (!normalized.ok) return;
-    expect(normalized.value.inputVersion).toBe(1);
-    expect(JSON.stringify(normalized.value.rollbackV1)).toBe(JSON.stringify(snapshotV1));
-    expect(normalized.value.canonical.projection.source_schema_version).toBe(1);
+    expect(normalized).toEqual({ ok: false, reason: "invalid_snapshot" });
+    expect(dashboardSnapshotV1Schema.safeParse(snapshotV1).success).toBe(true);
   });
 
   test("down-projects canonical v2 with exact deterministic v1 semantics", () => {

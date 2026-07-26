@@ -3,7 +3,6 @@ import { PairingTickets } from "./operator_auth";
 import type { Interaction } from "./schema";
 import {
   autonomousTaskEventSchema,
-  dashboardSnapshotV1Schema,
   directedJobEventSchema,
   interactionStateSchema,
 } from "./schema";
@@ -110,7 +109,7 @@ export class DashboardRealtimeHub {
     switch (payload.type) {
       case "snapshot":
         {
-          const normalized = parseAndNormalizeSnapshot(payload.snapshot, dashboardSnapshotV1Schema);
+          const normalized = parseAndNormalizeSnapshot(payload.snapshot);
           if (!normalized.ok) {
             peer.close(1003, "invalid_message");
             return;

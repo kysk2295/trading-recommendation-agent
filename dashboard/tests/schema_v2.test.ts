@@ -10,12 +10,21 @@ const INGEST_TOKEN = "ingest-token-with-adequate-length";
 const OPERATOR_TOKEN = "operator-token-with-adequate-length";
 
 describe("snapshot v2 compatibility boundary", () => {
-  test("accepts v1 and returns canonical v2 when the compatibility rollout is active", async () => {
-    // Given: a compatibility server and a current v1 publisher payload.
-    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN, OPERATOR_TOKEN);
+  test("rejects v1 without overwriting the canonical v2 snapshot", async () => {
+    // Given: a server with a current canonical v2 snapshot.
+    const store = new MemorySnapshotStore();
+    const app = createApp(store, INGEST_TOKEN, OPERATOR_TOKEN);
+    await app.request("/api/ingest", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${INGEST_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(snapshotV2),
+    });
 
-    // When: the v1 payload is ingested and the public snapshot is read.
-    const accepted = await app.request("/api/ingest", {
+    // When: a legacy v1 payload reaches the strict v2 ingest boundary.
+    const rejected = await app.request("/api/ingest", {
       method: "POST",
       headers: {
         authorization: `Bearer ${INGEST_TOKEN}`,
@@ -25,13 +34,11 @@ describe("snapshot v2 compatibility boundary", () => {
     });
     const viewed = await app.request("/api/snapshot");
 
-    // Then: compatibility input is accepted but the viewer contract is canonical v2.
-    expect(accepted.status).toBe(202);
+    // Then: v1 is rejected and neither canonical nor rollback storage is overwritten.
+    expect(rejected.status).toBe(400);
     expect(viewed.status).toBe(200);
-    expect(await viewed.json()).toMatchObject({
-      schema_version: 2,
-      projection: { source_schema_version: 1 },
-    });
+    expect(await viewed.json()).toEqual(snapshotV2);
+    expect(await store.latestV1()).not.toEqual(snapshotV1);
   });
 
   test("parses a strict bounded v2 fixture", () => {
