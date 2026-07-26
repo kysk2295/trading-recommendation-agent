@@ -83,7 +83,25 @@ def append_daily_snapshot(
 ) -> None:
     registry = LaneRegistryStore(outputs / "lane_control" / "lane_registry.sqlite3")
     scope = CURRENT_INTRADAY_EXPERIMENT_SCOPES[0]
-    snapshot = LaneDailySnapshot(
+    snapshot = finalized_snapshot(
+        complete=complete,
+        source_generation=source_generation,
+        source_sha256=source_sha256,
+    )
+    with registry.writer() as writer:
+        _ = writer.register_manifest(INTRADAY_MANIFEST)
+        _ = writer.register_experiment_scope(scope)
+        assert writer.append_daily_snapshot(snapshot)
+
+
+def finalized_snapshot(
+    *,
+    complete: bool = True,
+    source_generation: int = 42,
+    source_sha256: str = "a" * 64,
+) -> LaneDailySnapshot:
+    scope = CURRENT_INTRADAY_EXPERIMENT_SCOPES[0]
+    return LaneDailySnapshot(
         lane_id=LaneId.INTRADAY_MOMENTUM,
         session_date=dt.date(2026, 7, 25),
         finalized_at=FINALIZED_AT,
@@ -102,10 +120,6 @@ def append_daily_snapshot(
         open_order_count=0,
         open_position_count=0,
     )
-    with registry.writer() as writer:
-        _ = writer.register_manifest(INTRADAY_MANIFEST)
-        _ = writer.register_experiment_scope(scope)
-        assert writer.append_daily_snapshot(snapshot)
 
 
 def safety_plan(phase: PaperSafetyPhase, observed_at: dt.datetime) -> PaperSafetyPlan:

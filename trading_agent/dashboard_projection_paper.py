@@ -17,6 +17,7 @@ from trading_agent.dashboard_projection_common import (
     WorkspaceProjection,
     blocked_projection,
 )
+from trading_agent.lane_contract_keys import lane_daily_snapshot_key
 from trading_agent.lane_policy_models import LaneId
 from trading_agent.lane_registry_store import (
     InvalidLaneRegistrySourceError,
@@ -35,11 +36,14 @@ def project_finalized_paper(outputs: Path, *, now: dt.datetime) -> WorkspaceProj
             blocker_code="paper_source_wal_active",
         )
     try:
-        snapshots = tuple(
-            item.snapshot
+        stored_snapshots = tuple(
+            item
             for item in LaneRegistryReader(path).daily_snapshots()
             if item.snapshot.lane_id is LaneId.INTRADAY_MOMENTUM
         )
+        if any(item.snapshot_key != lane_daily_snapshot_key(item.snapshot) for item in stored_snapshots):
+            raise ValueError
+        snapshots = tuple(item.snapshot for item in stored_snapshots)
     except (
         InvalidLaneRegistrySourceError,
         OSError,
@@ -112,8 +116,8 @@ def project_finalized_paper(outputs: Path, *, now: dt.datetime) -> WorkspaceProj
             item_id="paper.positions",
             kind="paper",
             label="Finalized positions",
-            state="empty",
-            value="0 records",
+            state="empty" if latest.open_position_count == 0 else item_state,
+            value=f"{latest.open_position_count} records",
             observed_at=latest.finalized_at,
             trace_id=source_id,
         ),
@@ -121,8 +125,8 @@ def project_finalized_paper(outputs: Path, *, now: dt.datetime) -> WorkspaceProj
             item_id="paper.orders",
             kind="paper",
             label="Finalized open orders",
-            state="empty",
-            value="0 records",
+            state="empty" if latest.open_order_count == 0 else item_state,
+            value=f"{latest.open_order_count} records",
             observed_at=latest.finalized_at,
             trace_id=source_id,
         ),

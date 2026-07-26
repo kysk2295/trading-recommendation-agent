@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
+import sqlite3
 from pathlib import Path
 from typing import Literal
 
@@ -11,9 +13,12 @@ from tests.dashboard_paper_projection_fixtures import (
     MissingStage,
     append_daily_snapshot,
     append_finalized_lifecycle,
+    finalized_snapshot,
     safety_plan,
 )
 from trading_agent.dashboard_projection_paper import project_finalized_paper
+from trading_agent.lane_contract_keys import lane_daily_snapshot_key
+from trading_agent.lane_registry_store import LaneRegistryReader, StoredLaneDailySnapshot
 from trading_agent.paper_safety_models import PaperSafetyPhase
 
 NOW = dt.datetime(2026, 7, 26, 3, tzinfo=dt.UTC)
@@ -36,6 +41,96 @@ def test_finalized_zero_positions_and_orders_are_valid_empty_sections(tmp_path: 
     assert items["paper.orders"].value == "0 records"
     assert items["paper.lifecycle.eod_flat"].value == "finalized"
     assert all(node.kind == "paper_receipt" for node in projection.nodes if node.node_id.endswith("finalized"))
+
+
+def test_finalized_nonzero_positions_and_orders_preserve_authoritative_counts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given an exact keyed finalized snapshot with nonzero exposure counts
+    outputs = tmp_path / "outputs"
+    store = append_finalized_lifecycle(outputs)
+    identity = store.ledger_snapshot_identity()
+    snapshot = finalized_snapshot(
+        source_generation=identity.generation,
+        source_sha256=identity.sha256,
+    )
+    nonzero = snapshot.model_copy(update={"open_position_count": 2, "open_order_count": 3})
+    authoritative = StoredLaneDailySnapshot(
+        lane_daily_snapshot_key(nonzero),
+        nonzero,
+    )
+    monkeypatch.setattr(
+        LaneRegistryReader,
+        "daily_snapshots",
+        lambda _reader: (authoritative,),
+    )
+
+    # When the read-only Paper projection renders finalized counts
+    projection = project_finalized_paper(outputs, now=NOW)
+
+    # Then it displays the exact nonzero values instead of fabricating zero
+    items = {item.item_id: item for item in projection.workspace.items}
+    assert items["paper.positions"].state == "populated"
+    assert items["paper.positions"].value == "2 records"
+    assert items["paper.orders"].state == "populated"
+    assert items["paper.orders"].value == "3 records"
+
+
+def test_finalized_count_payload_must_match_immutable_snapshot_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given exposure counts changed without changing the finalized snapshot key
+    outputs = tmp_path / "outputs"
+    store = append_finalized_lifecycle(outputs)
+    identity = store.ledger_snapshot_identity()
+    snapshot = finalized_snapshot(
+        source_generation=identity.generation,
+        source_sha256=identity.sha256,
+    )
+    mismatched = StoredLaneDailySnapshot(
+        lane_daily_snapshot_key(snapshot),
+        snapshot.model_copy(update={"open_position_count": 2}),
+    )
+    monkeypatch.setattr(
+        LaneRegistryReader,
+        "daily_snapshots",
+        lambda _reader: (mismatched,),
+    )
+
+    # When the Paper projection verifies the immutable count authority
+    projection = project_finalized_paper(outputs, now=NOW)
+
+    # Then the mismatch fails closed and emits no fabricated counts
+    assert projection.workspace.state == "corrupt"
+    assert projection.workspace.blocker_code == "paper_finalized_ledger_invalid"
+    assert projection.workspace.items == ()
+
+
+def test_finalized_snapshot_missing_count_fails_closed(tmp_path: Path) -> None:
+    # Given a persisted finalized snapshot whose position count is missing
+    outputs = tmp_path / "outputs"
+    append_finalized_lifecycle(outputs)
+    path = outputs / "lane_control" / "lane_registry.sqlite3"
+    with sqlite3.connect(path) as connection:
+        payload = json.loads(connection.execute("SELECT payload_json FROM lane_daily_snapshots").fetchone()[0])
+        del payload["open_position_count"]
+        _ = connection.execute("DROP TRIGGER lane_daily_snapshots_no_update")
+        _ = connection.execute(
+            "UPDATE lane_daily_snapshots SET payload_json = ?",
+            (json.dumps(payload),),
+        )
+        connection.commit()
+        _ = connection.execute("PRAGMA journal_mode = DELETE").fetchone()
+
+    # When the Paper projection reads the malformed authority
+    projection = project_finalized_paper(outputs, now=NOW)
+
+    # Then validation fails closed before any count is emitted
+    assert projection.workspace.state == "corrupt"
+    assert projection.workspace.blocker_code == "paper_finalized_ledger_invalid"
+    assert projection.workspace.items == ()
 
 
 def test_incomplete_paper_verification_never_projects_values(tmp_path: Path) -> None:
