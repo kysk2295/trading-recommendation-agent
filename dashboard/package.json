@@ -19,8 +19,10 @@
     "zod": "^4.1.5"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@biomejs/biome": "^2.2.2",
     "@types/bun": "^1.2.21",
+    "playwright": "^1.62.0",
     "typescript": "^5.9.2"
   }
 }

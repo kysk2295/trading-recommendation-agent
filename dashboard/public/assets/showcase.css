@@ -335,7 +335,7 @@ summary:focus-visible,
   overflow-wrap: anywhere;
 }
 
-.metric-block dl > div {
+.metric-block .metric-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;

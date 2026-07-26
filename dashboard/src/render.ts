@@ -233,7 +233,9 @@ function renderBlocker(code: string): HTMLElement {
 
 function metadataGroup(label: string, value: HTMLElement): HTMLDivElement {
   const group = document.createElement("div");
-  group.append(textElement("dt", label), value);
+  const description = document.createElement("dd");
+  description.append(value);
+  group.append(textElement("dt", label), description);
   return group;
 }
 

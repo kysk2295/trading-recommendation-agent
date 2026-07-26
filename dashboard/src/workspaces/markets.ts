@@ -172,7 +172,9 @@ function renderMetadata(
     ["Blocker", textElement("code", blockerCode ?? "없음")],
   ] as const) {
     const group = document.createElement("div");
-    group.append(textElement("dt", label), value);
+    const description = document.createElement("dd");
+    description.append(value);
+    group.append(textElement("dt", label), description);
     metadata.append(group);
   }
   return metadata;

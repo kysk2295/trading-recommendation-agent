@@ -108,6 +108,7 @@ export class AgentWorkspace {
   private renderFamilies(): HTMLElement {
     const region = document.createElement("div");
     region.className = "command-family-selector";
+    region.setAttribute("role", "group");
     region.setAttribute("aria-label", "연구 에이전트 가족");
     for (const agentId of agentIds) {
       const [label, scope] = agentLabels[agentId];
