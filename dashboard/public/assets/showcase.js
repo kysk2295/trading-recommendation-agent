@@ -11,6 +11,44 @@ const drawer = document.querySelector(".trace-drawer");
 const state = document.querySelector("#trace-state");
 const summary = document.querySelector("#trace-summary");
 const terminal = document.querySelector("#trace-terminal");
+const traceTitle = document.querySelector("#trace-title");
+let traceInvoker = null;
+
+function focusTraceControl(event) {
+  if (event.key !== "Tab") return;
+
+  const controls = [
+    ...drawer.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ];
+  if (controls.length === 0) {
+    event.preventDefault();
+    return;
+  }
+
+  const first = controls[0];
+  const last = controls.at(-1);
+  const active = document.activeElement;
+  if (event.shiftKey && (active === first || !controls.includes(active))) {
+    event.preventDefault();
+    last.focus();
+  }
+  if (!event.shiftKey && (active === last || !controls.includes(active))) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+drawer.addEventListener("keydown", focusTraceControl);
+drawer.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  drawer.close();
+});
+drawer.addEventListener("close", () => {
+  traceInvoker?.focus();
+  traceInvoker = null;
+});
 
 document.addEventListener("click", (event) => {
   const trigger = event.target.closest(".trace-trigger");
@@ -24,5 +62,7 @@ document.addEventListener("click", (event) => {
   terminal.textContent = ["blocked", "corrupt", "unavailable"].includes(value)
     ? "Blocker terminal"
     : "Reviewer decision";
+  traceInvoker = trigger;
   drawer.showModal();
+  traceTitle.focus();
 });
