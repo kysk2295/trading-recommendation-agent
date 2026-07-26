@@ -46,9 +46,15 @@ async def run_interaction(
             worktree=worktree,
             state_root=state_root,
             source_evidence_root=source_evidence_root,
+            directed_event_sink=lambda event: send_payload(
+                socket,
+                event.model_dump_json(),
+                send_lock,
+            ),
         )
-        for event in execution.directed_events:
-            await send_payload(socket, event.model_dump_json(), send_lock)
+        if not execution.process_started:
+            for event in execution.directed_events:
+                await send_payload(socket, event.model_dump_json(), send_lock)
         await send_result(socket, execution.result, send_lock)
 
 

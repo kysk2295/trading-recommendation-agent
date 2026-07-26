@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import datetime as dt
 import json
+import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -13,6 +14,10 @@ from websockets.exceptions import WebSocketException
 
 import run_dashboard_publisher
 from trading_agent.dashboard_commands import InteractionPayload
+from trading_agent.dashboard_directed_research import AuthoritativeDirectedResearchBroker
+from trading_agent.dashboard_directed_research_models import (
+    DirectedResearchReceipt,
+)
 from trading_agent.dashboard_native_watch import watch_native_changes
 from trading_agent.dashboard_publisher_events import watch_roots
 from trading_agent.dashboard_relay import is_reconnectable_group, pairing_url, run_interaction
@@ -68,8 +73,7 @@ def test_dashboard_conversation_reset_help_bad_and_happy_path(tmp_path: Path) ->
 def test_dashboard_publisher_rejects_non_https_remote_url(tmp_path: Path) -> None:
     credentials = tmp_path / "dashboard.env"
     credentials.write_text(
-        "DASHBOARD_URL=http://railway.example\n"
-        "DASHBOARD_INGEST_TOKEN=token-with-adequate-length-123\n",
+        "DASHBOARD_URL=http://railway.example\nDASHBOARD_INGEST_TOKEN=token-with-adequate-length-123\n",
         encoding="utf-8",
     )
     credentials.chmod(0o600)
@@ -111,8 +115,7 @@ def test_dashboard_publisher_dry_run_emits_canonical_v2_json(tmp_path: Path) -> 
     receipt.chmod(0o600)
     credentials = tmp_path / "dashboard.env"
     credentials.write_text(
-        "DASHBOARD_URL=https://example.test\n"
-        "DASHBOARD_INGEST_TOKEN=fixture-value-with-adequate-length\n",
+        "DASHBOARD_URL=https://example.test\nDASHBOARD_INGEST_TOKEN=fixture-value-with-adequate-length\n",
         encoding="utf-8",
     )
     credentials.chmod(0o600)
@@ -151,9 +154,7 @@ def test_publisher_uses_websocket_events_without_periodic_http_or_sleep() -> Non
         )
     }
     called_names = {
-        node.func.attr
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        node.func.attr for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     }
 
     assert "httpx2" not in imported_roots
@@ -341,3 +342,104 @@ async def test_publisher_reports_running_then_terminal_command_state(tmp_path: P
 
     states = [json.loads(message)["state"] for message in socket.messages]
     assert states == ["running", "completed"]
+
+
+@pytest.mark.anyio
+async def test_directed_relay_streams_persisted_progress_before_blocked_broker_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: Hermes yields a strict plan and the authoritative broker blocks mid-step
+    socket = _SendSocket()
+    started = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def blocked_execute(
+        _broker: AuthoritativeDirectedResearchBroker,
+        operation: str,
+        family_id: str,
+    ) -> bytes:
+        nonlocal calls
+        del family_id
+        calls += 1
+        started.set()
+        if not release.wait(timeout=5):
+            raise TimeoutError
+        return (
+            DirectedResearchReceipt(
+                operation=operation,
+                terminal="completed",
+                domain_effects=1,
+                evidence_sha256s=("a" * 64,),
+                result_sha256="b" * 64,
+                summary="authoritative broker completed",
+            )
+            .model_dump_json()
+            .encode()
+        )
+
+    monkeypatch.setattr(AuthoritativeDirectedResearchBroker, "execute", blocked_execute)
+    hermes = tmp_path / "fake-directed-hermes"
+    hermes.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "plan = json.dumps({'schema_version':1,'operation':'hypothesis','intent':'bounded'})\n"
+        "print(json.dumps({'event':'complete','text':plan,"
+        "'session_id':'session-directed-relay-001','failed':False,'error':None}))\n"
+    )
+    hermes.chmod(0o700)
+    interaction = InteractionPayload.model_validate(
+        {
+            "id": "019c0014-f0f5-7000-8000-000000000020",
+            "agent_id": "opportunity_manager",
+            "mode": "hypothesis",
+            "command": "가설을 등록해줘",
+            "state": "queued",
+            "response": None,
+            "created_at": "2026-07-26T04:00:00Z",
+            "updated_at": "2026-07-26T04:00:00Z",
+        }
+    )
+    state = tmp_path / "interactive-state"
+    arguments = (
+        socket,
+        interaction,
+        anyio.Lock(),
+        anyio.CapacityLimiter(1),
+        hermes,
+        tmp_path,
+        state,
+        tmp_path,
+    )
+
+    # When: the relay runs while the broker remains blocked
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(run_interaction, *arguments)
+        with anyio.fail_after(5):
+            while not started.is_set() or len(socket.messages) < 2:
+                await anyio.sleep(0.01)
+        before_release = [json.loads(message) for message in socket.messages]
+        release.set()
+
+    # Then: progress arrived and persisted first, terminal evidence/result followed, replay did no work
+    assert [item.get("kind") for item in before_release] == [None, "progress"]
+    assert all(item.get("kind") != "result" for item in before_release)
+    event_log = (state / "directed-jobs" / interaction.id / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    assert [json.loads(line)["kind"] for line in event_log] == [
+        "progress",
+        "evidence",
+        "result",
+    ]
+    replay_start = len(socket.messages)
+    await run_interaction(*arguments)
+    replayed = [json.loads(message) for message in socket.messages[replay_start:]]
+    assert calls == 1
+    assert [item.get("kind") for item in replayed] == [
+        None,
+        "progress",
+        "evidence",
+        "result",
+        None,
+    ]
+    assert replayed[-1]["state"] == "completed"
