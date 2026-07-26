@@ -7,14 +7,11 @@ from typing import Literal, assert_never
 
 from trading_agent.dashboard_models_v2 import (
     FreshnessV2,
-    SourceStateName,
     SourceStateV2,
     TraceEdgeV2,
     TraceNodeV2,
-    WorkspaceItemV2,
 )
 from trading_agent.dashboard_projection_receipts import (
-    MAX_ITEM_COUNT,
     FailureReason,
     ReceiptRead,
     ReceiptSourceFailure,
@@ -132,50 +129,8 @@ def receipt_projection(
                     state=blocked_state,
                     blocker_code=blocked.blocker_code or f"{name}_receipt_blocked",
                 )
-            source_id = f"trace.{name}.source"
-            terminal_id = f"trace.{name}.terminal"
-            age = max(0, int((now - observed_at).total_seconds()))
-            stale = age > 7 * 86_400
-            projected_receipts = tuple(receipt for receipt in receipts if receipt.state != "empty")
-            items = tuple(
-                WorkspaceItemV2(
-                    item_id=receipt.item_id,
-                    kind=receipt.kind,
-                    label=receipt.label,
-                    state="stale" if stale else receipt.state,
-                    value=receipt.value,
-                    observed_at=receipt.observed_at,
-                    trace_id=source_id,
-                )
-                for receipt in projected_receipts[:MAX_ITEM_COUNT]
-            )
-            total = len(projected_receipts)
-            state = _aggregate_state(tuple(item.state for item in items), stale=stale)
-            terminal_kind = _terminal_kind(name, receipts[0].terminal_kind)
-            nodes = (
-                _node(source_id, "source_receipt", name, observed_at, safe_ref, "accepted"),
-                _node(terminal_id, terminal_kind, name, observed_at, safe_ref, "accepted"),
-            )
-            return WorkspaceProjection(
-                workspace=SourceStateV2(
-                    state=state,
-                    observed_at=observed_at,
-                    freshness=FreshnessV2(
-                        policy_id=f"{name}-receipt-v2",
-                        age_seconds=min(age, 31_536_000),
-                        as_of=now,
-                    ),
-                    blocker_code=None,
-                    summary=f"{name} projected from accepted receipts",
-                    total_count=total,
-                    projected_count=len(items),
-                    truncated=total > len(items),
-                    trace_id=source_id,
-                    items=items,
-                ),
-                nodes=nodes,
-                edges=(TraceEdgeV2(from_node_id=source_id, to_node_id=terminal_id, kind="derived_from"),),
-            )
+            _ = observed_at, safe_ref
+            return missing_projection(name, now)
         case unreachable:
             assert_never(unreachable)
 
@@ -198,30 +153,6 @@ def _failure_state(
             return "corrupt", "forbidden_content"
         case unreachable:
             assert_never(unreachable)
-
-
-def _aggregate_state(states: tuple[SourceStateName, ...], *, stale: bool) -> SourceStateName:
-    if stale:
-        return "stale"
-    for candidate in ("corrupt", "error", "blocked", "unavailable", "stale", "populated"):
-        if candidate in states:
-            return candidate
-    return "empty"
-
-
-def _terminal_kind(name: WorkspaceName, requested: TerminalKind) -> TerminalKind:
-    allowed: dict[WorkspaceName, tuple[TerminalKind, ...]] = {
-        "command_center": ("process_receipt",),
-        "overview": ("source_receipt",),
-        "markets": ("source_receipt", "reviewer_decision"),
-        "data_sources": ("source_receipt", "reviewer_decision"),
-        "research": ("reviewer_decision",),
-        "strategies": ("reviewer_decision", "lifecycle_decision"),
-        "derivatives": ("source_receipt", "reviewer_decision"),
-        "paper": ("paper_receipt",),
-        "system": ("reviewer_decision", "process_receipt", "deployment_receipt"),
-    }
-    return requested if requested in allowed[name] else allowed[name][0]
 
 
 def _node(

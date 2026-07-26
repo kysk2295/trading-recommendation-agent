@@ -38,8 +38,8 @@ def test_v2_snapshot_reports_all_missing_authorities_section_locally(tmp_path: P
         "paper",
         "system",
     }
-    assert all(workspace.state == "unavailable" for _, workspace in snapshot.workspaces)
-    assert len({workspace.blocker_code for _, workspace in snapshot.workspaces}) == 9
+    assert all(workspace.state in {"blocked", "unavailable"} for _, workspace in snapshot.workspaces)
+    assert all(workspace.blocker_code is not None for _, workspace in snapshot.workspaces)
     snapshot.model_validate_json(snapshot.model_dump_json())
 
 
@@ -87,23 +87,11 @@ def test_v2_snapshot_projects_finalized_paper_values_and_sha(tmp_path: Path) -> 
     assert any(node.safe_ref == "a" * 64 and node.kind == "paper_receipt" for node in snapshot.traces.nodes)
 
 
-@pytest.mark.parametrize(
-    ("mutation", "state", "blocker"),
-    [
-        ("malformed", "corrupt", "research_receipt_invalid"),
-        ("permissions", "corrupt", "research_source_permissions_invalid"),
-        ("future", "corrupt", "research_future_observation"),
-        ("mixed", "corrupt", "research_mixed_snapshot_epoch"),
-        ("stale", "stale", None),
-    ],
-)
-def test_v2_receipt_reader_distinguishes_hostile_states(
-    tmp_path: Path,
-    mutation: str,
-    state: str,
-    blocker: str | None,
+@pytest.mark.parametrize("mutation", ["malformed", "permissions", "future", "mixed", "stale"])
+def test_v2_generic_receipt_never_controls_research_state(
+    tmp_path: Path, mutation: str
 ) -> None:
-    # Given one hostile or stale append-only research receipt
+    # Given one hostile, stale, or future generic research receipt
     outputs = tmp_path / "outputs"
     root = outputs / "experiment_control"
     root.mkdir(parents=True)
@@ -129,11 +117,11 @@ def test_v2_receipt_reader_distinguishes_hostile_states(
     # When the source is projected
     snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW)
 
-    # Then only research reports the exact canonical state
+    # Then the authoritative experiment ledger remains the only source of truth
     research = snapshot.workspaces.research
-    assert research.state == state
-    assert research.blocker_code == blocker
-    assert snapshot.workspaces.strategies.blocker_code == "strategies_authority_missing"
+    assert research.state == "unavailable"
+    assert research.blocker_code == "research_catalog_missing"
+    assert research.items == ()
 
 
 def test_v2_receipts_are_bounded_and_reject_leakage(tmp_path: Path) -> None:
@@ -153,15 +141,15 @@ def test_v2_receipts_are_bounded_and_reject_leakage(tmp_path: Path) -> None:
     # When the source is projected
     snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW)
 
-    # Then the hostile source fails closed without leaking the canary
+    # Then the generic source is ignored without leaking the canary
     research = snapshot.workspaces.research
-    assert research.state == "corrupt"
-    assert research.blocker_code == "research_forbidden_content"
+    assert research.state == "unavailable"
+    assert research.blocker_code == "research_catalog_missing"
     assert "canary" not in snapshot.model_dump_json().lower()
 
 
-def test_v2_receipts_preserve_valid_empty_and_cap_populated_rows(tmp_path: Path) -> None:
-    # Given accepted empty and oversized populated authorities
+def test_v2_generic_receipts_cannot_claim_empty_or_populated_truth(tmp_path: Path) -> None:
+    # Given generic receipts claiming accepted empty and populated authorities
     outputs = tmp_path / "outputs"
     research_root = outputs / "experiment_control"
     derivative_root = outputs / "derivatives"
@@ -188,11 +176,12 @@ def test_v2_receipts_preserve_valid_empty_and_cap_populated_rows(tmp_path: Path)
     # When they are projected
     snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW)
 
-    # Then empty remains successful and populated rows carry exact cap metadata
-    assert snapshot.workspaces.research.state == "empty"
+    # Then neither generic claim becomes domain truth
+    assert snapshot.workspaces.research.state == "unavailable"
     assert snapshot.workspaces.research.total_count == 0
     derivatives = snapshot.workspaces.derivatives
-    assert (derivatives.total_count, derivatives.projected_count, derivatives.truncated) == (30, 24, True)
+    assert derivatives.state == "unavailable"
+    assert derivatives.projected_count == 0
 
 
 @pytest.mark.parametrize(
@@ -209,7 +198,7 @@ def test_v2_receipts_preserve_valid_empty_and_cap_populated_rows(tmp_path: Path)
         ("system", "system", "deployment_receipt"),
     ],
 )
-def test_v2_receipt_populates_each_workspace_with_resolvable_trace(
+def test_v2_generic_receipt_cannot_populate_authoritative_workspace(
     tmp_path: Path,
     workspace: str,
     root_name: str,
@@ -233,13 +222,13 @@ def test_v2_receipt_populates_each_workspace_with_resolvable_trace(
     # When the canonical projector reads it
     snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW)
 
-    # Then the workspace is populated and the strict DAG validates
+    # Then the workspace remains unavailable and the strict DAG validates
     selected = dict(snapshot.workspaces)[workspace]
-    assert selected.state == "populated"
-    assert selected.items[0].value == "accepted"
+    assert selected.state in {"blocked", "unavailable"}
+    assert all(item.value != "accepted" for item in selected.items)
     snapshot.model_validate_json(snapshot.model_dump_json())
     if workspace == "data_sources":
-        assert all(item.entitlement == "research_only" for item in snapshot.workspaces.data_sources.capabilities)
+        assert all(item.entitlement == "unavailable" for item in snapshot.workspaces.data_sources.capabilities)
 
 
 def _receipt(*, observed_at: dt.datetime) -> dict[str, str | int]:

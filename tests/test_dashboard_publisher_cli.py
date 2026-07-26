@@ -103,7 +103,7 @@ def test_dashboard_publisher_dry_run_emits_canonical_v2_json(tmp_path: Path) -> 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["schema_version"] == 2
-    assert payload["workspaces"]["research"]["items"][0]["value"] == "accepted"
+    assert payload["workspaces"]["research"]["state"] == "unavailable"
 
 
 def test_publisher_uses_websocket_events_without_periodic_http_or_sleep() -> None:
@@ -178,9 +178,8 @@ def test_publisher_watches_account_ledger_without_periodic_broker_reads(
 @pytest.mark.anyio
 async def test_publisher_watch_roots_coalesce_one_mutation_each(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Given one watchfiles batch containing one mutation from every stable root
+    # Given every stable root and an injectable event source
     for name in (
         "live_sessions",
         "source_evidence",
@@ -194,17 +193,32 @@ async def test_publisher_watch_roots_coalesce_one_mutation_each(
     roots = run_dashboard_publisher._watch_roots(tmp_path)
     socket = _SendSocket()
 
-    # When every declared root changes in one burst
+    observed_paths: tuple[Path, ...] = ()
+
+    # When real files in every declared root change in one coalesced burst
     async def one_batch(
-        *_paths: Path,
+        *paths: Path,
         **_settings: int,
     ) -> AsyncIterator[set[tuple[Change, str]]]:
-        yield {(Change.modified, str(root / "mutation.receipt")) for root in roots}
+        nonlocal observed_paths
+        observed_paths = paths
+        changed: set[tuple[Change, str]] = set()
+        for root in paths:
+            mutation = root / "mutation.receipt"
+            mutation.write_text(root.name, encoding="utf-8")
+            changed.add((Change.added, str(mutation)))
+        yield changed
 
-    monkeypatch.setattr(run_dashboard_publisher, "awatch", one_batch)
-    await run_dashboard_publisher._watch_output_events(socket, tmp_path, anyio.Lock())
+    await run_dashboard_publisher._watch_output_events(
+        socket,
+        tmp_path,
+        anyio.Lock(),
+        one_batch,
+    )
 
     # Then the publisher rebuilds and sends exactly one coalesced snapshot event
+    assert observed_paths == roots
+    assert all((root / "mutation.receipt").read_text(encoding="utf-8") == root.name for root in roots)
     assert len(socket.messages) == 1
     assert json.loads(socket.messages[0])["snapshot"]["schema_version"] == 2
 

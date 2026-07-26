@@ -5,12 +5,12 @@ import uuid
 from pathlib import Path
 from typing import Final, override
 
+from trading_agent.dashboard_market_calendar import project_market_calendar
 from trading_agent.dashboard_models_v2 import (
     CommandCenterV2,
     DashboardSnapshotV2,
     DataSourcesV2,
     ProjectionMetadataV2,
-    SourceCapabilityV2,
     TraceGraphV2,
     WorkspacesV2,
 )
@@ -18,11 +18,18 @@ from trading_agent.dashboard_projection_common import (
     WorkspaceProjection,
     receipt_projection,
 )
+from trading_agent.dashboard_projection_derivatives import project_derivatives
+from trading_agent.dashboard_projection_experiments import (
+    project_research,
+    project_strategies,
+)
 from trading_agent.dashboard_projection_paper import project_finalized_paper
 from trading_agent.dashboard_projection_receipts import (
     WorkspaceName,
     read_projection_receipts,
 )
+from trading_agent.dashboard_projection_sources import project_data_sources
+from trading_agent.dashboard_system_evidence import project_system_evidence
 
 ROOT_BY_WORKSPACE: Final[dict[WorkspaceName, str]] = {
     "command_center": "system",
@@ -35,7 +42,6 @@ ROOT_BY_WORKSPACE: Final[dict[WorkspaceName, str]] = {
     "paper": "paper",
     "system": "system",
 }
-PROVIDERS: Final = ("fred", "alfred", "treasury", "cftc", "opendart", "kis", "ls", "alpaca")
 
 
 class DashboardSnapshotV2TimeError(ValueError):
@@ -52,16 +58,33 @@ def collect_dashboard_snapshot_v2(
     generated_at = dt.datetime.now(dt.UTC) if now is None else now
     if generated_at.tzinfo is None or generated_at.utcoffset() is None:
         raise DashboardSnapshotV2TimeError
-    projections = {
+    projections: dict[WorkspaceName, WorkspaceProjection] = {
         name: receipt_projection(
             name,
             read_projection_receipts(outputs / root, name, now=generated_at),
             now=generated_at,
         )
         for name, root in ROOT_BY_WORKSPACE.items()
-        if name != "paper"
+        if name not in {
+            "overview",
+            "markets",
+            "data_sources",
+            "research",
+            "strategies",
+            "derivatives",
+            "paper",
+            "system",
+        }
     }
+    projections["overview"] = project_market_calendar(outputs, now=generated_at, workspace="overview")
+    projections["markets"] = project_market_calendar(outputs, now=generated_at, workspace="markets")
+    sources_projection, capabilities = project_data_sources(outputs, now=generated_at)
+    projections["data_sources"] = sources_projection
+    projections["research"] = project_research(outputs, now=generated_at)
+    projections["strategies"] = project_strategies(outputs, now=generated_at)
+    projections["derivatives"] = project_derivatives(outputs, now=generated_at)
     projections["paper"] = _paper_projection(outputs, generated_at)
+    projections["system"] = project_system_evidence(outputs, now=generated_at)
     command = projections["command_center"].workspace
     sources = projections["data_sources"].workspace
     workspaces = WorkspacesV2(
@@ -70,7 +93,7 @@ def collect_dashboard_snapshot_v2(
         markets=projections["markets"].workspace,
         data_sources=DataSourcesV2(
             **sources.model_dump(),
-            capabilities=_capabilities(projections["data_sources"]),
+            capabilities=capabilities,
         ),
         research=projections["research"].workspace,
         strategies=projections["strategies"].workspace,
@@ -95,7 +118,12 @@ def collect_dashboard_snapshot_v2(
             redaction_policy_version="dashboard-redaction-v2",
             reader_versions=(
                 "dashboard-receipt-reader-v2",
+                "data-capability-registry-reader-v1",
+                "experiment-ledger-reader-v1",
+                "futures-security-master-reader-v1",
+                "market-calendar-reader-v2",
                 "lane-registry-reader-v1",
+                "system-milestone-reader-v2",
             ),
             source_schema_version=2,
             total_count=total,
@@ -114,22 +142,4 @@ def _paper_projection(outputs: Path, now: dt.datetime) -> WorkspaceProjection:
         read_projection_receipts(outputs / ROOT_BY_WORKSPACE["paper"], "paper", now=now),
         now=now,
     )
-
-
-def _capabilities(projection: WorkspaceProjection) -> tuple[SourceCapabilityV2, ...]:
-    workspace = projection.workspace
-    return tuple(
-        SourceCapabilityV2(
-            capability_id=f"{provider}.dashboard",
-            provider=provider,
-            label=provider.upper(),
-            state=workspace.state,
-            entitlement="unavailable" if workspace.state == "unavailable" else "research_only",
-            observed_at=workspace.observed_at,
-            trace_id=workspace.trace_id,
-        )
-        for provider in PROVIDERS
-    )
-
-
 __all__ = ("DashboardSnapshotV2TimeError", "collect_dashboard_snapshot_v2")

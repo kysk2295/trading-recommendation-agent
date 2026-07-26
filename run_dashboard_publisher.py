@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Annotated, Protocol
 from urllib.parse import urlsplit, urlunsplit
@@ -24,7 +25,7 @@ import typer
 from anyio.abc import TaskGroup
 from pydantic import ValidationError
 from rich import print as rprint
-from watchfiles import awatch
+from watchfiles import Change, awatch
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import WebSocketException
 
@@ -59,6 +60,15 @@ WORKTREE = Path(__file__).resolve().parent
 
 class SnapshotSocket(Protocol):
     async def send(self, message: str) -> None: ...
+
+
+class WatchFactory(Protocol):
+    def __call__(
+        self,
+        *paths: Path,
+        debounce: int,
+        step: int,
+    ) -> AsyncIterator[set[tuple[Change, str]]]: ...
 
 
 @app.command(help="로컬 산출물을 redacted 운영 snapshot으로 안전하게 전송합니다.")
@@ -215,8 +225,10 @@ async def _watch_output_events(
     socket: SnapshotSocket,
     outputs: Path,
     send_lock: anyio.Lock,
+    watcher: WatchFactory | None = None,
 ) -> None:
-    async for _changes in awatch(
+    event_source = awatch if watcher is None else watcher
+    async for _changes in event_source(
         *_watch_roots(outputs),
         debounce=WATCH_DEBOUNCE_MS,
         step=WATCH_STEP_MS,
@@ -257,17 +269,18 @@ def _publisher_url(dashboard_url: str) -> str:
 
 
 def _watch_roots(outputs: Path) -> tuple[Path, ...]:
+    root = outputs.resolve()
     candidates = (
-        outputs / "live_sessions",
-        outputs / "source_evidence",
-        outputs / "experiment_control",
-        outputs / "lane_control",
-        outputs / "derivatives",
-        outputs / "paper",
-        outputs / "system",
+        root / "live_sessions",
+        root / "source_evidence",
+        root / "experiment_control",
+        root / "lane_control",
+        root / "derivatives",
+        root / "paper",
+        root / "system",
     )
     existing = tuple(path for path in candidates if path.is_dir())
-    return existing or (outputs,)
+    return existing or (root,)
 
 
 def _reconnect_delay_seconds(attempt: int) -> int:
