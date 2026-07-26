@@ -1,10 +1,16 @@
 import postgres from "postgres";
-import type { DashboardSnapshot, Interaction, InteractionState } from "./schema";
-import { dashboardSnapshotSchema, interactionSchema } from "./schema";
+import type { DashboardSnapshotV1, Interaction, InteractionState } from "./schema";
+import { dashboardSnapshotV1Schema, interactionSchema } from "./schema";
+import type { DashboardSnapshotV2 } from "./schema_v2";
+import { dashboardSnapshotV2Schema } from "./schema_v2";
+import type { NormalizedSnapshot } from "./snapshot_normalizer";
+import { parseAndNormalizeSnapshot } from "./snapshot_normalizer";
+import { type SnapshotSaveResult, saveSnapshotPair } from "./snapshot_pair_store";
 
 export interface SnapshotStore {
-  save(snapshot: DashboardSnapshot): Promise<void>;
-  latest(): Promise<DashboardSnapshot | null>;
+  save(snapshot: NormalizedSnapshot): Promise<SnapshotSaveResult>;
+  latest(): Promise<DashboardSnapshotV2 | null>;
+  latestV1(): Promise<DashboardSnapshotV1 | null>;
   createInteraction(interaction: Interaction): Promise<void>;
   updateInteraction(
     id: string,
@@ -16,15 +22,33 @@ export interface SnapshotStore {
 }
 
 export class MemorySnapshotStore implements SnapshotStore {
-  private snapshot: DashboardSnapshot | null = null;
+  private snapshot: NormalizedSnapshot | null = null;
   private readonly interactions: Interaction[] = [];
 
-  async save(snapshot: DashboardSnapshot): Promise<void> {
-    this.snapshot = snapshot;
+  async save(snapshot: NormalizedSnapshot): Promise<SnapshotSaveResult> {
+    let next = this.snapshot;
+    const result = await saveSnapshotPair(
+      {
+        lock: async () => {},
+        readCanonical: async () => this.snapshot?.canonical ?? null,
+        writeCanonical: async () => {
+          next = snapshot;
+        },
+        writeRollback: async () => {
+          this.snapshot = next;
+        },
+      },
+      snapshot,
+    );
+    return result;
   }
 
-  async latest(): Promise<DashboardSnapshot | null> {
-    return this.snapshot;
+  async latest(): Promise<DashboardSnapshotV2 | null> {
+    return this.snapshot?.canonical ?? null;
+  }
+
+  async latestV1(): Promise<DashboardSnapshotV1 | null> {
+    return this.snapshot?.rollbackV1 ?? null;
   }
 
   async createInteraction(interaction: Interaction): Promise<void> {
@@ -85,27 +109,67 @@ export class PostgresSnapshotStore implements SnapshotStore {
     this.ready = this.initialize();
   }
 
-  async save(snapshot: DashboardSnapshot): Promise<void> {
+  async save(snapshot: NormalizedSnapshot): Promise<SnapshotSaveResult> {
     await this.ready;
-    await this.sql`
-      INSERT INTO dashboard_snapshots (singleton_id, generated_at, payload)
-      VALUES (1, ${snapshot.generated_at}, ${this.sql.json(snapshot)})
-      ON CONFLICT (singleton_id) DO UPDATE SET
-        generated_at = EXCLUDED.generated_at,
-        payload = EXCLUDED.payload
-    `;
+    return this.sql.begin(async (transaction) => {
+      return saveSnapshotPair(
+        {
+          lock: async () => {
+            await transaction`SELECT pg_advisory_xact_lock(2026072602)`;
+          },
+          readCanonical: async () => {
+            const rows = await transaction<SnapshotRow[]>`
+            SELECT payload FROM dashboard_snapshots_v2 WHERE singleton_id = 2
+          `;
+            const row = rows[0];
+            return row === undefined ? null : dashboardSnapshotV2Schema.parse(row.payload);
+          },
+          writeCanonical: async (canonical) => {
+            await transaction`
+            INSERT INTO dashboard_snapshots_v2 (singleton_id, generated_at, payload)
+            VALUES (2, ${canonical.generated_at}, ${transaction.json(canonical)})
+            ON CONFLICT (singleton_id) DO UPDATE SET
+              generated_at = EXCLUDED.generated_at, payload = EXCLUDED.payload
+          `;
+          },
+          writeRollback: async (rollback) => {
+            await transaction`
+            INSERT INTO dashboard_snapshots (singleton_id, generated_at, payload)
+            VALUES (1, ${rollback.generated_at}, ${transaction.json(rollback)})
+            ON CONFLICT (singleton_id) DO UPDATE SET
+              generated_at = EXCLUDED.generated_at, payload = EXCLUDED.payload
+          `;
+          },
+        },
+        snapshot,
+      );
+    });
   }
 
-  async latest(): Promise<DashboardSnapshot | null> {
+  async latest(): Promise<DashboardSnapshotV2 | null> {
+    await this.ready;
+    const rows = await this.sql<SnapshotRow[]>`
+      SELECT payload FROM dashboard_snapshots_v2 WHERE singleton_id = 2
+    `;
+    const row = rows[0];
+    if (row !== undefined) {
+      return dashboardSnapshotV2Schema.parse(row.payload);
+    }
+    const legacy = await this.latestV1();
+    if (legacy === null) {
+      return null;
+    }
+    const normalized = parseAndNormalizeSnapshot(legacy, dashboardSnapshotV1Schema);
+    return normalized.ok ? normalized.value.canonical : null;
+  }
+
+  async latestV1(): Promise<DashboardSnapshotV1 | null> {
     await this.ready;
     const rows = await this.sql<SnapshotRow[]>`
       SELECT payload FROM dashboard_snapshots WHERE singleton_id = 1
     `;
     const row = rows[0];
-    if (row === undefined) {
-      return null;
-    }
-    return dashboardSnapshotSchema.parse(row.payload);
+    return row === undefined ? null : dashboardSnapshotV1Schema.parse(row.payload);
   }
 
   async createInteraction(interaction: Interaction): Promise<void> {
@@ -189,6 +253,13 @@ export class PostgresSnapshotStore implements SnapshotStore {
         id UUID PRIMARY KEY,
         state TEXT NOT NULL,
         created_at TEXT NOT NULL,
+        payload JSONB NOT NULL
+      )
+    `;
+    await this.sql`
+      CREATE TABLE IF NOT EXISTS dashboard_snapshots_v2 (
+        singleton_id SMALLINT PRIMARY KEY CHECK (singleton_id = 2),
+        generated_at TIMESTAMPTZ NOT NULL,
         payload JSONB NOT NULL
       )
     `;

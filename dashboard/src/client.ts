@@ -6,6 +6,7 @@ import type { EvidenceFilter } from "./render";
 import { renderSnapshot } from "./render";
 import type { DashboardSnapshot } from "./schema";
 import { dashboardSnapshotSchema } from "./schema";
+import { projectSnapshotForV1Render } from "./snapshot_render_adapter";
 import { initializeWorkspaceTabs } from "./workspace_tabs";
 
 const refreshButton = requiredElement("refresh-button", HTMLButtonElement);
@@ -68,8 +69,9 @@ async function refreshSnapshot(): Promise<void> {
 
 function renderCurrent(): void {
   if (snapshot !== null) {
-    renderSnapshot(snapshot, filter);
-    agentWorkspace.updateAgents(snapshot.agents);
+    const renderSnapshotV1 = projectSnapshotForV1Render(snapshot);
+    renderSnapshot(renderSnapshotV1, filter);
+    agentWorkspace.updateAgents(renderSnapshotV1.agents);
   }
 }
 

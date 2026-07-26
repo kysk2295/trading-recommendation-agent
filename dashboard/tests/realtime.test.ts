@@ -81,8 +81,14 @@ describe("event-driven dashboard relay", () => {
     hub.connectPublisher(publisher);
     await hub.handlePublisherMessage(publisher, JSON.stringify({ type: "snapshot", snapshot }));
 
-    expect(viewer.messages.map((message) => JSON.parse(message))).toEqual([
-      { type: "snapshot", snapshot },
+    expect(viewer.messages.map((message) => JSON.parse(message))).toMatchObject([
+      {
+        type: "snapshot",
+        snapshot: {
+          schema_version: 2,
+          projection: { source_schema_version: 1 },
+        },
+      },
     ]);
   });
 

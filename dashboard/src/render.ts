@@ -9,12 +9,12 @@ import {
   stateLabel,
   statusClass,
 } from "./format";
-import type { DashboardSnapshot } from "./schema";
+import type { DashboardSnapshotV1 } from "./schema";
 
 export type EvidenceFilter = "all" | "active";
 const knownSignalKeys = new Set<string>();
 
-export function renderSnapshot(snapshot: DashboardSnapshot, filter: EvidenceFilter): void {
+export function renderSnapshot(snapshot: DashboardSnapshotV1, filter: EvidenceFilter): void {
   renderMarkets(snapshot);
   renderForward(snapshot);
   renderAccount(snapshot);
@@ -23,7 +23,7 @@ export function renderSnapshot(snapshot: DashboardSnapshot, filter: EvidenceFilt
   renderResearch(snapshot);
 }
 
-function renderAccount(snapshot: DashboardSnapshot): void {
+function renderAccount(snapshot: DashboardSnapshotV1): void {
   const account = snapshot.account;
   const status = requiredElement("account-status", HTMLElement);
   status.textContent = stateLabel(account.status);
@@ -56,7 +56,7 @@ function pnlClass(value: string | null): string {
   return Number.parseFloat(value) > 0 ? "pnl-positive" : "pnl-negative";
 }
 
-function renderMarkets(snapshot: DashboardSnapshot): void {
+function renderMarkets(snapshot: DashboardSnapshotV1): void {
   const stack = requiredElement("market-stack", HTMLDivElement);
   stack.replaceChildren(
     ...snapshot.markets.map((market) => {
@@ -76,7 +76,7 @@ function renderMarkets(snapshot: DashboardSnapshot): void {
   );
 }
 
-function renderForward(snapshot: DashboardSnapshot): void {
+function renderForward(snapshot: DashboardSnapshotV1): void {
   const forward = snapshot.forward;
   const eligibleLabel = forward.eligible ? "READY" : "BLOCKED";
   const quality = requiredElement("quality-value", HTMLElement);
@@ -105,7 +105,7 @@ function renderForward(snapshot: DashboardSnapshot): void {
   blockers.replaceChildren(...forward.blockers.map((blocker) => textElement("p", blocker)));
 }
 
-function renderRecommendations(snapshot: DashboardSnapshot): void {
+function renderRecommendations(snapshot: DashboardSnapshotV1): void {
   const body = requiredElement("recommendation-rows", HTMLTableSectionElement);
   requiredElement("recommendation-count", HTMLElement).textContent =
     `${count(snapshot.recommendations.length)}건`;
@@ -139,7 +139,7 @@ function renderRecommendations(snapshot: DashboardSnapshot): void {
   );
 }
 
-function renderSignals(snapshot: DashboardSnapshot, filter: EvidenceFilter): void {
+function renderSignals(snapshot: DashboardSnapshotV1, filter: EvidenceFilter): void {
   const now = Date.now();
   const signals = snapshot.signals.filter(
     (signal) => filter === "all" || new Date(signal.valid_until).getTime() > now,
@@ -190,7 +190,7 @@ function renderSignals(snapshot: DashboardSnapshot, filter: EvidenceFilter): voi
   }
 }
 
-function renderResearch(snapshot: DashboardSnapshot): void {
+function renderResearch(snapshot: DashboardSnapshotV1): void {
   const research = snapshot.research;
   requiredElement("research-summary", HTMLElement).textContent = research.summary;
   const status = requiredElement("research-status", HTMLElement);

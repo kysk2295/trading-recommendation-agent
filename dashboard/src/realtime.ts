@@ -1,13 +1,15 @@
 import { z } from "zod";
 import { PairingTickets } from "./operator_auth";
-import type { DashboardSnapshot, Interaction } from "./schema";
-import { dashboardSnapshotSchema, interactionStateSchema } from "./schema";
+import type { Interaction } from "./schema";
+import { dashboardSnapshotV1Schema, interactionStateSchema } from "./schema";
+import type { DashboardSnapshotV2 } from "./schema_v2";
+import { parseAndNormalizeSnapshot } from "./snapshot_normalizer";
 import type { SnapshotStore } from "./store";
 
 const publisherMessageSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("snapshot"),
-    snapshot: dashboardSnapshotSchema,
+    snapshot: z.unknown(),
   }),
   z.strictObject({
     type: z.literal("interaction_result"),
@@ -91,8 +93,22 @@ export class DashboardRealtimeHub {
     }
     switch (payload.type) {
       case "snapshot":
-        await this.store.save(payload.snapshot);
-        this.broadcast(this.viewers, { type: "snapshot", snapshot: payload.snapshot });
+        {
+          const normalized = parseAndNormalizeSnapshot(payload.snapshot, dashboardSnapshotV1Schema);
+          if (!normalized.ok) {
+            peer.close(1003, "invalid_message");
+            return;
+          }
+          const saved = await this.store.save(normalized.value);
+          if (saved === "stale") {
+            peer.close(1008, "stale_snapshot");
+            return;
+          }
+          this.broadcast(this.viewers, {
+            type: "snapshot",
+            snapshot: normalized.value.canonical,
+          });
+        }
         return;
       case "interaction_result": {
         const updated = await this.store.updateInteraction(
@@ -113,7 +129,7 @@ export class DashboardRealtimeHub {
     }
   }
 
-  broadcastSnapshot(snapshot: DashboardSnapshot): void {
+  broadcastSnapshot(snapshot: DashboardSnapshotV2): void {
     this.broadcast(this.viewers, { type: "snapshot", snapshot });
   }
 

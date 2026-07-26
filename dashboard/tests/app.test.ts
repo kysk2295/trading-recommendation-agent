@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createApp } from "../src/app";
 import { PairingTickets } from "../src/operator_auth";
+import { dashboardSnapshotV1Schema } from "../src/schema";
 import { MemorySnapshotStore } from "../src/store";
 
 const INGEST_TOKEN = "ingest-token-with-adequate-length";
@@ -140,7 +141,11 @@ describe("dashboard API", () => {
 
     expect(ingested.status).toBe(202);
     expect(viewed.status).toBe(200);
-    expect(await viewed.json()).toEqual(snapshot);
+    expect(await viewed.json()).toMatchObject({
+      schema_version: 2,
+      projection: { source_schema_version: 1 },
+    });
+    expect(await store.latestV1()).toEqual(dashboardSnapshotV1Schema.parse(snapshot));
   });
 
   test("rejects fields outside the public schema", async () => {

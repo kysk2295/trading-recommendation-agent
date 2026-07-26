@@ -12,10 +12,11 @@ import {
 import { DashboardRealtimeHub } from "./realtime";
 import {
   agentIdSchema,
-  dashboardSnapshotSchema,
+  dashboardSnapshotV1Schema,
   interactionCreateSchema,
   interactionSchema,
 } from "./schema";
+import { parseAndNormalizeSnapshot } from "./snapshot_normalizer";
 import type { SnapshotStore } from "./store";
 
 const MAX_SNAPSHOT_BYTES = 256 * 1024;
@@ -190,12 +191,15 @@ export function createApp(
         }
         throw error;
       }
-      const parsed = dashboardSnapshotSchema.safeParse(payload);
-      if (!parsed.success) {
+      const parsed = parseAndNormalizeSnapshot(payload, dashboardSnapshotV1Schema);
+      if (!parsed.ok) {
         return context.json({ error: "invalid_snapshot" }, 400);
       }
-      await store.save(parsed.data);
-      realtime.broadcastSnapshot(parsed.data);
+      const saved = await store.save(parsed.value);
+      if (saved === "stale") {
+        return context.json({ error: "stale_snapshot" }, 409);
+      }
+      realtime.broadcastSnapshot(parsed.value.canonical);
       return context.json({ accepted: true }, 202);
     },
   );

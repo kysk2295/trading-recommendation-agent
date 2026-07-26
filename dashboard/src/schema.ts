@@ -1,4 +1,8 @@
 import { z } from "zod";
+import { dashboardSnapshotV2Schema } from "./schema_v2";
+
+export type { DashboardSnapshotV2 } from "./schema_v2";
+export { dashboardSnapshotV2Schema } from "./schema_v2";
 
 const marketSchema = z.strictObject({
   market_id: z.enum(["kr", "us"]),
@@ -111,7 +115,7 @@ export const operatorSessionSchema = z.strictObject({
   authenticated: z.boolean(),
 });
 
-export const dashboardSnapshotSchema = z.strictObject({
+export const dashboardSnapshotV1Schema = z.strictObject({
   schema_version: z.literal(1),
   generated_at: z.iso.datetime({ offset: true }),
   source: z.literal("local-runtime"),
@@ -124,6 +128,8 @@ export const dashboardSnapshotSchema = z.strictObject({
   account: accountSchema,
 });
 
+export const dashboardSnapshotSchema = dashboardSnapshotV2Schema;
+
 export const viewerMessageSchema = z.strictObject({
   type: z.literal("snapshot"),
   snapshot: dashboardSnapshotSchema,
@@ -134,7 +140,8 @@ export const operatorMessageSchema = z.strictObject({
   interaction: interactionSchema,
 });
 
+export type DashboardSnapshotV1 = z.infer<typeof dashboardSnapshotV1Schema>;
 export type DashboardSnapshot = z.infer<typeof dashboardSnapshotSchema>;
-export type AgentView = DashboardSnapshot["agents"][number];
+export type AgentView = DashboardSnapshotV1["agents"][number];
 export type Interaction = z.infer<typeof interactionSchema>;
 export type InteractionState = z.infer<typeof interactionStateSchema>;

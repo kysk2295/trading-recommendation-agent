@@ -7,6 +7,10 @@ from typing import Literal, override
 
 from pydantic import BaseModel, ConfigDict, SecretStr
 
+from trading_agent.dashboard_models_v2 import DashboardSnapshotV2
+
+__all__ = ["DashboardSnapshotV2"]
+
 JobRow = tuple[str, int | None, int]
 AgentId = Literal[
     "kr-theme",
@@ -16,6 +20,8 @@ AgentId = Literal[
     "research",
     "delivery",
 ]
+
+
 class MarketView(BaseModel):
     model_config = ConfigDict(frozen=True)
 
