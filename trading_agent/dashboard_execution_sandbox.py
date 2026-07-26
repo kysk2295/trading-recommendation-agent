@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
 from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1
+from trading_agent.dashboard_executable_binding import (
+    ExecutableIdentity,
+    InvalidExecutableBindingError,
+    capture_executable,
+    capture_interpreter,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,6 +19,27 @@ class AutonomousExecutionSandbox:
     source_evidence_root: Path
     hermes_executable: Path
     fixture_mode: bool
+    allowed_tool_executables: tuple[Path, ...] = ()
+    _bindings: tuple[ExecutableIdentity, ...] = ()
+    _runtime_bindings: tuple[ExecutableIdentity, ...] = ()
+    _binding_error: str | None = None
+
+    def __post_init__(self) -> None:
+        try:
+            bindings = tuple(
+                capture_executable(path)
+                for path in (self.hermes_executable, *self.allowed_tool_executables)
+            )
+            interpreters = tuple(
+                capture_interpreter(binding.interpreter)
+                for binding in bindings
+                if binding.interpreter is not None
+            )
+        except InvalidExecutableBindingError as error:
+            object.__setattr__(self, "_binding_error", error.reason)
+        else:
+            object.__setattr__(self, "_bindings", bindings)
+            object.__setattr__(self, "_runtime_bindings", bindings + interpreters)
 
     def blocker(self, trigger: AutonomousTriggerV1) -> str | None:
         if trigger.environment_spec.allowed_read_roots != ("isolated_worktree", "source_evidence"):
@@ -36,12 +62,12 @@ class AutonomousExecutionSandbox:
             return "provider_proxy_required"
         if not self.source_evidence_root.is_dir() or self.source_evidence_root.is_symlink():
             return "source_evidence_root_invalid"
-        if (
-            self.hermes_executable.is_symlink()
-            or not self.hermes_executable.is_file()
-            or not os.access(self.hermes_executable, os.X_OK)
-        ):
-            return "pinned_hermes_invalid"
+        if self._binding_error is not None:
+            return self._binding_error
+        try:
+            self._revalidate_bindings()
+        except InvalidExecutableBindingError as error:
+            return error.reason
         if not Path("/usr/bin/sandbox-exec").is_file():
             return "sandbox_runtime_missing"
         return None
@@ -52,32 +78,43 @@ class AutonomousExecutionSandbox:
         task_root: Path,
         worktree: Path,
     ) -> tuple[str, ...]:
+        self._revalidate_bindings()
+        command_binding = self._binding_for_command(command)
+        executable_paths = {command_binding.path}
+        if command_binding.interpreter is not None:
+            executable_paths.add(command_binding.interpreter)
         readable = (
             "/System",
             "/Library",
             "/usr/lib",
             "/usr/share",
-            "/bin",
-            "/usr/bin",
             str(worktree.resolve(strict=True)),
             str(self.source_evidence_root.resolve(strict=True)),
-            str(self.hermes_executable),
         )
         profile = "\n".join(
             (
                 "(version 1)",
                 "(deny default)",
                 '(import "system.sb")',
-                "(allow process*)",
+                "(deny process-fork)",
+                "(deny process-exec)",
                 "(allow sysctl-read)",
-                "(allow file-read-metadata)",
                 *(f"(allow file-read* (subpath {json.dumps(path)}))" for path in readable),
+                *(
+                    f"(allow file-read* (literal {json.dumps(str(path))}))"
+                    for path in sorted(executable_paths)
+                ),
+                *(
+                    f"(allow process-exec (literal {json.dumps(str(path))}))"
+                    for path in sorted(executable_paths)
+                ),
                 f"(allow file-write* (subpath {json.dumps(str(task_root.resolve(strict=True)))}))",
             )
         )
-        return ("/usr/bin/sandbox-exec", "-p", profile, *command)
+        return ("/usr/bin/sandbox-exec", "-p", profile, str(command_binding.path), *command[1:])
 
     def environment(self, trigger: AutonomousTriggerV1, experiment: Path) -> dict[str, str]:
+        self._revalidate_bindings()
         task_root = experiment.parent
         home = task_root / "home"
         temporary = task_root / "tmp"
@@ -113,6 +150,31 @@ class AutonomousExecutionSandbox:
             return False
         return candidate == root or root in candidate.parents
 
+    def _binding_for_command(self, command: tuple[str, ...]) -> ExecutableIdentity:
+        if not command:
+            raise InvalidExecutableBindingError("executable_command_empty")
+        requested = Path(command[0])
+        if requested.is_symlink():
+            raise InvalidExecutableBindingError("executable_symlink_forbidden")
+        if ".." in requested.parts:
+            raise InvalidExecutableBindingError("executable_path_traversal")
+        try:
+            normalized = requested.resolve(strict=True)
+        except OSError as error:
+            raise InvalidExecutableBindingError("executable_unavailable") from error
+        for binding in self._bindings:
+            if normalized == binding.path:
+                return binding
+        raise InvalidExecutableBindingError("executable_not_registered")
+
+    def _revalidate_bindings(self) -> None:
+        if self._binding_error is not None:
+            raise InvalidExecutableBindingError(self._binding_error)
+        for expected in self._runtime_bindings:
+            actual = capture_executable(expected.path)
+            if actual != expected:
+                raise InvalidExecutableBindingError("executable_identity_changed")
+
 
 def _write_path_allowed(value: str) -> bool:
     requested = Path(value)
@@ -124,4 +186,8 @@ def _write_path_allowed(value: str) -> bool:
     )
 
 
-__all__ = ("AutonomousExecutionSandbox",)
+__all__ = (
+    "AutonomousExecutionSandbox",
+    "ExecutableIdentity",
+    "InvalidExecutableBindingError",
+)

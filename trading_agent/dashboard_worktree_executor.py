@@ -41,15 +41,17 @@ class IsolatedWorktreeExecutor:
         source_evidence_root: Path,
         hermes_executable: Path,
         fixture_mode: bool = False,
+        allowed_tool_executables: tuple[Path, ...] = (),
     ) -> None:
         self._repository = repository.resolve()
         self._environment_root = environment_root.resolve()
-        self._hermes = hermes_executable.resolve()
+        self._hermes = hermes_executable
         self._sandbox = AutonomousExecutionSandbox(
             repository=self._repository,
             source_evidence_root=source_evidence_root.resolve(strict=False),
             hermes_executable=self._hermes,
             fixture_mode=fixture_mode,
+            allowed_tool_executables=allowed_tool_executables,
         )
 
     def preflight(self, trigger: AutonomousTriggerV1) -> str | None:
@@ -84,10 +86,12 @@ class IsolatedWorktreeExecutor:
                 result = self._failed("isolated_worktree_setup_failed", cleanup=False)
             else:
                 worktree_added = True
+                environment = self._sandbox.environment(trigger, experiment)
+                command = self._sandbox.argv(self._argv(trigger), task_root, worktree)
                 completed = subprocess.run(
-                    self._sandbox.argv(self._argv(trigger), task_root, worktree),
+                    command,
                     cwd=worktree,
-                    env=self._sandbox.environment(trigger, experiment),
+                    env=environment,
                     check=False,
                     capture_output=True,
                     timeout=trigger.budget_envelope.max_runtime_seconds,
