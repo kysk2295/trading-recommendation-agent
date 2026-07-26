@@ -81,7 +81,7 @@ export function marketsDataSourcesFixture(): unknown {
           kind: "reviewed_by",
         },
         { from_node_id: "trace-data", to_node_id: "trace-data-terminal", kind: "reviewed_by" },
-        ...PROVIDERS.map(([provider, , state]) => providerEdge(provider, state)),
+        ...PROVIDERS.flatMap(([provider, , state]) => providerEdges(provider, state)),
       ],
     },
     projection: { ...snapshotV2.projection, total_count: 11, projected_count: 11 },
@@ -128,25 +128,31 @@ function providerNodes(provider: string, state: string, observedAt: string) {
     state: unavailable ? ("unavailable" as const) : ("accepted" as const),
     source_namespace: `provider.${provider}`,
   };
-  const terminalKind = unavailable ? ("blocker_terminal" as const) : ("reviewer_decision" as const);
-  const terminal = {
-    node_id: `${providerTraceId(provider)}.terminal`,
-    kind: terminalKind,
-    label: unavailable ? `${provider} entitlement unavailable` : `${provider} provider review`,
-    observed_at: observedAt,
-    safe_ref: null,
-    state: unavailable ? ("blocked" as const) : ("accepted" as const),
-    source_namespace: `provider.${provider}`,
-  };
-  return [source, terminal];
+  if (!unavailable) return [source];
+  return [
+    source,
+    {
+      node_id: `${providerTraceId(provider)}.blocker`,
+      kind: "blocker_terminal" as const,
+      label: `${provider} entitlement unavailable`,
+      observed_at: observedAt,
+      safe_ref: null,
+      state: "blocked" as const,
+      source_namespace: `provider.${provider}`,
+    },
+  ];
 }
 
-function providerEdge(provider: string, state: string) {
-  return {
-    from_node_id: providerTraceId(provider),
-    to_node_id: `${providerTraceId(provider)}.terminal`,
-    kind: state === "unavailable" ? ("blocked_by" as const) : ("reviewed_by" as const),
-  };
+function providerEdges(provider: string, state: string) {
+  return state === "unavailable"
+    ? [
+        {
+          from_node_id: providerTraceId(provider),
+          to_node_id: `${providerTraceId(provider)}.blocker`,
+          kind: "blocked_by" as const,
+        },
+      ]
+    : [];
 }
 
 function providerTraceId(provider: string): string {

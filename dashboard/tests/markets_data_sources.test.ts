@@ -182,25 +182,26 @@ function acceptedMarketPath(): MarketEvidencePath {
 }
 
 function acceptedProviderPath(traceId: string, namespace: string): ProviderEvidencePath {
+  const source = {
+    node_id: traceId,
+    kind: "source_receipt",
+    label: "FRED provider review",
+    state: "accepted",
+    source_namespace: namespace,
+  };
   return {
     status: "resolved",
     startsAtSource: true,
-    nodes: [
-      {
-        node_id: traceId,
-        kind: "source_receipt",
-        state: "accepted",
-        source_namespace: namespace,
-      },
-    ],
-    terminal: null,
+    nodes: [source],
+    edges: [],
+    terminal: source,
   };
 }
 
 function missingPath(): ProviderEvidencePath {
-  return { status: "unavailable", startsAtSource: false, nodes: [], terminal: null };
+  return { status: "unavailable", startsAtSource: false, nodes: [], edges: [], terminal: null };
 }
 
 function corruptPath(): ProviderEvidencePath {
-  return { status: "corrupt", startsAtSource: false, nodes: [], terminal: null };
+  return { status: "corrupt", startsAtSource: false, nodes: [], edges: [], terminal: null };
 }
