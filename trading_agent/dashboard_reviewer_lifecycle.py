@@ -15,6 +15,7 @@ from trading_agent.research_identity_models import AgentFamily
 class PersistedChampionAuthority:
     strategy_version: str
     family_id: AgentFamilyId
+    lane_id: str
     lifecycle_ref: str
     reviewer_ref: str
     candidate_refs: tuple[str, ...]
@@ -34,7 +35,7 @@ class ReviewerLifecycleAuthorityReader:
         return any(candidate_ref in champion.candidate_refs for champion in self.champions())
 
     def allocation_manager_is_available(self) -> bool:
-        return len({champion.strategy_version for champion in self.champions()}) >= 2
+        return len({(champion.family_id, champion.lane_id) for champion in self.champions()}) >= 2
 
     def champions(self) -> tuple[PersistedChampionAuthority, ...]:
         reviews = {
@@ -63,14 +64,13 @@ class ReviewerLifecycleAuthorityReader:
                     continue
                 reviewer_ref = str(review.event_key)
                 candidates = tuple(
-                    key
-                    for key in lifecycle.event.evidence_keys
-                    if key not in {reviewer_ref, str(binding.binding_key)}
+                    key for key in lifecycle.event.evidence_keys if key not in {reviewer_ref, str(binding.binding_key)}
                 )
                 champions.append(
                     PersistedChampionAuthority(
                         strategy_version=binding.binding.strategy_version,
                         family_id=family_id,
+                        lane_id=binding.binding.legacy_lane_id.value,
                         lifecycle_ref=str(lifecycle.event_key),
                         reviewer_ref=reviewer_ref,
                         candidate_refs=candidates,
@@ -87,7 +87,9 @@ def _matching_review(
     matching = tuple(
         reviews[key]
         for key in evidence_keys
-        if key in reviews and reviews[key].event.strategy_version == strategy_version
+        if key in reviews
+        and reviews[key].event.strategy_version == strategy_version
+        and reviews[key].event.snapshot_key in evidence_keys
     )
     return matching[0] if len(matching) == 1 else None
 

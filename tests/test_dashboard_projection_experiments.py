@@ -104,6 +104,16 @@ def test_strategy_projection_uses_matching_persisted_reviewer_and_lifecycle_term
     assert research_nodes[root_edge.to_node_id].kind == "reviewer_decision"
 
 
+def test_strategy_projection_rejects_reviewer_linked_to_a_different_trial_terminal(tmp_path: Path) -> None:
+    outputs = _complete_experiment_outputs(tmp_path)
+    _append_reviewer_and_lifecycle(outputs, snapshot_key="0" * 64)
+
+    projection = project_strategies(outputs, now=NOW)
+
+    assert projection.workspace.state == "blocked"
+    assert projection.workspace.blocker_code == "reviewer_missing"
+
+
 def test_projection_blocks_every_workspace_when_one_candidate_is_incomplete() -> None:
     complete = _chain(blocker=None, reviewer_ref="d" * 64, lifecycle_ref="e" * 64)
     incomplete = _chain(blocker="reviewer_missing", reviewer_ref=None, lifecycle_ref=None)
@@ -216,12 +226,12 @@ def _descendants(
     return tuple(ordered)
 
 
-def _append_reviewer_and_lifecycle(outputs: Path) -> None:
+def _append_reviewer_and_lifecycle(outputs: Path, *, snapshot_key: str | None = None) -> None:
     completed = _terminal_event(_started_event())
     review = LaneReviewEvent(
         lane_id=ReviewLaneId(_version().lane_id.value),
         session_date=dt.date(2026, 7, 17),
-        snapshot_key=str(experiment_trial_event_key(completed)),
+        snapshot_key=snapshot_key or str(experiment_trial_event_key(completed)),
         experiment_scope_key=_version().experiment_scope_key,
         daily_record_id="a" * 64,
         daily_record_sha256="b" * 64,

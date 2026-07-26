@@ -30,6 +30,14 @@ class ExperimentChain:
     value: str
     observed_at: dt.datetime
     blocker: str | None
+    source_at: dt.datetime | None = None
+    hypothesis_at: dt.datetime | None = None
+    code_at: dt.datetime | None = None
+    trial_at: dt.datetime | None = None
+    trial_started_at: dt.datetime | None = None
+    terminal_at: dt.datetime | None = None
+    reviewed_at: dt.datetime | None = None
+    lifecycle_at: dt.datetime | None = None
 
 
 def read_experiment_chains(
@@ -129,6 +137,14 @@ def _chain(
         "label": label,
         "value": value,
         "observed_at": registration.ledger_recorded_at,
+        "source_at": None,
+        "hypothesis_at": None,
+        "code_at": registration.ledger_recorded_at,
+        "trial_at": None,
+        "trial_started_at": None,
+        "terminal_at": None,
+        "reviewed_at": None,
+        "lifecycle_at": None,
     }
     if card is None:
         return ExperimentChain(**base, blocker="source_card_missing")
@@ -139,6 +155,8 @@ def _chain(
         "source_ref": str(source.source_key),
         "hypothesis_ref": str(card.card_key),
         "observed_at": card.card.hypothesis.ledger_recorded_at,
+        "source_at": source.source.ledger_recorded_at,
+        "hypothesis_at": card.card.hypothesis.ledger_recorded_at,
     }
     if base["code_ref"] is None:
         return ExperimentChain(**base, blocker="code_sha_invalid")
@@ -148,9 +166,11 @@ def _chain(
         "dataset_sha": trial.registration.data_version,
         "trial_ref": str(trial.registration_key),
         "observed_at": trial.registration.registered_at,
+        "trial_at": trial.registration.registered_at,
     }
     events = reader.trial_events(trial.registration.trial_id)
     terminal_at = trial.registration.registered_at
+    terminal_ref: str | None = None
     match events:
         case ():
             return ExperimentChain(**base, blocker="trial_terminal_missing")
@@ -159,19 +179,36 @@ def _chain(
         case (*_, terminal):
             terminal_ref = str(terminal.event_key)
             terminal_at = terminal.event.occurred_at
-            base = base | {"terminal_ref": terminal_ref, "observed_at": terminal.event.occurred_at}
+            base = base | {
+                "terminal_ref": terminal_ref,
+                "observed_at": terminal.event.occurred_at,
+                "trial_started_at": events[0].event.occurred_at,
+                "terminal_at": terminal.event.occurred_at,
+            }
+    if not _monotonic(base):
+        return ExperimentChain(**base, blocker="timestamp_order_invalid")
+    if terminal_ref is None:
+        return ExperimentChain(**base, blocker="trial_terminal_missing")
     matching_reviews = tuple(
         review
         for review in review_events
-        if review.event.strategy_version == registration.strategy_version
+        if review.event.snapshot_key == terminal_ref
+        and review.event.strategy_version == registration.strategy_version
         and review.event.experiment_scope_key == registration.experiment_scope_key
+        and review.event.reviewer_action.value == "comparison_ready"
         and review.event.reviewed_at >= terminal_at
     )
     if len(matching_reviews) != 1:
         return ExperimentChain(**base, blocker="reviewer_missing")
     review = matching_reviews[0]
     reviewer_ref = str(review.event_key)
-    base = base | {"reviewer_ref": reviewer_ref, "observed_at": review.event.reviewed_at}
+    base = base | {
+        "reviewer_ref": reviewer_ref,
+        "observed_at": review.event.reviewed_at,
+        "reviewed_at": review.event.reviewed_at,
+    }
+    if not _monotonic(base):
+        return ExperimentChain(**base, blocker="timestamp_order_invalid")
     lifecycles = tuple(
         lifecycle
         for lifecycle in reader.lifecycle_events(registration.strategy_version)
@@ -181,7 +218,14 @@ def _chain(
         return ExperimentChain(**base, blocker="lifecycle_missing")
     lifecycle = lifecycles[-1]
     return ExperimentChain(
-        **(base | {"lifecycle_ref": str(lifecycle.event_key), "observed_at": lifecycle.event.decided_at}),
+        **(
+            base
+            | {
+                "lifecycle_ref": str(lifecycle.event_key),
+                "observed_at": lifecycle.event.decided_at,
+                "lifecycle_at": lifecycle.event.decided_at,
+            }
+        ),
         blocker=None,
     )
 
@@ -190,3 +234,21 @@ def _safe_ref(value: str) -> str | None:
     if len(value) == 40 and all(character in "0123456789abcdef" for character in value):
         return hashlib.sha256(value.encode()).hexdigest()
     return None
+
+
+def _monotonic(values: dict[str, str | dt.datetime | None]) -> bool:
+    timestamps = tuple(
+        value
+        for key in (
+            "source_at",
+            "hypothesis_at",
+            "code_at",
+            "trial_at",
+            "trial_started_at",
+            "terminal_at",
+            "reviewed_at",
+            "lifecycle_at",
+        )
+        if isinstance((value := values[key]), dt.datetime)
+    )
+    return timestamps == tuple(sorted(timestamps))

@@ -97,6 +97,23 @@ def test_query_only_authority_requires_two_independent_persisted_champions(tmp_p
     assert authority.promotion_is_authorized("a" * 64)
 
 
+def test_allocation_authority_does_not_count_two_versions_of_one_family_lane(tmp_path: Path) -> None:
+    first = _authority_chain("strategy-day-v1", AgentFamily.DAY_TRADING, LaneId.INTRADAY_MOMENTUM, "a")
+    second = _authority_chain("strategy-day-v2", AgentFamily.DAY_TRADING, LaneId.INTRADAY_MOMENTUM, "b")
+    authority = ReviewerLifecycleAuthorityReader(
+        experiments=(
+            _ExperimentReader(
+                tmp_path / "experiments.sqlite3",
+                (first[0], second[0]),
+                {first[0].binding.strategy_version: (first[1],), second[0].binding.strategy_version: (second[1],)},
+            ),
+        ),
+        reviews=(_ReviewReader(tmp_path / "reviews.sqlite3", (first[2], second[2])),),
+    )
+
+    assert not authority.allocation_manager_is_available()
+
+
 def _authority_chain(
     version: str,
     family: AgentFamily,
