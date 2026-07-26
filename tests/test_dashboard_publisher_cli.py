@@ -112,6 +112,13 @@ def test_archive_without_outputs_dispatches_autonomous_help_and_rejects_legacy_p
 ) -> None:
     # Given: a clean shipped archive with no default output tree
     missing_outputs = tmp_path / "archive-without-outputs"
+    credentials = tmp_path / "dashboard.env"
+    credentials.write_text(
+        "DASHBOARD_URL=https://example.test\n"
+        "DASHBOARD_INGEST_TOKEN=fixture-value-with-adequate-length\n",
+        encoding="utf-8",
+    )
+    credentials.chmod(0o600)
 
     # When: a command-local help path and the legacy root publish path are invoked
     autonomous_help = CliRunner().invoke(
@@ -120,7 +127,13 @@ def test_archive_without_outputs_dispatches_autonomous_help_and_rejects_legacy_p
     )
     legacy_publish = CliRunner().invoke(
         run_dashboard_publisher.app,
-        ["--outputs", str(missing_outputs), "--dry-run"],
+        [
+            "--outputs",
+            str(missing_outputs),
+            "--credentials",
+            str(credentials),
+            "--dry-run",
+        ],
     )
 
     # Then: dispatch help works while actual publishing validates its own required input
@@ -131,20 +144,30 @@ def test_archive_without_outputs_dispatches_autonomous_help_and_rejects_legacy_p
 
 
 def test_dashboard_publisher_rejects_non_https_remote_url(tmp_path: Path) -> None:
+    missing_outputs = tmp_path / "archive-without-outputs"
     credentials = tmp_path / "dashboard.env"
     credentials.write_text(
         "DASHBOARD_URL=http://railway.example\nDASHBOARD_INGEST_TOKEN=token-with-adequate-length-123\n",
         encoding="utf-8",
     )
     credentials.chmod(0o600)
+    before = tuple(tmp_path.iterdir())
 
     result = CliRunner().invoke(
         run_dashboard_publisher.app,
-        ["--credentials", str(credentials), "--once"],
+        [
+            "--outputs",
+            str(missing_outputs),
+            "--credentials",
+            str(credentials),
+            "--once",
+        ],
     )
 
     assert result.exit_code != 0
     assert "invalid_settings" in result.output
+    assert "outputs_directory_missing" not in result.output
+    assert tuple(tmp_path.iterdir()) == before
 
 
 def test_dashboard_publisher_dry_run_emits_canonical_v2_json(tmp_path: Path) -> None:

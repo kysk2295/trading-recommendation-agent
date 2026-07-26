@@ -81,15 +81,15 @@ def publish(
     dry_run: Annotated[bool, typer.Option(help="외부 전송 없이 snapshot 경계만 검증")] = False,
     pair_browser: Annotated[bool, typer.Option(help="일회용 운영자 브라우저 연결")] = False,
 ) -> None:
+    try:
+        config = load_dashboard_credentials(credentials)
+    except DashboardCredentialError as error:
+        raise typer.BadParameter(str(error), param_hint="--credentials") from error
     if not outputs.is_dir():
         raise typer.BadParameter(
             "outputs_directory_missing",
             param_hint="--outputs",
         )
-    try:
-        config = load_dashboard_credentials(credentials)
-    except DashboardCredentialError as error:
-        raise typer.BadParameter(str(error), param_hint="--credentials") from error
     snapshot = collect_dashboard_snapshot_v2(outputs)
     if dry_run:
         typer.echo(snapshot.model_dump_json())
