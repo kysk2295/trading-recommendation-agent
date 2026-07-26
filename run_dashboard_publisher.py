@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import shutil
+import signal
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Protocol
 
 import anyio
 import typer
@@ -65,6 +68,20 @@ _reconnect_delay_seconds = reconnect_delay_seconds
 register_execution_commands(app, DEFAULT_INTERACTIVE_STATE)
 
 
+@dataclass(slots=True)
+class PairingRequestState:
+    pending: bool = False
+
+
+BrowserOpener = Callable[[str], Awaitable[None]]
+
+
+class PublisherEventSocket(Protocol):
+    def __aiter__(self) -> AsyncIterator[str | bytes]: ...
+
+    async def send(self, message: str) -> None: ...
+
+
 @app.callback()
 def publisher_default(
     context: typer.Context,
@@ -80,6 +97,18 @@ def publisher_default(
     dry_run: Annotated[bool, typer.Option(help="외부 전송 없이 snapshot 경계만 검증")] = False,
     pair_browser: Annotated[bool, typer.Option(help="일회용 운영자 브라우저 연결")] = False,
 ) -> None:
+    if context.invoked_subcommand == "publish" and any(
+        (source := context.get_parameter_source(parameter)) is not None and source.name == "COMMANDLINE"
+        for parameter in (
+            "outputs",
+            "credentials",
+            "system_authority_config",
+            "once",
+            "dry_run",
+            "pair_browser",
+        )
+    ):
+        raise typer.BadParameter("publish_options_must_follow_subcommand")
     if context.invoked_subcommand is None:
         publish(
             outputs,
@@ -174,6 +203,7 @@ async def _run_event_connection(
 ) -> None:
     send_lock = anyio.Lock()
     limiter = anyio.CapacityLimiter(1)
+    pairing = PairingRequestState()
     try:
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(
@@ -193,6 +223,14 @@ async def _run_event_connection(
                 send_lock,
                 limiter,
                 tasks,
+                pairing,
+                open_pairing_url,
+            )
+            tasks.start_soon(
+                _watch_pairing_signal,
+                socket,
+                send_lock,
+                pairing,
             )
     except BaseExceptionGroup as error:
         if is_reconnectable_group(error):
@@ -201,21 +239,28 @@ async def _run_event_connection(
 
 
 async def _receive_events(
-    socket: ClientConnection,
+    socket: PublisherEventSocket,
     dashboard_url: str,
     pair_browser: bool,
     outputs: Path,
     send_lock: anyio.Lock,
     limiter: anyio.CapacityLimiter,
     tasks: TaskGroup,
+    pairing: PairingRequestState,
+    browser_opener: BrowserOpener,
 ) -> None:
     async for raw in socket:
         if not isinstance(raw, str):
             continue
         event = parse_dashboard_event(raw)
         if isinstance(event, PairingTicketMessage):
-            if pair_browser:
-                await open_pairing_url(pairing_url(dashboard_url, event.path))
+            if pair_browser or pairing.pending:
+                signal_requested = pairing.pending
+                try:
+                    await browser_opener(pairing_url(dashboard_url, event.path))
+                finally:
+                    if signal_requested:
+                        pairing.pending = False
             continue
         if isinstance(event, DashboardInteractionMessage):
             tasks.start_soon(
@@ -229,6 +274,29 @@ async def _receive_events(
                 DEFAULT_INTERACTIVE_STATE,
                 outputs / "source_evidence",
             )
+
+
+async def _watch_pairing_signal(
+    socket: PublisherEventSocket,
+    send_lock: anyio.Lock,
+    pairing: PairingRequestState,
+) -> None:
+    with anyio.open_signal_receiver(signal.SIGUSR1) as signals:
+        await _forward_pairing_signals(signals, socket, send_lock, pairing)
+
+
+async def _forward_pairing_signals(
+    signals: AsyncIterator[signal.Signals],
+    socket: PublisherEventSocket,
+    send_lock: anyio.Lock,
+    pairing: PairingRequestState,
+) -> None:
+    async for _received_signal in signals:
+        if pairing.pending:
+            continue
+        pairing.pending = True
+        async with send_lock:
+            await socket.send('{"type":"pairing_request"}')
 
 
 async def _watch_output_events(

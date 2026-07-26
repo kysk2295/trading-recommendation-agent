@@ -101,7 +101,7 @@ def pairing_url(dashboard_url: str, path: str) -> str:
 
 
 async def open_pairing_url(url: str) -> None:
-    result = await anyio.run_process(("open", url), check=False)
+    result = await anyio.run_process(("/usr/bin/open", url), check=False)
     if result.returncode != 0:
         raise OSError("operator pairing browser could not be opened")
 

@@ -200,10 +200,12 @@ describe("dashboard API", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ mode: "analysis", command: "현재 세션 차단 원인을 분석해줘" }),
     });
+    const receipts = await app.request("/api/operator/interactions");
 
     // Then: telemetry remains public while command submission is unauthorized.
     expect(telemetry.status).toBe(404);
     expect(command.status).toBe(401);
+    expect(receipts.status).toBe(401);
   });
 
   test("pairs a trusted device and creates an immutable agent interaction receipt", async () => {
@@ -250,6 +252,8 @@ describe("dashboard API", () => {
     expect(paired.status).toBe(302);
     expect(paired.headers.get("location")).toBe("/#command-center");
     expect(paired.headers.get("set-cookie")).toContain("HttpOnly");
+    expect(paired.headers.get("set-cookie")).toContain("Secure");
+    expect(paired.headers.get("set-cookie")).toContain("SameSite=Strict");
     expect(replayed.status).toBe(404);
   });
 

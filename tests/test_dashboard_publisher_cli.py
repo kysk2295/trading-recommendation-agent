@@ -4,6 +4,10 @@ import ast
 import datetime as dt
 import inspect
 import json
+import os
+import signal
+import subprocess
+import sys
 import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -14,6 +18,7 @@ from typer.testing import CliRunner
 from websockets.exceptions import WebSocketException
 
 import run_dashboard_publisher
+import trading_agent.dashboard_relay as dashboard_relay
 from trading_agent.dashboard_agent_family import AgentFamilyId
 from trading_agent.dashboard_commands import InteractionPayload
 from trading_agent.dashboard_directed_research import AuthoritativeDirectedResearchBroker
@@ -35,6 +40,20 @@ class _SendSocket:
     async def send(self, message: str) -> None:
         self.messages.append(message)
         self.sent.set()
+
+
+class _EventSocket(_SendSocket):
+    def __init__(self, events: list[str]) -> None:
+        super().__init__()
+        self._events = events
+
+    def __aiter__(self) -> _EventSocket:
+        return self
+
+    async def __anext__(self) -> str:
+        if not self._events:
+            raise StopAsyncIteration
+        return self._events.pop(0)
 
 
 class _FailingDirectedSocket(_SendSocket):
@@ -231,6 +250,62 @@ def test_dashboard_publisher_dry_run_emits_canonical_v2_json(tmp_path: Path) -> 
     assert payload["workspaces"]["research"]["state"] == "unavailable"
 
 
+def test_publisher_dry_run_cli_terminates_from_controlled_private_fixture(tmp_path: Path) -> None:
+    outputs = tmp_path / "outputs"
+    outputs.mkdir(mode=0o700)
+    credentials = tmp_path / "dashboard.env"
+    credentials.write_text(
+        "DASHBOARD_URL=https://example.test\n"
+        "DASHBOARD_INGEST_TOKEN=fixture-value-with-adequate-length\n",
+        encoding="utf-8",
+    )
+    credentials.chmod(0o600)
+
+    result = subprocess.run(
+        (
+            sys.executable,
+            str(Path(run_dashboard_publisher.__file__)),
+            "publish",
+            "--outputs",
+            str(outputs),
+            "--credentials",
+            str(credentials),
+            "--dry-run",
+            "--once",
+        ),
+        check=False,
+        capture_output=True,
+        cwd=Path(run_dashboard_publisher.__file__).parent,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    assert json.loads(result.stdout)["schema_version"] == 2
+
+
+def test_publisher_rejects_ambiguous_root_publish_options_before_opening_a_relay(tmp_path: Path) -> None:
+    result = subprocess.run(
+        (
+            sys.executable,
+            str(Path(run_dashboard_publisher.__file__)),
+            "--dry-run",
+            "--once",
+            "publish",
+        ),
+        check=False,
+        capture_output=True,
+        cwd=Path(run_dashboard_publisher.__file__).parent,
+        env={**os.environ, "HOME": str(tmp_path / "empty-home")},
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode != 0
+    assert "publish_options_must_follow_subcommand" in result.stderr
+
+
 def test_publisher_uses_websocket_events_without_periodic_http_or_sleep() -> None:
     source = Path(run_dashboard_publisher.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -269,6 +344,68 @@ def test_publisher_converts_dashboard_urls_to_publish_websockets() -> None:
         )
         == "https://observatory.example/operator/pair/single-use-ticket"
     )
+
+
+@pytest.mark.anyio
+async def test_pairing_browser_open_uses_fixed_macos_binary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[tuple[str, str], bool]] = []
+
+    class _Completed:
+        returncode = 0
+
+    async def run_process(arguments: tuple[str, str], *, check: bool) -> _Completed:
+        calls.append((arguments, check))
+        return _Completed()
+
+    monkeypatch.setattr(dashboard_relay.anyio, "run_process", run_process)
+
+    await dashboard_relay.open_pairing_url("https://observatory.example/operator/pair/opaque")
+
+    assert calls == [(("/usr/bin/open", "https://observatory.example/operator/pair/opaque"), False)]
+
+
+@pytest.mark.anyio
+async def test_resident_publisher_sigusr1_coalesces_one_ticket_request_and_keeps_ticket_out_of_socket_output() -> None:
+    # Given: the already-connected publisher and a received pairing ticket.
+    pairing_path = f"/operator/pair/{'x' * 40}"
+    socket = _EventSocket([json.dumps({"type": "pairing_ticket", "path": pairing_path})])
+    pairing = run_dashboard_publisher.PairingRequestState()
+    opened: list[str] = []
+
+    async def signals() -> AsyncIterator[signal.Signals]:
+        yield signal.SIGUSR1
+        yield signal.SIGUSR1
+
+    async def open_browser(url: str) -> None:
+        opened.append(url)
+
+    # When: two operator signals arrive before the one ticket response.
+    await run_dashboard_publisher._forward_pairing_signals(
+        signals(),
+        socket,
+        anyio.Lock(),
+        pairing,
+    )
+    async with anyio.create_task_group() as tasks:
+        await run_dashboard_publisher._receive_events(
+            socket,
+            "https://observatory.example",
+            False,
+            Path("outputs"),
+            anyio.Lock(),
+            anyio.CapacityLimiter(1),
+            tasks,
+            pairing,
+            open_browser,
+        )
+
+    # Then: the resident socket requests one ticket, opens it once, and writes neither ticket nor path.
+    assert socket.messages == ['{"type":"pairing_request"}']
+    assert opened == [f"https://observatory.example{pairing_path}"]
+    assert pairing.pending is False
+    assert pairing_path not in "".join(socket.messages)
 
 
 def test_publisher_watches_account_ledger_without_periodic_broker_reads(
