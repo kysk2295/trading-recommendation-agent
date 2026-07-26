@@ -11,7 +11,10 @@
 
 A quiet market operations room after the decorative screens have been removed. The signature is a thin acid-lime “live rail” that connects freshness, active agents, and current evidence while all other information remains neutral. The interface should feel exact, alert, and readable for hours.
 
-Design read: a public-read, data-dense trading observatory with a technical and restrained language. Snapshot ingestion remains private. The browser surface is strictly read-only and contains no pairing, question, command, or process-control affordance. `DESIGN_VARIANCE: 6`, `MOTION_INTENSITY: 3`, `VISUAL_DENSITY: 8`.
+Design read: a public-read, data-dense trading observatory with a technical and restrained language.
+Snapshot ingestion remains private. Public telemetry is keyless; an authenticated device may open
+an agent-specific command workspace without exposing its operator secret to page JavaScript.
+`DESIGN_VARIANCE: 6`, `MOTION_INTENSITY: 3`, `VISUAL_DENSITY: 8`.
 
 ## 2. Color
 
@@ -98,6 +101,24 @@ Base unit: 4px. Tokens: `--space-1` 4px, `--space-2` 8px, `--space-3` 12px, `--s
 - States: default, hover, active, focus.
 - Accessibility: `aria-pressed` and descriptive names.
 
+### Workspace Tabs
+- Structure: persistent top `tablist` with overview, agents, account/PnL, and evidence panels.
+- States: default, hover, selected, focus.
+- Accessibility: real buttons, `aria-selected`, `aria-controls`, roving keyboard focus, hash
+  deep-links, and one visible `tabpanel`.
+- Layout: horizontal reel on narrow screens; never wraps into an ambiguous two-row nav.
+
+### Agent Command Workspace
+- Structure: selectable agent rail, identity/status detail, labeled textarea, submit action, and
+  chronological interaction timeline.
+- States: locked, ready, relay offline, queued, running, completed, failed.
+- Accessibility: selected agent is explicit in text; `Ctrl+Enter` submits; feedback uses a polite
+  live region; focus remains in the composer.
+- Security: public viewers see the agent roster but never command text or responses. Commands
+  require a Secure HttpOnly device session issued by a single-use publisher pairing ticket.
+- Cost: model work begins only after an explicit submit. One executor runs at a time and there are
+  no automatic retries.
+
 ### Paper Account Ledger
 - Structure: featured equity and daily PnL, followed by realized PnL, unrealized PnL, planned open
   risk, open positions, and open orders.
@@ -123,6 +144,9 @@ Base unit: 4px. Tokens: `--space-1` 4px, `--space-2` 8px, `--space-3` 12px, `--s
 - Push snapshot changes over one same-origin WebSocket. Reconnect only after a disconnect with
   bounded exponential delay from 1 to 60 seconds. The macOS relay publishes an initial snapshot,
   then sends only on filesystem change; it has no periodic HTTP loop.
+- Selected tabs use a 220ms opacity/translate transition and preserve the user's scroll position
+  inside each workspace. Agent selection moves a 2px accent rail and updates the command context.
+- Command states arrive over WebSocket; no spinner loops and no progress polling.
 - Respect `prefers-reduced-motion`; remove all transforms and transitions.
 
 ## 7. Depth & Surface
@@ -139,6 +163,8 @@ Strategy: tonal shift with sparse borders.
 - Minimum body size 14px and minimum interactive target 40px.
 - WCAG AA contrast for all persistent text.
 - Keyboard access for refresh and filters.
+- Keyboard access for workspace tabs, agent selection, and command submission.
 - Never use color as the only state signal.
 - Live updates use polite announcements and do not steal focus.
-- Accepted debt at initial release: no screen-reader chart sonification because the first release uses tables and definition lists instead of canvas charts.
+- No screen-reader chart sonification is required because the product uses tables and definition
+  lists instead of canvas charts.
