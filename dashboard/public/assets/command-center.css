@@ -1,0 +1,205 @@
+.command-center-agent-workspace,
+.command-console,
+.command-timeline {
+  display: grid;
+  gap: var(--space-4);
+  min-inline-size: 0;
+}
+
+.command-console {
+  padding-block-start: var(--space-2);
+  border-block-start: 1px solid var(--border-default);
+}
+
+.command-family-selector {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.command-family {
+  display: grid;
+  min-block-size: var(--control-touch);
+  gap: var(--space-1);
+  justify-items: start;
+  padding: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  text-align: start;
+  transition:
+    border-color var(--motion-micro),
+    background-color var(--motion-micro);
+}
+
+.command-family small {
+  color: var(--text-tertiary);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--type-meta);
+  overflow-wrap: anywhere;
+}
+
+.command-family:hover {
+  border-color: var(--border-strong);
+}
+
+.command-family[aria-pressed="true"] {
+  border-color: var(--ember-500);
+  background: var(--ember-soft);
+}
+
+.command-composer {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-panel);
+  background: var(--surface-secondary);
+}
+
+.command-composer-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(10rem, 0.4fr);
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.command-composer label {
+  color: var(--text-secondary);
+  font-size: var(--type-small);
+}
+
+.command-composer select,
+.command-composer textarea {
+  inline-size: 100%;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.command-composer select {
+  min-block-size: var(--control-md);
+  padding-inline: var(--space-3);
+}
+
+.command-composer textarea {
+  resize: vertical;
+  min-block-size: 7rem;
+  padding: var(--space-3);
+  line-height: 1.5;
+}
+
+.command-composer button {
+  justify-self: end;
+  min-block-size: var(--control-touch);
+  padding-inline: var(--space-5);
+  border-radius: var(--radius-control);
+  background: var(--ember-500);
+  color: var(--text-inverse);
+  font-weight: 680;
+}
+
+.command-composer button:hover {
+  background: var(--ember-400);
+}
+
+.command-composer :disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.operator-state {
+  color: var(--text-secondary);
+  font-size: var(--type-small);
+}
+
+.command-timeline > h2 {
+  font-size: var(--type-h2);
+}
+
+.command-event {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-inline-start: 3px solid var(--border-strong);
+  background: var(--surface-secondary);
+}
+
+.command-event-conversation {
+  border-inline-start-color: var(--ember-500);
+}
+
+.command-event-directed {
+  border-inline-start-color: var(--status-warning);
+}
+
+.command-event-autonomous {
+  border-inline-start-color: var(--status-success);
+}
+
+.command-event header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: baseline;
+}
+
+.command-event header time {
+  margin-inline-start: auto;
+  color: var(--text-tertiary);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--type-meta);
+}
+
+.command-request,
+.command-response,
+.command-step {
+  overflow-wrap: anywhere;
+}
+
+.command-request {
+  color: var(--text-primary);
+  white-space: pre-wrap;
+}
+
+.command-response {
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+.command-step {
+  padding-block-start: var(--space-2);
+  border-block-start: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--type-small);
+}
+
+@media (max-width: 767px) {
+  .command-family-selector {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .command-composer-heading {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .command-composer button {
+    inline-size: 100%;
+  }
+}
+
+@media (max-width: 420px) {
+  .command-family-selector {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .command-family {
+    transition: none;
+  }
+}

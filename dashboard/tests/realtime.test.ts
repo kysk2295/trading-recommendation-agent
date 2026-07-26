@@ -113,7 +113,8 @@ describe("event-driven dashboard relay", () => {
     const publisher = new FakePeer();
     const interaction = {
       id: "019c0014-f0f5-7000-8000-000000000001",
-      agent_id: "research",
+      agent_id: "market_context",
+      mode: "conversation",
       command: "현재 데이터 결손을 요약해줘",
       state: "queued",
       response: null,
@@ -179,7 +180,8 @@ describe("event-driven dashboard relay", () => {
     const replacement = new FakePeer();
     const interaction = {
       id: "019c0014-f0f5-7000-8000-000000000002",
-      agent_id: "research",
+      agent_id: "market_context",
+      mode: "conversation",
       command: "한 번만 실행해줘",
       state: "queued",
       response: null,
@@ -206,15 +208,50 @@ describe("event-driven dashboard relay", () => {
     expect(replacement.messages).toEqual([]);
     expect((await store.listInteractions()).at(0)).toMatchObject({
       id: interaction.id,
-      state: "failed",
-      response: "publisher 연결이 끊겨 자동 재시도하지 않았습니다.",
+      state: "uncertain",
+      response: "publisher 연결이 끊겨 실행 결과를 확정할 수 없습니다.",
     });
     expect(operator.messages.map((message) => JSON.parse(message)).at(-1)).toMatchObject({
       type: "interaction",
       interaction: {
         id: interaction.id,
-        state: "failed",
+        state: "uncertain",
       },
     });
+  });
+
+  test("persists directed progress and replays it only to authenticated operators", async () => {
+    // Given: one connected publisher, operator, and public viewer
+    const store = new MemorySnapshotStore();
+    const hub = new DashboardRealtimeHub(store);
+    const publisher = new FakePeer();
+    const operator = new FakePeer();
+    const publicViewer = new FakePeer();
+    hub.connectPublisher(publisher);
+    await hub.connectOperator(operator);
+    await hub.connectViewer(publicViewer);
+    const event = {
+      type: "directed_job_event",
+      interaction_id: "019c0014-f0f5-7000-8000-000000000010",
+      agent_family_id: "systematic_quant",
+      job_kind: "experiment",
+      kind: "evidence",
+      state: "running",
+      sequence: 2,
+      step: null,
+      evidence_sha256: "a".repeat(64),
+      result_sha256: null,
+      summary: null,
+    } as const;
+
+    // When: the local broker streams an evidence receipt
+    await hub.handlePublisherMessage(publisher, JSON.stringify(event));
+    const reconnected = new FakePeer();
+    await hub.connectOperator(reconnected);
+
+    // Then: it is durable for operator reconnect and absent from public delivery
+    expect(operator.messages.map((message) => JSON.parse(message))).toContainEqual(event);
+    expect(reconnected.messages.map((message) => JSON.parse(message))).toContainEqual(event);
+    expect(publicViewer.messages).toEqual([]);
   });
 });

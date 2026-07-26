@@ -27,6 +27,8 @@ async def run_interaction(
     limiter: anyio.CapacityLimiter,
     hermes_executable: Path,
     worktree: Path,
+    state_root: Path,
+    source_evidence_root: Path,
 ) -> None:
     async with limiter:
         await send_result(
@@ -38,12 +40,16 @@ async def run_interaction(
             ),
             send_lock,
         )
-        result = await execute_interaction(
+        execution = await execute_interaction(
             interaction,
             hermes_executable=hermes_executable,
             worktree=worktree,
+            state_root=state_root,
+            source_evidence_root=source_evidence_root,
         )
-        await send_result(socket, result, send_lock)
+        for event in execution.directed_events:
+            await send_payload(socket, event.model_dump_json(), send_lock)
+        await send_result(socket, execution.result, send_lock)
 
 
 async def send_result(
@@ -51,14 +57,24 @@ async def send_result(
     result: InteractionResult,
     send_lock: anyio.Lock,
 ) -> None:
+    await send_payload(
+        socket,
+        json.dumps(
+            result.model_dump(mode="json"),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        send_lock,
+    )
+
+
+async def send_payload(
+    socket: DashboardSendSocket,
+    payload: str,
+    send_lock: anyio.Lock,
+) -> None:
     async with send_lock:
-        await socket.send(
-            json.dumps(
-                result.model_dump(mode="json"),
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        )
+        await socket.send(payload)
 
 
 def pairing_url(dashboard_url: str, path: str) -> str:

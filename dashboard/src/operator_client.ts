@@ -1,7 +1,10 @@
 import ky, { HTTPError, TimeoutError } from "ky";
 import {
   type AgentId,
+  type AutonomousTaskReceipt,
+  type DirectedJobEvent,
   type Interaction,
+  type InteractionMode,
   interactionReceiptSchema,
   operatorMessageSchema,
   operatorSessionSchema,
@@ -13,6 +16,8 @@ interface OperatorCallbacks {
   readonly onSession: (authenticated: boolean) => void;
   readonly onConnection: (state: ConnectionState) => void;
   readonly onInteraction: (interaction: Interaction) => void;
+  readonly onDirectedJob: (event: DirectedJobEvent) => void;
+  readonly onAutonomousJob: (event: AutonomousTaskReceipt) => void;
 }
 
 export class OperatorClient {
@@ -43,10 +48,10 @@ export class OperatorClient {
     }
   }
 
-  async submit(agentId: AgentId, command: string): Promise<Interaction> {
+  async submit(agentId: AgentId, mode: InteractionMode, command: string): Promise<Interaction> {
     const payload = await ky
       .post(`/api/agents/${agentId}/interactions`, {
-        json: { command },
+        json: { mode, command },
         retry: 0,
         timeout: 15_000,
       })
@@ -67,8 +72,19 @@ export class OperatorClient {
         return;
       }
       const parsed = parseMessage(event.data);
-      if (parsed !== null) {
-        this.callbacks.onInteraction(parsed.interaction);
+      if (parsed === null) return;
+      switch (parsed.type) {
+        case "interaction":
+          this.callbacks.onInteraction(parsed.interaction);
+          return;
+        case "directed_job_event":
+          this.callbacks.onDirectedJob(parsed);
+          return;
+        case "agent_task_event":
+          this.callbacks.onAutonomousJob(parsed.task);
+          return;
+        default:
+          return assertNever(parsed);
       }
     });
     socket.addEventListener("close", () => {
@@ -108,4 +124,12 @@ function parseMessage(raw: string): ReturnType<typeof operatorMessageSchema.pars
 
 function isExpectedNetworkError(error: unknown): boolean {
   return error instanceof HTTPError || error instanceof TimeoutError || error instanceof TypeError;
+}
+
+function assertNever(value: never): never {
+  throw new OperatorMessageError(`unknown operator message: ${String(value)}`);
+}
+
+class OperatorMessageError extends Error {
+  override readonly name = "OperatorMessageError";
 }

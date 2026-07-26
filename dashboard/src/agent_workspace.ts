@@ -1,192 +1,233 @@
-import { requiredElement, textElement } from "./dom";
-import { shortTime, stateLabel, statusClass } from "./format";
+import { directedEventText, eventHeading, renderAutonomous } from "./command_center_events";
+import { textElement } from "./dom";
 import { OperatorClient } from "./operator_client";
-import type { AgentId, AgentView, Interaction } from "./schema";
+import type {
+  AgentId,
+  AutonomousTaskReceipt,
+  DirectedJobEvent,
+  Interaction,
+  InteractionMode,
+} from "./schema";
 
 const agentIds = [
-  "kr-theme",
-  "us-intraday",
-  "us-systematic",
-  "us-swing",
-  "research",
-  "delivery",
+  "opportunity_manager",
+  "day_trading",
+  "swing_trading",
+  "systematic_quant",
+  "derivatives_research",
+  "market_context",
 ] as const satisfies readonly AgentId[];
 
 const agentLabels: Readonly<Record<AgentId, readonly [string, string]>> = {
-  "kr-theme": ["한국 테마", "KR THEME / INTRADAY"],
-  "us-intraday": ["미국 장중", "US INTRADAY"],
-  "us-systematic": ["미국 시스템", "US SYSTEMATIC"],
-  "us-swing": ["미국 스윙", "US SWING"],
-  research: ["데이터 연구", "CAUSAL RESEARCH"],
-  delivery: ["추천 전달", "DELIVERY & OPERATIONS"],
+  opportunity_manager: ["기회 관리자", "OPPORTUNITY MANAGER"],
+  day_trading: ["데이 트레이딩", "DAY TRADING"],
+  swing_trading: ["스윙 트레이딩", "SWING TRADING"],
+  systematic_quant: ["시스템 퀀트", "SYSTEMATIC QUANT"],
+  derivatives_research: ["파생상품 연구", "DERIVATIVES RESEARCH"],
+  market_context: ["시장 맥락", "MARKET CONTEXT"],
 };
 
+const modes = [
+  ["conversation", "대화"],
+  ["research", "연구 작업"],
+  ["analysis", "분석 작업"],
+  ["hypothesis", "가설 등록"],
+  ["experiment", "실험 실행"],
+  ["allowed_code", "허용 코드 점검"],
+] as const satisfies readonly (readonly [InteractionMode, string])[];
+
 export class AgentWorkspace {
-  private readonly selector = requiredElement("agent-selector", HTMLElement);
-  private readonly form = requiredElement("interaction-form", HTMLFormElement);
-  private readonly textarea = requiredElement("interaction-command", HTMLTextAreaElement);
-  private readonly submit = requiredElement("interaction-submit", HTMLButtonElement);
-  private readonly status = requiredElement("operator-status", HTMLElement);
-  private readonly guidance = requiredElement("interaction-guidance", HTMLElement);
   private readonly interactions = new Map<string, Interaction>();
-  private readonly agents = new Map<AgentId, AgentView>();
+  private readonly directed = new Map<string, DirectedJobEvent>();
+  private readonly autonomous = new Map<string, AutonomousTaskReceipt>();
   private readonly operator: OperatorClient;
-  private selected: AgentId = "kr-theme";
+  private host: HTMLElement | null = null;
+  private selected: AgentId = "opportunity_manager";
   private authenticated = false;
   private connected = false;
   private submitting = false;
+  private started = false;
 
   constructor() {
     this.operator = new OperatorClient({
       onSession: (authenticated) => {
         this.authenticated = authenticated;
-        this.updateCommandState();
+        this.render();
       },
       onConnection: (state) => {
         this.connected = state === "connected";
-        this.updateCommandState();
+        this.render();
       },
-      onInteraction: (interaction) => this.applyInteraction(interaction),
-    });
-    this.form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      void this.submitCommand();
-    });
-    this.textarea.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && event.ctrlKey) {
-        event.preventDefault();
-        this.form.requestSubmit();
-      }
-    });
-    this.renderSelector();
-    this.renderSelectedAgent();
-    this.updateCommandState();
-  }
-
-  start(): void {
-    void this.operator.start();
-  }
-
-  updateAgents(agents: readonly AgentView[]): void {
-    this.agents.clear();
-    for (const agent of agents) {
-      this.agents.set(agent.agent_id, agent);
-    }
-    this.renderSelector();
-    this.renderSelectedAgent();
-  }
-
-  private select(agentId: AgentId): void {
-    this.selected = agentId;
-    this.renderSelector();
-    this.renderSelectedAgent();
-    this.renderInteractions();
-    this.textarea.focus();
-  }
-
-  private renderSelector(): void {
-    this.selector.replaceChildren(
-      ...agentIds.map((agentId) => {
-        const [label, scope] = agentLabels[agentId];
-        const runtime = this.agents.get(agentId);
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "agent-choice";
-        button.dataset["agentId"] = agentId;
-        button.setAttribute("aria-pressed", String(agentId === this.selected));
-        button.addEventListener("click", () => this.select(agentId));
-        const identity = document.createElement("span");
-        identity.append(textElement("strong", label), textElement("small", scope));
-        button.append(
-          identity,
-          textElement(
-            "span",
-            stateLabel(runtime?.state ?? "idle"),
-            `state-text ${statusClass(runtime?.state ?? "idle")}`,
-          ),
+      onInteraction: (interaction) => {
+        this.interactions.set(
+          interaction.id,
+          latestInteraction(this.interactions.get(interaction.id), interaction),
         );
-        return button;
+        this.render();
+      },
+      onDirectedJob: (event) => {
+        this.directed.set(`${event.interaction_id}:${event.sequence}:${event.kind}`, event);
+        this.render();
+      },
+      onAutonomousJob: (event) => {
+        this.autonomous.set(`${event.public_task_id}:${event.sequence}`, event);
+        this.render();
+      },
+    });
+  }
+
+  mount(host: HTMLElement): void {
+    this.host = host;
+    this.render();
+    if (!this.started) {
+      this.started = true;
+      void this.operator.start();
+    }
+  }
+
+  private render(): void {
+    if (this.host === null) return;
+    const section = document.createElement("section");
+    section.className = "command-console";
+    section.append(this.renderFamilies(), this.renderComposer(), this.renderTimeline());
+    this.host.replaceChildren(section);
+  }
+
+  private renderFamilies(): HTMLElement {
+    const region = document.createElement("div");
+    region.className = "command-family-selector";
+    region.setAttribute("aria-label", "연구 에이전트 가족");
+    for (const agentId of agentIds) {
+      const [label, scope] = agentLabels[agentId];
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "command-family";
+      button.setAttribute("aria-pressed", String(this.selected === agentId));
+      button.append(textElement("strong", label), textElement("small", scope));
+      button.addEventListener("click", () => {
+        this.selected = agentId;
+        this.render();
+        this.host?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+      });
+      region.append(button);
+    }
+    return region;
+  }
+
+  private renderComposer(): HTMLFormElement {
+    const form = document.createElement("form");
+    form.className = "command-composer";
+    const status = !this.authenticated
+      ? "조회 전용 · 기기 페어링 필요"
+      : this.connected
+        ? "운영자 명령 채널 연결됨"
+        : "명령 채널 재연결 중";
+    const select = document.createElement("select");
+    select.id = "command-mode";
+    select.disabled = !this.authenticated || !this.connected || this.submitting;
+    for (const [value, label] of modes) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      select.append(option);
+    }
+    const textarea = document.createElement("textarea");
+    textarea.id = "command-text";
+    textarea.name = "command";
+    textarea.maxLength = 2_000;
+    textarea.rows = 4;
+    textarea.required = true;
+    textarea.placeholder = `${agentLabels[this.selected][0]}에게 증거 기반 목표를 지시하세요.`;
+    textarea.disabled = select.disabled;
+    const submit = document.createElement("button");
+    submit.type = "submit";
+    submit.textContent = this.submitting ? "접수 중" : "명령 접수";
+    submit.disabled = select.disabled;
+    textarea.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) form.requestSubmit();
+    });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void this.submit(select.value, textarea.value);
+    });
+    const heading = document.createElement("div");
+    heading.className = "command-composer-heading";
+    heading.append(
+      textElement(
+        "div",
+        status,
+        `operator-state ${this.connected ? "state-ready" : "state-armed"}`,
+      ),
+      Object.assign(document.createElement("label"), {
+        htmlFor: "command-mode",
+        textContent: "채널",
       }),
+      select,
     );
+    form.append(
+      heading,
+      Object.assign(document.createElement("label"), {
+        htmlFor: "command-text",
+        textContent: "운영자 메시지",
+      }),
+      textarea,
+      submit,
+    );
+    return form;
   }
 
-  private renderSelectedAgent(): void {
-    const [label, scope] = agentLabels[this.selected];
-    const runtime = this.agents.get(this.selected);
-    requiredElement("selected-agent-title", HTMLElement).textContent = label;
-    requiredElement("selected-agent-scope", HTMLElement).textContent = scope;
-    const state = requiredElement("selected-agent-state", HTMLElement);
-    state.textContent = stateLabel(runtime?.state ?? "idle");
-    state.className = `status-word ${statusClass(runtime?.state ?? "idle")}`;
-    requiredElement("selected-agent-job", HTMLElement).textContent =
-      runtime?.scheduled_label ?? "현재 등록된 실행·예약 작업 없음";
-  }
-
-  private updateCommandState(): void {
-    const ready = this.authenticated && this.connected && !this.submitting;
-    this.textarea.disabled = !ready;
-    this.submit.disabled = !ready;
-    if (!this.authenticated) {
-      this.status.textContent = "조회 전용 · 기기 페어링 필요";
-      this.status.className = "operator-state state-locked";
-      this.guidance.textContent =
-        "Mac publisher가 발급한 일회용 링크로 연결하면 명령 입력이 활성화됩니다.";
-      return;
-    }
-    if (!this.connected) {
-      this.status.textContent = "명령 채널 재연결 중";
-      this.status.className = "operator-state state-armed";
-      this.guidance.textContent = "연결이 복구되면 입력이 자동으로 활성화됩니다.";
-      return;
-    }
-    this.status.textContent = this.submitting ? "명령 접수 중" : "명령 접수 채널 연결됨";
-    this.status.className = "operator-state state-ready";
-    this.guidance.textContent =
-      "Ctrl+Enter로 전송 · 명령 1건당 Hermes 1회 실행 · 자동 유료 재시도 없음";
-  }
-
-  private async submitCommand(): Promise<void> {
-    const command = this.textarea.value.trim();
-    if (!this.authenticated || !this.connected || this.submitting || command.length === 0) {
-      return;
-    }
+  private async submit(rawMode: string, rawCommand: string): Promise<void> {
+    const mode = modes.find(([candidate]) => candidate === rawMode)?.[0];
+    const command = rawCommand.trim();
+    if (mode === undefined || command.length === 0 || this.submitting) return;
     this.submitting = true;
-    this.updateCommandState();
+    this.render();
     try {
-      const interaction = await this.operator.submit(this.selected, command);
-      this.applyInteraction(interaction);
-      this.textarea.value = "";
-    } catch (_error: unknown) {
-      this.guidance.textContent =
-        "명령을 접수하지 못했습니다. 연결 상태를 확인한 뒤 다시 보내세요.";
+      const interaction = await this.operator.submit(this.selected, mode, command);
+      this.interactions.set(interaction.id, interaction);
     } finally {
       this.submitting = false;
-      this.updateCommandState();
+      this.render();
     }
   }
 
-  private applyInteraction(interaction: Interaction): void {
-    this.interactions.set(
-      interaction.id,
-      latestInteraction(this.interactions.get(interaction.id), interaction),
-    );
-    if (interaction.agent_id === this.selected) {
-      this.renderInteractions();
-    }
-  }
-
-  private renderInteractions(): void {
-    const stream = requiredElement("interaction-stream", HTMLElement);
+  private renderTimeline(): HTMLElement {
+    const region = document.createElement("section");
+    region.className = "command-timeline";
+    region.append(textElement("h2", `${agentLabels[this.selected][0]} 활동 타임라인`));
     const interactions = [...this.interactions.values()]
-      .filter((interaction) => interaction.agent_id === this.selected)
+      .filter((item) => item.agent_id === this.selected)
       .sort((left, right) => right.created_at.localeCompare(left.created_at));
-    if (interactions.length === 0) {
-      stream.replaceChildren(
-        textElement("p", "아직 이 에이전트에게 보낸 명령이 없습니다.", "empty-state"),
-      );
-      return;
+    for (const interaction of interactions) region.append(this.renderInteraction(interaction));
+    const autonomous = [...this.autonomous.values()]
+      .filter((item) => item.agent_family_id === this.selected)
+      .sort((left, right) => right.occurred_at.localeCompare(left.occurred_at));
+    for (const task of autonomous) region.append(renderAutonomous(task));
+    if (interactions.length + autonomous.length === 0) {
+      region.append(textElement("p", "이 가족의 대화나 작업 receipt가 없습니다.", "empty-state"));
     }
-    stream.replaceChildren(...interactions.map(renderInteraction));
+    return region;
+  }
+
+  private renderInteraction(interaction: Interaction): HTMLElement {
+    const article = document.createElement("article");
+    const directed = interaction.mode !== "conversation";
+    article.className = `command-event command-event-${directed ? "directed" : "conversation"}`;
+    article.dataset["channel"] = directed ? "directed-job" : "conversation";
+    article.append(
+      eventHeading(directed ? "지시형 작업" : "대화", interaction.state, interaction.updated_at),
+      textElement("p", interaction.command, "command-request"),
+    );
+    const events = [...this.directed.values()]
+      .filter((event) => event.interaction_id === interaction.id)
+      .sort((left, right) => left.sequence - right.sequence);
+    for (const event of events) {
+      article.append(textElement("p", directedEventText(event), "command-step"));
+    }
+    if (interaction.response !== null) {
+      article.append(textElement("p", interaction.response, "command-response"));
+    }
+    return article;
   }
 }
 
@@ -195,32 +236,4 @@ export function latestInteraction(
   incoming: Interaction,
 ): Interaction {
   return current !== undefined && current.updated_at > incoming.updated_at ? current : incoming;
-}
-
-function renderInteraction(interaction: Interaction): HTMLElement {
-  const article = document.createElement("article");
-  article.className = `interaction-item interaction-${interaction.state}`;
-  const heading = document.createElement("div");
-  const time = document.createElement("time");
-  time.dateTime = interaction.updated_at;
-  time.textContent = shortTime(interaction.updated_at);
-  heading.append(
-    textElement("span", stateLabel(interaction.state), statusClass(interaction.state)),
-    time,
-  );
-  article.append(heading, textElement("p", interaction.command, "interaction-command"));
-  if (interaction.response !== null) {
-    article.append(textElement("p", interaction.response, "interaction-response"));
-  } else {
-    article.append(
-      textElement(
-        "p",
-        interaction.state === "running"
-          ? "Hermes가 목표를 처리하고 있습니다."
-          : "실행 순서를 기다립니다.",
-        "interaction-pending",
-      ),
-    );
-  }
-  return article;
 }

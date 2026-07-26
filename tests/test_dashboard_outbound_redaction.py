@@ -16,7 +16,10 @@ from trading_agent.dashboard_outbound_redaction import (
         "session_id session-canary",
         "/Users/private/worktree/output.json",
         "raw_payload provider-body",
+        "raw log provider-canary",
         "account_fingerprint identity",
+        "account number 12345678",
+        "~/.config/trading-agent/private.env",
     ],
 )
 def test_recursive_outbound_canaries_are_redacted(canary: str) -> None:

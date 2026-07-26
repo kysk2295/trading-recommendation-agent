@@ -130,7 +130,7 @@ export function createApp(
       return context.notFound();
     }
     setOperatorCookie(context, operatorToken);
-    return context.redirect("/#agents");
+    return context.redirect("/#command-center");
   });
   app.get("/api/operator/interactions", async (context) => {
     if (!operatorAuthorized(context, operatorToken)) {
@@ -163,6 +163,7 @@ export function createApp(
     const interaction = interactionSchema.parse({
       id: randomUUID(),
       agent_id: agentId.data,
+      mode: input.data.mode,
       command: input.data.command,
       state: "queued",
       response: null,

@@ -176,10 +176,10 @@ describe("dashboard API", () => {
 
     // When: the viewer reads telemetry and attempts to submit a command.
     const telemetry = await app.request("/api/snapshot");
-    const command = await app.request("/api/agents/us-intraday/interactions", {
+    const command = await app.request("/api/agents/day_trading/interactions", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ command: "현재 세션 차단 원인을 분석해줘" }),
+      body: JSON.stringify({ mode: "analysis", command: "현재 세션 차단 원인을 분석해줘" }),
     });
 
     // Then: telemetry remains public while command submission is unauthorized.
@@ -197,13 +197,13 @@ describe("dashboard API", () => {
     const cookie = paired.headers.get("set-cookie");
 
     // When: the paired device sends a goal to one dashboard agent.
-    const response = await app.request("/api/agents/us-intraday/interactions", {
+    const response = await app.request("/api/agents/day_trading/interactions", {
       method: "POST",
       headers: {
         cookie: cookie ?? "",
         "content-type": "application/json",
       },
-      body: JSON.stringify({ command: "현재 세션 차단 원인을 분석해줘" }),
+      body: JSON.stringify({ mode: "analysis", command: "현재 세션 차단 원인을 분석해줘" }),
     });
     const payload = await response.json();
 
@@ -212,7 +212,8 @@ describe("dashboard API", () => {
     expect(response.status).toBe(202);
     expect(payload).toMatchObject({
       interaction: {
-        agent_id: "us-intraday",
+        agent_id: "day_trading",
+        mode: "analysis",
         command: "현재 세션 차단 원인을 분석해줘",
         state: "queued",
       },
@@ -228,8 +229,35 @@ describe("dashboard API", () => {
     const replayed = await app.request(`/operator/pair/${ticket}`);
 
     expect(paired.status).toBe(302);
-    expect(paired.headers.get("location")).toBe("/#agents");
+    expect(paired.headers.get("location")).toBe("/#command-center");
     expect(paired.headers.get("set-cookie")).toContain("HttpOnly");
     expect(replayed.status).toBe(404);
+  });
+
+  test("rejects private canaries before interaction storage", async () => {
+    // Given: a paired operator and a command containing a prohibited local identifier
+    const store = new MemorySnapshotStore();
+    const app = createApp(store, INGEST_TOKEN, OPERATOR_TOKEN);
+    const paired = await app.request("/api/operator/session", {
+      method: "POST",
+      headers: { authorization: `Bearer ${OPERATOR_TOKEN}` },
+    });
+
+    // When: the canary crosses the command boundary
+    const response = await app.request("/api/agents/market_context/interactions", {
+      method: "POST",
+      headers: {
+        cookie: paired.headers.get("set-cookie") ?? "",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        mode: "conversation",
+        command: "inspect /Users/private/worktree/session.json",
+      }),
+    });
+
+    // Then: no message, store row, relay event, or DOM-bound value is created
+    expect(response.status).toBe(400);
+    expect(await store.listInteractions()).toEqual([]);
   });
 });

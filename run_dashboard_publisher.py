@@ -24,17 +24,13 @@ from rich import print as rprint
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import WebSocketException
 
-from trading_agent.dashboard_autonomous_publisher import (
-    DEFAULT_AUTONOMOUS_STATE,
-    InvalidAutonomousTriggerFixtureError,
-    execute_autonomous_fixture,
-)
 from trading_agent.dashboard_commands import (
     DashboardInteractionMessage,
     PairingTicketMessage,
     parse_dashboard_event,
 )
 from trading_agent.dashboard_models_v2 import DashboardSnapshotV2
+from trading_agent.dashboard_publisher_cli import register_execution_commands
 from trading_agent.dashboard_publisher_events import (
     SnapshotSocket,
     WatchFactory,
@@ -68,8 +64,10 @@ app = typer.Typer(
 )
 DEFAULT_OUTPUTS = Path(__file__).resolve().parent / "outputs"
 DEFAULT_CREDENTIALS = Path.home() / ".config" / "trading-agent" / "dashboard.env"
+DEFAULT_INTERACTIVE_STATE = Path.home() / ".local" / "state" / "trading-agent" / "dashboard-interactive"
 HERMES_EXECUTABLE = Path(shutil.which("hermes") or Path.home() / ".local/bin/hermes")
 WORKTREE = Path(__file__).resolve().parent
+register_execution_commands(app, DEFAULT_INTERACTIVE_STATE)
 
 
 @app.callback()
@@ -83,32 +81,6 @@ def publisher_default(
 ) -> None:
     if context.invoked_subcommand is None:
         publish(outputs, credentials, once, dry_run, pair_browser)
-
-
-@app.command("autonomous-agent", help="typed trigger 한 건을 격리된 autonomous 연구 task로 실행합니다.")
-def autonomous_agent(
-    trigger_fixture: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
-    state_root: Annotated[Path, typer.Option()] = DEFAULT_AUTONOMOUS_STATE,
-    dry_run: Annotated[bool, typer.Option(help="외부 relay 전송 없이 로컬 control plane만 검증")] = False,
-    expect_cleanup: Annotated[bool, typer.Option(help="격리 환경 cleanup receipt 필수")] = False,
-) -> None:
-    del dry_run
-    try:
-        outcome = execute_autonomous_fixture(
-            trigger_fixture,
-            state_root=state_root,
-        )
-    except InvalidAutonomousTriggerFixtureError as error:
-        raise typer.BadParameter("invalid_autonomous_trigger", param_hint="--trigger-fixture") from error
-    if expect_cleanup and not outcome.cleanup_completed:
-        typer.echo("AUTONOMOUS_BLOCKED model_processes=0 receipt=1")
-        raise typer.Exit(code=1)
-    if outcome.state == "completed" and outcome.claim_created:
-        typer.echo("AUTONOMOUS_OK claims=1 model_processes=1 duplicate_launches=0 evidence=append_only cleanup=1")
-        return
-    typer.echo(f"AUTONOMOUS_BLOCKED model_processes={outcome.model_processes} receipt=1")
-    if outcome.claim_created or outcome.state not in {"blocked", "completed", "failed", "uncertain"}:
-        raise typer.Exit(code=1)
 
 
 @app.command(help="로컬 산출물을 redacted 운영 snapshot으로 안전하게 전송합니다.")
@@ -220,6 +192,7 @@ async def _run_event_connection(
                 socket,
                 dashboard_url,
                 pair_browser,
+                outputs,
                 send_lock,
                 limiter,
                 tasks,
@@ -234,6 +207,7 @@ async def _receive_events(
     socket: ClientConnection,
     dashboard_url: str,
     pair_browser: bool,
+    outputs: Path,
     send_lock: anyio.Lock,
     limiter: anyio.CapacityLimiter,
     tasks: TaskGroup,
@@ -255,6 +229,8 @@ async def _receive_events(
                 limiter,
                 HERMES_EXECUTABLE,
                 WORKTREE,
+                DEFAULT_INTERACTIVE_STATE,
+                outputs / "source_evidence",
             )
 
 

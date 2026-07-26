@@ -3,7 +3,8 @@ import { latestInteraction } from "../src/agent_workspace";
 
 const queued = {
   id: "019c0014-f0f5-7000-8000-000000000001",
-  agent_id: "research",
+  agent_id: "market_context",
+  mode: "conversation",
   command: "명령",
   state: "queued",
   response: null,

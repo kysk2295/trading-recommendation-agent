@@ -72,6 +72,7 @@ export function stateLabel(state: string): string {
     target_2r: "2R 도달",
     time_exit: "시간 청산",
     unavailable: "자료 없음",
+    uncertain: "확정 불가",
     verified: "검증됨",
   };
   return labels[state] ?? state;

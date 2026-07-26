@@ -2,9 +2,15 @@ import postgres from "postgres";
 import type { AgentTaskEventStore } from "./agent_task_event_store";
 import { MemoryAgentTaskEventStore, PostgresAgentTaskEventStore } from "./agent_task_event_store";
 import { initializeDashboardStore } from "./dashboard_store_schema";
+import type { DirectedJobEventStore } from "./directed_job_event_store";
+import {
+  MemoryDirectedJobEventStore,
+  PostgresDirectedJobEventStore,
+} from "./directed_job_event_store";
 import type {
   AutonomousTaskReceipt,
   DashboardSnapshotV1,
+  DirectedJobEvent,
   Interaction,
   InteractionState,
 } from "./schema";
@@ -15,7 +21,7 @@ import type { NormalizedSnapshot } from "./snapshot_normalizer";
 import { parseAndNormalizeSnapshot } from "./snapshot_normalizer";
 import { type SnapshotSaveResult, saveSnapshotPair } from "./snapshot_pair_store";
 
-export interface SnapshotStore extends AgentTaskEventStore {
+export interface SnapshotStore extends AgentTaskEventStore, DirectedJobEventStore {
   save(snapshot: NormalizedSnapshot): Promise<SnapshotSaveResult>;
   latest(): Promise<DashboardSnapshotV2 | null>;
   latestV1(): Promise<DashboardSnapshotV1 | null>;
@@ -35,6 +41,7 @@ export class MemorySnapshotStore implements SnapshotStore {
   private snapshot: NormalizedSnapshot | null = null;
   private readonly interactions: Interaction[] = [];
   private readonly agentTaskEvents = new MemoryAgentTaskEventStore();
+  private readonly directedJobEvents = new MemoryDirectedJobEventStore();
 
   async save(snapshot: NormalizedSnapshot): Promise<SnapshotSaveResult> {
     let next = this.snapshot;
@@ -105,6 +112,14 @@ export class MemorySnapshotStore implements SnapshotStore {
   async listAgentTaskEvents(): Promise<readonly AutonomousTaskReceipt[]> {
     return this.agentTaskEvents.listAgentTaskEvents();
   }
+
+  async appendDirectedJobEvent(event: DirectedJobEvent): Promise<boolean> {
+    return this.directedJobEvents.appendDirectedJobEvent(event);
+  }
+
+  async listDirectedJobEvents(): Promise<readonly DirectedJobEvent[]> {
+    return this.directedJobEvents.listDirectedJobEvents();
+  }
 }
 
 type SnapshotRow = {
@@ -119,6 +134,7 @@ export class PostgresSnapshotStore implements SnapshotStore {
   private readonly sql: ReturnType<typeof postgres>;
   private readonly ready: Promise<void>;
   private readonly agentTaskEvents: PostgresAgentTaskEventStore;
+  private readonly directedJobEvents: PostgresDirectedJobEventStore;
 
   constructor(databaseUrl: string) {
     this.sql = postgres(databaseUrl, {
@@ -128,6 +144,7 @@ export class PostgresSnapshotStore implements SnapshotStore {
     });
     this.ready = this.initialize();
     this.agentTaskEvents = new PostgresAgentTaskEventStore(this.sql, this.ready);
+    this.directedJobEvents = new PostgresDirectedJobEventStore(this.sql, this.ready);
   }
 
   async save(snapshot: NormalizedSnapshot): Promise<SnapshotSaveResult> {
@@ -258,6 +275,14 @@ export class PostgresSnapshotStore implements SnapshotStore {
 
   async listAgentTaskEvents(): Promise<readonly AutonomousTaskReceipt[]> {
     return this.agentTaskEvents.listAgentTaskEvents();
+  }
+
+  async appendDirectedJobEvent(event: DirectedJobEvent): Promise<boolean> {
+    return this.directedJobEvents.appendDirectedJobEvent(event);
+  }
+
+  async listDirectedJobEvents(): Promise<readonly DirectedJobEvent[]> {
+    return this.directedJobEvents.listDirectedJobEvents();
   }
 
   private async interaction(id: string): Promise<Interaction | null> {

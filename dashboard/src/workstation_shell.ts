@@ -1,3 +1,4 @@
+import { AgentWorkspace } from "./agent_workspace";
 import { requiredElement } from "./dom";
 import { EvidenceTraceDrawer } from "./evidence_trace";
 import type { DashboardSnapshotV2 } from "./schema_v2";
@@ -6,6 +7,7 @@ import { initializeWorkspaceTabs } from "./workspace_tabs";
 import { WORKSPACE_RENDERERS } from "./workspaces";
 
 export class WorkstationShell {
+  private readonly agents = new AgentWorkspace();
   private readonly drawer = new EvidenceTraceDrawer();
   private readonly content = requiredElement("workspace-content", HTMLElement);
   private readonly scrollBody = requiredElement("workspace-main", HTMLElement);
@@ -74,6 +76,9 @@ export class WorkstationShell {
     const renderer = WORKSPACE_RENDERERS[this.activeWorkspace.key];
     this.content.setAttribute("aria-busy", "false");
     this.content.replaceChildren(renderer(this.snapshot, this.drawer));
+    if (this.activeWorkspace.id === "command-center") {
+      this.agents.mount(requiredElement("command-center-agent-workspace", HTMLElement));
+    }
   }
 
   private buildLauncherMenu(): void {

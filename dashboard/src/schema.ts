@@ -26,7 +26,7 @@ const forwardSchema = z.strictObject({
   incidents: z.array(z.string().max(160)).max(80),
 });
 
-export const agentIdSchema = z.enum([
+const legacyAgentIdSchema = z.enum([
   "kr-theme",
   "us-intraday",
   "us-systematic",
@@ -34,10 +34,9 @@ export const agentIdSchema = z.enum([
   "research",
   "delivery",
 ]);
-export type AgentId = z.infer<typeof agentIdSchema>;
 
 const agentSchema = z.strictObject({
-  agent_id: agentIdSchema,
+  agent_id: legacyAgentIdSchema,
   label: z.string().min(1).max(30),
   state: z.enum(["running", "armed", "idle", "failed"]),
   scheduled_label: z.string().min(1).max(180),
@@ -91,26 +90,6 @@ const accountSchema = z.strictObject({
   open_orders: z.number().int().nonnegative(),
 });
 
-export const interactionStateSchema = z.enum(["queued", "running", "completed", "failed"]);
-
-export const interactionSchema = z.strictObject({
-  id: z.uuid(),
-  agent_id: agentIdSchema,
-  command: z.string().trim().min(1).max(2_000),
-  state: interactionStateSchema,
-  response: z.string().max(8_000).nullable(),
-  created_at: z.iso.datetime({ offset: true }),
-  updated_at: z.iso.datetime({ offset: true }),
-});
-
-export const interactionCreateSchema = z.strictObject({
-  command: z.string().trim().min(1).max(2_000),
-});
-
-export const interactionReceiptSchema = z.strictObject({
-  interaction: interactionSchema,
-});
-
 export const researchFamilyIdSchema = z.enum([
   "opportunity_manager",
   "day_trading",
@@ -119,6 +98,75 @@ export const researchFamilyIdSchema = z.enum([
   "derivatives_research",
   "market_context",
 ]);
+export const agentIdSchema = researchFamilyIdSchema;
+export type AgentId = z.infer<typeof agentIdSchema>;
+
+export const interactionModeSchema = z.enum([
+  "conversation",
+  "research",
+  "analysis",
+  "hypothesis",
+  "experiment",
+  "allowed_code",
+]);
+
+export const interactionStateSchema = z.enum([
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "uncertain",
+]);
+
+const privateTextPattern =
+  /(?:\/Users\/|\/home\/|~\/|[A-Za-z]:\\|\b(?:api[_ -]?key|authorization|bearer|cookie|password|secret|token|account[_ -]?(?:id|fingerprint|number)|session[_ -]?id|worktree|raw[_ -]?(?:payload|header|response|log))\b)/i;
+
+const operatorCommandSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(2_000)
+  .refine((value) => !privateTextPattern.test(value), "private operator text is forbidden");
+
+export const interactionSchema = z.strictObject({
+  id: z.uuid(),
+  agent_id: agentIdSchema,
+  mode: interactionModeSchema,
+  command: operatorCommandSchema,
+  state: interactionStateSchema,
+  response: z.string().max(8_000).nullable(),
+  created_at: z.iso.datetime({ offset: true }),
+  updated_at: z.iso.datetime({ offset: true }),
+});
+
+export const interactionCreateSchema = z.strictObject({
+  mode: interactionModeSchema,
+  command: operatorCommandSchema,
+});
+
+export const interactionReceiptSchema = z.strictObject({
+  interaction: interactionSchema,
+});
+
+export const directedJobEventSchema = z.strictObject({
+  type: z.literal("directed_job_event"),
+  interaction_id: z.uuid(),
+  agent_family_id: researchFamilyIdSchema,
+  job_kind: interactionModeSchema.exclude(["conversation"]),
+  kind: z.enum(["progress", "evidence", "result"]),
+  state: z.enum(["running", "completed", "failed", "uncertain", "blocked"]),
+  sequence: z.number().int().nonnegative().max(32),
+  step: z.string().max(40).nullable(),
+  evidence_sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .nullable(),
+  result_sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .nullable(),
+  summary: z.string().max(240).nullable(),
+});
 
 export const autonomousTaskReceiptSchema = z.strictObject({
   schema_version: z.literal(1),
@@ -187,13 +235,19 @@ export const viewerMessageSchema = z.strictObject({
   snapshot: dashboardSnapshotSchema,
 });
 
-export const operatorMessageSchema = z.strictObject({
-  type: z.literal("interaction"),
-  interaction: interactionSchema,
-});
+export const operatorMessageSchema = z.discriminatedUnion("type", [
+  z.strictObject({
+    type: z.literal("interaction"),
+    interaction: interactionSchema,
+  }),
+  directedJobEventSchema,
+  autonomousTaskEventSchema,
+]);
 
 export type DashboardSnapshotV1 = z.infer<typeof dashboardSnapshotV1Schema>;
 export type DashboardSnapshot = z.infer<typeof dashboardSnapshotSchema>;
 export type AgentView = DashboardSnapshotV1["agents"][number];
 export type Interaction = z.infer<typeof interactionSchema>;
 export type InteractionState = z.infer<typeof interactionStateSchema>;
+export type InteractionMode = z.infer<typeof interactionModeSchema>;
+export type DirectedJobEvent = z.infer<typeof directedJobEventSchema>;

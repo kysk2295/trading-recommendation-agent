@@ -9,9 +9,12 @@ _FORBIDDEN: Final[tuple[re.Pattern[str], ...]] = (
         r"(?i)\b(?:api[_-]?key|authorization|bearer|cookie|password|secret|token)\b"
         r"(?:\s*[:=]?\s*\S+)?"
     ),
-    re.compile(r"(?i)\b(?:account[_-]?(?:id|fingerprint)|session[_-]?id|worktree)\b(?:\s+\S+)?"),
-    re.compile(r"(?i)\b(?:raw[_-]?(?:payload|header|response))\b(?:\s+\S+)?"),
-    re.compile(r"(?:/Users/|/home/|[A-Za-z]:\\)[^\s]+"),
+    re.compile(
+        r"(?i)\b(?:account[_ -]?(?:id|fingerprint|number)|session[_ -]?id|worktree)\b"
+        r"(?:\s+\S+)?"
+    ),
+    re.compile(r"(?i)\b(?:raw[_ -]?(?:payload|header|response|log))\b(?:\s+\S+)?"),
+    re.compile(r"(?:/Users/|/home/|~/|[A-Za-z]:\\)[^\s]+"),
 )
 
 

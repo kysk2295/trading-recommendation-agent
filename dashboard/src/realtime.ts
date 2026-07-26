@@ -4,6 +4,7 @@ import type { Interaction } from "./schema";
 import {
   autonomousTaskEventSchema,
   dashboardSnapshotV1Schema,
+  directedJobEventSchema,
   interactionStateSchema,
 } from "./schema";
 import type { DashboardSnapshotV2 } from "./schema_v2";
@@ -25,6 +26,7 @@ const publisherMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("pairing_request"),
   }),
   autonomousTaskEventSchema,
+  directedJobEventSchema,
 ]);
 
 export interface RealtimePeer {
@@ -66,6 +68,9 @@ export class DashboardRealtimeHub {
     }
     for (const task of await this.store.listAgentTaskEvents()) {
       send(peer, { type: "agent_task_event", task });
+    }
+    for (const event of await this.store.listDirectedJobEvents()) {
+      send(peer, event);
     }
   }
 
@@ -145,6 +150,13 @@ export class DashboardRealtimeHub {
         }
         return;
       }
+      case "directed_job_event": {
+        const created = await this.store.appendDirectedJobEvent(payload);
+        if (created) {
+          this.broadcast(this.operators, payload);
+        }
+        return;
+      }
     }
   }
 
@@ -185,8 +197,8 @@ export class DashboardRealtimeHub {
       }
       const updated = await this.store.updateInteraction(
         interaction.id,
-        "failed",
-        "publisher 연결이 끊겨 자동 재시도하지 않았습니다.",
+        "uncertain",
+        "publisher 연결이 끊겨 실행 결과를 확정할 수 없습니다.",
       );
       if (updated !== null) {
         this.broadcast(this.operators, { type: "interaction", interaction: updated });

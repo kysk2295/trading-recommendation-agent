@@ -38,6 +38,33 @@ def test_dashboard_publisher_help() -> None:
     assert "--interval-seconds" not in result.stdout
 
 
+def test_dashboard_conversation_reset_help_bad_and_happy_path(tmp_path: Path) -> None:
+    # Given: a local family binding created without network access
+    from trading_agent.dashboard_hermes_sessions import HermesSessionBindingStore
+
+    state = tmp_path / "state"
+    bindings = HermesSessionBindingStore(state / "hermes-sessions")
+    bindings.capture("market_context", "session-market-context-001")
+
+    # When: help, invalid family, and the exact local reset command run
+    help_result = CliRunner().invoke(run_dashboard_publisher.app, ["reset-conversation", "--help"])
+    bad = CliRunner().invoke(
+        run_dashboard_publisher.app,
+        ["reset-conversation", "--family", "delivery", "--state-root", str(state)],
+    )
+    happy = CliRunner().invoke(
+        run_dashboard_publisher.app,
+        ["reset-conversation", "--family", "market_context", "--state-root", str(state)],
+    )
+
+    # Then: only the canonical happy path removes the local binding
+    assert help_result.exit_code == 0
+    assert bad.exit_code != 0
+    assert happy.exit_code == 0
+    assert "RESET_OK" in happy.stdout
+    assert bindings.session_for("market_context") is None
+
+
 def test_dashboard_publisher_rejects_non_https_remote_url(tmp_path: Path) -> None:
     credentials = tmp_path / "dashboard.env"
     credentials.write_text(
@@ -280,10 +307,19 @@ def test_publisher_classifies_nested_websocket_failures_for_reconnect() -> None:
 @pytest.mark.anyio
 async def test_publisher_reports_running_then_terminal_command_state(tmp_path: Path) -> None:
     socket = _SendSocket()
+    hermes = tmp_path / "fake-hermes"
+    hermes.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "print(json.dumps({'event':'complete','text':'done',"
+        "'session_id':'session-market-context-001','failed':False,'error':None}))\n"
+    )
+    hermes.chmod(0o700)
     interaction = InteractionPayload.model_validate(
         {
             "id": "019c0014-f0f5-7000-8000-000000000001",
-            "agent_id": "research",
+            "agent_id": "market_context",
+            "mode": "conversation",
             "command": "결손을 요약해줘",
             "state": "queued",
             "response": None,
@@ -297,7 +333,9 @@ async def test_publisher_reports_running_then_terminal_command_state(tmp_path: P
         interaction,
         anyio.Lock(),
         anyio.CapacityLimiter(1),
-        Path("/bin/echo"),
+        hermes,
+        tmp_path,
+        tmp_path / "interactive-state",
         tmp_path,
     )
 

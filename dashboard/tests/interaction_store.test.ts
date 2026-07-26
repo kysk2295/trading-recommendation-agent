@@ -7,7 +7,8 @@ describe("agent interaction store", () => {
     const store = new MemorySnapshotStore();
     const older = {
       id: "019c0014-f0f5-7000-8000-000000000001",
-      agent_id: "research",
+      agent_id: "market_context",
+      mode: "conversation",
       command: "첫 번째 명령",
       state: "completed",
       response: "완료",
@@ -16,7 +17,8 @@ describe("agent interaction store", () => {
     } as const;
     const queued = {
       id: "019c0014-f0f5-7000-8000-000000000002",
-      agent_id: "us-intraday",
+      agent_id: "day_trading",
+      mode: "analysis",
       command: "두 번째 명령",
       state: "queued",
       response: null,

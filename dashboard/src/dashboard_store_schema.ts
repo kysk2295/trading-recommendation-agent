@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 import { PostgresAgentTaskEventStore } from "./agent_task_event_store";
+import { PostgresDirectedJobEventStore } from "./directed_job_event_store";
 
 export async function initializeDashboardStore(sql: ReturnType<typeof postgres>): Promise<void> {
   await sql`
@@ -25,4 +26,5 @@ export async function initializeDashboardStore(sql: ReturnType<typeof postgres>)
     )
   `;
   await PostgresAgentTaskEventStore.initialize(sql);
+  await PostgresDirectedJobEventStore.initialize(sql);
 }
