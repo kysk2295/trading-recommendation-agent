@@ -19,6 +19,8 @@ _SCHEMA = (
     "interaction_id TEXT PRIMARY KEY,"
     "agent_family_id TEXT NOT NULL,"
     "kind TEXT NOT NULL CHECK(kind IN ('conversation','directed')),"
+    "request_sha256 TEXT NOT NULL,"
+    "plan_sha256 TEXT,"
     "state TEXT NOT NULL CHECK(state IN ('queued','running','completed','failed','uncertain')),"
     "process_starts INTEGER NOT NULL DEFAULT 0 CHECK(process_starts BETWEEN 0 AND 1)"
     ");"
@@ -34,6 +36,8 @@ class InteractiveClaim:
     interaction_id: str
     agent_family_id: AgentFamilyId
     kind: InteractionKind
+    request_sha256: str | None
+    plan_sha256: str | None
     state: InteractionClaimState
     process_starts: int
 
@@ -51,6 +55,7 @@ class InteractiveClaimStore:
                 os.close(descriptor)
             with closing(self._connect()) as connection, connection:
                 connection.executescript(_SCHEMA)
+                _migrate_claim_schema(connection)
         except (OSError, sqlite3.Error) as error:
             raise InvalidInteractiveClaimStoreError("interactive_claim_store_invalid") from error
 
@@ -59,17 +64,47 @@ class InteractiveClaimStore:
         interaction_id: str,
         family_id: AgentFamilyId,
         kind: InteractionKind,
+        request_sha256: str,
     ) -> bool:
         try:
             with closing(self._connect()) as connection, connection:
                 cursor = connection.execute(
                     "INSERT OR IGNORE INTO interactive_claims "
-                    "(interaction_id,agent_family_id,kind,state) VALUES (?,?,?,'queued')",
-                    (interaction_id, family_id, kind),
+                    "(interaction_id,agent_family_id,kind,request_sha256,state) "
+                    "VALUES (?,?,?,?,'queued')",
+                    (interaction_id, family_id, kind, request_sha256),
                 )
                 return cursor.rowcount == 1
         except sqlite3.Error as error:
             raise InvalidInteractiveClaimStoreError("interactive_claim_failed") from error
+
+    def identity_matches(
+        self,
+        interaction_id: str,
+        family_id: AgentFamilyId,
+        kind: InteractionKind,
+        request_sha256: str,
+    ) -> bool:
+        claim = self.get(interaction_id)
+        return (
+            claim is not None
+            and claim.agent_family_id == family_id
+            and claim.kind == kind
+            and claim.request_sha256 == request_sha256
+        )
+
+    def bind_plan(self, interaction_id: str, plan_sha256: str) -> bool:
+        try:
+            with closing(self._connect()) as connection, connection:
+                cursor = connection.execute(
+                    "UPDATE interactive_claims SET plan_sha256=? "
+                    "WHERE interaction_id=? AND state='running' "
+                    "AND (plan_sha256 IS NULL OR plan_sha256=?)",
+                    (plan_sha256, interaction_id, plan_sha256),
+                )
+                return cursor.rowcount == 1
+        except sqlite3.Error as error:
+            raise InvalidInteractiveClaimStoreError("interactive_claim_plan_failed") from error
 
     def mark_running(self, interaction_id: str, *, process_started: bool = True) -> bool:
         return self._transition(interaction_id, "queued", "running", process_start=process_started)
@@ -89,7 +124,8 @@ class InteractiveClaimStore:
         try:
             with closing(self._connect()) as connection, connection:
                 row = connection.execute(
-                    "SELECT interaction_id,agent_family_id,kind,state,process_starts "
+                    "SELECT interaction_id,agent_family_id,kind,request_sha256,plan_sha256,"
+                    "state,process_starts "
                     "FROM interactive_claims WHERE interaction_id=?",
                     (interaction_id,),
                 ).fetchone()
@@ -137,6 +173,14 @@ def _require_private_file(path: Path) -> None:
         or metadata.st_nlink != 1
     ):
         raise InvalidInteractiveClaimStoreError("interactive_claim_file_identity_invalid")
+
+
+def _migrate_claim_schema(connection: sqlite3.Connection) -> None:
+    columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(interactive_claims)")}
+    if "request_sha256" not in columns:
+        connection.execute("ALTER TABLE interactive_claims ADD COLUMN request_sha256 TEXT")
+    if "plan_sha256" not in columns:
+        connection.execute("ALTER TABLE interactive_claims ADD COLUMN plan_sha256 TEXT")
 
 
 __all__ = (

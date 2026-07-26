@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from functools import partial
 from pathlib import Path
-from typing import Literal, assert_never, cast
+from typing import Literal, cast
 
 import anyio
+from anyio.from_thread import run as run_async_from_worker_thread
+from anyio.to_thread import run_sync as run_sync_in_worker_thread
 from pydantic import ValidationError
 
 from trading_agent.dashboard_directed_jobs import (
@@ -16,7 +19,6 @@ from trading_agent.dashboard_directed_jobs import (
     DirectedJobKind,
     DirectedJobRequest,
     InvalidDirectedJobError,
-    load_directed_events,
 )
 from trading_agent.dashboard_execution_claims import InteractiveClaimStore
 from trading_agent.dashboard_hermes_protocol import (
@@ -29,6 +31,10 @@ from trading_agent.dashboard_hermes_protocol import (
 from trading_agent.dashboard_hermes_sessions import (
     HermesSessionBindingStore,
     InvalidHermesSessionBindingError,
+)
+from trading_agent.dashboard_interaction_identity import (
+    duplicate_execution,
+    interaction_request_sha256,
 )
 from trading_agent.dashboard_interaction_models import (
     DashboardInteractionMessage,
@@ -52,12 +58,20 @@ async def execute_interaction(
     source_evidence_root: Path,
     timeout_seconds: float = 900,
     environment: Mapping[str, str] | None = None,
-    directed_event_sink: Callable[[DirectedJobEvent], Awaitable[None]] | None = None,
+    directed_event_sink: Callable[[DirectedJobEvent], Coroutine[None, None, None]] | None = None,
 ) -> InteractionExecution:
     claims = InteractiveClaimStore(state_root / "interactive-claims.sqlite3")
     kind: Literal["conversation", "directed"] = "conversation" if interaction.mode == "conversation" else "directed"
-    if not claims.claim(interaction.id, interaction.agent_id, kind):
-        return _duplicate_execution(interaction.id, claims, state_root)
+    request_sha256 = interaction_request_sha256(interaction)
+    if not claims.claim(interaction.id, interaction.agent_id, kind, request_sha256):
+        if not claims.identity_matches(
+            interaction.id,
+            interaction.agent_id,
+            kind,
+            request_sha256,
+        ):
+            return _failed_execution(interaction.id, "interaction_identity_conflict")
+        return duplicate_execution(interaction.id, claims, state_root)
     if not claims.mark_running(interaction.id, process_started=True):
         return _failed_execution(interaction.id, "interaction_claim_transition_failed")
     sessions = HermesSessionBindingStore(state_root / "hermes-sessions")
@@ -99,6 +113,16 @@ async def execute_interaction(
                 terminal.text,
                 cast(DirectedJobKind, interaction.mode),
             )
+            plan_sha256 = hashlib.sha256(
+                plan.model_dump_json().encode(),
+            ).hexdigest()
+            if not claims.bind_plan(interaction.id, plan_sha256):
+                return _terminal_failure(
+                    interaction.id,
+                    claims,
+                    "interaction_plan_binding_failed",
+                    True,
+                )
             return await _execute_directed(
                 interaction,
                 plan.intent,
@@ -128,7 +152,7 @@ async def _execute_directed(
     state_root: Path,
     source: Path,
     repository: Path,
-    event_sink: Callable[[DirectedJobEvent], Awaitable[None]] | None,
+    event_sink: Callable[[DirectedJobEvent], Coroutine[None, None, None]] | None,
 ) -> InteractionExecution:
     request = DirectedJobRequest(
         interaction_id=interaction.id,
@@ -143,13 +167,13 @@ async def _execute_directed(
             repository=repository,
         )
         if event_sink is None:
-            events = await anyio.to_thread.run_sync(executor.execute, request)
+            events = await run_sync_in_worker_thread(executor.execute, request)
         else:
 
             def emit(event: DirectedJobEvent) -> None:
-                anyio.from_thread.run(event_sink, event)
+                run_async_from_worker_thread(event_sink, event)
 
-            events = await anyio.to_thread.run_sync(
+            events = await run_sync_in_worker_thread(
                 partial(executor.execute, request, emit),
             )
     except (InvalidDirectedJobError, OSError, subprocess.SubprocessError):
@@ -200,57 +224,6 @@ def _failed_execution(interaction_id: str, reason: str) -> InteractionExecution:
     return InteractionExecution(
         InteractionResult(interaction_id=interaction_id, state="failed", response=reason),
         (),
-        False,
-    )
-
-
-def _duplicate_execution(
-    interaction_id: str,
-    claims: InteractiveClaimStore,
-    state_root: Path,
-) -> InteractionExecution:
-    claim = claims.get(interaction_id)
-    events: tuple[DirectedJobEvent, ...] = ()
-    if claim is not None and claim.kind == "directed":
-        try:
-            events = load_directed_events(state_root / "directed-jobs", interaction_id)
-        except (InvalidDirectedJobError, OSError, ValidationError):
-            events = ()
-        if (
-            events
-            and events[-1].kind == "result"
-            and events[-1].state
-            in (
-                "completed",
-                "failed",
-                "uncertain",
-            )
-        ):
-            terminal_state = cast(Literal["completed", "failed", "uncertain"], events[-1].state)
-            if claim.state == "running":
-                _ = claims.mark_terminal(interaction_id, terminal_state)
-            return InteractionExecution(
-                InteractionResult(
-                    interaction_id=interaction_id,
-                    state=terminal_state,
-                    response=events[-1].summary,
-                ),
-                events,
-                False,
-            )
-    if claim is None:
-        state: Literal["completed", "failed", "uncertain"] = "uncertain"
-    else:
-        match claim.state:
-            case "queued" | "running" | "uncertain":
-                state = "uncertain"
-            case "completed" | "failed":
-                state = claim.state
-            case unexpected:
-                assert_never(unexpected)
-    return InteractionExecution(
-        InteractionResult(interaction_id=interaction_id, state=state, response=None),
-        events,
         False,
     )
 

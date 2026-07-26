@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Literal, assert_never
 
 from pydantic import ValidationError
 
 from trading_agent.dashboard_agent_family import AgentFamilyId
+from trading_agent.dashboard_directed_package import (
+    FixedDirectedResearchPackage,
+    InvalidDirectedResearchPackageError,
+    ensure_private_directory,
+    require_private_file,
+)
 from trading_agent.dashboard_directed_research_models import (
     DirectedExperimentSpec,
     DirectedResearchKind,
@@ -33,21 +39,23 @@ from trading_agent.source_driven_hypothesis_queue import (
 class AuthoritativeDirectedResearchBroker:
     def __init__(self, *, state_root: Path, source_evidence_root: Path) -> None:
         self._state_root = state_root
-        self._package = source_evidence_root / "directed-research"
+        self._source_root = source_evidence_root
 
     def execute(self, operation: DirectedResearchKind, family_id: AgentFamilyId) -> bytes:
         try:
+            package = FixedDirectedResearchPackage.from_source_root(self._source_root)
             match operation:
                 case "research" | "analysis":
-                    receipt = self._query(operation, family_id)
+                    receipt = self._query(operation, family_id, package)
                 case "hypothesis":
-                    receipt = self._register(family_id)
+                    receipt = self._register(family_id, package)
                 case "experiment":
-                    receipt = self._experiment(family_id)
+                    receipt = self._experiment(family_id, package)
                 case unexpected:
-                    raise AssertionError(unexpected)
+                    assert_never(unexpected)
         except (
             InvalidDirectedResearchBrokerError,
+            InvalidDirectedResearchPackageError,
             OSError,
             RuntimeError,
             ValidationError,
@@ -60,8 +68,9 @@ class AuthoritativeDirectedResearchBroker:
         self,
         operation: Literal["research", "analysis"],
         family_id: AgentFamilyId,
+        package: FixedDirectedResearchPackage,
     ) -> DirectedResearchReceipt:
-        ledger, _ = self._ensure_hypothesis(family_id)
+        ledger, _ = self._ensure_hypothesis(family_id, package)
         artifact = project_source_driven_hypothesis_queue(ExperimentLedgerReader(ledger.path))
         _, created = publish_source_driven_hypothesis_queue(
             self._family_root(family_id) / operation,
@@ -79,8 +88,12 @@ class AuthoritativeDirectedResearchBroker:
             summary=f"authoritative {operation} output published",
         )
 
-    def _register(self, family_id: AgentFamilyId) -> DirectedResearchReceipt:
-        ledger, created = self._ensure_hypothesis(family_id)
+    def _register(
+        self,
+        family_id: AgentFamilyId,
+        package: FixedDirectedResearchPackage,
+    ) -> DirectedResearchReceipt:
+        ledger, created = self._ensure_hypothesis(family_id, package)
         if created != 1:
             raise InvalidDirectedResearchBrokerError
         card = _single_item(ExperimentLedgerReader(ledger.path).research_hypothesis_cards())
@@ -93,23 +106,30 @@ class AuthoritativeDirectedResearchBroker:
             summary="authoritative hypothesis registered",
         )
 
-    def _experiment(self, family_id: AgentFamilyId) -> DirectedResearchReceipt:
-        ledger, _ = self._ensure_hypothesis(family_id)
+    def _experiment(
+        self,
+        family_id: AgentFamilyId,
+        package: FixedDirectedResearchPackage,
+    ) -> DirectedResearchReceipt:
+        hypothesis_manifest = package.hypothesis_manifest()
+        spec = _load_spec(package.experiment_spec())
+        entitlement = package.entitlement_contract()
+        session_dirs = package.session_directories(spec.session_dates)
+        ledger = ExperimentLedgerStore(self._family_root(family_id) / "experiment.sqlite3")
+        _ = register_research_hypothesis_manifest(hypothesis_manifest, ledger)
         queue = project_source_driven_hypothesis_queue(ExperimentLedgerReader(ledger.path))
         queue_path, _ = publish_source_driven_hypothesis_queue(
             self._family_root(family_id) / "experiment-queue",
             queue,
         )
+        require_private_file(queue_path, self._family_root(family_id))
         item = _single_item(queue.snapshot.items)
-        spec = _load_spec(self._package / "experiment.json")
         family_root = self._family_root(family_id)
         lane_registry = family_root / "lane-registry.sqlite3"
         _ = bootstrap_lane_control_plane(LaneRegistryStore(lane_registry))
         result = run_intraday_actual_research(
             IntradayActualResearchRequest(
-                session_dirs=tuple(
-                    self._package / "sessions" / session_date.isoformat() for session_date in spec.session_dates
-                ),
+                session_dirs=session_dirs,
                 required_session_dates=spec.required_session_dates,
                 strategy_bindings=(
                     IntradayResearchStrategyBinding(
@@ -133,7 +153,7 @@ class AuthoritativeDirectedResearchBroker:
                 paths=IntradayActualResearchPaths(
                     dataset_root=family_root / "dataset",
                     binding_root=family_root / "binding",
-                    entitlement_contract=self._package / "entitlement.json",
+                    entitlement_contract=entitlement,
                     source_queue_artifact=queue_path,
                     lane_registry=lane_registry,
                     experiment_ledger=ledger.path,
@@ -170,16 +190,22 @@ class AuthoritativeDirectedResearchBroker:
     def _ensure_hypothesis(
         self,
         family_id: AgentFamilyId,
+        package: FixedDirectedResearchPackage,
     ) -> tuple[ExperimentLedgerStore, int]:
         ledger = ExperimentLedgerStore(self._family_root(family_id) / "experiment.sqlite3")
         registered = register_research_hypothesis_manifest(
-            self._package / "hypothesis.json",
+            package.hypothesis_manifest(),
             ledger,
         )
         return ledger, registered.cards_created
 
     def _family_root(self, family_id: AgentFamilyId) -> Path:
-        return self._state_root / "authoritative" / family_id
+        ensure_private_directory(self._state_root, self._state_root)
+        authority_root = self._state_root / "authoritative"
+        ensure_private_directory(authority_root, self._state_root)
+        root = self._state_root / "authoritative" / family_id
+        ensure_private_directory(root, self._state_root)
+        return root
 
 
 def _load_spec(path: Path) -> DirectedExperimentSpec:

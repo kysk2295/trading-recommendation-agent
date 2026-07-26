@@ -2,15 +2,20 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import Literal, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from trading_agent.dashboard_agent_family import AgentFamilyId
+from trading_agent.dashboard_directed_file_io import (
+    append_bytes,
+    read_bounded_bytes,
+    write_bytes_once,
+)
+from trading_agent.dashboard_directed_package import ensure_private_directory
 from trading_agent.dashboard_directed_research import (
     AuthoritativeDirectedResearchBroker,
 )
@@ -30,6 +35,10 @@ DirectedEventSink = Callable[["DirectedJobEvent"], None]
 
 
 class InvalidDirectedJobError(RuntimeError):
+    pass
+
+
+class DirectedEventDeliveryError(OSError):
     pass
 
 
@@ -67,6 +76,7 @@ class DirectedJobExecutor:
         repository: Path,
         research_broker: DirectedResearchBroker | None = None,
     ) -> None:
+        ensure_private_directory(state_root, state_root)
         self._state_root = state_root
         self._repository = repository
         self._research_broker = research_broker or AuthoritativeDirectedResearchBroker(
@@ -88,7 +98,11 @@ class DirectedJobExecutor:
             0,
             step=_step_name(request.job_kind),
         )
-        _record_and_emit(root, progress, event_sink)
+        try:
+            _record_and_emit(root, progress, event_sink)
+        except DirectedEventDeliveryError:
+            terminal = self._persist_delivery_uncertain(request, root, 1)
+            return progress, terminal
         try:
             evidence_sha, result_sha, summary = self._execute_operation(request, root)
         except InvalidDirectedJobError:
@@ -111,7 +125,11 @@ class DirectedJobExecutor:
             1,
             evidence_sha256=evidence_sha,
         )
-        _record_and_emit(root, evidence, event_sink)
+        try:
+            _record_and_emit(root, evidence, event_sink)
+        except DirectedEventDeliveryError:
+            terminal = self._persist_delivery_uncertain(request, root, 2)
+            return progress, evidence, terminal
         result = self._event(
             request,
             "result",
@@ -120,8 +138,28 @@ class DirectedJobExecutor:
             result_sha256=result_sha,
             summary=summary,
         )
-        _record_and_emit(root, result, event_sink)
+        try:
+            _record_and_emit(root, result, event_sink)
+        except DirectedEventDeliveryError:
+            terminal = self._persist_delivery_uncertain(request, root, 3)
+            return progress, evidence, result, terminal
         return progress, evidence, result
+
+    def _persist_delivery_uncertain(
+        self,
+        request: DirectedJobRequest,
+        root: Path,
+        sequence: int,
+    ) -> DirectedJobEvent:
+        terminal = self._event(
+            request,
+            "result",
+            "uncertain",
+            sequence,
+            summary="directed event delivery uncertain",
+        )
+        _record_and_emit(root, terminal, None)
+        return terminal
 
     def _execute_operation(
         self,
@@ -141,9 +179,11 @@ class DirectedJobExecutor:
                     TimeoutError,
                 ) as error:
                     raise InvalidDirectedJobError("directed_research_broker_failed") from error
-                _write_bytes_once(root / "broker-receipt.json", raw)
+                write_bytes_once(root / "broker-receipt.json", raw)
                 receipt_sha = hashlib.sha256(raw).hexdigest()
                 return receipt_sha, receipt.result_sha256, receipt.summary
+            case unexpected:
+                assert_never(unexpected)
 
     def _code_check(self, root: Path) -> tuple[str, str, str]:
         try:
@@ -167,7 +207,7 @@ class DirectedJobExecutor:
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
-        _write_bytes_once(root / "code-check-receipt.json", payload)
+        write_bytes_once(root / "code-check-receipt.json", payload)
         result_sha = hashlib.sha256(payload).hexdigest()
         return result_sha, result_sha, "allowlisted repository check completed"
 
@@ -203,15 +243,8 @@ def _step_name(kind: DirectedJobKind) -> str:
             return f"{operation}_broker"
         case "allowed_code":
             return "code_check"
-
-
-def _write_bytes_once(path: Path, payload: bytes) -> None:
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    try:
-        os.write(descriptor, payload)
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+        case unexpected:
+            assert_never(unexpected)
 
 
 def _record_and_emit(
@@ -220,33 +253,19 @@ def _record_and_emit(
     event_sink: DirectedEventSink | None,
 ) -> None:
     payload = event.model_dump_json().encode() + b"\n"
-    descriptor = os.open(
-        root / "events.jsonl",
-        os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW,
-        0o600,
-    )
-    try:
-        os.write(descriptor, payload)
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    append_bytes(root / "events.jsonl", payload)
     if event_sink is not None:
         event_sink(event)
 
 
 def load_directed_events(state_root: Path, interaction_id: str) -> tuple[DirectedJobEvent, ...]:
     path = state_root / interaction_id / "events.jsonl"
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    try:
-        payload = os.read(descriptor, MAX_EVENT_LOG_BYTES + 1)
-    finally:
-        os.close(descriptor)
-    if len(payload) > MAX_EVENT_LOG_BYTES:
-        raise InvalidDirectedJobError("directed_event_log_oversized")
+    payload = read_bounded_bytes(path, MAX_EVENT_LOG_BYTES)
     return tuple(DirectedJobEvent.model_validate_json(line) for line in payload.splitlines() if line.strip())
 
 
 __all__ = (
+    "DirectedEventDeliveryError",
     "DirectedEventSink",
     "DirectedJobEvent",
     "DirectedJobExecutor",

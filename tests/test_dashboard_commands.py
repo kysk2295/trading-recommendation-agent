@@ -7,12 +7,14 @@ import pytest
 from pydantic import ValidationError
 
 from tests.test_dashboard_directed_jobs import _write_experiment_package
+from trading_agent.dashboard_agent_family import AgentFamilyId
 from trading_agent.dashboard_commands import (
     DashboardInteractionMessage,
     execute_interaction,
     parse_dashboard_event,
 )
 from trading_agent.dashboard_directed_research import AuthoritativeDirectedResearchBroker
+from trading_agent.dashboard_directed_research_models import DirectedResearchKind
 from trading_agent.experiment_ledger_models import TrialEventKind
 from trading_agent.experiment_ledger_store import ExperimentLedgerReader
 
@@ -25,6 +27,7 @@ def _message(
     interaction_id: str = "019c0014-f0f5-7000-8000-000000000001",
     family_id: str = "market_context",
     mode: str = "conversation",
+    command: str = "현재 실제 데이터 결손을 한 문장으로 설명해줘",
 ) -> DashboardInteractionMessage:
     return DashboardInteractionMessage.model_validate(
         {
@@ -33,7 +36,7 @@ def _message(
                 "id": interaction_id,
                 "agent_id": family_id,
                 "mode": mode,
-                "command": "현재 실제 데이터 결손을 한 문장으로 설명해줘",
+                "command": command,
                 "state": "queued",
                 "response": None,
                 "created_at": "2026-07-26T04:00:00Z",
@@ -148,6 +151,55 @@ async def test_duplicate_delivery_launches_no_second_process(tmp_path: Path) -> 
     assert first.process_started
     assert not duplicate.process_started
     assert duplicate.result.state == "completed"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("family_id", "mode", "command"),
+    [
+        ("day_trading", "conversation", "현재 실제 데이터 결손을 한 문장으로 설명해줘"),
+        ("market_context", "analysis", "현재 실제 데이터 결손을 한 문장으로 설명해줘"),
+        ("market_context", "conversation", "다른 요청"),
+    ],
+)
+async def test_reused_uuid_with_conflicting_identity_launches_zero_and_rejects(
+    tmp_path: Path,
+    family_id: str,
+    mode: str,
+    command: str,
+) -> None:
+    # Given: one completed claim and a second payload reusing its UUID with changed identity
+    fake = tmp_path / "fake-hermes"
+    count = tmp_path / "count"
+    fake.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os\n"
+        "open(os.environ['COUNT_PATH'], 'a').write('1\\n')\n"
+        "print(json.dumps({'event':'complete','text':'done',"
+        "'session_id':'session-identity-001','failed':False,'error':None}))\n"
+    )
+    fake.chmod(0o700)
+    first = _message()
+    conflict = _message(family_id=family_id, mode=mode, command=command)
+    settings = {
+        "hermes_executable": fake,
+        "worktree": tmp_path,
+        "state_root": tmp_path / "state",
+        "source_evidence_root": tmp_path,
+        "timeout_seconds": 5,
+        "environment": {"COUNT_PATH": str(count)},
+    }
+
+    # When: the completed UUID is delivered with the conflicting payload
+    original = await execute_interaction(first.interaction, **settings)
+    rejected = await execute_interaction(conflict.interaction, **settings)
+
+    # Then: the conflict never replays completion and launches no second model or tool
+    assert original.result.state == "completed"
+    assert rejected.result.state == "failed"
+    assert rejected.result.response == "interaction_identity_conflict"
+    assert not rejected.process_started
+    assert count.read_text().splitlines() == ["1"]
 
 
 @pytest.mark.anyio
@@ -286,8 +338,8 @@ async def test_post_effect_directed_crash_closes_claim_uncertain_without_relaunc
 
     def write_then_crash(
         broker: AuthoritativeDirectedResearchBroker,
-        operation: str,
-        family_id: str,
+        operation: DirectedResearchKind,
+        family_id: AgentFamilyId,
     ) -> bytes:
         nonlocal calls
         calls += 1
@@ -364,7 +416,10 @@ def _write_directed_hypothesis_package(tmp_path: Path) -> Path:
     source = tmp_path / "source"
     package = source / "directed-research"
     package.mkdir(parents=True)
+    source.chmod(0o700)
+    package.chmod(0o700)
     (package / "hypothesis.json").write_bytes(HYPOTHESIS_MANIFEST.read_bytes())
+    (package / "hypothesis.json").chmod(0o600)
     return source
 
 

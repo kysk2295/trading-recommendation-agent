@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import stat
 from collections.abc import Callable
 from pathlib import Path
 
@@ -163,10 +164,14 @@ def test_crash_after_real_ledger_write_closes_uncertain_without_retry(tmp_path: 
     # Given: an injected broker mutates the real ledger and crashes before returning a receipt
     source = _write_hypothesis_package(tmp_path)
     real = _executor(tmp_path, source)._research_broker
+
+    def register_effect() -> None:
+        _ = real.execute("hypothesis", "systematic_quant")
+
     broker = _RecordingBroker(
         b"",
         OSError("receipt lost"),
-        effect=lambda: real.execute("hypothesis", "systematic_quant"),
+        effect=register_effect,
     )
     executor = _executor(tmp_path, source, broker)
 
@@ -241,7 +246,10 @@ def _write_hypothesis_package(tmp_path: Path) -> Path:
     source = tmp_path / "source"
     package = source / "directed-research"
     package.mkdir(parents=True)
+    source.chmod(0o700)
+    package.chmod(0o700)
     (package / "hypothesis.json").write_bytes(HYPOTHESIS_MANIFEST.read_bytes())
+    (package / "hypothesis.json").chmod(0o600)
     return source
 
 
@@ -253,6 +261,7 @@ def _write_experiment_package(tmp_path: Path) -> Path:
         package / "sessions" / session_date.isoformat(),
         session_date=session_date,
     )
+    _make_tree_private(package / "sessions")
     (package / "entitlement.json").write_bytes(ENTITLEMENT.read_bytes())
     (package / "entitlement.json").chmod(0o600)
     (package / "experiment.json").write_text(
@@ -281,7 +290,122 @@ def _write_experiment_package(tmp_path: Path) -> Path:
         ),
         encoding="utf-8",
     )
+    (package / "experiment.json").chmod(0o600)
     return source
+
+
+@pytest.mark.parametrize("mutation", ["public", "symlink", "hardlink"])
+def test_unsafe_hypothesis_package_input_mutates_no_ledger(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    # Given: the fixed hypothesis input is public, a symlink, or a hardlink alias
+    source = _write_hypothesis_package(tmp_path)
+    manifest = source / "directed-research" / "hypothesis.json"
+    match mutation:
+        case "public":
+            manifest.chmod(0o644)
+        case "symlink":
+            external = tmp_path / "external.json"
+            external.write_bytes(manifest.read_bytes())
+            external.chmod(0o600)
+            manifest.unlink()
+            manifest.symlink_to(external)
+        case "hardlink":
+            alias = tmp_path / "manifest-alias.json"
+            alias.hardlink_to(manifest)
+        case unexpected:
+            raise AssertionError(unexpected)
+
+    # When: hypothesis registration crosses the broker boundary
+    events = _executor(tmp_path, source).execute(_request("hypothesis"))
+
+    # Then: the unsafe input closes uncertain before any authoritative ledger mutation
+    ledger = tmp_path / "state" / "authoritative" / "systematic_quant" / "experiment.sqlite3"
+    assert events[-1].state == "uncertain"
+    assert not ledger.exists()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["public_spec", "symlink_entitlement", "public_session_dir", "hardlink_session_file"],
+)
+def test_unsafe_experiment_package_input_mutates_no_ledger(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    # Given: one experiment package component violates fixed private identity
+    source = _write_experiment_package(tmp_path)
+    package = source / "directed-research"
+    match mutation:
+        case "public_spec":
+            (package / "experiment.json").chmod(0o644)
+        case "symlink_entitlement":
+            entitlement = package / "entitlement.json"
+            external = tmp_path / "entitlement.json"
+            external.write_bytes(entitlement.read_bytes())
+            external.chmod(0o600)
+            entitlement.unlink()
+            entitlement.symlink_to(external)
+        case "public_session_dir":
+            next((package / "sessions").iterdir()).chmod(0o755)
+        case "hardlink_session_file":
+            session_file = next(path for path in (package / "sessions").rglob("*") if path.is_file())
+            (tmp_path / "session-alias").hardlink_to(session_file)
+        case unexpected:
+            raise AssertionError(unexpected)
+
+    # When: the bounded experiment crosses the broker boundary
+    events = _executor(tmp_path, source).execute(_request("experiment"))
+
+    # Then: validation fails before hypothesis, queue, lane, or trial mutation
+    ledger = tmp_path / "state" / "authoritative" / "systematic_quant" / "experiment.sqlite3"
+    assert events[-1].state == "uncertain"
+    assert not ledger.exists()
+
+
+@pytest.mark.parametrize("mutation", ["public", "symlink", "hardlink"])
+def test_unsafe_authoritative_family_root_causes_zero_external_write(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    # Given: the authoritative family output root is public or aliases external state
+    source = _write_hypothesis_package(tmp_path)
+    state = tmp_path / "state"
+    authority = state / "authoritative"
+    authority.mkdir(parents=True, mode=0o700)
+    state.chmod(0o700)
+    authority.chmod(0o700)
+    family = authority / "systematic_quant"
+    external = tmp_path / "external-output"
+    match mutation:
+        case "public":
+            family.mkdir(mode=0o755)
+        case "symlink":
+            external.mkdir(mode=0o700)
+            family.symlink_to(external, target_is_directory=True)
+        case "hardlink":
+            external.write_bytes(b"external")
+            external.chmod(0o600)
+            family.hardlink_to(external)
+        case unexpected:
+            raise AssertionError(unexpected)
+
+    # When: a hypothesis job resolves its code-owned output root
+    events = _executor(tmp_path, source).execute(_request("hypothesis"))
+
+    # Then: it closes uncertain without changing permissions or writing outside authority
+    assert events[-1].state == "uncertain"
+    if mutation == "public":
+        assert stat.S_IMODE(family.stat().st_mode) == 0o755
+    else:
+        assert not external.is_dir() or tuple(external.iterdir()) == ()
+        assert not (external / "experiment.sqlite3").exists()
+
+
+def _make_tree_private(root: Path) -> None:
+    for path in (root, *root.rglob("*")):
+        path.chmod(0o700 if path.is_dir() else 0o600)
 
 
 def _valid_receipt(operation: DirectedResearchKind) -> bytes:

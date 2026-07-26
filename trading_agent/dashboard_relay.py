@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from websockets.exceptions import WebSocketException
 
 from trading_agent.dashboard_commands import InteractionPayload, InteractionResult, execute_interaction
+from trading_agent.dashboard_directed_jobs import DirectedEventDeliveryError, DirectedJobEvent
 
 
 class DashboardSendSocket(Protocol):
@@ -46,9 +47,9 @@ async def run_interaction(
             worktree=worktree,
             state_root=state_root,
             source_evidence_root=source_evidence_root,
-            directed_event_sink=lambda event: send_payload(
+            directed_event_sink=lambda event: send_directed_event(
                 socket,
-                event.model_dump_json(),
+                event,
                 send_lock,
             ),
         )
@@ -72,6 +73,17 @@ async def send_result(
         ),
         send_lock,
     )
+
+
+async def send_directed_event(
+    socket: DashboardSendSocket,
+    event: DirectedJobEvent,
+    send_lock: anyio.Lock,
+) -> None:
+    try:
+        await send_payload(socket, event.model_dump_json(), send_lock)
+    except (OSError, TimeoutError, WebSocketException) as error:
+        raise DirectedEventDeliveryError from error
 
 
 async def send_payload(

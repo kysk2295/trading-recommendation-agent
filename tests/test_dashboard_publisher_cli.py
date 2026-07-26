@@ -13,9 +13,11 @@ from typer.testing import CliRunner
 from websockets.exceptions import WebSocketException
 
 import run_dashboard_publisher
+from trading_agent.dashboard_agent_family import AgentFamilyId
 from trading_agent.dashboard_commands import InteractionPayload
 from trading_agent.dashboard_directed_research import AuthoritativeDirectedResearchBroker
 from trading_agent.dashboard_directed_research_models import (
+    DirectedResearchKind,
     DirectedResearchReceipt,
 )
 from trading_agent.dashboard_native_watch import watch_native_changes
@@ -31,6 +33,20 @@ class _SendSocket:
     async def send(self, message: str) -> None:
         self.messages.append(message)
         self.sent.set()
+
+
+class _FailingDirectedSocket(_SendSocket):
+    def __init__(self, fail_kind: str) -> None:
+        super().__init__()
+        self._fail_kind = fail_kind
+        self._failed = False
+
+    async def send(self, message: str) -> None:
+        payload = json.loads(message)
+        if not self._failed and payload.get("kind") == self._fail_kind:
+            self._failed = True
+            raise OSError("directed event disconnect")
+        await super().send(message)
 
 
 def test_dashboard_publisher_help() -> None:
@@ -357,8 +373,8 @@ async def test_directed_relay_streams_persisted_progress_before_blocked_broker_r
 
     def blocked_execute(
         _broker: AuthoritativeDirectedResearchBroker,
-        operation: str,
-        family_id: str,
+        operation: DirectedResearchKind,
+        family_id: AgentFamilyId,
     ) -> bytes:
         nonlocal calls
         del family_id
@@ -420,11 +436,11 @@ async def test_directed_relay_streams_persisted_progress_before_blocked_broker_r
             while not started.is_set() or len(socket.messages) < 2:
                 await anyio.sleep(0.01)
         before_release = [json.loads(message) for message in socket.messages]
+        assert [item.get("kind") for item in before_release] == [None, "progress"]
+        assert all(item.get("kind") != "result" for item in before_release)
         release.set()
 
     # Then: progress arrived and persisted first, terminal evidence/result followed, replay did no work
-    assert [item.get("kind") for item in before_release] == [None, "progress"]
-    assert all(item.get("kind") != "result" for item in before_release)
     event_log = (state / "directed-jobs" / interaction.id / "events.jsonl").read_text(encoding="utf-8").splitlines()
     assert [json.loads(line)["kind"] for line in event_log] == [
         "progress",
@@ -443,3 +459,92 @@ async def test_directed_relay_streams_persisted_progress_before_blocked_broker_r
         None,
     ]
     assert replayed[-1]["state"] == "completed"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("fail_kind", "expected_broker_calls"),
+    [("progress", 0), ("evidence", 1), ("result", 1)],
+)
+async def test_directed_disconnect_persists_uncertain_terminal_and_replays_without_relaunch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fail_kind: str,
+    expected_broker_calls: int,
+) -> None:
+    # Given: a relay disconnects while sending one persisted directed event
+    calls = 0
+
+    def execute_broker(
+        _broker: AuthoritativeDirectedResearchBroker,
+        operation: DirectedResearchKind,
+        family_id: AgentFamilyId,
+    ) -> bytes:
+        nonlocal calls
+        del family_id
+        calls += 1
+        return (
+            DirectedResearchReceipt(
+                operation=operation,
+                terminal="completed",
+                domain_effects=1,
+                evidence_sha256s=("a" * 64,),
+                result_sha256="b" * 64,
+                summary="authoritative broker completed",
+            )
+            .model_dump_json()
+            .encode()
+        )
+
+    monkeypatch.setattr(AuthoritativeDirectedResearchBroker, "execute", execute_broker)
+    hermes = tmp_path / "fake-disconnect-hermes"
+    count = tmp_path / "hermes-count"
+    hermes.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        f"open({str(count)!r}, 'a').write('1\\n')\n"
+        "plan = json.dumps({'schema_version':1,'operation':'hypothesis','intent':'bounded'})\n"
+        "print(json.dumps({'event':'complete','text':plan,"
+        "'session_id':'session-disconnect-001','failed':False,'error':None}))\n"
+    )
+    hermes.chmod(0o700)
+    interaction = InteractionPayload.model_validate(
+        {
+            "id": "019c0014-f0f5-7000-8000-000000000021",
+            "agent_id": "opportunity_manager",
+            "mode": "hypothesis",
+            "command": "가설을 등록해줘",
+            "state": "queued",
+            "response": None,
+            "created_at": "2026-07-26T04:00:00Z",
+            "updated_at": "2026-07-26T04:00:00Z",
+        }
+    )
+    state = tmp_path / "state"
+    arguments = (
+        interaction,
+        anyio.Lock(),
+        anyio.CapacityLimiter(1),
+        hermes,
+        tmp_path,
+        state,
+        tmp_path,
+    )
+
+    # When: the failing relay runs and a fresh socket reconnects the exact interaction
+    await run_interaction(
+        _FailingDirectedSocket(fail_kind),
+        *arguments,
+    )
+    reconnect = _SendSocket()
+    await run_interaction(reconnect, *arguments)
+
+    # Then: the log and claim replay uncertain without another Hermes or broker launch
+    event_log = (state / "directed-jobs" / interaction.id / "events.jsonl").read_text(encoding="utf-8")
+    events = [json.loads(line) for line in event_log.splitlines()]
+    replayed = [json.loads(message) for message in reconnect.messages]
+    assert events[-1]["kind"] == "result"
+    assert events[-1]["state"] == "uncertain"
+    assert replayed[-1]["state"] == "uncertain"
+    assert calls == expected_broker_calls
+    assert count.read_text().splitlines() == ["1"]
