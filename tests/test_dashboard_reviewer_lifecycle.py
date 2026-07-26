@@ -3,11 +3,13 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 
+from tests.test_experiment_ledger_store import _version
 from trading_agent.adaptive_evaluation_models import AdaptiveAction
 from trading_agent.dashboard_reviewer_lifecycle import ReviewerLifecycleAuthorityReader
 from trading_agent.experiment_ledger_keys import (
     StrategyLifecycleEventKey,
     strategy_authority_binding_key,
+    strategy_version_registration_key,
 )
 from trading_agent.experiment_ledger_models import (
     StrategyLifecycleEvent,
@@ -18,6 +20,7 @@ from trading_agent.experiment_ledger_store import (
     ExperimentLedgerReader,
     StoredStrategyAuthorityBinding,
     StoredStrategyLifecycleEvent,
+    StoredStrategyVersionRegistration,
 )
 from trading_agent.lane_identity_models import LaneId
 from trading_agent.lane_policy_models import LaneId as ReviewLaneId
@@ -34,16 +37,21 @@ class _ExperimentReader(ExperimentLedgerReader):
         path: Path,
         bindings: tuple[StoredStrategyAuthorityBinding, ...],
         events: dict[str, tuple[StoredStrategyLifecycleEvent, ...]],
+        registrations: tuple[StoredStrategyVersionRegistration, ...],
     ) -> None:
         super().__init__(path)
         self._bindings = bindings
         self._events = events
+        self._registrations = registrations
 
     def strategy_authority_bindings(self) -> tuple[StoredStrategyAuthorityBinding, ...]:
         return self._bindings
 
     def lifecycle_events(self, strategy_version: str) -> tuple[StoredStrategyLifecycleEvent, ...]:
         return self._events.get(strategy_version, ())
+
+    def strategy_versions(self) -> tuple[StoredStrategyVersionRegistration, ...]:
+        return self._registrations
 
 
 class _ReviewReader(LaneReviewReader):
@@ -75,6 +83,7 @@ def test_query_only_authority_requires_two_independent_persisted_champions(tmp_p
         tmp_path / "experiments.sqlite3",
         (first[0], second[0]),
         {first[0].binding.strategy_version: (first[1],), second[0].binding.strategy_version: (second[1],)},
+        (first[3], second[3]),
     )
     reviews = _ReviewReader(tmp_path / "reviews.sqlite3", (first[2], second[2]))
 
@@ -88,6 +97,7 @@ def test_query_only_authority_requires_two_independent_persisted_champions(tmp_p
                 tmp_path / "single.sqlite3",
                 (first[0],),
                 {first[0].binding.strategy_version: (first[1],)},
+                (first[3],),
             ),
         ),
         reviews=(_ReviewReader(tmp_path / "single-review.sqlite3", (first[2],)),),
@@ -106,6 +116,7 @@ def test_allocation_authority_does_not_count_two_versions_of_one_family_lane(tmp
                 tmp_path / "experiments.sqlite3",
                 (first[0], second[0]),
                 {first[0].binding.strategy_version: (first[1],), second[0].binding.strategy_version: (second[1],)},
+                (first[3], second[3]),
             ),
         ),
         reviews=(_ReviewReader(tmp_path / "reviews.sqlite3", (first[2], second[2])),),
@@ -114,12 +125,66 @@ def test_allocation_authority_does_not_count_two_versions_of_one_family_lane(tmp
     assert not authority.allocation_manager_is_available()
 
 
+def test_champion_rejects_recomputed_reviewer_key_from_a_different_lane(tmp_path: Path) -> None:
+    chain = _authority_chain(
+        "strategy-day-v1",
+        AgentFamily.DAY_TRADING,
+        LaneId.INTRADAY_MOMENTUM,
+        "a",
+        review_lane=ReviewLaneId.SWING_MOMENTUM,
+    )
+    authority = ReviewerLifecycleAuthorityReader(
+        experiments=(
+            _ExperimentReader(
+                tmp_path / "experiments.sqlite3",
+                (chain[0],),
+                {chain[0].binding.strategy_version: (chain[1],)},
+                (chain[3],),
+            ),
+        ),
+        reviews=(_ReviewReader(tmp_path / "reviews.sqlite3", (chain[2],)),),
+    )
+
+    assert authority.champions() == ()
+    assert not authority.promotion_is_authorized("a" * 64)
+    assert not authority.allocation_manager_is_available()
+
+
+def test_champion_rejects_recomputed_reviewer_key_from_a_different_family_lane(tmp_path: Path) -> None:
+    chain = _authority_chain(
+        "strategy-day-v1",
+        AgentFamily.DAY_TRADING,
+        LaneId.INTRADAY_MOMENTUM,
+        "a",
+        review_lane=ReviewLaneId.MARKET_REGIME,
+    )
+    authority = ReviewerLifecycleAuthorityReader(
+        experiments=(
+            _ExperimentReader(
+                tmp_path / "experiments.sqlite3",
+                (chain[0],),
+                {chain[0].binding.strategy_version: (chain[1],)},
+                (chain[3],),
+            ),
+        ),
+        reviews=(_ReviewReader(tmp_path / "reviews.sqlite3", (chain[2],)),),
+    )
+
+    assert authority.champions() == ()
+
+
 def _authority_chain(
     version: str,
     family: AgentFamily,
     lane: LaneId,
     candidate: str,
-) -> tuple[StoredStrategyAuthorityBinding, StoredStrategyLifecycleEvent, StoredLaneReviewEvent]:
+    review_lane: ReviewLaneId | None = None,
+) -> tuple[
+    StoredStrategyAuthorityBinding,
+    StoredStrategyLifecycleEvent,
+    StoredLaneReviewEvent,
+    StoredStrategyVersionRegistration,
+]:
     decided = dt.datetime(2026, 7, 26, 20, tzinfo=dt.UTC)
     binding = StrategyAuthorityBinding(
         strategy_version=version,
@@ -133,8 +198,20 @@ def _authority_chain(
         bound_at=decided - dt.timedelta(days=2),
     )
     stored_binding = StoredStrategyAuthorityBinding(strategy_authority_binding_key(binding), binding)
+    registration = _version().model_copy(
+        update={
+            "strategy_id": version.replace("-", "_"),
+            "strategy_version": version,
+            "lane_id": lane,
+            "experiment_scope_key": "c" * 64,
+        }
+    )
+    stored_registration = StoredStrategyVersionRegistration(
+        strategy_version_registration_key(registration),
+        registration,
+    )
     review = LaneReviewEvent(
-        lane_id=ReviewLaneId(lane.value),
+        lane_id=ReviewLaneId(lane.value) if review_lane is None else review_lane,
         session_date=dt.date(2026, 7, 25),
         snapshot_key=candidate * 64,
         experiment_scope_key="c" * 64,
@@ -169,4 +246,4 @@ def _authority_chain(
         previous_event_key="9" * 64,
     )
     stored_lifecycle = StoredStrategyLifecycleEvent(StrategyLifecycleEventKey("8" * 64), lifecycle)
-    return stored_binding, stored_lifecycle, stored_review
+    return stored_binding, stored_lifecycle, stored_review, stored_registration

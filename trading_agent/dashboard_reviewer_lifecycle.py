@@ -5,7 +5,11 @@ from typing import assert_never
 
 from trading_agent.dashboard_agent_family import AgentFamilyId
 from trading_agent.experiment_ledger_models import StrategyLifecycleState
-from trading_agent.experiment_ledger_store import ExperimentLedgerReader
+from trading_agent.experiment_ledger_store import (
+    ExperimentLedgerReader,
+    StoredStrategyAuthorityBinding,
+    StoredStrategyVersionRegistration,
+)
 from trading_agent.lane_review_models import LaneReviewerAction
 from trading_agent.lane_review_store import LaneReviewReader, StoredLaneReviewEvent
 from trading_agent.research_identity_models import AgentFamily
@@ -46,7 +50,14 @@ class ReviewerLifecycleAuthorityReader:
         }
         champions: list[PersistedChampionAuthority] = []
         for ledger in self._experiments:
+            registrations = {
+                stored.registration.strategy_version: stored
+                for stored in ledger.strategy_versions()
+            }
             for binding in ledger.strategy_authority_bindings():
+                registration = registrations.get(binding.binding.strategy_version)
+                if registration is None or registration.registration.lane_id is not binding.binding.legacy_lane_id:
+                    continue
                 events = ledger.lifecycle_events(binding.binding.strategy_version)
                 if not events:
                     continue
@@ -56,7 +67,12 @@ class ReviewerLifecycleAuthorityReader:
                     StrategyLifecycleState.PAPER_CHAMPION,
                 }:
                     continue
-                review = _matching_review(lifecycle.event.evidence_keys, reviews, binding.binding.strategy_version)
+                review = _matching_review(
+                    lifecycle.event.evidence_keys,
+                    reviews,
+                    binding,
+                    registration,
+                )
                 if review is None or lifecycle.event.decided_at < review.event.reviewed_at:
                     continue
                 family_id = _family_id(binding.binding.strategy_lane.agent_family)
@@ -82,13 +98,18 @@ class ReviewerLifecycleAuthorityReader:
 def _matching_review(
     evidence_keys: tuple[str, ...],
     reviews: dict[str, StoredLaneReviewEvent],
-    strategy_version: str,
+    binding: StoredStrategyAuthorityBinding,
+    registration: StoredStrategyVersionRegistration,
 ) -> StoredLaneReviewEvent | None:
     matching = tuple(
         reviews[key]
         for key in evidence_keys
         if key in reviews
-        and reviews[key].event.strategy_version == strategy_version
+        and reviews[key].event.strategy_version == binding.binding.strategy_version
+        and reviews[key].event.strategy_version == registration.registration.strategy_version
+        and reviews[key].event.experiment_scope_key == registration.registration.experiment_scope_key
+        and reviews[key].event.lane_id is binding.binding.legacy_lane_id
+        and reviews[key].event.lane_id is registration.registration.lane_id
         and reviews[key].event.snapshot_key in evidence_keys
     )
     return matching[0] if len(matching) == 1 else None
