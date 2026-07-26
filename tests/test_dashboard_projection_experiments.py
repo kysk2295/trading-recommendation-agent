@@ -28,7 +28,7 @@ from trading_agent.experiment_ledger_models import (
     StrategyLifecycleEventKind,
     StrategyLifecycleState,
 )
-from trading_agent.experiment_ledger_store import ExperimentLedgerStore
+from trading_agent.experiment_ledger_store import ExperimentLedgerReader, ExperimentLedgerStore
 from trading_agent.lane_policy_models import LaneId as ReviewLaneId
 from trading_agent.lane_review_keys import lane_review_event_key
 from trading_agent.lane_review_models import LaneReviewerAction, LaneReviewEvent
@@ -114,6 +114,29 @@ def test_strategy_projection_rejects_reviewer_linked_to_a_different_trial_termin
     assert projection.workspace.blocker_code == "reviewer_missing"
 
 
+def test_strategy_projection_rejects_reviewer_from_a_different_lane(tmp_path: Path) -> None:
+    outputs = _complete_experiment_outputs(tmp_path)
+    _append_reviewer_and_lifecycle(outputs, review_lane=ReviewLaneId("swing_momentum"))
+
+    projection = project_strategies(outputs, now=NOW)
+
+    assert projection.workspace.blocker_code == "reviewer_missing"
+
+
+def test_projection_rejects_equal_consecutive_authority_timestamps(tmp_path: Path) -> None:
+    outputs = _complete_experiment_outputs(tmp_path, strict_stage_times=False)
+
+    assert project_research(outputs, now=NOW).workspace.blocker_code == "timestamp_order_invalid"
+
+
+def test_projection_rejects_authority_stage_after_observation_time(tmp_path: Path) -> None:
+    outputs = _complete_experiment_outputs(tmp_path)
+
+    projection = project_research(outputs, now=dt.datetime(2026, 7, 16, 19, tzinfo=dt.UTC))
+
+    assert projection.workspace.blocker_code == "research_future_observation"
+
+
 def test_projection_blocks_every_workspace_when_one_candidate_is_incomplete() -> None:
     complete = _chain(blocker=None, reviewer_ref="d" * 64, lifecycle_ref="e" * 64)
     incomplete = _chain(blocker="reviewer_missing", reviewer_ref=None, lifecycle_ref=None)
@@ -170,15 +193,28 @@ def test_allocation_authority_item_requires_two_independent_champions() -> None:
     assert _allocation_item(available_with_two_champions).value == "Authority present · read-only; no mutation control"
 
 
-def _complete_experiment_outputs(tmp_path: Path) -> Path:
+def _complete_experiment_outputs(tmp_path: Path, *, strict_stage_times: bool = True) -> Path:
     outputs = tmp_path / "outputs"
     ledger = ExperimentLedgerStore(outputs / "experiment_control" / "experiment_ledger.sqlite3")
     started = _started_event()
+    card = _research_card()
+    version = _version()
+    trial = _trial()
+    if strict_stage_times:
+        card = card.model_copy(
+            update={
+                "hypothesis": card.hypothesis.model_copy(
+                    update={"ledger_recorded_at": dt.datetime(2026, 7, 15, 12, tzinfo=dt.UTC)}
+                )
+            }
+        )
+        version = version.model_copy(update={"ledger_recorded_at": dt.datetime(2026, 7, 15, 13, tzinfo=dt.UTC)})
+        trial = trial.model_copy(update={"registered_at": dt.datetime(2026, 7, 15, 14, tzinfo=dt.UTC)})
     with ledger.writer() as writer:
         assert writer.register_research_source(_research_source())
-        assert writer.register_research_hypothesis(_research_card())
-        assert writer.register_strategy_version(_version())
-        assert writer.register_trial(_trial())
+        assert writer.register_research_hypothesis(card)
+        assert writer.register_strategy_version(version)
+        assert writer.register_trial(trial)
         assert writer.append_trial_event(started)
         assert writer.append_trial_event(_terminal_event(started))
     return outputs
@@ -226,10 +262,15 @@ def _descendants(
     return tuple(ordered)
 
 
-def _append_reviewer_and_lifecycle(outputs: Path, *, snapshot_key: str | None = None) -> None:
+def _append_reviewer_and_lifecycle(
+    outputs: Path,
+    *,
+    snapshot_key: str | None = None,
+    review_lane: ReviewLaneId | None = None,
+) -> None:
     completed = _terminal_event(_started_event())
     review = LaneReviewEvent(
-        lane_id=ReviewLaneId(_version().lane_id.value),
+        lane_id=ReviewLaneId(_version().lane_id.value) if review_lane is None else review_lane,
         session_date=dt.date(2026, 7, 17),
         snapshot_key=snapshot_key or str(experiment_trial_event_key(completed)),
         experiment_scope_key=_version().experiment_scope_key,
@@ -250,8 +291,25 @@ def _append_reviewer_and_lifecycle(outputs: Path, *, snapshot_key: str | None = 
     review_store = LaneReviewStore(outputs / "lane_control" / "lane_review.sqlite3")
     with review_store.writer() as writer:
         assert writer.append_event(review)
-    binding = _strategy_authority_binding(AgentOperatingMode.SHADOW)
-    registration = _lifecycle_registration()
+    binding = _strategy_authority_binding(AgentOperatingMode.SHADOW).model_copy(
+        update={"bound_at": dt.datetime(2026, 7, 15, 15, tzinfo=dt.UTC)}
+    )
+    reader = ExperimentLedgerReader(outputs / "experiment_control" / "experiment_ledger.sqlite3")
+    stored_hypothesis = reader.hypotheses()[0]
+    stored_version = reader.strategy_versions()[0]
+    registration = _lifecycle_registration().model_copy(
+        update={
+            "evidence_keys": tuple(
+                sorted(
+                    (
+                        str(stored_hypothesis.registration_key),
+                        stored_version.registration.experiment_scope_key,
+                        str(stored_version.registration_key),
+                    )
+                )
+            )
+        }
+    )
     challenger = StrategyLifecycleEvent(
         strategy_version=registration.strategy_version,
         sequence=2,

@@ -3,8 +3,11 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 from dataclasses import dataclass
+from itertools import pairwise
+from typing import assert_never
 
 from trading_agent.dashboard_reviewer_lifecycle import ReviewerLifecycleAuthorityReader
+from trading_agent.experiment_ledger_models import TrialEventKind
 from trading_agent.experiment_ledger_store import (
     ExperimentLedgerReader,
     StoredExperimentTrialRegistration,
@@ -45,6 +48,7 @@ def read_experiment_chains(
     reviews: LaneReviewReader,
     *,
     strategies: bool,
+    now: dt.datetime,
 ) -> tuple[tuple[ExperimentChain, ...], bool]:
     sources: dict[str, StoredResearchSource] = {str(stored.source_key): stored for stored in reader.research_sources()}
     cards = {stored.card.hypothesis.hypothesis_id: stored for stored in reader.research_hypothesis_cards()}
@@ -62,6 +66,7 @@ def read_experiment_chains(
             version,
             version.registration.lane_id.value if strategies else version.registration.hypothesis_id,
             version.registration.strategy_version if strategies else version.registration.hypothesis_id,
+            now,
         )
         for version in versions
     ]
@@ -122,6 +127,7 @@ def _chain(
     version: StoredStrategyVersionRegistration,
     label: str,
     value: str,
+    now: dt.datetime,
 ) -> ExperimentChain:
     registration = version.registration
     base = {
@@ -169,23 +175,33 @@ def _chain(
         "trial_at": trial.registration.registered_at,
     }
     events = reader.trial_events(trial.registration.trial_id)
-    terminal_at = trial.registration.registered_at
     terminal_ref: str | None = None
     match events:
         case ():
             return ExperimentChain(**base, blocker="trial_terminal_missing")
-        case (*_, terminal) if terminal.event.event_kind.value == "started":
-            return ExperimentChain(**base, blocker="trial_terminal_missing")
-        case (*_, terminal):
+        case (started, *_, terminal):
+            match started.event.event_kind:
+                case TrialEventKind.STARTED:
+                    pass
+                case TrialEventKind.COMPLETED | TrialEventKind.FAILED | TrialEventKind.CENSORED:
+                    return ExperimentChain(**base, blocker="trial_terminal_missing")
+                case unreachable:
+                    assert_never(unreachable)
+            match terminal.event.event_kind:
+                case TrialEventKind.STARTED:
+                    return ExperimentChain(**base, blocker="trial_terminal_missing")
+                case TrialEventKind.COMPLETED | TrialEventKind.FAILED | TrialEventKind.CENSORED:
+                    pass
+                case unreachable:
+                    assert_never(unreachable)
             terminal_ref = str(terminal.event_key)
-            terminal_at = terminal.event.occurred_at
             base = base | {
                 "terminal_ref": terminal_ref,
                 "observed_at": terminal.event.occurred_at,
                 "trial_started_at": events[0].event.occurred_at,
                 "terminal_at": terminal.event.occurred_at,
             }
-    if not _monotonic(base):
+    if not _strict_stages(base, now):
         return ExperimentChain(**base, blocker="timestamp_order_invalid")
     if terminal_ref is None:
         return ExperimentChain(**base, blocker="trial_terminal_missing")
@@ -195,8 +211,8 @@ def _chain(
         if review.event.snapshot_key == terminal_ref
         and review.event.strategy_version == registration.strategy_version
         and review.event.experiment_scope_key == registration.experiment_scope_key
+        and review.event.lane_id.value == registration.lane_id.value
         and review.event.reviewer_action.value == "comparison_ready"
-        and review.event.reviewed_at >= terminal_at
     )
     if len(matching_reviews) != 1:
         return ExperimentChain(**base, blocker="reviewer_missing")
@@ -207,7 +223,7 @@ def _chain(
         "observed_at": review.event.reviewed_at,
         "reviewed_at": review.event.reviewed_at,
     }
-    if not _monotonic(base):
+    if not _strict_stages(base, now):
         return ExperimentChain(**base, blocker="timestamp_order_invalid")
     lifecycles = tuple(
         lifecycle
@@ -217,15 +233,15 @@ def _chain(
     if not lifecycles:
         return ExperimentChain(**base, blocker="lifecycle_missing")
     lifecycle = lifecycles[-1]
+    final = base | {
+        "lifecycle_ref": str(lifecycle.event_key),
+        "observed_at": lifecycle.event.decided_at,
+        "lifecycle_at": lifecycle.event.decided_at,
+    }
+    if not _strict_stages(final, now):
+        return ExperimentChain(**final, blocker="timestamp_order_invalid")
     return ExperimentChain(
-        **(
-            base
-            | {
-                "lifecycle_ref": str(lifecycle.event_key),
-                "observed_at": lifecycle.event.decided_at,
-                "lifecycle_at": lifecycle.event.decided_at,
-            }
-        ),
+        **(final),
         blocker=None,
     )
 
@@ -236,7 +252,7 @@ def _safe_ref(value: str) -> str | None:
     return None
 
 
-def _monotonic(values: dict[str, str | dt.datetime | None]) -> bool:
+def _strict_stages(values: dict[str, str | dt.datetime | None], now: dt.datetime) -> bool:
     timestamps = tuple(
         value
         for key in (
@@ -251,4 +267,6 @@ def _monotonic(values: dict[str, str | dt.datetime | None]) -> bool:
         )
         if isinstance((value := values[key]), dt.datetime)
     )
-    return timestamps == tuple(sorted(timestamps))
+    return all(left < right for left, right in pairwise(timestamps)) and all(
+        timestamp <= now for timestamp in timestamps
+    )

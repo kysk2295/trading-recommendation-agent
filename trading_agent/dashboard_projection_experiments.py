@@ -47,7 +47,9 @@ def _project(workspace: Workspace, outputs: Path, now: dt.datetime) -> Workspace
         return blocked_projection(workspace, now=now, state="unavailable", blocker_code=_missing_catalog(workspace))
     reviews = LaneReviewReader(outputs / "lane_control" / "lane_review.sqlite3")
     try:
-        chains, allocation_available = read_experiment_chains(ledger, reviews, strategies=workspace == "strategies")
+        chains, allocation_available = read_experiment_chains(
+            ledger, reviews, strategies=workspace == "strategies", now=now
+        )
     except (
         InvalidExperimentLedgerSourceError,
         InvalidLaneReviewSourceError,
