@@ -20,6 +20,9 @@ from pydantic import (
 from trading_agent.dashboard_system_current_authority import (
     SYSTEM_CURRENT_AUTHORITY_FILE,
     SYSTEM_CURRENT_AUTHORITY_ROOT,
+    RailwayCurrentAuthority,
+    RelayCurrentAuthority,
+    SystemAuthorityVerifier,
     SystemCurrentAuthority,
     read_system_current_authority,
 )
@@ -148,6 +151,8 @@ _ADAPTER = TypeAdapter(OperationReceipt)
 def read_operation_receipts(
     path: Path,
     now: dt.datetime,
+    *,
+    authority_verifier: SystemAuthorityVerifier | None,
 ) -> tuple[OperationReceipt, ...] | str:
     if not path.exists():
         return ()
@@ -185,6 +190,7 @@ def read_operation_receipts(
         / SYSTEM_CURRENT_AUTHORITY_ROOT
         / SYSTEM_CURRENT_AUTHORITY_FILE,
         now,
+        verifier=authority_verifier,
     )
     if isinstance(authority, str):
         return authority
@@ -203,7 +209,7 @@ def read_operation_receipts(
 
 def _validate_current_authority(
     receipts: tuple[OperationReceipt, ...],
-    authority: SystemCurrentAuthority,
+    authorities: tuple[SystemCurrentAuthority, ...],
 ) -> str | None:
     railway = tuple(item for item in receipts if isinstance(item, RailwayReceipt))
     relay = tuple(item for item in receipts if isinstance(item, RelayReceipt))
@@ -211,23 +217,29 @@ def _validate_current_authority(
         return "railway_current_receipt_conflict"
     if len(relay) != 1:
         return "relay_current_receipt_conflict"
+    authority_railway = next(
+        item for item in authorities if isinstance(item, RailwayCurrentAuthority)
+    )
+    authority_relay = next(
+        item for item in authorities if isinstance(item, RelayCurrentAuthority)
+    )
     current_railway = railway[0]
-    if current_railway.deployment_id != authority.railway_deployment_id:
+    if current_railway.deployment_id != authority_railway.deployment_id:
         return "railway_current_deployment_mismatch"
-    if current_railway.code_sha256 != authority.railway_code_sha256:
+    if current_railway.code_sha256 != authority_railway.code_sha256:
         return "railway_current_code_mismatch"
-    if current_railway.receipt_sha256 != authority.railway_receipt_sha256:
+    if current_railway.receipt_sha256 != authority_railway.source_receipt_sha256:
         return "railway_current_receipt_mismatch"
-    if current_railway.source_root_sha256 != authority.railway_source_root_sha256:
+    if current_railway.source_root_sha256 != authority_railway.source_root_sha256:
         return "railway_current_source_mismatch"
     current_relay = relay[0]
-    if current_relay.transition_id != authority.relay_transition_id:
+    if current_relay.transition_id != authority_relay.transition_id:
         return "relay_current_transition_mismatch"
-    if current_relay.owner_sha256 != authority.relay_owner_sha256:
+    if current_relay.owner_sha256 != authority_relay.socket_owner_sha256:
         return "relay_current_owner_mismatch"
-    if current_relay.receipt_sha256 != authority.relay_receipt_sha256:
+    if current_relay.receipt_sha256 != authority_relay.source_receipt_sha256:
         return "relay_current_receipt_mismatch"
-    if current_relay.source_root_sha256 != authority.relay_source_root_sha256:
+    if current_relay.source_root_sha256 != authority_relay.source_root_sha256:
         return "relay_current_source_mismatch"
     return None
 

@@ -5,11 +5,11 @@ import json
 from pathlib import Path
 
 import pytest
-from dashboard_system_fixtures import typed_control_receipts
+from dashboard_system_fixtures import typed_control_receipts, write_current_authority
 
 from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
 from trading_agent.dashboard_system_control_receipts import AUTONOMOUS_CONTROL_FILE
-from trading_agent.dashboard_system_current_authority import SYSTEM_CURRENT_AUTHORITY_FILE
+from trading_agent.dashboard_system_current_authority import SystemAuthorityVerifier
 from trading_agent.dashboard_system_evidence import MILESTONE_FILE, MILESTONE_IDS
 from trading_agent.dashboard_system_operations import OPERATIONS_FILE
 
@@ -23,11 +23,15 @@ def test_system_projects_exactly_m0_through_m10_from_typed_evidence(
     root = tmp_path / "outputs/system"
     root.mkdir(parents=True)
     _write_milestones(root, NOW)
-    _write_operations(root, NOW)
+    verifier = _write_operations(root, NOW)
     _write_autonomous_control(root, NOW)
 
     # When system evidence is projected
-    snapshot = collect_dashboard_snapshot_v2(tmp_path / "outputs", now=NOW)
+    snapshot = collect_dashboard_snapshot_v2(
+        tmp_path / "outputs",
+        now=NOW,
+        system_authority_verifier=verifier,
+    )
     system = snapshot.workspaces.system
 
     # Then exactly eleven milestones precede the three typed operations
@@ -61,10 +65,14 @@ def test_system_operations_fail_closed_from_typed_receipts(
     root = tmp_path / "outputs/system"
     root.mkdir(parents=True)
     _write_milestones(root, NOW)
-    _write_operations(root, NOW, mutation=mutation)
+    verifier = _write_operations(root, NOW, mutation=mutation)
 
     # When system operations are projected
-    snapshot = collect_dashboard_snapshot_v2(tmp_path / "outputs", now=NOW)
+    snapshot = collect_dashboard_snapshot_v2(
+        tmp_path / "outputs",
+        now=NOW,
+        system_authority_verifier=verifier,
+    )
 
     # Then the exact normalized blocker is emitted without process inference
     assert snapshot.workspaces.system.blocker_code == blocker
@@ -139,7 +147,7 @@ def _write_operations(
     now: dt.datetime,
     *,
     mutation: str | None = None,
-) -> None:
+) -> SystemAuthorityVerifier:
     rows = list(_operation_rows(now))
     if mutation == "launchd_stale":
         rows[0] = {
@@ -156,29 +164,20 @@ def _write_operations(
     path = root / OPERATIONS_FILE
     path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
     path.chmod(0o600)
-    authority_root = root.parent / "source_evidence"
-    authority_root.mkdir(parents=True, exist_ok=True)
-    authority_path = authority_root / SYSTEM_CURRENT_AUTHORITY_FILE
-    authority_path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "evidence_type": "system_current_authority",
-                "observed_at": now.isoformat(),
-                "railway_deployment_id": "deploy-1",
-                "railway_code_sha256": "b" * 64,
-                "railway_receipt_sha256": "c" * 64,
-                "railway_source_root_sha256": "1" * 64,
-                "relay_transition_id": "transition-1",
-                "relay_owner_sha256": "d" * 64,
-                "relay_receipt_sha256": "e" * 64,
-                "relay_source_root_sha256": "2" * 64,
-                "receipt_sha256": "f" * 64,
-            }
-        ),
-        encoding="utf-8",
+    return write_current_authority(
+        root,
+        observed_at=now,
+        railway_changes={
+            "code_sha256": "b" * 64,
+            "source_receipt_sha256": "c" * 64,
+            "source_root_sha256": "1" * 64,
+        },
+        relay_changes={
+            "socket_owner_sha256": "d" * 64,
+            "source_receipt_sha256": "e" * 64,
+            "source_root_sha256": "2" * 64,
+        },
     )
-    authority_path.chmod(0o600)
 
 
 def _write_milestones(root: Path, now: dt.datetime) -> None:

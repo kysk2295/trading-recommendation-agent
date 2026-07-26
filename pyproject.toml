@@ -5,6 +5,7 @@ description = "Paper-only US momentum research and recommendation agent"
 requires-python = ">=3.12"
 dependencies = [
   "anyio>=4.9,<5",
+  "cryptography>=46,<47",
   "duckdb==1.5.4",
   "httpx2[http2,brotli,zstd]",
   "ijson==3.5.0",

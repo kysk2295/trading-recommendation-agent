@@ -31,6 +31,7 @@ from trading_agent.dashboard_projection_receipts import (
     read_projection_receipts,
 )
 from trading_agent.dashboard_projection_sources import project_data_sources
+from trading_agent.dashboard_system_current_authority import SystemAuthorityVerifier
 from trading_agent.dashboard_system_evidence import project_system_evidence
 
 ROOT_BY_WORKSPACE: Final[dict[WorkspaceName, str]] = {
@@ -56,6 +57,7 @@ def collect_dashboard_snapshot_v2(
     outputs: Path,
     *,
     now: dt.datetime | None = None,
+    system_authority_verifier: SystemAuthorityVerifier | None = None,
 ) -> DashboardSnapshotV2:
     generated_at = dt.datetime.now(dt.UTC) if now is None else now
     if generated_at.tzinfo is None or generated_at.utcoffset() is None:
@@ -86,7 +88,11 @@ def collect_dashboard_snapshot_v2(
     projections["strategies"] = project_strategies(outputs, now=generated_at)
     projections["derivatives"] = project_derivatives(outputs, now=generated_at)
     projections["paper"] = _paper_projection(outputs, generated_at)
-    projections["system"] = project_system_evidence(outputs, now=generated_at)
+    projections["system"] = project_system_evidence(
+        outputs,
+        now=generated_at,
+        authority_verifier=system_authority_verifier,
+    )
     command = projections["command_center"].workspace
     sources = projections["data_sources"].workspace
     workspaces = WorkspacesV2(
@@ -142,7 +148,7 @@ def collect_dashboard_snapshot_v2(
                 "market-calendar-reader-v2",
                 "lane-registry-reader-v1",
                 "system-milestone-reader-v2",
-                "system-current-authority-reader-v1",
+                "system-current-authority-reader-v2",
                 "system-autonomous-control-reader-v2",
                 "system-operations-reader-v2",
                 "treasury-yield-reader-v1",

@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from trading_agent.dashboard_system_current_authority import (
+    RailwayCurrentAuthority,
+    RelayCurrentAuthority,
+    SystemAuthorityVerifier,
+    canonical_authority_payload,
+)
 from trading_agent.dashboard_system_evidence import MILESTONE_IDS
 
 type JsonScalar = str | int | None
@@ -123,27 +134,111 @@ def operations(mutation: str = "") -> tuple[JsonRow, ...]:
     return launchd, stage, railway, relay
 
 
-def current_authority() -> JsonRow:
-    return {
-        "schema_version": 1,
+@dataclass(frozen=True, slots=True)
+class SystemAuthorityTestSigner:
+    verifier: SystemAuthorityVerifier
+    _private_key: Ed25519PrivateKey = field(repr=False)
+
+    def sign(self, row: JsonRow) -> JsonRow:
+        unsigned = {**row, "signature": "A" * 86}
+        serialized = json.dumps(unsigned)
+        authority = (
+            RailwayCurrentAuthority.model_validate_json(serialized)
+            if row["kind"] == "railway_deployment"
+            else RelayCurrentAuthority.model_validate_json(serialized)
+        )
+        signature = self._private_key.sign(canonical_authority_payload(authority))
+        return {
+            **row,
+            "signature": base64.urlsafe_b64encode(signature).decode().rstrip("="),
+        }
+
+
+def system_authority_signer(
+    *,
+    key_id: str = "test-authority-key-1",
+) -> SystemAuthorityTestSigner:
+    private_key = Ed25519PrivateKey.generate()
+    public_key = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    verifier = SystemAuthorityVerifier.from_public_bytes(
+        key_id=key_id,
+        project_id="trading-recommendation-agent",
+        environment="test",
+        railway_service_id="dashboard",
+        relay_service_id="publisher-relay",
+        public_key=public_key,
+    )
+    return SystemAuthorityTestSigner(verifier=verifier, _private_key=private_key)
+
+
+def current_authority(
+    signer: SystemAuthorityTestSigner,
+    *,
+    railway_changes: JsonRow | None = None,
+    relay_changes: JsonRow | None = None,
+    observed_at: dt.datetime = NOW,
+    sequence: int = 1,
+) -> tuple[JsonRow, JsonRow]:
+    common: JsonRow = {
+        "schema_version": 2,
         "evidence_type": "system_current_authority",
-        "observed_at": NOW.isoformat(),
-        "railway_deployment_id": "deploy-1",
-        "railway_code_sha256": "d" * 64,
-        "railway_receipt_sha256": "e" * 64,
-        "railway_source_root_sha256": "2" * 64,
-        "relay_transition_id": "transition-1",
-        "relay_owner_sha256": "f" * 64,
-        "relay_receipt_sha256": "1" * 64,
-        "relay_source_root_sha256": "3" * 64,
-        "receipt_sha256": "4" * 64,
+        "key_id": signer.verifier.key_id,
+        "project_id": signer.verifier.project_id,
+        "environment": signer.verifier.environment,
+        "observed_at": observed_at.isoformat(),
+        "sequence": sequence,
     }
+    railway: JsonRow = {
+        **common,
+        "kind": "railway_deployment",
+        "service_id": signer.verifier.railway_service_id,
+        "deployment_id": "deploy-1",
+        "code_sha256": "d" * 64,
+        "source_receipt_sha256": "e" * 64,
+        "source_root_sha256": "2" * 64,
+        "nonce": f"railway-nonce-{sequence:08d}",
+        **(railway_changes or {}),
+    }
+    relay: JsonRow = {
+        **common,
+        "kind": "relay_socket",
+        "service_id": signer.verifier.relay_service_id,
+        "transition_id": "transition-1",
+        "socket_owner_sha256": "f" * 64,
+        "source_receipt_sha256": "1" * 64,
+        "source_root_sha256": "3" * 64,
+        "nonce": f"relay-nonce-{sequence:08d}",
+        **(relay_changes or {}),
+    }
+    return signer.sign(railway), signer.sign(relay)
 
 
-def write_current_authority(system: Path) -> None:
+def write_current_authority(
+    system: Path,
+    signer: SystemAuthorityTestSigner | None = None,
+    *,
+    railway_changes: JsonRow | None = None,
+    relay_changes: JsonRow | None = None,
+    observed_at: dt.datetime = NOW,
+    sequence: int = 1,
+) -> SystemAuthorityVerifier:
+    authority_signer = system_authority_signer() if signer is None else signer
     root = system.parent / "source_evidence"
     root.mkdir(parents=True, exist_ok=True)
-    write_rows(root / "system-current-authority.v1.json", (current_authority(),))
+    write_rows(
+        root / "system-current-authority.v2.jsonl",
+        current_authority(
+            authority_signer,
+            railway_changes=railway_changes,
+            relay_changes=relay_changes,
+            observed_at=observed_at,
+            sequence=sequence,
+        ),
+    )
+    return authority_signer.verifier
 
 
 def control_receipts(mutation: str = "") -> tuple[JsonRow, ...]:

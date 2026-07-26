@@ -7,6 +7,7 @@ from typing import Final
 from trading_agent.dashboard_models_v2 import SourceStateName, WorkspaceItemV2
 from trading_agent.dashboard_projection_common import WorkspaceProjection
 from trading_agent.dashboard_projection_system_control import project_autonomous_control
+from trading_agent.dashboard_system_current_authority import SystemAuthorityVerifier
 from trading_agent.dashboard_system_evidence import project_milestone_evidence
 from trading_agent.dashboard_system_operations import project_system_operations
 
@@ -22,9 +23,18 @@ _STATE_PRIORITY: Final[dict[SourceStateName, int]] = {
 }
 
 
-def project_system(outputs: Path, *, now: dt.datetime) -> WorkspaceProjection:
+def project_system(
+    outputs: Path,
+    *,
+    now: dt.datetime,
+    authority_verifier: SystemAuthorityVerifier | None = None,
+) -> WorkspaceProjection:
     milestones = project_milestone_evidence(outputs, now=now)
-    operations = project_system_operations(outputs, now=now)
+    operations = project_system_operations(
+        outputs,
+        now=now,
+        authority_verifier=authority_verifier,
+    )
     autonomous = project_autonomous_control(outputs, now=now)
     projections = (milestones, operations, autonomous)
     worst = max(projections, key=lambda item: _STATE_PRIORITY[item.workspace.state])

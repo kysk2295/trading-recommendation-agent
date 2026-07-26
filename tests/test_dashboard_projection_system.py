@@ -10,6 +10,7 @@ from dashboard_system_fixtures import (
     control_receipts,
     milestones,
     operations,
+    system_authority_signer,
     system_root,
     write_current_authority,
     write_rows,
@@ -27,10 +28,10 @@ def test_complete_system_projection_keeps_exact_milestones_and_typed_operations(
     root = system_root(tmp_path)
     write_rows(root / MILESTONE_FILE, milestones())
     write_rows(root / OPERATIONS_FILE, operations())
-    write_current_authority(root)
+    verifier = write_current_authority(root)
     write_rows(root / AUTONOMOUS_CONTROL_FILE, control_receipts())
 
-    projection = project_system(tmp_path / "outputs", now=NOW)
+    projection = project_system(tmp_path / "outputs", now=NOW, authority_verifier=verifier)
 
     assert projection.workspace.state == "populated"
     assert tuple(item.label for item in projection.workspace.items[:11]) == MILESTONE_IDS
@@ -82,10 +83,10 @@ def test_adverse_system_receipts_fail_closed(
     root = system_root(tmp_path)
     write_rows(root / MILESTONE_FILE, milestones())
     write_rows(root / OPERATIONS_FILE, operations(mutation))
-    write_current_authority(root)
+    verifier = write_current_authority(root)
     write_rows(root / AUTONOMOUS_CONTROL_FILE, control_receipts(mutation))
 
-    projection = project_system(tmp_path / "outputs", now=NOW)
+    projection = project_system(tmp_path / "outputs", now=NOW, authority_verifier=verifier)
 
     assert projection.workspace.state in {"blocked", "stale", "unavailable"}
     assert projection.workspace.blocker_code == blocker
@@ -116,10 +117,10 @@ def test_launchd_alias_and_private_fields_never_project(
     write_rows(root / MILESTONE_FILE, milestones())
     row: JsonRow = {**operations()[0], **hostile}
     write_rows(root / OPERATIONS_FILE, (row, *operations()[1:]))
-    write_current_authority(root)
+    verifier = write_current_authority(root)
     write_rows(root / AUTONOMOUS_CONTROL_FILE, control_receipts())
 
-    projection = project_system(tmp_path / "outputs", now=NOW)
+    projection = project_system(tmp_path / "outputs", now=NOW, authority_verifier=verifier)
     payload = projection.workspace.model_dump_json().lower()
 
     assert projection.workspace.state == "corrupt"
@@ -135,15 +136,16 @@ def test_launchd_alias_and_private_fields_never_project(
 @pytest.mark.parametrize("source", ["milestones", "operations", "autonomous"])
 def test_missing_authority_is_unavailable(tmp_path: Path, source: str) -> None:
     root = system_root(tmp_path)
+    verifier = system_authority_signer().verifier
     if source != "milestones":
         write_rows(root / MILESTONE_FILE, milestones())
     if source != "operations":
         write_rows(root / OPERATIONS_FILE, operations())
-        write_current_authority(root)
+        verifier = write_current_authority(root)
     if source != "autonomous":
         write_rows(root / AUTONOMOUS_CONTROL_FILE, control_receipts())
 
-    projection = project_system(tmp_path / "outputs", now=NOW)
+    projection = project_system(tmp_path / "outputs", now=NOW, authority_verifier=verifier)
 
     assert projection.workspace.state == "unavailable"
     assert projection.workspace.blocker_code is not None
@@ -158,10 +160,10 @@ def test_future_corrupt_and_oversized_receipts_are_bounded(tmp_path: Path) -> No
         "observed_at": (NOW + dt.timedelta(hours=1)).isoformat(),
     }
     write_rows(root / OPERATIONS_FILE, operations())
-    write_current_authority(root)
+    verifier = write_current_authority(root)
     write_rows(root / AUTONOMOUS_CONTROL_FILE, tuple(rows))
 
-    future_projection = project_system(tmp_path / "outputs", now=NOW)
+    future_projection = project_system(tmp_path / "outputs", now=NOW, authority_verifier=verifier)
 
     assert future_projection.workspace.state == "corrupt"
     assert future_projection.workspace.projected_count <= 24
@@ -170,7 +172,7 @@ def test_future_corrupt_and_oversized_receipts_are_bounded(tmp_path: Path) -> No
     path = root / AUTONOMOUS_CONTROL_FILE
     path.write_bytes(b" " * (128 * 1024 + 1))
     path.chmod(0o600)
-    oversized_projection = project_system(tmp_path / "outputs", now=NOW)
+    oversized_projection = project_system(tmp_path / "outputs", now=NOW, authority_verifier=verifier)
 
     assert oversized_projection.workspace.state == "corrupt"
     assert oversized_projection.workspace.projected_count <= 24

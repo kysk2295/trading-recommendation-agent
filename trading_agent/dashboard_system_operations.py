@@ -12,6 +12,7 @@ from trading_agent.dashboard_models_v2 import (
     WorkspaceItemV2,
 )
 from trading_agent.dashboard_projection_common import WorkspaceProjection
+from trading_agent.dashboard_system_current_authority import SystemAuthorityVerifier
 from trading_agent.dashboard_system_operation_receipts import (
     OPERATIONS_FILE,
     LaunchdReceipt,
@@ -27,8 +28,17 @@ from trading_agent.dashboard_system_trace import (
 )
 
 
-def project_system_operations(outputs: Path, *, now: dt.datetime) -> WorkspaceProjection:
-    read = read_operation_receipts(outputs / "system" / OPERATIONS_FILE, now)
+def project_system_operations(
+    outputs: Path,
+    *,
+    now: dt.datetime,
+    authority_verifier: SystemAuthorityVerifier | None = None,
+) -> WorkspaceProjection:
+    read = read_operation_receipts(
+        outputs / "system" / OPERATIONS_FILE,
+        now,
+        authority_verifier=authority_verifier,
+    )
     match read:
         case tuple() as receipts:
             return _project(receipts, now)
