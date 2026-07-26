@@ -30,6 +30,7 @@ export const agentIdSchema = z.enum([
   "research",
   "delivery",
 ]);
+export type AgentId = z.infer<typeof agentIdSchema>;
 
 const agentSchema = z.strictObject({
   agent_id: agentIdSchema,
@@ -86,6 +87,30 @@ const accountSchema = z.strictObject({
   open_orders: z.number().int().nonnegative(),
 });
 
+export const interactionStateSchema = z.enum(["queued", "running", "completed", "failed"]);
+
+export const interactionSchema = z.strictObject({
+  id: z.uuid(),
+  agent_id: agentIdSchema,
+  command: z.string().trim().min(1).max(2_000),
+  state: interactionStateSchema,
+  response: z.string().max(8_000).nullable(),
+  created_at: z.iso.datetime({ offset: true }),
+  updated_at: z.iso.datetime({ offset: true }),
+});
+
+export const interactionCreateSchema = z.strictObject({
+  command: z.string().trim().min(1).max(2_000),
+});
+
+export const interactionReceiptSchema = z.strictObject({
+  interaction: interactionSchema,
+});
+
+export const operatorSessionSchema = z.strictObject({
+  authenticated: z.boolean(),
+});
+
 export const dashboardSnapshotSchema = z.strictObject({
   schema_version: z.literal(1),
   generated_at: z.iso.datetime({ offset: true }),
@@ -99,5 +124,17 @@ export const dashboardSnapshotSchema = z.strictObject({
   account: accountSchema,
 });
 
-export type AgentId = z.infer<typeof agentIdSchema>;
+export const viewerMessageSchema = z.strictObject({
+  type: z.literal("snapshot"),
+  snapshot: dashboardSnapshotSchema,
+});
+
+export const operatorMessageSchema = z.strictObject({
+  type: z.literal("interaction"),
+  interaction: interactionSchema,
+});
+
 export type DashboardSnapshot = z.infer<typeof dashboardSnapshotSchema>;
+export type AgentView = DashboardSnapshot["agents"][number];
+export type Interaction = z.infer<typeof interactionSchema>;
+export type InteractionState = z.infer<typeof interactionStateSchema>;

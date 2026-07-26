@@ -1,10 +1,12 @@
 import ky, { HTTPError, TimeoutError } from "ky";
+import { AgentWorkspace } from "./agent_workspace";
 import { requiredElement } from "./dom";
 import { DashboardRealtimeClient } from "./realtime_client";
 import type { EvidenceFilter } from "./render";
 import { renderSnapshot } from "./render";
 import type { DashboardSnapshot } from "./schema";
 import { dashboardSnapshotSchema } from "./schema";
+import { initializeWorkspaceTabs } from "./workspace_tabs";
 
 const refreshButton = requiredElement("refresh-button", HTMLButtonElement);
 const freshnessText = requiredElement("freshness-text", HTMLElement);
@@ -12,6 +14,8 @@ const freshnessMark = requiredElement("freshness-mark", HTMLElement);
 let snapshot: DashboardSnapshot | null = null;
 let filter: EvidenceFilter = "all";
 let realtimeConnected = false;
+initializeWorkspaceTabs();
+const agentWorkspace = new AgentWorkspace();
 const realtime = new DashboardRealtimeClient({
   onSnapshot: (nextSnapshot) => {
     snapshot = nextSnapshot;
@@ -65,6 +69,7 @@ async function refreshSnapshot(): Promise<void> {
 function renderCurrent(): void {
   if (snapshot !== null) {
     renderSnapshot(snapshot, filter);
+    agentWorkspace.updateAgents(snapshot.agents);
   }
 }
 
@@ -107,3 +112,4 @@ window.setInterval(updateClock, 1_000);
 updateClock();
 void refreshSnapshot();
 realtime.start();
+agentWorkspace.start();

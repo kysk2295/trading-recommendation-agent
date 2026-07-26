@@ -18,7 +18,6 @@ export function renderSnapshot(snapshot: DashboardSnapshot, filter: EvidenceFilt
   renderMarkets(snapshot);
   renderForward(snapshot);
   renderAccount(snapshot);
-  renderAgents(snapshot);
   renderRecommendations(snapshot);
   renderSignals(snapshot, filter);
   renderResearch(snapshot);
@@ -104,25 +103,6 @@ function renderForward(snapshot: DashboardSnapshot): void {
   );
   const blockers = requiredElement("blocker-list", HTMLDivElement);
   blockers.replaceChildren(...forward.blockers.map((blocker) => textElement("p", blocker)));
-}
-
-function renderAgents(snapshot: DashboardSnapshot): void {
-  const body = requiredElement("agent-rows", HTMLTableSectionElement);
-  if (snapshot.agents.length === 0) {
-    body.replaceChildren(emptyRow("등록된 에이전트가 없습니다.", 3));
-    return;
-  }
-  body.replaceChildren(
-    ...snapshot.agents.map((agent) => {
-      const row = document.createElement("tr");
-      row.append(
-        cell(agent.label),
-        cell(stateLabel(agent.state), `state-text ${statusClass(agent.state)}`),
-        cell(agent.scheduled_label, "job-label"),
-      );
-      return row;
-    }),
-  );
 }
 
 function renderRecommendations(snapshot: DashboardSnapshot): void {

@@ -1,17 +1,24 @@
 import { z } from "zod";
-import type { DashboardSnapshot } from "./schema";
-import { dashboardSnapshotSchema } from "./schema";
+import { PairingTickets } from "./operator_auth";
+import type { DashboardSnapshot, Interaction } from "./schema";
+import { dashboardSnapshotSchema, interactionStateSchema } from "./schema";
 import type { SnapshotStore } from "./store";
 
-const publisherMessageSchema = z.strictObject({
-  type: z.literal("snapshot"),
-  snapshot: dashboardSnapshotSchema,
-});
-
-export const viewerMessageSchema = z.strictObject({
-  type: z.literal("snapshot"),
-  snapshot: dashboardSnapshotSchema,
-});
+const publisherMessageSchema = z.discriminatedUnion("type", [
+  z.strictObject({
+    type: z.literal("snapshot"),
+    snapshot: dashboardSnapshotSchema,
+  }),
+  z.strictObject({
+    type: z.literal("interaction_result"),
+    interaction_id: z.uuid(),
+    state: interactionStateSchema.exclude(["queued"]),
+    response: z.string().max(8_000).nullable(),
+  }),
+  z.strictObject({
+    type: z.literal("pairing_request"),
+  }),
+]);
 
 export interface RealtimePeer {
   readonly raw?: unknown;
@@ -21,10 +28,14 @@ export interface RealtimePeer {
 
 export class DashboardRealtimeHub {
   private readonly viewers = new Map<unknown, RealtimePeer>();
+  private readonly operators = new Map<unknown, RealtimePeer>();
   private publisher: RealtimePeer | null = null;
   private publisherIdentity: unknown = null;
 
-  constructor(private readonly store: SnapshotStore) {}
+  constructor(
+    private readonly store: SnapshotStore,
+    private readonly pairingTickets = new PairingTickets(),
+  ) {}
 
   async connectViewer(peer: RealtimePeer): Promise<void> {
     this.viewers.set(identity(peer), peer);
@@ -38,19 +49,33 @@ export class DashboardRealtimeHub {
     this.viewers.delete(identity(peer));
   }
 
+  async connectOperator(peer: RealtimePeer): Promise<void> {
+    this.operators.set(identity(peer), peer);
+    for (const interaction of await this.store.listInteractions()) {
+      send(peer, { type: "interaction", interaction });
+    }
+  }
+
+  disconnectOperator(peer: RealtimePeer): void {
+    this.operators.delete(identity(peer));
+  }
+
   connectPublisher(peer: RealtimePeer): void {
     const nextIdentity = identity(peer);
     if (this.publisher !== null && this.publisherIdentity !== nextIdentity) {
       this.publisher.close(1008, "publisher_replaced");
+      void this.failRunningInteractions();
     }
     this.publisher = peer;
     this.publisherIdentity = nextIdentity;
+    void this.deliverPending(peer);
   }
 
-  disconnectPublisher(peer: RealtimePeer): void {
+  async disconnectPublisher(peer: RealtimePeer): Promise<void> {
     if (this.publisherIdentity === identity(peer)) {
       this.publisher = null;
       this.publisherIdentity = null;
+      await this.failRunningInteractions();
     }
   }
 
@@ -64,18 +89,73 @@ export class DashboardRealtimeHub {
       peer.close(1003, "invalid_message");
       return;
     }
-    await this.store.save(payload.snapshot);
-    this.broadcast({ type: "snapshot", snapshot: payload.snapshot });
+    switch (payload.type) {
+      case "snapshot":
+        await this.store.save(payload.snapshot);
+        this.broadcast(this.viewers, { type: "snapshot", snapshot: payload.snapshot });
+        return;
+      case "interaction_result": {
+        const updated = await this.store.updateInteraction(
+          payload.interaction_id,
+          payload.state,
+          payload.response,
+        );
+        if (updated !== null) {
+          this.broadcast(this.operators, { type: "interaction", interaction: updated });
+        }
+        return;
+      }
+      case "pairing_request": {
+        const ticket = this.pairingTickets.issue();
+        send(peer, { type: "pairing_ticket", path: `/operator/pair/${ticket}` });
+        return;
+      }
+    }
   }
 
   broadcastSnapshot(snapshot: DashboardSnapshot): void {
-    this.broadcast({ type: "snapshot", snapshot });
+    this.broadcast(this.viewers, { type: "snapshot", snapshot });
   }
 
-  private broadcast(message: object): void {
+  async queueInteraction(interaction: Interaction): Promise<void> {
+    await this.store.createInteraction(interaction);
+    this.broadcast(this.operators, { type: "interaction", interaction });
+    if (this.publisher !== null) {
+      send(this.publisher, { type: "interaction", interaction });
+    }
+  }
+
+  private broadcast(peers: ReadonlyMap<unknown, RealtimePeer>, message: object): void {
     const payload = JSON.stringify(message);
-    for (const viewer of this.viewers.values()) {
-      viewer.send(payload);
+    for (const peer of peers.values()) {
+      peer.send(payload);
+    }
+  }
+
+  private async deliverPending(peer: RealtimePeer): Promise<void> {
+    for (const interaction of await this.store.pendingInteractions()) {
+      if (this.publisherIdentity !== identity(peer)) {
+        return;
+      }
+      if (interaction.state === "queued") {
+        send(peer, { type: "interaction", interaction });
+      }
+    }
+  }
+
+  private async failRunningInteractions(): Promise<void> {
+    for (const interaction of await this.store.pendingInteractions()) {
+      if (interaction.state !== "running") {
+        continue;
+      }
+      const updated = await this.store.updateInteraction(
+        interaction.id,
+        "failed",
+        "publisher 연결이 끊겨 자동 재시도하지 않았습니다.",
+      );
+      if (updated !== null) {
+        this.broadcast(this.operators, { type: "interaction", interaction: updated });
+      }
     }
   }
 }

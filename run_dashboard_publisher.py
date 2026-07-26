@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Annotated
@@ -21,13 +22,26 @@ from urllib.parse import urlsplit, urlunsplit
 
 import anyio
 import typer
+from anyio.abc import TaskGroup
 from pydantic import ValidationError
 from rich import print as rprint
 from watchfiles import awatch
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import WebSocketException
 
+from trading_agent.dashboard_commands import (
+    DashboardInteractionMessage,
+    PairingTicketMessage,
+    parse_dashboard_event,
+)
 from trading_agent.dashboard_models import DashboardSnapshot
+from trading_agent.dashboard_relay import (
+    DashboardRelayConnectionError,
+    is_reconnectable_group,
+    open_pairing_url,
+    pairing_url,
+    run_interaction,
+)
 from trading_agent.dashboard_snapshot import (
     DashboardCredentialError,
     JobRow,
@@ -39,6 +53,8 @@ app = typer.Typer(help="로컬 산출물을 redacted 운영 snapshot으로 안�
 DEFAULT_OUTPUTS = Path(__file__).resolve().parent / "outputs"
 DEFAULT_CREDENTIALS = Path.home() / ".config" / "trading-agent" / "dashboard.env"
 MAX_RECONNECT_SECONDS = 60
+HERMES_EXECUTABLE = Path(shutil.which("hermes") or Path.home() / ".local/bin/hermes")
+WORKTREE = Path(__file__).resolve().parent
 
 
 @app.command(help="로컬 산출물을 redacted 운영 snapshot으로 안전하게 전송합니다.")
@@ -47,6 +63,10 @@ def publish(
     credentials: Annotated[Path, typer.Option()] = DEFAULT_CREDENTIALS,
     once: Annotated[bool, typer.Option(help="한 번 전송한 뒤 종료")] = False,
     dry_run: Annotated[bool, typer.Option(help="외부 전송 없이 snapshot 경계만 검증")] = False,
+    pair_browser: Annotated[
+        bool,
+        typer.Option(help="이 Mac의 브라우저를 일회용 운영자 세션으로 연결"),
+    ] = False,
 ) -> None:
     try:
         config = load_dashboard_credentials(credentials)
@@ -68,6 +88,7 @@ def publish(
             config.ingest_token.get_secret_value(),
             snapshot,
             once,
+            pair_browser,
         )
         if once:
             rprint("[green]dashboard snapshot published by event relay[/green]")
@@ -83,6 +104,7 @@ async def _relay(
     initial_snapshot: DashboardSnapshot,
     *,
     once: bool,
+    pair_browser: bool,
 ) -> None:
     attempt = 0
     snapshot = initial_snapshot
@@ -101,9 +123,14 @@ async def _relay(
             ) as socket:
                 attempt = 0
                 await _send_snapshot(socket, snapshot)
+                if pair_browser:
+                    await socket.send('{"type":"pairing_request"}')
+                if once and pair_browser:
+                    await _pair_browser_once(socket, dashboard_url)
+                    return
                 if once:
                     return
-                await _watch_output_events(socket, outputs)
+                await _run_event_connection(socket, outputs, dashboard_url, pair_browser)
         except (OSError, TimeoutError, WebSocketException):
             if once:
                 raise
@@ -118,17 +145,92 @@ async def _run_relay(
     token: str,
     initial_snapshot: DashboardSnapshot,
     once: bool,
+    pair_browser: bool,
 ) -> None:
-    await _relay(outputs, dashboard_url, token, initial_snapshot, once=once)
+    await _relay(
+        outputs,
+        dashboard_url,
+        token,
+        initial_snapshot,
+        once=once,
+        pair_browser=pair_browser,
+    )
+
+
+async def _run_event_connection(
+    socket: ClientConnection,
+    outputs: Path,
+    dashboard_url: str,
+    pair_browser: bool,
+) -> None:
+    send_lock = anyio.Lock()
+    limiter = anyio.CapacityLimiter(1)
+    try:
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(_watch_output_events, socket, outputs, send_lock)
+            tasks.start_soon(
+                _receive_events,
+                socket,
+                dashboard_url,
+                pair_browser,
+                send_lock,
+                limiter,
+                tasks,
+            )
+    except BaseExceptionGroup as error:
+        if is_reconnectable_group(error):
+            raise DashboardRelayConnectionError from error
+        raise
+
+
+async def _receive_events(
+    socket: ClientConnection,
+    dashboard_url: str,
+    pair_browser: bool,
+    send_lock: anyio.Lock,
+    limiter: anyio.CapacityLimiter,
+    tasks: TaskGroup,
+) -> None:
+    async for raw in socket:
+        if not isinstance(raw, str):
+            continue
+        event = parse_dashboard_event(raw)
+        if isinstance(event, PairingTicketMessage):
+            if pair_browser:
+                await open_pairing_url(pairing_url(dashboard_url, event.path))
+            continue
+        if isinstance(event, DashboardInteractionMessage):
+            tasks.start_soon(
+                run_interaction,
+                socket,
+                event.interaction,
+                send_lock,
+                limiter,
+                HERMES_EXECUTABLE,
+                WORKTREE,
+            )
 
 
 async def _watch_output_events(
     socket: ClientConnection,
     outputs: Path,
+    send_lock: anyio.Lock,
 ) -> None:
     async for _changes in awatch(*_watch_roots(outputs), debounce=2_000, step=250):
         snapshot = collect_dashboard_snapshot(outputs, jobs=_launchd_jobs())
-        await _send_snapshot(socket, snapshot)
+        async with send_lock:
+            await _send_snapshot(socket, snapshot)
+
+
+async def _pair_browser_once(socket: ClientConnection, dashboard_url: str) -> None:
+    while True:
+        raw = await socket.recv()
+        if not isinstance(raw, str):
+            continue
+        event = parse_dashboard_event(raw)
+        if isinstance(event, PairingTicketMessage):
+            await open_pairing_url(pairing_url(dashboard_url, event.path))
+            return
 
 
 async def _send_snapshot(

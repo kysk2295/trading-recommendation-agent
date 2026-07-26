@@ -8,10 +8,11 @@ class ServerConfigurationError extends Error {
 }
 
 const ingestToken = requiredEnvironment("DASHBOARD_INGEST_TOKEN");
+const operatorToken = requiredEnvironment("DASHBOARD_OPERATOR_TOKEN");
 const databaseUrl = process.env["DATABASE_URL"];
 const store: SnapshotStore =
   databaseUrl === undefined ? new MemorySnapshotStore() : new PostgresSnapshotStore(databaseUrl);
-const app = createApp(store, ingestToken);
+const app = createApp(store, ingestToken, operatorToken);
 const parsedPort = Number.parseInt(process.env["PORT"] ?? "3000", 10);
 
 if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65_535) {

@@ -1,11 +1,25 @@
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 
+import anyio
+import pytest
 from typer.testing import CliRunner
+from websockets.exceptions import WebSocketException
 
 import run_dashboard_publisher
+from trading_agent.dashboard_commands import InteractionPayload
+from trading_agent.dashboard_relay import is_reconnectable_group, pairing_url, run_interaction
+
+
+class _SendSocket:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    async def send(self, message: str) -> None:
+        self.messages.append(message)
 
 
 def test_dashboard_publisher_help() -> None:
@@ -14,6 +28,7 @@ def test_dashboard_publisher_help() -> None:
     assert result.exit_code == 0
     assert "redacted" in result.stdout
     assert "--once" in result.stdout
+    assert "--pair-browser" in result.stdout
     assert "--interval-seconds" not in result.stdout
 
 
@@ -70,6 +85,13 @@ def test_publisher_converts_dashboard_urls_to_publish_websockets() -> None:
         run_dashboard_publisher._publisher_url("http://localhost:3100")
         == "ws://localhost:3100/api/realtime/publish"
     )
+    assert (
+        pairing_url(
+            "https://observatory.example",
+            "/operator/pair/single-use-ticket",
+        )
+        == "https://observatory.example/operator/pair/single-use-ticket"
+    )
 
 
 def test_publisher_watches_account_ledger_without_periodic_broker_reads(
@@ -95,3 +117,40 @@ def test_publisher_bounds_reconnect_backoff() -> None:
         60,
         60,
     ]
+
+
+def test_publisher_classifies_nested_websocket_failures_for_reconnect() -> None:
+    failure = ExceptionGroup(
+        "publisher connection",
+        [ExceptionGroup("receive", [WebSocketException("publisher replaced")])],
+    )
+
+    assert is_reconnectable_group(failure)
+
+
+@pytest.mark.anyio
+async def test_publisher_reports_running_then_terminal_command_state(tmp_path: Path) -> None:
+    socket = _SendSocket()
+    interaction = InteractionPayload.model_validate(
+        {
+            "id": "019c0014-f0f5-7000-8000-000000000001",
+            "agent_id": "research",
+            "command": "결손을 요약해줘",
+            "state": "queued",
+            "response": None,
+            "created_at": "2026-07-26T04:00:00Z",
+            "updated_at": "2026-07-26T04:00:00Z",
+        }
+    )
+
+    await run_interaction(
+        socket,
+        interaction,
+        anyio.Lock(),
+        anyio.CapacityLimiter(1),
+        Path("/bin/echo"),
+        tmp_path,
+    )
+
+    states = [json.loads(message)["state"] for message in socket.messages]
+    assert states == ["running", "completed"]

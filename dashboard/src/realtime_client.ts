@@ -1,5 +1,5 @@
-import { viewerMessageSchema } from "./realtime";
 import type { DashboardSnapshot } from "./schema";
+import { viewerMessageSchema } from "./schema";
 
 type ConnectionState = "connected" | "disconnected";
 

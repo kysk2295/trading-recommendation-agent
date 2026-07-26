@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="/assets/layout.css" />
     <link rel="stylesheet" href="/assets/components.css" />
     <link rel="stylesheet" href="/assets/data-components.css" />
+    <link rel="stylesheet" href="/assets/workspace.css" />
     <link rel="stylesheet" href="/assets/responsive.css" />
     <link rel="stylesheet" href="/assets/showcase.css" />
   </head>
@@ -41,6 +42,31 @@
             <div><dt>Recommendations</dt><dd>3</dd></div>
             <div><dt>Unavailable</dt><dd>—</dd></div>
           </dl>
+        </article>
+        <article class="panel showcase-wide">
+          <div class="panel-heading">
+            <div><p class="meta-label">WORKSPACE TABS</p><h2>상위 작업 공간</h2></div>
+          </div>
+          <nav class="workspace-tabs showcase-tabs" aria-label="쇼케이스 작업 공간" role="tablist">
+            <button type="button" role="tab" aria-selected="false"><span>01</span> 개요</button>
+            <button type="button" role="tab" aria-selected="true"><span>02</span> 에이전트</button>
+            <button type="button" role="tab" aria-selected="false"><span>03</span> 계좌·PnL</button>
+            <button type="button" role="tab" aria-selected="false"><span>04</span> 추천·근거</button>
+          </nav>
+        </article>
+        <article class="panel showcase-wide">
+          <div class="selected-agent">
+            <div><p class="meta-label">CAUSAL RESEARCH</p><h2>데이터 연구</h2></div>
+            <span class="status-word state-ready">명령 채널 연결됨</span>
+          </div>
+          <form class="interaction-form">
+            <label for="showcase-command">이 에이전트에게 내릴 명령</label>
+            <textarea id="showcase-command" rows="3">실제 데이터 결손을 산출물 근거로 분석해줘.</textarea>
+            <div class="composer-actions">
+              <p>Ctrl+Enter로 전송 · 명령 1건당 Hermes 1회 실행</p>
+              <button type="button">명령 보내기</button>
+            </div>
+          </form>
         </article>
         <article class="panel showcase-wide">
           <div class="panel-heading">

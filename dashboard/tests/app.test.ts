@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { createApp } from "../src/app";
+import { PairingTickets } from "../src/operator_auth";
 import { MemorySnapshotStore } from "../src/store";
 
 const INGEST_TOKEN = "ingest-token-with-adequate-length";
+const OPERATOR_TOKEN = "operator-token-with-adequate-length";
 
 const snapshot = {
   schema_version: 1,
@@ -80,7 +82,7 @@ const snapshot = {
 
 describe("dashboard API", () => {
   test("reports public health without disclosing configuration", async () => {
-    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN);
+    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN, OPERATOR_TOKEN);
 
     const response = await app.request("/api/health");
 
@@ -89,24 +91,27 @@ describe("dashboard API", () => {
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
   });
 
-  test("serves a read-only observatory with account PnL and no operator controls", async () => {
-    // Given: the public read-only observatory application.
-    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN);
+  test("serves tabbed observatory and agent command workspace without an access-key field", async () => {
+    // Given: the public observatory application with a protected command boundary.
+    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN, OPERATOR_TOKEN);
 
     // When: a browser opens the dashboard shell.
     const response = await app.request("/");
     const html = await response.text();
 
-    // Then: account telemetry is visible and remote-control surfaces are absent.
+    // Then: focused workspaces and the command composer are visible without a token input.
     expect(response.status).toBe(200);
+    expect(html).toContain('role="tablist"');
+    expect(html).toContain('id="tab-agents"');
+    expect(html).toContain('id="tab-account"');
+    expect(html).toContain('id="interaction-form"');
     expect(html).toContain('id="account-equity"');
     expect(html).toContain('id="account-daily-pnl"');
-    expect(html).not.toContain('id="operator-pair-form"');
-    expect(html).not.toContain('id="interaction-form"');
+    expect(html).not.toContain('type="password"');
   });
 
   test("protects ingestion while keeping snapshot reads public", async () => {
-    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN);
+    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN, OPERATOR_TOKEN);
 
     const ingestDenied = await app.request("/api/ingest", {
       method: "POST",
@@ -121,7 +126,7 @@ describe("dashboard API", () => {
 
   test("stores a strict redacted snapshot and returns it to the viewer", async () => {
     const store = new MemorySnapshotStore();
-    const app = createApp(store, INGEST_TOKEN);
+    const app = createApp(store, INGEST_TOKEN, OPERATOR_TOKEN);
 
     const ingested = await app.request("/api/ingest", {
       method: "POST",
@@ -139,7 +144,7 @@ describe("dashboard API", () => {
   });
 
   test("rejects fields outside the public schema", async () => {
-    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN);
+    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN, OPERATOR_TOKEN);
     const unsafe = { ...snapshot, account_id: "must-not-cross-boundary" };
 
     const response = await app.request("/api/ingest", {
@@ -155,26 +160,73 @@ describe("dashboard API", () => {
   });
 
   test("returns not found until the first publisher snapshot arrives", async () => {
-    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN);
+    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN, OPERATOR_TOKEN);
 
     const response = await app.request("/api/snapshot");
 
     expect(response.status).toBe(404);
   });
 
-  test("does not expose operator, interaction, or command routes", async () => {
-    // Given: the browser surface is intentionally read-only.
-    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN);
+  test("keeps commands private while public telemetry stays keyless", async () => {
+    // Given: an unpaired public viewer.
+    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN, OPERATOR_TOKEN);
 
-    // When: a visitor probes every former command surface.
-    const responses = await Promise.all([
-      app.request("/api/operator/session"),
-      app.request("/api/agents/us-intraday/interactions"),
-      app.request("/api/operator/agents/us-intraday/view"),
-      app.request("/api/worker/interactions/3f454e79-608d-4c83-88d6-10f3db79dc35/result"),
-    ]);
+    // When: the viewer reads telemetry and attempts to submit a command.
+    const telemetry = await app.request("/api/snapshot");
+    const command = await app.request("/api/agents/us-intraday/interactions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command: "현재 세션 차단 원인을 분석해줘" }),
+    });
 
-    // Then: none of those routes exist.
-    expect(responses.map((response) => response.status)).toEqual([404, 404, 404, 404]);
+    // Then: telemetry remains public while command submission is unauthorized.
+    expect(telemetry.status).toBe(404);
+    expect(command.status).toBe(401);
+  });
+
+  test("pairs a trusted device and creates an immutable agent interaction receipt", async () => {
+    // Given: a device that proves the operator secret once.
+    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN, OPERATOR_TOKEN);
+    const paired = await app.request("/api/operator/session", {
+      method: "POST",
+      headers: { authorization: `Bearer ${OPERATOR_TOKEN}` },
+    });
+    const cookie = paired.headers.get("set-cookie");
+
+    // When: the paired device sends a goal to one dashboard agent.
+    const response = await app.request("/api/agents/us-intraday/interactions", {
+      method: "POST",
+      headers: {
+        cookie: cookie ?? "",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ command: "현재 세션 차단 원인을 분석해줘" }),
+    });
+    const payload = await response.json();
+
+    // Then: the command is queued under the exact selected agent.
+    expect(paired.status).toBe(204);
+    expect(response.status).toBe(202);
+    expect(payload).toMatchObject({
+      interaction: {
+        agent_id: "us-intraday",
+        command: "현재 세션 차단 원인을 분석해줘",
+        state: "queued",
+      },
+    });
+  });
+
+  test("pairs a trusted device through a single-use publisher ticket", async () => {
+    const tickets = new PairingTickets();
+    const app = createApp(new MemorySnapshotStore(), INGEST_TOKEN, OPERATOR_TOKEN, tickets);
+    const ticket = tickets.issue();
+
+    const paired = await app.request(`/operator/pair/${ticket}`);
+    const replayed = await app.request(`/operator/pair/${ticket}`);
+
+    expect(paired.status).toBe(302);
+    expect(paired.headers.get("location")).toBe("/#agents");
+    expect(paired.headers.get("set-cookie")).toContain("HttpOnly");
+    expect(replayed.status).toBe(404);
   });
 });

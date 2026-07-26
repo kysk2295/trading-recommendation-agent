@@ -82,7 +82,8 @@ The command workspace defines:
 - **running**: Hermes process is active.
 - **completed**: final response and completion time visible.
 - **failed**: direct error copy with a retry-by-resubmission path; no automatic paid retry.
-- **relay offline**: submission is rejected before creating a misleading executable receipt.
+- **relay offline**: the immutable receipt remains queued and is delivered when the authenticated
+  publisher reconnects; the UI never presents it as running before the local executor accepts it.
 
 Submit feedback uses `aria-live="polite"` and never steals focus. `Ctrl+Enter` submits; Enter
 alone creates a new line.
@@ -99,7 +100,7 @@ alone creates a new line.
 ## Verification
 
 - Unit/integration: strict schemas, cookie authorization, single-use pairing, interaction store,
-  publisher delivery, result broadcast, invalid input, relay-offline behavior.
+  publisher delivery, result broadcast, invalid input, and durable relay-offline queue behavior.
 - E2E: paired browser submits a harmless agent command and receives its terminal response.
 - UI: 375, 768, and 1280 px; tabs, keyboard path, locked/queued/running/completed/failed states,
   long Korean text, empty interactions, reduced motion, 200% zoom.
@@ -107,4 +108,3 @@ alone creates a new line.
   never receive interaction payloads; publisher remains Bearer protected.
 - Cost: clear network capture, wait 20 seconds while idle, assert zero HTTP requests and unchanged
   snapshot/interaction timestamps.
-
