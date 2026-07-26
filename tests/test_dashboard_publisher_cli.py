@@ -20,6 +20,7 @@ from trading_agent.dashboard_directed_research_models import (
     DirectedResearchKind,
     DirectedResearchReceipt,
 )
+from trading_agent.dashboard_execution_claims import InteractiveClaimStore
 from trading_agent.dashboard_native_watch import watch_native_changes
 from trading_agent.dashboard_publisher_events import watch_roots
 from trading_agent.dashboard_relay import is_reconnectable_group, pairing_url, run_interaction
@@ -64,18 +65,38 @@ def test_dashboard_conversation_reset_help_bad_and_happy_path(tmp_path: Path) ->
     from trading_agent.dashboard_hermes_sessions import HermesSessionBindingStore
 
     state = tmp_path / "state"
+    missing_outputs = tmp_path / "archive-without-outputs"
     bindings = HermesSessionBindingStore(state / "hermes-sessions")
     bindings.capture("market_context", "session-market-context-001")
 
     # When: help, invalid family, and the exact local reset command run
-    help_result = CliRunner().invoke(run_dashboard_publisher.app, ["reset-conversation", "--help"])
+    help_result = CliRunner().invoke(
+        run_dashboard_publisher.app,
+        ["--outputs", str(missing_outputs), "reset-conversation", "--help"],
+    )
     bad = CliRunner().invoke(
         run_dashboard_publisher.app,
-        ["reset-conversation", "--family", "delivery", "--state-root", str(state)],
+        [
+            "--outputs",
+            str(missing_outputs),
+            "reset-conversation",
+            "--family",
+            "delivery",
+            "--state-root",
+            str(state),
+        ],
     )
     happy = CliRunner().invoke(
         run_dashboard_publisher.app,
-        ["reset-conversation", "--family", "market_context", "--state-root", str(state)],
+        [
+            "--outputs",
+            str(missing_outputs),
+            "reset-conversation",
+            "--family",
+            "market_context",
+            "--state-root",
+            str(state),
+        ],
     )
 
     # Then: only the canonical happy path removes the local binding
@@ -84,6 +105,29 @@ def test_dashboard_conversation_reset_help_bad_and_happy_path(tmp_path: Path) ->
     assert happy.exit_code == 0
     assert "RESET_OK" in happy.stdout
     assert bindings.session_for("market_context") is None
+
+
+def test_archive_without_outputs_dispatches_autonomous_help_and_rejects_legacy_publish(
+    tmp_path: Path,
+) -> None:
+    # Given: a clean shipped archive with no default output tree
+    missing_outputs = tmp_path / "archive-without-outputs"
+
+    # When: a command-local help path and the legacy root publish path are invoked
+    autonomous_help = CliRunner().invoke(
+        run_dashboard_publisher.app,
+        ["--outputs", str(missing_outputs), "autonomous-agent", "--help"],
+    )
+    legacy_publish = CliRunner().invoke(
+        run_dashboard_publisher.app,
+        ["--outputs", str(missing_outputs), "--dry-run"],
+    )
+
+    # Then: dispatch help works while actual publishing validates its own required input
+    assert autonomous_help.exit_code == 0
+    assert "--trigger-fixture" in autonomous_help.stdout
+    assert legacy_publish.exit_code != 0
+    assert "outputs_directory_missing" in legacy_publish.output
 
 
 def test_dashboard_publisher_rejects_non_https_remote_url(tmp_path: Path) -> None:
@@ -463,14 +507,19 @@ async def test_directed_relay_streams_persisted_progress_before_blocked_broker_r
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    ("fail_kind", "expected_broker_calls"),
-    [("progress", 0), ("evidence", 1), ("result", 1)],
+    ("fail_kind", "expected_broker_calls", "expected_state"),
+    [
+        ("progress", 0, "failed"),
+        ("evidence", 1, "completed"),
+        ("result", 1, "completed"),
+    ],
 )
-async def test_directed_disconnect_persists_uncertain_terminal_and_replays_without_relaunch(
+async def test_directed_disconnect_persists_one_authoritative_terminal_without_relaunch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     fail_kind: str,
     expected_broker_calls: int,
+    expected_state: str,
 ) -> None:
     # Given: a relay disconnects while sending one persisted directed event
     calls = 0
@@ -539,12 +588,19 @@ async def test_directed_disconnect_persists_uncertain_terminal_and_replays_witho
     reconnect = _SendSocket()
     await run_interaction(reconnect, *arguments)
 
-    # Then: the log and claim replay uncertain without another Hermes or broker launch
+    # Then: one terminal and the matching claim replay without another Hermes or broker launch
     event_log = (state / "directed-jobs" / interaction.id / "events.jsonl").read_text(encoding="utf-8")
     events = [json.loads(line) for line in event_log.splitlines()]
     replayed = [json.loads(message) for message in reconnect.messages]
-    assert events[-1]["kind"] == "result"
-    assert events[-1]["state"] == "uncertain"
-    assert replayed[-1]["state"] == "uncertain"
+    terminals = [event for event in events if event["kind"] == "result"]
+    replayed_terminals = [event for event in replayed if event.get("kind") == "result"]
+    claim = InteractiveClaimStore(state / "interactive-claims.sqlite3").get(interaction.id)
+    assert len(terminals) == 1
+    assert terminals[0]["state"] == expected_state
+    assert len(replayed_terminals) == 1
+    assert replayed_terminals[0]["state"] == expected_state
+    assert replayed[-1]["state"] == expected_state
+    assert claim is not None
+    assert claim.state == expected_state
     assert calls == expected_broker_calls
     assert count.read_text().splitlines() == ["1"]

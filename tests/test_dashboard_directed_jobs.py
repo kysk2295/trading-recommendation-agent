@@ -186,8 +186,10 @@ def test_crash_after_real_ledger_write_closes_uncertain_without_retry(tmp_path: 
     assert broker.calls == 1
 
 
-def test_allowed_code_runs_fixed_git_boundary_without_research_broker(tmp_path: Path) -> None:
-    # Given: a fixed allowlisted code check and a broker that must remain unused
+def test_allowed_code_runs_archive_safe_syntax_boundary_without_research_broker(
+    tmp_path: Path,
+) -> None:
+    # Given: a fixed archive-safe syntax check and a broker that must remain unused
     broker = _RecordingBroker(b"")
     executor = _executor(tmp_path, tmp_path, broker)
 

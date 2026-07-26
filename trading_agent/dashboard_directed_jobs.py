@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import hashlib
-import json
-import subprocess
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import Literal, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from trading_agent.dashboard_agent_family import AgentFamilyId
+from trading_agent.dashboard_directed_code_check import (
+    DirectedCodeCheckError,
+    run_archive_safe_code_check,
+)
 from trading_agent.dashboard_directed_file_io import (
     append_bytes,
     read_bounded_bytes,
@@ -101,7 +104,14 @@ class DirectedJobExecutor:
         try:
             _record_and_emit(root, progress, event_sink)
         except DirectedEventDeliveryError:
-            terminal = self._persist_delivery_uncertain(request, root, 1)
+            terminal = self._persist_delivery_terminal(
+                request,
+                root,
+                1,
+                "failed",
+                None,
+                "directed delivery failed before operation",
+            )
             return progress, terminal
         try:
             evidence_sha, result_sha, summary = self._execute_operation(request, root)
@@ -116,7 +126,8 @@ class DirectedJobExecutor:
                 1,
                 summary=f"{request.job_kind} execution {terminal_state}",
             )
-            _record_and_emit(root, terminal, event_sink)
+            with suppress(DirectedEventDeliveryError):
+                _record_and_emit(root, terminal, event_sink)
             return progress, terminal
         evidence = self._event(
             request,
@@ -128,7 +139,14 @@ class DirectedJobExecutor:
         try:
             _record_and_emit(root, evidence, event_sink)
         except DirectedEventDeliveryError:
-            terminal = self._persist_delivery_uncertain(request, root, 2)
+            terminal = self._persist_delivery_terminal(
+                request,
+                root,
+                2,
+                "completed",
+                result_sha,
+                summary,
+            )
             return progress, evidence, terminal
         result = self._event(
             request,
@@ -141,22 +159,25 @@ class DirectedJobExecutor:
         try:
             _record_and_emit(root, result, event_sink)
         except DirectedEventDeliveryError:
-            terminal = self._persist_delivery_uncertain(request, root, 3)
-            return progress, evidence, result, terminal
+            return progress, evidence, result
         return progress, evidence, result
 
-    def _persist_delivery_uncertain(
+    def _persist_delivery_terminal(
         self,
         request: DirectedJobRequest,
         root: Path,
         sequence: int,
+        state: Literal["completed", "failed"],
+        result_sha256: str | None,
+        summary: str,
     ) -> DirectedJobEvent:
         terminal = self._event(
             request,
             "result",
-            "uncertain",
+            state,
             sequence,
-            summary="directed event delivery uncertain",
+            result_sha256=result_sha256,
+            summary=summary,
         )
         _record_and_emit(root, terminal, None)
         return terminal
@@ -168,7 +189,10 @@ class DirectedJobExecutor:
     ) -> tuple[str, str, str]:
         match request.job_kind:
             case "allowed_code":
-                return self._code_check(root)
+                try:
+                    return run_archive_safe_code_check(self._repository, root)
+                except DirectedCodeCheckError as error:
+                    raise InvalidDirectedJobError("directed_code_check_failed") from error
             case "research" | "analysis" | "hypothesis" | "experiment":
                 try:
                     raw = self._research_broker.execute(request.job_kind, request.agent_family_id)
@@ -184,32 +208,6 @@ class DirectedJobExecutor:
                 return receipt_sha, receipt.result_sha256, receipt.summary
             case unexpected:
                 assert_never(unexpected)
-
-    def _code_check(self, root: Path) -> tuple[str, str, str]:
-        try:
-            completed = subprocess.run(
-                ("/usr/bin/git", "diff", "--check", "--"),
-                cwd=self._repository,
-                check=False,
-                capture_output=True,
-                timeout=30,
-            )
-        except (OSError, subprocess.SubprocessError) as error:
-            raise InvalidDirectedJobError("directed_code_check_failed") from error
-        if completed.returncode != 0:
-            raise InvalidDirectedJobError("directed_code_check_failed")
-        payload = json.dumps(
-            {
-                "operation": "code_check",
-                "returncode": completed.returncode,
-                "stdout_sha256": hashlib.sha256(completed.stdout).hexdigest(),
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-        write_bytes_once(root / "code-check-receipt.json", payload)
-        result_sha = hashlib.sha256(payload).hexdigest()
-        return result_sha, result_sha, "allowlisted repository check completed"
 
     @staticmethod
     def _event(

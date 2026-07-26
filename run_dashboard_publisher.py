@@ -1,14 +1,4 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.12"
-# dependencies = [
-#   "anyio>=4.9",
-#   "pydantic>=2.11",
-#   "rich>=13.9",
-#   "typer>=0.15",
-#   "websockets>=16,<17",
-# ]
-# ///
+#!/usr/bin/env -S uv run
 
 from __future__ import annotations
 
@@ -73,7 +63,7 @@ register_execution_commands(app, DEFAULT_INTERACTIVE_STATE)
 @app.callback()
 def publisher_default(
     context: typer.Context,
-    outputs: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_OUTPUTS,
+    outputs: Annotated[Path, typer.Option(file_okay=False)] = DEFAULT_OUTPUTS,
     credentials: Annotated[Path, typer.Option()] = DEFAULT_CREDENTIALS,
     once: Annotated[bool, typer.Option(help="한 번 전송한 뒤 종료")] = False,
     dry_run: Annotated[bool, typer.Option(help="외부 전송 없이 snapshot 경계만 검증")] = False,
@@ -91,6 +81,11 @@ def publish(
     dry_run: Annotated[bool, typer.Option(help="외부 전송 없이 snapshot 경계만 검증")] = False,
     pair_browser: Annotated[bool, typer.Option(help="일회용 운영자 브라우저 연결")] = False,
 ) -> None:
+    if not outputs.is_dir():
+        raise typer.BadParameter(
+            "outputs_directory_missing",
+            param_hint="--outputs",
+        )
     try:
         config = load_dashboard_credentials(credentials)
     except DashboardCredentialError as error:
