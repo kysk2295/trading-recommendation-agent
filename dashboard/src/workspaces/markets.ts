@@ -136,7 +136,7 @@ function renderContext(
     textElement("h2", "Market context and quote guard"),
     textElement(
       "p",
-      "현재 quote는 entitlement, currentness, redistribution permit이 함께 있는 canonical snapshot에서만 표시합니다. 이 v2 projection은 calendar/session evidence만 게시합니다.",
+      "현재 quote는 entitlement, currentness, redistribution permit이 함께 있는 canonical snapshot에서만 표시합니다. 이\u00a0v2 projection은 calendar/session evidence만 게시합니다.",
       "state-guidance",
     ),
   );
