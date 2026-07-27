@@ -146,6 +146,7 @@ def test_production_model_environment_pins_openrouter_provider_and_model(tmp_pat
     # Then: provider routing is explicit instead of falling back to Codex session credentials
     assert model_environment["HERMES_INFERENCE_PROVIDER"] == "openrouter"
     assert model_environment["HERMES_INFERENCE_MODEL"] == "openai/gpt-5.4-mini"
+    assert Path(model_environment["HERMES_HOME"]) == identity.readable_literals[0].resolve().parent
 
 
 @pytest.mark.parametrize(

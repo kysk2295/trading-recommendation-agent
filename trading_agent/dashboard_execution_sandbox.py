@@ -166,6 +166,11 @@ class _ExecutionSandbox:
             case "hermes-model":
                 environment.update(
                     {
+                        "HERMES_HOME": str(
+                            self.execution_identity.readable_literals[0].resolve(
+                                strict=True
+                            ).parent
+                        ),
                         "HERMES_INFERENCE_MODEL": AUTONOMOUS_HERMES_MODEL,
                         "HERMES_INFERENCE_PROVIDER": AUTONOMOUS_HERMES_PROVIDER,
                     }
