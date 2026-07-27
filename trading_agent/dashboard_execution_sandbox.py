@@ -14,10 +14,11 @@ from trading_agent.dashboard_execution_identity import (
     BoundExecutionIdentity,
     BoundExecutionRequest,
 )
+from trading_agent.dashboard_hermes_credentials import materialize_hermes_auth
 
 IdentityValidator = Callable[[BoundExecutionIdentity], None]
-AUTONOMOUS_HERMES_PROVIDER: Final = "openrouter"
-AUTONOMOUS_HERMES_MODEL: Final = "openai/gpt-5.4-mini"
+AUTONOMOUS_HERMES_PROVIDER: Final = "openai-codex"
+AUTONOMOUS_HERMES_MODEL: Final = "gpt-5.5"
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,13 +165,14 @@ class _ExecutionSandbox:
         }
         match self.execution_identity.role:
             case "hermes-model":
+                hermes_home = home / ".hermes"
+                _ = materialize_hermes_auth(
+                    self.execution_identity.readable_literals[1],
+                    hermes_home,
+                )
                 environment.update(
                     {
-                        "HERMES_HOME": str(
-                            self.execution_identity.readable_literals[0].resolve(
-                                strict=True
-                            ).parent
-                        ),
+                        "HERMES_HOME": str(hermes_home.resolve(strict=True)),
                         "HERMES_INFERENCE_MODEL": AUTONOMOUS_HERMES_MODEL,
                         "HERMES_INFERENCE_PROVIDER": AUTONOMOUS_HERMES_PROVIDER,
                     }

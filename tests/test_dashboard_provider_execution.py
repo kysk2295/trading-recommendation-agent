@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 from dashboard_execution_support import execution_sandbox
@@ -32,20 +33,31 @@ def _roots(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     return task_root, experiment, worktree, source
 
 
-def test_production_model_environment_pins_openrouter_provider_and_model(tmp_path: Path) -> None:
-    # Given: the production Hermes model boundary with an available OpenRouter credential source
+def test_production_model_environment_materializes_isolated_codex_credentials(tmp_path: Path) -> None:
+    # Given: the production Hermes model identity and one private host auth store
     repository = Path(__file__).resolve().parents[1]
     _, experiment, _, source = _roots(tmp_path)
-    identity = _build_expected_execution(repository, ProductionExecutionId.HERMES_MODEL)
+    auth_store = tmp_path / "auth.json"
+    auth_store.write_text('{"provider":"fixture"}')
+    auth_store.chmod(0o600)
+    expected = _build_expected_execution(repository, ProductionExecutionId.HERMES_MODEL)
+    identity = replace(
+        expected,
+        readable_literals=(expected.readable_literals[0], auth_store),
+    )
     sandbox = execution_sandbox(repository, source, identity)
 
     # When: the boundary creates the isolated model environment
     model_environment = sandbox.environment(_trigger(), experiment)
+    repeated_environment = sandbox.environment(_trigger(), experiment)
 
-    # Then: provider routing is explicit instead of falling back to Codex session credentials
-    assert model_environment["HERMES_INFERENCE_PROVIDER"] == "openrouter"
-    assert model_environment["HERMES_INFERENCE_MODEL"] == "openai/gpt-5.4-mini"
-    assert Path(model_environment["HERMES_HOME"]) == identity.readable_literals[0].resolve().parent
+    # Then: repeated boundary derivation is safe and reuses the task-local mode-600 copy
+    assert repeated_environment == model_environment
+    assert model_environment["HERMES_INFERENCE_PROVIDER"] == "openai-codex"
+    assert model_environment["HERMES_INFERENCE_MODEL"] == "gpt-5.5"
+    isolated_auth = Path(model_environment["HERMES_HOME"]) / "auth.json"
+    assert isolated_auth.read_text() == auth_store.read_text()
+    assert isolated_auth.stat().st_mode & 0o777 == 0o600
 
 
 def test_provider_proxy_sandbox_profile_accepts_loopback_endpoint(tmp_path: Path) -> None:

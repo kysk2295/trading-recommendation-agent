@@ -65,7 +65,10 @@ def _create_descriptor_builder():
             entrypoint,
             agent_root / "hermes_cli",
             (interpreter.path.parents[1], agent_root),
-            readable_literals=(agent_root / ".env",),
+            readable_literals=(
+                agent_root / ".env",
+                Path.home() / ".hermes" / "auth.json",
+            ),
             test_only=False,
             supporting_files=(wrapper,),
         )
