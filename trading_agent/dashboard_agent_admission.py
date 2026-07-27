@@ -67,7 +67,13 @@ def policy_blocker(
     if sum(item.agent_family_id == trigger.agent_family_id for item in active) >= policy.max_family_concurrency:
         return "family_concurrency_exhausted"
     floor = now - dt.timedelta(seconds=policy.rolling_failure_window_seconds)
-    failures = tuple(item for item in latest if item.state in {"failed", "uncertain"} and item.occurred_at >= floor)
+    failures = tuple(
+        item
+        for item in latest
+        if item.agent_family_id == trigger.agent_family_id
+        and item.state in {"failed", "uncertain"}
+        and item.occurred_at >= floor
+    )
     if len(failures) >= policy.max_rolling_failures:
         return "rolling_failure_budget_exhausted"
     return None

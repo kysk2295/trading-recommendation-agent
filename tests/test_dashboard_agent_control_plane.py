@@ -212,3 +212,40 @@ def test_budget_cooldown_and_failure_gates_never_launch_replacement(tmp_path: Pa
     # Then: it is blocked with zero paid retry
     assert failure_outcome.reason == "rolling_failure_budget_exhausted"
     assert failed_executor.launches == 1
+
+
+def test_failure_budget_isolated_per_agent_family(tmp_path: Path) -> None:
+    # Given: one family has exhausted its rolling failure budget
+    now = dt.datetime(2026, 7, 26, 8, tzinfo=dt.UTC)
+    first = AutonomousTriggerV1.model_validate(trigger_fixture(now=now))
+    second = first.model_copy(
+        update={
+            "agent_family_id": "swing_trading",
+            "dedupe_key": "new-data-swing-source-receipt-001",
+            "trigger_id": "trigger-swing-new-data-001",
+        }
+    )
+    executor = _FakeExecutor(state="failed")
+    plane = AutonomousControlPlane(
+        state_root=tmp_path / "state",
+        executor=executor,
+        policy=AutonomousPolicy(
+            max_trigger_age_seconds=3_600,
+            max_daily_tokens_per_family=1_000_000,
+            max_daily_cost_microusd_per_family=100_000_000,
+            cooldown_seconds=0,
+            max_global_concurrency=1,
+            max_family_concurrency=1,
+            rolling_failure_window_seconds=3_600,
+            max_rolling_failures=1,
+        ),
+        authority_resolver=_AllowAuthority(),
+    )
+    assert plane.handle(first, now=now).state == "failed"
+
+    # When: a different family receives an authorized trigger inside the same window
+    outcome = plane.handle(second, now=now + dt.timedelta(seconds=1))
+
+    # Then: the unrelated family retains its own execution and failure budget
+    assert outcome.state == "failed"
+    assert executor.launches == 2
