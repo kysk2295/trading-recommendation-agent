@@ -4,9 +4,23 @@
 
 - Approved direction: the 2026-07-26 dashboard v2 handoff fixes the product as a carbon-black operations workstation with one ember-orange accent, compact asymmetric financial composition, fixed desktop rails, and evidence-first interaction.
 - Existing-surface audit: dashboard v1 is a four-tab observatory with acid-lime tokens, system fonts, a sticky document header, and a showcase containing sample values. V2 replaces its visual and information architecture while preserving the Hono, Bun, vanilla TypeScript, WebSocket, public-read, and private-operator boundaries.
-- Reference use: the user-provided finance dashboard pages are visual inspiration only. They contribute density, table/chart rhythm, and asymmetric composition; no mark, logo, wording, layout copy, or asset may be reproduced.
+- Reference use: the user-provided Fintrixty finance dashboard, Pinterest finance dashboard, and
+  the exact Behance `Crypto AI Trading Bot` project are binding comparison inputs rather than a
+  vague mood. Fintrixty/Pinterest contribute a wide data-first canvas, compact market tape,
+  table/chart dominance, and asymmetric primary/secondary regions. The Behance project contributes
+  carbon depth, thin display hierarchy, one decisive focal action, large uninterrupted fields, and
+  restraint around badges and containers. Product copy, marks, logos, bright green brand color, and
+  presentation-only 3D assets are not copied.
+- 2026-07-27 rendered-surface correction: the first implementation visibly regressed into duplicated
+  workspace titles, a passive empty context rail, a large boxed authority summary, six equal agent
+  cards, equal session cards, and box-per-row system registries. Those patterns fail the supplied
+  benchmark even though their individual tokens were valid. V2 therefore uses one title, an
+  authority strip, a selected-agent command stage, a session tape, ledger rows, and a wider working
+  canvas.
 - Frontend guidance: redesign audit establishes targeted replacement rather than framework migration; layout mechanics establish bounded shell and named scroll owners; perfection establishes same-origin fonts, semantic HTML, real-browser accessibility/performance gates; designpowers establishes inclusive personas, cognitive constraints, objective review, and explicit debt.
-- Explicit anti-references: glass, neon, AI purple, equal-card mosaics, nested cards, decorative status dots, fake precision, and perpetual motion.
+- Explicit anti-references: glass, neon, AI purple, equal-card mosaics, nested cards, decorative
+  status dots, fake precision, perpetual motion, duplicated headings, passive empty rails, and
+  boxed metadata whose only purpose is to make the screen look busy.
 
 ## 1. Atmosphere, identity, and operators
 
@@ -137,14 +151,17 @@ Base unit is 4px.
 ### Fixed desktop shell
 
 - At `>= 1180px`, `.workstation-shell` is a `100dvb` grid:
-  `232px minmax(0, 1fr) 304px`; rows are `64px minmax(0, 1fr) 28px`.
+  `208px minmax(0, 1fr)`; rows are `56px minmax(0, 1fr) 28px`.
 - The sidebar occupies column 1 across all rows and never scrolls with workspace content. If its
   navigation cannot fit vertically, only `.workspace-nav-list` owns overflow.
-- The command/context header occupies column 2, row 1. The context rail occupies column 3 across
-  rows 1–2 and owns its own overflow only for Evidence/selection context.
+- The command/context header occupies column 2, row 1. It carries connection and refresh controls,
+  not a second full-size copy of the workspace title.
 - `.workspace-scroll-body` occupies column 2, row 2, has `min-block-size: 0`,
   `min-inline-size: 0`, and is the sole vertical scroll owner for the active workspace.
 - The status strip is fixed in row 3. `html` and `body` do not scroll in desktop shell mode.
+- At `>= 1440px`, a `264px` context rail may occupy column 3. Below that width it becomes the
+  Evidence Trace drawer so a passive empty rail never removes space from data tables or charts.
+  The rail may show bounded snapshot context, but never repeats the workspace or displays filler.
 - Regions use `stack`, `cluster`, `switcher`, `fixed-sidenav-shell`, `scroll-body-shell`,
   `list-detail`, and overflow-safe grids:
   `repeat(auto-fit, minmax(min(16rem, 100%), 1fr))`.
@@ -155,7 +172,8 @@ Base unit is 4px.
 
 | Width | Shell behavior | Scroll owner |
 | --- | --- | --- |
-| `>=1180px` | 232px fixed sidebar + fluid workspace + 304px fixed context rail | active `.workspace-scroll-body`; context rail only for its own long content |
+| `>=1440px` | 208px fixed sidebar + fluid workspace + 264px evidence context rail | active `.workspace-scroll-body`; context rail only for selected evidence context |
+| `1180–1439px` | 208px fixed sidebar + full-width workspace; context becomes an end drawer | active `.workspace-scroll-body`; open drawer owns its body scroll |
 | `768–1179px` | 72px icon/short-label rail, fixed 56px header; context rail becomes an end drawer | active workspace body; open drawer traps focus and owns its body scroll |
 | `320–767px` | fixed 52px header and 56px bottom workspace launcher; no persistent side/context rail | one active workspace body; tables/reels declare local horizontal scroll |
 
@@ -212,7 +230,7 @@ lower cap in the master spec wins.
 | `WorkstationShell` | sidebar, context header/rail, active main, status strip | fixed-shell geometry above; route landmarks; one active main scroll owner |
 | `WorkspaceNav` | nine real links/buttons with route index and optional text status | active, hover, pressed, focus, unavailable; roving Arrow/Home/End; hash reload/back-forward |
 | `ContextRail` | selection summary or trace launcher; drawer variant at narrower widths | never repeats the whole workspace; absent selection is truthful empty |
-| `SourceStatePanel` | heading, observation time, state copy, content, trace action | all eight canonical states; no spinner loop; state label is text |
+| `AuthorityStrip` | state, one-line authority summary, observation/freshness/count, trace action | replaces the boxed summary card; all eight canonical states; blocker may expand to one inline terminal row |
 | `MetricCell` | `dl` pair plus source time and trace button | known, stale, blocked, unavailable; mono/tabular numbers; no fake precision |
 | `LedgerTable` | semantic table inside labeled `.table-viewport` | loading skeleton, empty row, error, corrupt, stale, populated, truncated; sticky header only inside table scroll |
 | `EvidenceFeed` | ordered articles | empty/error/stale/populated; chronological order stated; no invented events |
@@ -221,7 +239,9 @@ lower cap in the master spec wins.
 | `BlockerNotice` | blocker code, plain-language effect, observation time, trace control | blocked/unavailable/corrupt; never contains raw exception, payload, or path |
 | `TruncationNotice` | count metadata and user-action disclosure | shown whenever `truncated=true`; does not trigger an automatic fetch |
 | `CommandComposer` | family selection, labeled textarea, submit, live result | locked/ready/relay-offline/queued/running/completed/failed/uncertain; one explicit message, one claim, no paid retry |
-| `AgentChannelStack` | conversation, directed job, autonomous job | never merges autonomous trigger activity into conversation; streams typed progress/evidence/result |
+| `AgentCommandStage` | compact vertical family index + one selected conversation/tool/autonomous timeline + anchored composer | never shows six equal cards; never merges autonomous trigger activity into conversation; streams typed progress/evidence/result |
+| `SessionTape` | KR/US or other bounded session cells in one divided strip | no equal standalone cards; state, value, observed time, and trace remain individually addressable |
+| `EvidenceLedger` | section heading + divided semantic rows/table | provider, strategy, family, runtime, and lifecycle collections use rows instead of box-per-item cards |
 | `InteractionTimeline` | ordered immutable receipts | empty/queued/running/completed/failed/uncertain; private only |
 | `EvidenceTraceDrawer` | dialog heading, graph/list toggle, close, node detail | open from every value/state, trap focus, Escape close, return focus, route change closes safely |
 | `SkeletonBlock` | content-shaped neutral blocks | `aria-hidden`; parent announces loading once; no shimmer or loop |
@@ -333,6 +353,12 @@ primary content never creates page-level horizontal scrolling.
   requests and zero model calls; dashboard periodic model polling is always forbidden. An
   authorized autonomous trigger may call a model without submit. Railway only stores redacted
   projections/streaming events and never runs the model.
+- During a KR regular session, immutable source receipts under `kr_theme/m3_live` wake the local
+  publisher through native filesystem events. A fresh cycle can authorize one deduplicated
+  `new_data` task for `opportunity_manager`; it uses a separate isolated worktree, the family
+  memory namespace, bounded budgets, and a loopback CONNECT proxy restricted to declared model
+  provider hosts. Runtime readiness comes from 18 typed receipts (six families by three channels),
+  never from launchd labels or PIDs.
 - Autonomous output cannot promote a strategy without Independent Reviewer and lifecycle gates,
   cannot mutate providers outside existing Paper gates, and can never open live-money execution.
 

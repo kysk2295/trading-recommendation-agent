@@ -22,6 +22,15 @@ system. Authorized Autonomous Research triggers may execute models on the Mac mi
 separate addendum. The referenced finance pages are inspiration only; no logo, mark, wording,
 branded asset, or copied layout ships.
 
+The supplied Fintrixty, Pinterest finance, and exact Behance `Crypto AI Trading Bot` references are
+binding composition checks. The rendered product uses a wide uninterrupted data canvas, thin
+hierarchy, sparse focal controls, table/chart-led density, and asymmetric primary/secondary
+regions. It rejects duplicated workspace titles, passive empty context rails, large boxed metadata,
+six equal agent cards, equal session cards, and box-per-row registries. At 1180–1439px the shell is
+`208px + fluid workspace`; the optional 264px evidence context rail appears only at `>=1440px` and
+only for selected evidence context. Command Center uses one compact family index and one selected
+agent command stage.
+
 The
 [Dashboard v2 Agent Execution Contract Addendum](2026-07-26-dashboard-v2-agent-execution-contract-addendum.md)
 corrects and supersedes the earlier dashboard-wide explicit-submit-only language while preserving
@@ -220,6 +229,16 @@ They may guide `watchfiles`, but the resolved absolute path never crosses the pr
 | Command Center: interaction receipt (`id`, agent, state, redacted command/response times) | Railway immutable interaction store and CAS model | authenticated publisher/operator WebSocket event; no filesystem poll | point-in-time CAS state ordered by `updated_at`; no state regression | 50 recent/private | public viewer `unavailable/operator_session_required`; relay absent `blocked/publisher_relay_offline`; uncertain local seam `blocked/execution_uncertain` | `process_receipt` or `blocker_terminal` | Hermes session ID, binding key/path, raw stdout/stderr, operator secret | `dashboard/src/store.ts`, `dashboard/src/realtime.ts`, `trading_agent/dashboard_commands.py`, new `trading_agent/dashboard_hermes_sessions.py` |
 | Command Center: binding/claim health (existence only, never IDs) | owner-only binding and claim readers | owner-only dashboard-Hermes state root, watched locally | exact interaction UUID claim and terminal receipt; restart-safe | exactly 6 family summaries | unsafe mode/link/symlink `corrupt/local_state_permissions_invalid`; missing resume `blocked/hermes_resume_missing`; duplicate `corrupt/duplicate_execution_claim` | `process_receipt` or `blocker_terminal` | session ID, local filename/path, claim payload, account data | new `trading_agent/dashboard_hermes_sessions.py`, new `trading_agent/dashboard_execution_claims.py` |
 | Command Center: directed/autonomous job stream | local control-plane claims, trigger policy, step/evidence/result receipts | stable owner-only receipt roots; event-driven publisher | CAS state and append-only steps for exact causation ID; no terminal regression | 50 jobs/channel | invalid trigger `blocked/autonomous_trigger_invalid`; budget/cooldown/concurrency/failure gate `blocked/autonomous_policy_gate`; text-only tool completion `corrupt/directed_job_evidence_missing` | `process_receipt`, Reviewer/lifecycle receipt, or blocker | prompt/session/worktree/path, raw tool/provider payload, secret/account | new `trading_agent/dashboard_agent_control_plane.py`, `dashboard_autonomous_research.py`, `dashboard_projection_agents.py` |
+
+The KR regular-session implementation treats `outputs/kr_theme/m3_live/<session>/kr_theme.sqlite3`
+as a source ledger, never an agent identity. Native changes under `outputs/kr_theme` cause a
+bounded read of the latest source cycle. The bridge writes an immutable redacted evidence record,
+an exact persisted source authority, and at most one `new_data` trigger keyed by
+`(opportunity_manager, policy_version, collection_cycle_id)`. Runtime readiness is projected from
+18 family/channel receipts. Model traffic from an accepted autonomous task crosses only an
+ephemeral loopback CONNECT proxy restricted to declared provider HTTPS hosts; the task retains
+its isolated worktree, one-process budget, cooldown, concurrency, failure budget, no-retry,
+Reviewer and lifecycle gates.
 | Overview: market/session posture | `KisKrSessionCalendarStore` plus new strict `DashboardUsSessionReceiptReader` and `MarketSessionViewV2` | `outputs/live_sessions`, calendar receipt parents | latest completed session/bar for its market; missing authority is unavailable | 2 markets | missing calendar `unavailable/market_calendar_missing`; stale calendar `stale/market_calendar_stale`; closed is populated state, not error | typed `source_receipt` decision or `blocker_terminal` | raw provider payload, credential state, account identity | `trading_agent/kis_kr_session_calendar_store.py`, new `trading_agent/dashboard_market_calendar.py`, new `trading_agent/dashboard_projection_overview.py` |
 | Overview: blocker digest | all nine workspace `SourceState` results | snapshot rebuild event | same snapshot ID only; never join across epochs | 12 blockers | zero blockers after successful reads `empty`; read failure stays section-local; mismatched snapshot `corrupt/mixed_snapshot_epoch` | underlying terminal for each blocker | raw exception/log/path | new `trading_agent/dashboard_projection_overview.py` |
 | Overview: research/Paper/system summaries | exact workspace projections, not independent readers | same canonical v2 object | same `snapshot_id`; summary cannot be fresher than source workspace | 3 summaries | mirrors section state; never converts unavailable to zero/healthy | referenced workspace terminal | extra values not present in underlying workspace | TypeScript normalizer/render owner in `dashboard/src/schema.ts`, `dashboard/src/workspaces/overview.ts` |

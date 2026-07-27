@@ -66,8 +66,12 @@ Command Center를 기본 화면으로 하고 다음 workspace를 구현한다.
 - ember orange 단일 accent
 - green, amber, red는 실제 semantic state에만 사용
 - `Pretendard Variable`과 `IBM Plex Mono`
-- desktop fixed sidebar, fixed context rail, workspace-owned scroll body
-- compact asymmetric financial bento와 실제 table/chart 조합
+- desktop fixed sidebar와 workspace-owned scroll body. context rail은 `>=1440px`에서 선택된
+  증거 맥락이 있을 때만 사용하고, 그 아래에서는 drawer로 전환해 빈 rail이 작업 폭을
+  차지하지 않음
+- 넓고 연속적인 금융 데이터 면, compact asymmetric composition, 실제 table/chart 조합
+- Command Center는 여섯 개 동일 카드가 아니라 compact family index와 한 개의 선택된
+  agent command stage를 사용
 - 모든 metric에서 source부터 Reviewer 또는 Paper 결과까지 여는 Evidence Trace drawer
 - `DESIGN_VARIANCE: 5`
 - `MOTION_INTENSITY: 3`

@@ -372,6 +372,10 @@ strict autonomous trigger/claim/policy/worktree/tool/receipt contract.
 - Inject crash at trigger authorization, claim, process launch, tool step, result persistence and
   event send. Each claim launches at most one process, terminates `failed|uncertain`, and never
   performs automatic paid retry.
+- Watch `outputs/kr_theme` through the existing native event relay. Convert only a fresh typed KR
+  source cycle into one immutable `opportunity_manager` new-data authority/trigger pair. Project
+  readiness from exactly 18 family/channel receipts and route production Hermes traffic through
+  the allowlisted loopback provider proxy.
 - Block promotion without Independent Reviewer plus lifecycle decisions. Assert forbidden provider
   mutation and live-money calls are zero; assert Alpaca Paper mutation is zero without the existing
   Paper gate chain.
