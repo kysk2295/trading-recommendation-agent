@@ -14,8 +14,8 @@ from trading_agent.dashboard_agent_control_plane import (
     AutonomousPolicy,
     FaultSeam,
 )
+from trading_agent.dashboard_autonomous_executor_contract import ExecutionResult
 from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1, trigger_fixture
-from trading_agent.dashboard_worktree_executor import ExecutionResult
 
 
 class _CountingExecutor:

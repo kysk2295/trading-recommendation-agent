@@ -39,7 +39,11 @@ def experiment_hashes(experiment: Path) -> tuple[str, ...]:
     return tuple(
         hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted(experiment.rglob("*"))
-        if path.is_file() and not path.is_symlink()
+        if (
+            path.is_file()
+            and not path.is_symlink()
+            and not path.name.endswith(".publication.lock")
+        )
     )
 
 

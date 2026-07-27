@@ -14,6 +14,7 @@ from trading_agent.dashboard_agent_control_plane import (
     AutonomousPolicy,
 )
 from trading_agent.dashboard_authority_adapters import ProductionTriggerAuthorityResolver
+from trading_agent.dashboard_autonomous_executor_contract import AutonomousTaskExecutor
 from trading_agent.dashboard_autonomous_research import (
     AutonomousTaskReceiptV1,
     AutonomousTriggerV1,
@@ -23,10 +24,7 @@ from trading_agent.dashboard_trigger_authority import (
     PersistedTriggerAuthorityResolver,
     TriggerAuthorityStore,
 )
-from trading_agent.dashboard_worktree_executor import (
-    AutonomousTaskExecutor,
-    IsolatedWorktreeExecutor,
-)
+from trading_agent.dashboard_worktree_executor import IsolatedWorktreeExecutor
 from trading_agent.experiment_ledger_store import ExperimentLedgerReader
 from trading_agent.lane_review_store import LaneReviewReader
 from trading_agent.private_query_file import (

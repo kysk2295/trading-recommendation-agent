@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal
 
+from trading_agent.dashboard_autonomous_executor_contract import ExecutionResult
 from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1
+from trading_agent.dashboard_candidate_evidence import publish_model_candidate
 from trading_agent.dashboard_execution_catalog import ProductionExecutionId
 from trading_agent.dashboard_isolated_worktree_support import (
     autonomous_prompt,
@@ -24,25 +25,6 @@ from trading_agent.private_query_file import (
     InvalidPrivateQueryFileError,
     read_private_text_query_only,
 )
-
-ExecutionState = Literal["completed", "failed", "uncertain"]
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutionResult:
-    state: ExecutionState
-    result_summary: str
-    result_sha256: str | None
-    evidence_sha256: tuple[str, ...]
-    cleanup_completed: bool
-    process_started: bool
-    worktree_clean: bool
-
-
-class AutonomousTaskExecutor(Protocol):
-    def preflight(self, trigger: AutonomousTriggerV1) -> str | None: ...
-
-    def execute(self, trigger: AutonomousTriggerV1, task_id: str) -> ExecutionResult: ...
 
 
 class _IsolatedWorktreeExecutorCore:
@@ -134,6 +116,7 @@ class _IsolatedWorktreeExecutorCore:
                         worktree_clean=clean,
                     )
                 else:
+                    candidate = publish_model_candidate(experiment, trigger, stdout)
                     registered = self._run_broker(
                         trigger,
                         task_root,
@@ -157,9 +140,7 @@ class _IsolatedWorktreeExecutorCore:
                     else:
                         result = ExecutionResult(
                             state="completed",
-                            result_summary=redact_outbound_text(
-                                stdout.decode("utf-8", errors="replace").strip()
-                            ),
+                            result_summary=candidate.candidate_summary,
                             result_sha256=result_hash,
                             evidence_sha256=experiment_hashes(experiment),
                             cleanup_completed=False,
@@ -275,8 +256,5 @@ class IsolatedWorktreeExecutor(_IsolatedWorktreeExecutorCore):
 
 
 __all__ = (
-    "AutonomousTaskExecutor",
-    "ExecutionResult",
-    "ExecutionState",
     "IsolatedWorktreeExecutor",
 )

@@ -8,9 +8,9 @@ from typing import Literal, Protocol
 from trading_agent.dashboard_agent_admission import AutonomousPolicy
 from trading_agent.dashboard_agent_receipts import build_receipt
 from trading_agent.dashboard_agent_store import AutonomousTaskStore, InvalidAutonomousTaskStoreError
+from trading_agent.dashboard_autonomous_executor_contract import AutonomousTaskExecutor
 from trading_agent.dashboard_autonomous_research import AutonomousTaskReceiptV1, AutonomousTriggerV1
 from trading_agent.dashboard_trigger_authority import TriggerAuthorityResolver
-from trading_agent.dashboard_worktree_executor import AutonomousTaskExecutor
 
 OutcomeState = Literal["completed", "failed", "uncertain", "blocked"]
 FaultSeam = Literal[

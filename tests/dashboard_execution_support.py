@@ -29,9 +29,16 @@ from trading_agent.dashboard_production_execution_boundary import (
 )
 from trading_agent.dashboard_worktree_executor import _IsolatedWorktreeExecutorCore
 
-FixtureScenario = Literal["model", "exec-escape", "filesystem-escape", "network-escape"]
+FixtureScenario = Literal[
+    "model",
+    "model-stdout-only",
+    "exec-escape",
+    "filesystem-escape",
+    "network-escape",
+]
 _FIXTURE_TARGETS: dict[FixtureScenario, str] = {
     "model": "fake_hermes.py",
+    "model-stdout-only": "fake_hermes_stdout_only.py",
     "exec-escape": "fake_hermes_exec_escape.py",
     "filesystem-escape": "fake_hermes_filesystem_escape.py",
     "network-escape": "fake_hermes_network_escape.py",
@@ -126,8 +133,9 @@ def worktree_executor(
     repository: Path,
     environment_root: Path,
     source_evidence_root: Path,
+    scenario: FixtureScenario = "model",
 ) -> _IsolatedWorktreeExecutorCore:
-    identity = fixture_identity(repository)
+    identity = fixture_identity(repository, scenario)
     model_boundary: ProductionExecutionBoundary = _TestExecutionBoundary(
         execution_sandbox(repository, source_evidence_root, identity)
     )
