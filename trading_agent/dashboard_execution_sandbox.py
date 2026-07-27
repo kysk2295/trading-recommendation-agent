@@ -122,7 +122,7 @@ class _ExecutionSandbox:
                     if provider_proxy_port is None
                     else (
                         "(allow network-outbound "
-                        f'(remote ip "127.0.0.1:{provider_proxy_port}"))',
+                        f'(remote ip "localhost:{provider_proxy_port}"))',
                     )
                 ),
             )

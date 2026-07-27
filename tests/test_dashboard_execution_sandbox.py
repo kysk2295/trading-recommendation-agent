@@ -149,6 +149,27 @@ def test_production_model_environment_pins_openrouter_provider_and_model(tmp_pat
     assert Path(model_environment["HERMES_HOME"]) == identity.readable_literals[0].resolve().parent
 
 
+def test_provider_proxy_sandbox_profile_accepts_loopback_endpoint(tmp_path: Path) -> None:
+    # Given: a real Hermes probe request with the production provider-proxy profile shape
+    repository = Path(__file__).resolve().parents[1]
+    task_root, experiment, worktree, source = _roots(tmp_path)
+    identity = _build_expected_execution(repository, ProductionExecutionId.HERMES_PROBE)
+    sandbox = _sandbox(repository, source, identity)
+
+    # When: macOS sandbox-exec parses and runs the loopback-constrained profile
+    result = subprocess.run(
+        sandbox.argv(identity.request(), task_root, worktree, provider_proxy_port=9443),
+        cwd=worktree,
+        env=sandbox.environment(_trigger(), experiment),
+        check=False,
+        capture_output=True,
+    )
+
+    # Then: the network rule is valid without granting a remote provider endpoint
+    assert result.returncode == 0
+    assert result.stdout == b"Hermes Agent entrypoint verified\n"
+
+
 @pytest.mark.parametrize(
     "mutation",
     ["python-c", "python-m", "script", "appended", "digest", "role"],
