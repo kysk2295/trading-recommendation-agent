@@ -23,7 +23,10 @@ from trading_agent.dashboard_executable_binding import (
     capture_file,
     capture_python_entrypoint,
 )
-from trading_agent.dashboard_execution_catalog import ProductionExecutionId
+from trading_agent.dashboard_execution_catalog import (
+    ProductionExecutionId,
+    _build_expected_execution,
+)
 from trading_agent.dashboard_execution_identity import BoundExecutionIdentity
 from trading_agent.dashboard_execution_sandbox import _ExecutionSandbox
 from trading_agent.dashboard_production_execution_boundary import (
@@ -128,6 +131,21 @@ def test_fixed_fixture_model_real_hermes_probe_and_native_broker_execute(tmp_pat
     assert b"Hermes Agent" in probe_result.stdout
     assert broker_result.returncode == 0
     assert broker_result.stdout == b""
+
+
+def test_production_model_environment_pins_openrouter_provider_and_model(tmp_path: Path) -> None:
+    # Given: the production Hermes model boundary with an available OpenRouter credential source
+    repository = Path(__file__).resolve().parents[1]
+    _, experiment, _, source = _roots(tmp_path)
+    identity = _build_expected_execution(repository, ProductionExecutionId.HERMES_MODEL)
+    sandbox = _sandbox(repository, source, identity)
+
+    # When: the boundary creates the isolated model environment
+    model_environment = sandbox.environment(_trigger(), experiment)
+
+    # Then: provider routing is explicit instead of falling back to Codex session credentials
+    assert model_environment["HERMES_INFERENCE_PROVIDER"] == "openrouter"
+    assert model_environment["HERMES_INFERENCE_MODEL"] == "openai/gpt-5.4-mini"
 
 
 @pytest.mark.parametrize(

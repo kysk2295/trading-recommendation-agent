@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final, assert_never
 
 from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1
 from trading_agent.dashboard_executable_binding import (
@@ -15,6 +16,8 @@ from trading_agent.dashboard_execution_identity import (
 )
 
 IdentityValidator = Callable[[BoundExecutionIdentity], None]
+AUTONOMOUS_HERMES_PROVIDER: Final = "openrouter"
+AUTONOMOUS_HERMES_MODEL: Final = "openai/gpt-5.4-mini"
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +162,18 @@ class _ExecutionSandbox:
             "PATH": str(binary.resolve(strict=True)),
             "TMPDIR": str(temporary.resolve(strict=True)),
         }
+        match self.execution_identity.role:
+            case "hermes-model":
+                environment.update(
+                    {
+                        "HERMES_INFERENCE_MODEL": AUTONOMOUS_HERMES_MODEL,
+                        "HERMES_INFERENCE_PROVIDER": AUTONOMOUS_HERMES_PROVIDER,
+                    }
+                )
+            case "hermes-probe" | "fixture-model" | "health-broker" | "research-broker":
+                pass
+            case unreachable:
+                assert_never(unreachable)
         if provider_proxy_url is not None:
             environment.update(
                 {
@@ -202,5 +217,7 @@ def _write_path_allowed(value: str) -> bool:
 
 
 __all__ = (
+    "AUTONOMOUS_HERMES_MODEL",
+    "AUTONOMOUS_HERMES_PROVIDER",
     "InvalidExecutableBindingError",
 )
