@@ -4,9 +4,11 @@ import datetime as dt
 import subprocess
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 from dashboard_execution_support import execution_sandbox
 
+import trading_agent.dashboard_python_execution_guard as execution_guard
 from trading_agent.dashboard_autonomous_research import (
     AutonomousTriggerV1,
     trigger_fixture,
@@ -58,6 +60,36 @@ def test_production_model_environment_materializes_isolated_codex_credentials(tm
     isolated_auth = Path(model_environment["HERMES_HOME"]) / "auth.json"
     assert isolated_auth.read_text() == auth_store.read_text()
     assert isolated_auth.stat().st_mode & 0o777 == 0o600
+
+
+def test_hermes_guard_ignores_vendor_project_environment(monkeypatch) -> None:
+    # Given: Hermes requests its task home and a vendor checkout environment
+    calls: list[tuple[object, object]] = []
+
+    def original(*, hermes_home=None, project_env=None):
+        calls.append((hermes_home, project_env))
+        return []
+
+    loader = SimpleNamespace(load_hermes_dotenv=original)
+    main = SimpleNamespace(main=lambda: 0)
+
+    def import_fixture(name: str):
+        if name == "hermes_cli.env_loader":
+            return loader
+        loader.load_hermes_dotenv(
+            hermes_home="/task/home",
+            project_env="/vendor/.env",
+        )
+        return main
+
+    monkeypatch.setattr(execution_guard, "import_module", import_fixture)
+
+    # When: the Dashboard-only guard imports Hermes
+    loaded = execution_guard._import_hermes_main()
+
+    # Then: only the isolated task home reaches the original environment loader
+    assert loaded() == 0
+    assert calls == [("/task/home", None)]
 
 
 def test_provider_proxy_sandbox_profile_accepts_loopback_endpoint(tmp_path: Path) -> None:

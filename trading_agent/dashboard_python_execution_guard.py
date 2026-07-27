@@ -5,6 +5,7 @@ import runpy
 import sys
 from importlib import import_module
 from pathlib import Path
+from types import ModuleType
 from typing import Protocol, cast
 
 _DENIED_AUDIT_EVENTS = frozenset(
@@ -19,6 +20,31 @@ _DENIED_AUDIT_EVENTS = frozenset(
 
 class _HermesMain(Protocol):
     def __call__(self) -> int: ...
+
+
+class _HermesDotenvLoader(Protocol):
+    def __call__(
+        self,
+        *,
+        hermes_home: str | os.PathLike[str] | None = None,
+        project_env: str | os.PathLike[str] | None = None,
+    ) -> list[Path]: ...
+
+
+def _import_hermes_main() -> _HermesMain:
+    environment_loader = cast(ModuleType, import_module("hermes_cli.env_loader"))
+    original = cast(_HermesDotenvLoader, environment_loader.__dict__["load_hermes_dotenv"])
+
+    def load_task_environment(
+        *,
+        hermes_home: str | os.PathLike[str] | None = None,
+        project_env: str | os.PathLike[str] | None = None,
+    ) -> list[Path]:
+        del project_env
+        return original(hermes_home=hermes_home)
+
+    environment_loader.__dict__["load_hermes_dotenv"] = load_task_environment
+    return cast(_HermesMain, import_module("hermes_cli.main").__dict__["main"])
 
 
 def _deny_process_escape(
@@ -63,7 +89,7 @@ def _main(argv: tuple[str, ...]) -> int:
         "-z",
         prompt,
     ]
-    main = cast(_HermesMain, import_module("hermes_cli.main").__dict__["main"])
+    main = _import_hermes_main()
     return int(main())
 
 
