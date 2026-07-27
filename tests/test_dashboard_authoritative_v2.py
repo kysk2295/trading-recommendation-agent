@@ -149,6 +149,42 @@ def test_kr_open_day_does_not_infer_intraday_open_state(tmp_path: Path) -> None:
     assert kr.value != "open"
 
 
+def test_kr_calendar_projects_from_active_m3_realtime_output(tmp_path: Path) -> None:
+    # Given the regular-session producer writes its authority beneath kr_theme/m3_live
+    outputs = tmp_path / "outputs"
+    rows = (_calendar_row("20260727", "Y", "Y", "Y"),)
+    receipt = KisKrSessionCalendarReceipt(
+        base_date=dt.date(2026, 7, 27),
+        received_at=dt.datetime(2026, 7, 27, 8, 55, tzinfo=KST),
+        status_code=200,
+        content_type="application/json",
+        raw_payload=_calendar_payload(rows),
+    )
+    calendar = project_kis_kr_session_calendar(receipt)
+    KisKrSessionCalendarStore(
+        outputs
+        / "kr_theme"
+        / "m3_live"
+        / "2026-07-27-watch-test"
+        / "calendar.sqlite3"
+    ).append(receipt, calendar)
+
+    # When the Dashboard projects the same regular-session date
+    snapshot = collect_dashboard_snapshot_v2(
+        outputs,
+        now=dt.datetime(2026, 7, 27, 5, 20, tzinfo=dt.UTC),
+    )
+
+    # Then the producer authority is visible without copying it to a fake path
+    kr = next(
+        item
+        for item in snapshot.workspaces.markets.items
+        if item.item_id == "market.kr.session"
+    )
+    assert kr.value == "scheduled"
+    assert kr.state == "populated"
+
+
 def _calendar_payload(rows: tuple[dict[str, str], ...]) -> bytes:
     return json.dumps(
         {

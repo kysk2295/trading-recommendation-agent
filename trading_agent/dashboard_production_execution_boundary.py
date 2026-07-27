@@ -16,6 +16,7 @@ from trading_agent.dashboard_execution_identity import (
     BrokerOperation,
 )
 from trading_agent.dashboard_execution_sandbox import _ExecutionSandbox
+from trading_agent.dashboard_provider_proxy import restricted_provider_proxy
 
 
 class ProductionExecutionBoundary(Protocol):
@@ -77,6 +78,7 @@ def _create_production_boundary_factory():
                 execution_identity=identity,
                 fixture_mode=False,
                 identity_validator=validate,
+                provider_proxy_available=True,
             )
 
         def run(
@@ -89,6 +91,32 @@ def _create_production_boundary_factory():
             timeout: int,
         ) -> subprocess.CompletedProcess[bytes]:
             environment = boundary.environment(trigger, experiment)
+            if (
+                request.role == "hermes-model"
+                and trigger.environment_spec.network_policy
+                == "model_provider_only"
+            ):
+                with restricted_provider_proxy() as proxy:
+                    environment = boundary.environment(
+                        trigger,
+                        experiment,
+                        proxy.url,
+                    )
+                    command = boundary.argv(
+                        request,
+                        task_root,
+                        worktree,
+                        proxy.port,
+                    )
+                    boundary._revalidate_bindings()
+                    return run_process(
+                        command,
+                        cwd=worktree,
+                        env=environment,
+                        check=False,
+                        capture_output=True,
+                        timeout=timeout,
+                    )
             command = boundary.argv(request, task_root, worktree)
             boundary._revalidate_bindings()
             return run_process(

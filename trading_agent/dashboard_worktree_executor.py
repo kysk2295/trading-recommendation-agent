@@ -20,6 +20,10 @@ from trading_agent.dashboard_production_execution_boundary import (
     create_production_execution_boundary,
 )
 from trading_agent.dashboard_research_broker_contract import InvalidResearchBrokerCommandError
+from trading_agent.private_query_file import (
+    InvalidPrivateQueryFileError,
+    read_private_text_query_only,
+)
 
 ExecutionState = Literal["completed", "failed", "uncertain"]
 
@@ -47,11 +51,13 @@ class _IsolatedWorktreeExecutorCore:
         *,
         repository: Path,
         environment_root: Path,
+        source_evidence_root: Path,
         sandbox: ProductionExecutionBoundary,
         broker_sandbox: ProductionExecutionBoundary,
     ) -> None:
         self._repository = repository.resolve()
         self._environment_root = environment_root.resolve()
+        self._source_evidence_root = source_evidence_root.resolve()
         self._sandbox = sandbox
         self._broker_sandbox = broker_sandbox
 
@@ -105,7 +111,10 @@ class _IsolatedWorktreeExecutorCore:
                     task_root,
                     experiment,
                     worktree,
-                    autonomous_prompt(trigger),
+                    autonomous_prompt(
+                        trigger,
+                        self._source_evidence(trigger),
+                    ),
                     trigger.budget_envelope.max_runtime_seconds,
                 )
                 process_started = True
@@ -203,6 +212,24 @@ class _IsolatedWorktreeExecutorCore:
             min(trigger.budget_envelope.max_runtime_seconds, 30),
         )
 
+    def _source_evidence(self, trigger: AutonomousTriggerV1) -> str | None:
+        path = (
+            self._source_evidence_root
+            / "evidence"
+            / f"{trigger.trigger_id}.json"
+        )
+        try:
+            payload = read_private_text_query_only(path)
+        except InvalidPrivateQueryFileError:
+            return None
+        if (
+            len(payload.encode()) > 32 * 1024
+            or hashlib.sha256(payload.encode()).hexdigest()
+            != trigger.payload_sha256
+        ):
+            return None
+        return payload
+
     @staticmethod
     def _failed(
         reason: str,
@@ -233,6 +260,7 @@ class IsolatedWorktreeExecutor(_IsolatedWorktreeExecutorCore):
         super().__init__(
             repository=repository,
             environment_root=environment_root,
+            source_evidence_root=source_evidence_root,
             sandbox=create_production_execution_boundary(
                 repository=repository,
                 source_evidence_root=source_evidence_root,

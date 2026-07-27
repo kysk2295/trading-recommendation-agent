@@ -24,6 +24,7 @@ class _ExecutionSandbox:
     execution_identity: BoundExecutionIdentity
     fixture_mode: bool
     identity_validator: IdentityValidator
+    provider_proxy_available: bool = False
     _binding_error: str | None = None
 
     def __post_init__(self) -> None:
@@ -58,6 +59,7 @@ class _ExecutionSandbox:
             trigger.environment_spec.network_policy == "model_provider_only"
             and not self.fixture_mode
             and self.execution_identity.role in {"hermes-model", "hermes-probe"}
+            and not self.provider_proxy_available
         ):
             return "provider_proxy_required"
         if not self.source_evidence_root.is_dir() or self.source_evidence_root.is_symlink():
@@ -75,6 +77,7 @@ class _ExecutionSandbox:
         request: BoundExecutionRequest,
         task_root: Path,
         worktree: Path,
+        provider_proxy_port: int | None = None,
     ) -> tuple[str, ...]:
         self._revalidate_bindings()
         if not self.execution_identity.accepts(request):
@@ -111,11 +114,24 @@ class _ExecutionSandbox:
                 f"(allow file-read* (literal {json.dumps(executable)}))",
                 f"(allow process-exec (literal {json.dumps(executable)}))",
                 f"(allow file-write* (subpath {json.dumps(str(task_root.resolve(strict=True)))}))",
+                *(
+                    ()
+                    if provider_proxy_port is None
+                    else (
+                        "(allow network-outbound "
+                        f'(remote ip "127.0.0.1:{provider_proxy_port}"))',
+                    )
+                ),
             )
         )
         return ("/usr/bin/sandbox-exec", "-p", profile, *request.argv)
 
-    def environment(self, trigger: AutonomousTriggerV1, experiment: Path) -> dict[str, str]:
+    def environment(
+        self,
+        trigger: AutonomousTriggerV1,
+        experiment: Path,
+        provider_proxy_url: str | None = None,
+    ) -> dict[str, str]:
         self._revalidate_bindings()
         task_root = experiment.parent
         home = task_root / "home"
@@ -123,7 +139,7 @@ class _ExecutionSandbox:
         binary = task_root / "bin"
         for path in (home, temporary, binary):
             path.mkdir(mode=0o700, exist_ok=True)
-        return {
+        environment = {
             "DASHBOARD_AGENT_FAMILY": trigger.agent_family_id,
             "DASHBOARD_AUTONOMOUS_CHANNEL": "1",
             "DASHBOARD_EXPERIMENT_ROOT": str(experiment.resolve(strict=True)),
@@ -143,6 +159,15 @@ class _ExecutionSandbox:
             "PATH": str(binary.resolve(strict=True)),
             "TMPDIR": str(temporary.resolve(strict=True)),
         }
+        if provider_proxy_url is not None:
+            environment.update(
+                {
+                    "ALL_PROXY": provider_proxy_url,
+                    "HTTPS_PROXY": provider_proxy_url,
+                    "HTTP_PROXY": provider_proxy_url,
+                }
+            )
+        return environment
 
     def _read_path_allowed(self, value: str) -> bool:
         requested = Path(value)

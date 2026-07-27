@@ -427,6 +427,7 @@ def test_publisher_watches_account_ledger_without_periodic_broker_reads(
         "source_evidence",
         "experiment_control",
         "lane_control",
+        "kr_theme",
         "derivatives",
         "paper",
         "system",
@@ -438,6 +439,7 @@ def test_publisher_watches_account_ledger_without_periodic_broker_reads(
         tmp_path / "source_evidence",
         tmp_path / "experiment_control",
         tmp_path / "lane_control",
+        tmp_path / "kr_theme",
         tmp_path / "derivatives",
         tmp_path / "paper",
         tmp_path / "system",
@@ -454,6 +456,7 @@ async def test_publisher_watch_roots_coalesce_one_mutation_each(
         "source_evidence",
         "experiment_control",
         "lane_control",
+        "kr_theme",
         "derivatives",
         "paper",
         "system",
@@ -534,6 +537,42 @@ def test_publisher_bounds_reconnect_backoff() -> None:
         60,
         60,
     ]
+
+
+def test_publisher_records_exact_six_family_three_channel_readiness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ReadyBoundary:
+        def blocker(self, _trigger: object) -> None:
+            return None
+
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    monkeypatch.setattr(
+        run_dashboard_publisher,
+        "DEFAULT_AUTONOMOUS_STATE",
+        tmp_path / "autonomous",
+    )
+    monkeypatch.setattr(
+        run_dashboard_publisher,
+        "current_code_sha",
+        lambda: "a" * 40,
+    )
+    monkeypatch.setattr(
+        run_dashboard_publisher,
+        "create_production_execution_boundary",
+        lambda **_settings: ReadyBoundary(),
+    )
+
+    run_dashboard_publisher._record_agent_readiness(outputs)
+    snapshot = run_dashboard_publisher.collect_dashboard_snapshot_v2(outputs)
+
+    assert len(tuple((outputs / "system" / "agent-runtime").glob("*.json"))) == 18
+    assert tuple(
+        agent.runtime_state
+        for agent in snapshot.workspaces.command_center.agents
+    ) == ("armed",) * 6
 
 
 def test_publisher_classifies_nested_websocket_failures_for_reconnect() -> None:

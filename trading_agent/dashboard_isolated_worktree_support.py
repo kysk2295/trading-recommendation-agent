@@ -9,7 +9,10 @@ from trading_agent.dashboard_agent_family import AGENT_FAMILY_REGISTRY
 from trading_agent.dashboard_autonomous_research import AutonomousTriggerV1
 
 
-def autonomous_prompt(trigger: AutonomousTriggerV1) -> str:
+def autonomous_prompt(
+    trigger: AutonomousTriggerV1,
+    source_evidence: str | None = None,
+) -> str:
     role = next(item.role for item in AGENT_FAMILY_REGISTRY if item.family_id == trigger.agent_family_id)
     return (
         f"Role: {role}. Family identity: {trigger.agent_family_id}. "
@@ -17,7 +20,8 @@ def autonomous_prompt(trigger: AutonomousTriggerV1) -> str:
         "This is a separate autonomous task session; never resume an interactive session. "
         "Read only source-bound evidence, write candidate evidence only in the declared experiment root, "
         "and do not mutate providers, Paper state, lifecycle authority, deployment, or the integration worktree. "
-        f"Trigger type: {trigger.trigger_type}. Evidence refs: {','.join(trigger.evidence_refs)}."
+        f"Trigger type: {trigger.trigger_type}. Evidence refs: {','.join(trigger.evidence_refs)}. "
+        f"Source evidence: {source_evidence or 'unavailable'}."
     )
 
 

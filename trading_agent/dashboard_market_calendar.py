@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from trading_agent.dashboard_kr_market_runtime import project_kr_realtime_cycle
 from trading_agent.dashboard_models_v2 import (
     FreshnessV2,
     SourceStateV2,
@@ -55,9 +56,17 @@ def project_market_calendar(
 ) -> WorkspaceProjection:
     kr = _kr_calendar(outputs, now, workspace)
     us = _us_calendar(outputs, now, workspace)
-    parts = (kr, us)
+    realtime = (
+        (project_kr_realtime_cycle(outputs, now=now),)
+        if workspace == "markets"
+        else ()
+    )
+    parts = (kr, us, *realtime)
     states = tuple(part[0].state for part in parts)
-    missing = "unavailable" in states or "corrupt" in states
+    missing = any(
+        state in {"error", "blocked", "unavailable", "corrupt"}
+        for state in states
+    )
     stale = "stale" in states
     root_id = f"trace.{workspace}.calendar"
     blocker_id = f"{root_id}.blocker"
@@ -81,10 +90,16 @@ def project_market_calendar(
                 default=now,
             ),
             freshness=FreshnessV2(policy_id="authoritative-market-calendar-v2", age_seconds=0, as_of=now),
-            blocker_code="market_calendar_missing" if blocked else None,
-            summary="Authoritative KR and US market calendars projected",
-            total_count=2,
-            projected_count=2,
+            blocker_code=(
+                "kr_realtime_cycle_incomplete"
+                if "blocked" in states
+                else "market_calendar_missing"
+                if blocked
+                else None
+            ),
+            summary="Authoritative KR/US calendars and KR realtime cycle projected",
+            total_count=len(parts),
+            projected_count=len(parts),
             truncated=False,
             trace_id=root_id,
             items=tuple(item for item, _, _ in parts),
@@ -99,15 +114,19 @@ def _kr_calendar(
     now: dt.datetime,
     workspace: Workspace,
 ) -> tuple[WorkspaceItemV2, tuple[TraceNodeV2, ...], tuple[TraceEdgeV2, ...]]:
-    path = outputs / "live_sessions" / "kis_kr_session_calendar.sqlite3"
+    target = now.astimezone(SEOUL).date()
+    paths = _kr_calendar_paths(outputs, target)
     try:
-        snapshots = KisKrSessionCalendarStore(path).snapshots()
+        snapshots = tuple(
+            snapshot
+            for path in paths
+            for snapshot in KisKrSessionCalendarStore(path).snapshots()
+        )
     except (InvalidKisKrSessionCalendarStoreError, OSError):
         return _missing("kr", now, workspace, "market_calendar_invalid")
     if not snapshots:
         return _missing("kr", now, workspace, "market_calendar_missing")
     snapshot = max(snapshots, key=lambda item: item.payload.observed_at)
-    target = now.astimezone(SEOUL).date()
     day = next((item for item in snapshot.payload.days if item.session_date == target), None)
     if day is None:
         return _missing("kr", now, workspace, "market_calendar_date_missing")
@@ -122,6 +141,18 @@ def _kr_calendar(
         snapshot.snapshot_id,
         stale,
         workspace,
+    )
+
+
+def _kr_calendar_paths(outputs: Path, target: dt.date) -> tuple[Path, ...]:
+    canonical = outputs / "live_sessions" / "kis_kr_session_calendar.sqlite3"
+    if canonical.exists() or canonical.is_symlink():
+        return (canonical,)
+    realtime = outputs / "kr_theme" / "m3_live"
+    return tuple(
+        path / "calendar.sqlite3"
+        for path in sorted(realtime.glob(f"{target.isoformat()}*"))
+        if path.is_dir()
     )
 
 

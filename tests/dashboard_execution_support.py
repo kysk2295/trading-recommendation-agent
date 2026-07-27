@@ -134,6 +134,7 @@ def worktree_executor(
     return _IsolatedWorktreeExecutorCore(
         repository=repository,
         environment_root=environment_root,
+        source_evidence_root=source_evidence_root,
         sandbox=model_boundary,
         broker_sandbox=create_production_execution_boundary(
             repository=repository,

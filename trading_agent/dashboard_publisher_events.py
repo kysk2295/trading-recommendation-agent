@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
+import subprocess
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Protocol
@@ -9,8 +11,13 @@ from urllib.parse import urlsplit, urlunsplit
 import anyio
 
 from trading_agent.dashboard_autonomous_publisher import (
+    DEFAULT_AUTONOMOUS_STATE,
     autonomous_trigger_paths,
     stream_autonomous_trigger_event,
+)
+from trading_agent.dashboard_kr_autonomous_bridge import (
+    InvalidKrAutonomousBridgeError,
+    publish_kr_autonomous_triggers,
 )
 from trading_agent.dashboard_models_v2 import DashboardSnapshotV2
 from trading_agent.dashboard_native_watch import watch_native_changes
@@ -55,12 +62,24 @@ async def watch_output_events(
     system_authority_verifier: SystemAuthorityVerifierInput = None,
 ) -> None:
     event_source = watch_native_changes if watcher is None else watcher
+    code_sha = current_code_sha()
     async for changes in event_source(
         *watch_roots(outputs),
         debounce=WATCH_DEBOUNCE_MS,
         step=WATCH_STEP_MS,
     ):
-        for trigger_path in autonomous_trigger_paths(changes):
+        try:
+            generated = publish_kr_autonomous_triggers(
+                outputs,
+                state_root=DEFAULT_AUTONOMOUS_STATE,
+                pinned_code_sha=code_sha,
+                now=dt.datetime.now(dt.UTC),
+            )
+        except InvalidKrAutonomousBridgeError:
+            generated = ()
+        for trigger_path in tuple(
+            sorted(set(autonomous_trigger_paths(changes)) | set(generated))
+        ):
             await stream_autonomous_trigger_event(
                 socket,
                 trigger_path,
@@ -87,6 +106,7 @@ def watch_roots(outputs: Path) -> tuple[Path, ...]:
         root / "source_evidence",
         root / "experiment_control",
         root / "lane_control",
+        root / "kr_theme",
         root / "derivatives",
         root / "paper",
         root / "system",
@@ -99,9 +119,21 @@ def reconnect_delay_seconds(attempt: int) -> int:
     return min(MAX_RECONNECT_SECONDS, 5 * 2 ** max(0, attempt))
 
 
+def current_code_sha() -> str:
+    completed = subprocess.run(
+        ("git", "-C", str(Path(__file__).resolve().parents[1]), "rev-parse", "HEAD"),
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    return completed.stdout.strip()
+
+
 __all__ = (
     "SnapshotSocket",
     "WatchFactory",
+    "current_code_sha",
     "publisher_url",
     "reconnect_delay_seconds",
     "send_snapshot",
