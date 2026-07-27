@@ -33,9 +33,6 @@ export function renderWorkspace(
     }
     fragment.append(renderItemTable(workspace.items, snapshot, drawer));
   }
-  if (definition.key === "command_center") {
-    fragment.append(renderAgents(snapshot.workspaces.command_center.agents, snapshot, drawer));
-  }
   if (definition.key === "data_sources") {
     fragment.append(
       renderCapabilities(snapshot.workspaces.data_sources.capabilities, snapshot, drawer),
@@ -144,23 +141,6 @@ function tableBody(
     }),
   );
   return body;
-}
-
-function renderAgents(
-  agents: DashboardSnapshotV2["workspaces"]["command_center"]["agents"],
-  snapshot: DashboardSnapshotV2,
-  drawer: EvidenceTraceDrawer,
-): HTMLElement {
-  return renderBoundedRows(
-    "가족별 실행 채널",
-    agents.map((agent) => ({
-      label: agent.label,
-      detail: `${agent.role} · ${agent.runtime_state}`,
-      traceId: agent.trace_id,
-    })),
-    snapshot,
-    drawer,
-  );
 }
 
 function renderCapabilities(

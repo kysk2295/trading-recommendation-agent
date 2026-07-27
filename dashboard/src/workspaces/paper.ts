@@ -49,7 +49,7 @@ export const renderPaper: WorkspaceRenderer = (snapshot, drawer) => {
   const guard = document.createElement("section");
   guard.className = "workspace-contract-strip paper-contract";
   guard.append(
-    textElement("h2", "Finalized Paper ledger"),
+    textElement("h2", "확정 Paper 원장"),
     textElement(
       "p",
       "PnL, positions, orders and entry → protective OCO → reconcile → cutoff → EOD-flat lifecycle are read-only finalized evidence. This workspace has no submit, replace or cancel control.",

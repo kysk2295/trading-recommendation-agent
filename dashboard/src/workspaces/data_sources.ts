@@ -66,7 +66,7 @@ function renderProviderTable(
 ): HTMLElement {
   const section = document.createElement("section");
   section.className = "provider-capability-section";
-  section.append(textElement("h2", "Eight authoritative provider capabilities"));
+  section.append(textElement("h2", "공급자별 데이터 권한"));
   const viewport = document.createElement("div");
   viewport.className = "table-viewport provider-table-viewport";
   viewport.tabIndex = 0;

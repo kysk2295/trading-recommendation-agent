@@ -7,6 +7,12 @@ export const renderCommandCenter: WorkspaceRenderer = (snapshot, drawer) => {
   const host = document.createElement("div");
   host.id = "command-center-agent-workspace";
   host.className = "command-center-agent-workspace";
-  fragment.append(host);
+  const authority = fragment.firstChild;
+  const ledger = authority?.nextSibling;
+  if (ledger === null || ledger === undefined) {
+    fragment.append(host);
+  } else {
+    fragment.insertBefore(host, ledger);
+  }
   return fragment;
 };

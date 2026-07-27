@@ -60,7 +60,7 @@ export const renderSystem: WorkspaceRenderer = (snapshot, drawer) => {
   const section = document.createElement("section");
   section.className = "system-family-registry";
   section.setAttribute("aria-labelledby", "system-family-heading");
-  const heading = textElement("h2", "Product research families");
+  const heading = textElement("h2", "6개 전문 연구 에이전트");
   heading.id = "system-family-heading";
   section.append(heading);
   for (const family of systemFamilyRoster(snapshot.workspaces.command_center.agents)) {

@@ -1,16 +1,16 @@
 .workspace-view {
-  inline-size: min(100%, 1120px);
+  inline-size: min(100%, 1320px);
   min-block-size: 100%;
   margin-inline: auto;
-  padding: var(--space-8) var(--space-6) var(--space-10);
+  padding: var(--space-6) var(--space-6) var(--space-10);
 }
 
 .workspace-heading {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(min(28rem, 100%), 0.7fr);
+  grid-template-columns: minmax(15rem, 0.72fr) minmax(min(30rem, 100%), 1fr);
   align-items: end;
-  gap: var(--space-8);
-  padding-block-end: var(--space-6);
+  gap: var(--space-6);
+  padding-block-end: var(--space-5);
   border-block-end: 1px solid var(--border-default);
 }
 
@@ -26,10 +26,16 @@
   word-break: keep-all;
 }
 
+.workspace-heading h1 {
+  font-size: 1.875rem;
+  font-weight: 690;
+  letter-spacing: -0.035em;
+}
+
 .workspace-content {
   display: grid;
-  gap: var(--space-6);
-  padding-block-start: var(--space-6);
+  gap: var(--space-5);
+  padding-block-start: var(--space-4);
 }
 
 .workspace-content > * {
@@ -38,8 +44,9 @@
 
 .system-family-registry {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
-  gap: var(--space-3);
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  border-block: 1px solid var(--border-default);
 }
 
 .system-family-registry > h2,
@@ -48,24 +55,24 @@
 }
 
 .system-family-registry > h2 {
-  padding-block-end: var(--space-2);
-  border-block-end: 1px solid var(--border-default);
+  padding: var(--space-3) 0;
+  border-block-end: 1px solid var(--border-subtle);
   font-size: var(--type-h2);
 }
 
 .system-family-registry article {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--space-2);
-  align-items: start;
+  grid-template-columns: minmax(11rem, 0.55fr) minmax(0, 1.45fr) auto;
+  gap: var(--space-4);
+  align-items: center;
   min-inline-size: 0;
-  padding: var(--space-4);
-  border: 1px solid var(--border-subtle);
-  background: var(--surface-secondary);
+  padding: var(--space-3) 0;
+  border-block-end: 1px solid var(--border-subtle);
+  background: transparent;
 }
 
 .system-family-registry article p {
-  grid-column: 1 / -1;
+  grid-column: auto;
   color: var(--text-secondary);
   font-size: var(--type-small);
   overflow-wrap: anywhere;
@@ -77,6 +84,7 @@
 }
 
 .system-family-boundary {
+  padding-block: var(--space-3);
   max-inline-size: 68ch;
   color: var(--text-tertiary);
   font-size: var(--type-small);
@@ -90,10 +98,10 @@
 .workspace-contract-strip {
   display: grid;
   gap: var(--space-2);
-  padding: var(--space-4);
+  padding: var(--space-3) 0 var(--space-3) var(--space-4);
   border-block: 1px solid var(--border-default);
   border-inline-start: 2px solid var(--ember-500);
-  background: var(--surface-primary);
+  background: transparent;
 }
 
 .workspace-contract-strip h2 {
@@ -125,6 +133,88 @@
   gap: var(--space-3);
 }
 
+.market-live-cycle {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(min(24rem, 100%), 0.85fr);
+  gap: var(--space-3) var(--space-6);
+  padding: var(--space-4) 0;
+  border-block: 1px solid var(--border-default);
+}
+
+.market-live-cycle > header {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.market-live-cycle > header .trace-button {
+  margin-inline-start: auto;
+}
+
+.market-live-cycle > h2 {
+  font-size: 1.25rem;
+}
+
+.market-live-cycle > p {
+  color: var(--text-secondary);
+}
+
+.market-live-metrics {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.market-live-metrics div {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.market-live-metrics span {
+  color: var(--text-tertiary);
+  font-size: var(--type-small);
+}
+
+.market-live-metrics strong {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.market-live-metrics div:first-child strong {
+  font-size: 1.5rem;
+  letter-spacing: -0.03em;
+}
+
+.market-live-meter {
+  display: flex;
+  grid-column: 2;
+  grid-row: 2 / span 2;
+  gap: var(--space-2);
+  align-items: stretch;
+  min-block-size: 64px;
+}
+
+.market-live-meter span {
+  flex: 1;
+  border-block: 1px solid var(--border-default);
+  background: var(--surface-secondary);
+}
+
+.market-live-meter .is-covered {
+  border-color: var(--status-success);
+  background: color-mix(in srgb, var(--status-success) 22%, var(--surface-primary));
+}
+
+.market-cycle-id {
+  grid-column: 2;
+  color: var(--text-tertiary);
+  font-size: var(--type-small);
+  overflow-wrap: anywhere;
+}
+
 .market-session-section > h2,
 .market-context-section > h2,
 .provider-capability-section > h2 {
@@ -139,17 +229,23 @@
 .market-session-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
-  gap: var(--space-3);
+  gap: 0;
+  border-block: 1px solid var(--border-default);
 }
 
 .market-session-card {
   display: grid;
   gap: var(--space-2);
   min-inline-size: 0;
-  padding: var(--space-4);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-panel);
-  background: var(--surface-secondary);
+  padding: var(--space-4) var(--space-5);
+  border: 0;
+  border-inline-end: 1px solid var(--border-subtle);
+  border-radius: 0;
+  background: transparent;
+}
+
+.market-session-card:last-child {
+  border-inline-end: 0;
 }
 
 .market-session-card h3,
@@ -164,7 +260,8 @@
 
 .market-session-value {
   color: var(--text-primary);
-  font-size: var(--type-h2);
+  font-size: 1.25rem;
+  letter-spacing: -0.02em;
 }
 
 .market-session-card time,
@@ -199,7 +296,7 @@
   grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.5fr) auto;
   gap: var(--space-3);
   align-items: center;
-  padding: var(--space-3);
+  padding: var(--space-3) 0;
   border-block-start: 1px solid var(--border-subtle);
 }
 
@@ -210,6 +307,42 @@
 .provider-table-viewport td {
   min-inline-size: 10rem;
   vertical-align: top;
+}
+
+.provider-table-viewport table {
+  min-inline-size: 980px;
+  table-layout: fixed;
+}
+
+.provider-table-viewport th,
+.provider-table-viewport td {
+  min-inline-size: 0;
+  max-inline-size: none;
+  overflow-wrap: anywhere;
+}
+
+.provider-table-viewport tr > :nth-child(1) {
+  inline-size: 18%;
+}
+
+.provider-table-viewport tr > :nth-child(2) {
+  inline-size: 13%;
+}
+
+.provider-table-viewport tr > :nth-child(3) {
+  inline-size: 22%;
+}
+
+.provider-table-viewport tr > :nth-child(4) {
+  inline-size: 20%;
+}
+
+.provider-table-viewport tr > :nth-child(5) {
+  inline-size: 19%;
+}
+
+.provider-table-viewport tr > :nth-child(6) {
+  inline-size: 8%;
 }
 
 .provider-table-viewport th:first-child {

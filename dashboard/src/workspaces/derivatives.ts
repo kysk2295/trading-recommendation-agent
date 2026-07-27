@@ -75,7 +75,7 @@ export const renderDerivatives: WorkspaceRenderer = (snapshot, drawer) => {
   const guard = document.createElement("section");
   guard.className = "workspace-contract-strip derivatives-contract";
   guard.append(
-    textElement("h2", "Derivatives research context"),
+    textElement("h2", "파생상품 연구 경계"),
     textElement(
       "p",
       "Option chain, IV, skew, term structure, futures roll and CFTC context are read-only. Current quotes require active real-time entitlement, allowed redistribution, current healthy capability and fresh source authority together.",

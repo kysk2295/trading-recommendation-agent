@@ -104,17 +104,20 @@
   }
 
   .source-state-panel {
-    padding: var(--space-4);
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--space-4) 0;
   }
 
   .source-metadata {
-    grid-template-columns: minmax(0, 1fr);
+    grid-column: 1;
+    grid-row: auto;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .source-metadata div + div {
-    padding-block-start: var(--space-2);
-    padding-inline-start: 0;
-    border-inline-start: 0;
+    padding-block-start: 0;
+    padding-inline-start: var(--space-2);
+    border-inline-start: 1px solid var(--border-subtle);
   }
 
   .bounded-list article {
@@ -127,7 +130,17 @@
   }
 
   .market-metadata {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .market-live-cycle {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .market-live-meter,
+  .market-cycle-id {
+    grid-column: 1;
+    grid-row: auto;
   }
 
   .market-withheld-row {
@@ -135,6 +148,25 @@
   }
 
   .market-withheld-row span {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .market-session-card {
+    border-inline-end: 0;
+    border-block-end: 1px solid var(--border-subtle);
+    padding-inline: 0;
+  }
+
+  .market-session-card:last-child {
+    border-block-end: 0;
+  }
+
+  .system-family-registry article {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .system-family-registry article p {
     grid-column: 1 / -1;
     grid-row: 2;
   }

@@ -88,7 +88,11 @@ export async function resetScrollableContent(page: Page): Promise<void> {
   if ((await scrollBody.count()) !== 1) return;
   await scrollBody.evaluate(async (element) => {
     element.scrollTop = 0;
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
   });
 }
 

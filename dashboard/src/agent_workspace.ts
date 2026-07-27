@@ -101,7 +101,18 @@ export class AgentWorkspace {
     if (this.host === null) return;
     const section = document.createElement("section");
     section.className = "command-console";
-    section.append(this.renderFamilies(), this.renderComposer(), this.renderTimeline());
+    const dock = document.createElement("aside");
+    dock.className = "command-family-dock";
+    dock.setAttribute("aria-label", "연구 에이전트 선택");
+    dock.append(
+      textElement("p", "전문 연구 에이전트", "meta-label"),
+      this.renderFamilies(),
+      this.renderOperatorState(),
+    );
+    const stage = document.createElement("div");
+    stage.className = "command-stage";
+    stage.append(this.renderTimeline(), this.renderComposer());
+    section.append(dock, stage);
     this.host.replaceChildren(section);
   }
 
@@ -130,11 +141,6 @@ export class AgentWorkspace {
   private renderComposer(): HTMLFormElement {
     const form = document.createElement("form");
     form.className = "command-composer";
-    const status = !this.authenticated
-      ? "조회 전용 · 기기 페어링 필요"
-      : this.connected
-        ? "운영자 명령 채널 연결됨"
-        : "명령 채널 재연결 중";
     const select = document.createElement("select");
     select.id = "command-mode";
     select.disabled = !this.authenticated || !this.connected || this.submitting;
@@ -166,11 +172,6 @@ export class AgentWorkspace {
     const heading = document.createElement("div");
     heading.className = "command-composer-heading";
     heading.append(
-      textElement(
-        "div",
-        status,
-        `operator-state ${this.connected ? "state-ready" : "state-armed"}`,
-      ),
       Object.assign(document.createElement("label"), {
         htmlFor: "command-mode",
         textContent: "채널",
@@ -187,6 +188,21 @@ export class AgentWorkspace {
       submit,
     );
     return form;
+  }
+
+  private renderOperatorState(): HTMLElement {
+    const status = !this.authenticated
+      ? "조회 전용 · 기기 페어링 필요"
+      : this.connected
+        ? "운영자 명령 채널 연결됨"
+        : "명령 채널 재연결 중";
+    const region = document.createElement("div");
+    region.className = "operator-boundary";
+    region.append(
+      textElement("span", this.connected ? "CONNECTED" : "READ ONLY", "meta-label"),
+      textElement("p", status, `operator-state ${this.connected ? "state-ready" : "state-armed"}`),
+    );
+    return region;
   }
 
   private async submit(rawMode: string, rawCommand: string): Promise<void> {
@@ -213,7 +229,14 @@ export class AgentWorkspace {
   private renderTimeline(): HTMLElement {
     const region = document.createElement("section");
     region.className = "command-timeline";
-    region.append(textElement("h2", `${agentLabels[this.selected][0]} 활동 타임라인`));
+    const heading = document.createElement("header");
+    heading.className = "command-timeline-heading";
+    heading.append(
+      textElement("p", agentLabels[this.selected][1], "meta-label"),
+      textElement("h2", agentLabels[this.selected][0]),
+      textElement("p", "대화 · 지시 실행 · 자율 연구 receipt", "command-channel-legend"),
+    );
+    region.append(heading);
     const interactions = [...this.interactions.values()]
       .filter((item) => item.agent_id === this.selected)
       .sort((left, right) => right.created_at.localeCompare(left.created_at));
@@ -223,7 +246,16 @@ export class AgentWorkspace {
       .sort((left, right) => right.occurred_at.localeCompare(left.occurred_at));
     for (const task of autonomous) region.append(renderAutonomous(task));
     if (interactions.length + autonomous.length === 0) {
-      region.append(textElement("p", "이 가족의 대화나 작업 receipt가 없습니다.", "empty-state"));
+      const empty = document.createElement("div");
+      empty.className = "command-empty";
+      empty.append(
+        textElement("strong", "아직 기록된 실행이 없습니다."),
+        textElement(
+          "p",
+          "아래 입력창에서 대화를 시작하거나 허용된 연구 작업을 지시할 수 있습니다.",
+        ),
+      );
+      region.append(empty);
     }
     return region;
   }

@@ -40,8 +40,9 @@ td {
   min-inline-size: 0;
   max-inline-size: 100%;
   overflow-x: auto;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-panel);
+  border-block: 1px solid var(--border-default);
+  border-inline: 0;
+  border-radius: 0;
   background: var(--surface-primary);
   overscroll-behavior-inline: contain;
 }
@@ -57,10 +58,11 @@ td {
 .compact-chart {
   display: grid;
   gap: var(--space-2);
-  padding: var(--space-4);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-panel);
-  background: var(--surface-secondary);
+  padding: var(--space-4) 0;
+  border-block: 1px solid var(--border-default);
+  border-inline: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .compact-chart svg {
@@ -85,11 +87,12 @@ td {
 
 .bounded-list {
   display: grid;
-  gap: var(--space-3);
+  gap: 0;
+  border-block-start: 1px solid var(--border-default);
 }
 
 .bounded-list > h2 {
-  padding-block-end: var(--space-2);
+  padding-block: var(--space-3);
   border-block-end: 1px solid var(--border-default);
 }
 
@@ -98,9 +101,10 @@ td {
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
   align-items: center;
   gap: var(--space-4);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border-subtle);
-  background: var(--surface-secondary);
+  padding: var(--space-3);
+  border: 0;
+  border-block-end: 1px solid var(--border-subtle);
+  background: transparent;
 }
 
 .bounded-list article strong,
@@ -116,7 +120,8 @@ td {
 
 .empty-state {
   padding: var(--space-6);
-  border: 1px solid var(--border-subtle);
+  border-block: 1px solid var(--border-subtle);
+  border-inline: 0;
   color: var(--text-tertiary);
   text-align: center;
 }

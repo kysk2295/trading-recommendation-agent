@@ -40,6 +40,8 @@ export async function captureMatrixCase(
   requireEqual(routeActive, true, `${width}/${route}/${state} active route`);
   const stateRendered = await verifyRenderedState(page, state);
   const traceAssertion = await verifyTrace(page, state);
+  const screenshot = join(screenshotDirectory, `${width}-${route}-${state}.png`);
+  await page.screenshot({ path: screenshot });
   const axe = await analyzeAtScrollPositions(page);
   requireEqual(
     axe.violations,
@@ -56,8 +58,6 @@ export async function captureMatrixCase(
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
   );
   const leakHits = await browserLeakHits(page);
-  const screenshot = join(screenshotDirectory, `${width}-${route}-${state}.png`);
-  await page.screenshot({ path: screenshot });
   return {
     width,
     route,

@@ -80,7 +80,7 @@ await context.route("**/__qa__/materialize.css", async (route) => {
     contentType: "text/css",
     body: [
       "html,body{block-size:auto!important;overflow:visible!important}",
-      ".workstation-shell{block-size:auto!important;min-block-size:100dvb;overflow:visible!important;grid-template-rows:64px auto 28px!important}",
+      ".workstation-shell{block-size:auto!important;min-block-size:100dvb;overflow:visible!important;grid-template-rows:56px auto 28px!important}",
       ".workspace-scroll-body{overflow:visible!important}",
       ".market-summary,.data-sources-summary,.market-session-section,.market-context-section,.provider-capability-section{content-visibility:visible!important}",
     ].join(""),

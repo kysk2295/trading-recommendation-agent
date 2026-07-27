@@ -75,7 +75,7 @@ function renderCausalLedger(
 ): HTMLElement {
   const section = document.createElement("section");
   section.className = "provider-capability-section";
-  section.append(textElement("h2", "Source / paper / hypothesis causal queue"));
+  section.append(textElement("h2", "가설·실험 증거 원장"));
   const viewport = document.createElement("div");
   viewport.className = "table-viewport";
   viewport.tabIndex = 0;
@@ -134,7 +134,7 @@ function renderStrategyGovernance(
 ): HTMLElement {
   const section = document.createElement("section");
   section.className = "bounded-list";
-  section.append(textElement("h2", "Strategy governance and allocation gate"));
+  section.append(textElement("h2", "전략 승격과 배분 gate"));
   const candidates = workspace.items.filter((candidate) => candidate.kind === "strategy");
   const gates = candidates.map((item) => ({
     item,

@@ -67,7 +67,6 @@ export class WorkstationShell {
     this.drawer.close();
     this.closeLauncher();
     this.activeWorkspace = workspace;
-    requiredElement("active-workspace-label", HTMLElement).textContent = workspace.label;
     requiredElement("workspace-kicker", HTMLElement).textContent = workspace.kicker;
     requiredElement("workspace-heading", HTMLElement).textContent = workspace.label;
     requiredElement("workspace-description", HTMLElement).textContent = workspace.description;

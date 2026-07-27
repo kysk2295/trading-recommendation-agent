@@ -24,15 +24,48 @@ export type MarketEvidencePath = {
 };
 
 export type MarketEvidencePresentation = { readonly state: SourceState; readonly value: string };
+export type KrRealtimeCyclePresentation = {
+  readonly records: number;
+  readonly successfulSources: number;
+  readonly totalSources: number;
+  readonly cycleId: string;
+};
 
 export const renderMarkets: WorkspaceRenderer = (snapshot, drawer) => {
   const workspace = snapshot.workspaces.markets;
   const fragment = document.createDocumentFragment();
   fragment.append(renderSummary(workspace, snapshot, drawer));
+  const realtime = renderRealtimeCycle(workspace.items, snapshot, drawer);
+  if (realtime !== null) fragment.append(realtime);
   fragment.append(renderSessions(workspace.items, snapshot, drawer));
   fragment.append(renderContext(workspace.items, snapshot, drawer));
   return fragment;
 };
+
+export function krRealtimeCyclePresentation(
+  value: string | null,
+): KrRealtimeCyclePresentation | null {
+  if (value === null) return null;
+  const match = /^records=(\d+);coverage=(\d+)\/(\d+);cycle=([a-zA-Z0-9._:-]{1,120})$/.exec(value);
+  if (match === null) return null;
+  const [, rawRecords, rawSuccessful, rawTotal, cycleId] = match;
+  const records = Number(rawRecords);
+  const successfulSources = Number(rawSuccessful);
+  const totalSources = Number(rawTotal);
+  if (
+    cycleId === undefined ||
+    !Number.isSafeInteger(records) ||
+    !Number.isSafeInteger(successfulSources) ||
+    !Number.isSafeInteger(totalSources) ||
+    totalSources < 1 ||
+    totalSources > 12 ||
+    successfulSources < 0 ||
+    successfulSources > totalSources
+  ) {
+    return null;
+  }
+  return { records, successfulSources, totalSources, cycleId };
+}
 
 export function marketEvidencePresentation(
   item: Pick<MarketItem, "item_id" | "label" | "state" | "value" | "observed_at" | "trace_id">,
@@ -86,7 +119,7 @@ function renderSessions(
 ): HTMLElement {
   const section = document.createElement("section");
   section.className = "market-session-section";
-  section.append(textElement("h2", "Authoritative calendar sessions"));
+  section.append(textElement("h2", "정규장 상태"));
   const sessions = items.filter((item) => item.item_id.endsWith(".session"));
   if (sessions.length === 0) {
     section.append(
@@ -99,6 +132,75 @@ function renderSessions(
   for (const item of sessions) grid.append(renderSession(item, snapshot, drawer));
   section.append(grid);
   return section;
+}
+
+function renderRealtimeCycle(
+  items: readonly MarketItem[],
+  snapshot: DashboardSnapshotV2,
+  drawer: EvidenceTraceDrawer,
+): HTMLElement | null {
+  const item = items.find((candidate) => candidate.item_id === "market.kr.realtime_cycle");
+  if (item === undefined) return null;
+  const presentation = sourceStatePresentation(item.state);
+  const cycle = krRealtimeCyclePresentation(item.value);
+  const section = document.createElement("section");
+  section.className = "market-live-cycle";
+  const heading = document.createElement("header");
+  heading.append(
+    textElement("div", "KR REGULAR SESSION", "meta-label"),
+    textElement("span", presentation.label, `state-badge state-${presentation.tone}`),
+    traceButton(item.label, item.trace_id, snapshot, drawer),
+  );
+  section.append(heading);
+  if (cycle === null) {
+    section.append(
+      textElement("h2", "실시간 수집 cycle 권위 없음"),
+      textElement("p", "완료된 source receipt가 게시되기 전에는 감지 수치를 만들지 않습니다."),
+    );
+    return section;
+  }
+  const metrics = document.createElement("div");
+  metrics.className = "market-live-metrics";
+  metrics.append(
+    metric("감지 records", cycle.records.toLocaleString("ko-KR")),
+    metric("source coverage", `${cycle.successfulSources}/${cycle.totalSources}`),
+    metric(
+      "관측",
+      item.observed_at === null
+        ? "없음"
+        : new Intl.DateTimeFormat("ko-KR", {
+            month: "numeric",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          }).format(new Date(item.observed_at)),
+    ),
+  );
+  const meter = document.createElement("div");
+  meter.className = "market-live-meter";
+  meter.setAttribute(
+    "aria-label",
+    `${cycle.totalSources}개 source 중 ${cycle.successfulSources}개 수집 성공`,
+  );
+  meter.setAttribute("role", "img");
+  for (let index = 0; index < cycle.totalSources; index += 1) {
+    const segment = document.createElement("span");
+    if (index < cycle.successfulSources) segment.className = "is-covered";
+    meter.append(segment);
+  }
+  section.append(
+    textElement("h2", item.label),
+    metrics,
+    meter,
+    textElement("code", cycle.cycleId, "market-cycle-id"),
+  );
+  return section;
+}
+
+function metric(label: string, value: string): HTMLElement {
+  const group = document.createElement("div");
+  group.append(textElement("span", label), textElement("strong", value));
+  return group;
 }
 
 function renderSession(
@@ -139,8 +241,10 @@ function renderContext(
     textElement("span", "이\u00a0v2", "market-projection-label"),
     " projection은 calendar/session evidence만 게시합니다.",
   );
-  section.append(textElement("h2", "Market context and quote guard"), guidance);
-  for (const item of items.filter((value) => !value.item_id.endsWith(".session"))) {
+  section.append(textElement("h2", "시장 데이터 권위"), guidance);
+  for (const item of items.filter(
+    (value) => !value.item_id.endsWith(".session") && value.item_id !== "market.kr.realtime_cycle",
+  )) {
     const row = document.createElement("div");
     row.className = "market-withheld-row";
     row.append(

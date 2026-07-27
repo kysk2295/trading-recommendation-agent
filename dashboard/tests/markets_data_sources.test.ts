@@ -6,10 +6,27 @@ import {
   providerEvidencePresentation,
   providerQuoteNotice,
 } from "../src/workspaces/data_sources";
-import { type MarketEvidencePath, marketEvidencePresentation } from "../src/workspaces/markets";
+import {
+  krRealtimeCyclePresentation,
+  type MarketEvidencePath,
+  marketEvidencePresentation,
+} from "../src/workspaces/markets";
 import { marketsDataSourcesFixture } from "./e2e/markets_data_sources_fixture";
 
 describe("Markets v2 safety", () => {
+  test("Given an authoritative KR realtime cycle value, when it is rendered, then exact counts survive without quote inference", () => {
+    expect(
+      krRealtimeCyclePresentation("records=190;coverage=1/4;cycle=kr-m3-live-20260727-fbcb34d-060"),
+    ).toEqual({
+      records: 190,
+      successfulSources: 1,
+      totalSources: 4,
+      cycleId: "kr-m3-live-20260727-fbcb34d-060",
+    });
+    expect(krRealtimeCyclePresentation("records=190;coverage=5/4;cycle=invalid")).toBeNull();
+    expect(krRealtimeCyclePresentation("999.99")).toBeNull();
+  });
+
   test("Given a non-session market row, when it lacks license proofs, then it never exposes a quote", () => {
     // Given: a canonical metric that is not an authoritative market-calendar session.
     const item = {
