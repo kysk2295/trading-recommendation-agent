@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Final
+from typing import Final, override
 from zoneinfo import ZoneInfo
 
 NEW_YORK: Final = ZoneInfo("America/New_York")
@@ -92,6 +92,12 @@ EARLY_CLOSE_DAYS: Final[frozenset[dt.date]] = frozenset(
 )
 
 
+class UnsupportedUsEquityCalendarDateError(ValueError):
+    @override
+    def __str__(self) -> str:
+        return "date is outside the tracked XNYS calendar"
+
+
 def regular_session_bounds(
     session_date: dt.date,
 ) -> tuple[dt.datetime, dt.datetime] | None:
@@ -106,3 +112,13 @@ def regular_session_bounds(
         dt.datetime.combine(session_date, REGULAR_OPEN, tzinfo=NEW_YORK),
         dt.datetime.combine(session_date, close_time, tzinfo=NEW_YORK),
     )
+
+
+def next_regular_session(after: dt.date) -> dt.date:
+    candidate = after + dt.timedelta(days=1)
+    last_published_date = dt.date(max(PUBLISHED_CALENDAR_YEARS), 12, 31)
+    while candidate <= last_published_date:
+        if regular_session_bounds(candidate) is not None:
+            return candidate
+        candidate += dt.timedelta(days=1)
+    raise UnsupportedUsEquityCalendarDateError

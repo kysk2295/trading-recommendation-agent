@@ -3,7 +3,9 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import os
 import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, override
@@ -31,7 +33,6 @@ from trading_agent.multi_market_experiment_models import (
 )
 from trading_agent.private_immutable_file import (
     publish_private_immutable_text,
-    read_private_text,
 )
 from trading_agent.research_identity_models import AgentOperatingMode
 
@@ -69,7 +70,9 @@ def prepare_kr_theme_research_chain_rollover(
     try:
         if _COMMIT_SHA.fullmatch(request.code_version) is None or not _aware(request.recorded_at):
             raise InvalidKrThemeResearchChainRolloverError
-        previous = _load_bundle(request.previous_bundle_path)
+        previous = load_kr_theme_research_rollover_bundle(
+            request.previous_bundle_path
+        )
         _require_previous_bundle(request.experiment_ledger, previous)
         recorded_at = _effective_recorded_at(request, previous)
         opportunity = _rolled_version(
@@ -123,8 +126,11 @@ def prepare_kr_theme_research_chain_rollover(
         raise InvalidKrThemeResearchChainRolloverError from None
 
 
-def _load_bundle(path: Path) -> KrThemeResearchRolloverBundle:
-    payload = read_private_text(path)
+def load_kr_theme_research_rollover_bundle(
+    path: Path,
+) -> KrThemeResearchRolloverBundle:
+    """Load and verify one canonical KR rollover authority bundle."""
+    payload = _read_private_text(path)
     bundle = KrThemeResearchRolloverBundle.model_validate_json(payload)
     if (
         _canonical_json(bundle) != payload
@@ -139,6 +145,12 @@ def _load_bundle(path: Path) -> KrThemeResearchRolloverBundle:
     ):
         raise InvalidKrThemeResearchChainRolloverError
     return bundle
+
+
+def kr_theme_research_rollover_bundle_sha256(
+    bundle: KrThemeResearchRolloverBundle,
+) -> str:
+    return hashlib.sha256(_canonical_json(bundle).encode()).hexdigest()
 
 
 def _require_previous_bundle(
@@ -243,9 +255,35 @@ def _aware(value: dt.datetime) -> bool:
     return value.tzinfo is not None and value.utcoffset() is not None
 
 
+def _read_private_text(path: Path) -> str:
+    descriptor = os.open(
+        path.expanduser().absolute(),
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+    )
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+        ):
+            raise InvalidKrThemeResearchChainRolloverError
+        payload = bytearray()
+        while chunk := os.read(descriptor, 64 * 1024):
+            payload.extend(chunk)
+        if os.fstat(descriptor) != metadata:
+            raise InvalidKrThemeResearchChainRolloverError
+        return bytes(payload).decode()
+    finally:
+        os.close(descriptor)
+
+
 __all__ = (
     "InvalidKrThemeResearchChainRolloverError",
     "KrThemeResearchChainRolloverRequest",
     "KrThemeResearchRolloverBundle",
+    "kr_theme_research_rollover_bundle_sha256",
+    "load_kr_theme_research_rollover_bundle",
     "prepare_kr_theme_research_chain_rollover",
 )
