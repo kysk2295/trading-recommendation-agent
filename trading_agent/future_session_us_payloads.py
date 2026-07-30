@@ -298,7 +298,11 @@ def _observer_job(
             *arguments,
         ),
         dependencies=dependencies,
-        source_paths=(request.experiment_ledger,),
+        source_paths=(
+            (_required(request.watch_database),)
+            if role is FutureSessionUsRole.US_DAY_PREFLIGHT_OBSERVER
+            else (request.experiment_ledger,)
+        ),
         destination_paths=(_required(request.execution_database),),
         payload_mode=FutureSessionPayloadMode.RETRY_UNTIL_SUCCESS,
         not_before=not_before,

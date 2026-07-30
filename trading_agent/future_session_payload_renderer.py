@@ -4,8 +4,13 @@ import shlex
 from dataclasses import dataclass
 from typing import assert_never, override
 
+from trading_agent.future_session_observer_payloads import (
+    render_preflight_payload,
+    render_projection_payload,
+)
 from trading_agent.future_session_plan_models import (
     FutureSessionPayloadMode,
+    FutureSessionUsRole,
     JobTimingSpec,
 )
 
@@ -22,6 +27,20 @@ class InvalidFutureSessionPayloadSpecError(ValueError):
 def render_job_payload(job: JobTimingSpec) -> str:
     command = shlex.join(job.command)
     header = "#!/bin/zsh\n\nset -u\numask 077\n\n"
+    match job.role:
+        case FutureSessionUsRole.US_HERMES_PROJECTION:
+            return header + render_projection_payload(job, command)
+        case FutureSessionUsRole.US_DAY_PREFLIGHT_OBSERVER:
+            return header + render_preflight_payload(job, command)
+        case (
+            FutureSessionUsRole.US_ORB_WATCHER
+            | FutureSessionUsRole.US_DAY_CLOSE_FINALIZER
+            | FutureSessionUsRole.US_DAY_ARM_OBSERVER
+            | None
+        ):
+            pass
+        case unreachable:
+            assert_never(unreachable)
     match job.payload_mode:
         case FutureSessionPayloadMode.ONCE:
             return f"{header}exec {command}\n"
@@ -81,7 +100,7 @@ def _gated_finalizer_retry(job: JobTimingSpec, command: str) -> str:
     gate = job.finalizer_gate
     if gate is None:
         raise InvalidFutureSessionPayloadSpecError("finalizer_gate_missing")
-    watcher_probe = shlex.join(gate.watcher_active_probe)
+    watcher_probe = f"{shlex.join(gate.watcher_active_probe)} >/dev/null 2>&1"
     source_path = shlex.quote(str(gate.source_path))
     return (
         f"readonly stability_seconds={gate.stability_seconds}\n"

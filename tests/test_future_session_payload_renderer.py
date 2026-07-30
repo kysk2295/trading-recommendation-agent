@@ -258,7 +258,7 @@ def _gated_finalizer_job(
                 "watcher_active_probe": (
                     "/bin/zsh",
                     "-c",
-                    "[[ -f $1 ]]",
+                    "print -r -- probe; print -u2 -r -- probe; [[ -f $1 ]]",
                     "_",
                     str(active),
                 ),
