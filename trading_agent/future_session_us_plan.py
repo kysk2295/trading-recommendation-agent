@@ -21,12 +21,15 @@ from trading_agent.future_session_plan_models import (
     FutureSessionPlanRequest,
     JobTimingSpec,
     ReadyToPrepareSessionPlan,
+    RuntimeEnvironmentAttestation,
     SessionCalendarProvenance,
     StrategyRegistrationIdentity,
     WaitingAuthorityReason,
     WaitingSessionAuthority,
+    canonical_request_json,
     plan_content_sha256,
 )
+from trading_agent.future_session_us_payloads import attest_us_runtime, build_us_jobs
 from trading_agent.strategy_factory import StrategyMode
 from trading_agent.us_equity_calendar import (
     EARLY_CLOSE_DAYS,
@@ -57,6 +60,14 @@ def compile_us_future_session_plan(
             target,
             WaitingAuthorityReason.RUNTIME_AUTHORITY_MISSING,
         )
+    runtime_environment, environment_reason = attest_us_runtime(request)
+    if runtime_environment is None:
+        reason = (
+            WaitingAuthorityReason.FROZEN_RUNTIME_STORE_SCHEMA_INCOMPATIBLE
+            if environment_reason == "frozen_runtime_store_schema_incompatible"
+            else WaitingAuthorityReason.RUNTIME_ENVIRONMENT_INVALID
+        )
+        return _waiting(request, target, reason)
     readiness = evaluate_forward_runtime_readiness(
         runtime_dir=request.frozen_runtime.directory,
         expected_head=request.frozen_runtime.commit_sha,
@@ -101,24 +112,20 @@ def compile_us_future_session_plan(
         source_version="tracked-xnys-2023-2028-v1",
         evidence_sha256=_calendar_sha256(),
     )
-    jobs = (
-        JobTimingSpec(
-            job_id=f"us-preopen-{target.isoformat()}",
-            run_at=bounds[0] - dt.timedelta(minutes=5),
-            purpose="preopen_authority_check",
-        ),
-        JobTimingSpec(
-            job_id=f"us-session-{target.isoformat()}",
-            run_at=bounds[0],
-            purpose="session_runtime",
-        ),
-        JobTimingSpec(
-            job_id=f"us-terminal-{target.isoformat()}",
-            run_at=bounds[1] + dt.timedelta(minutes=5),
-            purpose="post_session_terminal",
-        ),
+    orb = next(
+        item.strategy_version
+        for item in registrations
+        if item.strategy_version.startswith("orb_")
     )
-    return _ready(request, target, calendar, registrations, jobs)
+    jobs = build_us_jobs(request, target, orb)
+    return _ready(
+        request,
+        target,
+        calendar,
+        registrations,
+        jobs,
+        runtime_environment,
+    )
 
 
 def _registrations(
@@ -191,9 +198,13 @@ def _ready(
     calendar: SessionCalendarProvenance,
     registrations: tuple[StrategyRegistrationIdentity, ...],
     jobs: tuple[JobTimingSpec, ...],
+    runtime_environment: RuntimeEnvironmentAttestation,
 ) -> ReadyToPrepareSessionPlan:
     values = {
         "market": request.market,
+        "source_request_sha256": hashlib.sha256(
+            canonical_request_json(request).encode()
+        ).hexdigest(),
         "target_session": target,
         "compiled_at": request.compiled_at,
         "scheduler_main_sha": request.scheduler_main_sha,
@@ -209,6 +220,7 @@ def _ready(
             DeferredTrialRegistrationState.DEFERRED_UNTIL_PREOPEN
         ),
         "jobs": jobs,
+        "runtime_environment": runtime_environment,
     }
     provisional = ReadyToPrepareSessionPlan.model_construct(
         plan_sha256="0" * 64,

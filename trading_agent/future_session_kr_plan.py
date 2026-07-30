@@ -27,6 +27,7 @@ from trading_agent.future_session_plan_models import (
     StrategyRegistrationIdentity,
     WaitingAuthorityReason,
     WaitingSessionAuthority,
+    canonical_request_json,
     plan_content_sha256,
 )
 from trading_agent.kis_kr_session_calendar_store import (
@@ -279,6 +280,9 @@ def _ready(
 ) -> ReadyToPrepareSessionPlan:
     values = {
         "market": request.market,
+        "source_request_sha256": hashlib.sha256(
+            canonical_request_json(request).encode()
+        ).hexdigest(),
         "target_session": target,
         "compiled_at": request.compiled_at,
         "scheduler_main_sha": request.scheduler_main_sha,
@@ -300,6 +304,7 @@ def _ready(
             DeferredTrialRegistrationState.DEFERRED_UNTIL_PREOPEN
         ),
         "jobs": _jobs(target),
+        "runtime_environment": None,
     }
     provisional = ReadyToPrepareSessionPlan.model_construct(
         plan_sha256="0" * 64,

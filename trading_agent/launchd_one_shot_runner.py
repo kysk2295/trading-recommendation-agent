@@ -16,6 +16,12 @@ class OneShotRunnerSpec:
     persistent_plist: Path | None = None
     authority_repository: Path | None = None
     source_commit: str | None = None
+    role: str | None = None
+    request_sha256: str | None = None
+    plan_sha256: str | None = None
+    runtime_commit_sha: str | None = None
+    runtime_attestation_sha256: str | None = None
+    preparation_manifest: Path | None = None
 
 
 def render_runner(spec: OneShotRunnerSpec) -> str:
@@ -88,10 +94,54 @@ def render_persistent_runner(spec: OneShotRunnerSpec) -> str:
     command = shlex.join(spec.command)
     run_epoch = int(spec.run_at.timestamp())
     expires_epoch = int(spec.expires_at.timestamp())
-    receipt_format = (
-        '{"completed_at_epoch":%s,"exit_code":%d,"label":"%s",'
-        '"result":"%s","schema_version":1,"source_commit_sha":"%s"}\\n'
+    provenance = (
+        spec.role,
+        spec.request_sha256,
+        spec.plan_sha256,
+        spec.runtime_commit_sha,
+        spec.runtime_attestation_sha256,
+        spec.preparation_manifest,
     )
+    provenance_enabled = any(value is not None for value in provenance)
+    if provenance_enabled and any(value is None for value in provenance):
+        raise ValueError
+    if provenance_enabled:
+        manifest = shlex.quote(str(spec.preparation_manifest))
+        provenance_declarations = (
+            f"readonly role={shlex.quote(str(spec.role))}\n"
+            f"readonly request_sha256={spec.request_sha256}\n"
+            f"readonly plan_sha256={spec.plan_sha256}\n"
+            f"readonly runtime_commit_sha={spec.runtime_commit_sha}\n"
+            f"readonly runtime_attestation_sha256={spec.runtime_attestation_sha256}\n"
+            f"readonly preparation_manifest={manifest}\n"
+        )
+        receipt_format = (
+            '{"completed_at_epoch":%s,"exit_code":%d,"label":"%s",'
+            '"plan_sha256":"%s","preparation_manifest_sha256":"%s",'
+            '"request_sha256":"%s","result":"%s","role":"%s",'
+            '"runtime_attestation_sha256":"%s","runtime_commit_sha":"%s",'
+            '"schema_version":2,"source_commit_sha":"%s"}\\n'
+        )
+        receipt_arguments = (
+            "$(/bin/date +%s) $exit_code $job_label $plan_sha256 "
+            "$manifest_sha256 $request_sha256 $result $role "
+            "$runtime_attestation_sha256 $runtime_commit_sha $source_commit"
+        )
+        manifest_hash = (
+            "  local manifest_sha256\n"
+            "  manifest_sha256=$(/usr/bin/shasum -a 256 $preparation_manifest | "
+            "/usr/bin/awk '{print $1}')\n"
+        )
+    else:
+        provenance_declarations = ""
+        receipt_format = (
+            '{"completed_at_epoch":%s,"exit_code":%d,"label":"%s",'
+            '"result":"%s","schema_version":1,"source_commit_sha":"%s"}\\n'
+        )
+        receipt_arguments = (
+            "$(/bin/date +%s) $exit_code $job_label $result $source_commit"
+        )
+        manifest_hash = ""
     return f"""#!/bin/zsh
 
 set -u
@@ -105,6 +155,7 @@ readonly claim={claim}
 readonly persistent_plist={persistent_plist}
 readonly repository={repository}
 readonly source_commit={spec.source_commit}
+{provenance_declarations}
 
 cleanup_job() {{
   /bin/launchctl remove $job_label >/dev/null 2>&1 || true
@@ -115,8 +166,9 @@ write_receipt() {{
   local result=$1
   local exit_code=$2
   local temporary_receipt="${{receipt}}.tmp.$$"
+{manifest_hash}\
   /usr/bin/printf '{receipt_format}' \\
-    "$(/bin/date +%s)" $exit_code $job_label $result $source_commit > $temporary_receipt
+    {receipt_arguments} > $temporary_receipt
   /bin/chmod 600 $temporary_receipt
   /bin/mv -f $temporary_receipt $receipt
 }}

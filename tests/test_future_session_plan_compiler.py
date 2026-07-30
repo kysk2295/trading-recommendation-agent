@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import sys
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,7 @@ from trading_agent.future_session_plan_models import (
     WaitingSessionAuthority,
     canonical_plan_json,
 )
+from trading_agent.future_session_us_payloads import build_us_jobs
 from trading_agent.kis_kr_session_calendar import project_kis_kr_session_calendar
 from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStore
 from trading_agent.kr_theme_research_registration import (
@@ -118,6 +120,55 @@ def test_us_plan_is_stable_and_binds_exact_runtime_authority(
         ReadyToPrepareSessionPlan.model_validate(tampered)
 
 
+def test_xnys_2026_07_31_five_role_timing_contract(tmp_path: Path) -> None:
+    # Given
+    runtime, required, head = _runtime(tmp_path)
+    lane, experiment, execution = _stores(tmp_path, code_version=head)
+    request = _us_request(
+        tmp_path,
+        runtime=runtime,
+        head=head,
+        required=required,
+        lane=lane,
+        experiment=experiment,
+        execution=execution,
+    )
+
+    # When
+    jobs = build_us_jobs(request, dt.date(2026, 7, 31), "orb_fixture")
+
+    # Then
+    assert tuple(job.role.value for job in jobs if job.role is not None) == (
+        "us_orb_watcher",
+        "us_hermes_projection",
+        "us_day_preflight_observer",
+        "us_day_close_finalizer",
+        "us_day_arm_observer",
+    )
+    assert tuple(job.run_at.isoformat() for job in jobs) == (
+        "2026-07-31T08:00:00-04:00",
+        "2026-07-31T08:00:00-04:00",
+        "2026-07-31T08:00:00-04:00",
+        "2026-07-31T08:00:00-04:00",
+        "2026-07-31T09:00:00-04:00",
+    )
+    assert tuple(
+        job.expires_at.isoformat()
+        for job in jobs
+        if job.expires_at is not None
+    ) == (
+        "2026-07-31T16:20:00-04:00",
+        "2026-07-31T16:20:00-04:00",
+        "2026-07-31T15:35:00-04:00",
+        "2026-07-31T16:20:00-04:00",
+        "2026-07-31T15:31:00-04:00",
+    )
+    assert "open=09:30" in jobs[4].purpose
+    assert "entry_cutoff=15:30" in jobs[4].purpose
+    assert "finalize=16:05" in jobs[3].purpose
+    assert "source_deadline=16:15" in jobs[3].purpose
+
+
 def test_us_plan_waits_for_wrong_explicit_runtime_authority(
     tmp_path: Path,
 ) -> None:
@@ -167,6 +218,47 @@ def test_stale_scheduler_sha_waits_without_jobs(tmp_path: Path) -> None:
     assert decision.jobs == ()
     assert tuple(reason.value for reason in decision.reasons) == (
         "scheduler_authority_invalid",
+    )
+
+
+def test_us_plan_distinguishes_store_schema_from_runtime_environment(
+    tmp_path: Path,
+) -> None:
+    # Given
+    runtime, required, head = _runtime(tmp_path)
+    lane, experiment, execution = _stores(tmp_path, code_version=head)
+    request = _us_request(
+        tmp_path,
+        runtime=runtime,
+        head=head,
+        required=required,
+        lane=lane,
+        experiment=experiment,
+        execution=execution,
+    )
+
+    # When
+    schema_decision = compile_future_session_plan(
+        request.model_copy(
+            update={
+                "execution_database": (
+                    tmp_path / "uninitialized-execution.sqlite3"
+                ).absolute()
+            }
+        )
+    )
+    environment_decision = compile_future_session_plan(
+        request.model_copy(update={"runtime_interpreter": Path("/usr/bin/false")})
+    )
+
+    # Then
+    assert isinstance(schema_decision, WaitingSessionAuthority)
+    assert tuple(reason.value for reason in schema_decision.reasons) == (
+        "frozen_runtime_store_schema_incompatible",
+    )
+    assert isinstance(environment_decision, WaitingSessionAuthority)
+    assert tuple(reason.value for reason in environment_decision.reasons) == (
+        "runtime_environment_invalid",
     )
 
 
@@ -308,6 +400,14 @@ def _us_request(
         lane_registry=lane.absolute(),
         execution_database=execution.absolute(),
         required_runtime_commits=(required,),
+        runtime_interpreter=Path(sys.executable).absolute(),
+        watch_database=(tmp_path / "watch.sqlite3").absolute(),
+        delivery_database=(tmp_path / "delivery.sqlite3").absolute(),
+        arm_database=(tmp_path / "arm.sqlite3").absolute(),
+        signing_key=(tmp_path / "signing.env").absolute(),
+        opportunity_outbox=(tmp_path / "opportunities.sqlite3").absolute(),
+        signal_outbox=(tmp_path / "signals.sqlite3").absolute(),
+        lane_review_ledger=(tmp_path / "lane-review.sqlite3").absolute(),
     )
 
 

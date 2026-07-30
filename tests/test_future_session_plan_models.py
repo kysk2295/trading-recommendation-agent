@@ -42,9 +42,10 @@ def test_trial_state_is_deferred_until_preopen() -> None:
     )
 
 
-def _request_payload(tmp_path: Path) -> dict[str, str]:
+def _request_payload(tmp_path: Path) -> dict[str, object]:
     root = tmp_path.absolute()
     return {
+        "schema_version": "2",
         "market": FutureSessionMarket.US.value,
         "after_date": dt.date(2026, 7, 2).isoformat(),
         "compiled_at": "2026-07-02T20:00:00+00:00",
@@ -58,4 +59,12 @@ def _request_payload(tmp_path: Path) -> dict[str, str]:
         "experiment_ledger": str(root / "experiment.sqlite3"),
         "lane_registry": str(root / "lane.sqlite3"),
         "execution_database": str(root / "execution.sqlite3"),
+        "runtime_interpreter": "/usr/bin/python3",
+        "watch_database": str(root / "watch.sqlite3"),
+        "delivery_database": str(root / "delivery.sqlite3"),
+        "arm_database": str(root / "arm.sqlite3"),
+        "signing_key": str(root / "signing.env"),
+        "opportunity_outbox": str(root / "opportunities.sqlite3"),
+        "signal_outbox": str(root / "signals.sqlite3"),
+        "lane_review_ledger": str(root / "lane-review.sqlite3"),
     }

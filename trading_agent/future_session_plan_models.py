@@ -28,6 +28,14 @@ class DeferredTrialRegistrationState(StrEnum):
     DEFERRED_UNTIL_PREOPEN = "deferred_until_preopen"
 
 
+class FutureSessionUsRole(StrEnum):
+    US_ORB_WATCHER = "us_orb_watcher"
+    US_HERMES_PROJECTION = "us_hermes_projection"
+    US_DAY_PREFLIGHT_OBSERVER = "us_day_preflight_observer"
+    US_DAY_CLOSE_FINALIZER = "us_day_close_finalizer"
+    US_DAY_ARM_OBSERVER = "us_day_arm_observer"
+
+
 class WaitingAuthorityReason(StrEnum):
     CALENDAR_AUTHORITY_MISSING = "calendar_authority_missing"
     CALENDAR_AUTHORITY_INVALID = "calendar_authority_invalid"
@@ -35,6 +43,10 @@ class WaitingAuthorityReason(StrEnum):
     RUNTIME_AUTHORITY_MISSING = "runtime_authority_missing"
     RUNTIME_AUTHORITY_AMBIGUOUS = "runtime_authority_ambiguous"
     SCHEDULER_AUTHORITY_INVALID = "scheduler_authority_invalid"
+    FROZEN_RUNTIME_STORE_SCHEMA_INCOMPATIBLE = (
+        "frozen_runtime_store_schema_incompatible"
+    )
+    RUNTIME_ENVIRONMENT_INVALID = "runtime_environment_invalid"
     ROLLOVER_BUNDLE_INVALID = "rollover_bundle_invalid"
     ROLLOVER_BUNDLE_MISMATCH = "rollover_bundle_mismatch"
     TRIAL_AUTHORITY_CONFLICT = "trial_authority_conflict"
@@ -90,7 +102,7 @@ class FutureSessionArtifactLayout(BaseModel):
 class FutureSessionPlanRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     market: FutureSessionMarket
     after_date: dt.date
     compiled_at: dt.datetime
@@ -108,6 +120,14 @@ class FutureSessionPlanRequest(BaseModel):
     interval_seconds: int = 60
     kis_server_attempts: int = 4
     eod_last_bar_semantic_attempts: int = 3
+    runtime_interpreter: Path | None = None
+    watch_database: Path | None = None
+    delivery_database: Path | None = None
+    arm_database: Path | None = None
+    signing_key: Path | None = None
+    opportunity_outbox: Path | None = None
+    signal_outbox: Path | None = None
+    lane_review_ledger: Path | None = None
 
     @model_validator(mode="after")
     def validate_request(self) -> Self:
@@ -119,6 +139,14 @@ class FutureSessionPlanRequest(BaseModel):
             *(() if self.execution_database is None else (self.execution_database,)),
             *(() if self.kr_calendar_store is None else (self.kr_calendar_store,)),
             *(() if self.kr_rollover_bundle is None else (self.kr_rollover_bundle,)),
+            *(() if self.runtime_interpreter is None else (self.runtime_interpreter,)),
+            *(() if self.watch_database is None else (self.watch_database,)),
+            *(() if self.delivery_database is None else (self.delivery_database,)),
+            *(() if self.arm_database is None else (self.arm_database,)),
+            *(() if self.signing_key is None else (self.signing_key,)),
+            *(() if self.opportunity_outbox is None else (self.opportunity_outbox,)),
+            *(() if self.signal_outbox is None else (self.signal_outbox,)),
+            *(() if self.lane_review_ledger is None else (self.lane_review_ledger,)),
         )
         commits = (self.scheduler_main_sha, *self.required_runtime_commits)
         if (
@@ -134,6 +162,19 @@ class FutureSessionPlanRequest(BaseModel):
                     and self.execution_database is not None
                     and self.kr_calendar_store is None
                     and self.kr_rollover_bundle is None
+                    and all(
+                        value is not None
+                        for value in (
+                            self.runtime_interpreter,
+                            self.watch_database,
+                            self.delivery_database,
+                            self.arm_database,
+                            self.signing_key,
+                            self.opportunity_outbox,
+                            self.signal_outbox,
+                            self.lane_review_ledger,
+                        )
+                    )
                 )
             case FutureSessionMarket.KR:
                 valid_shape = (
@@ -141,6 +182,19 @@ class FutureSessionPlanRequest(BaseModel):
                     and self.execution_database is None
                     and self.kr_calendar_store is not None
                     and self.kr_rollover_bundle is not None
+                    and all(
+                        value is None
+                        for value in (
+                            self.runtime_interpreter,
+                            self.watch_database,
+                            self.delivery_database,
+                            self.arm_database,
+                            self.signing_key,
+                            self.opportunity_outbox,
+                            self.signal_outbox,
+                            self.lane_review_ledger,
+                        )
+                    )
                 )
         if not valid_shape:
             raise ValueError("market authority inputs are incomplete")
@@ -199,22 +253,60 @@ class JobTimingSpec(BaseModel):
     job_id: str
     run_at: dt.datetime
     purpose: str
+    role: FutureSessionUsRole | None = None
+    label: str | None = None
+    expires_at: dt.datetime | None = None
+    command: tuple[str, ...] = ()
+    dependencies: tuple[FutureSessionUsRole, ...] = ()
+    source_paths: tuple[Path, ...] = ()
+    destination_paths: tuple[Path, ...] = ()
 
     @model_validator(mode="after")
     def validate_timing(self) -> Self:
-        if not self.job_id or not self.purpose or not _aware(self.run_at):
+        optional_times_valid = self.expires_at is None or (
+            _aware(self.expires_at) and self.expires_at > self.run_at
+        )
+        paths = (*self.source_paths, *self.destination_paths)
+        if (
+            not self.job_id
+            or not self.purpose
+            or not _aware(self.run_at)
+            or not optional_times_valid
+            or any(not path.is_absolute() for path in paths)
+        ):
             raise ValueError("invalid job timing")
+        return self
+
+
+class RuntimeEnvironmentAttestation(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    interpreter: Path
+    python_version: str
+    duckdb_version: str
+    attestation_sha256: str
+
+    @model_validator(mode="after")
+    def validate_attestation(self) -> Self:
+        if (
+            not self.interpreter.is_absolute()
+            or not self.python_version
+            or not self.duckdb_version
+            or _SHA256.fullmatch(self.attestation_sha256) is None
+        ):
+            raise ValueError("invalid runtime environment attestation")
         return self
 
 
 class ReadyToPrepareSessionPlan(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     status: Literal[FutureSessionPlanStatus.READY_TO_PREPARE] = (
         FutureSessionPlanStatus.READY_TO_PREPARE
     )
     plan_sha256: str
+    source_request_sha256: str
     market: FutureSessionMarket
     target_session: dt.date
     compiled_at: dt.datetime
@@ -227,6 +319,7 @@ class ReadyToPrepareSessionPlan(BaseModel):
     artifact_layout: FutureSessionArtifactLayout
     trial_registration_state: DeferredTrialRegistrationState
     jobs: tuple[JobTimingSpec, ...]
+    runtime_environment: RuntimeEnvironmentAttestation | None = None
 
     @model_validator(mode="after")
     def validate_plan(self) -> Self:
@@ -246,12 +339,29 @@ class ReadyToPrepareSessionPlan(BaseModel):
                 for value in kr_hashes
             )
         )
+        us_roles = tuple(job.role for job in self.jobs)
+        us_shape = (
+            len(self.jobs) == 5
+            and set(us_roles) == set(FutureSessionUsRole)
+            and all(
+                job.label is not None
+                and job.expires_at is not None
+                and bool(job.command)
+                for job in self.jobs
+            )
+            and self.runtime_environment is not None
+            if self.market is FutureSessionMarket.US
+            else all(job.role is None for job in self.jobs)
+            and self.runtime_environment is None
+        )
         if (
             not self.strategy_registrations
             or registration_ids != tuple(sorted(set(registration_ids)))
             or not self.jobs
             or run_times != tuple(sorted(run_times))
             or not kr_shape
+            or not us_shape
+            or _SHA256.fullmatch(self.source_request_sha256) is None
             or self.plan_sha256 != plan_content_sha256(self)
         ):
             raise ValueError("invalid ready future-session plan")
@@ -261,7 +371,7 @@ class ReadyToPrepareSessionPlan(BaseModel):
 class WaitingSessionAuthority(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     status: Literal[FutureSessionPlanStatus.WAITING_AUTHORITY] = (
         FutureSessionPlanStatus.WAITING_AUTHORITY
     )
@@ -302,6 +412,15 @@ def canonical_plan_json(
     ) + "\n"
 
 
+def canonical_request_json(value: FutureSessionPlanRequest) -> str:
+    return json.dumps(
+        value.model_dump(mode="json"),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ) + "\n"
+
+
 def plan_content_sha256(payload: BaseModel) -> str:
     return hashlib.sha256(
         json.dumps(
@@ -325,12 +444,15 @@ __all__ = (
     "FutureSessionPlanDecision",
     "FutureSessionPlanRequest",
     "FutureSessionPlanStatus",
+    "FutureSessionUsRole",
     "JobTimingSpec",
     "ReadyToPrepareSessionPlan",
+    "RuntimeEnvironmentAttestation",
     "SessionCalendarProvenance",
     "StrategyRegistrationIdentity",
     "WaitingAuthorityReason",
     "WaitingSessionAuthority",
     "canonical_plan_json",
+    "canonical_request_json",
     "plan_content_sha256",
 )

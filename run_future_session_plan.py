@@ -16,6 +16,7 @@ from trading_agent.future_session_plan_compiler import (
 from trading_agent.future_session_plan_models import (
     FutureSessionPlanRequest,
     canonical_plan_json,
+    canonical_request_json,
 )
 
 
@@ -26,9 +27,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         request_path = Path(arguments.request)
         if not request_path.is_absolute():
             raise ValueError
-        request = FutureSessionPlanRequest.model_validate_json(
-            _read_request(request_path)
-        )
+        payload = _read_request(request_path)
+        request = FutureSessionPlanRequest.model_validate_json(payload)
+        if canonical_request_json(request).encode() != payload:
+            raise ValueError
         decision = compile_future_session_plan(request)
     except (OSError, TypeError, ValidationError, ValueError):
         sys.stdout.write(
