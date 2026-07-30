@@ -1,0 +1,183 @@
+from __future__ import annotations
+
+import datetime as dt
+import shlex
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True, slots=True)
+class OneShotRunnerSpec:
+    label: str
+    run_at: dt.datetime
+    receipt: Path
+    command: tuple[str, ...]
+    expires_at: dt.datetime | None = None
+    persistent_plist: Path | None = None
+    authority_repository: Path | None = None
+    source_commit: str | None = None
+
+
+def render_runner(spec: OneShotRunnerSpec) -> str:
+    label = shlex.quote(spec.label)
+    receipt = shlex.quote(str(spec.receipt))
+    claim = shlex.quote(f"{spec.receipt}.claim")
+    command = shlex.join(spec.command)
+    run_epoch = int(spec.run_at.timestamp())
+    return f"""#!/bin/zsh
+
+set -u
+umask 077
+
+readonly job_label={label}
+readonly run_epoch={run_epoch}
+readonly receipt={receipt}
+readonly claim={claim}
+
+if [[ -f $receipt ]]; then
+  /bin/launchctl remove $job_label >/dev/null 2>&1 || true
+  exit 0
+fi
+
+while (( $(/bin/date +%s) < run_epoch )); do
+  remaining=$(( run_epoch - $(/bin/date +%s) ))
+  if (( remaining > 60 )); then
+    /bin/sleep 60
+  else
+    /bin/sleep $remaining
+  fi
+done
+
+if ! /bin/mkdir $claim 2>/dev/null; then
+  print -u2 -r -- '{{"reason":"already_claimed","result":"blocked"}}'
+  /bin/launchctl remove $job_label >/dev/null 2>&1 || true
+  exit 75
+fi
+/bin/chmod 700 $claim
+
+finalize() {{
+  local exit_code=$?
+  local temporary_receipt="${{receipt}}.tmp.$$"
+  trap - EXIT
+  /usr/bin/printf 'exit_code=%d\\ncompleted_at_epoch=%s\\n' \\
+    $exit_code "$(/bin/date +%s)" > $temporary_receipt
+  /bin/chmod 600 $temporary_receipt
+  /bin/mv -f $temporary_receipt $receipt
+  /bin/launchctl remove $job_label >/dev/null 2>&1 || true
+  exit $exit_code
+}}
+trap finalize EXIT
+
+{command}
+"""
+
+
+def render_persistent_runner(spec: OneShotRunnerSpec) -> str:
+    if (
+        spec.persistent_plist is None
+        or spec.authority_repository is None
+        or spec.source_commit is None
+        or spec.expires_at is None
+    ):
+        raise ValueError
+    label = shlex.quote(spec.label)
+    receipt = shlex.quote(str(spec.receipt))
+    claim = shlex.quote(f"{spec.receipt}.claim")
+    persistent_plist = shlex.quote(str(spec.persistent_plist))
+    repository = shlex.quote(str(spec.authority_repository))
+    command = shlex.join(spec.command)
+    run_epoch = int(spec.run_at.timestamp())
+    expires_epoch = int(spec.expires_at.timestamp())
+    receipt_format = (
+        '{"completed_at_epoch":%s,"exit_code":%d,"label":"%s",'
+        '"result":"%s","schema_version":1,"source_commit_sha":"%s"}\\n'
+    )
+    return f"""#!/bin/zsh
+
+set -u
+umask 077
+
+readonly job_label={label}
+readonly run_epoch={run_epoch}
+readonly expires_epoch={expires_epoch}
+readonly receipt={receipt}
+readonly claim={claim}
+readonly persistent_plist={persistent_plist}
+readonly repository={repository}
+readonly source_commit={spec.source_commit}
+
+cleanup_job() {{
+  /bin/launchctl remove $job_label >/dev/null 2>&1 || true
+  /bin/rm -f $persistent_plist
+}}
+
+write_receipt() {{
+  local result=$1
+  local exit_code=$2
+  local temporary_receipt="${{receipt}}.tmp.$$"
+  /usr/bin/printf '{receipt_format}' \\
+    "$(/bin/date +%s)" $exit_code $job_label $result $source_commit > $temporary_receipt
+  /bin/chmod 600 $temporary_receipt
+  /bin/mv -f $temporary_receipt $receipt
+}}
+
+if [[ -f $receipt ]]; then
+  cleanup_job
+  exit 0
+fi
+
+while (( $(/bin/date +%s) < run_epoch )); do
+  remaining=$(( run_epoch - $(/bin/date +%s) ))
+  if (( remaining > 60 )); then
+    /bin/sleep 60
+  else
+    /bin/sleep $remaining
+  fi
+done
+
+if (( $(/bin/date +%s) > expires_epoch )); then
+  write_receipt expired 0
+  cleanup_job
+  exit 0
+fi
+
+branch=$(/usr/bin/git -C $repository symbolic-ref --quiet --short HEAD 2>/dev/null)
+tracked=$(/usr/bin/git -C $repository status --porcelain=v1 --untracked-files=no 2>/dev/null)
+head=$(/usr/bin/git -C $repository rev-parse HEAD 2>/dev/null)
+local_main=$(/usr/bin/git -C $repository rev-parse refs/heads/main 2>/dev/null)
+origin_main=$(/usr/bin/git -C $repository rev-parse refs/remotes/origin/main 2>/dev/null)
+if [[ $branch != main || -n $tracked || $head != $source_commit || \\
+  $head != $local_main || $head != $origin_main ]]; then
+  write_receipt blocked 78
+  cleanup_job
+  exit 78
+fi
+
+if [[ -d $claim ]]; then
+  /bin/rmdir $claim 2>/dev/null || {{
+    print -u2 -r -- '{{"reason":"active_claim","result":"blocked"}}'
+    cleanup_job
+    exit 75
+  }}
+fi
+if ! /bin/mkdir $claim 2>/dev/null; then
+  print -u2 -r -- '{{"reason":"already_claimed","result":"blocked"}}'
+  cleanup_job
+  exit 75
+fi
+/bin/chmod 700 $claim
+
+finalize() {{
+  local exit_code=$?
+  trap - EXIT
+  write_receipt completed $exit_code
+  cleanup_job
+  exit $exit_code
+}}
+trap finalize EXIT
+
+{command}
+"""
+
+
+__all__ = ("OneShotRunnerSpec", "render_persistent_runner", "render_runner")
