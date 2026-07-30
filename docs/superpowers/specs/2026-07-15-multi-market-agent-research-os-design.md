@@ -8,6 +8,9 @@
 - 첫 코드 마일스톤: 공통 식별·신호 계약만 추가하며 DB·실행 동작은 변경하지 않음
 
 > 상위 제품·데이터·상시 운영 아키텍처는 [2026-07-17 기관형 다중 시장 Quant Research OS 설계](2026-07-17-institutional-multi-market-quant-research-os-design.md)가 확장한다. 이 문서는 이미 구현된 `MarketId`, `AgentFamily`, `StrategyLaneRef`, Opportunity·TradeSignal과 composite experiment 계약의 권위를 계속 가진다.
+>
+> **2026-07-22 제품 우선순위:** 아래 §12는 계약을 도입하던 당시의 구현 기록이며 현재 개발
+> 순서가 아니다. 현재 실행 마일스톤은 상위 설계 §17과 `docs/milestones_status_ko.md`만 따른다.
 
 ## 1. 제품 정의
 
@@ -332,7 +335,7 @@ SQLite는 현재 단일 호스트 append-only 원장과 query-only Reviewer에 �
 
 변경 범위의 pytest, 전체 pytest, Ruff, basedpyright, CLI `--help`, 오입력, fixture happy path를 실행한다. 무거운 데이터 작업은 한 번에 하나만 실행하고 RSS 10 GiB 전에 중단한다.
 
-## 12. 점진적 구현 순서
+## 12. 초기 계약 구현 순서 기록
 
 ### Milestone 1 — 공통 제품 계약
 

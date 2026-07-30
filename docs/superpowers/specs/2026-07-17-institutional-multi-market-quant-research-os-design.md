@@ -2,6 +2,7 @@
 
 - 상태: 제품 기획 승인, 점진적 구현 진행 중
 - 작성일: 2026-07-17
+- 제품 우선순위 개정: 2026-07-22
 - 문서 권위: 최상위 제품·데이터·에이전트 아키텍처
 - 제품 경계: 연구, 실시간 종목 발굴, 추천, shadow 검증, Alpaca Paper 전진검증
 - 실제 자금 거래: 금지
@@ -620,81 +621,123 @@ agent마다 여러 challenger를 동시에 shadow 평가할 수 있다. champion
 - CLI `--help`, invalid input와 fixture happy path
 - 변경 범위 pytest, 전체 pytest, Ruff와 basedpyright
 
-## 17. 점진적 마일스톤
+## 17. 제품 우선 마일스톤
 
-### Milestone 0: 문서와 권위 정리
+2026-07-22부터 이전의 `data foundation → raw lake → evidence source → derivatives` 목록은 구현된
+capability inventory일 뿐 개발 순서가 아니다. 유일한 실행 순서는 아래 사용자 수직 마일스톤이다.
+새 schema, ledger, connector, supervisor 또는 library 통합은 독립 마일스톤이 될 수 없다.
 
-- 이 설계를 canonical product architecture로 지정
-- README에 제품 결과, agent 조직과 data plane 반영
-- 기존 2026-07-15 설계는 구현된 공통 계약의 하위 문서로 유지
+### Milestone 0: 제품 우선순위 전환
 
-### Milestone 1: 기존 intraday Paper checkpoint 완료
+- canonical 설계, README와 상태표를 같은 제품 순서로 맞춘다.
+- 현재 구현된 안전·원장·replay 계약은 유지하되 추가 확장은 동결한다.
+- 진행 중인 혼합 작업은 삭제하지 않고 현재 제품 수직에 필요한 부분만 검증해 재사용한다.
 
-- 현재 smoke 위험 한도를 유지
-- GET-only generic safety planner와 armed mutation 경로의 risk contract 차이를 명시하고, 실행 가능 경로는 active lane manifest를 단일 권위로 사용
-- 정규장 조건이 자연스럽게 충족될 때 armed entry·protective lifecycle·EOD flat·reconciliation 검증
-- 조건이 없으면 POST를 만들지 않고 fake broker E2E와 runbook evidence를 유지
+완료 증거는 세 문서의 일치와 `git status` 보존이다.
 
-### Milestone 2: 데이터 foundation 계약
+### Milestone 1: 실시간 추천 전달
 
-- `DataSourceId`, `DataCapability`, `DataEntitlement`, `CanonicalEventEnvelope`
-- `InstrumentId`, alias와 corporate-action contract
-- `StrategyDataRequirement`와 `blocked_by_data`
-- 네트워크·실행 mutation 없는 contract-only checkpoint
+- 기존 US·KR `Opportunity`와 `TradeSignal`을 종목, 현재 진입 조건, 손절, 목표, 근거, 유효시간,
+  strategy version을 갖춘 `RecommendationCard`로 확정한다.
+- 기존 outbox를 Telegram의 Hermes agent 전달 경로에 연결하고 중복 전송을 막는다.
+- 적격 추천이 없는 날도 `no recommendation`과 차단 사유를 일일 결과로 전달한다.
+- stale quote, 장 종료, 누락 spread와 불완전 source는 카드 발행 전에 계속 fail-closed한다.
 
-### Milestone 3: Raw lake와 deterministic replay
+완료 조건은 수동 복사 없이 현재 세션의 실제 read-only 시장 증거로 생성된 카드 또는 명시적
+무추천 결과가 Telegram/Hermes에 도착하고, fixture happy path와 stale/invalid 차단도 함께 통과하는
+것이다.
 
-- 기존 bounded US·KR collector의 raw receipt를 object partition manifest로 projection
-- Parquet canonical event writer와 DuckDB query
-- correction, tombstone, checkpoint와 replay conformance
+### Milestone 2: US Day Agent 운영 수직
 
-### Milestone 4: US equity always-on data vertical
+- ORB 계열 baseline 하나만 활성화해 정규장 scanner → current quote → 추천 전달을 상시 실행한다.
+- 자연스럽게 적격 setup이 생길 때만 명시적 arm 아래 Alpaca Paper entry를 제출한다.
+- 부분체결, 거절, timeout, restart, 보호 OCO resize, cutoff, EOD cancel/flatten과 broker/shadow 대사를
+  하나의 사용자 결과로 닫는다.
+- 기존 max notional 100 USD, planned risk 10 USD, position 1, daily loss 30 USD와 비용 가정을 확대하지
+  않는다.
 
-- broad scanner와 dynamic quote·trade subscription
-- 공통 indicator kernel과 feature snapshot
-- 현재 US Opportunity·TradeSignal을 새 evidence contract에 연결
-- 장중 장기 실행, restart와 gap recovery 검증
+완료 조건은 예약된 뉴욕 정규장 세션 3회를 수동 상태 수리 없이 끝내고, 그중 실제 적격 setup 한
+건 이상이 Paper entry → 보호주문 → exit 또는 EOD flat → 최종 대사 → Telegram 결과까지 완주하는
+것이다. 적격 setup이 없으면 주문을 만들지 않으며 이 실제 lifecycle 증거가 생길 때까지 마일스톤은
+운영 부분 상태로 남는다.
 
-### Milestone 5: News·공시·소셜 evidence
+### Milestone 3: KR Theme Day Agent 운영 수직
 
-- SEC·DART·회사 발표·허용 뉴스 source 확장
-- X·Reddit 공식 connector entitlement와 retention 계약
-- entity·claim·burst·corroboration pipeline
-- social evidence는 shadow experiment에만 사용
+- 기존 OpenDART·LS NWS·KIS ranking·volume surge same-cycle을 열린 KRX 세션에 실행한다.
+- rank-1 theme leader의 현재 호가와 완료 분봉으로 추천 카드를 전달한다.
+- 국내 주문 없이 conservative shadow entry → stop/target/time exit → 일일 Reviewer 결과를 확정한다.
+- source가 불완전하거나 VI·단일가·거래정지·가격제한·stale quote gate를 통과하지 못하면 차단 사유를
+  사용자에게 전달한다.
 
-### Milestone 6: Derivatives와 market context
+완료 조건은 예약된 KRX 정규장 세션 3회를 수동 상태 수리 없이 끝내고, 실제 후보 한 건 이상이
+추천 → shadow entry/exit → 비용 반영 결과 → Telegram 일일 요약까지 완주하는 것이다.
 
-- US options chain·quote·trade·OI read-only adapter
-- 선물·macro·CFTC·volatility context
-- option contract와 futures roll security master
-- derivatives agent는 shadow-only로 시작
+### Milestone 4: 상시 운영과 일일 사용자 루프
 
-### Milestone 7: KR real-time recommendation vertical
+- Mac mini에서 US·KR 장전, 장중, 장후 job을 재부팅 후에도 자동 실행한다.
+- 장중에는 새 카드만 전달하고 장후에는 후보, 추천, 진입·미진입 사유, 결과와 data/process incident를
+  한 번 요약한다.
+- process restart, 동일 카드 중복, 휴장과 provider 장애를 사용자 메시지에서 구분한다.
+- 운영자가 여러 CLI를 순서대로 실행하지 않아도 한 세션이 끝까지 닫혀야 한다.
 
-- LS/KIS 체결·호가·VI·가격제한·수급 read-only adapter
-- 현재 KR catalyst cycle을 live Opportunity에 연결
-- theme leader day shadow와 recommendation card
-- 국내 주문·계좌 mutation 없음
+완료 조건은 US와 KR 각각 연속 5거래일 동안 매일 추천 또는 명시적 무추천/incident 결과가 자동
+전달되고, 재시작 한 번을 포함해 중복·누락 없이 장후 결과까지 닫히는 것이다. 여기까지가
+**운영 제품 v1**이다.
 
-### Milestone 8: Loop Engineer v2
+### Milestone 5: US Swing Agent 운영 수직
 
-- source-driven hypothesis queue
-- strategy implementation patch와 immutable version
-- historical·walk-forward·shadow 자동 orchestration
-- comparison-ready Reviewer, promotion review와 recovery policy
-- 자동 코드 생성은 테스트된 PR과 version 등록까지만 허용
+- 기존 `new_high_momentum` 신고가·RVOL 전략을 현재 NYSE 일봉과 뉴스·공시 근거에 연결한다.
+- 조건부 진입 구간, 손절, 목표, 보유시간과 무효화 조건을 Telegram/Hermes에 전달한다.
+- 다중세션 shadow state가 entry, stop/target/time exit와 expired/no-entry를 구분해 일일 결과에 반영한다.
 
-### Milestone 9: Paper forward validation 확대
+완료 조건은 실제 post-close 데이터에서 한 건 이상의 완전한 다중세션 shadow lifecycle과 명시적
+no-entry/expired 관찰이 재생 가능하게 닫히는 것이다.
 
-- 승격된 US day lane의 broker/shadow 표본 누적
-- 검증된 US swing state machine과 별도 Paper account 계약
-- lane별 daily snapshot과 운영 SLO를 함께 평가
+### Milestone 6: Loop Engineer 실제 연구 루프
 
-### Milestone 10: Allocation Manager
+- 논문, GitHub reference, 실제 실패 사례와 관측된 regime에서 한 번에 challenger 하나만 제안한다.
+- 가설, 데이터 범위, 비용, 비교 기준과 중단 조건을 실행 전에 고정한다.
+- historical → walk-forward → shadow를 같은 strategy version으로 실행하고 Independent Reviewer가
+  `reject`, `continue_collection`, `comparison_ready` 또는 증거가 충분할 때만 `promote`를 권고한다.
+- 실패와 무신호도 총 실험 수에 포함하고, 결과를 주간 Telegram/Hermes 연구 요약으로 전달한다.
+- Qlib, RD-Agent, NautilusTrader, LEAN 또는 OpenBB는 이 마일스톤에서 자체 baseline보다 효과가
+  확인되는 격리 worker나 비교 도구로만 사용할 수 있다.
 
-- 최소 두 독립 champion 이후에만 구현
-- 확정된 전일 snapshot만 읽는 next-session risk budget
-- 주문·종목 발굴·당일 재배분 권한 없음
+완료 조건은 challenger 하나가 source → 사전등록 → 구현·테스트 → historical/walk-forward → shadow
+등록 → Reviewer 결정까지 자동으로 완주하는 것이다. 수익성이나 promotion을 억지로 만들 필요는 없다.
+여기까지가 **Research OS v1**이다.
+
+### Milestone 7: 전문 전략 Agent 확장
+
+- Systematic Quant Agent의 첫 lane을 shadow 수직으로 완성한 뒤에만 다음 lane을 연다.
+- 옵션·선물·소셜은 등록된 challenger가 그 capability를 필수로 요구할 때 read-only로 추가한다.
+- 새 agent도 반드시 실시간/장후 카드, shadow outcome과 Reviewer 결과를 먼저 제공한다.
+- lane 간 결합은 새 composite hypothesis로만 실험한다.
+
+완료 조건은 day, swing, systematic에서 각각 한 개 이상의 운영 수직과 독립 forward evidence가
+존재하는 것이다.
+
+### Milestone 8: Allocation Manager
+
+- 최소 두 독립 executable champion 이후에만 구현한다.
+- 확정된 전일 snapshot만 읽어 다음 세션 risk budget을 계산한다.
+- 종목 발굴, 주문, 당일 재배분 권한을 갖지 않는다.
+
+사용자가 말하는 `종목 발굴 매니저`는 Milestone 1~3의 `Opportunity Manager`다. 이 단계의
+`Allocation Manager`와 혼동하지 않는다.
+
+### 17.1 인프라 작업 허용 규칙
+
+지원 작업은 아래 조건을 모두 만족할 때만 허용한다.
+
+1. 현재 활성 마일스톤의 실제 사용자 시나리오가 실패한 증거를 먼저 제시한다.
+2. 기존 module과 저장 계약 안에서 가장 작은 변경으로 고친다.
+3. 같은 변경 묶음에서 카드, Paper/shadow 결과 또는 일일 메시지까지 실제 표면을 다시 검증한다.
+4. 새 DB/schema/provider/framework는 기존 경로로 시나리오를 닫을 수 없음을 증명한 경우에만 추가한다.
+5. fixture, schema, receipt, recovery 또는 `--help`만 통과한 상태를 마일스톤 완료로 부르지 않는다.
+
+장 휴장이나 적격 신호 부재는 다른 인프라를 선제 구축할 허가가 아니다. 그 시간에는 같은 수직의
+전달, replay, fake-broker E2E, 운영 runbook과 다음 실제 세션 준비만 수행한다.
 
 ## 18. 기존 문서와의 관계
 
@@ -719,15 +762,25 @@ agent마다 여러 challenger를 동시에 shadow 평가할 수 있다. champion
 
 ## 20. 제품 완료의 의미
 
-이 제품은 connector 수가 많다고 완료되지 않는다. 다음 조건이 함께 충족되어야 기관형 Research OS 기반이 완성됐다고 본다.
+connector나 ledger 수가 많다고 제품이 완료되지 않는다.
 
-1. 모든 추천을 당시 관측 가능한 raw evidence까지 재생할 수 있다.
-2. strategy version과 required data capability가 고정돼 있다.
-3. live와 replay가 같은 feature·signal 결과를 만든다.
-4. 실패·중도절단·수정·삭제와 실험 총 시도 수가 보존된다.
-5. 전문 agent가 독립 lane을 운영하고 결합은 새 실험으로만 이뤄진다.
-6. Reviewer와 lifecycle이 전략 구현·주문 프로세스와 독립돼 있다.
-7. 상시 운영 중 provider 장애와 process restart를 데이터 손실 없이 복구한다.
-8. 추천 카드가 근거, 시각, 진입, 위험, 무효화와 검증 상태를 함께 제공한다.
-9. 승인된 미국 lane만 Alpaca Paper에서 broker/shadow 동시 검증을 수행한다.
-10. 실제 자금 주문 경로는 존재하지 않는다.
+**운영 제품 v1**은 다음을 사용자가 실제로 관측할 때 완료된다.
+
+1. US와 KR 장중 후보가 현재 진입 조건, 손절, 목표, 근거와 유효시간을 갖춘 카드로 전달된다.
+2. 추천이 없거나 차단됐을 때도 이유가 Telegram/Hermes에 전달된다.
+3. US day baseline이 Alpaca Paper에서 보호주문과 EOD 대사까지 실제 lifecycle을 완주한다.
+4. KR day baseline이 열린 장에서 shadow entry/exit와 비용 반영 결과를 완주한다.
+5. 재부팅과 provider 장애를 포함해 매일 자동 장후 요약이 도착한다.
+
+**Research OS v1**은 운영 제품 v1에 더해 다음을 만족할 때 완료된다.
+
+6. swing lifecycle 하나가 실제 다중세션 forward evidence를 만든다.
+7. challenger 하나가 source부터 Reviewer 결정까지 자동 연구 루프를 완주한다.
+8. 실패·중도절단·무신호와 총 실험 수가 보존되고 결과가 사용자에게 보고된다.
+
+모든 단계에서 아래 품질 계약은 유지한다.
+
+- 모든 추천은 당시 관측 가능한 raw evidence와 불변 strategy version까지 재생 가능하다.
+- live와 replay는 같은 feature·signal 의미를 사용한다.
+- Reviewer는 전략 구현·주문 프로세스와 독립된다.
+- 승인된 미국 lane만 Alpaca Paper를 사용하고 실제 자금 주문 경로는 존재하지 않는다.

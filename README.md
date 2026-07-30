@@ -20,28 +20,41 @@
 
 가격·호가·시장 상태를 현재 시점에 확인할 수 없으면 `현재 진입 가능`으로 표시하지 않는다. 추천은 주문권한이 아니며 Paper 체결은 체결 가능성을 평가하는 하류 증거다.
 
-## 목표 아키텍처
+## 지금 만드는 제품
+
+개발 순서는 데이터 기반을 더 넓히는 순서가 아니라 사용자가 결과를 받는 순서다.
+
+1. 기존 US·KR 추천을 Telegram의 Hermes agent에 전달한다.
+2. US ORB baseline 하나를 정규장 scan → 추천 → Alpaca Paper → 보호주문 → EOD 대사까지 완주한다.
+3. KR theme leader baseline 하나를 열린 KRX same-cycle → 추천 → shadow entry/exit까지 완주한다.
+4. Mac mini에서 두 시장을 상시 실행하고 추천·무추천·incident·결과를 매일 요약한다.
+5. 그 다음 swing vertical과 challenger 연구·Reviewer 루프를 실제로 돌린다.
+6. systematic, options, futures와 추가 social data는 검증 중인 가설이 요구할 때만 확장한다.
+
+운영 제품 v1은 1~4가 실제 시장에서 관측될 때 완료다. fixture, schema, ledger 또는 CLI만 완성된
+상태를 제품 완료로 세지 않는다. 상세 상태와 완료 증거는
+[제품 우선 마일스톤](docs/milestones_status_ko.md)에 기록한다.
+
+새 ledger, schema, supervisor, 범용 framework와 선제적 provider 추가는 동결한다. 현재 사용자
+수직이 실패한 직접 원인일 때만 기존 구조 안에서 최소한으로 보완한다.
+
+## 제품 동작 흐름
 
 ```mermaid
 flowchart LR
-    A["주식·옵션·선물·호가"] --> G["Data Acquisition Gateway"]
-    B["뉴스·공시·X·Reddit"] --> G
-    C["거시·수급·연구 자료"] --> G
-    G --> R["Immutable Raw Lake"]
-    R --> N["Quality Gate + Security Master"]
-    N --> F["Feature And Event Engine"]
-    F --> P["Point-In-Time Evidence Store"]
-    P --> O["Opportunity Manager"]
-    P --> T["Trading Agents"]
-    O --> E["Experiment Ledger"]
-    T --> E
-    E --> V["Independent Reviewer"]
-    V --> L["Lifecycle Controller"]
-    L --> X["Shadow + Alpaca Paper"]
-    X --> E
+    D["US·KR 가격·수급·뉴스·공시·테마"] --> O["Opportunity Manager"]
+    O --> A["Day · Swing · Systematic Agents"]
+    A --> C["RecommendationCard"]
+    C --> H["Telegram · Hermes"]
+    A --> X["Shadow · Alpaca Paper"]
+    X --> R["Daily Outcome · Independent Reviewer"]
+    R --> Q["Challenger Queue"]
+    Q --> A
 ```
 
-현재의 append-only SQLite control ledger와 Paper 실행 상태기계는 유지한다. 전 종목 tick·호가·옵션·소셜처럼 대용량인 데이터만 durable raw spool, object storage와 Parquet 계층으로 점진적으로 분리한다.
+현재의 append-only SQLite control ledger, point-in-time evidence와 Paper 실행 상태기계는 이 흐름을
+안전하게 지지하는 내부 구현으로 유지한다. 별도 데이터 계층은 실제 활성 전략이 현재 저장 방식의
+한계를 증명할 때만 확장한다.
 
 ## 전문 에이전트 조직
 
@@ -65,6 +78,20 @@ flowchart LR
 모든 event는 원본 reference와 함께 `event_time`, `published_at`, `provider_time`, `received_at`, correction과 schema version을 보존한다. 전략이 요구한 data capability가 없거나 stale이면 다른 source로 조용히 대체하지 않고 `blocked_by_data` 또는 `research_only`로 닫는다.
 
 ## 현재 구현 상태
+
+제품 관점에서의 현재 상태는 다음과 같다.
+
+| 사용자 기능 | 현재 관측된 상태 |
+|---|---|
+| US day 추천·Paper | scanner, 카드, Paper 상태기계는 준비됐지만 실제 Paper POST는 0건 |
+| KR theme day 추천 | 실제 LS 뉴스와 KIS ranking source는 확인했지만 열린 KRX 전체 shadow 수직은 미완료 |
+| Telegram/Hermes | 로컬 card outbox까지만 있고 실제 전달 adapter는 미연결 |
+| 상시 운전·일일 요약 | 개별 scheduler는 있으나 US·KR 통합 사용자 세션은 미완료 |
+| swing | fixture E2E만 완료, 실제 다중세션 forward lifecycle 미완료 |
+| 자가개선 연구 | 원장·Reviewer 계약은 있으나 challenger source→결정 자동 루프는 미완료 |
+
+따라서 다음 개발은 Telegram/Hermes 전달과 US/KR 실제 세션 수직에만 집중한다. 아래 내용은 이미
+구현된 기술 체크포인트의 상세 기록이며 추가 인프라 개발 순서가 아니다.
 
 > **현재 상태:** 분봉 수집·급등주 스캐너·ORB/VWAP/HOD/Gap-and-Go 추천·인과성 감사·과거 및 forward 평가에 더해 Alpaca Paper 시장시계·계좌·주문·포지션·Account Activities FILL GET, `trade_updates` 스트림 인증·구독·Ping/Pong, 단일 Writer 원장과 fail-closed 주문 승인 게이트까지 구현되어 있다. 수신 frame은 text/binary 원문 BLOB을 먼저 확정한 뒤 분류하며, 재시작 시 미분류 receipt를 원래 순서로 복구하고 매 연결 세대에서 REST 주문 snapshot·개별 FILL activity·nested 보호 OCO와 대사한다. 모호한 entry/OCO/cancel mutation은 deterministic client order ID 또는 broker order ID로 직접 GET하며, 정확한 targeted 증거가 없으면 재전송하지 않는다. 통합 운영 세션은 한 Writer lease와 한 WSS 안에서 current-epoch 복구·승인·Paper mutation·사후 대사를 직렬 실행한다. 부분체결 수량이 기존 보호 OCO보다 늘어나면 source-bound cancel만 먼저 실행하고 terminal 대사 뒤 다음 호출에서 새 client ID와 exact 수량으로 replacement OCO를 제출한다. 별도 append-only lane registry는 세 manifest·전용 Paper account binding·사전등록 experiment scope·final daily snapshot 계약을 보존하고 Reviewer용 query-only reader를 제공한다. ORB intraday producer는 장 종료 뒤 현재 GET/WSS readiness, flat broker 상태, 세 계층 account binding, exact-scope daily record와 query-only execution hash를 다시 검증해 immutable `LaneDailySnapshot`을 append한다. 독립 Reviewer는 이 snapshot과 exact daily/adaptive artifact만 읽어 별도 global append-only review ledger에 권고를 남기며 전략 상태·champion·allocation·주문권한을 바꾸지 않는다. lane·review·execution DB와 분리된 global experiment ledger schema v6는 기존 source lineage, legacy 가설·전략 버전·trial·lifecycle, exact `StrategyLaneRef` 기반 multi-market 가설·버전·shadow trial·next-session lifecycle을 append-only로 보존한다. ORB의 NYSE 거래일마다 pre-open 등록·정규장 시작·장후 terminal을 갖는 독립 `shadow_forward` trial을 만들고, exact daily/adaptive/snapshot/review evidence로 `completed`·`censored`·`failed` 중 하나를 확정하는 opt-in watch 연결도 구현됐다. local-only Lifecycle Controller v1은 exact finalized snapshot·review·현재 lifecycle chain을 다시 검증하고 성숙 구간의 명확한 5일 열화만 다음 NYSE 세션 `suspended` event로 append한다. 조기 reject, 비교·승격·복구·champion·allocation·주문권한은 계속 닫혀 있다. 전용 장후 runner는 snapshot 성공 뒤에만 Reviewer를 실행하고 단계별 audit와 redacted aggregate report를 남긴다. 일일 연구 원장은 schema v2에서 exact lane scope로만 표본을 누적한다. 신규 진입, 보호 OCO 수명주기, cutoff·kill switch·EOD cancel/flatten은 모두 정확한 arm 객체가 필요한 축소 smoke CLI로만 열렸고 실제 정규장 Paper mutation은 아직 0건이다.
 
