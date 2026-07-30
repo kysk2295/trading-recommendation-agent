@@ -23,6 +23,7 @@ from trading_agent.us_day_acceptance_models import (
     UsDayFinalReconciliationEvidence,
     UsDayHermesOutcomeReceiptEvidence,
     UsDayNaturalPaperLifecycleEvidence,
+    UsDaySessionCommitBinding,
     UsDaySessionTerminal,
     UsDayThreeSessionReport,
 )
@@ -47,10 +48,11 @@ class UsDayAcceptanceEvidenceBundle:
 def build_three_session_report(
     terminals: tuple[UsDaySessionTerminal, ...],
     generated_at: dt.datetime | None = None,
+    verifier_commit_sha: str | None = None,
 ) -> UsDayThreeSessionReport:
     validated = _validated_terminals(terminals)
     eligible = tuple(item for item in validated if item.is_real_scheduled_session)
-    context = _envelope(validated, generated_at)
+    context = _envelope(validated, generated_at, verifier_commit_sha)
     delivery_passed = bool(eligible) and all(item.hermes_acknowledged for item in eligible)
     natural_passed = any(item.has_natural_lifecycle for item in eligible)
     reconciliation_passed = bool(eligible) and all(item.is_finally_reconciled for item in eligible)
@@ -59,6 +61,7 @@ def build_three_session_report(
         commit_sha=context.commit_sha,
         generated_at=context.generated_at,
         session_ids=context.session_ids,
+        session_commit_bindings=context.session_commit_bindings,
         fixture_labels=context.fixture_labels,
         source_artifact_hashes=context.source_artifact_hashes,
         daily_terminal_count=len(validated),
@@ -73,10 +76,8 @@ def build_three_session_report(
 def write_us_day_acceptance_evidence(request: UsDayAcceptanceBuildRequest) -> UsDayAcceptanceEvidenceBundle:
     commit_sha = require_clean_repository_commit(request.repository)
     terminals = _load_terminals(request)
-    if any(item.commit_sha != commit_sha for item in terminals):
-        raise InvalidUsDayAcceptanceEvidenceError
     _verify_sources(request.repository, terminals)
-    report = build_three_session_report(terminals, request.generated_at)
+    report = build_three_session_report(terminals, request.generated_at, commit_sha)
     eligible = tuple(item for item in terminals if item.is_real_scheduled_session)
     output_root = request.repository / "outputs/acceptance"
     report_paths = _report_paths(output_root)
@@ -129,10 +130,7 @@ def _validated_terminals(terminals: tuple[UsDaySessionTerminal, ...]) -> tuple[U
         validated = tuple(UsDaySessionTerminal.model_validate(item.model_dump(mode="python")) for item in terminals)
     except ValidationError:
         raise InvalidUsDayAcceptanceEvidenceError from None
-    if (
-        len({item.session_id for item in validated}) != len(validated)
-        or len({item.commit_sha for item in validated}) != 1
-    ):
+    if len({item.session_id for item in validated}) != len(validated):
         raise InvalidUsDayAcceptanceEvidenceError
     return tuple(sorted(validated, key=lambda item: item.session_id))
 
@@ -140,12 +138,17 @@ def _validated_terminals(terminals: tuple[UsDaySessionTerminal, ...]) -> tuple[U
 def _envelope(
     terminals: tuple[UsDaySessionTerminal, ...],
     generated_at: dt.datetime | None,
+    verifier_commit_sha: str | None,
 ) -> UsDayEvidenceEnvelope:
     source_hashes = tuple(sorted({source.sha256 for item in terminals for source in item.source_artifacts}))
     return UsDayEvidenceEnvelope(
-        commit_sha=terminals[0].commit_sha,
+        commit_sha=terminals[0].commit_sha if verifier_commit_sha is None else verifier_commit_sha,
         generated_at=max(item.observed_through for item in terminals) if generated_at is None else generated_at,
         session_ids=tuple(item.session_id for item in terminals),
+        session_commit_bindings=tuple(
+            UsDaySessionCommitBinding(session_id=item.session_id, terminal_commit_sha=item.commit_sha)
+            for item in terminals
+        ),
         fixture_labels=tuple(sorted({item.fixture_label for item in terminals})),
         source_artifact_hashes=source_hashes,
     )
@@ -179,6 +182,7 @@ def _natural_evidence(
         commit_sha=report.commit_sha,
         generated_at=report.generated_at,
         session_ids=report.session_ids,
+        session_commit_bindings=report.session_commit_bindings,
         fixture_labels=report.fixture_labels,
         source_artifact_hashes=report.source_artifact_hashes,
         passed=report.natural_paper_lifecycle_passed,
@@ -195,6 +199,7 @@ def _reconciliation_evidence(
         commit_sha=report.commit_sha,
         generated_at=report.generated_at,
         session_ids=report.session_ids,
+        session_commit_bindings=report.session_commit_bindings,
         fixture_labels=report.fixture_labels,
         source_artifact_hashes=report.source_artifact_hashes,
         passed=report.final_reconciliation_passed,
@@ -210,6 +215,7 @@ def _receipt_evidence(
         commit_sha=report.commit_sha,
         generated_at=report.generated_at,
         session_ids=report.session_ids,
+        session_commit_bindings=report.session_commit_bindings,
         fixture_labels=report.fixture_labels,
         source_artifact_hashes=report.source_artifact_hashes,
         passed=report.delivery_subgate_passed,

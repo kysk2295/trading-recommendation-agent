@@ -109,6 +109,20 @@ class UsDaySessionTerminal(BaseModel):
         )
 
 
+class UsDaySessionCommitBinding(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True, hide_input_in_errors=True)
+
+    session_id: str
+    terminal_commit_sha: str
+
+    @model_validator(mode="after")
+    def validate_binding(self) -> Self:
+        if _GIT_SHA.fullmatch(self.terminal_commit_sha) is None:
+            raise InvalidUsDayAcceptanceEvidenceError
+        _ = _session_date(self.session_id)
+        return self
+
+
 class UsDayEvidenceEnvelope(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
@@ -117,8 +131,18 @@ class UsDayEvidenceEnvelope(BaseModel):
     commit_sha: str
     generated_at: AwareDatetime
     session_ids: tuple[str, ...]
+    session_commit_bindings: tuple[UsDaySessionCommitBinding, ...]
     fixture_labels: tuple[str, ...]
     source_artifact_hashes: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def validate_envelope(self) -> Self:
+        if (
+            _GIT_SHA.fullmatch(self.commit_sha) is None
+            or self.session_ids != tuple(binding.session_id for binding in self.session_commit_bindings)
+        ):
+            raise InvalidUsDayAcceptanceEvidenceError
+        return self
 
 
 class UsDayThreeSessionReport(UsDayEvidenceEnvelope):
