@@ -70,19 +70,36 @@ def test_once_waits_for_setup_without_opening_arm_material(tmp_path: Path, capsy
 
 
 def test_once_waits_when_setup_has_no_owner_arm(tmp_path: Path, capsys) -> None:
-    signer = HermesArmSigner.from_bytes(b"x" * 32)
+    signer_accessed = False
 
-    exit_code = main(_args(tmp_path, "--once"), _deps(_current_source, lambda _: signer, CapturingOperatingMain()))
+    def signer(_: Path) -> HermesArmSigner:
+        nonlocal signer_accessed
+        signer_accessed = True
+        return HermesArmSigner.from_bytes(b"x" * 32)
+
+    exit_code = main(_args(tmp_path, "--once"), _deps(_current_source, signer, CapturingOperatingMain()))
 
     assert exit_code == 0
     assert json.loads(capsys.readouterr().out) == {"result": "waiting_owner_arm"}
     assert not (tmp_path / "arm.sqlite3").exists()
+    assert not signer_accessed
 
 
 def test_once_blocks_an_existing_unreadable_arm_database(tmp_path: Path, capsys) -> None:
     database = tmp_path / "arm.sqlite3"
     database.touch()
     database.chmod(0)
+    signer = HermesArmSigner.from_bytes(b"x" * 32)
+
+    exit_code = main(_args(tmp_path, "--once"), _deps(_current_source, lambda _: signer, CapturingOperatingMain()))
+
+    assert exit_code == 1
+    assert json.loads(capsys.readouterr().out) == {"reason": "invalid_store", "result": "blocked"}
+
+
+def test_once_blocks_an_existing_broken_arm_database_path(tmp_path: Path, capsys) -> None:
+    database = tmp_path / "arm.sqlite3"
+    database.symlink_to(tmp_path / "missing.sqlite3")
     signer = HermesArmSigner.from_bytes(b"x" * 32)
 
     exit_code = main(_args(tmp_path, "--once"), _deps(_current_source, lambda _: signer, CapturingOperatingMain()))

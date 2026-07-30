@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import math
+import os
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -157,8 +158,12 @@ def _observe(command: UsDayArmedEntryCommand, dependencies: UsDayArmedEntryDepen
                 return 0
             dependencies.sleeper(command.poll_interval_seconds)
             continue
-        store = dependencies.store_factory(command.arm_database, dependencies.signer_loader(command.signing_key))
-        matching = _matching_arms(store, command.session_id, now)
+        matching: tuple[HermesArmRequest, ...]
+        if os.path.lexists(command.arm_database):
+            store = dependencies.store_factory(command.arm_database, dependencies.signer_loader(command.signing_key))
+            matching = _matching_arms(store, command.session_id, now)
+        else:
+            matching = ()
         match len(matching):
             case 0:
                 if command.once:
@@ -166,7 +171,7 @@ def _observe(command: UsDayArmedEntryCommand, dependencies: UsDayArmedEntryDepen
                     return 0
                 dependencies.sleeper(command.poll_interval_seconds)
             case 1:
-                return dependencies.operating_main(_operating_argv(command, matching[0]))
+                return dependencies.operating_main(_operating_argv(command, next(iter(matching))))
             case _:
                 _print_result(ArmedEntryResult.BLOCKED_AMBIGUOUS_CONFIRMED_ARM)
                 return 1

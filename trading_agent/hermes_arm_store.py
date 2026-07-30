@@ -47,9 +47,10 @@ PRAGMA user_version = 1;
 
 
 class HermesArmStore:
-    __slots__ = ("_signer", "path")
+    __slots__ = ("_signer", "_source_path", "path")
 
     def __init__(self, path: Path, signer: HermesArmSigner) -> None:
+        self._source_path = path.absolute()
         self.path = path.resolve(strict=False)
         self._signer = signer
 
@@ -79,12 +80,8 @@ class HermesArmStore:
         return HermesArmRequest.model_validate_json(json.dumps(values))
 
     def requests(self) -> tuple[HermesArmRequest, ...]:
-        try:
-            _ = os.stat(self.path)
-        except FileNotFoundError:
+        if not os.path.lexists(self._source_path):
             return ()
-        except OSError:
-            raise InvalidHermesArmRequestError(HermesArmFailure.INVALID_STORE) from None
         try:
             with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
                 rows: list[tuple[str, str, str]] = connection.execute(
