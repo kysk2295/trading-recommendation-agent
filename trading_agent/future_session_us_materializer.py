@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import hashlib
 import os
 import plistlib
 import shutil
-import stat
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import TypeAdapter, ValidationError
@@ -27,6 +24,20 @@ from trading_agent.future_session_plan_models import (
     canonical_plan_json,
     canonical_request_json,
 )
+from trading_agent.future_session_us_materializer_errors import (
+    FutureSessionMaterializationError,
+)
+from trading_agent.future_session_us_materializer_io import (
+    sha256,
+    stage_path,
+    write_private_file,
+)
+from trading_agent.future_session_us_materializer_models import (
+    UsFutureSessionMaterializationRequest,
+)
+from trading_agent.future_session_us_materializer_reader import (
+    read_private_canonical_file,
+)
 from trading_agent.launchd_one_shot_runner import (
     OneShotRunnerSpec,
     render_persistent_runner,
@@ -38,45 +49,43 @@ _PRIVATE_DIRECTORY_MODE = 0o700
 _PLAN_ADAPTER = TypeAdapter(FutureSessionPlanDecision)
 
 
-@dataclass(frozen=True, slots=True)
-class FutureSessionMaterializationError(ValueError):
-    reason: str
-
-    def __str__(self) -> str:
-        return self.reason
-
-
 def materialize_us_future_session(
-    *,
-    request_path: Path,
-    plan_path: Path,
-    output_dir: Path,
+    materialization: UsFutureSessionMaterializationRequest,
 ) -> Path:
+    request_path = materialization.request_path
+    plan_path = materialization.plan_path
+    output_dir = materialization.output_dir
     if not output_dir.is_absolute():
         raise FutureSessionMaterializationError("absolute_output_required")
-    request_payload = _read_private_canonical_file(request_path)
-    plan_payload = _read_private_canonical_file(plan_path)
+    resolved_launch_agents_dir = (
+        (Path.home() / "Library" / "LaunchAgents")
+        if materialization.launch_agents_dir is None
+        else materialization.launch_agents_dir
+    )
+    if not resolved_launch_agents_dir.is_absolute():
+        raise FutureSessionMaterializationError("absolute_launch_agents_required")
+    request_payload = read_private_canonical_file(request_path)
+    plan_payload = read_private_canonical_file(plan_path)
     try:
-        request = FutureSessionPlanRequest.model_validate_json(request_payload)
+        future_session_request = FutureSessionPlanRequest.model_validate_json(request_payload)
         plan = _PLAN_ADAPTER.validate_json(plan_payload)
     except (TypeError, ValidationError, ValueError):
         raise FutureSessionMaterializationError("invalid_authority") from None
     if (
-        canonical_request_json(request).encode() != request_payload
+        canonical_request_json(future_session_request).encode() != request_payload
         or canonical_plan_json(plan).encode() != plan_payload
         or not isinstance(plan, ReadyToPrepareSessionPlan)
-        or request.market is not FutureSessionMarket.US
+        or future_session_request.market is not FutureSessionMarket.US
         or plan.market is not FutureSessionMarket.US
         or plan.artifact_layout.root != output_dir
     ):
         raise FutureSessionMaterializationError("invalid_authority")
-    request_sha256 = _sha256(request_payload)
+    request_sha256 = sha256(request_payload).hexdigest()
     if plan.source_request_sha256 != request_sha256:
         raise FutureSessionMaterializationError("request_plan_mismatch")
-    recompiled = compile_future_session_plan(request)
-    if (
-        not isinstance(recompiled, ReadyToPrepareSessionPlan)
-        or canonical_plan_json(recompiled) != canonical_plan_json(plan)
+    recompiled = compile_future_session_plan(future_session_request)
+    if not isinstance(recompiled, ReadyToPrepareSessionPlan) or canonical_plan_json(recompiled) != canonical_plan_json(
+        plan
     ):
         raise FutureSessionMaterializationError("authority_changed")
     runtime_environment = plan.runtime_environment
@@ -100,29 +109,30 @@ def materialize_us_future_session(
                 stage=stage,
                 output_dir=output_dir,
                 plan=plan,
-                authority_repository=request.authority_repository,
+                authority_repository=future_session_request.authority_repository,
                 manifest_path=manifest_path,
+                launch_agents_dir=resolved_launch_agents_dir,
             )
             for job in plan.jobs
         )
         manifest = FutureSessionPreparationManifest(
             request_sha256=request_sha256,
             plan_sha256=plan.plan_sha256,
-            canonical_plan_file_sha256=_sha256(plan_payload),
+            canonical_plan_file_sha256=sha256(plan_payload).hexdigest(),
             scheduler_main_sha=plan.scheduler_main_sha,
             runtime_commit_sha=plan.frozen_runtime.commit_sha,
             runtime_attestation_sha256=runtime_environment.attestation_sha256,
-            authority_repository=request.authority_repository,
+            authority_repository=future_session_request.authority_repository,
             frozen_runtime=plan.frozen_runtime.directory,
             entries=entries,
         )
-        _write_file(
+        write_private_file(
             stage / "preparation-manifest.json",
             canonical_manifest_json(manifest).encode(),
             _PRIVATE_FILE_MODE,
         )
         os.replace(stage, output_dir)
-    except BaseException:
+    except (OSError, ValueError):
         shutil.rmtree(stage, ignore_errors=True)
         raise
     return manifest_path
@@ -136,13 +146,9 @@ def _prepare_role(
     plan: ReadyToPrepareSessionPlan,
     authority_repository: Path,
     manifest_path: Path,
+    launch_agents_dir: Path,
 ) -> PreparedUsRoleArtifact:
-    if (
-        job.role is None
-        or job.label is None
-        or job.expires_at is None
-        or not job.command
-    ):
+    if job.role is None or job.label is None or job.expires_at is None or not job.command:
         raise FutureSessionMaterializationError("invalid_us_role")
     role = job.role
     jobs_stage = stage / "jobs"
@@ -158,8 +164,8 @@ def _prepare_role(
     stdout_log = output_dir / "logs" / f"{role.value}.stdout.log"
     stderr_log = output_dir / "logs" / f"{role.value}.stderr.log"
     payload_content = render_job_payload(job).encode()
-    _write_file(
-        _stage_path(stage, output_dir, payload),
+    write_private_file(
+        stage_path(stage, output_dir, payload),
         payload_content,
         _PRIVATE_EXECUTABLE_MODE,
     )
@@ -173,7 +179,7 @@ def _prepare_role(
             receipt=receipt,
             command=(str(payload),),
             expires_at=job.expires_at,
-            persistent_plist=plist,
+            persistent_plist=launch_agents_dir / f"{job.label}.plist",
             authority_repository=authority_repository,
             source_commit=plan.scheduler_main_sha,
             role=role.value,
@@ -184,8 +190,8 @@ def _prepare_role(
             preparation_manifest=manifest_path,
         )
     ).encode()
-    _write_file(
-        _stage_path(stage, output_dir, wrapper),
+    write_private_file(
+        stage_path(stage, output_dir, wrapper),
         wrapper_content,
         _PRIVATE_EXECUTABLE_MODE,
     )
@@ -202,8 +208,8 @@ def _prepare_role(
         },
         sort_keys=True,
     )
-    _write_file(
-        _stage_path(stage, output_dir, plist),
+    write_private_file(
+        stage_path(stage, output_dir, plist),
         plist_content,
         _PRIVATE_FILE_MODE,
     )
@@ -211,73 +217,15 @@ def _prepare_role(
         role=role,
         label=job.label,
         payload_wrapper=payload,
-        payload_sha256=_sha256(payload_content),
+        payload_sha256=sha256(payload_content).hexdigest(),
         persistent_wrapper=wrapper,
-        persistent_wrapper_sha256=_sha256(wrapper_content),
+        persistent_wrapper_sha256=sha256(wrapper_content).hexdigest(),
         persistent_plist=plist,
-        persistent_plist_sha256=_sha256(plist_content),
+        persistent_plist_sha256=sha256(plist_content).hexdigest(),
         receipt=receipt,
         stdout_log=stdout_log,
         stderr_log=stderr_log,
     )
-
-
-def _read_private_canonical_file(path: Path) -> bytes:
-    if not path.is_absolute():
-        raise FutureSessionMaterializationError("absolute_input_required")
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    try:
-        metadata = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
-            or stat.S_IMODE(metadata.st_mode) != _PRIVATE_FILE_MODE
-            or metadata.st_nlink != 1
-        ):
-            raise FutureSessionMaterializationError("invalid_input_file")
-        payload = bytearray()
-        while chunk := os.read(descriptor, 64 * 1024):
-            payload.extend(chunk)
-        after = os.fstat(descriptor)
-        if (
-            (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
-            != (
-                metadata.st_dev,
-                metadata.st_ino,
-                metadata.st_size,
-                metadata.st_mtime_ns,
-                metadata.st_ctime_ns,
-            )
-        ):
-            raise FutureSessionMaterializationError("input_changed")
-        return bytes(payload)
-    finally:
-        os.close(descriptor)
-
-
-def _stage_path(stage: Path, output_dir: Path, final: Path) -> Path:
-    return stage / final.relative_to(output_dir)
-
-
-def _write_file(path: Path, content: bytes, mode: int) -> None:
-    path.parent.mkdir(mode=_PRIVATE_DIRECTORY_MODE, parents=True, exist_ok=True)
-    descriptor = os.open(
-        path,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-        mode,
-    )
-    try:
-        os.fchmod(descriptor, mode)
-        written = os.write(descriptor, content)
-        if written != len(content):
-            raise OSError("short write")
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def _sha256(payload: bytes) -> str:
-    return hashlib.sha256(payload).hexdigest()
 
 
 __all__ = (
