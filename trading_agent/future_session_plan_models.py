@@ -253,6 +253,27 @@ class SessionCalendarProvenance(BaseModel):
         return self
 
 
+class FinalizerReadinessGate(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    watcher_label: str
+    watcher_active_probe: tuple[str, ...]
+    source_path: Path
+    stability_seconds: int
+
+    @model_validator(mode="after")
+    def validate_gate(self) -> Self:
+        if (
+            not self.watcher_label
+            or not self.watcher_active_probe
+            or not Path(self.watcher_active_probe[0]).is_absolute()
+            or not self.source_path.is_absolute()
+            or self.stability_seconds <= 0
+        ):
+            raise ValueError("invalid finalizer readiness gate")
+        return self
+
+
 class JobTimingSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -270,6 +291,7 @@ class JobTimingSpec(BaseModel):
     not_before: dt.datetime | None = None
     poll_until: dt.datetime | None = None
     poll_interval_seconds: int | None = None
+    finalizer_gate: FinalizerReadinessGate | None = None
 
     @model_validator(mode="after")
     def validate_timing(self) -> Self:
@@ -277,6 +299,10 @@ class JobTimingSpec(BaseModel):
             _aware(self.expires_at) and self.expires_at > self.run_at
         )
         paths = (*self.source_paths, *self.destination_paths)
+        gate_valid = self.finalizer_gate is None or (
+            self.role is FutureSessionUsRole.US_DAY_CLOSE_FINALIZER
+            and self.payload_mode is FutureSessionPayloadMode.RETRY_UNTIL_SUCCESS
+        )
         match self.payload_mode:
             case FutureSessionPayloadMode.ONCE:
                 payload_valid = (
@@ -322,6 +348,7 @@ class JobTimingSpec(BaseModel):
             or not _aware(self.run_at)
             or not optional_times_valid
             or not payload_valid
+            or not gate_valid
             or any(not path.is_absolute() for path in paths)
         ):
             raise ValueError("invalid job timing")
@@ -488,6 +515,7 @@ def _aware(value: dt.datetime) -> bool:
 
 __all__ = (
     "DeferredTrialRegistrationState",
+    "FinalizerReadinessGate",
     "FrozenRuntimeAuthority",
     "FutureSessionArtifactLayout",
     "FutureSessionMarket",

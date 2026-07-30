@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from pydantic import ValidationError
 
 from trading_agent.future_session_plan_models import (
+    FinalizerReadinessGate,
     FutureSessionPayloadMode,
     FutureSessionPlanRequest,
     FutureSessionUsRole,
@@ -185,7 +186,7 @@ def build_us_jobs(
         destination_paths=(_required(request.delivery_database),),
         payload_mode=FutureSessionPayloadMode.REPEAT_THROUGH_DEADLINE,
         poll_until=dt.datetime.combine(target, dt.time(16, 15), tzinfo=_NY),
-        poll_interval_seconds=30,
+        poll_interval_seconds=5,
     )
     preflight = _observer_job(
         request, target, common_run, dt.time(15, 35),
@@ -302,7 +303,29 @@ def _observer_job(
         payload_mode=FutureSessionPayloadMode.RETRY_UNTIL_SUCCESS,
         not_before=not_before,
         poll_until=poll_until,
-        poll_interval_seconds=30,
+        poll_interval_seconds=5,
+        finalizer_gate=(
+            None
+            if role is FutureSessionUsRole.US_DAY_PREFLIGHT_OBSERVER
+            else _finalizer_gate(request, target)
+        ),
+    )
+
+
+def _finalizer_gate(
+    request: FutureSessionPlanRequest,
+    target: dt.date,
+) -> FinalizerReadinessGate:
+    watcher_label = f"ai.trading-agent.us-orb-watcher-{target:%Y%m%d}"
+    return FinalizerReadinessGate(
+        watcher_label=watcher_label,
+        watcher_active_probe=(
+            "/bin/launchctl",
+            "print",
+            f"gui/{os.getuid()}/{watcher_label}",
+        ),
+        source_path=_required(request.watch_database),
+        stability_seconds=5,
     )
 
 

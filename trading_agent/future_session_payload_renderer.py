@@ -55,13 +55,103 @@ def _retry_payload(job: JobTimingSpec, command: str) -> str:
         if job.not_before is None
         else _wait_until(int(job.not_before.timestamp()))
     )
-    return (
+    prefix = (
         f"readonly poll_deadline_epoch={deadline_epoch}\n"
         f"readonly poll_interval_seconds={poll_seconds}\n"
         f"{not_before}\n"
-        f"{_deadline_guard()}"
+    )
+    if job.finalizer_gate is not None:
+        return prefix + _gated_finalizer_retry(job, command)
+    return (
+        prefix
+        + _deadline_guard()
+        + "last_exit_code=1\n"
+        "while true; do\n"
+        f"  {command}\n"
+        "  last_exit_code=$?\n"
+        "  if (( last_exit_code == 0 )); then\n"
+        "    exit 0\n"
+        "  fi\n"
+        f"{_sleep_or_finish('exit $last_exit_code')}"
+        "done\n"
+    )
+
+
+def _gated_finalizer_retry(job: JobTimingSpec, command: str) -> str:
+    gate = job.finalizer_gate
+    if gate is None:
+        raise InvalidFutureSessionPayloadSpecError("finalizer_gate_missing")
+    watcher_probe = shlex.join(gate.watcher_active_probe)
+    source_path = shlex.quote(str(gate.source_path))
+    return (
+        f"readonly stability_seconds={gate.stability_seconds}\n"
+        f"readonly watch_source_path={source_path}\n\n"
+        "block_finalizer() {\n"
+        '  print -u2 -r -- "{\\"reason\\":\\"$1\\",'
+        '\\"result\\":\\"blocked\\"}"\n'
+        "  exit 78\n"
+        "}\n\n"
+        "wait_for_poll_or_block() {\n"
+        "  now_epoch=$(/bin/date +%s)\n"
+        "  if (( now_epoch >= poll_deadline_epoch )); then\n"
+        "    block_finalizer $1\n"
+        "  fi\n"
+        "  remaining=$(( poll_deadline_epoch - now_epoch ))\n"
+        "  sleep_seconds=$(( "
+        "remaining < poll_interval_seconds ? remaining : poll_interval_seconds "
+        "))\n"
+        "  /bin/sleep $sleep_seconds\n"
+        "}\n\n"
+        "blocked_reason=watcher_active\n"
         "last_exit_code=1\n"
         "while true; do\n"
+        f"  if {watcher_probe}; then\n"
+        "    blocked_reason=watcher_active\n"
+        "    wait_for_poll_or_block $blocked_reason\n"
+        "    continue\n"
+        "  fi\n"
+        "  if [[ ! -f $watch_source_path ]]; then\n"
+        "    blocked_reason=watch_source_missing\n"
+        "    wait_for_poll_or_block $blocked_reason\n"
+        "    continue\n"
+        "  fi\n"
+        "  if ! first_source_stat=$(/usr/bin/stat -f "
+        "'%d:%i:%z:%m:%c' $watch_source_path 2>/dev/null); then\n"
+        "    blocked_reason=watch_source_missing\n"
+        "    wait_for_poll_or_block $blocked_reason\n"
+        "    continue\n"
+        "  fi\n"
+        "  blocked_reason=watch_source_unstable\n"
+        "  now_epoch=$(/bin/date +%s)\n"
+        "  remaining=$(( poll_deadline_epoch - now_epoch ))\n"
+        "  if (( remaining < stability_seconds )); then\n"
+        "    if (( remaining > 0 )); then\n"
+        "      /bin/sleep $remaining\n"
+        "    fi\n"
+        "    block_finalizer $blocked_reason\n"
+        "  fi\n"
+        "  /bin/sleep $stability_seconds\n"
+        f"  if {watcher_probe}; then\n"
+        "    blocked_reason=watcher_active\n"
+        "    continue\n"
+        "  fi\n"
+        "  if [[ ! -f $watch_source_path ]]; then\n"
+        "    blocked_reason=watch_source_missing\n"
+        "    continue\n"
+        "  fi\n"
+        "  if ! second_source_stat=$(/usr/bin/stat -f "
+        "'%d:%i:%z:%m:%c' $watch_source_path 2>/dev/null); then\n"
+        "    blocked_reason=watch_source_missing\n"
+        "    continue\n"
+        "  fi\n"
+        "  if [[ $first_source_stat != $second_source_stat ]]; then\n"
+        "    blocked_reason=watch_source_unstable\n"
+        "    continue\n"
+        "  fi\n"
+        f"  if {watcher_probe}; then\n"
+        "    blocked_reason=watcher_active\n"
+        "    continue\n"
+        "  fi\n"
         f"  {command}\n"
         "  last_exit_code=$?\n"
         "  if (( last_exit_code == 0 )); then\n"

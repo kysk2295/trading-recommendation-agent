@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import sys
 from pathlib import Path
 
@@ -245,6 +246,18 @@ def test_xnys_2026_07_31_five_role_timing_contract(tmp_path: Path) -> None:
     assert jobs[3].command[
         jobs[3].command.index("--source-artifact") + 1
     ] == str(watch_database.relative_to(runtime))
+    assert tuple(job.poll_interval_seconds for job in jobs[1:4]) == (5, 5, 5)
+    finalizer_gate = jobs[3].model_dump(mode="json")["finalizer_gate"]
+    assert finalizer_gate == {
+        "source_path": str(watch_database),
+        "stability_seconds": 5,
+        "watcher_active_probe": [
+            "/bin/launchctl",
+            "print",
+            f"gui/{os.getuid()}/{watcher.label}",
+        ],
+        "watcher_label": watcher.label,
+    }
     assert jobs[4].command[jobs[4].command.index("--repository") + 1] == str(
         runtime
     )
