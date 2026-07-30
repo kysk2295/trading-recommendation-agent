@@ -70,15 +70,25 @@ def test_once_waits_for_setup_without_opening_arm_material(tmp_path: Path, capsy
 
 
 def test_once_waits_when_setup_has_no_owner_arm(tmp_path: Path, capsys) -> None:
-    store = HermesArmStore(tmp_path / "arm.sqlite3", HermesArmSigner.from_bytes(b"x" * 32))
-    store._initialize()
+    signer = HermesArmSigner.from_bytes(b"x" * 32)
 
-    exit_code = main(
-        _args(tmp_path, "--once"), _deps(_current_source, lambda _: store._signer, CapturingOperatingMain(), store)
-    )
+    exit_code = main(_args(tmp_path, "--once"), _deps(_current_source, lambda _: signer, CapturingOperatingMain()))
 
     assert exit_code == 0
     assert json.loads(capsys.readouterr().out) == {"result": "waiting_owner_arm"}
+    assert not (tmp_path / "arm.sqlite3").exists()
+
+
+def test_once_blocks_an_existing_unreadable_arm_database(tmp_path: Path, capsys) -> None:
+    database = tmp_path / "arm.sqlite3"
+    database.touch()
+    database.chmod(0)
+    signer = HermesArmSigner.from_bytes(b"x" * 32)
+
+    exit_code = main(_args(tmp_path, "--once"), _deps(_current_source, lambda _: signer, CapturingOperatingMain()))
+
+    assert exit_code == 1
+    assert json.loads(capsys.readouterr().out) == {"reason": "invalid_store", "result": "blocked"}
 
 
 def test_confirmed_matching_arm_dispatches_operating_run_once(tmp_path: Path, capsys) -> None:
@@ -189,7 +199,7 @@ def _deps(
         source_loader=source,
         signer_loader=signer,
         operating_main=operating,
-        store_factory=lambda _, supplied: store or HermesArmStore(Path("/unused"), supplied),
+        store_factory=lambda path, supplied: store or HermesArmStore(path, supplied),
         sleeper=lambda _: None,
     )
 

@@ -59,31 +59,23 @@ class UsDayArmedEntryCommand:
     once: bool
 
 
-type SourceLoader = Callable[[Path, dt.datetime], PaperOrderAdmissionRequest]
-type SignerLoader = Callable[[Path], HermesArmSigner]
-type OperatingMain = Callable[[Sequence[str]], int]
-type StoreFactory = Callable[[Path, HermesArmSigner], HermesArmStore]
 type Clock = Callable[[], dt.datetime]
 
 
 @dataclass(frozen=True, slots=True)
 class UsDayArmedEntryDependencies:
     clock: Clock
-    source_loader: SourceLoader
-    signer_loader: SignerLoader
-    operating_main: OperatingMain
-    store_factory: StoreFactory
+    source_loader: Callable[[Path, dt.datetime], PaperOrderAdmissionRequest]
+    signer_loader: Callable[[Path], HermesArmSigner]
+    operating_main: Callable[[Sequence[str]], int]
+    store_factory: Callable[[Path, HermesArmSigner], HermesArmStore]
     sleeper: Callable[[float], None]
-
-
-def _load_signer(path: Path) -> HermesArmSigner:
-    return HermesArmSigner(load_hermes_arm_signing_key(path))
 
 
 DEFAULT_DEPENDENCIES: Final = UsDayArmedEntryDependencies(
     clock=lambda: dt.datetime.now(dt.UTC),
     source_loader=load_current_orb_paper_entry,
-    signer_loader=_load_signer,
+    signer_loader=lambda path: HermesArmSigner(load_hermes_arm_signing_key(path)),
     operating_main=operating_main,
     store_factory=HermesArmStore,
     sleeper=time.sleep,

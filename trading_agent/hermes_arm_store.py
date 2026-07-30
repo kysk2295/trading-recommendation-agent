@@ -80,6 +80,12 @@ class HermesArmStore:
 
     def requests(self) -> tuple[HermesArmRequest, ...]:
         try:
+            _ = os.stat(self.path)
+        except FileNotFoundError:
+            return ()
+        except OSError:
+            raise InvalidHermesArmRequestError(HermesArmFailure.INVALID_STORE) from None
+        try:
             with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
                 rows: list[tuple[str, str, str]] = connection.execute(
                     "SELECT request_id, payload_json, signature FROM arm_requests ORDER BY request_id"
