@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 import run_future_session_materialize
+import trading_agent.launchd_one_shot as launchd_one_shot
 from tests.test_forward_runtime_readiness_cli import _runtime, _stores
 from tests.test_future_session_plan_compiler import _us_request
 from trading_agent.future_session_plan_compiler import compile_future_session_plan
@@ -26,8 +27,23 @@ from trading_agent.future_session_us_materializer import (
 )
 
 
-def test_prepare_atomically_materializes_exact_five_us_roles(tmp_path: Path) -> None:
+def test_prepare_atomically_materializes_exact_five_us_roles(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     # Given
+    activated = False
+
+    def reject_activation(_request) -> None:
+        nonlocal activated
+        activated = True
+        raise AssertionError
+
+    monkeypatch.setattr(
+        launchd_one_shot,
+        "submit_one_shot",
+        reject_activation,
+    )
     request, plan, request_path, plan_path = _authority_files(tmp_path)
     assert isinstance(plan, ReadyToPrepareSessionPlan)
     output = plan.artifact_layout.root
@@ -52,6 +68,18 @@ def test_prepare_atomically_materializes_exact_five_us_roles(tmp_path: Path) -> 
     assert manifest["runtime_commit_sha"] == request.frozen_runtime.commit_sha
     assert stat.S_IMODE(manifest_path.stat().st_mode) == 0o600
     assert not tuple(output.parent.glob(f".{output.name}.prepare-*"))
+    assert not activated
+    signing_key = request.signing_key
+    watch_database = request.watch_database
+    opportunity_outbox = request.opportunity_outbox
+    signal_outbox = request.signal_outbox
+    assert signing_key is not None and not signing_key.exists()
+    assert watch_database is not None and not watch_database.exists()
+    assert opportunity_outbox is not None and not opportunity_outbox.exists()
+    assert signal_outbox is not None and not signal_outbox.exists()
+    jobs_by_role = {
+        job.role.value: job for job in plan.jobs if job.role is not None
+    }
     for entry in manifest["entries"]:
         payload = Path(entry["payload_wrapper"])
         wrapper = Path(entry["persistent_wrapper"])
@@ -84,6 +112,23 @@ def test_prepare_atomically_materializes_exact_five_us_roles(tmp_path: Path) -> 
         assert plan.plan_sha256 in wrapper_text
         assert request.frozen_runtime.commit_sha in wrapper_text
         assert str(manifest_path) in wrapper_text
+        payload_text = payload.read_text(encoding="utf-8")
+        job = jobs_by_role[entry["role"]]
+        if job.poll_until is not None:
+            assert (
+                f"readonly poll_deadline_epoch={int(job.poll_until.timestamp())}"
+                in payload_text
+            )
+            assert (
+                f"readonly poll_interval_seconds={job.poll_interval_seconds}"
+                in payload_text
+            )
+            assert "deadline_elapsed" in payload_text
+        if job.not_before is not None:
+            assert (
+                f"readonly not_before_epoch={int(job.not_before.timestamp())}"
+                in payload_text
+            )
 
 
 def test_invalid_plan_leaves_no_partial_output(tmp_path: Path) -> None:

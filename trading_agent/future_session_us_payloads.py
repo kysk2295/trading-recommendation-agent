@@ -5,12 +5,15 @@ import hashlib
 import json
 import os
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
+from typing import override
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
 from trading_agent.future_session_plan_models import (
+    FutureSessionPayloadMode,
     FutureSessionPlanRequest,
     FutureSessionUsRole,
     JobTimingSpec,
@@ -18,6 +21,16 @@ from trading_agent.future_session_plan_models import (
 )
 
 _NY = ZoneInfo("America/New_York")
+_WATCH_DATABASE_NAME = "paper_recommendations.sqlite3"
+
+
+@dataclass(frozen=True, slots=True)
+class InvalidUsFutureSessionPayloadError(ValueError):
+    reason: str
+
+    @override
+    def __str__(self) -> str:
+        return self.reason
 
 
 def attest_us_runtime(
@@ -97,8 +110,28 @@ def build_us_jobs(
     orb_strategy_version: str,
 ) -> tuple[JobTimingSpec, ...]:
     root = request.artifact_root / "us" / target.isoformat()
-    runtime = request.frozen_runtime.directory
+    runtime = request.frozen_runtime.directory.resolve(strict=False)
     interpreter = _required(request.runtime_interpreter)
+    requested_watch_database = _required(request.watch_database)
+    watch_database = requested_watch_database.resolve(strict=False)
+    if watch_database != requested_watch_database:
+        raise InvalidUsFutureSessionPayloadError(
+            "noncanonical_watch_database"
+        )
+    try:
+        watch_source = watch_database.relative_to(runtime)
+    except ValueError:
+        raise InvalidUsFutureSessionPayloadError(
+            "watch_database_outside_frozen_runtime"
+        ) from None
+    if (
+        watch_database.name != _WATCH_DATABASE_NAME
+        or not watch_source.parts
+        or watch_source.parts[0] != "outputs"
+    ):
+        raise InvalidUsFutureSessionPayloadError(
+            "noncanonical_watch_database"
+        )
     common_run = dt.datetime.combine(target, dt.time(8), tzinfo=_NY)
     common_expiry = dt.datetime.combine(target, dt.time(16, 20), tzinfo=_NY)
     session_id = f"XNYS-{target.isoformat()}"
@@ -111,9 +144,14 @@ def build_us_jobs(
         purpose="watch_open=09:30;finalize=16:05",
         command=(
             str(interpreter), str(runtime / "run_kis_paper_watch.py"),
-            "--output-dir", str(root / "watch"),
+            "--output-dir", str(watch_database.parent),
             "--cycles", str(request.cycles),
             "--interval-seconds", str(request.interval_seconds),
+            "--max-wait-minutes", "720",
+            "--top", "10",
+            "--max-pages", "1",
+            "--collect-premarket",
+            "--premarket-interval-seconds", "300",
             "--wait-until-open", "--strategy", "orb",
             "--lane-execution-database", str(request.execution_database),
             "--lane-registry", str(request.lane_registry),
@@ -127,7 +165,7 @@ def build_us_jobs(
             _required(request.lane_registry),
             _required(request.lane_review_ledger),
         ),
-        destination_paths=(_required(request.watch_database), root / "watch"),
+        destination_paths=(watch_database,),
     )
     projection = JobTimingSpec(
         job_id=f"us-hermes-projection-{target}",
@@ -145,6 +183,9 @@ def build_us_jobs(
         dependencies=(FutureSessionUsRole.US_ORB_WATCHER,),
         source_paths=(_required(request.opportunity_outbox), _required(request.signal_outbox)),
         destination_paths=(_required(request.delivery_database),),
+        payload_mode=FutureSessionPayloadMode.REPEAT_THROUGH_DEADLINE,
+        poll_until=dt.datetime.combine(target, dt.time(16, 15), tzinfo=_NY),
+        poll_interval_seconds=30,
     )
     preflight = _observer_job(
         request, target, common_run, dt.time(15, 35),
@@ -170,13 +211,13 @@ def build_us_jobs(
             "--execution-database",
             str(request.execution_database),
             "--repository",
-            str(request.authority_repository),
+            str(runtime),
             "--session-id",
             session_id,
             "--strategy-version",
             orb_strategy_version,
             "--source-artifact",
-            str(request.opportunity_outbox),
+            str(watch_source),
             "--terminal-output",
             str(root / "terminal.json"),
         ),
@@ -195,9 +236,9 @@ def build_us_jobs(
             "--arm-database", str(request.arm_database), "--delivery-database", str(request.delivery_database),
             "--execution-database", str(request.execution_database), "--watch-database", str(request.watch_database),
             "--experiment-ledger", str(request.experiment_ledger), "--lane-registry", str(request.lane_registry),
-            "--repository", str(request.authority_repository), "--signing-key", str(request.signing_key),
+            "--repository", str(runtime), "--signing-key", str(request.signing_key),
             "--session-id", session_id, "--entry-cutoff", f"{target}T15:30:00-04:00",
-            "--poll-interval-seconds", "30",
+            "--poll-interval-seconds", "5",
         ),
         dependencies=(FutureSessionUsRole.US_DAY_PREFLIGHT_OBSERVER,),
         source_paths=(_required(request.signing_key), _required(request.watch_database)),
@@ -217,6 +258,29 @@ def _observer_job(
     purpose: str,
     dependencies: tuple[FutureSessionUsRole, ...] = (),
 ) -> JobTimingSpec:
+    match role:
+        case FutureSessionUsRole.US_DAY_PREFLIGHT_OBSERVER:
+            not_before = None
+            poll_until = dt.datetime.combine(
+                target,
+                dt.time(15, 30),
+                tzinfo=_NY,
+            )
+        case FutureSessionUsRole.US_DAY_CLOSE_FINALIZER:
+            not_before = dt.datetime.combine(
+                target,
+                dt.time(16, 5),
+                tzinfo=_NY,
+            )
+            poll_until = dt.datetime.combine(
+                target,
+                dt.time(16, 15),
+                tzinfo=_NY,
+            )
+        case _:
+            raise InvalidUsFutureSessionPayloadError(
+                "invalid_observer_role"
+            )
     return JobTimingSpec(
         job_id=f"us-day-{name}-{target}",
         role=role,
@@ -235,6 +299,10 @@ def _observer_job(
         dependencies=dependencies,
         source_paths=(request.experiment_ledger,),
         destination_paths=(_required(request.execution_database),),
+        payload_mode=FutureSessionPayloadMode.RETRY_UNTIL_SUCCESS,
+        not_before=not_before,
+        poll_until=poll_until,
+        poll_interval_seconds=30,
     )
 
 
@@ -244,4 +312,8 @@ def _required[T](value: T | None) -> T:
     return value
 
 
-__all__ = ("attest_us_runtime", "build_us_jobs")
+__all__ = (
+    "InvalidUsFutureSessionPayloadError",
+    "attest_us_runtime",
+    "build_us_jobs",
+)

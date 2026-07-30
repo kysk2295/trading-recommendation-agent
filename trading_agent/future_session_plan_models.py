@@ -36,6 +36,12 @@ class FutureSessionUsRole(StrEnum):
     US_DAY_ARM_OBSERVER = "us_day_arm_observer"
 
 
+class FutureSessionPayloadMode(StrEnum):
+    ONCE = "once"
+    REPEAT_THROUGH_DEADLINE = "repeat_through_deadline"
+    RETRY_UNTIL_SUCCESS = "retry_until_success"
+
+
 class WaitingAuthorityReason(StrEnum):
     CALENDAR_AUTHORITY_MISSING = "calendar_authority_missing"
     CALENDAR_AUTHORITY_INVALID = "calendar_authority_invalid"
@@ -260,6 +266,10 @@ class JobTimingSpec(BaseModel):
     dependencies: tuple[FutureSessionUsRole, ...] = ()
     source_paths: tuple[Path, ...] = ()
     destination_paths: tuple[Path, ...] = ()
+    payload_mode: FutureSessionPayloadMode = FutureSessionPayloadMode.ONCE
+    not_before: dt.datetime | None = None
+    poll_until: dt.datetime | None = None
+    poll_interval_seconds: int | None = None
 
     @model_validator(mode="after")
     def validate_timing(self) -> Self:
@@ -267,11 +277,51 @@ class JobTimingSpec(BaseModel):
             _aware(self.expires_at) and self.expires_at > self.run_at
         )
         paths = (*self.source_paths, *self.destination_paths)
+        match self.payload_mode:
+            case FutureSessionPayloadMode.ONCE:
+                payload_valid = (
+                    self.not_before is None
+                    and self.poll_until is None
+                    and self.poll_interval_seconds is None
+                )
+            case FutureSessionPayloadMode.REPEAT_THROUGH_DEADLINE:
+                payload_valid = (
+                    self.not_before is None
+                    and self.poll_until is not None
+                    and _aware(self.poll_until)
+                    and self.poll_until >= self.run_at
+                    and (
+                        self.expires_at is None
+                        or self.poll_until <= self.expires_at
+                    )
+                    and self.poll_interval_seconds is not None
+                    and self.poll_interval_seconds > 0
+                )
+            case FutureSessionPayloadMode.RETRY_UNTIL_SUCCESS:
+                payload_valid = (
+                    self.poll_until is not None
+                    and _aware(self.poll_until)
+                    and self.poll_until >= self.run_at
+                    and (
+                        self.expires_at is None
+                        or self.poll_until <= self.expires_at
+                    )
+                    and (
+                        self.not_before is None
+                        or (
+                            _aware(self.not_before)
+                            and self.run_at <= self.not_before <= self.poll_until
+                        )
+                    )
+                    and self.poll_interval_seconds is not None
+                    and self.poll_interval_seconds > 0
+                )
         if (
             not self.job_id
             or not self.purpose
             or not _aware(self.run_at)
             or not optional_times_valid
+            or not payload_valid
             or any(not path.is_absolute() for path in paths)
         ):
             raise ValueError("invalid job timing")
@@ -441,6 +491,7 @@ __all__ = (
     "FrozenRuntimeAuthority",
     "FutureSessionArtifactLayout",
     "FutureSessionMarket",
+    "FutureSessionPayloadMode",
     "FutureSessionPlanDecision",
     "FutureSessionPlanRequest",
     "FutureSessionPlanStatus",

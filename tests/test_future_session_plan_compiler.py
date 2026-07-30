@@ -135,7 +135,21 @@ def test_xnys_2026_07_31_five_role_timing_contract(tmp_path: Path) -> None:
     )
 
     # When
-    jobs = build_us_jobs(request, dt.date(2026, 7, 31), "orb_fixture")
+    target = dt.date(2026, 7, 31)
+    watch_database = (
+        runtime
+        / "outputs"
+        / "future-sessions"
+        / "us"
+        / target.isoformat()
+        / "watch"
+        / "paper_recommendations.sqlite3"
+    )
+    jobs = build_us_jobs(
+        request.model_copy(update={"watch_database": watch_database}),
+        target,
+        "orb_fixture",
+    )
 
     # Then
     assert tuple(job.role.value for job in jobs if job.role is not None) == (
@@ -167,6 +181,97 @@ def test_xnys_2026_07_31_five_role_timing_contract(tmp_path: Path) -> None:
     assert "entry_cutoff=15:30" in jobs[4].purpose
     assert "finalize=16:05" in jobs[3].purpose
     assert "source_deadline=16:15" in jobs[3].purpose
+    watcher = jobs[0]
+    assert watcher.command == (
+        str(request.runtime_interpreter),
+        str(runtime / "run_kis_paper_watch.py"),
+        "--output-dir",
+        str(watch_database.parent),
+        "--cycles",
+        "390",
+        "--interval-seconds",
+        "60",
+        "--max-wait-minutes",
+        "720",
+        "--top",
+        "10",
+        "--max-pages",
+        "1",
+        "--collect-premarket",
+        "--premarket-interval-seconds",
+        "300",
+        "--wait-until-open",
+        "--strategy",
+        "orb",
+        "--lane-execution-database",
+        str(request.execution_database),
+        "--lane-registry",
+        str(request.lane_registry),
+        "--lane-review-ledger",
+        str(request.lane_review_ledger),
+        "--lane-forward-output-dir",
+        str(
+            request.artifact_root
+            / "us"
+            / target.isoformat()
+            / "lane-forward"
+        ),
+        "--experiment-ledger",
+        str(request.experiment_ledger),
+        "--delivery-database",
+        str(request.delivery_database),
+    )
+    assert jobs[1].model_dump(mode="json")["payload_mode"] == (
+        "repeat_through_deadline"
+    )
+    assert jobs[1].model_dump(mode="json")["poll_until"] == (
+        "2026-07-31T16:15:00-04:00"
+    )
+    assert jobs[2].model_dump(mode="json")["payload_mode"] == (
+        "retry_until_success"
+    )
+    assert jobs[2].model_dump(mode="json")["poll_until"] == (
+        "2026-07-31T15:30:00-04:00"
+    )
+    assert jobs[3].model_dump(mode="json")["not_before"] == (
+        "2026-07-31T16:05:00-04:00"
+    )
+    assert jobs[3].model_dump(mode="json")["poll_until"] == (
+        "2026-07-31T16:15:00-04:00"
+    )
+    assert jobs[3].command[jobs[3].command.index("--repository") + 1] == str(
+        runtime
+    )
+    assert jobs[3].command[
+        jobs[3].command.index("--source-artifact") + 1
+    ] == str(watch_database.relative_to(runtime))
+    assert jobs[4].command[jobs[4].command.index("--repository") + 1] == str(
+        runtime
+    )
+    assert jobs[4].command[
+        jobs[4].command.index("--poll-interval-seconds") + 1
+    ] == "5"
+
+
+def test_us_job_builder_rejects_noncanonical_watch_database(
+    tmp_path: Path,
+) -> None:
+    # Given
+    runtime, required, head = _runtime(tmp_path)
+    lane, experiment, execution = _stores(tmp_path, code_version=head)
+    request = _us_request(
+        tmp_path,
+        runtime=runtime,
+        head=head,
+        required=required,
+        lane=lane,
+        experiment=experiment,
+        execution=execution,
+    ).model_copy(update={"watch_database": (tmp_path / "watch.sqlite3").absolute()})
+
+    # When / Then
+    with pytest.raises(ValueError):
+        build_us_jobs(request, dt.date(2026, 7, 27), "orb_fixture")
 
 
 def test_us_plan_waits_for_wrong_explicit_runtime_authority(
@@ -401,7 +506,15 @@ def _us_request(
         execution_database=execution.absolute(),
         required_runtime_commits=(required,),
         runtime_interpreter=Path(sys.executable).absolute(),
-        watch_database=(tmp_path / "watch.sqlite3").absolute(),
+        watch_database=(
+            runtime
+            / "outputs"
+            / "future-sessions"
+            / "us"
+            / "2026-07-27"
+            / "watch"
+            / "paper_recommendations.sqlite3"
+        ).absolute(),
         delivery_database=(tmp_path / "delivery.sqlite3").absolute(),
         arm_database=(tmp_path / "arm.sqlite3").absolute(),
         signing_key=(tmp_path / "signing.env").absolute(),

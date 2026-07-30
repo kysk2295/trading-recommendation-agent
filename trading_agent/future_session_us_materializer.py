@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import os
 import plistlib
-import shlex
 import shutil
 import stat
 import tempfile
@@ -17,6 +16,7 @@ from trading_agent.future_session_materialization_models import (
     PreparedUsRoleArtifact,
     canonical_manifest_json,
 )
+from trading_agent.future_session_payload_renderer import render_job_payload
 from trading_agent.future_session_plan_compiler import compile_future_session_plan
 from trading_agent.future_session_plan_models import (
     FutureSessionMarket,
@@ -157,12 +157,7 @@ def _prepare_role(
     receipt = output_dir / "receipts" / f"{role.value}.json"
     stdout_log = output_dir / "logs" / f"{role.value}.stdout.log"
     stderr_log = output_dir / "logs" / f"{role.value}.stderr.log"
-    payload_content = (
-        "#!/bin/zsh\n\n"
-        "set -u\n"
-        "umask 077\n\n"
-        f"exec {shlex.join(job.command)}\n"
-    ).encode()
+    payload_content = render_job_payload(job).encode()
     _write_file(
         _stage_path(stage, output_dir, payload),
         payload_content,
