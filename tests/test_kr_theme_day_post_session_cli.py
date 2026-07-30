@@ -4,6 +4,8 @@ import csv
 import datetime as dt
 import stat
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 import run_kr_theme_day_lifecycle as lifecycle_cli
@@ -19,6 +21,9 @@ from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.hermes_delivery_projection import project_trade_signals
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStore
+from trading_agent.kr_theme_day_post_session_audit import (
+    run_audited_kr_theme_day_post_session_phase,
+)
 from trading_agent.kr_theme_day_review_store import KrThemeDayReviewStore
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -218,6 +223,52 @@ def test_delivery_failure_stops_reviewer_and_lifecycle(tmp_path: Path) -> None:
     assert calls == [post_session_cli.terminal_command(request)]
     assert _audit_rows(request.paths.output_dir / post_session_cli.DELIVERY_AUDIT_NAME) == [
         (STARTED_AT.isoformat(), "1", "failed")
+    ]
+
+
+def test_concurrent_phase_attempts_are_serialized_and_keep_one_audit_header(
+    tmp_path: Path,
+) -> None:
+    audit = tmp_path / "phase.csv"
+    start = threading.Barrier(3)
+    state_lock = threading.Lock()
+    active = 0
+    max_active = 0
+    results: list[int] = []
+
+    def action() -> int:
+        nonlocal active, max_active
+        with state_lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.05)
+        with state_lock:
+            active -= 1
+        return 0
+
+    def worker() -> None:
+        start.wait()
+        results.append(
+            run_audited_kr_theme_day_post_session_phase(
+                action,
+                audit,
+                lambda: STARTED_AT,
+            )
+        )
+
+    workers = tuple(threading.Thread(target=worker) for _ in range(2))
+    for worker_thread in workers:
+        worker_thread.start()
+    start.wait()
+    for worker_thread in workers:
+        worker_thread.join(timeout=2)
+
+    assert all(not worker_thread.is_alive() for worker_thread in workers)
+    assert sorted(results) == [0, 0]
+    assert max_active == 1
+    assert _audit_rows(audit) == [
+        (STARTED_AT.isoformat(), "0", "ok"),
+        (STARTED_AT.isoformat(), "0", "ok"),
     ]
 
 
