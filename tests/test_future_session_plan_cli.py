@@ -64,6 +64,7 @@ def test_cli_reports_waiting_as_typed_success(
                 "after_date": "2026-07-24",
                 "compiled_at": "2026-07-24T20:00:00Z",
                 "scheduler_main_sha": "b" * 40,
+                "authority_repository": str((tmp_path / "missing-authority").absolute()),
                 "frozen_runtime": {
                     "directory": str((tmp_path / "missing-runtime").absolute()),
                     "commit_sha": "a" * 40,

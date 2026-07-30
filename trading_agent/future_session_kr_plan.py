@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from pydantic import ValidationError
 
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
+from trading_agent.experiment_ledger_models import StrategyLifecycleState
 from trading_agent.experiment_ledger_store import (
     ExperimentLedgerReader,
     InvalidExperimentLedgerSourceError,
@@ -82,6 +83,12 @@ def compile_kr_future_session_plan(
             request,
             target,
             WaitingAuthorityReason.ROLLOVER_BUNDLE_MISMATCH,
+        )
+    if not _target_shadow_lifecycle(request, bundle, target):
+        return _waiting(
+            request,
+            target,
+            WaitingAuthorityReason.RUNTIME_AUTHORITY_MISSING,
         )
     try:
         trials = ExperimentLedgerReader(
@@ -155,6 +162,26 @@ def _registrations(
             ),
             key=lambda item: item.strategy_version,
         )
+    )
+
+
+def _target_shadow_lifecycle(
+    request: FutureSessionPlanRequest,
+    bundle: KrThemeResearchRolloverBundle,
+    target: dt.date,
+) -> bool:
+    try:
+        state = ExperimentLedgerReader(
+            request.experiment_ledger
+        ).multi_market_lifecycle_state(
+            bundle.day_version.strategy_version,
+            target,
+        )
+    except (InvalidExperimentLedgerSourceError, OSError, ValueError):
+        return False
+    return (
+        state is not None
+        and state.event.to_state is StrategyLifecycleState.EXPERIMENTAL_SHADOW
     )
 
 

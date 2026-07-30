@@ -5,8 +5,14 @@ from trading_agent.future_session_plan_models import (
     FutureSessionMarket,
     FutureSessionPlanDecision,
     FutureSessionPlanRequest,
+    WaitingAuthorityReason,
+    WaitingSessionAuthority,
 )
 from trading_agent.future_session_us_plan import compile_us_future_session_plan
+from trading_agent.repository_current_main import (
+    CurrentMainAuthorityError,
+    current_main_commit,
+)
 
 
 def compile_future_session_plan(
@@ -15,11 +21,30 @@ def compile_future_session_plan(
     request = FutureSessionPlanRequest.model_validate(
         request.model_dump(mode="python")
     )
+    try:
+        scheduler_main_sha = current_main_commit(request.authority_repository)
+    except CurrentMainAuthorityError:
+        return _scheduler_waiting(request)
+    if scheduler_main_sha != request.scheduler_main_sha:
+        return _scheduler_waiting(request)
     match request.market:
         case FutureSessionMarket.US:
             return compile_us_future_session_plan(request)
         case FutureSessionMarket.KR:
             return compile_kr_future_session_plan(request)
+
+
+def _scheduler_waiting(
+    request: FutureSessionPlanRequest,
+) -> FutureSessionPlanDecision:
+    return WaitingSessionAuthority(
+        market=request.market,
+        target_session=None,
+        compiled_at=request.compiled_at,
+        scheduler_main_sha=request.scheduler_main_sha,
+        frozen_runtime=request.frozen_runtime,
+        reasons=(WaitingAuthorityReason.SCHEDULER_AUTHORITY_INVALID,),
+    )
 
 
 __all__ = ("compile_future_session_plan",)

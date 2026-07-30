@@ -49,6 +49,7 @@ def _request_payload(tmp_path: Path) -> dict[str, str]:
         "after_date": dt.date(2026, 7, 2).isoformat(),
         "compiled_at": "2026-07-02T20:00:00+00:00",
         "scheduler_main_sha": "b" * 40,
+        "authority_repository": str(root / "authority"),
         "frozen_runtime": {
             "directory": str(root / "runtime"),
             "commit_sha": "a" * 40,

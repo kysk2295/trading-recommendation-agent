@@ -34,6 +34,7 @@ class WaitingAuthorityReason(StrEnum):
     FROZEN_RUNTIME_INVALID = "frozen_runtime_invalid"
     RUNTIME_AUTHORITY_MISSING = "runtime_authority_missing"
     RUNTIME_AUTHORITY_AMBIGUOUS = "runtime_authority_ambiguous"
+    SCHEDULER_AUTHORITY_INVALID = "scheduler_authority_invalid"
     ROLLOVER_BUNDLE_INVALID = "rollover_bundle_invalid"
     ROLLOVER_BUNDLE_MISMATCH = "rollover_bundle_mismatch"
     TRIAL_AUTHORITY_CONFLICT = "trial_authority_conflict"
@@ -94,6 +95,7 @@ class FutureSessionPlanRequest(BaseModel):
     after_date: dt.date
     compiled_at: dt.datetime
     scheduler_main_sha: str
+    authority_repository: Path
     frozen_runtime: FrozenRuntimeAuthority
     artifact_root: Path
     experiment_ledger: Path
@@ -110,6 +112,7 @@ class FutureSessionPlanRequest(BaseModel):
     @model_validator(mode="after")
     def validate_request(self) -> Self:
         paths = (
+            self.authority_repository,
             self.artifact_root,
             self.experiment_ledger,
             *(() if self.lane_registry is None else (self.lane_registry,)),
@@ -121,7 +124,6 @@ class FutureSessionPlanRequest(BaseModel):
         if (
             not _aware(self.compiled_at)
             or any(_COMMIT_SHA.fullmatch(value) is None for value in commits)
-            or self.scheduler_main_sha == self.frozen_runtime.commit_sha
             or any(not path.is_absolute() for path in paths)
         ):
             raise ValueError("invalid future-session request")

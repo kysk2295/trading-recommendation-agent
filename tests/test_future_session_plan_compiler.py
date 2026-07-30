@@ -6,11 +6,16 @@ from pathlib import Path
 import pytest
 
 from tests.test_forward_runtime_readiness_cli import (
+    _git,
     _runtime,
     _stores,
 )
 from tests.test_kis_kr_session_calendar import _receipt
-from trading_agent.experiment_ledger_models import TrialKind
+from trading_agent.experiment_ledger_models import (
+    StrategyLifecycleEventKind,
+    StrategyLifecycleState,
+    TrialKind,
+)
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.future_session_plan_compiler import compile_future_session_plan
 from trading_agent.future_session_plan_models import (
@@ -29,8 +34,18 @@ from trading_agent.kr_theme_research_registration import (
 from trading_agent.kr_theme_research_rollover import (
     prepare_kr_theme_research_rollover,
 )
+from trading_agent.multi_market_experiment_keys import (
+    multi_market_hypothesis_registration_key,
+    multi_market_strategy_version_registration_key,
+)
 from trading_agent.multi_market_experiment_models import (
     MultiMarketStrategyVersionRegistration,
+)
+from trading_agent.multi_market_lifecycle_keys import (
+    multi_market_lifecycle_event_key,
+)
+from trading_agent.multi_market_lifecycle_models import (
+    MultiMarketStrategyLifecycleEvent,
 )
 from trading_agent.multi_market_trial_models import (
     MultiMarketExperimentTrialRegistration,
@@ -130,6 +145,62 @@ def test_us_plan_waits_for_wrong_explicit_runtime_authority(
     )
 
 
+def test_stale_scheduler_sha_waits_without_jobs(tmp_path: Path) -> None:
+    # Given
+    runtime, required, head = _runtime(tmp_path)
+    lane, experiment, execution = _stores(tmp_path, code_version=head)
+    request = _us_request(
+        tmp_path,
+        runtime=runtime,
+        head=head,
+        required=required,
+        lane=lane,
+        experiment=experiment,
+        execution=execution,
+    ).model_copy(update={"scheduler_main_sha": "f" * 40})
+
+    # When
+    decision = compile_future_session_plan(request)
+
+    # Then
+    assert isinstance(decision, WaitingSessionAuthority)
+    assert decision.jobs == ()
+    assert tuple(reason.value for reason in decision.reasons) == (
+        "scheduler_authority_invalid",
+    )
+
+
+def test_equal_scheduler_and_runtime_sha_is_valid_authority(
+    tmp_path: Path,
+) -> None:
+    # Given
+    runtime, required, head = _runtime(tmp_path)
+    _git(runtime, "branch", "-M", "main")
+    _git(runtime, "update-ref", "refs/remotes/origin/main", head)
+    lane, experiment, execution = _stores(tmp_path, code_version=head)
+    request = _us_request(
+        tmp_path,
+        runtime=runtime,
+        head=head,
+        required=required,
+        lane=lane,
+        experiment=experiment,
+        execution=execution,
+    ).model_copy(
+        update={
+            "authority_repository": runtime,
+            "scheduler_main_sha": head,
+        }
+    )
+
+    # When
+    decision = compile_future_session_plan(request)
+
+    # Then
+    assert isinstance(decision, ReadyToPrepareSessionPlan)
+    assert decision.scheduler_main_sha == decision.frozen_runtime.commit_sha
+
+
 def test_kr_old_snapshot_derives_schedule_but_trial_stays_deferred(
     tmp_path: Path,
 ) -> None:
@@ -149,6 +220,28 @@ def test_kr_old_snapshot_derives_schedule_but_trial_stays_deferred(
     assert decision.calendar_provenance.observed_at is not None
     assert decision.calendar_provenance.observed_at.date() == dt.date(2026, 7, 20)
     assert len(decision.strategy_registrations) == 2
+
+
+@pytest.mark.parametrize(
+    "lifecycle",
+    ("absent", "rejected"),
+)
+def test_kr_non_shadow_target_lifecycle_waits_without_jobs(
+    tmp_path: Path,
+    lifecycle: str,
+) -> None:
+    # Given
+    request, _, _ = _kr_request(tmp_path, lifecycle=lifecycle)
+
+    # When
+    decision = compile_future_session_plan(request)
+
+    # Then
+    assert isinstance(decision, WaitingSessionAuthority)
+    assert decision.jobs == ()
+    assert tuple(reason.value for reason in decision.reasons) == (
+        "runtime_authority_missing",
+    )
 
 
 def test_kr_conflicting_target_trial_blocks_materializable_jobs(
@@ -199,11 +292,13 @@ def _us_request(
     experiment: Path,
     execution: Path,
 ) -> FutureSessionPlanRequest:
+    authority, scheduler_sha = _authority_repository(tmp_path)
     return FutureSessionPlanRequest(
         market=FutureSessionMarket.US,
         after_date=dt.date(2026, 7, 24),
         compiled_at=dt.datetime(2026, 7, 24, 20, tzinfo=dt.UTC),
-        scheduler_main_sha="e" * 40,
+        scheduler_main_sha=scheduler_sha,
+        authority_repository=authority,
         frozen_runtime=FrozenRuntimeAuthority(
             directory=runtime,
             commit_sha=head,
@@ -218,6 +313,8 @@ def _us_request(
 
 def _kr_request(
     tmp_path: Path,
+    *,
+    lifecycle: str = "shadow",
 ) -> tuple[
     FutureSessionPlanRequest,
     ExperimentLedgerStore,
@@ -250,11 +347,19 @@ def _kr_request(
     day_version = next(
         item for item in versions if "leader-vwap-reclaim" in item.strategy_version
     )
+    if lifecycle != "absent":
+        _seed_kr_lifecycle(
+            ledger,
+            day_version,
+            rejected=lifecycle == "rejected",
+        )
+    authority, scheduler_sha = _authority_repository(tmp_path)
     request = FutureSessionPlanRequest(
         market=FutureSessionMarket.KR,
         after_date=dt.date(2026, 7, 20),
         compiled_at=dt.datetime(2026, 7, 20, 9, tzinfo=dt.UTC),
-        scheduler_main_sha="e" * 40,
+        scheduler_main_sha=scheduler_sha,
+        authority_repository=authority,
         frozen_runtime=FrozenRuntimeAuthority(
             directory=runtime,
             commit_sha=head,
@@ -265,3 +370,87 @@ def _kr_request(
         kr_rollover_bundle=rollover.bundle_path.absolute(),
     )
     return request, ledger, day_version
+
+
+def _authority_repository(tmp_path: Path) -> tuple[Path, str]:
+    repository = tmp_path / "authority"
+    repository.mkdir(mode=0o700)
+    _git(repository, "init", "--quiet", "--initial-branch=main")
+    _git(repository, "config", "user.email", "authority@example.invalid")
+    _git(repository, "config", "user.name", "Authority Test")
+    (repository / "authority.txt").write_text("main\n", encoding="utf-8")
+    _git(repository, "add", "authority.txt")
+    _git(repository, "commit", "--quiet", "-m", "authority")
+    head = _git(repository, "rev-parse", "HEAD")
+    _git(repository, "update-ref", "refs/remotes/origin/main", head)
+    return repository, head
+
+
+def _seed_kr_lifecycle(
+    ledger: ExperimentLedgerStore,
+    version: MultiMarketStrategyVersionRegistration,
+    *,
+    rejected: bool,
+) -> None:
+    hypothesis = next(
+        item.registration
+        for item in ledger.multi_market_hypotheses()
+        if item.registration.hypothesis_id == version.hypothesis_id
+    )
+    calendar_id = "a" * 64
+    registration = MultiMarketStrategyLifecycleEvent(
+        strategy_version=version.strategy_version,
+        strategy_lane=version.strategy_lane,
+        sequence=1,
+        event_kind=StrategyLifecycleEventKind.REGISTRATION,
+        from_state=None,
+        to_state=StrategyLifecycleState.EXPERIMENTAL_SHADOW,
+        policy_version="future_session_fixture_v1",
+        decision_session_date=dt.date(2026, 7, 20),
+        effective_session_date=dt.date(
+            2026,
+            7,
+            21 if rejected else 22,
+        ),
+        decided_at=dt.datetime(
+            2026,
+            7,
+            20,
+            18,
+            tzinfo=dt.timezone(dt.timedelta(hours=9)),
+        ),
+        session_calendar_snapshot_id=calendar_id,
+        evidence_keys=tuple(
+            sorted(
+                (
+                    calendar_id,
+                    version.experiment_scope_key,
+                    str(multi_market_hypothesis_registration_key(hypothesis)),
+                    str(multi_market_strategy_version_registration_key(version)),
+                )
+            )
+        ),
+        reason_codes=("multi_market_strategy_registered",),
+        previous_event_key=None,
+    )
+    with ledger.writer() as writer:
+        assert writer.append_multi_market_lifecycle_event(registration) is True
+        if rejected:
+            previous = str(multi_market_lifecycle_event_key(registration))
+            transition = MultiMarketStrategyLifecycleEvent(
+                strategy_version=version.strategy_version,
+                strategy_lane=version.strategy_lane,
+                sequence=2,
+                event_kind=StrategyLifecycleEventKind.TRANSITION,
+                from_state=StrategyLifecycleState.EXPERIMENTAL_SHADOW,
+                to_state=StrategyLifecycleState.REJECTED,
+                policy_version="future_session_fixture_v1",
+                decision_session_date=dt.date(2026, 7, 21),
+                effective_session_date=dt.date(2026, 7, 22),
+                decided_at=dt.datetime(2026, 7, 21, 15, 40, tzinfo=dt.timezone(dt.timedelta(hours=9))),
+                session_calendar_snapshot_id="b" * 64,
+                evidence_keys=tuple(sorted((previous, "b" * 64))),
+                reason_codes=("fixture_rejected",),
+                previous_event_key=previous,
+            )
+            assert writer.append_multi_market_lifecycle_event(transition) is True

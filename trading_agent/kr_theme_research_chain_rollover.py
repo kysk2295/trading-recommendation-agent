@@ -266,13 +266,20 @@ def _read_private_text(path: Path) -> str:
             not stat.S_ISREG(metadata.st_mode)
             or metadata.st_uid != os.getuid()
             or stat.S_IMODE(metadata.st_mode) != 0o600
-            or metadata.st_nlink != 1
+            or metadata.st_nlink not in (1, 2)
         ):
             raise InvalidKrThemeResearchChainRolloverError
         payload = bytearray()
         while chunk := os.read(descriptor, 64 * 1024):
             payload.extend(chunk)
-        if os.fstat(descriptor) != metadata:
+        after = os.fstat(descriptor)
+        if (
+            after.st_dev != metadata.st_dev
+            or after.st_ino != metadata.st_ino
+            or after.st_size != metadata.st_size
+            or after.st_mtime_ns != metadata.st_mtime_ns
+            or after.st_ctime_ns != metadata.st_ctime_ns
+        ):
             raise InvalidKrThemeResearchChainRolloverError
         return bytes(payload).decode()
     finally:
