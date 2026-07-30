@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import sys
 from pathlib import Path
 
 from tests.us_news_catalyst_trial_fixtures import (
@@ -51,7 +52,10 @@ def test_actions_follow_preopen_start_and_setup_windows(tmp_path: Path) -> None:
     )
 
     assert register.status is UsNewsCatalystDaySessionActionStatus.EXECUTE
-    assert register.command is not None and register.command[1] == "register"
+    assert register.command is not None
+    assert register.command[0] == sys.executable
+    assert Path(register.command[1]).name == "run_us_news_catalyst_shadow_trial.py"
+    assert register.command[2] == "register"
     assert start.status is UsNewsCatalystDaySessionActionStatus.EXECUTE
     assert start.command is not None and str(projection_path) in start.command
 
@@ -87,7 +91,9 @@ def test_actions_follow_preopen_start_and_setup_windows(tmp_path: Path) -> None:
     assert early.status is UsNewsCatalystDaySessionActionStatus.WAITING
     assert boundary.status is UsNewsCatalystDaySessionActionStatus.WAITING
     assert collect.status is UsNewsCatalystDaySessionActionStatus.EXECUTE
-    assert collect.command is not None and "run_us_news_catalyst_cohort_collect.py" in collect.command[0]
+    assert collect.command is not None
+    assert collect.command[0] == sys.executable
+    assert Path(collect.command[1]).name == "run_us_news_catalyst_cohort_collect.py"
 
 
 def _manifest(tmp_path: Path) -> UsNewsCatalystDaySessionManifest:

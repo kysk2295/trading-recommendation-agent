@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import sys
 from pathlib import Path
 from typing import assert_never
 
@@ -263,7 +264,11 @@ def _ledger_output(manifest: UsNewsCatalystDaySessionManifest, output: Path) -> 
 
 
 def _execute(*command: str) -> UsNewsCatalystDaySessionAction:
-    return UsNewsCatalystDaySessionAction(UsNewsCatalystDaySessionActionStatus.EXECUTE, command, None)
+    return UsNewsCatalystDaySessionAction(
+        UsNewsCatalystDaySessionActionStatus.EXECUTE,
+        (sys.executable, *command),
+        None,
+    )
 
 
 def _waiting() -> UsNewsCatalystDaySessionAction:

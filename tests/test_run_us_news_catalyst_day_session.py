@@ -161,8 +161,8 @@ class _FixturePhaseRunner:
 
     def __call__(self, command: tuple[str, ...]) -> int:
         self.commands.append(command)
-        script = Path(command[0]).name
-        argv = list(command[1:])
+        script = Path(command[1]).name
+        argv = list(command[2:])
         if script == "run_us_news_catalyst_shadow_trial.py":
             return run_us_news_catalyst_shadow_trial.main(argv, clock=lambda: self.now)
         if script == "run_us_news_catalyst_setup_observation.py":
