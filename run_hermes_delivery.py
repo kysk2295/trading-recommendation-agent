@@ -16,6 +16,8 @@ from typing import assert_never
 
 from pydantic import ValidationError
 
+from trading_agent.dashboard_reviewer_lifecycle import ReviewerLifecycleAuthorityReader
+from trading_agent.experiment_ledger_store import ExperimentLedgerReader
 from trading_agent.hermes_delivery_errors import (
     HermesDeliveryWriterLeaseUnavailableError,
     InvalidHermesDeliveryStoreError,
@@ -46,6 +48,7 @@ from trading_agent.kr_source_cycle_delivery import (
     project_kr_source_cycle_incident,
 )
 from trading_agent.kr_theme_store import KrThemeStore
+from trading_agent.lane_review_store import LaneReviewReader
 from trading_agent.private_stable_report import InvalidPrivateStableReportError
 from trading_agent.us_session_delivery_reconciliation import InvalidUsSessionDeliveryReconciliationError
 from trading_agent.us_session_delivery_terminal import InvalidUsSessionDeliveryTerminalError
@@ -102,6 +105,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     query.add_argument("--database", type=Path, required=True)
     query.add_argument("--symbol", required=True)
     query.add_argument("--observed-at", type=_datetime, required=True)
+    query.add_argument("--experiment-ledger", type=Path)
+    query.add_argument("--lane-review", type=Path)
     return parser.parse_args(argv)
 
 
@@ -209,9 +214,13 @@ def main(
                     }
                 )
             case "query":
-                result = HermesAgentQueryService(store).query(args.symbol, observed_at=args.observed_at)
+                result = HermesAgentQueryService(
+                    store,
+                    allocation_authority=_allocation_authority(args.experiment_ledger, args.lane_review),
+                ).query(args.symbol, observed_at=args.observed_at)
                 _print(
                     {
+                        "allocation_manager": result.allocation_manager.model_dump(mode="json"),
                         "instrument_id": result.instrument_id,
                         "opinion_count": len(result.opinions),
                         "opinions": [opinion.model_dump(mode="json") for opinion in result.opinions],
@@ -253,6 +262,24 @@ def _sources(opportunities: Path, signals: Path) -> HermesProjectionSources:
         opportunity_outbox=opportunities,
         signal_outbox=signals,
     )
+
+
+def _allocation_authority(
+    experiment_ledger: Path | None,
+    lane_review: Path | None,
+) -> ReviewerLifecycleAuthorityReader | None:
+    if (experiment_ledger is None) != (lane_review is None):
+        raise InvalidHermesQueryError
+    if experiment_ledger is None or lane_review is None:
+        return None
+    experiments = ExperimentLedgerReader(experiment_ledger)
+    reviews = LaneReviewReader(lane_review)
+    if (
+        (experiments.path.exists() and not experiments.is_initialized())
+        or (reviews.path.exists() and not reviews.is_initialized())
+    ):
+        return None
+    return ReviewerLifecycleAuthorityReader(experiments=(experiments,), reviews=(reviews,))
 
 
 def _date(value: str) -> dt.date:

@@ -119,6 +119,8 @@ def test_query_handler_executes_only_allowlisted_project_cli(tmp_path: Path, mon
     command = calls[0]
     assert command[1:4] == ("run", "python", str(project / "run_hermes_delivery.py"))
     assert "query" in command
+    assert command[command.index("--experiment-ledger") + 1] == "outputs/experiment_control/experiment_ledger.sqlite3"
+    assert command[command.index("--lane-review") + 1] == "outputs/lane_control/lane_review.sqlite3"
     assert "https://example.invalid" not in command
 
 

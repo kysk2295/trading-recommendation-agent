@@ -17,6 +17,7 @@ _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$")
 _DATABASE = Path("outputs/hermes/delivery.sqlite3")
 _ARM_DATABASE = Path("outputs/hermes/arm.sqlite3")
 _LANE_REGISTRY = Path("outputs/lane_control/lane_registry.sqlite3")
+_LANE_REVIEW = Path("outputs/lane_control/lane_review.sqlite3")
 _EXPERIMENT_LEDGER = Path("outputs/experiment_control/experiment_ledger.sqlite3")
 ArmSchemaValue = str | bool | list[str] | dict[str, "ArmSchemaValue"]
 
@@ -147,7 +148,19 @@ def _query(args: Mapping[str, str], **context: str) -> str:
         return _blocked("invalid_arguments")
     return _run_project_cli(
         "run_hermes_delivery.py",
-        ("query", "--database", str(_DATABASE), "--symbol", symbol, "--observed-at", observed_at),
+        (
+            "query",
+            "--database",
+            str(_DATABASE),
+            "--symbol",
+            symbol,
+            "--observed-at",
+            observed_at,
+            "--experiment-ledger",
+            str(_EXPERIMENT_LEDGER),
+            "--lane-review",
+            str(_LANE_REVIEW),
+        ),
     )
 
 
@@ -166,7 +179,7 @@ def _status(args: Mapping[str, str], **context: str) -> str:
             "delivery_worker_status": _delivery_worker_status(),
             "query_available": (root / "run_hermes_delivery.py").is_file(),
             "result": "ready",
-            "version": "1.3.0",
+            "version": "1.4.0",
         }
     )
 

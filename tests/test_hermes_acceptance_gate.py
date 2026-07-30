@@ -441,7 +441,7 @@ def _plugin_receipt(repository: Path) -> None:
         json.dumps(
             {
                 "enabled": True,
-                "installed_version": "1.3.0",
+                "installed_version": "1.4.0",
                 "observed_at": "2026-07-24T17:00:00Z",
                 "plugin_manifest_path": "integrations/hermes/trading-agent/plugin.yaml",
                 "plugin_manifest_sha256": acceptance_artifact_sha256(
