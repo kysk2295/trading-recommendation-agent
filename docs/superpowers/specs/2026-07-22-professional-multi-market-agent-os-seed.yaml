@@ -1,0 +1,412 @@
+goal: >-
+  Extend the existing trading-recommendation-agent into an always-on professional
+  multi-market research OS where installing one versioned Hermes plugin gives the
+  owner separate real-time recommendations, queries, lifecycle outcomes, and alerts
+  from US and KR Day, Swing, Systematic, Options, and Futures agents; deterministic
+  strategy cores and a sandboxed Loop Engineer continuously test provenance-bound
+  hypotheses and automatically promote or demote immutable strategy versions under
+  Alpaca Paper-only, KR shadow-only, fixed-risk, causal, and reproducible evidence
+  contracts, with allocation enabled only after two independent executable champions.
+
+constraints:
+  - "C-001: Real-money trading and every live brokerage endpoint are permanently forbidden."
+  - >-
+    C-002: Alpaca mutation is allowed only at https://paper-api.alpaca.markets through
+    the existing sole execution writer during an explicitly armed US session.
+  - >-
+    C-003: Hermes may authenticate and route a signed, expiring, one-use arm request
+    but may never call a broker; the trading repository command gateway must
+    revalidate owner, nonce, session, lane, expiry, account binding, and fixed risk
+    before the sole writer consumes the request.
+  - >-
+    C-004: Paper limits remain at or below USD 100 notional, USD 10 planned risk, one
+    open position, and USD 30 daily loss; no agent, Reviewer, lifecycle transition,
+    or Allocation Manager may enlarge them automatically.
+  - >-
+    C-005: Daily loss uses the worse of broker equity drawdown and local realized plus
+    unrealized loss, remaining stop risk, and fees from the previous NYSE close;
+    external account activity blocks execution and the loss latch survives restart
+    until the next NYSE session.
+  - >-
+    C-006: KIS and LS remain read-only; KR validation uses conservative shadow fills
+    and no KR account, balance, position, or order mutation.
+  - >-
+    C-007: Current-entry-actionable evidence must be from the current session. A quote
+    older than 5 seconds or a completed one-minute bar received more than 90 seconds
+    after bar close is ineligible. News, flow, and filing caps are locked by the lane
+    before outcomes. Provider rolling latency may block earlier, cannot loosen these
+    caps, and is not retrained during an outage.
+  - >-
+    C-008: Recommendation, execution, review, and lifecycle decisions preserve source,
+    observation time, strategy version, policy version, and immutable evidence; no
+    future data, silent source substitution, or synthetic value may fill a gap.
+  - >-
+    C-009: Papers, professional sources, GitHub, permitted Reddit, X, news, market
+    anomalies, and observed failures may propose hypotheses, but claims from source
+    material are not performance evidence and collection must respect entitlement,
+    license, retention, and redistribution terms.
+  - >-
+    C-010: An active research day is a scheduled day on which at least one
+    entitlement-approved source sweep reaches a terminal result and no global source
+    outage censors discovery. It targets at least 20 new provenance-complete candidate
+    hypotheses. A candidate counts once only when it has a unique hypothesis ID and
+    semantic fingerprint, source URI or content hash, observed-at time, lane scope,
+    falsifiable rule, and duplicate decision; retries, mirrors, paraphrases, and
+    parameter variants without a distinct mechanism do not increase the count. A
+    shortfall emits a censored or failed daily research result rather than fabricated
+    candidates. Discovery and light screening may be bounded in parallel, while
+    exactly one manifest-marked heavy data or backtest process holds the heavy-work
+    lease and stops safely before total process-tree RSS reaches 10 GiB.
+  - >-
+    C-011: Generated strategy code runs without project secrets or broker access in a
+    resource-limited, network-allowlisted sandbox; only an independently reviewed,
+    signed, merged commit may enter shadow, and a running champion is never
+    overwritten in place.
+  - >-
+    C-012: The Reviewer may design lane-specific gates only before trial outcomes are
+    visible. Point-in-time causality, out-of-sample validation, costs, multiple-testing
+    control, and reproducibility cannot be waived; changing a locked gate creates a
+    new policy, version, and trial.
+  - >-
+    C-013: Agent opinions remain separate. Hermes may summarize and contrast them but
+    may not manufacture a blended trade verdict; any combination is a preregistered
+    composite hypothesis with its own trial.
+  - >-
+    C-014: New providers are added only after an active challenger proves a missing
+    data capability. Paid contracts require explicit owner approval.
+  - >-
+    C-015: Operational acceptance runs only from a clean immutable commit and
+    preserves all pre-existing dirty-worktree changes; new standalone infrastructure
+    requires evidence that an active user vertical cannot close through existing
+    contracts.
+  - >-
+    C-016: A test result alone cannot satisfy an operational acceptance criterion.
+    Every acceptance artifact set includes a schema-valid manifest bound to the exact
+    clean commit SHA, criterion and policy versions, real market-session identifiers,
+    observation window, producer identities, content hashes, and verifier version;
+    fixture or synthetic evidence is labeled and cannot satisfy a required natural or
+    live-session gate.
+
+acceptance_criteria:
+  - description: >-
+      AC-001 Hermes always-on user surface: Installing the version-matched project
+      plugin in Hermes once enables the owner to query Opportunity, Market Context,
+      Day, Swing, Systematic, and Derivatives agents and receive automatic watch,
+      actionable, invalidation, exit, incident, no-recommendation, research, and
+      daily-summary events without manual copying. US and KR each run for five
+      consecutive trading sessions without manual state repair. A controlled child
+      process restart and read-only provider outage are recovered, and every delivered
+      or suppressed event reconciles to one immutable delivery identity, Telegram
+      acknowledgement or terminal delivery state, and reply lineage with no
+      unaccounted duplicate or omission.
+    verify_command: >-
+      uv run pytest -q tests/test_hermes_plugin_contract.py
+      tests/test_hermes_delivery_e2e.py
+      tests/test_multi_market_soak_reconciliation.py && uv run python -m
+      trading_agent.acceptance_evidence verify --criterion AC-001 --manifest
+      outputs/acceptance/hermes/manifest.json --require-clean-commit
+      --require-session-binding && echo OK
+    expected_artifacts:
+      - outputs/acceptance/hermes/manifest.json
+      - outputs/acceptance/hermes/plugin_installation.json
+      - outputs/acceptance/hermes/delivery_reconciliation.json
+      - outputs/acceptance/hermes/query_and_alert_qa.md
+      - outputs/acceptance/soak/us_five_session_report.json
+      - outputs/acceptance/soak/kr_five_session_report.json
+      - outputs/acceptance/soak/restart_and_provider_fault_reconciliation.json
+    output_assertion: OK
+  - description: >-
+      AC-002 US and KR Day operating outcome: The US Day subgate records three
+      scheduled regular sessions and, for at least one naturally occurring eligible
+      setup, the owner observes scanner, current quote, Hermes actionable card,
+      owner-armed Alpaca Paper entry, protective OCO, partial-fill recovery when
+      applicable, exit or EOD flatness, broker reconciliation, and final Hermes
+      result. The KR Day subgate separately records three scheduled open KRX sessions
+      in which the owner observes current source collection, theme opportunity,
+      current quote, Hermes card, conservative shadow entry and terminal exit,
+      independent Reviewer result, and daily summary, with zero KIS or LS account or
+      order mutations and explicit stale, incomplete-source, VI, auction, halt, and
+      price-limit blocks. Every no-setup or blocked session reports its reason. Ten US
+      censored_no_setup sessions may validate US delivery and market subgates but the
+      US Paper lifecycle, this criterion, and the operating product remain unresolved.
+    verify_command: >-
+      uv run pytest -q tests/test_us_day_operating_vertical_e2e.py
+      tests/test_paper_operating_session.py
+      tests/test_kr_day_operating_vertical_e2e.py && uv run python -m
+      trading_agent.acceptance_evidence verify --criterion AC-002 --manifest
+      outputs/acceptance/day/manifest.json --require-clean-commit
+      --require-session-binding && echo OK
+    expected_artifacts:
+      - outputs/acceptance/day/manifest.json
+      - outputs/acceptance/us_day/three_session_report.json
+      - outputs/acceptance/us_day/natural_paper_lifecycle.json
+      - outputs/acceptance/us_day/final_reconciliation.json
+      - outputs/acceptance/us_day/hermes_outcome_receipt.json
+      - outputs/acceptance/kr_day/three_session_report.json
+      - outputs/acceptance/kr_day/open_session_shadow_lifecycle.json
+      - outputs/acceptance/kr_day/reviewer_result.json
+      - outputs/acceptance/kr_day/hermes_daily_summary_receipt.json
+    output_assertion: OK
+  - description: >-
+      AC-003 US Swing outcome: A separately versioned US Swing lane produces a
+      replayable multi-session shadow lifecycle from point-in-time opportunity and
+      market-context evidence through entry, overnight state transitions, exit or
+      invalidation, independent review, and Hermes result. Its holding-period,
+      overnight-risk, freshness, cost, and terminal-state policy is independent from
+      US Day and cannot reuse the Day execution state machine as an overnight flag.
+    verify_command: >-
+      uv run pytest -q tests/test_swing_shadow_trial.py && uv run python -m
+      trading_agent.acceptance_evidence verify --criterion AC-003 --manifest
+      outputs/acceptance/swing/manifest.json --require-clean-commit
+      --require-session-binding && echo OK
+    expected_artifacts:
+      - outputs/acceptance/swing/manifest.json
+      - outputs/acceptance/swing/multi_session_shadow_lifecycle.json
+      - outputs/acceptance/swing/reviewer_result.json
+      - outputs/acceptance/swing/hermes_outcome_receipt.json
+    output_assertion: OK
+  - description: >-
+      AC-004 Loop Engineer and automated lifecycle outcome: At least one
+      provenance-bound challenger automatically traverses preregistration, sandboxed
+      implementation, historical and walk-forward evaluation, shadow, independent
+      review, and a deterministic comparison, promotion, champion, suspension,
+      demotion, or retirement decision under a prospective immutable lifecycle policy.
+      Legacy events remain replayable, a champion frozen by an arm cannot change that
+      session, and failed, censored, or rejected attempts remain visible in Hermes and
+      the experiment ledger.
+    verify_command: >-
+      uv run pytest -q tests/test_loop_engineer_challenger_e2e.py
+      tests/test_automated_lifecycle_v2.py && uv run python -m
+      trading_agent.acceptance_evidence verify --criterion AC-004 --manifest
+      outputs/acceptance/research/manifest.json --require-clean-commit
+      --require-session-binding && echo OK
+    expected_artifacts:
+      - outputs/acceptance/research/manifest.json
+      - outputs/acceptance/research/challenger_source_to_decision.json
+      - outputs/acceptance/research/signed_generated_code_provenance.json
+      - outputs/acceptance/research/hermes_weekly_research_receipt.json
+      - outputs/acceptance/governance/lifecycle_migration_and_replay.json
+    output_assertion: OK
+  - description: >-
+      AC-005 Systematic Quant outcome: Independently preregistered Systematic lanes
+      cover US ETF trend and relative-strength rotation and separately controlled
+      leveraged ETF variants. Every user-exposed lane has a scheduled current-session
+      or explicitly labeled post-close Hermes result, replayable shadow outcome,
+      capability and entitlement decision, and independent Reviewer status before
+      advancing.
+    verify_command: >-
+      uv run pytest -q tests/test_systematic_quant_lanes_e2e.py && uv run python -m
+      trading_agent.acceptance_evidence verify --criterion AC-005 --manifest
+      outputs/acceptance/systematic/manifest.json --require-clean-commit
+      --require-session-binding && echo OK
+    expected_artifacts:
+      - outputs/acceptance/systematic/manifest.json
+      - outputs/acceptance/systematic/lane_coverage.json
+      - outputs/acceptance/systematic/shadow_and_review_evidence.json
+      - outputs/acceptance/systematic/hermes_agent_results.json
+    output_assertion: OK
+  - description: >-
+      AC-006 Options and Futures outcome: Independently preregistered Derivatives
+      lanes cover options IV, skew and term structure, futures trend, basis and roll,
+      and event-option hypotheses. Each lane remains read-only or shadow-only, records
+      its market-data capability and entitlement decision, produces a scheduled
+      current-session or explicitly labeled post-close Hermes result and replayable
+      outcome, and receives independent Reviewer status before advancing.
+    verify_command: >-
+      uv run pytest -q tests/test_derivatives_agent_lanes_e2e.py && uv run python -m
+      trading_agent.acceptance_evidence verify --criterion AC-006 --manifest
+      outputs/acceptance/derivatives/manifest.json --require-clean-commit
+      --require-session-binding && echo OK
+    expected_artifacts:
+      - outputs/acceptance/derivatives/manifest.json
+      - outputs/acceptance/derivatives/lane_coverage.json
+      - outputs/acceptance/derivatives/shadow_and_review_evidence.json
+      - outputs/acceptance/derivatives/hermes_agent_results.json
+    output_assertion: OK
+  - description: >-
+      AC-007 Allocation outcome: Allocation remains disabled until two champions from
+      distinct non-composite executable lanes have separate forward evidence and
+      Paper-eligible authority. It then produces next-session budgets only from
+      finalized prior-day lane snapshots, stays inside unchanged total risk, never
+      selects symbols, creates orders, or reallocates intraday, and exposes its result
+      and disabled reason through Hermes.
+    verify_command: >-
+      uv run pytest -q tests/test_allocation_manager_gate.py && uv run python -m
+      trading_agent.acceptance_evidence verify --criterion AC-007 --manifest
+      outputs/acceptance/governance/manifest.json --require-clean-commit
+      --require-session-binding && echo OK
+    expected_artifacts:
+      - outputs/acceptance/governance/manifest.json
+      - outputs/acceptance/governance/champion_independence_decision.json
+      - outputs/acceptance/governance/next_session_allocation.json
+      - outputs/acceptance/governance/hermes_allocation_receipt.json
+    output_assertion: OK
+
+ontology_schema:
+  name: ProfessionalMultiMarketAgentOS
+  description: >-
+    Immutable research, recommendation, delivery, Paper or shadow execution, review,
+    lifecycle, and allocation evidence across markets and specialist agent families.
+  fields:
+    - name: market_domains
+      type: array
+      description: US and KR equity or derivatives domains with calendars, entitlements, and execution modes.
+    - name: agent_families
+      type: array
+      description: Opportunity, Market Context, Day, Swing, Systematic, Derivatives, and Allocation responsibilities.
+    - name: strategy_lanes
+      type: array
+      description: Independently falsifiable hypothesis families with execution and data boundaries.
+    - name: strategy_versions
+      type: array
+      description: Immutable merged code, configuration, gate policy, and source provenance identities.
+    - name: experiment_trials
+      type: array
+      description: Preregistered historical, walk-forward, shadow, or Paper observations and terminal outcomes.
+    - name: recommendation_events
+      type: array
+      description: Watch, actionable, invalidated, exited, no-recommendation, and incident events with causal evidence.
+    - name: research_events
+      type: array
+      description: Hypothesis discovery, screening, trial, review, lifecycle, failure, censoring, and source-provenance results.
+    - name: daily_summary_events
+      type: array
+      description: Per-market and per-research-day terminal summaries with expected, emitted, suppressed, failed, and reconciled event counts.
+    - name: delivery_events
+      type: array
+      description: Immutable Hermes delivery identities, reply lineage, acknowledgements, retries, and dead letters.
+    - name: arm_requests
+      type: array
+      description: Signed owner requests scoped to nonce, session, lane, champion, expiry, account, and fixed risk.
+    - name: execution_snapshots
+      type: array
+      description: Broker, shadow, local-ledger, position, order, loss-latch, and reconciliation state.
+    - name: review_decisions
+      type: array
+      description: Independent evidence assessments against immutable preregistered gates.
+    - name: lifecycle_events
+      type: array
+      description: Versioned append-only state transitions with effective session and authority evidence.
+    - name: provider_capabilities
+      type: array
+      description: Source coverage, freshness, latency baseline, hard cap, entitlement, health, and cost decision.
+    - name: hypotheses
+      type: array
+      description: Provenance-bound research claims, falsification rules, locked gates, and source evidence.
+    - name: hermes_installations
+      type: array
+      description: Plugin and contract versions, owner binding, enabled tools, subscriptions, and compatibility state.
+    - name: owner_authorizations
+      type: array
+      description: Allowlisted identity, confirmation, nonce, expiry, revocation, and consumed arm-request evidence.
+    - name: generated_code_artifacts
+      type: array
+      description: Sandbox policy, source worktree, tests, review, signer, merge commit, and deployment eligibility.
+    - name: control_plane_actors
+      type: array
+      description: Loop Engineer, Independent Reviewer, Lifecycle Controller, single execution writer, and Allocation Manager authorities.
+    - name: champions
+      type: array
+      description: Independently eligible shadow or Paper strategy versions and frozen session bindings.
+    - name: risk_allocations
+      type: array
+      description: Prior-snapshot-derived next-session lane budgets bounded by unchanged global risk.
+
+evaluation_principles:
+  - name: user_observability
+    description: Prefer working Hermes recommendations, outcomes, incidents, and daily summaries over internal infrastructure counts.
+    weight: 1.0
+  - name: causal_reproducibility
+    description: Every decision must replay from only evidence available at that time and the exact immutable version.
+    weight: 1.0
+  - name: execution_integrity
+    description: Paper or shadow state, delivery state, and local ledgers must reconcile and fail closed on ambiguity.
+    weight: 1.0
+  - name: research_validity
+    description: OOS, costs, multiple-testing control, regime evidence, and failed or censored trials remain visible.
+    weight: 0.95
+  - name: product_focus
+    description: Add support code only when it closes a currently failing user-visible vertical.
+    weight: 0.9
+  - name: bounded_autonomy
+    description: Automate research and lifecycle without granting live-money, discretionary broker, or risk-expansion authority.
+    weight: 1.0
+
+exit_conditions:
+  - name: operating_product_v1
+    description: Hermes and independently evidenced US and KR Day operation are observable by the owner.
+    criteria: >-
+      AC-001 and AC-002 pass; a ten-session censored_no_setup period may pass delivery,
+      market, and soak subgates but cannot close AC-002 or this exit condition without
+      a natural full US Paper lifecycle.
+  - name: research_os_v1
+    description: Multi-session Swing and one complete automated challenger loop are operating.
+    criteria: AC-001 through AC-004 pass.
+  - name: professional_agent_os
+    description: Systematic and Derivatives specialists operate under the shared evidence kernel.
+    criteria: AC-001 through AC-006 pass.
+  - name: allocation_enabled
+    description: Allocation activates only after independent executable champions exist.
+    criteria: AC-007 passes and at least two preregistered champion-independence decisions are valid.
+
+brownfield_context:
+  project_type: brownfield
+  context_references:
+    - path: /Users/goyunseo/work/trading-recommendation-agent
+      role: primary
+      summary: >-
+        /Users/goyunseo/work/trading-recommendation-agent is the only repository this
+        Seed may modify; README.md and AGENTS.md define current behavior and safety.
+    - path: /Users/goyunseo/work/trading-recommendation-agent/docs/superpowers/specs
+      role: reference
+      summary: >-
+        Read-only existing design evidence, including the 2026-07-17 canonical design,
+        multi-market contracts, Hermes v1, lifecycle v1, lane control-plane, autonomous
+        Paper Research OS, research source lineage, and KR theme lane.
+    - path: /Users/goyunseo/work/trading-recommendation-agent/docs/runbooks
+      role: reference
+      summary: Read-only current operational and Paper smoke procedures.
+  existing_patterns:
+    - Modular monolith with provider adapters and explicit market or agent ownership.
+    - Append-only mode-600 SQLite ledgers and content-addressed immutable artifacts.
+    - Point-in-time event semantics and fail-closed data, account, order, and lifecycle gates.
+    - Single Paper writer with deterministic client order IDs, WebSocket raw-first ingestion, REST recovery, and reconciliation.
+    - Strategy Lane to Strategy Version to Experiment Trial identity hierarchy.
+    - Query-only Independent Reviewer evidence and versioned lifecycle policy.
+  existing_dependencies:
+    - Python 3.12
+    - Pydantic v2
+    - Typer and Rich
+    - httpx2 and websockets
+    - SQLite, DuckDB, PyArrow, and Parquet
+    - pytest, Ruff, and basedpyright
+
+metadata:
+  seed_id: seed_professional_multi_market_agent_os_20260722
+  version: 1.0.0
+  created_at: 2026-07-21T17:14:45Z
+  ambiguity_score: 0.0
+  interview_id: null
+  generation_mode: normal
+  degraded: false
+  unresolved_slots: []
+  recovery_reason: null
+  decision_provenance:
+    user_confirmed: 38
+
+authority_contract:
+  interview_mode: ouroboros_path_b
+  interview_approval: explicit
+  qa_pass_threshold: 0.9
+  supersedes:
+    - Product ordering that previously combined US and KR delivery before the US-first operating vertical.
+    - >-
+      Earlier Hermes and Telegram exclusion wording only for authenticated project
+      queries, immutable outbound notifications, acknowledgements, and signed arm
+      request routing; Hermes still has no strategy, risk, execution-writer, or broker
+      authority.
+    - Hermes query-only wording only to permit signed arm-request authentication and routing; Hermes still has no broker authority.
+    - Lifecycle v1 promotion-closed policy only through a prospective v2 migration; immutable historical events are never rewritten.
+  preserves:
+    - Existing immutable execution, research, source, review, and lifecycle evidence.
+    - Existing Paper endpoint, account binding, risk, single-writer, and fail-closed contracts.
