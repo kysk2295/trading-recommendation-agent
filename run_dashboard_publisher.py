@@ -27,7 +27,12 @@ from trading_agent.dashboard_production_execution_boundary import (
     create_production_execution_boundary,
 )
 from trading_agent.dashboard_publisher_cli import register_execution_commands
-from trading_agent.dashboard_publisher_events import current_code_sha, watch_output_events
+from trading_agent.dashboard_publisher_events import (
+    DashboardPublisherAuthorityError,
+    current_code_sha,
+    require_current_main_authority,
+    watch_output_events,
+)
 from trading_agent.dashboard_publisher_pairing import (
     InteractionRuntime,
     PairingRequestRuntime,
@@ -128,6 +133,10 @@ def publish(
     dry_run: Annotated[bool, typer.Option(help="외부 전송 없이 snapshot 경계만 검증")] = False,
     pair_browser: Annotated[bool, typer.Option(help="일회용 운영자 브라우저 연결")] = False,
 ) -> None:
+    try:
+        require_current_main_authority()
+    except DashboardPublisherAuthorityError as error:
+        raise typer.BadParameter(str(error), param_hint="startup") from error
     try:
         config = load_dashboard_credentials(credentials)
     except DashboardCredentialError as error:

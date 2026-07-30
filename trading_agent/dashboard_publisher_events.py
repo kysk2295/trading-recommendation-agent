@@ -4,8 +4,10 @@ import datetime as dt
 import json
 import subprocess
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import Final, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
 import anyio
@@ -29,6 +31,23 @@ from trading_agent.dashboard_system_current_authority import (
 MAX_RECONNECT_SECONDS = 60
 WATCH_DEBOUNCE_MS = 2_000
 WATCH_STEP_MS = 250
+_MAIN_BRANCH: Final = "main"
+
+
+class DashboardPublisherAuthorityBlocker(StrEnum):
+    BRANCH_INVALID = "dashboard_publisher_authority_branch_invalid"
+    CHECK_UNAVAILABLE = "dashboard_publisher_authority_check_unavailable"
+    HEAD_NOT_CURRENT = "dashboard_publisher_authority_head_not_current"
+    REF_UNAVAILABLE = "dashboard_publisher_authority_ref_unavailable"
+    TRACKED_TREE_DIRTY = "dashboard_publisher_authority_tracked_tree_dirty"
+
+
+@dataclass(frozen=True, slots=True)
+class DashboardPublisherAuthorityError(Exception):
+    blocker: DashboardPublisherAuthorityBlocker
+
+    def __str__(self) -> str:
+        return self.blocker
 
 
 class SnapshotSocket(Protocol):
@@ -130,12 +149,76 @@ def current_code_sha() -> str:
     return completed.stdout.strip()
 
 
+def require_current_main_authority() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    branch = _git_authority_optional(repository, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if branch != _MAIN_BRANCH:
+        raise DashboardPublisherAuthorityError(DashboardPublisherAuthorityBlocker.BRANCH_INVALID)
+    tracked_changes = _git_authority_value(
+        repository,
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=no",
+        blocker=DashboardPublisherAuthorityBlocker.CHECK_UNAVAILABLE,
+    )
+    if tracked_changes:
+        raise DashboardPublisherAuthorityError(DashboardPublisherAuthorityBlocker.TRACKED_TREE_DIRTY)
+    head = _git_authority_value(
+        repository,
+        "rev-parse",
+        "HEAD",
+        blocker=DashboardPublisherAuthorityBlocker.CHECK_UNAVAILABLE,
+    )
+    local_main = _git_authority_value(
+        repository,
+        "rev-parse",
+        "refs/heads/main",
+        blocker=DashboardPublisherAuthorityBlocker.REF_UNAVAILABLE,
+    )
+    origin_main = _git_authority_value(
+        repository,
+        "rev-parse",
+        "refs/remotes/origin/main",
+        blocker=DashboardPublisherAuthorityBlocker.REF_UNAVAILABLE,
+    )
+    if head != local_main or head != origin_main:
+        raise DashboardPublisherAuthorityError(DashboardPublisherAuthorityBlocker.HEAD_NOT_CURRENT)
+
+
+def _git_authority_optional(repository: Path, *arguments: str) -> str | None:
+    try:
+        completed = subprocess.run(
+            ("git", "-C", str(repository), *arguments),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise DashboardPublisherAuthorityError(DashboardPublisherAuthorityBlocker.CHECK_UNAVAILABLE) from None
+    return completed.stdout.strip() if completed.returncode == 0 else None
+
+
+def _git_authority_value(
+    repository: Path,
+    *arguments: str,
+    blocker: DashboardPublisherAuthorityBlocker,
+) -> str:
+    value = _git_authority_optional(repository, *arguments)
+    if value is None:
+        raise DashboardPublisherAuthorityError(blocker)
+    return value
+
+
 __all__ = (
+    "DashboardPublisherAuthorityBlocker",
+    "DashboardPublisherAuthorityError",
     "SnapshotSocket",
     "WatchFactory",
     "current_code_sha",
     "publisher_url",
     "reconnect_delay_seconds",
+    "require_current_main_authority",
     "send_snapshot",
     "watch_output_events",
     "watch_roots",

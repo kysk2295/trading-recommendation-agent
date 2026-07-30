@@ -18,6 +18,7 @@ from typer.testing import CliRunner
 from websockets.exceptions import WebSocketException
 
 import run_dashboard_publisher
+import trading_agent.dashboard_publisher_events as dashboard_publisher_events
 import trading_agent.dashboard_relay as dashboard_relay
 from trading_agent.dashboard_agent_family import AgentFamilyId
 from trading_agent.dashboard_commands import InteractionPayload
@@ -29,8 +30,11 @@ from trading_agent.dashboard_directed_research_models import (
 from trading_agent.dashboard_execution_claims import InteractiveClaimStore
 from trading_agent.dashboard_native_watch import watch_native_changes
 from trading_agent.dashboard_publisher_events import (
+    DashboardPublisherAuthorityBlocker,
+    DashboardPublisherAuthorityError,
     publisher_url,
     reconnect_delay_seconds,
+    require_current_main_authority,
     watch_output_events,
     watch_roots,
 )
@@ -143,6 +147,7 @@ def test_dashboard_conversation_reset_help_bad_and_happy_path(tmp_path: Path) ->
 
 def test_archive_without_outputs_dispatches_autonomous_help_and_rejects_legacy_publish(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given: a clean shipped archive with no default output tree
     missing_outputs = tmp_path / "archive-without-outputs"
@@ -153,6 +158,7 @@ def test_archive_without_outputs_dispatches_autonomous_help_and_rejects_legacy_p
         encoding="utf-8",
     )
     credentials.chmod(0o600)
+    monkeypatch.setattr(run_dashboard_publisher, "require_current_main_authority", lambda: None)
 
     # When: a command-local help path and the legacy root publish path are invoked
     autonomous_help = CliRunner().invoke(
@@ -177,7 +183,10 @@ def test_archive_without_outputs_dispatches_autonomous_help_and_rejects_legacy_p
     assert "outputs_directory_missing" in legacy_publish.output
 
 
-def test_dashboard_publisher_rejects_non_https_remote_url(tmp_path: Path) -> None:
+def test_dashboard_publisher_rejects_non_https_remote_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     missing_outputs = tmp_path / "archive-without-outputs"
     credentials = tmp_path / "dashboard.env"
     credentials.write_text(
@@ -185,6 +194,7 @@ def test_dashboard_publisher_rejects_non_https_remote_url(tmp_path: Path) -> Non
         encoding="utf-8",
     )
     credentials.chmod(0o600)
+    monkeypatch.setattr(run_dashboard_publisher, "require_current_main_authority", lambda: None)
     before = tuple(tmp_path.iterdir())
 
     result = CliRunner().invoke(
@@ -204,7 +214,172 @@ def test_dashboard_publisher_rejects_non_https_remote_url(tmp_path: Path) -> Non
     assert tuple(tmp_path.iterdir()) == before
 
 
-def test_dashboard_publisher_dry_run_emits_canonical_v2_json(tmp_path: Path) -> None:
+def test_publisher_blocks_stale_main_authority_before_startup_side_effects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a stale main worktree and counters on every startup side effect
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    calls = {"credentials": 0, "readiness": 0, "system_authority": 0, "snapshot": 0, "relay": 0}
+
+    def stale_authority() -> None:
+        raise DashboardPublisherAuthorityError(DashboardPublisherAuthorityBlocker.HEAD_NOT_CURRENT)
+
+    def count_credentials(_path: Path) -> None:
+        calls["credentials"] += 1
+
+    def count_readiness(_outputs: Path) -> None:
+        calls["readiness"] += 1
+
+    def count_system_authority(_path: Path, *, untrusted_root: Path) -> None:
+        calls["system_authority"] += 1
+
+    def count_snapshot(_outputs: Path, **_settings: object) -> None:
+        calls["snapshot"] += 1
+
+    async def count_relay(**_settings: object) -> None:
+        calls["relay"] += 1
+
+    monkeypatch.setattr(run_dashboard_publisher, "require_current_main_authority", stale_authority)
+    monkeypatch.setattr(run_dashboard_publisher, "load_dashboard_credentials", count_credentials)
+    monkeypatch.setattr(run_dashboard_publisher, "_record_agent_readiness", count_readiness)
+    monkeypatch.setattr(run_dashboard_publisher, "load_system_authority_verifier", count_system_authority)
+    monkeypatch.setattr(run_dashboard_publisher, "collect_dashboard_snapshot_v2", count_snapshot)
+    monkeypatch.setattr(run_dashboard_publisher, "_run_relay", count_relay)
+
+    # When: the real CLI publish entry point starts in dry-run mode
+    result = CliRunner().invoke(
+        run_dashboard_publisher.app,
+        ["publish", "--outputs", str(outputs), "--credentials", str(tmp_path / "missing.env"), "--dry-run"],
+    )
+
+    # Then: it fails closed with a stable code before loading or mutating anything else
+    assert result.exit_code != 0
+    assert "dashboard_publisher_authority_head_not_current" in result.output
+    assert calls == {
+        "credentials": 0,
+        "readiness": 0,
+        "system_authority": 0,
+        "snapshot": 0,
+        "relay": 0,
+    }
+
+
+@pytest.mark.parametrize(
+    ("responses", "expected"),
+    [
+        pytest.param(
+            {("symbolic-ref", "--quiet", "--short", "HEAD"): (0, "integration\n")},
+            DashboardPublisherAuthorityBlocker.BRANCH_INVALID,
+            id="non-main-branch",
+        ),
+        pytest.param(
+            {("symbolic-ref", "--quiet", "--short", "HEAD"): (1, "")},
+            DashboardPublisherAuthorityBlocker.BRANCH_INVALID,
+            id="detached-head",
+        ),
+        pytest.param(
+            {
+                ("symbolic-ref", "--quiet", "--short", "HEAD"): (0, "main\n"),
+                ("status", "--porcelain=v1", "--untracked-files=no"): (0, " M tracked.py\n"),
+            },
+            DashboardPublisherAuthorityBlocker.TRACKED_TREE_DIRTY,
+            id="tracked-tree-dirty",
+        ),
+        pytest.param(
+            {
+                ("symbolic-ref", "--quiet", "--short", "HEAD"): (0, "main\n"),
+                ("status", "--porcelain=v1", "--untracked-files=no"): (0, ""),
+                ("rev-parse", "HEAD"): (0, "1ab0014\n"),
+                ("rev-parse", "refs/heads/main"): (0, "14bc732\n"),
+                ("rev-parse", "refs/remotes/origin/main"): (0, "14bc732\n"),
+            },
+            DashboardPublisherAuthorityBlocker.HEAD_NOT_CURRENT,
+            id="stale-integration-worktree",
+        ),
+        pytest.param(
+            {
+                ("symbolic-ref", "--quiet", "--short", "HEAD"): (0, "main\n"),
+                ("status", "--porcelain=v1", "--untracked-files=no"): (0, ""),
+                ("rev-parse", "HEAD"): (0, "14bc732\n"),
+                ("rev-parse", "refs/heads/main"): (0, "14bc732\n"),
+                ("rev-parse", "refs/remotes/origin/main"): (1, ""),
+            },
+            DashboardPublisherAuthorityBlocker.REF_UNAVAILABLE,
+            id="origin-main-unreadable",
+        ),
+    ],
+)
+def test_current_main_authority_rejects_each_blocker(
+    monkeypatch: pytest.MonkeyPatch,
+    responses: dict[tuple[str, ...], tuple[int, str]],
+    expected: DashboardPublisherAuthorityBlocker,
+) -> None:
+    # Given: controlled local git responses with no fetch or provider access
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(command: tuple[str, ...], **_settings: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        returncode, stdout = responses.get(command[3:], (1, ""))
+        return subprocess.CompletedProcess(command, returncode, stdout, "")
+
+    monkeypatch.setattr(dashboard_publisher_events.subprocess, "run", fake_run)
+
+    # When: the publisher authority guard evaluates the module's repository
+    with pytest.raises(DashboardPublisherAuthorityError) as failure:
+        require_current_main_authority()
+
+    # Then: each denial exposes only its stable typed blocker code
+    assert failure.value.blocker is expected
+    assert all(
+        command[:3]
+        == ("git", "-C", str(Path(dashboard_publisher_events.__file__).resolve().parents[1]))
+        for command in commands
+    )
+    assert not any("fetch" in command for command in commands)
+
+
+def test_current_main_authority_allows_untracked_hermes_with_current_refs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: current main refs and a status command that excludes untracked .hermes
+    commands: list[tuple[str, ...]] = []
+    current = "14bc732"
+    responses = {
+        ("symbolic-ref", "--quiet", "--short", "HEAD"): (0, "main\n"),
+        ("status", "--porcelain=v1", "--untracked-files=no"): (0, ""),
+        ("rev-parse", "HEAD"): (0, f"{current}\n"),
+        ("rev-parse", "refs/heads/main"): (0, f"{current}\n"),
+        ("rev-parse", "refs/remotes/origin/main"): (0, f"{current}\n"),
+    }
+
+    def fake_run(command: tuple[str, ...], **_settings: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        returncode, stdout = responses.get(command[3:], (1, ""))
+        return subprocess.CompletedProcess(command, returncode, stdout, "")
+
+    monkeypatch.setattr(dashboard_publisher_events.subprocess, "run", fake_run)
+
+    # When: the current-main guard runs before a dry-run startup
+    require_current_main_authority()
+
+    # Then: it accepts the repository without considering untracked files
+    expected_status_command = (
+        "git",
+        "-C",
+        str(Path(dashboard_publisher_events.__file__).resolve().parents[1]),
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=no",
+    )
+    assert expected_status_command in commands
+
+
+def test_dashboard_publisher_dry_run_emits_canonical_v2_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Given a mode-600 publisher boundary and accepted redacted source receipt
     outputs = tmp_path / "outputs"
     source_root = outputs / "experiment_control"
@@ -236,6 +411,7 @@ def test_dashboard_publisher_dry_run_emits_canonical_v2_json(tmp_path: Path) -> 
         encoding="utf-8",
     )
     credentials.chmod(0o600)
+    monkeypatch.setattr(run_dashboard_publisher, "require_current_main_authority", lambda: None)
 
     # When the real CLI dry-run boundary executes
     result = CliRunner().invoke(
@@ -267,10 +443,22 @@ def test_publisher_dry_run_cli_terminates_from_controlled_private_fixture(tmp_pa
     )
     credentials.chmod(0o600)
 
+    publisher_root = tmp_path / "current-main-publisher"
+    repository = Path(run_dashboard_publisher.__file__).parent
+    cloned = subprocess.run(
+        ("git", "clone", "--quiet", "--branch", "main", str(repository), str(publisher_root)),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert cloned.returncode == 0, cloned.stderr
+    publisher = publisher_root / "run_dashboard_publisher.py"
+
     result = subprocess.run(
         (
             sys.executable,
-            str(Path(run_dashboard_publisher.__file__)),
+            str(publisher),
             "publish",
             "--outputs",
             str(outputs),
@@ -281,7 +469,7 @@ def test_publisher_dry_run_cli_terminates_from_controlled_private_fixture(tmp_pa
         ),
         check=False,
         capture_output=True,
-        cwd=Path(run_dashboard_publisher.__file__).parent,
+        cwd=publisher_root,
         text=True,
         timeout=5,
     )
