@@ -8,6 +8,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from trading_agent.hermes_arm_request import (
     HermesArmFailure,
     HermesArmRequest,
@@ -75,6 +77,29 @@ class HermesArmStore:
         values = json.loads(row[0])
         values["signature"] = row[1]
         return HermesArmRequest.model_validate_json(json.dumps(values))
+
+    def requests(self) -> tuple[HermesArmRequest, ...]:
+        try:
+            with sqlite3.connect(f"file:{self.path}?mode=ro", uri=True) as connection:
+                rows: list[tuple[str, str, str]] = connection.execute(
+                    "SELECT request_id, payload_json, signature FROM arm_requests ORDER BY request_id"
+                ).fetchall()
+        except sqlite3.Error:
+            raise InvalidHermesArmRequestError(HermesArmFailure.INVALID_STORE) from None
+        requests: list[HermesArmRequest] = []
+        for request_id, payload, signature in rows:
+            if not self._signer.verify(payload, signature):
+                raise InvalidHermesArmRequestError(HermesArmFailure.INVALID_STORE)
+            try:
+                values = json.loads(payload)
+                values["signature"] = signature
+                request = HermesArmRequest.model_validate_json(json.dumps(values))
+            except (json.JSONDecodeError, TypeError, ValidationError):
+                raise InvalidHermesArmRequestError(HermesArmFailure.INVALID_STORE) from None
+            if request.request_id != request_id:
+                raise InvalidHermesArmRequestError(HermesArmFailure.INVALID_STORE)
+            requests.append(request)
+        return tuple(requests)
 
     def transitions(self, request_id: str) -> tuple[HermesArmTransition, ...]:
         self._initialize()

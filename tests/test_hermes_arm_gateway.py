@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import sqlite3
 import stat
 from pathlib import Path
 
@@ -92,6 +93,24 @@ def test_confirmed_arm_is_consumed_once_for_exact_session_lane_and_risk(tmp_path
     with pytest.raises(InvalidHermesArmRequestError) as replay:
         _ = gateway.consume(HermesArmConsumeCommand(request_id=confirmed.request_id, expected_scope=SCOPE))
     assert replay.value.reason is HermesArmFailure.CONSUMED
+
+
+def test_request_enumeration_rejects_a_tampered_signed_row(tmp_path: Path) -> None:
+    # Given
+    gateway, _, _ = _gateway(tmp_path)
+    prepared = gateway.prepare(HermesArmPrepareCommand(owner_id_hash=OWNER, scope=SCOPE))
+    store = gateway._config.store
+    with sqlite3.connect(store.path) as connection:
+        connection.execute("DROP TRIGGER arm_requests_no_update")
+        connection.execute(
+            "UPDATE arm_requests SET payload_json = ? WHERE request_id = ?",
+            ("{}", prepared.request_id),
+        )
+
+    # When / Then
+    with pytest.raises(InvalidHermesArmRequestError) as invalid:
+        _ = store.requests()
+    assert invalid.value.reason is HermesArmFailure.INVALID_STORE
 
 
 def test_wrong_owner_and_replayed_confirmation_are_rejected(tmp_path: Path) -> None:
