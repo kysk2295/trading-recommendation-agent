@@ -191,6 +191,21 @@ def test_allocation_authority_item_requires_two_independent_champions() -> None:
     assert _allocation_item(available_with_two_champions).value == "Authority present · read-only; no mutation control"
 
 
+def test_strategy_projection_reserves_the_bounded_item_slot_for_allocation_authority() -> None:
+    chains = tuple(
+        _chain(blocker=None, reviewer_ref="d" * 64, lifecycle_ref="e" * 64)
+        for _ in range(24)
+    )
+
+    projection = _projection("strategies", chains, False, NOW)
+
+    assert len(projection.workspace.items) == 24
+    assert projection.workspace.items[-1].item_id == "strategies.allocation_authority"
+    assert projection.workspace.total_count == 25
+    assert projection.workspace.projected_count == 24
+    assert projection.workspace.truncated is True
+
+
 def _chain(
     *,
     code_version: str = "a" * 40,

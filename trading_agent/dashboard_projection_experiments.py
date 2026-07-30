@@ -77,7 +77,8 @@ def _projection(
     edges: list[TraceEdgeV2] = []
     items: list[WorkspaceItemV2] = []
     terminals: list[str] = []
-    for index, chain in enumerate(chains[:24]):
+    projected_chains = chains[: 23 if workspace == "strategies" else 24]
+    for index, chain in enumerate(projected_chains):
         trace_id, terminal = _append_chain(nodes, edges, workspace, index, chain)
         terminals.append(terminal)
         items.append(
@@ -110,7 +111,7 @@ def _projection(
             summary=f"{workspace} ledger projected; allocation manager {allocation}",
             total_count=len(chains) + (1 if workspace == "strategies" else 0),
             projected_count=len(items),
-            truncated=len(chains) > len(items),
+            truncated=len(chains) > len(projected_chains),
             trace_id=root_id,
             items=tuple(items),
         ),
