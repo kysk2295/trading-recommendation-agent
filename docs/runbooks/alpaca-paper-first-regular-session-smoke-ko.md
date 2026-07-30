@@ -84,6 +84,11 @@ lane manifest와 scope가 exact current 계약일 때만 global experiment ledge
 
 별도 터미널에서 ORB watch를 시작한다. 네 lane 경로와 global experiment ledger를 함께 지정하면 watch는 provider 호출 전에 해당 NYSE 세션 `shadow_forward` trial을 register하고, 정규장 scan 전에 started event를 append한다. metrics, daily record, adaptive, snapshot, Reviewer가 모두 성공한 뒤에만 장후 terminal을 확정한다. 이 watch는 Alpaca 주문 mutation을 호출하지 않는다.
 
+**장전 등록 창:** `--experiment-ledger` 경로는 NYSE regular open **전**에 register가 성공해야 한다. 정규장이 이미 열린 뒤 최초 register는 `blocked_source`로 실패하고 watch 전체가 종료된다. 장중 늦게 smoke를 시작할 때는 아래 중 하나를 고른다.
+
+1. 권장(연구 trial 포함): 다음 거래일 pre-open에 register 후 `--wait-until-open`으로 개장부터 운영.
+2. Paper entry 후보만 필요: `--experiment-ledger`와 lane forward 경로를 빼고 watch만 실행해 `paper_recommendations.sqlite3`를 만든다. 이 경우 장후 trial terminal은 만들지 않는다.
+
 ```bash
 ./run_kis_paper_watch.py \
   --output-dir "$WATCH_RUN" \
@@ -100,7 +105,19 @@ lane manifest와 scope가 exact current 계약일 때만 global experiment ledge
   --experiment-ledger "$EXPERIMENT_DB"
 ```
 
-watch cycle이 실패했거나 `candidate_input_cycles.csv`와 SQLite 후보 입력이 불완전하면 그 cycle의 추천으로 entry를 실행하지 않는다.
+장중 Paper entry 전용 최소 예:
+
+```bash
+./run_kis_paper_watch.py \
+  --output-dir "$WATCH_RUN" \
+  --cycles 30 \
+  --interval-seconds 60 \
+  --strategy orb \
+  --top 10 \
+  --max-pages 1
+```
+
+watch cycle이 실패했거나 `candidate_input_cycles.csv`와 SQLite 후보 입력이 불완전하면 그 cycle의 추천으로 entry를 실행하지 않는다. setup 추천이 생성 직후 같은 봉에서 1R/2R로 종료되면 30초 entry 창이 닫히므로, entry smoke는 scan 직후 즉시 실행하고 stale 후보를 재사용하지 않는다.
 
 ## 3. 진입 직전 GET-only 대사
 

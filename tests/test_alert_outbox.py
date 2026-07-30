@@ -55,10 +55,18 @@ def test_alert_outbox_persists_a_complete_card_without_duplicates(
     assert payload["target_1r"] == 11.0
     assert payload["target_2r"] == 11.5
     assert payload["paper_only"] is True
+    assert payload["order_authority"] is False
+    assert payload["current_entry_possible"] is False
+    assert payload["market_id"] == "us_equities"
+    assert payload["agent_family"] == "day_trading"
+    assert payload["strategy_lane"] == "us_equities/day_trading/orb"
+    assert payload["same_bar_collision_policy"] == "stop_first"
     assert "알림 이후 새 완료 1분봉" in payload["entry_condition"]
     assert "진입 전 10.0000 이하" in payload["invalidation_condition"]
-    assert "TEST · opening_range_breakout" in markdown
+    assert "TEST · ORB 5분 돌파" in markdown
     assert "조건부 진입: 10.5000" in markdown
+    assert "현재 진입 가능: 아니오" in markdown
+    assert "주문 권한: 없음" in markdown
     assert "수익 보장" in markdown
 
 

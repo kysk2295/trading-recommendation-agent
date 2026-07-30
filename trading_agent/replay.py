@@ -105,22 +105,43 @@ def write_report(path: Path, store: PaperStore) -> None:
         "# 급등주 Paper 추천 재생 결과",
         "",
         "> 자동주문 또는 수익 보장이 아닌 연구용 조건부 추천 기록입니다.",
+        "> 이 카드는 주문 권한이 아니며 현재 호가 검증 없이는 현재 진입 가능으로 표시하지 않습니다.",
         "",
     ]
     recommendations = store.recommendations()
     if not recommendations:
-        lines.append("추천 없음")
-    for row in recommendations:
         lines.extend(
             (
-                f"## {row.symbol} · {row.strategy}",
+                "추천 없음",
                 "",
+                "- 해석: 현재 원장에 저장된 조건부 추천이 없습니다.",
+                "- 확인: 스캔 요약의 위험 게이트·스프레드·최신 완료 봉 조건을 함께 봅니다.",
+                "- 주문: Paper mutation을 이 빈 결과로 실행하지 않습니다.",
+            )
+        )
+    for row in recommendations:
+        risk = row.entry - row.stop
+        lines.extend(
+            (
+                f"## {row.symbol} · {_strategy_label(row.strategy)}",
+                "",
+                f"- 추천 ID: {row.recommendation_id}",
+                f"- 시장: {MARKET_ID}",
+                f"- 에이전트: {AGENT_FAMILY}",
+                f"- 전략 lane: {_strategy_lane(row.strategy)}",
+                f"- 전략 코드: {row.strategy}",
                 f"- 생성 시각: {row.created_at.isoformat()}",
                 f"- 상태: {_state_name(row.state)}",
-                f"- 조건부 진입가: {row.entry:.4f}",
-                f"- 손절가: {row.stop:.4f}",
-                f"- 1R 목표가: {row.target_1r:.4f}",
-                f"- 2R 목표가: {row.target_2r:.4f}",
+                "- 실행 가능성: 조건부 (현재 호가 미검증 · Paper 전용)",
+                "- 주문 권한: 없음 (추천 카드 자체는 주문하지 않음)",
+                f"- 조건부 진입가: {_price(row.entry)}",
+                f"- 손절가: {_price(row.stop)}",
+                f"- 1R 목표가: {_price(row.target_1r)}",
+                f"- 2R 목표가: {_price(row.target_2r)}",
+                f"- 주당 계획위험(R): {_price(risk)}",
+                f"- 예상 보유: {EXPECTED_HOLD}",
+                "- 무효화: 진입 전 손절가 이하, 정규장 종료, 데이터 지연·호가 결손",
+                "- 같은 봉 충돌: 손절과 목표가 동시 도달 시 손절 우선",
                 f"- 근거: {row.rationale}",
                 "",
                 "### 이벤트",
@@ -129,7 +150,7 @@ def write_report(path: Path, store: PaperStore) -> None:
         )
         lines.extend(
             f"- {event.occurred_at.isoformat()} · {_state_name(event.state)}"
-            + ("" if event.price is None else f" · {event.price:.4f}")
+            + ("" if event.price is None else f" · {_price(event.price)}")
             + ("" if event.note == "" else f" · {event.note}")
             for event in store.events(row.recommendation_id)
         )
@@ -182,27 +203,39 @@ def _recommendation_alert(
 ) -> RecommendationAlert:
     effective_queued_at = max(row.created_at, queued_at)
     first_eligible_at = first_eligible_bar_at(effective_queued_at)
+    risk = row.entry - row.stop
+    strategy_lane = _strategy_lane(row.strategy)
     entry_condition = (
         f"알림 이후 새 완료 1분봉(첫 평가 가능 시작 {first_eligible_at.isoformat()})에서 "
-        f"{row.entry:.4f} 이상 체결되고 세션·호가·스프레드 필터가 유효할 때만 paper 진입"
+        f"{_price(row.entry)} 이상 체결되고 세션·호가·스프레드 필터가 유효할 때만 paper 진입"
     )
-    invalidation = f"진입 전 {row.stop:.4f} 이하 도달, 정규장 종료, 데이터 지연·호가 결손 중 하나면 무효"
+    invalidation = (
+        f"진입 전 {_price(row.stop)} 이하 도달, 정규장 종료, 데이터 지연·호가 결손 중 하나면 무효"
+    )
     payload = json.dumps(
         {
             "schema_version": 1,
             "recommendation_id": row.recommendation_id,
             "paper_only": True,
+            "order_authority": False,
+            "current_entry_possible": False,
+            "actionability": "conditional",
+            "market_id": MARKET_ID,
+            "agent_family": AGENT_FAMILY,
+            "strategy_lane": strategy_lane,
             "symbol": row.symbol,
             "strategy": row.strategy,
             "created_at": row.created_at.isoformat(),
             "first_eligible_bar_at": first_eligible_at.isoformat(),
             "queued_at": effective_queued_at.isoformat(),
+            "expected_hold": EXPECTED_HOLD,
             "entry_condition": entry_condition,
             "entry": round(row.entry, 6),
             "stop": round(row.stop, 6),
             "target_1r": round(row.target_1r, 6),
             "target_2r": round(row.target_2r, 6),
-            "risk_per_share": round(row.entry - row.stop, 6),
+            "risk_per_share": round(risk, 6),
+            "same_bar_collision_policy": "stop_first",
             "invalidation_condition": invalidation,
             "rationale": row.rationale,
         },
@@ -211,15 +244,26 @@ def _recommendation_alert(
     )
     markdown = "\n".join(
         (
-            f"## {row.symbol} · {row.strategy}",
+            f"## {row.symbol} · {_strategy_label(row.strategy)}",
             "",
+            f"- 추천 ID: {row.recommendation_id}",
+            f"- 시장: {MARKET_ID}",
+            f"- 에이전트: {AGENT_FAMILY}",
+            f"- 전략 lane: {strategy_lane}",
+            f"- 전략 코드: {row.strategy}",
             f"- 알림 시각: {effective_queued_at.isoformat()}",
             f"- 첫 체결 평가 봉: {first_eligible_at.isoformat()}",
-            f"- 조건부 진입: {row.entry:.4f}",
+            "- 실행 가능성: 조건부 (현재 호가 미검증 · Paper 전용)",
+            "- 현재 진입 가능: 아니오 (호가·세션·스프레드 재검증 전)",
+            "- 주문 권한: 없음",
+            f"- 조건부 진입: {_price(row.entry)}",
             f"- 진입 조건: {entry_condition}",
-            f"- 손절: {row.stop:.4f}",
-            f"- 목표: 1R {row.target_1r:.4f} / 2R {row.target_2r:.4f}",
+            f"- 손절: {_price(row.stop)}",
+            f"- 목표: 1R {_price(row.target_1r)} / 2R {_price(row.target_2r)}",
+            f"- 주당 계획위험(R): {_price(risk)}",
+            f"- 예상 보유: {EXPECTED_HOLD}",
             f"- 무효화: {invalidation}",
+            "- 같은 봉 충돌: 손절 우선",
             f"- 근거: {row.rationale}",
             "",
         )
@@ -230,6 +274,37 @@ def _recommendation_alert(
         payload,
         markdown,
     )
+
+
+MARKET_ID = "us_equities"
+AGENT_FAMILY = "day_trading"
+EXPECTED_HOLD = "당일 정규장 종료 전 time_exit (overnight 없음)"
+
+_STRATEGY_LANES: dict[str, str] = {
+    "opening_range_breakout": "us_equities/day_trading/orb",
+    "vwap_reclaim": "us_equities/day_trading/vwap_reclaim",
+    "hod_breakout": "us_equities/day_trading/hod_breakout",
+    "gap_and_go": "us_equities/day_trading/gap_and_go",
+}
+
+_STRATEGY_LABELS: dict[str, str] = {
+    "opening_range_breakout": "ORB 5분 돌파",
+    "vwap_reclaim": "VWAP 첫 눌림 재탈환",
+    "hod_breakout": "HOD 돌파",
+    "gap_and_go": "갭 지속",
+}
+
+
+def _strategy_lane(strategy: str) -> str:
+    return _STRATEGY_LANES.get(strategy, f"{MARKET_ID}/{AGENT_FAMILY}/{strategy}")
+
+
+def _strategy_label(strategy: str) -> str:
+    return _STRATEGY_LABELS.get(strategy, strategy)
+
+
+def _price(value: float) -> str:
+    return f"{value:.4f}"
 
 
 def _bar_from_row(row: dict[str, str]) -> BarInput:

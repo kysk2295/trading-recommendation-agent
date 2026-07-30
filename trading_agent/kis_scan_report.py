@@ -40,6 +40,8 @@ def write_scan_summary(path: Path, summary: ScanSummary) -> None:
         f"- 위험 통과 후 포트폴리오 한도 제외: {len(summary.risk_screen.not_selected)}개",
         "- 예상 왕복비용: 현재 spread + 편도 20bp 슬리피지 예비비",
         "- PIT float: 미제공, 거래대금은 저유동성 대리필터일 뿐 float가 아님",
+        "- 추천 카드: 주문 권한 없음 · 현재 호가 검증 전 현재 진입 가능으로 표시하지 않음",
+        "- Paper entry: setup 상태·30초 이내·직전 완료 봉 결합이 모두 맞을 때만 단발 smoke 가능",
         "",
         "| 거래소 | 종목 | 등락률 | 가격 | 스프레드(bp) | 정규장 분봉 | 상태 |",
         "|---|---:|---:|---:|---:|---:|---|",

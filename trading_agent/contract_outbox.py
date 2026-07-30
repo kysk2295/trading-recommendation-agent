@@ -11,6 +11,7 @@ from typing import override
 
 from pydantic import BaseModel, ValidationError
 
+from trading_agent.research_identity_models import MarketId
 from trading_agent.signal_contract_models import (
     OpportunitySnapshot,
     SignalActionability,
@@ -405,15 +406,39 @@ def _signal_card_path(cards_dir: Path, signal_id: str) -> Path:
 
 def _signal_card(publication: TradeSignalPublication) -> str:
     signal = publication.signal
+    market = signal.strategy_lane.market_id
+    is_conditional = signal.actionability is SignalActionability.CONDITIONAL
+    is_kr = market is MarketId.KR_EQUITIES
+    market_label = "한국 주식" if is_kr else "미국 주식"
     title = (
-        "미국 주식 조건부 트레이딩 신호"
-        if signal.actionability is SignalActionability.CONDITIONAL
-        else "미국 주식 현재 호가 검증 트레이딩 신호"
+        f"{market_label} 조건부 트레이딩 신호"
+        if is_conditional
+        else f"{market_label} 현재 호가 검증 트레이딩 신호"
     )
-    actionability = (
-        "조건부 (현재 호가 미검증)"
-        if signal.actionability is SignalActionability.CONDITIONAL
-        else "현재 호가 검증"
+    if is_conditional:
+        actionability = "조건부 (현재 호가 미검증 · 현재 진입 가능 아님)"
+        current_entry = "아니오"
+        research_scope = (
+            "연구 및 shadow forward-validation 후보이며 확정수익이나 자동주문이 아닙니다."
+            if is_kr
+            else "연구 및 Paper forward-validation 후보이며 확정수익이나 자동주문이 아닙니다."
+        )
+    elif is_kr:
+        actionability = "현재 호가 검증 (shadow 연구 전용 · 국내 주문 없음)"
+        current_entry = "예 (호가 검증 시점 · 주문 권한 없음)"
+        research_scope = (
+            "연구 및 shadow forward-validation 후보이며 확정수익이나 자동주문이 아닙니다."
+        )
+    else:
+        actionability = "현재 호가 검증 (Paper 전진검증 후보)"
+        current_entry = "예 (호가 검증 통과 시점 기준 · 주문 권한은 별도)"
+        research_scope = (
+            "연구 및 Paper forward-validation 후보이며 확정수익이나 자동주문이 아닙니다."
+        )
+    order_line = (
+        "- 주문 권한: 없음 (KR shadow-only · 국내 계좌/주문 API 없음)"
+        if is_kr
+        else "- 주문 권한: 없음"
     )
     targets = " / ".join(
         f"{target.label} {_decimal_text(target.price)}"
@@ -433,9 +458,12 @@ def _signal_card(publication: TradeSignalPublication) -> str:
     lines = (
         f"# {title}",
         "",
-        "> 연구 및 Paper forward-validation 후보이며 확정수익이나 자동주문이 아닙니다.",
+        f"> {research_scope}",
+        "> 이 신호 카드 자체는 주문 권한이 아닙니다.",
         "",
+        f"- 신호 ID: {signal.signal_id}",
         f"- 시장: {signal.strategy_lane.market_id.value}",
+        f"- 에이전트: {signal.strategy_lane.agent_family.value}",
         f"- 전략: {signal.strategy_lane.canonical_id}",
         f"- 전략 버전: {signal.producer_strategy_version}",
         f"- 신호 관측 시각: {signal.observed_at.isoformat()}",
@@ -443,11 +471,14 @@ def _signal_card(publication: TradeSignalPublication) -> str:
         f"- 유효 종료: {signal.valid_until.isoformat()}",
         f"- 종목: {signal.symbol}",
         f"- 실행 가능성: {actionability}",
+        f"- 현재 진입 가능: {current_entry}",
+        order_line,
         *quote_lines,
         f"- 조건부 진입: {signal.entry_type.value} {_decimal_text(signal.entry_price)}",
         f"- 손절: {_decimal_text(signal.stop_price)}",
         f"- 목표: {targets}",
-        f"- 무효화: {signal.invalidation_rule}",
+        f"- 무효화: {_korean_invalidation(signal.invalidation_rule, signal.stop_price)}",
+        "- 같은 봉 충돌: 손절 우선",
         f"- 근거: {signal.rationale}",
         f"- 기회 ID: {signal.opportunity_id or '없음'}",
         "",
@@ -456,4 +487,18 @@ def _signal_card(publication: TradeSignalPublication) -> str:
 
 
 def _decimal_text(value: Decimal) -> str:
-    return format(value.normalize(), "f")
+    quantized = value.quantize(Decimal("0.0001"))
+    text = format(quantized.normalize(), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text if text else "0"
+
+
+def _korean_invalidation(rule: str, stop: Decimal) -> str:
+    stripped = rule.strip()
+    if stripped.startswith("Invalidate below"):
+        return (
+            f"진입 전 {_decimal_text(stop)} 이하 도달, 정규장 종료, "
+            "데이터 지연·호가·시장 게이트 실패 시 무효"
+        )
+    return stripped
