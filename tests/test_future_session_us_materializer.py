@@ -6,6 +6,7 @@ import plistlib
 import stat
 import subprocess
 from pathlib import Path
+from typing import assert_never
 
 import pytest
 
@@ -123,7 +124,50 @@ def test_prepare_atomically_materializes_exact_five_us_roles(
                 f"readonly poll_interval_seconds={job.poll_interval_seconds}"
                 in payload_text
             )
-            assert "deadline_elapsed" in payload_text
+        match job.role:
+            case FutureSessionUsRole.US_HERMES_PROJECTION:
+                assert (
+                    'source_signature="${opportunity_stat}|${signal_stat}"'
+                    in payload_text
+                )
+                assert (
+                    "[[ $source_signature != $projected_signature ]]"
+                    in payload_text
+                )
+                assert "pending_exit_code=0" in payload_text
+                assert "if (( pending_exit_code != 0 )); then" in payload_text
+                assert "exit $pending_exit_code" in payload_text
+                assert "exit 0" in payload_text
+                assert "deadline_elapsed" not in payload_text
+            case FutureSessionUsRole.US_DAY_PREFLIGHT_OBSERVER:
+                assert (
+                    '{"reason":"no_ready_current_setup","result":"censored"}'
+                    in payload_text
+                )
+                assert "if [[ $watch_stat != $observed_signature ]]" in payload_text
+                assert "exit 0" in payload_text
+                assert "deadline_elapsed" not in payload_text
+            case FutureSessionUsRole.US_DAY_CLOSE_FINALIZER:
+                assert (
+                    'print -u2 -r -- "{\\"reason\\":\\"$1\\",'
+                    '\\"result\\":\\"blocked\\"}"'
+                    in payload_text
+                )
+                assert "if (( now_epoch >= poll_deadline_epoch )); then" in payload_text
+                assert "exit 78" in payload_text
+                assert "watcher_active" in payload_text
+                assert "watch_source_missing" in payload_text
+                assert "watch_source_unstable" in payload_text
+                assert "deadline_elapsed" not in payload_text
+            case (
+                FutureSessionUsRole.US_ORB_WATCHER
+                | FutureSessionUsRole.US_DAY_ARM_OBSERVER
+            ):
+                assert job.poll_until is None
+            case None:
+                raise AssertionError
+            case unreachable:
+                assert_never(unreachable)
         if job.not_before is not None:
             assert (
                 f"readonly not_before_epoch={int(job.not_before.timestamp())}"
