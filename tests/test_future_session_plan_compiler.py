@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -432,6 +433,38 @@ def test_kr_old_snapshot_derives_schedule_but_trial_stays_deferred(
     assert len(decision.strategy_registrations) == 2
 
 
+def test_kr_plan_waits_when_frozen_runtime_cannot_read_experiment_ledger(
+    tmp_path: Path,
+) -> None:
+    # Given
+    runtime, _, _ = _runtime(tmp_path)
+    shutil.copytree(
+        Path(__file__).parents[1] / "trading_agent",
+        runtime / "trading_agent",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    schema = runtime / "trading_agent" / "experiment_ledger_schema.py"
+    schema.write_text(
+        schema.read_text(encoding="utf-8").replace(
+            "EXPERIMENT_LEDGER_SCHEMA_VERSION: Final = 7",
+            "EXPERIMENT_LEDGER_SCHEMA_VERSION: Final = 6",
+        ),
+        encoding="utf-8",
+    )
+    _git(runtime, "add", "trading_agent")
+    _git(runtime, "commit", "--quiet", "-m", "older ledger reader")
+    request, _, _ = _kr_request(tmp_path, runtime=runtime)
+
+    # When
+    decision = compile_future_session_plan(request)
+
+    # Then
+    assert isinstance(decision, WaitingSessionAuthority)
+    assert tuple(reason.value for reason in decision.reasons) == (
+        "frozen_runtime_store_schema_incompatible",
+    )
+
+
 @pytest.mark.parametrize(
     "lifecycle",
     ("absent", "rejected"),
@@ -541,12 +574,16 @@ def _kr_request(
     tmp_path: Path,
     *,
     lifecycle: str = "shadow",
+    runtime: Path | None = None,
 ) -> tuple[
     FutureSessionPlanRequest,
     ExperimentLedgerStore,
     MultiMarketStrategyVersionRegistration,
 ]:
-    runtime, _, head = _runtime(tmp_path)
+    if runtime is None:
+        runtime, _, head = _runtime(tmp_path)
+    else:
+        head = _git(runtime, "rev-parse", "HEAD")
     ledger = ExperimentLedgerStore(tmp_path / "kr-experiment.sqlite3")
     examples = Path(__file__).parents[1] / "examples" / "kr_theme_projection"
     opportunity = examples / "research-registration.json"

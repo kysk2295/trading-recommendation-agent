@@ -5,6 +5,7 @@ import hashlib
 import os
 import stat
 import subprocess
+import sys
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -60,6 +61,14 @@ def compile_kr_future_session_plan(
             target,
             WaitingAuthorityReason.FROZEN_RUNTIME_INVALID,
         )
+    ledger_compatible = _frozen_runtime_can_read_experiment_ledger(request)
+    if ledger_compatible is not True:
+        reason = (
+            WaitingAuthorityReason.FROZEN_RUNTIME_STORE_SCHEMA_INCOMPATIBLE
+            if ledger_compatible is False
+            else WaitingAuthorityReason.RUNTIME_ENVIRONMENT_INVALID
+        )
+        return _waiting(request, target, reason)
     bundle = _bundle(request)
     if bundle is None:
         return _waiting(
@@ -269,6 +278,51 @@ def _git(root: Path, *arguments: str) -> str:
         text=True,
         timeout=10,
     ).stdout.strip()
+
+
+def _frozen_runtime_can_read_experiment_ledger(
+    request: FutureSessionPlanRequest,
+) -> bool | None:
+    runtime = request.frozen_runtime.directory
+    import_root = (
+        runtime
+        if (runtime / "trading_agent").is_dir()
+        else Path(__file__).parents[1]
+    )
+    environment = os.environ.copy()
+    existing_pythonpath = environment.get("PYTHONPATH")
+    environment["PYTHONPATH"] = (
+        str(import_root)
+        if existing_pythonpath is None
+        else os.pathsep.join((str(import_root), existing_pythonpath))
+    )
+    script = (
+        "import sys\n"
+        "from pathlib import Path\n"
+        "from trading_agent.experiment_ledger_store import ExperimentLedgerReader\n"
+        "print(int(ExperimentLedgerReader(Path(sys.argv[1])).is_initialized()))\n"
+    )
+    try:
+        completed = subprocess.run(
+            (sys.executable, "-c", script, str(request.experiment_ledger)),
+            cwd=runtime,
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    match completed.stdout.strip():
+        case "1":
+            return True
+        case "0":
+            return False
+        case _:
+            return None
 
 
 def _ready(
