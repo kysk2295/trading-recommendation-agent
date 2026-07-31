@@ -5,6 +5,7 @@
 - 상위 권위:
   - `2026-07-17-institutional-multi-market-quant-research-os-design.md`
   - `2026-07-22-professional-multi-market-agent-os-seed.yaml`
+  - `2026-07-31-output-first-benchmark-research.md`
 - 목표: 이름만 agent인 launcher/job 구성을 실제로 관찰·판단·연구·기억하는 6개
   전문 연구 에이전트로 전환한다.
 
@@ -25,6 +26,33 @@
 여기서 실제 evidence는 production store에 원출처, 관측시각과 content identity가 남은
 시장·뉴스·공시·연구 record를 뜻한다. fixture, synthetic payload와 수동으로 만든 trigger는
 실제 연구 활동으로 세지 않는다.
+
+### 1.1 2026-07-31 현행 관측
+
+현재 코드에는 autonomous executor, hypothesis/trial ledger, replay와 Hermes delivery가 이미
+있다. 그러나 로컬 권위 store에서 관측된 autonomous receipt 26건은 전부
+`approved_schedule`이고, source/market/reviewer trigger는 0건이다. result 6건 중 5건은 failed,
+나머지 1건은 evidence 없이 “Blocked before source-bound research could start”를 반환했지만
+completed로 저장됐다.
+
+experiment ledger에는 hypothesis 4개와 started trial 2개가 있지만 research source/card와
+terminal trial은 없다. Hermes에는 Opportunity와 Day 결과만 있고 Context, Swing, Systematic,
+Derivatives의 실제 연구 결과가 없다. 따라서 현재 병목은 인프라나 schema 부족이 아니라
+evidence→연구 행동→terminal result→feedback→next action의 부재다.
+
+### 1.2 벤치마크에서 실제로 채택하는 것
+
+| 벤치마크 | 채택 | 채택하지 않는 것 |
+|---|---|---|
+| RD-Agent | hypothesis→implementation→execution→feedback→next hypothesis lineage | generic multi-agent runtime과 demo 성공 주장 |
+| Qlib | run status, params/metrics/artifact, prediction·analysis record | Qlib 전체 workflow와 online order 가정 |
+| LEAN·NautilusTrader | 동일 strategy version의 replay/Paper event와 order/fill/position report | 엔진 교체와 완전한 live/replay parity 가정 |
+| OpenBB | narrative/table/chart, provider, warning과 metadata가 있는 사용자 result envelope | provider framework·CLI·hosted agent stack 도입 |
+| ArcticDB | dataset snapshot/as-of/resolved-version identity | 새 database migration |
+| FinNLP | 뉴스·공시 source coverage 참고 | agent/runtime benchmark로 사용 |
+| FinRobot·FinRL 계열 | evidence-linked report, CSV/model/chart와 replay/Paper 비교 형식 | 플랫폼 도입과 수익성 주장 |
+
+벤치마크 조사와 공식 근거는 `2026-07-31-output-first-benchmark-research.md`가 권위다.
 
 ## 2. 채택 구조
 
@@ -161,6 +189,26 @@ experiment와 recommendation은 기존 권위 store에 기록하고, agent cycle
 
 runtime이 재시작되면 journal의 마지막 terminal cycle과 inbox cursor부터 이어간다.
 
+### 4.7 사용자-facing Research Result
+
+cycle receipt와 health는 결과물이 아니다. 모든 terminal cycle은 OpenBB의 result envelope와
+RD-Agent/Qlib의 research lineage를 결합한 다음 내용을 남긴다.
+
+| 필드 | 내용 |
+|---|---|
+| identity | agent, cycle, timestamp, market/session |
+| question | 이번 cycle의 질문 또는 falsifiable hypothesis |
+| evidence | provider/source, 관측시각, dataset snapshot/as-of/version과 input hash |
+| action | tool, config/code version, 실행 status와 exception/output reference |
+| results | 사용자가 읽는 narrative와 machine-readable rows |
+| metrics/chart | 필요할 때 baseline, 비교 metric, table/chart artifact와 limitations |
+| feedback | accept/reject/inconclusive, 이유, 반증과 새 관찰 |
+| recommendation | 있을 때 timestamp, entry, stop, targets, rationale, outcome history reference |
+| continuation | 다음 질문과 wake 조건 또는 terminal reason |
+
+result가 없는 `completed`, terminal event 없는 started trial, evidence 없는 model text와
+launcher health는 research result로 인정하지 않는다.
+
 ## 5. 최소 Persistence
 
 새 persistence는 agent cycle을 진짜로 이어가기 위해 필요한 최소 정보만 저장한다.
@@ -231,6 +279,17 @@ Hermes의 여섯 family query는 저장된 delivery projection만 읽는 현재 
 - 다음 행동 또는 wake 조건
 - recommendation, context, research result 또는 no-action reason
 
+agent별 최소 사용자 artifact는 다음과 같다.
+
+| Agent | 최소 artifact |
+|---|---|
+| Opportunity | 후보 table, source/evidence, 조사 이유, 중복 판단과 다음 가설 |
+| Context | regime narrative, breadth/volatility/liquidity table 또는 chart, 전략별 영향 |
+| Day | setup/recommendation/no-action card, completed bar, entry/stop/targets, outcome 상태 |
+| Swing | multi-session thesis, catalyst timeline, invalidation과 open-state review |
+| Systematic | hypothesis, baseline, experiment config, metric table/chart, Reviewer feedback, next hypothesis |
+| Derivatives | IV/skew/term/basis table 또는 chart, entitlement, 해석·한계와 후속 연구 |
+
 여섯 의견을 하나의 매수·매도 verdict로 합치지 않는다. 자동 메시지는 새로운 결과가 생겼을 때만
 발행하며 재시작으로 같은 결과를 다시 보내지 않는다.
 
@@ -270,23 +329,24 @@ completed인 현재 오류는 허용하지 않는다.
 
 ## 11. 구현 순서
 
-### Slice 1: Opportunity 실제 폐루프
+### Slice 1: Opportunity 실제 결과물
 
-공통 runtime과 최소 journal을 만들고 Opportunity Manager가 실제 저장 evidence에서 한 cycle을
-완주하게 한다. 성공 증거는 실제 evidence→판단→후보 또는 hypothesis/no-action→Hermes
-result→next wake다.
+공통 runtime이나 새 journal부터 만들지 않는다. 기존 source store, autonomous executor,
+experiment ledger와 Hermes를 사용해 Opportunity Manager 한 cycle을 먼저 닫는다. 성공 증거는
+실제 evidence→판단→후보 table과 narrative→hypothesis 또는 명시적 no-action→Hermes card→next
+wake다.
 
-### Slice 2: 나머지 5개 actor 연결
+### Slice 2: Systematic 실제 실험 결과물
 
-같은 runtime에 Context, Day, Swing, Systematic, Derivatives의 mission, inbox와 tool set을 연결한다.
-각 agent가 최소 한 번 실제 evidence로 terminal cycle을 만들기 전에는 “6-agent runtime
-완료”라고 부르지 않는다.
+Systematic agent가 실제 research source에서 hypothesis를 만들고 기존 Loop Engineer 경로로
+bounded experiment를 수행한다. source→hypothesis→code/config hash→terminal metric/table/chart→
+Reviewer decision→next hypothesis→Hermes report를 한 번 완주한다.
 
-### Slice 3: Challenger 폐루프
+### Slice 3: 관측된 공통 cycle만 추출
 
-Opportunity 또는 Systematic agent가 만든 한 hypothesis를 기존 Loop Engineer 경로에 연결해
-source→preregistration→sandbox implementation/test→historical/walk-forward→shadow
-registration→Reviewer decision→agent memory→Hermes summary를 닫는다.
+앞의 두 vertical에서 실제로 반복된 최소 state와 continuation만 공통 persistent actor cycle로
+추출한다. 그 뒤 Context, Day, Swing, Derivatives의 mission, inbox와 기존 tool을 연결한다. 각
+agent가 실제 result envelope를 한 번 만들기 전에는 “6-agent runtime 완료”라고 부르지 않는다.
 
 ### Slice 4: 시장 운영 vertical
 
@@ -303,6 +363,8 @@ Day와 Swing actor의 결정이 기존 US/KR deterministic vertical을 호출하
 - agent별 서로 다른 mission, inbox, tool decision과 memory cursor
 - 실제 source-bound hypothesis 1개
 - 실제 bounded experiment terminal 1개
+- Opportunity 후보 table과 narrative 1개
+- Systematic terminal metric table/chart와 Reviewer feedback 1개
 - 실패 또는 no-action cycle 1개가 성공으로 오인되지 않고 보존
 - runtime 재시작 뒤 마지막 cursor와 open work를 이어서 처리
 - Hermes에서 6개 agent의 최근 판단과 다음 행동을 개별 조회
@@ -348,6 +410,8 @@ Day와 Swing actor의 결정이 기존 US/KR deterministic vertical을 호출하
 4. 한 개의 provenance-bound hypothesis가 실제 research action으로 이어진다.
 5. Hermes가 여섯 agent의 판단, 진행 연구와 다음 행동을 개별 표시한다.
 6. 실패·blocked·no-action이 completed research로 잘못 집계되지 않는다.
+7. 최소 Opportunity result와 Systematic experiment report가 narrative, table, source/version,
+   tool action, feedback과 next wake를 함께 보여준다.
 
 이 완료는 상위 Professional Multi-Market Research OS 전체 완료가 아니다. 전체 완료는 이후 실제
 US·KR 세션, Day Paper/shadow, Swing multi-session, challenger Reviewer와 5거래일 acceptance가
