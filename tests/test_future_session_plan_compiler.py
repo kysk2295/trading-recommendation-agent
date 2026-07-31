@@ -433,6 +433,48 @@ def test_kr_old_snapshot_derives_schedule_but_trial_stays_deferred(
     assert len(decision.strategy_registrations) == 2
 
 
+def test_kr_configured_non_running_interpreter_waits_for_runtime_environment(
+    tmp_path: Path,
+) -> None:
+    # Given
+    request, _, _ = _kr_request(tmp_path)
+    configured = request.model_copy(
+        update={
+            "runtime_interpreter": Path("/usr/bin/false"),
+            "delivery_database": (tmp_path / "delivery.sqlite3").absolute(),
+        }
+    )
+
+    # When
+    decision = compile_future_session_plan(configured)
+
+    # Then
+    assert isinstance(decision, WaitingSessionAuthority)
+    assert tuple(reason.value for reason in decision.reasons) == (
+        "runtime_environment_invalid",
+    )
+
+
+def test_kr_configured_current_interpreter_keeps_v7_plan_ready(
+    tmp_path: Path,
+) -> None:
+    # Given
+    request, _, _ = _kr_request(tmp_path)
+    configured = request.model_copy(
+        update={
+            "runtime_interpreter": Path(sys.executable).absolute(),
+            "delivery_database": (tmp_path / "delivery.sqlite3").absolute(),
+        }
+    )
+
+    # When
+    decision = compile_future_session_plan(configured)
+
+    # Then
+    assert isinstance(decision, ReadyToPrepareSessionPlan)
+    assert decision.target_session == dt.date(2026, 7, 22)
+
+
 def test_kr_plan_waits_when_frozen_runtime_cannot_read_experiment_ledger(
     tmp_path: Path,
 ) -> None:

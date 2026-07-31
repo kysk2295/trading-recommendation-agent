@@ -303,8 +303,13 @@ def _frozen_runtime_can_read_experiment_ledger(
         "print(int(ExperimentLedgerReader(Path(sys.argv[1])).is_initialized()))\n"
     )
     try:
+        interpreter = (
+            sys.executable
+            if request.runtime_interpreter is None
+            else str(request.runtime_interpreter)
+        )
         completed = subprocess.run(
-            (sys.executable, "-c", script, str(request.experiment_ledger)),
+            (interpreter, "-c", script, str(request.experiment_ledger)),
             cwd=runtime,
             env=environment,
             check=False,

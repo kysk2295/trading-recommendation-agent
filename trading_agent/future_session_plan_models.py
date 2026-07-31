@@ -188,12 +188,12 @@ class FutureSessionPlanRequest(BaseModel):
                     and self.execution_database is None
                     and self.kr_calendar_store is not None
                     and self.kr_rollover_bundle is not None
+                    and (self.runtime_interpreter is None)
+                    == (self.delivery_database is None)
                     and all(
                         value is None
                         for value in (
-                            self.runtime_interpreter,
                             self.watch_database,
-                            self.delivery_database,
                             self.arm_database,
                             self.signing_key,
                             self.opportunity_outbox,
