@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "lane_id": "intraday_momentum",
+  "sources": [
+    {
+      "schema_version": 1,
+      "source_id": "academic-momentum-1993",
+      "source_kind": "academic_paper",
+      "title": "Returns to Buying Winners and Selling Losers",
+      "source_url": "https://doi.org/10.1111/j.1540-6261.1993.tb04702.x",
+      "published_on": "1993-02-01",
+      "claim": "Intermediate-horizon relative strength motivates a testable momentum hypothesis.",
+      "limitations": "This study is not current-market, point-in-time, or net-cost evidence for this project.",
+      "retrieved_at": "2026-07-16T20:00:00Z",
+      "ledger_recorded_at": "2026-07-16T20:00:00Z"
+    },
+    {
+      "schema_version": 1,
+      "source_id": "technical-rules-1992",
+      "source_kind": "academic_paper",
+      "title": "Simple Technical Trading Rules and the Stochastic Properties of Stock Returns",
+      "source_url": "https://doi.org/10.1111/j.1540-6261.1992.tb04681.x",
+      "published_on": "1992-12-01",
+      "claim": "Trading-range break rules motivate testing a bounded new-high signal family.",
+      "limitations": "Historical index evidence does not establish implementability for current individual equities.",
+      "retrieved_at": "2026-07-16T20:00:00Z",
+      "ledger_recorded_at": "2026-07-16T20:00:00Z"
+    }
+  ],
+  "regime_context": "regular_session_high_liquidity"
+}

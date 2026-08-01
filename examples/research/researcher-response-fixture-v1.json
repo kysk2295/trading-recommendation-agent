@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "hypothesis_id": "H-MOM-VWAP-SOURCE-002",
+  "hypothesis": "Eligible high-relative-volume US equities that extend above session VWAP, complete a first pullback, and reclaim with renewed volume may show positive cost-adjusted same-day continuation.",
+  "falsification_rule": "Reject after 20 eligible sessions when profit factor is below 0.75 while the matched baseline profit factor is at least 1.0.",
+  "cited_source_ids": [
+    "academic-momentum-1993",
+    "technical-rules-1992"
+  ],
+  "economic_mechanism": "Underreaction and delayed participation may create a bounded continuation after renewed demand.",
+  "counterfactual_baseline": "Matched eligible sessions without a first-pullback VWAP reclaim under the same data and cost contract.",
+  "strategy_source": "def signal(bars, index):\n    return bars[index]",
+  "free_parameters": [
+    "minimum_relative_volume"
+  ]
+}
