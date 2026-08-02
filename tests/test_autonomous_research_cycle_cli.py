@@ -58,6 +58,9 @@ def test_autonomous_cycle_rejects_unbound_python_before_ledger_creation(tmp_path
     )
     assert "result: blocked" in report
     assert "trading mutation: 0" in report
+    parsed = cycle_cli.load_autonomous_cycle_cli_result(tmp_path / "output")
+    assert parsed.status == "blocked"
+    assert parsed.reason_codes == ("cycle_or_evidence_invalid",)
 
 
 def test_autonomous_cycle_fixture_completes_without_broker_mutation(tmp_path: Path) -> None:
@@ -80,6 +83,10 @@ def test_autonomous_cycle_fixture_completes_without_broker_mutation(tmp_path: Pa
     assert "reviewer_decision: hold" in report
     assert "trading mutation: 0" in report
     assert "strategy_source" not in report
+    parsed = cycle_cli.load_autonomous_cycle_cli_result(tmp_path / "output")
+    assert parsed.status == "complete"
+    assert parsed.reviewer_decision == "hold"
+    assert parsed.trading_mutation == 0
 
 
 def _arguments(tmp_path: Path, ledger: Path, python: Path) -> tuple[str, ...]:

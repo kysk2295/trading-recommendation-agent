@@ -177,6 +177,7 @@ class ResearchAgentCycleV1(BaseModel):
     evidence_id: EvidenceId = Field(pattern=r"^[a-f0-9]{64}$")
     action_request_id: ActionId = Field(pattern=r"^[a-f0-9]{64}$")
     agent_family_id: AgentFamilyId
+    market_id: MarketId
     evidence_sequence: int = Field(ge=1)
     cursor_before: int = Field(ge=0)
     state: ResearchAgentCycleState

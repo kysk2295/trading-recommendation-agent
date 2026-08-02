@@ -106,6 +106,7 @@ class ResearchAgentCycleStore:
             evidence_id=stored.evidence.evidence_id,
             action_request_id=research_agent_action_id(cycle_id),
             agent_family_id=stored.evidence.agent_family_id,
+            market_id=stored.evidence.market_id,
             evidence_sequence=stored.sequence,
             cursor_before=cursor_before,
             state=ResearchAgentCycleState.STARTED,

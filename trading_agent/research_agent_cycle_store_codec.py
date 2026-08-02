@@ -91,6 +91,7 @@ def require_same_cycle_identity(existing: ResearchAgentCycleV1, candidate: Resea
         or existing.evidence_id != candidate.evidence_id
         or existing.action_request_id != candidate.action_request_id
         or existing.agent_family_id != candidate.agent_family_id
+        or existing.market_id != candidate.market_id
         or existing.evidence_sequence != candidate.evidence_sequence
         or existing.cursor_before != candidate.cursor_before
     ):
