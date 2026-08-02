@@ -44,6 +44,10 @@ def parse_service_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         command = commands.add_parser(name)
         command.add_argument("--config", type=Path, required=True)
         command.add_argument("--plist", type=Path, required=True)
+    replace = commands.add_parser("replace")
+    for pair in ("current", "candidate"):
+        replace.add_argument(f"--{pair}-config", type=Path, required=True)
+        replace.add_argument(f"--{pair}-plist", type=Path, required=True)
     for name in ("tick", "run"):
         command = commands.add_parser(name)
         command.add_argument("--config", type=Path, required=True)

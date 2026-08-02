@@ -31,6 +31,7 @@ from trading_agent.research_agent_service_cli_args import (
     parse_service_args,
 )
 from trading_agent.research_agent_service_config import (
+    RESEARCH_AGENT_SERVICE_LABEL,
     InvalidResearchAgentServiceConfigError,
     load_research_agent_service_config,
     verify_research_agent_launch_agent,
@@ -47,6 +48,7 @@ from trading_agent.research_agent_systematic import InvalidSystematicResearchAct
 
 Clock = Callable[[], dt.datetime]
 CommandRunner = Callable[[tuple[str, ...]], int]
+_NOT_LOADED_RETURN_CODE = 113
 
 
 def main(
@@ -89,6 +91,8 @@ def main(
             return 0
         if args.command == "activate":
             return _activate(args, _default_runner if runner is None else runner)
+        if args.command == "replace":
+            return _replace(args, _default_runner if runner is None else runner)
         return 2
     except (
         CurrentMainAuthorityError,
@@ -122,6 +126,31 @@ def _activate(args: argparse.Namespace, runner: CommandRunner) -> int:
     target = f"{domain}/{config.label}"
     if runner(("/bin/launchctl", "kickstart", target)) != 0:
         _ = runner(("/bin/launchctl", "bootout", domain, plist))
+        return 2
+    return 0
+
+
+def _replace(args: argparse.Namespace, runner: CommandRunner) -> int:
+    _ = verify_research_agent_launch_agent(args.current_config, args.current_plist)
+    current = load_research_agent_service_config(args.current_config)
+    _ = verify_research_agent_launch_agent(args.candidate_config, args.candidate_plist)
+    candidate = load_research_agent_service_config(args.candidate_config)
+    if current.label != RESEARCH_AGENT_SERVICE_LABEL or candidate.label != RESEARCH_AGENT_SERVICE_LABEL:
+        return 2
+    _ = current_main_commit(candidate.project_root)
+    domain = f"gui/{os.getuid()}"
+    target = f"{domain}/{RESEARCH_AGENT_SERVICE_LABEL}"
+    current_plist = str(args.current_plist.expanduser().absolute())
+    candidate_plist = str(args.candidate_plist.expanduser().absolute())
+    if (
+        runner(("/bin/launchctl", "bootout", domain, current_plist)) != 0
+        and runner(("/bin/launchctl", "print", target)) != _NOT_LOADED_RETURN_CODE
+    ):
+        return 2
+    if runner(("/bin/launchctl", "bootstrap", domain, candidate_plist)) != 0:
+        return 2
+    if runner(("/bin/launchctl", "kickstart", target)) != 0:
+        _ = runner(("/bin/launchctl", "bootout", domain, candidate_plist))
         return 2
     return 0
 

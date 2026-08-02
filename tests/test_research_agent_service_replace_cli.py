@@ -1,0 +1,262 @@
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+import pytest
+
+from run_research_agent_runtime import main
+from trading_agent.research_agent_service_config import (
+    RESEARCH_AGENT_SERVICE_LABEL,
+    ResearchAgentServiceConfig,
+    write_research_agent_launch_agent,
+    write_research_agent_service_config,
+)
+from trading_agent.research_agent_sources import ResearchAgentSourcePaths
+from trading_agent.research_agent_systematic import SystematicResearchActionConfig
+
+
+@dataclass(frozen=True, slots=True)
+class ReplacementFixture:
+    repository: Path
+    current_config: Path
+    current_plist: Path
+    candidate_config: Path
+    candidate_plist: Path
+
+
+def test_replace_help_exposes_only_pair_paths(capsys: pytest.CaptureFixture[str]) -> None:
+    code = main(("replace", "--help"))
+
+    assert code == 0
+    output = capsys.readouterr().out
+    assert all(
+        option in output
+        for option in ("--current-config", "--current-plist", "--candidate-config", "--candidate-plist")
+    )
+    assert all(secret not in output.lower() for secret in ("api_key", "token", "account"))
+
+
+def test_replace_success_calls_exact_order(tmp_path: Path) -> None:
+    fixture = _replacement_fixture(tmp_path)
+    calls: list[tuple[str, ...]] = []
+
+    code = main(_argv(fixture), runner=lambda command: calls.append(command) or 0)
+
+    domain = f"gui/{os.getuid()}"
+    assert code == 0
+    assert calls == [
+        ("/bin/launchctl", "bootout", domain, str(fixture.current_plist)),
+        ("/bin/launchctl", "bootstrap", domain, str(fixture.candidate_plist)),
+        ("/bin/launchctl", "kickstart", f"{domain}/{RESEARCH_AGENT_SERVICE_LABEL}"),
+    ]
+
+
+@pytest.mark.parametrize("bad_pair", ["current", "candidate"])
+def test_replace_bad_candidate_makes_zero_calls(
+    tmp_path: Path,
+    bad_pair: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fixture = _replacement_fixture(tmp_path)
+    bad_plist = {"current": fixture.current_plist, "candidate": fixture.candidate_plist}[bad_pair]
+    bad_plist.chmod(0o600)
+    bad_plist.write_text("invalid", encoding="utf-8")
+    calls: list[tuple[str, ...]] = []
+
+    code = main(_argv(fixture), runner=lambda command: calls.append(command) or 0)
+
+    assert code == 2
+    assert calls == []
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ""
+
+
+def test_replace_non_main_candidate_makes_zero_calls(tmp_path: Path) -> None:
+    fixture = _replacement_fixture(tmp_path)
+    _git(fixture.repository, "switch", "-c", "codex/fixture")
+    calls: list[tuple[str, ...]] = []
+
+    code = main(_argv(fixture), runner=lambda command: calls.append(command) or 0)
+
+    assert code == 2
+    assert calls == []
+
+
+@pytest.mark.parametrize("failed_operation", ["bootstrap", "kickstart"])
+def test_replace_bootstrap_failure_never_restores_current_pair(
+    tmp_path: Path,
+    failed_operation: str,
+) -> None:
+    fixture = _replacement_fixture(tmp_path)
+    calls: list[tuple[str, ...]] = []
+
+    def runner(command: tuple[str, ...]) -> int:
+        calls.append(command)
+        return int(command[1] == failed_operation)
+
+    code = main(_argv(fixture), runner=runner)
+
+    domain = f"gui/{os.getuid()}"
+    target = f"{domain}/{RESEARCH_AGENT_SERVICE_LABEL}"
+    expected = {
+        "bootstrap": [
+            ("/bin/launchctl", "bootout", domain, str(fixture.current_plist)),
+            ("/bin/launchctl", "bootstrap", domain, str(fixture.candidate_plist)),
+        ],
+        "kickstart": [
+            ("/bin/launchctl", "bootout", domain, str(fixture.current_plist)),
+            ("/bin/launchctl", "bootstrap", domain, str(fixture.candidate_plist)),
+            ("/bin/launchctl", "kickstart", target),
+            ("/bin/launchctl", "bootout", domain, str(fixture.candidate_plist)),
+        ],
+    }
+    assert code == 2
+    assert calls == expected[failed_operation]
+
+
+@pytest.mark.parametrize(("probe_code", "expected_code"), [(113, 0), (0, 2), (1, 2)])
+def test_replace_bootout_failure_requires_confirmed_absence(
+    tmp_path: Path,
+    probe_code: int,
+    expected_code: int,
+) -> None:
+    fixture = _replacement_fixture(tmp_path)
+    calls: list[tuple[str, ...]] = []
+
+    def runner(command: tuple[str, ...]) -> int:
+        calls.append(command)
+        return probe_code if command[1] == "print" else int(command[1] == "bootout")
+
+    code = main(_argv(fixture), runner=runner)
+
+    domain = f"gui/{os.getuid()}"
+    target = f"{domain}/{RESEARCH_AGENT_SERVICE_LABEL}"
+    prefix = [
+        ("/bin/launchctl", "bootout", domain, str(fixture.current_plist)),
+        ("/bin/launchctl", "print", target),
+    ]
+    expected = {
+        113: [
+            *prefix,
+            ("/bin/launchctl", "bootstrap", domain, str(fixture.candidate_plist)),
+            ("/bin/launchctl", "kickstart", target),
+        ],
+        0: prefix,
+        1: prefix,
+    }
+    assert code == expected_code
+    assert calls == expected[probe_code]
+
+
+def _replacement_fixture(tmp_path: Path) -> ReplacementFixture:
+    repository = _current_main_repository(tmp_path)
+    current_config, current_plist = _provision(tmp_path, repository, "current")
+    candidate_config, candidate_plist = _provision(tmp_path, repository, "candidate")
+    return ReplacementFixture(
+        repository=repository,
+        current_config=current_config,
+        current_plist=current_plist,
+        candidate_config=candidate_config,
+        candidate_plist=candidate_plist,
+    )
+
+
+def _current_main_repository(tmp_path: Path) -> Path:
+    repository = tmp_path / "main"
+    repository.mkdir()
+    for name in ("run_research_agent_runtime.py", "run_autonomous_research_cycle.py"):
+        (repository / name).write_text("pass\n", encoding="utf-8")
+    _git(repository, "init", "-b", "main")
+    _git(repository, "config", "user.name", "Research Runtime Test")
+    _git(repository, "config", "user.email", "runtime@example.invalid")
+    _git(repository, "add", ".")
+    _git(repository, "commit", "-m", "fixture")
+    head = _git(repository, "rev-parse", "HEAD")
+    _git(repository, "update-ref", "refs/remotes/origin/main", head)
+    return repository
+
+
+def _provision(tmp_path: Path, repository: Path, name: str) -> tuple[Path, Path]:
+    config = _config(tmp_path, repository)
+    config_path = (tmp_path / "private" / f"{name}.json").absolute()
+    plist_path = (tmp_path / "private" / f"{name}.plist").absolute()
+    assert write_research_agent_service_config(config_path, config)
+    assert write_research_agent_launch_agent(plist_path, config, config_path)
+    return config_path, plist_path
+
+
+def _config(tmp_path: Path, project_root: Path) -> ResearchAgentServiceConfig:
+    outputs = tmp_path / "outputs"
+    sources = ResearchAgentSourcePaths(
+        outputs_root=outputs,
+        market_context_root=outputs / "market-context",
+        day_session_root=outputs / "live-sessions",
+        swing_shadow_database=outputs / "swing" / "shadow.sqlite3",
+        swing_review_database=outputs / "swing" / "review.sqlite3",
+        experiment_ledger=outputs / "experiments" / "ledger.sqlite3",
+        lane_review_database=outputs / "reviews" / "lane.sqlite3",
+    )
+    uv_path = Path(shutil.which("uv") or "/bin/false").resolve()
+    systematic = SystematicResearchActionConfig(
+        project_root=project_root,
+        uv_executable=uv_path,
+        python_executable=Path(sys.executable).resolve(),
+        context=tmp_path / "systematic" / "context.json",
+        response_fixture=None,
+        hermes_executable=Path("/bin/echo"),
+        model_id="fixture-service-v1",
+        provider_id="fixture-provider",
+        experiment_ledger=sources.experiment_ledger,
+        receipt_root=tmp_path / "systematic" / "receipts",
+        strategy_root=tmp_path / "systematic" / "strategies",
+        manifest_root=tmp_path / "systematic" / "manifests",
+        queue_root=tmp_path / "systematic" / "queue",
+        input_csv=tmp_path / "systematic" / "input.csv",
+        data_foundation_manifest=tmp_path / "systematic" / "foundation.json",
+        artifact_root=tmp_path / "systematic" / "artifacts",
+        review_root=tmp_path / "systematic" / "reviews",
+        runs_root=tmp_path / "systematic" / "runs",
+        max_runtime_seconds=120.0,
+    )
+    return ResearchAgentServiceConfig(
+        label=RESEARCH_AGENT_SERVICE_LABEL,
+        project_root=project_root,
+        uv_path=uv_path,
+        hermes_executable=Path("/bin/echo"),
+        model_id="fixture-service-v1",
+        provider_id="fixture-provider",
+        cycle_database=tmp_path / "state" / "cycles.sqlite3",
+        output_root=tmp_path / "state" / "reports",
+        hermes_database=tmp_path / "state" / "hermes.sqlite3",
+        source_paths=sources,
+        systematic=systematic,
+    )
+
+
+def _argv(fixture: ReplacementFixture) -> tuple[str, ...]:
+    return (
+        "replace",
+        "--current-config",
+        str(fixture.current_config),
+        "--current-plist",
+        str(fixture.current_plist),
+        "--candidate-config",
+        str(fixture.candidate_config),
+        "--candidate-plist",
+        str(fixture.candidate_plist),
+    )
+
+
+def _git(repository: Path, *arguments: str) -> str:
+    completed = subprocess.run(
+        ("git", "-C", str(repository), *arguments),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip()
