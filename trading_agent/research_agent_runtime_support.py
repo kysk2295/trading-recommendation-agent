@@ -4,6 +4,7 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import assert_never
 
+from trading_agent import us_equity_calendar as us_calendar
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
 from trading_agent.research_agent_cycle_models import (
     MarketId,
@@ -122,6 +123,61 @@ def runtime_failure_result(context: RuntimeFailureContext) -> ResearchAgentResul
     )
 
 
+def primary_admission_no_action(
+    cycle: ResearchAgentCycleV1,
+    evidence: ResearchAgentEvidenceV1,
+    now: dt.datetime,
+) -> ResearchAgentResultV1 | None:
+    match evidence.agent_family_id:
+        case "opportunity_manager":
+            blocked_prefix = "opportunity.blocked."
+        case "market_context":
+            blocked_prefix = "market_context.blocked."
+        case "day_trading":
+            blocked_prefix = "day.blocked."
+        case "swing_trading" | "systematic_quant" | "derivatives_research":
+            return None
+        case unreachable:
+            assert_never(unreachable)
+    if evidence.source_key.startswith(blocked_prefix):
+        reason = evidence.source_key
+        continuation = "Wait for current-session Primary evidence that passes source admission."
+        next_wake = None
+    elif evidence.source_key.startswith(f"scheduled.{evidence.agent_family_id}."):
+        current = now.astimezone(us_calendar.NEW_YORK)
+        bounds = us_calendar.regular_session_bounds(current.date())
+        if bounds is not None and bounds[0] <= current < bounds[1]:
+            return None
+        if bounds is not None and current < bounds[0]:
+            next_wake = bounds[0]
+        elif current.date() >= dt.date(max(us_calendar.PUBLISHED_CALENDAR_YEARS), 12, 31):
+            next_wake = None
+        else:
+            next_wake = us_calendar.regular_session_bounds(us_calendar.next_regular_session(current.date()))
+            next_wake = None if next_wake is None else next_wake[0]
+        reason = f"{cycle.agent_family_id}.regular_session_closed"
+        continuation = "Wait until the next New York regular session."
+    else:
+        return None
+    return ResearchAgentResultV1(
+        result_id=research_agent_result_id(cycle.cycle_id),
+        cycle_id=cycle.cycle_id,
+        agent_family_id=cycle.agent_family_id,
+        market_id=cycle.market_id,
+        status=ResearchAgentResultStatus.NO_ACTION,
+        question="Can this Primary research cycle continue safely?",
+        summary="Primary source admission produced a deterministic no-action result.",
+        reason=reason,
+        continuation=continuation,
+        open_work_ref=None,
+        evidence_refs=evidence.evidence_refs,
+        artifact_refs=(),
+        occurred_at=now,
+        next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE if next_wake is None else ResearchAgentWakeKind.SCHEDULED,
+        next_wake_at=next_wake,
+    )
+
+
 def normalize_failure_backoff(
     result: ResearchAgentResultV1,
     prior_failures: int,
@@ -214,6 +270,7 @@ __all__ = (
     "actor_state_work",
     "actor_wake_states",
     "normalize_failure_backoff",
+    "primary_admission_no_action",
     "retry_evidence",
     "runtime_failure_result",
     "scheduled_evidence",

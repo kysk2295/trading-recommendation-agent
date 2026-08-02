@@ -38,6 +38,7 @@ from trading_agent.research_agent_runtime_support import (
     actor_state_work,
     actor_wake_states,
     normalize_failure_backoff,
+    primary_admission_no_action,
     retry_evidence,
     runtime_failure_result,
     scheduled_evidence,
@@ -158,6 +159,11 @@ class ResearchAgentRuntime:
         stored = self._resolve_evidence(EvidenceResolution(actor.agent_family_id, actor.evidence, actor.open_work, now))
         cycle = self.store.start_cycle(stored, now)
         prior_failures = _prior_failures(states, cycle.agent_family_id)
+        no_action = primary_admission_no_action(cycle, stored.evidence, now)
+        if no_action is not None:
+            outcome = RuntimeCycleOutcome(cycle, stored.evidence, no_action, prior_failures, 0, len(recovered))
+            self._persist(outcome)
+            return _tick_result(outcome)
         if stored.evidence.source_key.startswith("source_failure."):
             result = runtime_failure_result(
                 RuntimeFailureContext(

@@ -29,6 +29,7 @@ from trading_agent.research_agent_runtime import (
     ResearchAgentRuntimeServices,
     research_agent_runtime_lease,
 )
+from trading_agent.research_agent_runtime_support import scheduled_evidence
 from trading_agent.research_agent_sources import (
     ResearchAgentSourceCollectionBatch,
     ResearchAgentSourceFailure,
@@ -59,6 +60,9 @@ class StaticCollector:
     def collect(self, now: dt.datetime) -> ResearchAgentSourceCollectionBatch:
         del now
         return self.batch
+
+
+EMPTY_COLLECTOR = StaticCollector(ResearchAgentSourceCollectionBatch(evidence=(), failures=()))
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +188,86 @@ def test_source_failure_is_isolated_and_never_calls_the_model(tmp_path: Path) ->
     assert result.model_calls == 0
     assert stored[0].reason == "market_context_source_invalid"
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("family", "source_key"),
+    (
+        ("opportunity_manager", "opportunity.blocked.snapshot_unavailable"),
+        ("market_context", "market_context.blocked.snapshot_unavailable"),
+        ("day_trading", "day.blocked.completed_bar_unavailable"),
+    ),
+)
+def test_primary_blocked_evidence_persists_no_action_before_model_call(
+    tmp_path: Path,
+    family: AgentFamilyId,
+    source_key: str,
+) -> None:
+    # Given: a Primary source admitted explicit blocked evidence.
+    calls: list[AgentFamilyId] = []
+    runtime = _runtime(tmp_path / "cycles.sqlite3", EMPTY_COLLECTOR, calls)
+    runtime.ingest((_evidence(family, 1).model_copy(update={"source_key": source_key}),))
+
+    # When: the runtime evaluates that evidence.
+    tick = runtime.tick(NOW + dt.timedelta(minutes=2))
+    stored = runtime.store.results()
+    runtime.close()
+
+    # Then: a deterministic terminal no-action is persisted without model or publication artifacts.
+    assert tick.status == "no_action"
+    assert tick.agent_family_id == family
+    assert tick.model_calls == 0
+    assert len(stored) == 1
+    assert stored[0].reason == source_key
+    assert stored[0].continuation == "Wait for current-session Primary evidence that passes source admission."
+    assert stored[0].next_wake_kind is ResearchAgentWakeKind.NEW_EVIDENCE
+    assert stored[0].next_wake_at is None
+    assert stored[0].artifact_refs == ()
+    assert calls == []
+
+
+def test_closed_session_primary_schedule_persists_no_action_before_model_call(tmp_path: Path) -> None:
+    # Given: a Primary scheduled wake is selected while the New York regular session is closed.
+    calls: list[AgentFamilyId] = []
+    runtime = _runtime(tmp_path / "cycles.sqlite3", EMPTY_COLLECTOR, calls)
+    runtime.ingest((scheduled_evidence("market_context", NOW, 30),))
+
+    # When: the runtime evaluates scheduled work on Sunday.
+    tick = runtime.tick(NOW)
+    stored = runtime.store.results()
+    runtime.close()
+
+    # Then: it waits for Monday's regular open without invoking the model or publishing artifacts.
+    assert tick.status == "no_action"
+    assert tick.agent_family_id == "market_context"
+    assert tick.model_calls == 0
+    assert stored[0].reason == "market_context.regular_session_closed"
+    assert stored[0].continuation == "Wait until the next New York regular session."
+    assert stored[0].next_wake_kind is ResearchAgentWakeKind.SCHEDULED
+    assert stored[0].next_wake_at == dt.datetime(2026, 8, 3, 13, 30, tzinfo=dt.UTC)
+    assert stored[0].artifact_refs == ()
+    assert calls == []
+
+
+def test_research_blocked_evidence_keeps_the_normal_decision_path(tmp_path: Path) -> None:
+    # Given: a Research-family source admitted explicit blocked evidence.
+    calls: list[AgentFamilyId] = []
+    evidence = _evidence("swing_trading", 1).model_copy(
+        update={"source_key": "swing.blocked.shadow_evidence_empty"}
+    )
+    runtime = _runtime(tmp_path / "cycles.sqlite3", EMPTY_COLLECTOR, calls)
+    runtime.ingest((evidence,))
+
+    # When: the runtime evaluates that evidence.
+    tick = runtime.tick(NOW)
+    stored = runtime.store.results()
+    runtime.close()
+
+    # Then: the established model/action path remains serviceable.
+    assert tick.status == "completed"
+    assert tick.model_calls == 1
+    assert len(stored[0].artifact_refs) == 2
+    assert calls == ["swing_trading"]
 
 
 def test_interrupted_cycle_replays_once_after_restart(tmp_path: Path) -> None:
