@@ -151,8 +151,8 @@ def observe(bar: dict[str, object], candidate: dict[str, object] | None) -> dict
 - runtime daemon이 응답한다.
 - image reference가 tag가 아닌 승인된 `sha256:` digest다.
 - container command에 필수 isolation option이 모두 포함된다.
-- source/input/output mount가 resolve된 bounded trial directory 아래에 있다.
-- mount 대상에 symlink, credentials 또는 repository root가 없다.
+- source mount가 resolve된 bounded artifact directory 아래에 있다.
+- source mount 대상에 symlink, credentials 또는 repository root가 없다.
 
 하나라도 증명하지 못하면 container를 시작하지 않고 `container_preflight_failed`로 검열한다.
 
@@ -251,7 +251,7 @@ Risk Kernel이 만든 order intent만 기존 Alpaca Paper client에 도달할 �
 - `generated_strategy_protocol_failed`: 입력·출력 계약 위반
 - `generated_strategy_timeout`: wall-clock 초과
 - `generated_strategy_oom`: memory limit 종료
-- `generated_strategy_output_exceeded`: stdout/stderr/result cap 초과
+- `generated_strategy_output_exceeded`: stdout/stderr/frame cap 초과
 - `non_deterministic_strategy`: 동일 입력 재실행 hash 불일치
 - `bounded_historical_experiment_failed`: 호스트 evaluator 실패
 
