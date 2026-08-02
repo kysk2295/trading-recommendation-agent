@@ -127,7 +127,7 @@ def _activate_ready(artifact_root: Path, activation_path: Path) -> SystematicInp
     )
     pointer = _absolute_path(activation_path)
     write_systematic_input_activation(pointer, activation)
-    return load_systematic_input_activation(pointer)
+    return activation
 
 
 def _activate_blocked(
@@ -145,7 +145,7 @@ def _activate_blocked(
     )
     pointer = _absolute_path(activation_path)
     write_systematic_input_activation(pointer, activation)
-    return load_systematic_input_activation(pointer)
+    return activation
 
 
 def _absolute_path(path: Path) -> Path:
