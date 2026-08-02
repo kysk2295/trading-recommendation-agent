@@ -22,6 +22,7 @@ from trading_agent.kr_theme_models import (
 )
 from trading_agent.kr_theme_store import KrThemeStore
 from trading_agent.private_query_file import read_private_text_query_only
+from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
 
 UTC = dt.UTC
 NOW = dt.datetime(2026, 7, 27, 5, 21, tzinfo=UTC)
@@ -42,21 +43,27 @@ def test_completed_kr_source_cycle_publishes_one_authorized_opportunity_trigger(
     _seed_complete_cycle(database)
     state_root = tmp_path / "autonomous-state"
 
-    first = publish_kr_autonomous_triggers(
-        outputs,
-        state_root=state_root,
-        pinned_code_sha="a" * 40,
-        now=NOW,
-    )
-    replay = publish_kr_autonomous_triggers(
-        outputs,
-        state_root=state_root,
-        pinned_code_sha="a" * 40,
-        now=NOW,
-    )
+    with ResearchAgentCycleStore(tmp_path / "cycles.sqlite3") as cycle_store:
+        first = publish_kr_autonomous_triggers(
+            outputs,
+            state_root=state_root,
+            pinned_code_sha="a" * 40,
+            now=NOW,
+            cycle_store=cycle_store,
+        )
+        replay = publish_kr_autonomous_triggers(
+            outputs,
+            state_root=state_root,
+            pinned_code_sha="a" * 40,
+            now=NOW,
+            cycle_store=cycle_store,
+        )
+        inbox = cycle_store.runnable_evidence("opportunity_manager", NOW)
 
     assert len(first) == 1
     assert replay == ()
+    assert len(inbox) == 1
+    assert inbox[0].evidence.source_key == f"kr.authorized.{CYCLE_ID}"
     assert stat.S_IMODE(first[0].stat().st_mode) == 0o600
     trigger = AutonomousTriggerV1.model_validate_json(
         read_private_text_query_only(first[0])

@@ -26,6 +26,9 @@ from trading_agent.private_immutable_file import (
     InvalidPrivateImmutableFileError,
     publish_private_immutable_text,
 )
+from trading_agent.research_agent_cycle_models import ResearchAgentEvidenceV1, ResearchAgentTriggerKind
+from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
+from trading_agent.research_agent_source_common import ResearchAgentEvidenceMaterial, canonical_model_json
 
 SEOUL: Final = ZoneInfo("Asia/Seoul")
 TRIGGER_TTL: Final = dt.timedelta(minutes=10)
@@ -42,6 +45,7 @@ def publish_kr_autonomous_triggers(
     state_root: Path,
     pinned_code_sha: str,
     now: dt.datetime,
+    cycle_store: ResearchAgentCycleStore | None = None,
 ) -> tuple[Path, ...]:
     if now.tzinfo is None or now.utcoffset() is None:
         raise InvalidKrAutonomousBridgeError
@@ -71,9 +75,24 @@ def publish_kr_autonomous_triggers(
             )
             if publish_private_immutable_text(destination, trigger.model_dump_json()):
                 created.append(destination)
+            if cycle_store is not None:
+                _ = cycle_store.append_evidence(_trigger_evidence(trigger))
         except (InvalidPrivateImmutableFileError, OSError, RuntimeError) as error:
             raise InvalidKrAutonomousBridgeError from error
     return tuple(created)
+
+
+def _trigger_evidence(trigger: AutonomousTriggerV1) -> ResearchAgentEvidenceV1:
+    cycle_id = trigger.dedupe_key.removeprefix("kr-new-data-")
+    return ResearchAgentEvidenceMaterial(
+        family="opportunity_manager",
+        trigger=ResearchAgentTriggerKind.NEW_DATA,
+        source_key=f"kr.authorized.{cycle_id}",
+        observed_at=trigger.observed_at,
+        available_at=trigger.authorized_at,
+        market_id="kr_equities",
+        canonical_payload=canonical_model_json(trigger),
+    ).evidence()
 
 
 def current_kr_databases(outputs: Path, session_date: dt.date) -> tuple[Path, ...]:
