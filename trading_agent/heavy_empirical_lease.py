@@ -43,7 +43,13 @@ def heavy_empirical_lease(ledger_path: Path) -> Iterator[None]:
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         descriptor_locked = True
         _require_binding(lock_path, parent, descriptor)
-    except (BlockingIOError, InvalidPrivateDirectoryIdentityError, OSError, ValueError):
+    except (
+        BlockingIOError,
+        HeavyEmpiricalLeaseError,
+        InvalidPrivateDirectoryIdentityError,
+        OSError,
+        ValueError,
+    ):
         if descriptor >= 0:
             with suppress(OSError):
                 os.close(descriptor)
