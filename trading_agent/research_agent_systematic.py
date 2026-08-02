@@ -53,6 +53,7 @@ class SystematicResearchActionConfig(BaseModel):
     response_fixture: Path | None
     hermes_executable: Path | None
     model_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,127}$")
+    provider_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,127}$")
     experiment_ledger: Path
     receipt_root: Path
     strategy_root: Path
@@ -159,7 +160,14 @@ def systematic_cycle_command(
     provider = (
         ("--response-fixture", str(config.response_fixture))
         if config.response_fixture is not None
-        else ("--hermes-executable", str(config.hermes_executable), "--model-id", config.model_id)
+        else (
+            "--hermes-executable",
+            str(config.hermes_executable),
+            "--provider-id",
+            config.provider_id,
+            "--model-id",
+            config.model_id,
+        )
     )
     return (
         str(config.uv_executable),

@@ -42,6 +42,7 @@ class ResearchAgentServiceConfig(BaseModel):
     uv_path: Path
     hermes_executable: Path
     model_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,127}$")
+    provider_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,127}$")
     cycle_database: Path
     output_root: Path
     hermes_database: Path
@@ -67,6 +68,8 @@ class ResearchAgentServiceConfig(BaseModel):
             and self.systematic.hermes_executable != self.hermes_executable
         ):
             raise InvalidResearchAgentServiceConfigError(reason="systematic_hermes_binding_invalid")
+        if self.systematic.provider_id != self.provider_id:
+            raise InvalidResearchAgentServiceConfigError(reason="systematic_provider_binding_invalid")
         return self
 
 

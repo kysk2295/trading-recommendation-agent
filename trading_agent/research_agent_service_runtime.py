@@ -131,7 +131,11 @@ def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRu
     services = ResearchAgentRuntimeServices(
         store=ResearchAgentCycleStore(config.cycle_database),
         collector=ConfiguredResearchAgentEvidenceCollector(config.source_paths),
-        decisions=HermesCliResearchAgentDecisionClient(config.hermes_executable, config.model_id),
+        decisions=HermesCliResearchAgentDecisionClient(
+            config.hermes_executable,
+            config.model_id,
+            config.provider_id,
+        ),
         actions=actions,
     )
     return ResearchAgentRuntime(services)

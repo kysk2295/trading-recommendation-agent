@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import re
 import stat
 import subprocess
 from collections.abc import Callable
@@ -30,6 +31,7 @@ from trading_agent.researcher_receipt_store import ResearcherReceiptStore
 
 _MAX_RESPONSE_BYTES = 256 * 1024
 _MAX_FREE_PARAMETERS: Final = 4
+_PROVIDER_ID: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,127}$")
 
 
 class ResearcherLlmError(RuntimeError):
@@ -108,9 +110,14 @@ class FixtureLlmProposalClient:
 class HermesCliProposalClient:
     executable: Path
     model_id: str
+    provider_id: str
     seed: int | None = None
     temperature: float = 0.2
     timeout_seconds: float = 120.0
+
+    def __post_init__(self) -> None:
+        if _PROVIDER_ID.fullmatch(self.provider_id) is None:
+            raise ResearcherLlmError
 
     def complete(self, prompt: str) -> bytes:
         try:
@@ -127,6 +134,8 @@ class HermesCliProposalClient:
                     str(executable),
                     "--ignore-user-config",
                     "--ignore-rules",
+                    "--provider",
+                    self.provider_id,
                     "-m",
                     self.model_id,
                     "-t",

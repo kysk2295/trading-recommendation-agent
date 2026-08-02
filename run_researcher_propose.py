@@ -81,6 +81,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     provider.add_argument("--response-fixture", type=Path)
     provider.add_argument("--hermes-executable", type=Path)
     parser.add_argument("--model-id", default="hermes-researcher-v1")
+    parser.add_argument("--provider-id")
     parser.add_argument("--max-attempts", type=int, default=2)
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser.parse_args(argv)
@@ -92,8 +93,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         source = load_researcher_context_input(args.context)
         if args.response_fixture is not None:
             client = FixtureLlmProposalClient(args.response_fixture.read_bytes())
-        elif args.hermes_executable is not None:
-            client = HermesCliProposalClient(args.hermes_executable, args.model_id)
+        elif args.hermes_executable is not None and args.provider_id is not None:
+            client = HermesCliProposalClient(args.hermes_executable, args.model_id, args.provider_id)
         else:
             raise ResearcherPipelineError
         receipts = ResearcherReceiptStore(args.receipt_root)

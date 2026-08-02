@@ -140,7 +140,7 @@ def test_hermes_client_executes_owned_local_adapter_and_returns_stdout(tmp_path:
     executable = tmp_path / "hermes-fixture"
     executable.write_text("#!/bin/sh\nprintf '{\"schema_version\":1}'\n", encoding="utf-8")
     executable.chmod(0o700)
-    client = HermesCliProposalClient(executable, "hermes-fixture-v1")
+    client = HermesCliProposalClient(executable, "hermes-fixture-v1", "openai-codex")
 
     # When: the actual subprocess adapter completes a prompt.
     response = client.complete("{}")
@@ -153,12 +153,14 @@ def test_hermes_client_binds_the_receipted_model_to_the_invocation(tmp_path: Pat
     # Given: an executable that accepts only the model recorded by the client.
     executable = tmp_path / "hermes-model-fixture"
     executable.write_text(
-        "#!/bin/sh\n[ \"$3\" = \"-m\" ] && [ \"$4\" = \"research/model-v1\" ] || exit 42\n"
+        "#!/bin/sh\n"
+        "[ \"$3\" = \"--provider\" ] && [ \"$4\" = \"openai-codex\" ] || exit 41\n"
+        "[ \"$5\" = \"-m\" ] && [ \"$6\" = \"research/model-v1\" ] || exit 42\n"
         "printf '{\"schema_version\":1}'\n",
         encoding="utf-8",
     )
     executable.chmod(0o700)
-    client = HermesCliProposalClient(executable, "research/model-v1")
+    client = HermesCliProposalClient(executable, "research/model-v1", "openai-codex")
 
     # When: one structured completion is requested.
     response = client.complete("{}")

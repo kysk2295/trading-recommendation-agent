@@ -77,6 +77,7 @@ def _config(tmp_path: Path) -> SystematicResearchActionConfig:
         response_fixture=PROJECT / "examples" / "research" / "researcher-response-fixture-v1.json",
         hermes_executable=None,
         model_id="hermes-researcher-v1",
+        provider_id="fixture-provider",
         experiment_ledger=tmp_path / "experiment.sqlite3",
         receipt_root=tmp_path / "receipts",
         strategy_root=tmp_path / "strategies",
@@ -98,6 +99,21 @@ def test_systematic_command_uses_unique_cycle_output_and_existing_guarded_cli(tm
     assert "--offline" in command
     assert str(PROJECT / "run_autonomous_research_cycle.py") in command
     assert str(tmp_path / "runs" / _cycle().cycle_id / "output") in command
+
+
+def test_systematic_hermes_command_binds_explicit_provider(tmp_path: Path) -> None:
+    config = _config(tmp_path).model_copy(
+        update={
+            "response_fixture": None,
+            "hermes_executable": Path("/bin/echo"),
+            "provider_id": "openai-codex",
+        }
+    )
+
+    command = systematic_cycle_command(config, _cycle())
+
+    position = command.index("--provider-id")
+    assert command[position + 1] == "openai-codex"
 
 
 def test_systematic_action_runs_generated_strategy_and_parses_reviewer_result(tmp_path: Path) -> None:

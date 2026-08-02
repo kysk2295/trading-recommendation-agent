@@ -72,6 +72,7 @@ def config_from_provision_args(args: argparse.Namespace) -> ResearchAgentService
         response_fixture=fixture,
         hermes_executable=hermes if fixture is None else None,
         model_id=args.model_id,
+        provider_id=args.provider_id,
         experiment_ledger=_absolute(args.systematic_experiment_ledger),
         receipt_root=_absolute(args.systematic_receipt_root),
         strategy_root=_absolute(args.systematic_strategy_root),
@@ -93,6 +94,7 @@ def config_from_provision_args(args: argparse.Namespace) -> ResearchAgentService
         uv_path=uv_path,
         hermes_executable=hermes,
         model_id=args.model_id,
+        provider_id=args.provider_id,
         cycle_database=_absolute(args.cycle_database),
         output_root=_absolute(args.output_root),
         hermes_database=_absolute(args.hermes_database),
@@ -118,6 +120,7 @@ def _add_provision_arguments(parser: argparse.ArgumentParser) -> None:
         parser.add_argument(f"--{option}", type=Path, required=True)
     parser.add_argument("--systematic-response-fixture", type=Path)
     parser.add_argument("--model-id", required=True)
+    parser.add_argument("--provider-id", required=True)
     parser.add_argument("--max-runtime-seconds", type=float, default=600.0)
     parser.add_argument("--max-bars", type=int, default=100_000)
     parser.add_argument("--max-sessions", type=int, default=60)

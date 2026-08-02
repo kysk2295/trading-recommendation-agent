@@ -124,9 +124,18 @@ def test_parser_rejects_second_action_authority_or_argv(extra: dict[str, bool | 
 
 def test_hermes_cli_client_returns_validated_decision(tmp_path: Path) -> None:
     executable = tmp_path / "hermes-fixture"
-    executable.write_bytes(b"#!/bin/sh\nprintf '%s' '" + _response() + b"'\n")
+    executable.write_bytes(
+        b"#!/bin/sh\n"
+        b"[ \"$3\" = \"--provider\" ] && [ \"$4\" = \"openai-codex\" ] || exit 42\n"
+        b"[ \"$5\" = \"-m\" ] && [ \"$6\" = \"hermes-research-actor-v1\" ] || exit 43\n"
+        b"printf '%s' '" + _response() + b"'\n"
+    )
     executable.chmod(0o700)
-    client = HermesCliResearchAgentDecisionClient(executable, "hermes-research-actor-v1")
+    client = HermesCliResearchAgentDecisionClient(
+        executable,
+        "hermes-research-actor-v1",
+        "openai-codex",
+    )
 
     decision = client.decide(_request())
 
@@ -141,6 +150,7 @@ def test_hermes_cli_client_fails_closed_on_nonzero_or_timeout(tmp_path: Path, bo
     client = HermesCliResearchAgentDecisionClient(
         executable,
         "hermes-research-actor-v1",
+        "openai-codex",
         timeout_seconds=0.01,
     )
 

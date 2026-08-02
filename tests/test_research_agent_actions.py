@@ -84,6 +84,7 @@ def _config(tmp_path: Path) -> ResearchAgentActionConfig:
             response_fixture=PROJECT / "examples" / "research" / "researcher-response-fixture-v1.json",
             hermes_executable=None,
             model_id="fixture-model-v1",
+            provider_id="fixture-provider",
             experiment_ledger=tmp_path / "experiment.sqlite3",
             receipt_root=tmp_path / "receipts",
             strategy_root=tmp_path / "strategies",

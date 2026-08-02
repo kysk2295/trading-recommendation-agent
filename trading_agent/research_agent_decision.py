@@ -104,20 +104,34 @@ class ResearchAgentDecisionClient(Protocol):
 
 @final
 class HermesCliResearchAgentDecisionClient:
-    __slots__ = ("_executable", "_model_id", "_timeout_seconds")
+    __slots__ = ("_executable", "_model_id", "_provider_id", "_timeout_seconds")
 
     _executable: FileIdentity
     _model_id: str
+    _provider_id: str
     _timeout_seconds: float
 
-    def __init__(self, executable: Path, model_id: str, *, timeout_seconds: float = 120.0) -> None:
+    def __init__(
+        self,
+        executable: Path,
+        model_id: str,
+        provider_id: str,
+        *,
+        timeout_seconds: float = 120.0,
+    ) -> None:
         try:
             self._executable = capture_file(executable, executable=True)
         except InvalidExecutableBindingError:
             raise InvalidResearchAgentDecisionError(reason="hermes_executable_invalid") from None
-        if _MODEL_ID.fullmatch(model_id) is None or timeout_seconds <= 0 or timeout_seconds > 300:
+        if (
+            _MODEL_ID.fullmatch(model_id) is None
+            or _MODEL_ID.fullmatch(provider_id) is None
+            or timeout_seconds <= 0
+            or timeout_seconds > 300
+        ):
             raise InvalidResearchAgentDecisionError(reason="hermes_client_config_invalid")
         self._model_id = model_id
+        self._provider_id = provider_id
         self._timeout_seconds = timeout_seconds
 
     def decide(self, request: ResearchAgentDecisionRequest) -> ResearchAgentDecisionV1:
@@ -130,6 +144,8 @@ class HermesCliResearchAgentDecisionClient:
                     str(self._executable.path),
                     "--ignore-user-config",
                     "--ignore-rules",
+                    "--provider",
+                    self._provider_id,
                     "-m",
                     self._model_id,
                     "-t",
