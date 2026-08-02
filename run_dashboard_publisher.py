@@ -68,7 +68,7 @@ DEFAULT_OUTPUTS = Path(__file__).resolve().parent / "outputs"
 DEFAULT_CREDENTIALS = Path.home() / ".config" / "trading-agent" / "dashboard.env"
 DEFAULT_SYSTEM_AUTHORITY_CONFIG = Path.home() / ".config" / "trading-agent" / "system-authority.json"
 DEFAULT_INTERACTIVE_STATE = Path.home() / ".local" / "state" / "trading-agent" / "dashboard-interactive"
-DEFAULT_RESEARCH_AGENT_CONFIG = Path.home() / ".config" / "trading-agent" / "research-agent-runtime.json"
+DEFAULT_RESEARCH_AGENT_CONFIG = Path.home() / ".config" / "trading-agent" / "research-agent-runtime-v2.json"
 HERMES_EXECUTABLE = Path(shutil.which("hermes") or Path.home() / ".local/bin/hermes")
 WORKTREE = Path(__file__).resolve().parent
 register_execution_commands(app, DEFAULT_INTERACTIVE_STATE)
