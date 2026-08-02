@@ -109,23 +109,33 @@ class ResearchAgentDecisionV1(BaseModel):
     cycle_id: CycleId = Field(pattern=r"^[a-f0-9]{64}$")
     agent_family_id: AgentFamilyId
     primary_decision: ResearchAgentDecisionKind
+    requested_action: ResearchAgentDecisionKind | None
     question: str = Field(min_length=8, max_length=500)
     summary: str = Field(min_length=8, max_length=1_000)
     reason: str | None = Field(default=None, min_length=3, max_length=160)
     continuation: str | None = Field(default=None, min_length=8, max_length=500)
+    open_work_ref: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{7,159}$")
     evidence_refs: tuple[str, ...] = Field(min_length=1, max_length=32)
     decided_at: AwareDatetime
     next_wake_kind: ResearchAgentWakeKind
     next_wake_at: AwareDatetime | None
+    model_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,127}$")
+    prompt_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    response_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
 
     @model_validator(mode="after")
     def require_decision_invariants(self) -> Self:
         _require_references(self.evidence_refs, allow_empty=False)
         _require_wake_time(self.next_wake_kind, self.next_wake_at)
         if self.primary_decision is ResearchAgentDecisionKind.NO_ACTION and (
-            self.reason is None or self.continuation is None
+            self.reason is None or self.continuation is None or self.requested_action is not None
         ):
             raise InvalidResearchAgentCycleFieldError(reason="no_action_continuation_required")
+        if (
+            self.primary_decision is not ResearchAgentDecisionKind.NO_ACTION
+            and self.requested_action is not self.primary_decision
+        ):
+            raise InvalidResearchAgentCycleFieldError(reason="single_primary_action_required")
         return self
 
 

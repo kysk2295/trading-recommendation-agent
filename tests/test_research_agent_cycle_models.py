@@ -96,6 +96,7 @@ def test_no_action_decision_requires_reason_and_continuation() -> None:
             cycle_id=CycleId("d" * 64),
             agent_family_id="day_trading",
             primary_decision=ResearchAgentDecisionKind.NO_ACTION,
+            requested_action=None,
             question="Is a current-session setup eligible?",
             summary="No completed eligible setup exists.",
             reason=None,
@@ -104,6 +105,9 @@ def test_no_action_decision_requires_reason_and_continuation() -> None:
             decided_at=NOW,
             next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
             next_wake_at=None,
+            model_id="fixture-model-v1",
+            prompt_sha256="1" * 64,
+            response_sha256="2" * 64,
         )
 
 
