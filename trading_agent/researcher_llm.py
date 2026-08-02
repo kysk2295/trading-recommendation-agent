@@ -234,6 +234,7 @@ def _prompt(context: ResearcherContext) -> str:
             "censored_reasons": context.failure_digest.censored_reasons,
             "failed_falsifications": context.failure_digest.failed_falsifications,
             "rejected_hypothesis_texts": context.failure_digest.rejected_hypothesis_texts,
+            "reviewer_decisions": context.failure_digest.reviewer_decisions,
         },
         "lane_id": context.lane_id.value,
         "regime_context": context.regime_context,

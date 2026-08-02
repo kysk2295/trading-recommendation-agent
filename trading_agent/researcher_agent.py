@@ -13,6 +13,7 @@ class FailureDigest:
     censored_reasons: tuple[str, ...]
     failed_falsifications: tuple[str, ...]
     rejected_hypothesis_texts: tuple[str, ...]
+    reviewer_decisions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

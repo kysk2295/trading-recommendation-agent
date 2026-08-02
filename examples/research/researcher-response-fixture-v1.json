@@ -9,7 +9,7 @@
   ],
   "economic_mechanism": "Underreaction and delayed participation may create a bounded continuation after renewed demand.",
   "counterfactual_baseline": "Matched eligible sessions without a first-pullback VWAP reclaim under the same data and cost contract.",
-  "strategy_source": "def signal(bars, index):\n    return bars[index]",
+  "strategy_source": "def create_strategy(context):\n    class Strategy:\n        def observe(self, bar, candidate):\n            return None\n    return Strategy()\n",
   "free_parameters": [
     "minimum_relative_volume"
   ]
