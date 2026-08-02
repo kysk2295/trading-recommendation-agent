@@ -48,3 +48,25 @@ def test_researcher_prompt_exposes_the_critic_parameter_ceiling() -> None:
         "factory": "create_strategy(context)",
         "method": "observe(bar, candidate)",
     }
+
+
+def test_researcher_prompt_requires_executable_strategy_source_protocol() -> None:
+    context = ResearcherContext(
+        lane_id=LaneId.INTRADAY_MOMENTUM,
+        sources=(),
+        failure_digest=FailureDigest((), (), ()),
+        regime_context="regular_session_high_liquidity",
+        existing_hypothesis_texts=(),
+    )
+
+    contract = json.loads(researcher_llm._prompt(context))["contract"]["strategy_source_contract"]
+
+    assert contract["content"] == "complete_syntactically_valid_python_source_only"
+    assert contract["observe_return"]["signal_exact_keys"] == [
+        "symbol",
+        "timestamp",
+        "entry",
+        "stop",
+        "rationale",
+    ]
+    assert contract["observe_return"]["no_signal"] is None

@@ -237,6 +237,33 @@ def _prompt(context: ResearcherContext) -> str:
                 "factory": "create_strategy(context)",
                 "method": "observe(bar, candidate)",
             },
+            "strategy_source_contract": {
+                "content": "complete_syntactically_valid_python_source_only",
+                "factory": "define create_strategy(context) returning a stateful object with observe",
+                "no_markdown_or_prose": True,
+                "observe_inputs": {
+                    "bar_keys": (
+                        "symbol",
+                        "timestamp",
+                        "open",
+                        "high",
+                        "low",
+                        "close",
+                        "volume",
+                        "prior_close",
+                        "average_daily_volume",
+                        "spread_bps",
+                        "catalyst",
+                    ),
+                    "candidate": "null or a dict with symbol,timestamp,price,gap_pct,change_pct,"
+                    "relative_volume,cumulative_dollar_volume,spread_bps,catalyst",
+                },
+                "observe_return": {
+                    "no_signal": None,
+                    "signal_constraints": "echo bar symbol and timestamp; finite entry greater than stop",
+                    "signal_exact_keys": ("symbol", "timestamp", "entry", "stop", "rationale"),
+                },
+            },
         },
         "existing_hypothesis_texts": context.existing_hypothesis_texts,
         "failure_digest": {
