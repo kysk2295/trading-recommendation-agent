@@ -1,21 +1,45 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Literal
+from pathlib import Path
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
+from trading_agent.private_immutable_file import read_private_text
 from trading_agent.research_agent_cycle_models import ResearchAgentEvidenceV1
 from trading_agent.research_agent_source_adapters_primary import (
     DaySourceAdapter,
     MarketContextSourceAdapter,
     OpportunitySourceAdapter,
+    PrimarySourcePaths,
 )
-from trading_agent.research_agent_source_common import InvalidResearchAgentSourceError
-from trading_agent.research_agent_sources import ResearchAgentSourcePaths
+from trading_agent.research_agent_source_common import (
+    InvalidResearchAgentSourceError,
+    require_source_boundary,
+)
 
 PrimaryAgentFamily = Literal["opportunity_manager", "market_context", "day_trading"]
 InspectionStatus = Literal["ready", "blocked"]
+
+
+class PrimaryInspectionSourcePaths(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True, strict=True)
+
+    market_context_root: Path
+    day_session_root: Path
+
+    @model_validator(mode="after")
+    def require_safe_boundaries(self) -> Self:
+        require_source_boundary(self.market_context_root)
+        require_source_boundary(self.day_session_root)
+        return self
+
+
+class _PrimaryInspectionServiceConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True, strict=True)
+
+    source_paths: PrimaryInspectionSourcePaths
 
 
 class PrimaryFamilySourceInspection(BaseModel):
@@ -43,7 +67,7 @@ class PrimarySourceInspection(BaseModel):
 
 
 def inspect_primary_sources(
-    paths: ResearchAgentSourcePaths,
+    paths: PrimarySourcePaths,
     now: dt.datetime,
 ) -> PrimarySourceInspection:
     if now.tzinfo is None or now.utcoffset() is None:
@@ -61,6 +85,11 @@ def inspect_primary_sources(
     families = (opportunity, context, day)
     status: InspectionStatus = "ready" if all(family.status == "ready" for family in families) else "blocked"
     return PrimarySourceInspection(status=status, inspected_at=now, families=families)
+
+
+def load_primary_source_paths(config_path: Path) -> PrimaryInspectionSourcePaths:
+    payload = read_private_text(config_path.expanduser().absolute())
+    return _PrimaryInspectionServiceConfig.model_validate_json(payload).source_paths
 
 
 def _family(
@@ -81,6 +110,8 @@ def _family(
 
 __all__ = (
     "PrimaryFamilySourceInspection",
+    "PrimaryInspectionSourcePaths",
     "PrimarySourceInspection",
     "inspect_primary_sources",
+    "load_primary_source_paths",
 )

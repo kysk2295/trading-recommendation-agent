@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -36,6 +37,25 @@ def test_help_exposes_read_only_deterministic_inspection_surface() -> None:
     assert completed.returncode == 0
     assert all(option in completed.stdout for option in ("inspect", "--config", "--now"))
     assert not any(option in completed.stdout for option in ("--submit-order", "--account", "--positions"))
+
+
+def test_documented_uv_script_help_runs_with_declared_dependencies() -> None:
+    # Given
+    uv = shutil.which("uv")
+    assert uv is not None
+
+    # When
+    completed = subprocess.run(
+        (uv, "run", "--script", str(SCRIPT), "--help"),
+        cwd=PROJECT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    # Then
+    assert completed.returncode == 0, completed.stderr
+    assert "inspect" in completed.stdout
 
 
 def test_bad_now_is_redacted_and_rejected_before_source_inspection(tmp_path: Path) -> None:
@@ -83,8 +103,8 @@ def test_inspection_reports_exact_primary_families_and_redacted_digests(tmp_path
 def test_inspection_reports_closed_stale_and_missing_spread_without_mutation(tmp_path: Path) -> None:
     # Given
     paths = source_paths(tmp_path)
-    seed_opportunity(paths, valid_until=NOW - NOW.resolution)
-    seed_market_context(paths, spread=None)
+    seed_opportunity(paths, spread=None)
+    seed_market_context(paths, valid_until=NOW - NOW.resolution)
     seed_day(paths)
     config = write_service_config(tmp_path, paths)
 
@@ -97,7 +117,7 @@ def test_inspection_reports_closed_stale_and_missing_spread_without_mutation(tmp
     assert payload["broker_mutation"] == payload["provider_calls"] == 0
     assert payload["status"] == "blocked"
     assert [item["source_key"] for item in payload["families"]] == [
-        "opportunity.blocked.stale",
-        "market_context.blocked.missing_spread",
+        "opportunity.blocked.missing_spread",
+        "market_context.blocked.stale",
         "day.session.20260803",
     ]

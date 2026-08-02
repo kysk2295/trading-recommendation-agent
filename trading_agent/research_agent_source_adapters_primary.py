@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING, assert_never, final
+from typing import Protocol, assert_never, final
 
 from pydantic import ValidationError
 
@@ -32,8 +32,10 @@ from trading_agent.research_agent_source_common import (
 )
 from trading_agent.us_equity_calendar import NEW_YORK
 
-if TYPE_CHECKING:
-    from trading_agent.research_agent_sources import ResearchAgentSourcePaths
+
+class PrimarySourcePaths(Protocol):
+    market_context_root: Path
+    day_session_root: Path
 
 
 @final
@@ -42,7 +44,7 @@ class OpportunitySourceAdapter:
 
     def collect(
         self,
-        paths: ResearchAgentSourcePaths,
+        paths: PrimarySourcePaths,
         now: dt.datetime,
     ) -> tuple[ResearchAgentEvidenceV1, ...]:
         session_failure = primary_session_failure(now)
@@ -83,7 +85,7 @@ class MarketContextSourceAdapter:
 
     def collect(
         self,
-        paths: ResearchAgentSourcePaths,
+        paths: PrimarySourcePaths,
         now: dt.datetime,
     ) -> tuple[ResearchAgentEvidenceV1, ...]:
         session_failure = primary_session_failure(now)
@@ -125,7 +127,7 @@ class DaySourceAdapter:
 
     def collect(
         self,
-        paths: ResearchAgentSourcePaths,
+        paths: PrimarySourcePaths,
         now: dt.datetime,
     ) -> tuple[ResearchAgentEvidenceV1, ...]:
         session_failure = primary_session_failure(now)
@@ -142,7 +144,7 @@ class DaySourceAdapter:
         if not database.exists() or not risk_screen.exists():
             return _blocked_day("source_pair_unavailable", now)
         try:
-            require_source_boundary(database)
+            require_private_source_file(database)
             require_private_source_file(risk_screen)
             admission = day_source_admission(database, risk_screen, now)
         except (InvalidResearchAgentSourceError, OSError, sqlite3.Error, TypeError, ValueError):
@@ -237,4 +239,9 @@ def _blocked(
     return (capability_evidence(spec, now),)
 
 
-__all__ = ("DaySourceAdapter", "MarketContextSourceAdapter", "OpportunitySourceAdapter")
+__all__ = (
+    "DaySourceAdapter",
+    "MarketContextSourceAdapter",
+    "OpportunitySourceAdapter",
+    "PrimarySourcePaths",
+)

@@ -24,10 +24,10 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from trading_agent.research_agent_primary_source_inspection import inspect_primary_sources
-from trading_agent.research_agent_service_config import (
-    InvalidResearchAgentServiceConfigError,
-    load_research_agent_service_config,
+from trading_agent.private_immutable_file import InvalidPrivateImmutableFileError
+from trading_agent.research_agent_primary_source_inspection import (
+    inspect_primary_sources,
+    load_primary_source_paths,
 )
 from trading_agent.research_agent_source_common import InvalidResearchAgentSourceError
 
@@ -52,10 +52,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         now = dt.datetime.fromisoformat(args.now)
         if now.tzinfo is None or now.utcoffset() is None:
             raise InvalidResearchAgentSourceError(reason="collection_time_invalid")
-        config = load_research_agent_service_config(args.config)
-        inspection = inspect_primary_sources(config.source_paths, now)
+        paths = load_primary_source_paths(args.config)
+        inspection = inspect_primary_sources(paths, now)
     except (
-        InvalidResearchAgentServiceConfigError,
+        InvalidPrivateImmutableFileError,
         InvalidResearchAgentSourceError,
         OSError,
         TypeError,

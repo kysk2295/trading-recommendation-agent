@@ -11,12 +11,29 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final
 
-from trading_agent.kis_live import MAX_FEED_DELAY, regular_session_is_open
 from trading_agent.market_context_models import MarketContextSnapshot
-from trading_agent.market_risk import MARKET_RISK_HEADER
 from trading_agent.research_agent_source_common import canonical_payload_json
 from trading_agent.signal_contract_models import FeatureValue, OpportunitySnapshot
-from trading_agent.us_equity_calendar import NEW_YORK
+from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
+
+_PRIMARY_MAX_FEED_DELAY: Final[dt.timedelta] = dt.timedelta(minutes=3)
+_MARKET_RISK_HEADER: Final[tuple[str, ...]] = (
+    "observed_at",
+    "exchange",
+    "symbol",
+    "selected",
+    "reason",
+    "change_pct",
+    "price",
+    "bid",
+    "ask",
+    "spread_bps",
+    "estimated_round_trip_cost_bps",
+    "dollar_volume",
+    "volume",
+    "average_daily_volume",
+    "volume_to_adv",
+)
 
 
 class PrimaryAdmissionFailure(StrEnum):
@@ -52,7 +69,9 @@ class _RiskRow:
 
 
 def primary_session_failure(now: dt.datetime) -> PrimaryAdmissionFailure | None:
-    if not regular_session_is_open(now):
+    current = now.astimezone(NEW_YORK)
+    bounds = regular_session_bounds(current.date())
+    if bounds is None or not bounds[0] <= current < bounds[1]:
         return PrimaryAdmissionFailure.SESSION_CLOSED
     return None
 
@@ -90,8 +109,6 @@ def market_context_admission(
         return dated
     if snapshot.observed_at > now or snapshot.valid_until < now:
         return PrimaryAdmissionFailure.STALE
-    if not _spread_is_usable(snapshot.breadth_and_volatility_features):
-        return PrimaryAdmissionFailure.MISSING_SPREAD
     return None
 
 
@@ -112,7 +129,7 @@ def day_source_admission(
     if dated is not None:
         return dated
     if any(
-        timestamp > now or now - timestamp > MAX_FEED_DELAY
+        timestamp > now or now - timestamp > _PRIMARY_MAX_FEED_DELAY
         for timestamp in (database_facts.latest_checkpoint_at, latest_risk_at)
     ):
         return PrimaryAdmissionFailure.STALE
@@ -187,7 +204,7 @@ def _read_risk_rows(path: Path) -> tuple[_RiskRow, ...]:
         fields = tuple(reader.fieldnames or ())
         if "spread_bps" not in fields:
             return ()
-        if fields != MARKET_RISK_HEADER:
+        if fields != _MARKET_RISK_HEADER:
             raise ValueError
         rows = tuple(reader)
     parsed: list[_RiskRow] = []

@@ -9,7 +9,10 @@ from pydantic import ValidationError
 
 from trading_agent.contract_outbox import append_opportunity_snapshot
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES
-from trading_agent.market_context_models import MarketContextSnapshot, MarketRegimeLabel
+from trading_agent.market_context_breadth_producer import (
+    BreadthMemberObservation,
+    produce_market_context_from_breadth,
+)
 from trading_agent.research_agent_cycle_models import ResearchAgentTriggerKind
 from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
 from trading_agent.research_agent_source_adapters_primary import OpportunitySourceAdapter
@@ -79,19 +82,14 @@ def _seed_opportunity(paths: ResearchAgentSourcePaths) -> None:
 
 def _seed_market_context(paths: ResearchAgentSourcePaths) -> None:
     paths.market_context_root.mkdir(parents=True)
-    snapshot = MarketContextSnapshot(
-        context_id="us-context-20260803t1435",
+    snapshot = produce_market_context_from_breadth(
+        (
+            BreadthMemberObservation("AAPL", 120, 10_000),
+            BreadthMemberObservation("MSFT", -50, 8_000),
+        ),
         market_id=MarketId.US_EQUITIES,
         observed_at=NOW,
         valid_until=NOW + dt.timedelta(minutes=30),
-        regime_labels=(MarketRegimeLabel.TRENDING,),
-        breadth_and_volatility_features=(
-            FeatureValue(name="advance_decline", value="1.2"),
-            FeatureValue(name="spread_bps", value="14.0"),
-        ),
-        macro_and_flow_refs=("fred.vix",),
-        coverage=(SourceCoverage(source_id="internal_breadth", observed_at=NOW, record_count=500, complete=True),),
-        producer_version="market-context-v1",
     )
     path = paths.market_context_root / "us-current.market-context.json"
     path.write_text(snapshot.model_dump_json(), encoding="utf-8")

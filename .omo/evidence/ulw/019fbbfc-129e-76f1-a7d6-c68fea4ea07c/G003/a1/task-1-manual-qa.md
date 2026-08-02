@@ -60,7 +60,43 @@ Command:
 uv run python run_research_agent_primary_sources.py inspect --config /private/tmp/g003-primary-qa.wpaHX9/missing-spread/private/service.json --now 2026-08-03T14:35:00+00:00
 ```
 
-Result: exit `0`, top-level status `blocked`; Market Context reported `market_context.blocked.missing_spread`, while the independently current Opportunity and Day sources remained `ready`.
+Result: exit `0`, top-level status `blocked`; Opportunity reported `opportunity.blocked.missing_spread`, while producer-shaped Market Context (which has no spread field) and Day remained independently `ready`.
+
+## Corrective PEP-723 replay
+
+The corrective replay used private local fixtures under `/private/tmp/g003-corrective-qa-20260803`. The breadth producer created Market Context without a spread field; both Day files were mode `600`. No provider, account, position, order, or broker call was made.
+
+```text
+uv run --script run_research_agent_primary_sources.py --help
+exit 0; inspect, --config, and --now exposed
+
+uv run --script run_research_agent_primary_sources.py inspect --config <private-fixture> --now 2026-08-03T14:35:00+00:00
+exit 0; status ready; exactly Opportunity, Market Context, and Day ready; provider_calls 0; broker_mutation 0
+
+uv run --script run_research_agent_primary_sources.py inspect --config <private-fixture> --now not-a-time
+exit 2; stderr exactly {"broker_mutation":0,"status":"invalid"}
+```
+
+Corrective automated and static gates:
+
+```text
+uv run pytest -q tests/test_research_agent_sources.py tests/test_research_agent_primary_admission.py tests/test_research_agent_primary_source_cli.py tests/test_market_context_breadth_producer.py
+25 passed in 1.10s
+
+uv run ruff check <eight owned changed Python files>
+All checks passed!
+
+uv run ruff format --check <eight owned changed Python files>
+8 files already formatted
+
+uv run basedpyright <eight owned changed Python files>
+0 errors, 0 warnings, 0 notes
+
+uv run .../check-no-excuse-rules.py <eight owned changed Python files>
+no violations in 8 file(s)
+```
+
+Corrective production-file line counts were `234, 247, 117, 79`; every file remained below the 250-line ceiling.
 
 ## Automated and static gates
 
