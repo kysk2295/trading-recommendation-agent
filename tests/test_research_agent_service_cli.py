@@ -50,8 +50,7 @@ def _config(tmp_path: Path, *, project_root: Path = WORKTREE) -> ResearchAgentSe
         strategy_root=tmp_path / "systematic" / "strategies",
         manifest_root=tmp_path / "systematic" / "manifests",
         queue_root=tmp_path / "systematic" / "queue",
-        input_csv=tmp_path / "systematic" / "input.csv",
-        data_foundation_manifest=tmp_path / "systematic" / "foundation.json",
+        input_activation=tmp_path / "systematic" / "input-activation.json",
         artifact_root=tmp_path / "systematic" / "artifacts",
         review_root=tmp_path / "systematic" / "reviews",
         runs_root=tmp_path / "systematic" / "runs",
@@ -123,6 +122,18 @@ def test_activation_rejects_non_main_project_before_launchctl(tmp_path: Path) ->
 def test_help_and_bad_config_are_fail_closed(tmp_path: Path) -> None:
     assert main(("--help",)) == 0
     assert main(("verify", "--config", str(tmp_path / "missing"), "--plist", str(tmp_path / "missing"))) == 2
+
+
+def test_provision_help_exposes_activation_pointer_without_raw_input_overrides(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = main(("provision", "--help"))
+
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "--systematic-input-activation" in output
+    assert "--systematic-input-csv" not in output
+    assert "--systematic-foundation-manifest" not in output
 
 
 def test_activation_calls_exact_bootstrap_and_kickstart_on_clean_current_main(tmp_path: Path) -> None:

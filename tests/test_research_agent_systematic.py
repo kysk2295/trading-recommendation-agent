@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import shutil
 import sys
 from pathlib import Path
+from typing import Literal, assert_never
+from unittest.mock import Mock
 
+import pytest
+
+from tests.research_agent_systematic_input_fixtures import (
+    ReadySystematicInputFixture,
+    write_ready_systematic_input_activation,
+)
 from trading_agent.research_agent_actions import ResearchAgentActionConfig, ResearchAgentActionExecutor
 from trading_agent.research_agent_cycle_models import (
     ActionId,
@@ -23,9 +32,26 @@ from trading_agent.research_agent_systematic import (
     SystematicResearchActionExecutor,
     systematic_cycle_command,
 )
+from trading_agent.research_agent_systematic_input_evidence import (
+    VerifiedSystematicInputEvidence,
+    verify_systematic_input_evidence_graph,
+)
+from trading_agent.research_agent_systematic_input_models import (
+    BlockedSystematicInputActivation,
+)
+from trading_agent.research_agent_systematic_input_store import (
+    write_systematic_input_activation,
+)
 
 PROJECT = Path(__file__).resolve().parents[1]
 NOW = dt.datetime(2026, 8, 2, 12, 0, tzinfo=dt.UTC)
+type UnavailableActivationState = Literal[
+    "missing",
+    "malformed",
+    "blocked",
+    "tampered",
+    "disconnected",
+]
 
 
 def _cycle() -> ResearchAgentCycleV1:
@@ -66,9 +92,16 @@ def _decision() -> ResearchAgentDecisionV1:
     )
 
 
-def _config(tmp_path: Path) -> SystematicResearchActionConfig:
+def _config(
+    tmp_path: Path,
+    ready_input: ReadySystematicInputFixture | None = None,
+) -> SystematicResearchActionConfig:
     uv = shutil.which("uv")
     assert uv is not None
+    activated = ready_input or write_ready_systematic_input_activation(
+        tmp_path / "production-input",
+        tmp_path / "systematic-input.json",
+    )
     return SystematicResearchActionConfig(
         project_root=PROJECT,
         uv_executable=Path(uv),
@@ -83,8 +116,7 @@ def _config(tmp_path: Path) -> SystematicResearchActionConfig:
         strategy_root=tmp_path / "strategies",
         manifest_root=tmp_path / "manifests",
         queue_root=tmp_path / "queue",
-        input_csv=PROJECT / "examples" / "example_intraday.csv",
-        data_foundation_manifest=PROJECT / "examples" / "data" / "us-vwap-reclaim-historical-fixture-v1.json",
+        input_activation=activated.activation_path,
         artifact_root=tmp_path / "experiments",
         review_root=tmp_path / "reviews",
         runs_root=tmp_path / "runs",
@@ -92,13 +124,19 @@ def _config(tmp_path: Path) -> SystematicResearchActionConfig:
     )
 
 
-def test_systematic_command_uses_unique_cycle_output_and_existing_guarded_cli(tmp_path: Path) -> None:
-    command = systematic_cycle_command(_config(tmp_path), _cycle())
+def test_systematic_command_uses_verified_input_and_existing_guarded_cli(tmp_path: Path) -> None:
+    ready = write_ready_systematic_input_activation(
+        tmp_path / "production-input",
+        tmp_path / "systematic-input.json",
+    )
+    command = systematic_cycle_command(_config(tmp_path, ready), _cycle(), ready.activation)
 
     assert Path(command[0]).name == "uv"
     assert "--offline" in command
     assert str(PROJECT / "run_autonomous_research_cycle.py") in command
     assert str(tmp_path / "runs" / _cycle().cycle_id / "output") in command
+    assert command[command.index("--input-csv") + 1] == str(ready.graph.input_csv_path)
+    assert command[command.index("--data-foundation-manifest") + 1] == str(ready.graph.foundation_path)
 
 
 def test_systematic_hermes_command_binds_explicit_provider(tmp_path: Path) -> None:
@@ -110,7 +148,11 @@ def test_systematic_hermes_command_binds_explicit_provider(tmp_path: Path) -> No
         }
     )
 
-    command = systematic_cycle_command(config, _cycle())
+    ready = write_ready_systematic_input_activation(
+        tmp_path / "second-production-input",
+        tmp_path / "second-systematic-input.json",
+    )
+    command = systematic_cycle_command(config, _cycle(), ready.activation)
 
     position = command.index("--provider-id")
     assert command[position + 1] == "openai-codex"
@@ -141,3 +183,91 @@ def test_blocked_systematic_cycle_is_failed_with_fixed_retry_and_never_completed
     assert result.reason == "cycle_or_evidence_invalid"
     assert result.next_wake_kind is ResearchAgentWakeKind.SCHEDULED
     assert result.next_wake_at == NOW + dt.timedelta(minutes=15)
+
+
+@pytest.mark.parametrize(
+    "activation_state",
+    ["missing", "malformed", "blocked", "tampered", "disconnected"],
+)
+def test_unavailable_production_input_fails_without_subprocess(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    activation_state: UnavailableActivationState,
+) -> None:
+    ready = write_ready_systematic_input_activation(
+        tmp_path / "production-input",
+        tmp_path / "systematic-input.json",
+    )
+    match activation_state:
+        case "missing":
+            ready.activation_path.unlink()
+        case "malformed":
+            ready.activation_path.write_text(json.dumps({"status": "ready"}), encoding="utf-8")
+            ready.activation_path.chmod(0o600)
+        case "blocked":
+            write_systematic_input_activation(
+                ready.activation_path,
+                BlockedSystematicInputActivation(reason_code="no_connected_graph", attempted_at=NOW),
+            )
+        case "tampered":
+            ready.graph.input_csv_path.write_text("tampered\n", encoding="utf-8")
+        case "disconnected":
+            second = write_ready_systematic_input_activation(
+                tmp_path / "second-production-input",
+                tmp_path / "second-systematic-input.json",
+            )
+            write_systematic_input_activation(
+                ready.activation_path,
+                ready.activation.model_copy(
+                    update={
+                        "catalog_receipt_path": second.activation.catalog_receipt_path,
+                        "catalog_receipt_sha256": second.activation.catalog_receipt_sha256,
+                    }
+                ),
+            )
+        case unreachable:
+            assert_never(unreachable)
+    run = Mock(side_effect=AssertionError("subprocess must not run"))
+    monkeypatch.setattr("trading_agent.research_agent_systematic.subprocess.run", run)
+    executor = SystematicResearchActionExecutor(_config(tmp_path, ready), clock=lambda: NOW)
+
+    result = executor.execute(_cycle(), _decision())
+
+    assert result.status is ResearchAgentResultStatus.FAILED
+    assert result.reason == "production_input_unavailable"
+    assert result.next_wake_kind is ResearchAgentWakeKind.SCHEDULED
+    assert result.next_wake_at == NOW + dt.timedelta(minutes=15)
+    run.assert_not_called()
+
+
+def test_pointer_swap_during_graph_verification_fails_without_subprocess(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ready = write_ready_systematic_input_activation(
+        tmp_path / "production-input",
+        tmp_path / "systematic-input.json",
+    )
+
+    def swap_pointer(root: Path) -> VerifiedSystematicInputEvidence:
+        facts = verify_systematic_input_evidence_graph(root)
+        write_systematic_input_activation(
+            ready.activation_path,
+            BlockedSystematicInputActivation(reason_code="activation_replaced", attempted_at=NOW),
+        )
+        return facts
+
+    run = Mock(side_effect=AssertionError("subprocess must not run"))
+    monkeypatch.setattr(
+        "trading_agent.research_agent_systematic_input_runtime.verify_systematic_input_evidence_graph",
+        swap_pointer,
+    )
+    monkeypatch.setattr("trading_agent.research_agent_systematic.subprocess.run", run)
+    executor = SystematicResearchActionExecutor(_config(tmp_path, ready), clock=lambda: NOW)
+
+    result = executor.execute(_cycle(), _decision())
+
+    assert result.status is ResearchAgentResultStatus.FAILED
+    assert result.reason == "production_input_unavailable"
+    assert result.next_wake_at == NOW + dt.timedelta(minutes=15)
+    run.assert_not_called()

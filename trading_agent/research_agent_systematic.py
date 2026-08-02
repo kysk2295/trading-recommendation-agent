@@ -28,12 +28,18 @@ from trading_agent.research_agent_cycle_models import (
     ResearchAgentWakeKind,
     research_agent_result_id,
 )
+from trading_agent.research_agent_systematic_input_evidence import SystematicInputEvidenceError
+from trading_agent.research_agent_systematic_input_runtime import (
+    resolve_ready_systematic_input,
+    systematic_cycle_command,
+)
+from trading_agent.research_agent_systematic_input_store import (
+    InvalidSystematicInputActivationError,
+)
 
 
 class InvalidSystematicResearchActionError(RuntimeError):
     __slots__ = ("reason",)
-
-    reason: str
 
     def __init__(self, *, reason: str) -> None:
         self.reason = reason
@@ -59,15 +65,14 @@ class SystematicResearchActionConfig(BaseModel):
     strategy_root: Path
     manifest_root: Path
     queue_root: Path
-    input_csv: Path
-    data_foundation_manifest: Path
+    input_activation: Path
     artifact_root: Path
     review_root: Path
     runs_root: Path
     max_runtime_seconds: float = Field(gt=0, le=3_600)
     max_bars: int = Field(default=100_000, ge=1, le=100_000)
     max_sessions: int = Field(default=60, ge=1, le=60)
-    rss_limit_gib: float = Field(default=9.5, gt=0, le=10.0)
+    rss_limit_gib: float = Field(default=9.5, gt=0, le=9.5)
 
     @model_validator(mode="after")
     def require_absolute_provider_binding(self) -> Self:
@@ -81,8 +86,7 @@ class SystematicResearchActionConfig(BaseModel):
             self.strategy_root,
             self.manifest_root,
             self.queue_root,
-            self.input_csv,
-            self.data_foundation_manifest,
+            self.input_activation,
             self.artifact_root,
             self.review_root,
             self.runs_root,
@@ -125,10 +129,32 @@ class SystematicResearchActionExecutor:
         cycle: ResearchAgentCycleV1,
         decision: ResearchAgentDecisionV1,
     ) -> ResearchAgentResultV1:
-        command = systematic_cycle_command(self._config, cycle)
         try:
             revalidate(self._uv, executable=True)
             revalidate(self._script, executable=False)
+        except InvalidExecutableBindingError:
+            raise InvalidSystematicResearchActionError(reason="systematic_cycle_execution_failed") from None
+        try:
+            ready = resolve_ready_systematic_input(self._config.input_activation)
+        except (
+            InvalidSystematicInputActivationError,
+            OSError,
+            SystematicInputEvidenceError,
+            TypeError,
+            ValueError,
+        ):
+            return _failed_result(
+                SystematicFailureContext(
+                    cycle=cycle,
+                    decision=decision,
+                    occurred_at=self._clock(),
+                    reason="production_input_unavailable",
+                    summary="The production Systematic input is unavailable.",
+                    continuation="Retry after a verified production input activation is available.",
+                )
+            )
+        command = systematic_cycle_command(self._config, cycle, ready)
+        try:
             completed = subprocess.run(
                 command,
                 cwd=self._config.project_root,
@@ -142,7 +168,6 @@ class SystematicResearchActionExecutor:
             report = load_autonomous_cycle_cli_result(_cycle_output(self._config, cycle))
         except (
             InvalidAutonomousCycleCliResultError,
-            InvalidExecutableBindingError,
             OSError,
             subprocess.SubprocessError,
             ValueError,
@@ -151,62 +176,6 @@ class SystematicResearchActionExecutor:
         if (completed.returncode, report.status) not in {(0, "complete"), (1, "blocked")}:
             raise InvalidSystematicResearchActionError(reason="systematic_cycle_execution_failed")
         return _result_from_report(SystematicResultContext(cycle, decision, report, self._clock()))
-
-
-def systematic_cycle_command(
-    config: SystematicResearchActionConfig,
-    cycle: ResearchAgentCycleV1,
-) -> tuple[str, ...]:
-    provider = (
-        ("--response-fixture", str(config.response_fixture))
-        if config.response_fixture is not None
-        else (
-            "--hermes-executable",
-            str(config.hermes_executable),
-            "--provider-id",
-            config.provider_id,
-            "--model-id",
-            config.model_id,
-        )
-    )
-    return (
-        str(config.uv_executable),
-        "run",
-        "--offline",
-        "python",
-        str(config.project_root / "run_autonomous_research_cycle.py"),
-        "--context",
-        str(config.context),
-        *provider,
-        "--experiment-ledger",
-        str(config.experiment_ledger),
-        "--receipt-root",
-        str(config.receipt_root),
-        "--strategy-root",
-        str(config.strategy_root),
-        "--manifest-root",
-        str(config.manifest_root),
-        "--queue-root",
-        str(config.queue_root),
-        "--input-csv",
-        str(config.input_csv),
-        "--data-foundation-manifest",
-        str(config.data_foundation_manifest),
-        "--artifact-root",
-        str(config.artifact_root),
-        "--review-root",
-        str(config.review_root),
-        "--output-dir",
-        str(_cycle_output(config, cycle)),
-        "--python-executable",
-        str(config.python_executable),
-        "--max-bars",
-        str(config.max_bars),
-        "--max-sessions",
-        str(config.max_sessions),
-        "--rss-limit-gib",
-        str(config.rss_limit_gib),
-    )
 
 
 def _cycle_output(config: SystematicResearchActionConfig, cycle: ResearchAgentCycleV1) -> Path:
@@ -221,6 +190,16 @@ class SystematicResultContext:
     occurred_at: dt.datetime
 
 
+@dataclass(frozen=True, slots=True)
+class SystematicFailureContext:
+    cycle: ResearchAgentCycleV1
+    decision: ResearchAgentDecisionV1
+    occurred_at: dt.datetime
+    reason: str
+    summary: str
+    continuation: str
+
+
 def _result_from_report(context: SystematicResultContext) -> ResearchAgentResultV1:
     cycle = context.cycle
     decision = context.decision
@@ -228,21 +207,15 @@ def _result_from_report(context: SystematicResultContext) -> ResearchAgentResult
     occurred_at = context.occurred_at
     match report.status:
         case "blocked":
-            return ResearchAgentResultV1(
-                result_id=research_agent_result_id(cycle.cycle_id),
-                cycle_id=cycle.cycle_id,
-                agent_family_id=cycle.agent_family_id,
-                market_id=cycle.market_id,
-                status=ResearchAgentResultStatus.FAILED,
-                question=decision.question,
-                summary="The bounded generated strategy cycle was blocked.",
-                reason=report.reason_codes[0],
-                continuation="Retry the same evidence after the fixed failure backoff.",
-                evidence_refs=decision.evidence_refs,
-                artifact_refs=(),
-                occurred_at=occurred_at,
-                next_wake_kind=ResearchAgentWakeKind.SCHEDULED,
-                next_wake_at=occurred_at + dt.timedelta(minutes=15),
+            return _failed_result(
+                SystematicFailureContext(
+                    cycle=cycle,
+                    decision=decision,
+                    occurred_at=occurred_at,
+                    reason=report.reason_codes[0],
+                    summary="The bounded generated strategy cycle was blocked.",
+                    continuation="Retry the same evidence after the fixed failure backoff.",
+                )
             )
         case "complete":
             artifacts = _complete_artifacts(report)
@@ -264,6 +237,27 @@ def _result_from_report(context: SystematicResultContext) -> ResearchAgentResult
             )
         case unreachable:
             assert_never(unreachable)
+
+
+def _failed_result(context: SystematicFailureContext) -> ResearchAgentResultV1:
+    cycle = context.cycle
+    decision = context.decision
+    return ResearchAgentResultV1(
+        result_id=research_agent_result_id(cycle.cycle_id),
+        cycle_id=cycle.cycle_id,
+        agent_family_id=cycle.agent_family_id,
+        market_id=cycle.market_id,
+        status=ResearchAgentResultStatus.FAILED,
+        question=decision.question,
+        summary=context.summary,
+        reason=context.reason,
+        continuation=context.continuation,
+        evidence_refs=decision.evidence_refs,
+        artifact_refs=(),
+        occurred_at=context.occurred_at,
+        next_wake_kind=ResearchAgentWakeKind.SCHEDULED,
+        next_wake_at=context.occurred_at + dt.timedelta(minutes=15),
+    )
 
 
 def _complete_artifacts(report: AutonomousCycleCliResult) -> tuple[str, ...]:

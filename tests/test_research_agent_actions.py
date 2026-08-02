@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from tests.research_agent_systematic_input_fixtures import (
+    write_ready_systematic_input_activation,
+)
 from trading_agent.dashboard_agent_family import AgentFamilyId
 from trading_agent.research_agent_actions import (
     InvalidResearchAgentActionError,
@@ -75,6 +78,10 @@ def _decision(family: AgentFamilyId, kind: ResearchAgentDecisionKind) -> Researc
 def _config(tmp_path: Path) -> ResearchAgentActionConfig:
     uv = shutil.which("uv")
     assert uv is not None
+    ready_input = write_ready_systematic_input_activation(
+        tmp_path / "production-input",
+        tmp_path / "systematic-input.json",
+    )
     systematic = SystematicResearchActionExecutor(
         SystematicResearchActionConfig(
             project_root=PROJECT,
@@ -90,10 +97,7 @@ def _config(tmp_path: Path) -> ResearchAgentActionConfig:
             strategy_root=tmp_path / "strategies",
             manifest_root=tmp_path / "manifests",
             queue_root=tmp_path / "queue",
-            input_csv=PROJECT / "examples" / "example_intraday.csv",
-            data_foundation_manifest=(
-                PROJECT / "examples" / "data" / "us-vwap-reclaim-historical-fixture-v1.json"
-            ),
+            input_activation=ready_input.activation_path,
             artifact_root=tmp_path / "experiments",
             review_root=tmp_path / "reviews",
             runs_root=tmp_path / "runs",

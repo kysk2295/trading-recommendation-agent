@@ -26,6 +26,15 @@ from trading_agent.intraday_research_input_binding_models import (
     IntradayResearchInputBindingRequest,
     IntradayResearchStrategyBinding,
 )
+from trading_agent.research_agent_systematic_input_evidence import (
+    verify_systematic_input_evidence_graph,
+)
+from trading_agent.research_agent_systematic_input_models import (
+    ReadySystematicInputActivation,
+)
+from trading_agent.research_agent_systematic_input_store import (
+    write_systematic_input_activation,
+)
 from trading_agent.strategy_factory import StrategyMode
 
 
@@ -37,6 +46,13 @@ class SystematicInputGraphFixture:
     catalog_receipt_path: Path
     input_binding_receipt_path: Path
     foundation_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class ReadySystematicInputFixture:
+    graph: SystematicInputGraphFixture
+    activation_path: Path
+    activation: ReadySystematicInputActivation
 
 
 def write_systematic_input_graph(root: Path) -> SystematicInputGraphFixture:
@@ -94,6 +110,40 @@ def write_systematic_input_graph(root: Path) -> SystematicInputGraphFixture:
     )
 
 
+def write_ready_systematic_input_activation(
+    root: Path,
+    activation_path: Path,
+) -> ReadySystematicInputFixture:
+    graph = write_systematic_input_graph(root)
+    facts = verify_systematic_input_evidence_graph(graph.root)
+    activation = ReadySystematicInputActivation(
+        input_csv_path=facts.input_csv_path,
+        input_csv_sha256=facts.input_csv_sha256,
+        dataset_receipt_path=facts.dataset_receipt_path,
+        dataset_receipt_sha256=facts.dataset_receipt_sha256,
+        catalog_receipt_path=facts.catalog_receipt_path,
+        catalog_receipt_sha256=facts.catalog_receipt_sha256,
+        input_binding_receipt_path=facts.input_binding_receipt_path,
+        input_binding_receipt_sha256=facts.input_binding_receipt_sha256,
+        foundation_path=facts.foundation_path,
+        foundation_sha256=facts.foundation_sha256,
+        producer_commit_sha=facts.producer_commit_sha,
+        input_sha256=facts.input_sha256,
+        selected_session_dates=facts.selected_session_dates,
+        bar_count=facts.bar_count,
+        max_sessions=facts.max_sessions,
+        max_bars=facts.max_bars,
+        rss_limit_gib=facts.rss_limit_gib,
+        activated_at=facts.registered_at,
+    )
+    write_systematic_input_activation(activation_path, activation)
+    return ReadySystematicInputFixture(
+        graph=graph,
+        activation_path=activation_path,
+        activation=activation,
+    )
+
+
 def replace_model_artifact(path: Path, model: BaseModel, prefix: str) -> tuple[Path, str]:
     payload = canonical_model_payload(model)
     digest = hashlib.sha256(payload.encode()).hexdigest()
@@ -105,17 +155,22 @@ def replace_model_artifact(path: Path, model: BaseModel, prefix: str) -> tuple[P
 
 
 def canonical_model_payload(model: BaseModel) -> str:
-    return json.dumps(
-        model.model_dump(mode="json"),
-        ensure_ascii=True,
-        indent=2,
-        sort_keys=True,
-    ) + "\n"
+    return (
+        json.dumps(
+            model.model_dump(mode="json"),
+            ensure_ascii=True,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
 
 
 __all__ = (
+    "ReadySystematicInputFixture",
     "SystematicInputGraphFixture",
     "canonical_model_payload",
     "replace_model_artifact",
+    "write_ready_systematic_input_activation",
     "write_systematic_input_graph",
 )
