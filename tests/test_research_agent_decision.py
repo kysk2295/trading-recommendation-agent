@@ -83,6 +83,14 @@ def test_decision_prompt_binds_family_memory_and_evidence() -> None:
     assert "order authority: false" in prompt
 
 
+def test_decision_prompt_exposes_cross_field_response_contract() -> None:
+    prompt = render_research_agent_prompt(_request())
+
+    assert "primary_decision=no_action requires" in prompt
+    assert "next_wake_kind=scheduled requires" in prompt
+    assert "every other next_wake_kind requires next_wake_at=null" in prompt
+
+
 def test_parser_produces_one_audited_decision() -> None:
     request = _request()
     prompt = render_research_agent_prompt(request)
