@@ -98,8 +98,17 @@ def test_plist_contains_one_keepalive_service_and_no_secrets(tmp_path: Path) -> 
     assert "account" not in text.lower()
 
 
-def test_activation_rejects_worktree_before_launchctl(tmp_path: Path) -> None:
-    config_path, plist_path = _provision(tmp_path)
+def test_activation_rejects_non_main_project_before_launchctl(tmp_path: Path) -> None:
+    repository = tmp_path / "feature"
+    repository.mkdir()
+    for name in ("run_research_agent_runtime.py", "run_autonomous_research_cycle.py"):
+        (repository / name).write_text("pass\n", encoding="utf-8")
+    _git(repository, "init", "-b", "codex/fixture")
+    _git(repository, "config", "user.name", "Research Runtime Test")
+    _git(repository, "config", "user.email", "runtime@example.invalid")
+    _git(repository, "add", ".")
+    _git(repository, "commit", "-m", "fixture")
+    config_path, plist_path = _provision(tmp_path, project_root=repository)
     calls: list[tuple[str, ...]] = []
 
     code = main(
