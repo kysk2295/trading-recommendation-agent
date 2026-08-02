@@ -42,6 +42,7 @@ async def relay_snapshots(
     system_authority_verifier: SystemAuthorityVerifierInput,
     event_connection: EventConnection,
     pair_browser_once: PairBrowserOnce,
+    cycle_database: Path | None = None,
 ) -> None:
     attempt = 0
     snapshot = initial_snapshot
@@ -79,10 +80,17 @@ async def relay_snapshots(
                 raise
             await anyio.sleep(reconnect_delay_seconds(attempt))
             attempt += 1
-            snapshot = collect_dashboard_snapshot_v2(
-                outputs,
-                system_authority_verifier=system_authority_verifier,
-            )
+            if cycle_database is None:
+                snapshot = collect_dashboard_snapshot_v2(
+                    outputs,
+                    system_authority_verifier=system_authority_verifier,
+                )
+            else:
+                snapshot = collect_dashboard_snapshot_v2(
+                    outputs,
+                    system_authority_verifier=system_authority_verifier,
+                    cycle_database=cycle_database,
+                )
 
 
 __all__ = ("EventConnection", "PairBrowserOnce", "relay_snapshots")

@@ -62,9 +62,7 @@ def _seed_opportunity(paths: ResearchAgentSourcePaths) -> None:
                 features=(FeatureValue(name="change_pct", value="0.12"),),
             ),
         ),
-        evidence_refs=(
-            EvidenceRef(namespace="ranking", record_id="nas:1:acme", observed_at=observed_at),
-        ),
+        evidence_refs=(EvidenceRef(namespace="ranking", record_id="nas:1:acme", observed_at=observed_at),),
         source_coverage=(
             SourceCoverage(source_id="ranking_source", observed_at=observed_at, record_count=1, complete=True),
         ),
@@ -84,9 +82,7 @@ def _seed_market_context(paths: ResearchAgentSourcePaths) -> None:
         regime_labels=(MarketRegimeLabel.TRENDING,),
         breadth_and_volatility_features=(FeatureValue(name="advance_decline", value="1.2"),),
         macro_and_flow_refs=("fred.vix",),
-        coverage=(
-            SourceCoverage(source_id="internal_breadth", observed_at=NOW, record_count=500, complete=True),
-        ),
+        coverage=(SourceCoverage(source_id="internal_breadth", observed_at=NOW, record_count=500, complete=True),),
         producer_version="market-context-v1",
     )
     path = paths.market_context_root / "us-current.market-context.json"
@@ -101,16 +97,13 @@ def test_source_projection_routes_evidence_without_cross_family_leakage(tmp_path
 
     projected = collect_research_agent_evidence(paths, now=NOW)
     by_family = {
-        family: tuple(item for item in projected if item.agent_family_id == family)
-        for family in PRIMARY_AGENT_FAMILIES
+        family: tuple(item for item in projected if item.agent_family_id == family) for family in PRIMARY_AGENT_FAMILIES
     }
 
     assert {family for family, items in by_family.items() if items} == set(PRIMARY_AGENT_FAMILIES)
     assert all(item.payload_sha256 in item.evidence_refs for item in by_family["systematic_quant"])
     assert all(item.market_id == "none" for item in by_family["systematic_quant"])
-    assert all(
-        item.trigger_kind is ResearchAgentTriggerKind.MARKET_EVENT for item in by_family["market_context"]
-    )
+    assert all(item.trigger_kind is ResearchAgentTriggerKind.MARKET_EVENT for item in by_family["market_context"])
 
 
 def test_missing_derivatives_entitlement_is_explicit_evidence(tmp_path: Path) -> None:
@@ -119,6 +112,17 @@ def test_missing_derivatives_entitlement_is_explicit_evidence(tmp_path: Path) ->
     derivative = next(item for item in projected if item.agent_family_id == "derivatives_research")
 
     assert derivative.source_key == "derivatives.blocked.options_entitlement_missing"
+
+
+def test_unchanged_derivatives_state_does_not_create_per_tick_evidence(tmp_path: Path) -> None:
+    paths = _source_paths(tmp_path)
+
+    first = collect_research_agent_evidence(paths, now=NOW)
+    second = collect_research_agent_evidence(paths, now=NOW + dt.timedelta(seconds=30))
+    first_derivative = next(item for item in first if item.agent_family_id == "derivatives_research")
+    second_derivative = next(item for item in second if item.agent_family_id == "derivatives_research")
+
+    assert first_derivative.evidence_id == second_derivative.evidence_id
 
 
 def test_malformed_existing_market_context_fails_the_collection_tick(tmp_path: Path) -> None:

@@ -79,6 +79,7 @@ async def watch_output_events(
     send_lock: anyio.Lock,
     watcher: WatchFactory | None = None,
     system_authority_verifier: SystemAuthorityVerifierInput = None,
+    cycle_database: Path | None = None,
 ) -> None:
     event_source = watch_native_changes if watcher is None else watcher
     code_sha = current_code_sha()
@@ -96,18 +97,23 @@ async def watch_output_events(
             )
         except InvalidKrAutonomousBridgeError:
             generated = ()
-        for trigger_path in tuple(
-            sorted(set(autonomous_trigger_paths(changes)) | set(generated))
-        ):
+        for trigger_path in tuple(sorted(set(autonomous_trigger_paths(changes)) | set(generated))):
             await stream_autonomous_trigger_event(
                 socket,
                 trigger_path,
                 send_lock,
             )
-        snapshot = collect_dashboard_snapshot_v2(
-            outputs,
-            system_authority_verifier=system_authority_verifier,
-        )
+        if cycle_database is None:
+            snapshot = collect_dashboard_snapshot_v2(
+                outputs,
+                system_authority_verifier=system_authority_verifier,
+            )
+        else:
+            snapshot = collect_dashboard_snapshot_v2(
+                outputs,
+                system_authority_verifier=system_authority_verifier,
+                cycle_database=cycle_database,
+            )
         async with send_lock:
             await send_snapshot(socket, snapshot)
 

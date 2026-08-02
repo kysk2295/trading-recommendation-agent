@@ -14,6 +14,7 @@ from trading_agent.experiment_ledger_store import (
 )
 from trading_agent.lane_review_store import InvalidLaneReviewSourceError, LaneReviewReader
 from trading_agent.research_agent_cycle_models import ResearchAgentEvidenceV1, ResearchAgentTriggerKind
+from trading_agent.research_agent_derivatives_payload import stable_derivatives_payload
 from trading_agent.research_agent_source_common import (
     CapabilityEvidenceSpec,
     InvalidResearchAgentSourceError,
@@ -218,16 +219,7 @@ class DerivativesSourceAdapter:
         projection = project_derivatives(paths.outputs_root, now=now)
         if projection.workspace.state in {"corrupt", "error"}:
             raise InvalidResearchAgentSourceError(reason="derivatives_source_invalid")
-        payload = json.dumps(
-            {
-                "edges": [edge.model_dump(mode="json") for edge in projection.edges],
-                "nodes": [node.model_dump(mode="json") for node in projection.nodes],
-                "workspace": projection.workspace.model_dump(mode="json"),
-            },
-            ensure_ascii=True,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
+        payload = stable_derivatives_payload(projection)
         blocker = projection.workspace.blocker_code
         source_key = "derivatives.snapshot" if blocker is None else f"derivatives.blocked.{blocker}"
         observed_at = projection.workspace.observed_at or interval_bucket(now, 15)

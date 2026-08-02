@@ -62,6 +62,7 @@ def collect_dashboard_snapshot_v2(
     *,
     now: dt.datetime | None = None,
     system_authority_verifier: SystemAuthorityVerifierInput = None,
+    cycle_database: Path | None = None,
 ) -> DashboardSnapshotV2:
     generated_at = dt.datetime.now(dt.UTC) if now is None else now
     if generated_at.tzinfo is None or generated_at.utcoffset() is None:
@@ -73,7 +74,8 @@ def collect_dashboard_snapshot_v2(
             now=generated_at,
         )
         for name, root in ROOT_BY_WORKSPACE.items()
-        if name not in {
+        if name
+        not in {
             "overview",
             "markets",
             "data_sources",
@@ -101,6 +103,7 @@ def collect_dashboard_snapshot_v2(
         agent_projection, agents = project_agent_runtime(
             outputs,
             now=generated_at,
+            cycle_database=cycle_database,
         )
     except InvalidAgentRuntimeReceiptError:
         agent_projection, agents = project_agent_runtime(
@@ -175,4 +178,6 @@ def _paper_projection(outputs: Path, now: dt.datetime) -> WorkspaceProjection:
         read_projection_receipts(outputs / ROOT_BY_WORKSPACE["paper"], "paper", now=now),
         now=now,
     )
+
+
 __all__ = ("DashboardSnapshotV2TimeError", "collect_dashboard_snapshot_v2")
