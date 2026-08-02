@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import sqlite3
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import assert_never
@@ -32,6 +33,14 @@ from trading_agent.experiment_ledger_store import (
     ExperimentLedgerWriterLeaseUnavailableError,
     InvalidExperimentLedgerSourceError,
     UnsupportedExperimentLedgerSchemaError,
+)
+from trading_agent.generated_strategy_artifact import (
+    GeneratedStrategyArtifactError,
+    GeneratedStrategyArtifactStore,
+)
+from trading_agent.generated_strategy_runtime import (
+    GeneratedStrategyRuntimeError,
+    resolve_generated_strategy_runtime,
 )
 from trading_agent.private_immutable_file import InvalidPrivateImmutableFileError
 from trading_agent.private_report import write_private_report
@@ -64,6 +73,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--context", type=Path, required=True)
     parser.add_argument("--experiment-ledger", type=Path, required=True)
     parser.add_argument("--receipt-root", type=Path, required=True)
+    parser.add_argument("--strategy-root", type=Path, required=True)
+    parser.add_argument("--python-executable", type=Path, default=Path(sys.executable))
     parser.add_argument("--manifest-root", type=Path, required=True)
     parser.add_argument("--queue-root", type=Path, required=True)
     provider = parser.add_mutually_exclusive_group(required=True)
@@ -87,18 +98,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise ResearcherPipelineError
         receipts = ResearcherReceiptStore(args.receipt_root)
         ledger = ExperimentLedgerStore(args.experiment_ledger)
+        strategies = GeneratedStrategyArtifactStore(
+            args.strategy_root.resolve(strict=False),
+            resolve_generated_strategy_runtime(args.python_executable),
+        )
         context = build_researcher_context(source, ExperimentLedgerReader(ledger.path))
         result = ResearcherPipeline(
             ResearcherPipelineServices(
                 StructuredHypothesisGenerator(client, receipts, lambda: dt.datetime.now(dt.UTC)),
                 DeterministicHypothesisCritic(max_free_parameters=4),
             ),
-            ResearcherPipelineStores(ledger, receipts),
+            ResearcherPipelineStores(ledger, receipts, strategies),
             ResearcherPipelineArtifacts(args.manifest_root, args.queue_root),
         ).run(context, max_attempts=args.max_attempts)
     except (
         ExperimentLedgerConflictError,
         ExperimentLedgerWriterLeaseUnavailableError,
+        GeneratedStrategyArtifactError,
+        GeneratedStrategyRuntimeError,
         InvalidExperimentLedgerSourceError,
         InvalidPrivateImmutableFileError,
         InvalidResearchHypothesisManifestError,
@@ -115,7 +132,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         _report(args.output_dir, "blocked", ("proposal_or_evidence_invalid",))
         return 1
     match result:
-        case AcceptedResearchProposal(proposal=proposal, queue_path=queue_path):
+        case AcceptedResearchProposal(
+            proposal=proposal,
+            strategy_artifact=strategy_artifact,
+            queue_path=queue_path,
+        ):
             _report(
                 args.output_dir,
                 "ready",
@@ -123,6 +144,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"hypothesis_id: {proposal.card.hypothesis.hypothesis_id}",
                     f"prompt_sha256: {proposal.llm_receipt.prompt_sha256}",
                     f"response_sha256: {proposal.llm_receipt.response_sha256}",
+                    f"strategy_artifact_id: {strategy_artifact.artifact.artifact_id}",
+                    f"strategy_artifact: {strategy_artifact.source_path.name}",
                     f"queue_artifact: {queue_path.name}",
                 ),
             )

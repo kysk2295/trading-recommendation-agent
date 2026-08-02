@@ -224,6 +224,10 @@ def _prompt(context: ResearcherContext) -> str:
             "maximum_free_parameters": _MAX_FREE_PARAMETERS,
             "only_raw_json": True,
             "output_json_schema": LlmHypothesisDraft.model_json_schema(),
+            "strategy_entrypoint": {
+                "factory": "create_strategy(context)",
+                "method": "observe(bar, candidate)",
+            },
         },
         "existing_hypothesis_texts": context.existing_hypothesis_texts,
         "failure_digest": {

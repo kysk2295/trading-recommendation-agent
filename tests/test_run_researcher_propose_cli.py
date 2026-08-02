@@ -29,6 +29,8 @@ def test_researcher_propose_help_exposes_local_fail_closed_inputs() -> None:
     assert "--context" in completed.stdout
     assert "--experiment-ledger" in completed.stdout
     assert "--receipt-root" in completed.stdout
+    assert "--strategy-root" in completed.stdout
+    assert "--python-executable" in completed.stdout
     assert "--manifest-root" in completed.stdout
     assert "--queue-root" in completed.stdout
     assert "--response-fixture" in completed.stdout
@@ -72,6 +74,7 @@ def test_researcher_propose_fixture_registers_receipt_card_and_queue(tmp_path: P
     assert len(tuple((tmp_path / "receipts" / "responses").glob("*.txt"))) == 1
     assert len(tuple((tmp_path / "receipts" / "calls").glob("*.json"))) == 1
     assert len(tuple((tmp_path / "receipts" / "critiques").glob("*.json"))) == 1
+    assert len(tuple((tmp_path / "strategies").glob("*/strategy.py"))) == 1
     assert len(tuple((tmp_path / "manifests").glob("research_hypothesis_*.json"))) == 1
     assert len(tuple((tmp_path / "queue").glob("source_hypothesis_queue_*.json"))) == 1
     assert "result: ready" in (tmp_path / "output" / "researcher_propose_ko.md").read_text(encoding="utf-8")
@@ -85,6 +88,10 @@ def _arguments(tmp_path: Path, context: Path, response: Path, ledger: Path) -> t
         str(ledger),
         "--receipt-root",
         str(tmp_path / "receipts"),
+        "--strategy-root",
+        str(tmp_path / "strategies"),
+        "--python-executable",
+        sys.executable,
         "--manifest-root",
         str(tmp_path / "manifests"),
         "--queue-root",
@@ -124,7 +131,13 @@ def _write_cli_fixtures(tmp_path: Path) -> tuple[Path, Path]:
                 "cited_source_ids": source_manifest["research_source_ids"],
                 "economic_mechanism": source_manifest["economic_mechanism"],
                 "counterfactual_baseline": source_manifest["counterfactual_baseline"],
-                "strategy_source": "def signal(bars, index):\n    return bars[index]",
+                "strategy_source": (
+                    "def create_strategy(context):\n"
+                    "    class Strategy:\n"
+                    "        def observe(self, bar, candidate):\n"
+                    "            return None\n"
+                    "    return Strategy()\n"
+                ),
                 "free_parameters": ["minimum_relative_volume"],
             }
         ),

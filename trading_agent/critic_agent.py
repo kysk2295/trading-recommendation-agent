@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import re
 from dataclasses import dataclass
 from enum import StrEnum
@@ -14,7 +13,6 @@ _WHITESPACE: Final = re.compile(r"\s+")
 
 
 class ObjectionKind(StrEnum):
-    LOOK_AHEAD = "look_ahead"
     REDUNDANCY = "redundancy"
     FREE_PARAMS = "free_params"
     SOURCE_FIDELITY = "source_fidelity"
@@ -60,9 +58,6 @@ class DeterministicHypothesisCritic:
         ledger: ExperimentLedgerReader,
     ) -> CritiqueReport:
         objections: list[Objection] = []
-        look_ahead = _look_ahead_evidence(proposal.strategy_draft.source_code)
-        if look_ahead is not None:
-            objections.append(Objection(ObjectionKind.LOOK_AHEAD, Severity.BLOCKING, look_ahead))
         if _repeats_rejected_hypothesis(proposal, ledger):
             objections.append(
                 Objection(ObjectionKind.REDUNDANCY, Severity.BLOCKING, "rejected_scope_and_text_match")
@@ -76,48 +71,6 @@ class DeterministicHypothesisCritic:
                 )
             )
         return CritiqueReport(tuple(objections))
-
-
-def _look_ahead_evidence(source_code: str) -> str | None:
-    try:
-        tree = ast.parse(source_code)
-    except SyntaxError:
-        return "strategy_source_unparseable"
-    for node in ast.walk(tree):
-        if _future_bar_subscript(node):
-            return "future_bar_subscript"
-        if _future_shift(node):
-            return "negative_bar_shift"
-    return None
-
-
-def _future_bar_subscript(node: ast.AST) -> bool:
-    if not isinstance(node, ast.Subscript) or not _bar_container(node.value):
-        return False
-    index = node.slice
-    if not isinstance(index, ast.BinOp) or not isinstance(index.op, ast.Add):
-        return False
-    offset = _integer_literal(index.right)
-    return offset is None or offset > 0
-
-
-def _bar_container(node: ast.AST) -> bool:
-    expression = ast.unparse(node)
-    return expression == "bars" or expression.endswith("_bars") or expression.endswith(".bars")
-
-
-def _integer_literal(node: ast.AST) -> int | None:
-    expression = ast.unparse(node)
-    return int(expression) if re.fullmatch(r"-?\d+", expression) is not None else None
-
-
-def _future_shift(node: ast.AST) -> bool:
-    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute) or node.func.attr != "shift":
-        return False
-    if len(node.args) != 1 or node.keywords:
-        return False
-    offset = _integer_literal(node.args[0])
-    return offset is not None and offset < 0
 
 
 def _repeats_rejected_hypothesis(

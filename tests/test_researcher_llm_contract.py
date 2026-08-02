@@ -44,3 +44,7 @@ def test_researcher_prompt_exposes_the_critic_parameter_ceiling() -> None:
 
     # Then: candidates receive the same hard parameter ceiling used downstream.
     assert contract["maximum_free_parameters"] == 4
+    assert contract["strategy_entrypoint"] == {
+        "factory": "create_strategy(context)",
+        "method": "observe(bar, candidate)",
+    }

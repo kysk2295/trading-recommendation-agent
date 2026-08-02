@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,6 +15,8 @@ from trading_agent.experiment_ledger_models import (
     TrialKind,
 )
 from trading_agent.experiment_ledger_store import ExperimentLedgerReader, ExperimentLedgerStore
+from trading_agent.generated_strategy_artifact import GeneratedStrategyArtifactStore
+from trading_agent.generated_strategy_runtime import resolve_generated_strategy_runtime
 from trading_agent.intraday_research_loop import (
     IntradayResearchLoopPaths,
     run_intraday_research_loop,
@@ -89,7 +92,13 @@ def _run_full_cycle(tmp_path: Path) -> _E2eResult:
             "cited_source_ids": source_payload["research_source_ids"],
             "economic_mechanism": source_payload["economic_mechanism"],
             "counterfactual_baseline": source_payload["counterfactual_baseline"],
-            "strategy_source": "def signal(bars, index):\n    return bars[index]",
+            "strategy_source": (
+                "def create_strategy(context):\n"
+                "    class Strategy:\n"
+                "        def observe(self, bar, candidate):\n"
+                "            return None\n"
+                "    return Strategy()\n"
+            ),
             "free_parameters": ["minimum_relative_volume"],
         },
         separators=(",", ":"),
@@ -106,7 +115,14 @@ def _run_full_cycle(tmp_path: Path) -> _E2eResult:
             ),
             DeterministicHypothesisCritic(max_free_parameters=4),
         ),
-        ResearcherPipelineStores(ledger, receipts),
+        ResearcherPipelineStores(
+            ledger,
+            receipts,
+            GeneratedStrategyArtifactStore(
+                tmp_path / "strategies",
+                resolve_generated_strategy_runtime(Path(sys.executable)),
+            ),
+        ),
         ResearcherPipelineArtifacts(tmp_path / "manifests", tmp_path / "queue"),
     )
     accepted = pipeline.run(
@@ -114,6 +130,14 @@ def _run_full_cycle(tmp_path: Path) -> _E2eResult:
         max_attempts=1,
     )
     assert isinstance(accepted, AcceptedResearchProposal)
+    assert (
+        accepted.strategy_artifact.source_path.read_text(encoding="utf-8")
+        == accepted.proposal.strategy_draft.source_code
+    )
+    assert (
+        accepted.strategy_artifact.artifact.payload.response_sha256
+        == accepted.proposal.llm_receipt.response_sha256
+    )
     lane_registry = tmp_path / "lane.sqlite3"
     _ = bootstrap_lane_control_plane(LaneRegistryStore(lane_registry))
     manifest = _research_manifest(accepted)

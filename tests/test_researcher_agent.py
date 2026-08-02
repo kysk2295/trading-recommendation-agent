@@ -10,7 +10,6 @@ from trading_agent import researcher_llm
 from trading_agent.critic_agent import (
     DeterministicHypothesisCritic,
     ObjectionKind,
-    Severity,
 )
 from trading_agent.experiment_ledger_keys import research_source_key, strategy_lifecycle_event_key
 from trading_agent.experiment_ledger_models import (
@@ -73,19 +72,17 @@ def test_fixed_generator_returns_the_exact_prebuilt_proposal() -> None:
     assert generated is proposal
 
 
-def test_deterministic_critic_blocks_future_bar_access() -> None:
-    # Given: candidate code that reads the next bar in the sequence.
+def test_deterministic_critic_allows_unrestricted_python_source() -> None:
+    # Given: candidate code whose ordinary Python is isolated by the streaming runtime boundary.
     proposal = _proposal("return bars[index + 1]")
     critic = DeterministicHypothesisCritic(max_free_parameters=4)
 
     # When: hard checks inspect the candidate without an LLM.
     report = critic.critique(proposal, ExperimentLedgerReader(Path("missing.sqlite3")))
 
-    # Then: look-ahead is a blocking objection.
-    assert report.is_blocked is True
-    assert tuple((item.kind, item.severity) for item in report.objections) == (
-        (ObjectionKind.LOOK_AHEAD, Severity.BLOCKING),
-    )
+    # Then: the Critic leaves code capability enforcement to the sandbox protocol.
+    assert report.is_blocked is False
+    assert report.objections == ()
 
 
 def test_deterministic_critic_blocks_too_many_free_parameters() -> None:

@@ -8,6 +8,10 @@ from trading_agent.critic_agent import CritiqueReport, HypothesisCritic
 from trading_agent.experiment_ledger_keys import research_source_key
 from trading_agent.experiment_ledger_models import StrategyLifecycleState, TrialEventKind
 from trading_agent.experiment_ledger_store import ExperimentLedgerReader, ExperimentLedgerStore
+from trading_agent.generated_strategy_artifact import (
+    GeneratedStrategyArtifactStore,
+    PublishedGeneratedStrategy,
+)
 from trading_agent.private_immutable_file import publish_private_immutable_text
 from trading_agent.research_hypothesis_registration import (
     ResearchHypothesisManifest,
@@ -38,6 +42,7 @@ class ResearcherPipelineServices:
 class ResearcherPipelineStores:
     ledger: ExperimentLedgerStore
     receipts: ResearcherReceiptStore
+    strategies: GeneratedStrategyArtifactStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +55,7 @@ class ResearcherPipelineArtifacts:
 class AcceptedResearchProposal:
     proposal: ProposedHypothesis
     critique: CritiqueReport
+    strategy_artifact: PublishedGeneratedStrategy
     manifest_path: Path
     queue_path: Path
 
@@ -78,6 +84,7 @@ class ResearcherPipeline:
             _ = self.stores.receipts.record_critique(proposal, critique)
             critiques.append(critique)
             if not critique.is_blocked:
+                strategy_artifact = self.stores.strategies.publish(proposal)
                 manifest = _manifest(proposal)
                 manifest_path = (
                     self.artifacts.manifest_root.resolve(strict=False)
@@ -92,7 +99,13 @@ class ResearcherPipeline:
                     self.artifacts.queue_root.resolve(strict=False),
                     queue,
                 )
-                return AcceptedResearchProposal(proposal, critique, manifest_path, queue_path)
+                return AcceptedResearchProposal(
+                    proposal,
+                    critique,
+                    strategy_artifact,
+                    manifest_path,
+                    queue_path,
+                )
         return DroppedResearchProposal(tuple(critiques))
 
 
