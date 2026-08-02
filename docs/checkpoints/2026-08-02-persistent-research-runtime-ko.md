@@ -19,6 +19,9 @@ pointer 계약과 그 참조 artifact digest가 유효하다는 상태이며, �
 `null`로 보고한다. 상태 JSON에는 로컬 경로가 포함되지 않는다. activation이 `blocked`여도 다른
 다섯 research family는 계속 armed 상태로 동작하고, Systematic heavy action만
 `production_input_unavailable`로 실패한다. 이 상태는 실험 성과나 수익성을 뜻하지 않는다.
+일반 provision/verify/status/activate/load는 v2만 허용한다. 단, 이미 로드된 v1 서비스를 v2로
+내리는 one-way `replace`의 current pair에 한해서만 exact canonical v1 config/plist를 query-only로
+검증한다. v1 candidate, 자동 migration, v1 bootstrap과 실패 시 v1 복원은 허용하지 않는다.
 
 ```bash
 uv run python run_research_agent_runtime.py provision \

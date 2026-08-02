@@ -38,6 +38,9 @@ from trading_agent.research_agent_service_config import (
     write_research_agent_launch_agent,
     write_research_agent_service_config,
 )
+from trading_agent.research_agent_service_legacy_current import (
+    verify_research_agent_replace_current,
+)
 from trading_agent.research_agent_service_runtime import (
     InvalidResearchAgentServiceRuntimeError,
     run_service_forever,
@@ -135,11 +138,10 @@ def _activate(args: argparse.Namespace, runner: CommandRunner) -> int:
 
 
 def _replace(args: argparse.Namespace, runner: CommandRunner) -> int:
-    _ = verify_research_agent_launch_agent(args.current_config, args.current_plist)
-    current = load_research_agent_service_config(args.current_config)
+    current = verify_research_agent_replace_current(args.current_config, args.current_plist)
     _ = verify_research_agent_launch_agent(args.candidate_config, args.candidate_plist)
     candidate = load_research_agent_service_config(args.candidate_config)
-    if current.label != RESEARCH_AGENT_SERVICE_LABEL or candidate.label != RESEARCH_AGENT_SERVICE_LABEL:
+    if current.project_root != candidate.project_root or candidate.label != RESEARCH_AGENT_SERVICE_LABEL:
         return 2
     _ = current_main_commit(candidate.project_root)
     domain = f"gui/{os.getuid()}"
