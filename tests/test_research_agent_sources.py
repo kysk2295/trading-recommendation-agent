@@ -11,6 +11,7 @@ from trading_agent.contract_outbox import append_opportunity_snapshot
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES
 from trading_agent.market_context_models import MarketContextSnapshot, MarketRegimeLabel
 from trading_agent.research_agent_cycle_models import ResearchAgentTriggerKind
+from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
 from trading_agent.research_agent_sources import (
     InvalidResearchAgentSourceError,
     ResearchAgentSourcePaths,
@@ -123,6 +124,18 @@ def test_unchanged_derivatives_state_does_not_create_per_tick_evidence(tmp_path:
     second_derivative = next(item for item in second if item.agent_family_id == "derivatives_research")
 
     assert first_derivative.evidence_id == second_derivative.evidence_id
+
+
+def test_unchanged_derivatives_state_creates_one_evidence_per_interval_bucket(tmp_path: Path) -> None:
+    paths = _source_paths(tmp_path)
+    first = collect_research_agent_evidence(paths, now=NOW)
+    next_interval = collect_research_agent_evidence(paths, now=NOW + dt.timedelta(minutes=15))
+    first_derivative = next(item for item in first if item.agent_family_id == "derivatives_research")
+    next_derivative = next(item for item in next_interval if item.agent_family_id == "derivatives_research")
+    with ResearchAgentCycleStore(tmp_path / "cycles.sqlite3") as store:
+        assert store.append_evidence(first_derivative)
+        assert store.append_evidence(next_derivative)
+    assert first_derivative.evidence_id != next_derivative.evidence_id
 
 
 def test_malformed_existing_market_context_fails_the_collection_tick(tmp_path: Path) -> None:

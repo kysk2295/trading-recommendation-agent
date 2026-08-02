@@ -219,10 +219,18 @@ class DerivativesSourceAdapter:
         projection = project_derivatives(paths.outputs_root, now=now)
         if projection.workspace.state in {"corrupt", "error"}:
             raise InvalidResearchAgentSourceError(reason="derivatives_source_invalid")
-        payload = stable_derivatives_payload(projection)
         blocker = projection.workspace.blocker_code
         source_key = "derivatives.snapshot" if blocker is None else f"derivatives.blocked.{blocker}"
         observed_at = projection.workspace.observed_at or interval_bucket(now, 15)
+        payload = json.dumps(
+            {
+                "interval_observed_at": observed_at.isoformat(),
+                "projection": json.loads(stable_derivatives_payload(projection)),
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
         return (
             ResearchAgentEvidenceMaterial(
                 family="derivatives_research",
