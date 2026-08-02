@@ -12,6 +12,7 @@ from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES
 from trading_agent.market_context_models import MarketContextSnapshot, MarketRegimeLabel
 from trading_agent.research_agent_cycle_models import ResearchAgentTriggerKind
 from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
+from trading_agent.research_agent_source_adapters_primary import OpportunitySourceAdapter
 from trading_agent.research_agent_sources import (
     InvalidResearchAgentSourceError,
     ResearchAgentSourcePaths,
@@ -26,7 +27,7 @@ from trading_agent.signal_contract_models import (
     SourceCoverage,
 )
 
-NOW = dt.datetime(2026, 8, 2, 12, 0, tzinfo=dt.UTC)
+NOW = dt.datetime(2026, 8, 3, 14, 35, tzinfo=dt.UTC)
 
 
 def _source_paths(tmp_path: Path) -> ResearchAgentSourcePaths:
@@ -46,7 +47,7 @@ def _source_paths(tmp_path: Path) -> ResearchAgentSourcePaths:
 def _seed_opportunity(paths: ResearchAgentSourcePaths) -> None:
     observed_at = NOW - dt.timedelta(minutes=1)
     snapshot = OpportunitySnapshot(
-        opportunity_id="us-opportunity-20260802t115900-abcd1234",
+        opportunity_id="us-opportunity-20260803t143400-abcd1234",
         strategy_lane=StrategyLaneRef(
             market_id=MarketId.US_EQUITIES,
             agent_family=AgentFamily.OPPORTUNITY_MANAGER,
@@ -60,7 +61,10 @@ def _seed_opportunity(paths: ResearchAgentSourcePaths) -> None:
                 symbol="ACME",
                 rank=1,
                 score=Decimal("0.12"),
-                features=(FeatureValue(name="change_pct", value="0.12"),),
+                features=(
+                    FeatureValue(name="change_pct", value="0.12"),
+                    FeatureValue(name="spread_bps", value="12.5"),
+                ),
             ),
         ),
         evidence_refs=(EvidenceRef(namespace="ranking", record_id="nas:1:acme", observed_at=observed_at),),
@@ -68,7 +72,7 @@ def _seed_opportunity(paths: ResearchAgentSourcePaths) -> None:
             SourceCoverage(source_id="ranking_source", observed_at=observed_at, record_count=1, complete=True),
         ),
     )
-    session = paths.day_session_root / "20260802"
+    session = paths.day_session_root / "20260803"
     session.mkdir(parents=True)
     assert append_opportunity_snapshot(session / "opportunities.v1.jsonl", snapshot)
 
@@ -76,12 +80,15 @@ def _seed_opportunity(paths: ResearchAgentSourcePaths) -> None:
 def _seed_market_context(paths: ResearchAgentSourcePaths) -> None:
     paths.market_context_root.mkdir(parents=True)
     snapshot = MarketContextSnapshot(
-        context_id="us-context-20260802t1200",
+        context_id="us-context-20260803t1435",
         market_id=MarketId.US_EQUITIES,
         observed_at=NOW,
         valid_until=NOW + dt.timedelta(minutes=30),
         regime_labels=(MarketRegimeLabel.TRENDING,),
-        breadth_and_volatility_features=(FeatureValue(name="advance_decline", value="1.2"),),
+        breadth_and_volatility_features=(
+            FeatureValue(name="advance_decline", value="1.2"),
+            FeatureValue(name="spread_bps", value="14.0"),
+        ),
         macro_and_flow_refs=("fred.vix",),
         coverage=(SourceCoverage(source_id="internal_breadth", observed_at=NOW, record_count=500, complete=True),),
         producer_version="market-context-v1",
@@ -158,3 +165,16 @@ def test_source_paths_reject_relative_or_symlinked_boundaries(tmp_path: Path) ->
         ResearchAgentSourcePaths(
             **(paths.model_dump(mode="python") | {"outputs_root": alias}),
         )
+
+
+def test_opportunity_prior_date_emits_family_blocked_evidence(tmp_path: Path) -> None:
+    # Given: the only Opportunity snapshot belongs to the prior NY session.
+    paths = _source_paths(tmp_path)
+    _seed_opportunity(paths)
+    current_session = dt.datetime(2026, 8, 4, 14, 31, tzinfo=dt.UTC)
+
+    # When: the Primary adapter inspects the current open session.
+    evidence = OpportunitySourceAdapter().collect(paths, current_session)
+
+    # Then: prior-date data is explicit blocked evidence, never admitted research input.
+    assert tuple(item.source_key for item in evidence) == ("opportunity.blocked.prior_date",)

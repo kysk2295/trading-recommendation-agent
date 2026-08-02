@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, assert_never, final
 
 from pydantic import ValidationError
 
@@ -13,16 +13,24 @@ from trading_agent.hermes_delivery_projection import (
 )
 from trading_agent.market_context_models import MarketContextSnapshot
 from trading_agent.research_agent_cycle_models import ResearchAgentEvidenceV1, ResearchAgentTriggerKind
+from trading_agent.research_agent_primary_admission import (
+    DaySourceAdmission,
+    PrimaryAdmissionFailure,
+    day_source_admission,
+    market_context_admission,
+    opportunity_admission,
+    primary_session_failure,
+)
 from trading_agent.research_agent_source_common import (
     CapabilityEvidenceSpec,
     InvalidResearchAgentSourceError,
     ResearchAgentEvidenceMaterial,
     canonical_model_json,
-    canonical_payload_json,
     capability_evidence,
     require_private_source_file,
     require_source_boundary,
 )
+from trading_agent.us_equity_calendar import NEW_YORK
 
 if TYPE_CHECKING:
     from trading_agent.research_agent_sources import ResearchAgentSourcePaths
@@ -37,40 +45,35 @@ class OpportunitySourceAdapter:
         paths: ResearchAgentSourcePaths,
         now: dt.datetime,
     ) -> tuple[ResearchAgentEvidenceV1, ...]:
-        outboxes = tuple(
-            session / "opportunities.v1.jsonl"
-            for session in _latest_session_directories(paths.day_session_root)
-            if (session / "opportunities.v1.jsonl").exists()
-        )
-        projected: list[ResearchAgentEvidenceV1] = []
+        session_failure = primary_session_failure(now)
+        if session_failure is not None:
+            return _blocked_opportunity(session_failure, now)
+        outbox = _latest_session_artifact(paths.day_session_root, "opportunities.v1.jsonl")
+        if outbox is None:
+            return _blocked_opportunity("snapshot_unavailable", now)
+        if not _session_is_current(outbox.parent, now):
+            return _blocked_opportunity(PrimaryAdmissionFailure.PRIOR_DATE, now)
         try:
-            for outbox in outboxes:
-                require_source_boundary(outbox)
-                for snapshot in read_opportunity_snapshots(outbox):
-                    projected.append(
-                        ResearchAgentEvidenceMaterial(
-                            family="opportunity_manager",
-                            trigger=ResearchAgentTriggerKind.NEW_DATA,
-                            source_key=f"opportunity.{snapshot.opportunity_id}",
-                            observed_at=snapshot.observed_at,
-                            available_at=snapshot.observed_at,
-                            market_id=snapshot.strategy_lane.market_id.value,
-                            canonical_payload=canonical_model_json(snapshot),
-                        ).evidence()
-                    )
+            require_source_boundary(outbox)
+            snapshots = read_opportunity_snapshots(outbox)
         except (InvalidHermesProjectionSourceError, OSError, ValidationError, ValueError):
             raise InvalidResearchAgentSourceError(reason="opportunity_source_invalid") from None
-        if projected:
-            return tuple(projected)
+        if not snapshots:
+            return _blocked_opportunity("snapshot_unavailable", now)
+        snapshot = max(snapshots, key=lambda item: item.observed_at)
+        failure = opportunity_admission(snapshot, now)
+        if failure is not None:
+            return _blocked_opportunity(failure, now)
         return (
-            capability_evidence(
-                CapabilityEvidenceSpec(
-                    family="opportunity_manager",
-                    source_key="opportunity.blocked.snapshot_unavailable",
-                    market_id="none",
-                ),
-                now,
-            ),
+            ResearchAgentEvidenceMaterial(
+                family="opportunity_manager",
+                trigger=ResearchAgentTriggerKind.NEW_DATA,
+                source_key=f"opportunity.{snapshot.opportunity_id}",
+                observed_at=snapshot.observed_at,
+                available_at=snapshot.observed_at,
+                market_id=snapshot.strategy_lane.market_id.value,
+                canonical_payload=canonical_model_json(snapshot),
+            ).evidence(),
         )
 
 
@@ -83,49 +86,37 @@ class MarketContextSourceAdapter:
         paths: ResearchAgentSourcePaths,
         now: dt.datetime,
     ) -> tuple[ResearchAgentEvidenceV1, ...]:
+        session_failure = primary_session_failure(now)
+        if session_failure is not None:
+            return _blocked_market_context(session_failure, now)
         if not paths.market_context_root.exists():
-            return (
-                capability_evidence(
-                    CapabilityEvidenceSpec(
-                        family="market_context",
-                        source_key="market_context.blocked.snapshot_unavailable",
-                        market_id="cross_market",
-                    ),
-                    now,
-                ),
-            )
+            return _blocked_market_context("snapshot_unavailable", now)
         require_source_boundary(paths.market_context_root)
         artifacts = tuple(sorted(paths.market_context_root.glob("*.market-context.json"))[-8:])
         if not artifacts:
-            return (
-                capability_evidence(
-                    CapabilityEvidenceSpec(
-                        family="market_context",
-                        source_key="market_context.blocked.snapshot_unavailable",
-                        market_id="cross_market",
-                    ),
-                    now,
-                ),
-            )
-        projected: list[ResearchAgentEvidenceV1] = []
+            return _blocked_market_context("snapshot_unavailable", now)
         try:
+            snapshots: list[MarketContextSnapshot] = []
             for artifact in artifacts:
                 require_private_source_file(artifact)
-                snapshot = MarketContextSnapshot.model_validate_json(artifact.read_text(encoding="utf-8"))
-                projected.append(
-                    ResearchAgentEvidenceMaterial(
-                        family="market_context",
-                        trigger=ResearchAgentTriggerKind.MARKET_EVENT,
-                        source_key=f"market_context.{snapshot.context_id}",
-                        observed_at=snapshot.observed_at,
-                        available_at=snapshot.observed_at,
-                        market_id=snapshot.market_id.value,
-                        canonical_payload=canonical_model_json(snapshot),
-                    ).evidence()
-                )
+                snapshots.append(MarketContextSnapshot.model_validate_json(artifact.read_text(encoding="utf-8")))
         except (InvalidResearchAgentSourceError, OSError, UnicodeError, ValidationError, ValueError):
             raise InvalidResearchAgentSourceError(reason="market_context_source_invalid") from None
-        return tuple(projected)
+        snapshot = max(snapshots, key=lambda item: item.observed_at)
+        failure = market_context_admission(snapshot, now)
+        if failure is not None:
+            return _blocked_market_context(failure, now)
+        return (
+            ResearchAgentEvidenceMaterial(
+                family="market_context",
+                trigger=ResearchAgentTriggerKind.MARKET_EVENT,
+                source_key=f"market_context.{snapshot.context_id}",
+                observed_at=snapshot.observed_at,
+                available_at=snapshot.observed_at,
+                market_id=snapshot.market_id.value,
+                canonical_payload=canonical_model_json(snapshot),
+            ).evidence(),
+        )
 
 
 @final
@@ -137,26 +128,42 @@ class DaySourceAdapter:
         paths: ResearchAgentSourcePaths,
         now: dt.datetime,
     ) -> tuple[ResearchAgentEvidenceV1, ...]:
-        databases = tuple(
-            session / "paper_recommendations.sqlite3"
-            for session in _latest_session_directories(paths.day_session_root)
-            if (session / "paper_recommendations.sqlite3").exists()
-        )
-        if not databases:
-            return (
-                capability_evidence(
-                    CapabilityEvidenceSpec(
-                        family="day_trading",
-                        source_key="day.blocked.completed_bar_unavailable",
-                        market_id="us_equities",
-                    ),
-                    now,
-                ),
-            )
+        session_failure = primary_session_failure(now)
+        if session_failure is not None:
+            return _blocked_day(session_failure, now)
+        sessions = _latest_session_directories(paths.day_session_root)
+        if not sessions:
+            return _blocked_day("source_pair_unavailable", now)
+        session = sessions[-1]
+        if not _session_is_current(session, now):
+            return _blocked_day(PrimaryAdmissionFailure.PRIOR_DATE, now)
+        database = session / "paper_recommendations.sqlite3"
+        risk_screen = session / "market_risk_screen.csv"
+        if not database.exists() or not risk_screen.exists():
+            return _blocked_day("source_pair_unavailable", now)
         try:
-            return tuple(_day_database_evidence(database) for database in databases)
+            require_source_boundary(database)
+            require_private_source_file(risk_screen)
+            admission = day_source_admission(database, risk_screen, now)
         except (InvalidResearchAgentSourceError, OSError, sqlite3.Error, TypeError, ValueError):
             raise InvalidResearchAgentSourceError(reason="day_source_invalid") from None
+        match admission:
+            case PrimaryAdmissionFailure() as failure:
+                return _blocked_day(failure, now)
+            case DaySourceAdmission() as admitted:
+                evidence = ResearchAgentEvidenceMaterial(
+                    family="day_trading",
+                    trigger=ResearchAgentTriggerKind.NEW_DATA,
+                    source_key=f"day.session.{session.name}",
+                    observed_at=admitted.observed_at,
+                    available_at=admitted.observed_at,
+                    market_id="us_equities",
+                    canonical_payload=admitted.canonical_payload,
+                ).evidence()
+                references = tuple(sorted((evidence.payload_sha256, *admitted.provenance_sha256)))
+                return (evidence.model_copy(update={"evidence_refs": references}),)
+            case unreachable:
+                assert_never(unreachable)
 
 
 def _latest_session_directories(root: Path) -> tuple[Path, ...]:
@@ -171,40 +178,63 @@ def _latest_session_directories(root: Path) -> tuple[Path, ...]:
     return tuple(sorted(sessions, key=lambda path: path.name)[-2:])
 
 
-def _day_database_evidence(database: Path) -> ResearchAgentEvidenceV1:
-    require_source_boundary(database)
-    with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
-        _ = connection.execute("PRAGMA query_only=ON")
-        integrity = connection.execute("PRAGMA quick_check").fetchone()
-        recommendations = connection.execute("SELECT COUNT(*),MAX(created_at) FROM recommendations").fetchone()
-        checkpoints = connection.execute("SELECT COUNT(*),MAX(processed_at) FROM bar_checkpoints").fetchone()
-        events = connection.execute("SELECT COUNT(*),MAX(occurred_at) FROM events").fetchone()
-    if integrity != ("ok",) or recommendations is None or checkpoints is None or events is None:
-        raise InvalidResearchAgentSourceError(reason="day_database_invalid")
-    timestamps = tuple(
-        dt.datetime.fromisoformat(value)
-        for value in (recommendations[1], checkpoints[1], events[1])
-        if value is not None
+def _latest_session_artifact(root: Path, name: str) -> Path | None:
+    artifacts = tuple(session / name for session in _latest_session_directories(root) if (session / name).exists())
+    return None if not artifacts else artifacts[-1]
+
+
+def _session_is_current(session: Path, now: dt.datetime) -> bool:
+    current_name = now.astimezone(NEW_YORK).strftime("%Y%m%d")
+    return session.name == current_name
+
+
+def _blocked_opportunity(
+    reason: PrimaryAdmissionFailure | str,
+    now: dt.datetime,
+) -> tuple[ResearchAgentEvidenceV1, ...]:
+    return _blocked(
+        CapabilityEvidenceSpec(
+            family="opportunity_manager",
+            source_key=f"opportunity.blocked.{reason}",
+            market_id="none",
+        ),
+        now,
     )
-    observed_at = max(timestamps, default=dt.datetime.fromtimestamp(database.stat().st_mtime, tz=dt.UTC))
-    payload = canonical_payload_json(
-        {
-            "checkpoint_count": int(checkpoints[0]),
-            "event_count": int(events[0]),
-            "latest_observed_at": observed_at.isoformat(),
-            "recommendation_count": int(recommendations[0]),
-            "session": database.parent.name,
-        }
+
+
+def _blocked_market_context(
+    reason: PrimaryAdmissionFailure | str,
+    now: dt.datetime,
+) -> tuple[ResearchAgentEvidenceV1, ...]:
+    return _blocked(
+        CapabilityEvidenceSpec(
+            family="market_context",
+            source_key=f"market_context.blocked.{reason}",
+            market_id="cross_market",
+        ),
+        now,
     )
-    return ResearchAgentEvidenceMaterial(
-        family="day_trading",
-        trigger=ResearchAgentTriggerKind.NEW_DATA,
-        source_key=f"day.session.{database.parent.name}",
-        observed_at=observed_at,
-        available_at=observed_at,
-        market_id="us_equities",
-        canonical_payload=payload,
-    ).evidence()
+
+
+def _blocked_day(
+    reason: PrimaryAdmissionFailure | str,
+    now: dt.datetime,
+) -> tuple[ResearchAgentEvidenceV1, ...]:
+    return _blocked(
+        CapabilityEvidenceSpec(
+            family="day_trading",
+            source_key=f"day.blocked.{reason}",
+            market_id="us_equities",
+        ),
+        now,
+    )
+
+
+def _blocked(
+    spec: CapabilityEvidenceSpec,
+    now: dt.datetime,
+) -> tuple[ResearchAgentEvidenceV1, ...]:
+    return (capability_evidence(spec, now),)
 
 
 __all__ = ("DaySourceAdapter", "MarketContextSourceAdapter", "OpportunitySourceAdapter")

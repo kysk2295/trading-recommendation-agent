@@ -1,0 +1,12 @@
+RED command:
+uv run pytest -q tests/test_research_agent_sources.py::test_opportunity_prior_date_emits_family_blocked_evidence
+
+Observed exit: 1
+
+Focused failure:
+E       AssertionError: assert ('opportunity...00-abcd1234',) == ('opportunity....prior_date',)
+E         At index 0 diff: 'opportunity.us-opportunity-20260802t115900-abcd1234' != 'opportunity.blocked.prior_date'
+
+1 failed in 0.29s
+
+The failure is behavioral: the existing adapter admits a prior-session snapshot instead of emitting family-specific blocked evidence.
