@@ -1,0 +1,271 @@
+from __future__ import annotations
+
+import datetime as dt
+from pathlib import Path
+from types import TracebackType
+from typing import Self, assert_never, final
+
+from trading_agent.dashboard_agent_family import AgentFamilyId
+from trading_agent.research_agent_cycle_models import (
+    CycleId,
+    ResearchAgentCycleState,
+    ResearchAgentCycleV1,
+    ResearchAgentEvidenceV1,
+    ResearchAgentOpenWorkV1,
+    ResearchAgentResultStatus,
+    ResearchAgentResultV1,
+    research_agent_action_id,
+    research_agent_cycle_id,
+)
+from trading_agent.research_agent_cycle_store_codec import (
+    StoredResearchAgentCycleEvent,
+    StoredResearchAgentEvidence,
+    append_cycle_event,
+    canonical_cycle_json,
+    cycle_from_payload,
+    cycle_state_for_result,
+    insert_cycle,
+    latest_cycles_from_rows,
+    open_work_from_payload,
+    require_same_cycle_identity,
+    result_from_payload,
+    stored_cycle_event,
+    stored_evidence,
+    update_cycle,
+)
+from trading_agent.research_agent_cycle_store_support import (
+    InactiveResearchAgentCycleStoreError,
+    InvalidResearchAgentCycleStoreError,
+    ResearchAgentCycleDatabaseLease,
+    ResearchAgentCycleWriterLeaseUnavailableError,
+)
+
+
+@final
+class ResearchAgentCycleStore:
+    __slots__ = ("_database", "path")
+
+    def __init__(self, path: Path) -> None:
+        self.path = path.expanduser().absolute()
+        self._database = ResearchAgentCycleDatabaseLease(self.path)
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_exc_info: BaseException | type[BaseException] | TracebackType | None) -> None:
+        self.close()
+
+    def close(self) -> None:
+        self._database.close()
+
+    def append_evidence(self, evidence: ResearchAgentEvidenceV1) -> bool:
+        payload = canonical_cycle_json(evidence)
+        with self._database.writer() as connection:
+            existing = connection.execute(
+                "SELECT payload_json FROM evidence WHERE evidence_id=?",
+                (evidence.evidence_id,),
+            ).fetchone()
+            if existing is not None:
+                if existing[0] == payload:
+                    return False
+                raise InvalidResearchAgentCycleStoreError(reason="evidence_identity_conflict")
+            with connection:
+                _ = connection.execute(
+                    "INSERT INTO evidence(evidence_id,agent_family_id,available_at,payload_json) VALUES(?,?,?,?)",
+                    (
+                        evidence.evidence_id,
+                        evidence.agent_family_id,
+                        evidence.available_at.astimezone(dt.UTC).isoformat(),
+                        payload,
+                    ),
+                )
+        return True
+
+    def runnable_evidence(
+        self,
+        family: AgentFamilyId,
+        now: dt.datetime,
+    ) -> tuple[StoredResearchAgentEvidence, ...]:
+        with self._database.reader() as connection:
+            rows = connection.execute(
+                """SELECT sequence,evidence_id,agent_family_id,payload_json FROM evidence
+                WHERE agent_family_id=?
+                AND sequence > COALESCE((SELECT evidence_sequence FROM cursors WHERE agent_family_id=?),0)
+                AND available_at<=? ORDER BY sequence""",
+                (family, family, now.astimezone(dt.UTC).isoformat()),
+            ).fetchall()
+        return tuple(stored_evidence(row) for row in rows)
+
+    def start_cycle(self, stored: StoredResearchAgentEvidence, started_at: dt.datetime) -> ResearchAgentCycleV1:
+        cursor_before = self.cursor(stored.evidence.agent_family_id)
+        if stored.sequence <= cursor_before:
+            raise InvalidResearchAgentCycleStoreError(reason="evidence_already_consumed")
+        cycle_id = research_agent_cycle_id(stored.evidence, cursor_before=cursor_before)
+        candidate = ResearchAgentCycleV1(
+            cycle_id=cycle_id,
+            evidence_id=stored.evidence.evidence_id,
+            action_request_id=research_agent_action_id(cycle_id),
+            agent_family_id=stored.evidence.agent_family_id,
+            evidence_sequence=stored.sequence,
+            cursor_before=cursor_before,
+            state=ResearchAgentCycleState.STARTED,
+            started_at=started_at,
+            terminal_at=None,
+            result_id=None,
+        )
+        with self._database.writer() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT payload_json FROM cycles WHERE cycle_id=?", (cycle_id,)).fetchone()
+            if row is None:
+                insert_cycle(connection, candidate)
+                connection.commit()
+                return candidate
+            existing = cycle_from_payload(row[0])
+            require_same_cycle_identity(existing, candidate)
+            if existing.state is not ResearchAgentCycleState.INTERRUPTED:
+                connection.rollback()
+                return existing
+            replay = ResearchAgentCycleV1.model_validate(
+                existing.model_dump(mode="python")
+                | {"state": ResearchAgentCycleState.STARTED, "started_at": started_at, "terminal_at": None}
+            )
+            update_cycle(connection, replay)
+            append_cycle_event(connection, replay, started_at)
+            connection.commit()
+            return replay
+
+    def finish_cycle(self, cycle: ResearchAgentCycleV1, result: ResearchAgentResultV1) -> None:
+        match result.status:
+            case ResearchAgentResultStatus.COMPLETED | ResearchAgentResultStatus.NO_ACTION:
+                self._terminalize(cycle, result)
+            case ResearchAgentResultStatus.FAILED | ResearchAgentResultStatus.BLOCKED:
+                raise InvalidResearchAgentCycleStoreError(reason="finish_result_status_invalid")
+            case unreachable:
+                assert_never(unreachable)
+
+    def fail_cycle(self, cycle: ResearchAgentCycleV1, result: ResearchAgentResultV1) -> None:
+        match result.status:
+            case ResearchAgentResultStatus.FAILED | ResearchAgentResultStatus.BLOCKED:
+                self._terminalize(cycle, result)
+            case ResearchAgentResultStatus.COMPLETED | ResearchAgentResultStatus.NO_ACTION:
+                raise InvalidResearchAgentCycleStoreError(reason="failure_result_status_invalid")
+            case unreachable:
+                assert_never(unreachable)
+
+    def recover_interrupted(self, recovered_at: dt.datetime) -> tuple[CycleId, ...]:
+        recovered: list[CycleId] = []
+        with self._database.writer() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                "SELECT payload_json FROM cycles WHERE state=? ORDER BY evidence_sequence",
+                (ResearchAgentCycleState.STARTED,),
+            ).fetchall()
+            for row in rows:
+                cycle = cycle_from_payload(row[0])
+                interrupted = ResearchAgentCycleV1.model_validate(
+                    cycle.model_dump(mode="python")
+                    | {"state": ResearchAgentCycleState.INTERRUPTED, "terminal_at": recovered_at}
+                )
+                update_cycle(connection, interrupted)
+                append_cycle_event(connection, interrupted, recovered_at)
+                recovered.append(interrupted.cycle_id)
+            connection.commit()
+        return tuple(recovered)
+
+    def cursor(self, family: AgentFamilyId) -> int:
+        with self._database.reader() as connection:
+            row = connection.execute(
+                "SELECT evidence_sequence FROM cursors WHERE agent_family_id=?",
+                (family,),
+            ).fetchone()
+        return 0 if row is None else int(row[0])
+
+    def latest_cycles(self) -> tuple[ResearchAgentCycleV1, ...]:
+        with self._database.reader() as connection:
+            rows = connection.execute(
+                "SELECT agent_family_id,payload_json FROM cycles ORDER BY evidence_sequence DESC"
+            ).fetchall()
+        return latest_cycles_from_rows(rows)
+
+    def results(self) -> tuple[ResearchAgentResultV1, ...]:
+        with self._database.reader() as connection:
+            rows = connection.execute("SELECT payload_json FROM results ORDER BY rowid").fetchall()
+        return tuple(result_from_payload(row[0]) for row in rows)
+
+    def cycle_events(self, cycle_id: CycleId) -> tuple[StoredResearchAgentCycleEvent, ...]:
+        with self._database.reader() as connection:
+            rows = connection.execute(
+                "SELECT event_sequence,state,occurred_at,payload_json FROM cycle_events "
+                "WHERE cycle_id=? ORDER BY event_sequence",
+                (cycle_id,),
+            ).fetchall()
+        return tuple(stored_cycle_event(row) for row in rows)
+
+    def upsert_open_work(self, item: ResearchAgentOpenWorkV1) -> None:
+        payload = canonical_cycle_json(item)
+        with self._database.writer() as connection, connection:
+            _ = connection.execute(
+                """INSERT INTO open_work(open_work_id,agent_family_id,state,payload_json) VALUES(?,?,?,?)
+                ON CONFLICT(open_work_id) DO UPDATE SET state=excluded.state,payload_json=excluded.payload_json
+                WHERE open_work.agent_family_id=excluded.agent_family_id""",
+                (item.work_id, item.agent_family_id, item.state, payload),
+            )
+
+    def open_work(self, family: AgentFamilyId) -> tuple[ResearchAgentOpenWorkV1, ...]:
+        with self._database.reader() as connection:
+            rows = connection.execute(
+                "SELECT payload_json FROM open_work WHERE agent_family_id=? ORDER BY open_work_id",
+                (family,),
+            ).fetchall()
+        return tuple(open_work_from_payload(row[0]) for row in rows)
+
+    def _terminalize(self, cycle: ResearchAgentCycleV1, result: ResearchAgentResultV1) -> None:
+        if result.cycle_id != cycle.cycle_id or result.agent_family_id != cycle.agent_family_id:
+            raise InvalidResearchAgentCycleStoreError(reason="result_cycle_identity_mismatch")
+        terminal = ResearchAgentCycleV1.model_validate(
+            cycle.model_dump(mode="python")
+            | {
+                "state": cycle_state_for_result(result.status),
+                "terminal_at": result.occurred_at,
+                "result_id": result.result_id,
+            }
+        )
+        result_payload = canonical_cycle_json(result)
+        with self._database.writer() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT payload_json FROM cycles WHERE cycle_id=?", (cycle.cycle_id,)).fetchone()
+            existing = connection.execute(
+                "SELECT payload_json FROM results WHERE cycle_id=?",
+                (cycle.cycle_id,),
+            ).fetchone()
+            if existing is not None:
+                connection.rollback()
+                if row is not None and existing[0] == result_payload and cycle_from_payload(row[0]) == terminal:
+                    return
+                raise InvalidResearchAgentCycleStoreError(reason="result_identity_conflict")
+            if row is None or cycle_from_payload(row[0]) != cycle:
+                connection.rollback()
+                raise InvalidResearchAgentCycleStoreError(reason="started_cycle_missing")
+            _ = connection.execute(
+                "INSERT INTO results(result_id,cycle_id,payload_json) VALUES(?,?,?)",
+                (result.result_id, cycle.cycle_id, result_payload),
+            )
+            update_cycle(connection, terminal)
+            append_cycle_event(connection, terminal, result.occurred_at)
+            _ = connection.execute(
+                """INSERT INTO cursors(agent_family_id,evidence_sequence) VALUES(?,?)
+                ON CONFLICT(agent_family_id) DO UPDATE
+                SET evidence_sequence=MAX(evidence_sequence,excluded.evidence_sequence)""",
+                (cycle.agent_family_id, cycle.evidence_sequence),
+            )
+            connection.commit()
+
+
+__all__ = (
+    "InactiveResearchAgentCycleStoreError",
+    "InvalidResearchAgentCycleStoreError",
+    "ResearchAgentCycleStore",
+    "ResearchAgentCycleWriterLeaseUnavailableError",
+    "StoredResearchAgentCycleEvent",
+    "StoredResearchAgentEvidence",
+)

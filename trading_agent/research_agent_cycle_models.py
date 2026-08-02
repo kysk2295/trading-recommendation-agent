@@ -167,16 +167,22 @@ class ResearchAgentCycleV1(BaseModel):
     evidence_id: EvidenceId = Field(pattern=r"^[a-f0-9]{64}$")
     action_request_id: ActionId = Field(pattern=r"^[a-f0-9]{64}$")
     agent_family_id: AgentFamilyId
+    evidence_sequence: int = Field(ge=1)
     cursor_before: int = Field(ge=0)
     state: ResearchAgentCycleState
     started_at: AwareDatetime
     terminal_at: AwareDatetime | None = None
+    result_id: ResultId | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
     @model_validator(mode="after")
     def require_cycle_time(self) -> Self:
         is_terminal = self.state is not ResearchAgentCycleState.STARTED
         if is_terminal != (self.terminal_at is not None):
             raise InvalidResearchAgentCycleFieldError(reason="cycle_terminal_time_mismatch")
+        has_result = self.result_id is not None
+        is_open_state = self.state in {ResearchAgentCycleState.STARTED, ResearchAgentCycleState.INTERRUPTED}
+        if is_open_state == has_result:
+            raise InvalidResearchAgentCycleFieldError(reason="cycle_result_identity_mismatch")
         if self.terminal_at is not None and self.terminal_at < self.started_at:
             raise InvalidResearchAgentCycleFieldError(reason="cycle_time_order_invalid")
         return self
