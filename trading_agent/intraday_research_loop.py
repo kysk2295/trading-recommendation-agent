@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import datetime as dt
-import fcntl
 import hashlib
-import os
 import re
-import stat
 from collections.abc import Iterator
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, override
@@ -16,19 +13,13 @@ from trading_agent.daily_research_contract import strategy_contract
 from trading_agent.experiment_ledger_bootstrap import bootstrap_current_intraday_experiments
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.experiment_ledger_store import ExperimentLedgerReader, ExperimentLedgerStore
+from trading_agent.heavy_empirical_lease import HeavyEmpiricalLeaseError, heavy_empirical_lease
 from trading_agent.intraday_research_data_gate import require_intraday_research_data
 from trading_agent.intraday_research_loop_models import IntradayResearchManifest, IntradayReviewerDecision
 from trading_agent.intraday_research_reviewer import IntradayReviewRequest, review_intraday_experiment
 from trading_agent.intraday_research_trial import IntradayTrialExecutionContext, run_or_replay_intraday_trial
 from trading_agent.lane_identity_models import LaneId
 from trading_agent.lane_registry_store import LaneRegistryReader
-from trading_agent.private_directory_identity import (
-    InvalidPrivateDirectoryIdentityError,
-    absolute_private_path,
-    open_private_parent,
-    require_open_directory_path,
-    require_private_directory,
-)
 from trading_agent.replay import load_bounded_bar_source
 from trading_agent.source_backed_intraday_design import register_source_backed_intraday_design
 from trading_agent.source_driven_hypothesis_queue import load_source_driven_hypothesis_queue
@@ -153,64 +144,11 @@ def run_intraday_research_loop(
 
 @contextmanager
 def _heavy_empirical_lease(ledger_path: Path) -> Iterator[None]:
-    lock_path = absolute_private_path(Path(f"{ledger_path}.m6-heavy.lock"))
-    parent = descriptor = -1
-    parent_locked = descriptor_locked = False
     try:
-        parent = open_private_parent(lock_path.parent, create=True)
-        require_private_directory(parent)
-        descriptor = os.open(
-            lock_path.name,
-            os.O_CLOEXEC | os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
-            0o600,
-            dir_fd=parent,
-        )
-        _require_lease_binding(lock_path, parent, descriptor)
-        fcntl.flock(parent, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        parent_locked = True
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        descriptor_locked = True
-        _require_lease_binding(lock_path, parent, descriptor)
-    except (
-        BlockingIOError,
-        IntradayResearchLoopError,
-        InvalidPrivateDirectoryIdentityError,
-        OSError,
-        ValueError,
-    ):
-        if descriptor >= 0:
-            with suppress(OSError):
-                os.close(descriptor)
-        if parent >= 0:
-            with suppress(OSError):
-                os.close(parent)
+        with heavy_empirical_lease(ledger_path):
+            yield
+    except HeavyEmpiricalLeaseError:
         raise IntradayResearchLoopError from None
-    try:
-        yield
-        _require_lease_binding(lock_path, parent, descriptor)
-    except (InvalidPrivateDirectoryIdentityError, OSError, ValueError):
-        raise IntradayResearchLoopError from None
-    finally:
-        if descriptor_locked:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-        if parent_locked:
-            fcntl.flock(parent, fcntl.LOCK_UN)
-        os.close(descriptor)
-        os.close(parent)
-
-
-def _require_lease_binding(path: Path, parent: int, descriptor: int) -> None:
-    require_open_directory_path(path.parent, parent)
-    named = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
-    opened = os.fstat(descriptor)
-    if (
-        (named.st_dev, named.st_ino) != (opened.st_dev, opened.st_ino)
-        or not stat.S_ISREG(opened.st_mode)
-        or opened.st_uid != os.getuid()
-        or stat.S_IMODE(opened.st_mode) != 0o600
-        or opened.st_nlink != 1
-    ):
-        raise IntradayResearchLoopError
 
 
 __all__ = (

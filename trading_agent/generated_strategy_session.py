@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import resource
 import selectors
@@ -33,13 +34,22 @@ from trading_agent.models import BarInput, MomentumCandidate, StrategySignal
 
 
 class GeneratedStrategySession:
-    __slots__ = ("_buffer", "_limits", "_process", "_sequence", "_stderr", "name")
+    __slots__ = (
+        "_buffer",
+        "_limits",
+        "_process",
+        "_sequence",
+        "_signal_hashes",
+        "_stderr",
+        "name",
+    )
 
     name: str
     _process: subprocess.Popen[bytes]
     _stderr: BinaryIO
     _limits: GeneratedStrategyLimits
     _sequence: int
+    _signal_hashes: list[str]
     _buffer: bytearray
 
     def __init__(
@@ -54,6 +64,7 @@ class GeneratedStrategySession:
         self._stderr = stderr_handle
         self._limits = limits
         self._sequence = 0
+        self._signal_hashes = []
         self._buffer = bytearray()
 
     @classmethod
@@ -139,11 +150,16 @@ class GeneratedStrategySession:
             response = self._read_frame()
             if not isinstance(response, NoSignalResponse | SignalResponse | RunnerFailure):
                 raise GeneratedStrategyExecutionError("runner_response_invalid")
+            self._signal_hashes.append(hashlib.sha256(encode_frame(response)).hexdigest())
             return signal_from_response(request, response, self.name)
         except GeneratedStrategyExecutionError:
             raise
         except (BrokenPipeError, OSError, ValueError) as error:
             raise GeneratedStrategyExecutionError("generated_strategy_protocol_failed") from error
+
+    @property
+    def signal_stream_sha256(self) -> str:
+        return hashlib.sha256("".join(self._signal_hashes).encode()).hexdigest()
 
     def close(self) -> None:
         pipe = self._process.stdin

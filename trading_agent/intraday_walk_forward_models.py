@@ -98,6 +98,60 @@ class IntradayWalkForwardResult(BaseModel):
         return self
 
 
+class GeneratedIntradayWalkForwardResult(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: Literal[3] = 3
+    strategy: Literal["generated_python"] = "generated_python"
+    strategy_version: str
+    strategy_artifact_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    runtime_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    signal_stream_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    observed_sessions: int = Field(ge=1)
+    fold_count: int = Field(ge=1)
+    trade_count: int = Field(ge=0)
+    side_cost_bps: int = Field(ge=20, le=100)
+    gross_average_return: float | None
+    average_return: float | None
+    profit_factor: float | None
+    cumulative_return: float | None
+    max_drawdown: float | None
+    mean_ci_low: float | None
+    mean_ci_high: float | None
+    peak_rss_gib: float = Field(ge=0.0, le=9.5)
+    bootstrap_samples: int
+    bootstrap_seed: int
+    session_outcomes: tuple[IntradaySessionOutcome, ...]
+
+    @model_validator(mode="after")
+    def validate_generated_identity(self) -> Self:
+        if (
+            self.strategy_version != f"generated-python:{self.strategy_artifact_id}"
+            or not self.signal_stream_sha256
+        ):
+            raise ValueError("invalid generated walk-forward identity")
+        _ = IntradayWalkForwardResult(
+            schema_version=2,
+            strategy=StrategyMode.VWAP_RECLAIM,
+            observed_sessions=self.observed_sessions,
+            fold_count=self.fold_count,
+            trade_count=self.trade_count,
+            side_cost_bps=self.side_cost_bps,
+            gross_average_return=self.gross_average_return,
+            average_return=self.average_return,
+            profit_factor=self.profit_factor,
+            cumulative_return=self.cumulative_return,
+            max_drawdown=self.max_drawdown,
+            mean_ci_low=self.mean_ci_low,
+            mean_ci_high=self.mean_ci_high,
+            peak_rss_gib=self.peak_rss_gib,
+            bootstrap_samples=self.bootstrap_samples,
+            bootstrap_seed=self.bootstrap_seed,
+            session_outcomes=self.session_outcomes,
+        )
+        return self
+
+
 def _mean(values: tuple[float, ...]) -> float | None:
     return None if not values else sum(values) / len(values)
 
@@ -150,6 +204,7 @@ def _returns_match_cost(
 
 __all__ = (
     "INTRADAY_BOOTSTRAP_SEED",
+    "GeneratedIntradayWalkForwardResult",
     "IntradaySessionOutcome",
     "IntradayWalkForwardResult",
 )

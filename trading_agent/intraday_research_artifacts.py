@@ -9,7 +9,10 @@ from typing import Literal, Self, override
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
-from trading_agent.intraday_walk_forward_models import IntradayWalkForwardResult
+from trading_agent.intraday_walk_forward_models import (
+    GeneratedIntradayWalkForwardResult,
+    IntradayWalkForwardResult,
+)
 from trading_agent.private_immutable_file import (
     InvalidPrivateImmutableFileError,
     publish_private_immutable_text,
@@ -28,7 +31,7 @@ class InvalidIntradayResearchArtifactError(ValueError):
 class IntradayExperimentPayload(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[1, 2] = 2
+    schema_version: Literal[1, 2, 3] = 2
     trial_id: str
     strategy_version: str
     evaluator_version: str
@@ -37,7 +40,7 @@ class IntradayExperimentPayload(BaseModel):
     registered_at: dt.datetime
     started_at: dt.datetime
     completed_at: dt.datetime
-    result: IntradayWalkForwardResult
+    result: IntradayWalkForwardResult | GeneratedIntradayWalkForwardResult
 
     @model_validator(mode="after")
     def validate_payload(self) -> Self:
@@ -60,7 +63,7 @@ class IntradayExperimentPayload(BaseModel):
 class IntradayExperimentArtifact(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal[1, 2] = 2
+    schema_version: Literal[1, 2, 3] = 2
     artifact_id: str
     payload: IntradayExperimentPayload
 
