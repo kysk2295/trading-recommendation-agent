@@ -107,6 +107,7 @@ def result_from_decision(
         summary=decision.summary,
         reason=decision.reason,
         continuation=decision.continuation,
+        open_work_ref=decision.open_work_ref,
         evidence_refs=decision.evidence_refs,
         artifact_refs=artifacts,
         occurred_at=decision.decided_at,

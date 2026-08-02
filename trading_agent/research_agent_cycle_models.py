@@ -152,6 +152,7 @@ class ResearchAgentResultV1(BaseModel):
     summary: str = Field(min_length=8, max_length=1_000)
     reason: str | None = Field(default=None, min_length=3, max_length=160)
     continuation: str | None = Field(default=None, min_length=8, max_length=500)
+    open_work_ref: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{7,159}$")
     evidence_refs: tuple[str, ...] = Field(min_length=1, max_length=32)
     artifact_refs: tuple[str, ...] = Field(max_length=32)
     occurred_at: AwareDatetime
@@ -210,20 +211,21 @@ class ResearchAgentOpenWorkV1(BaseModel):
     evidence_refs: tuple[str, ...] = Field(min_length=1, max_length=32)
     next_wake_at: AwareDatetime | None
     updated_at: AwareDatetime
+    source_evidence_id: EvidenceId | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    failure_count: int = Field(default=0, ge=0, le=4)
 
     @model_validator(mode="after")
     def require_open_work_invariants(self) -> Self:
         _require_references(self.evidence_refs, allow_empty=False)
         if self.state is ResearchAgentOpenWorkState.OPEN and self.next_wake_at is None:
             raise InvalidResearchAgentCycleFieldError(reason="open_work_wake_time_required")
+        if self.failure_count > 0 and self.source_evidence_id is None:
+            raise InvalidResearchAgentCycleFieldError(reason="failed_open_work_source_required")
         return self
 
 
 def research_agent_cycle_id(evidence: ResearchAgentEvidenceV1, *, cursor_before: int) -> CycleId:
-    material = (
-        f"{evidence.agent_family_id}:{evidence.trigger_kind}:{evidence.evidence_id}:"
-        f"{cursor_before}:cycle-v1"
-    )
+    material = f"{evidence.agent_family_id}:{evidence.trigger_kind}:{evidence.evidence_id}:{cursor_before}:cycle-v1"
     return CycleId(hashlib.sha256(material.encode()).hexdigest())
 
 

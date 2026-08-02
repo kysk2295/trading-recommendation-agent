@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES
+from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
 from trading_agent.research_agent_cycle_models import ResearchAgentEvidenceV1
 from trading_agent.research_agent_source_adapters_primary import (
     DaySourceAdapter,
@@ -66,6 +67,27 @@ ADAPTERS: Final[tuple[ResearchAgentSourceAdapter, ...]] = (
     SystematicSourceAdapter(),
     DerivativesSourceAdapter(),
 )
+ADAPTER_FAMILIES: Final[tuple[AgentFamilyId, ...]] = (
+    "opportunity_manager",
+    "market_context",
+    "day_trading",
+    "swing_trading",
+    "systematic_quant",
+    "derivatives_research",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchAgentSourceFailure:
+    agent_family_id: AgentFamilyId
+    reason: str
+    observed_at: dt.datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchAgentSourceCollectionBatch:
+    evidence: tuple[ResearchAgentEvidenceV1, ...]
+    failures: tuple[ResearchAgentSourceFailure, ...]
 
 
 def collect_research_agent_evidence(
@@ -85,10 +107,38 @@ def collect_research_agent_evidence(
     )
 
 
+def collect_research_agent_evidence_isolated(
+    paths: ResearchAgentSourcePaths,
+    *,
+    now: dt.datetime,
+) -> ResearchAgentSourceCollectionBatch:
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise InvalidResearchAgentSourceError(reason="collection_time_invalid")
+    evidence: list[ResearchAgentEvidenceV1] = []
+    failures: list[ResearchAgentSourceFailure] = []
+    for family, adapter in zip(ADAPTER_FAMILIES, ADAPTERS, strict=True):
+        try:
+            evidence.extend(adapter.collect(paths, now))
+        except InvalidResearchAgentSourceError as error:
+            failures.append(ResearchAgentSourceFailure(family, error.reason, now))
+    family_order = {family: index for index, family in enumerate(PRIMARY_AGENT_FAMILIES)}
+    ordered = tuple(
+        sorted(
+            evidence,
+            key=lambda item: (family_order[item.agent_family_id], item.available_at, item.source_key),
+        )
+    )
+    return ResearchAgentSourceCollectionBatch(ordered, tuple(failures))
+
+
 __all__ = (
     "ADAPTERS",
+    "ADAPTER_FAMILIES",
     "InvalidResearchAgentSourceError",
     "ResearchAgentSourceAdapter",
+    "ResearchAgentSourceCollectionBatch",
+    "ResearchAgentSourceFailure",
     "ResearchAgentSourcePaths",
     "collect_research_agent_evidence",
+    "collect_research_agent_evidence_isolated",
 )
