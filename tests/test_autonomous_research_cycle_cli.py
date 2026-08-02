@@ -18,7 +18,7 @@ def test_autonomous_cycle_help_exposes_bounded_local_inputs() -> None:
     # Given: the public one-shot autonomous cycle CLI.
     # When: an operator requests its help surface.
     completed = subprocess.run(
-        (sys.executable, str(SCRIPT), "--help"),
+        ("uv", "run", str(SCRIPT), "--help"),
         cwd=PROJECT,
         check=False,
         capture_output=True,
