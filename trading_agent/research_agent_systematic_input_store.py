@@ -45,9 +45,6 @@ def write_systematic_input_activation(
         _validate_referenced_artifacts(checked)
         payload = _canonical_text(checked)
         write_private_stable_report(path, payload)
-        replay = _load(path)
-        if replay != checked or _canonical_text(replay) != payload:
-            raise InvalidSystematicInputActivationError("write_identity_mismatch")
     except InvalidSystematicInputActivationError:
         raise
     except (OSError, TypeError, UnicodeError, ValidationError, ValueError):
@@ -56,20 +53,16 @@ def write_systematic_input_activation(
 
 def load_systematic_input_activation(path: Path) -> SystematicInputActivation:
     try:
-        return _load(path)
+        payload = read_private_text(path)
+        activation = _ACTIVATION_ADAPTER.validate_json(payload)
+        if payload != _canonical_text(activation):
+            raise InvalidSystematicInputActivationError("payload_not_canonical")
+        _validate_referenced_artifacts(activation)
+        return activation
     except InvalidSystematicInputActivationError:
         raise
     except (OSError, TypeError, UnicodeError, ValidationError, ValueError):
         raise InvalidSystematicInputActivationError("read_invalid") from None
-
-
-def _load(path: Path) -> SystematicInputActivation:
-    payload = read_private_text(path)
-    activation = _ACTIVATION_ADAPTER.validate_json(payload)
-    if payload != _canonical_text(activation):
-        raise InvalidSystematicInputActivationError("payload_not_canonical")
-    _validate_referenced_artifacts(activation)
-    return activation
 
 
 def _validate_referenced_artifacts(activation: SystematicInputActivation) -> None:
