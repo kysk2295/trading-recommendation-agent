@@ -10,6 +10,9 @@ from pathlib import Path
 import pytest
 
 from run_research_agent_runtime import main
+from tests.research_agent_systematic_input_fixtures import (
+    write_blocked_systematic_input_activation,
+)
 from trading_agent.research_agent_service_config import (
     RESEARCH_AGENT_SERVICE_LABEL,
     ResearchAgentServiceConfig,
@@ -222,6 +225,8 @@ def _config(tmp_path: Path, project_root: Path) -> ResearchAgentServiceConfig:
         runs_root=tmp_path / "systematic" / "runs",
         max_runtime_seconds=120.0,
     )
+    if not systematic.input_activation.exists():
+        write_blocked_systematic_input_activation(systematic.input_activation)
     return ResearchAgentServiceConfig(
         label=RESEARCH_AGENT_SERVICE_LABEL,
         project_root=project_root,

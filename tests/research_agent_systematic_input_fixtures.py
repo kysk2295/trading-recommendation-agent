@@ -30,6 +30,7 @@ from trading_agent.research_agent_systematic_input_evidence import (
     verify_systematic_input_evidence_graph,
 )
 from trading_agent.research_agent_systematic_input_models import (
+    BlockedSystematicInputActivation,
     ReadySystematicInputActivation,
 )
 from trading_agent.research_agent_systematic_input_store import (
@@ -144,6 +145,16 @@ def write_ready_systematic_input_activation(
     )
 
 
+def write_blocked_systematic_input_activation(activation_path: Path) -> None:
+    write_systematic_input_activation(
+        activation_path,
+        BlockedSystematicInputActivation(
+            reason_code="production_input_unavailable",
+            attempted_at=NOW,
+        ),
+    )
+
+
 def replace_model_artifact(path: Path, model: BaseModel, prefix: str) -> tuple[Path, str]:
     payload = canonical_model_payload(model)
     digest = hashlib.sha256(payload.encode()).hexdigest()
@@ -171,6 +182,7 @@ __all__ = (
     "SystematicInputGraphFixture",
     "canonical_model_payload",
     "replace_model_artifact",
+    "write_blocked_systematic_input_activation",
     "write_ready_systematic_input_activation",
     "write_systematic_input_graph",
 )

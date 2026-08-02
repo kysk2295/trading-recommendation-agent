@@ -10,13 +10,63 @@
 - private immutable config 및 단일 macOS LaunchAgent provision/verify/activate 경계
 - 모든 runtime/action 결과의 order/lifecycle/allocation authority false 및 broker mutation 0
 
+## schema v2 운영 입력 결속
+
+서비스 config는 `schema_version=2`만 허용하며 v1을 자동 변환하지 않는다. Systematic 입력은
+`--systematic-input-activation`의 mode-600 activation 하나로만 결속한다. `ready`는 activation
+pointer 계약과 그 참조 artifact digest가 유효하다는 상태이며, 상태 조회 자체가 전체 evidence graph를
+재심사했다는 뜻은 아니다. ready 상태는 결속된 CSV와 data-foundation digest를 노출하고, `blocked`는 digest를
+`null`로 보고한다. 상태 JSON에는 로컬 경로가 포함되지 않는다. activation이 `blocked`여도 다른
+다섯 research family는 계속 armed 상태로 동작하고, Systematic heavy action만
+`production_input_unavailable`로 실패한다. 이 상태는 실험 성과나 수익성을 뜻하지 않는다.
+
+```bash
+uv run python run_research_agent_runtime.py provision \
+  --project-root /absolute/trading-recommendation-agent \
+  --uv-path /absolute/bin/uv \
+  --hermes-executable /absolute/bin/hermes \
+  --python-executable /absolute/bin/python \
+  --model-id MODEL_ID --provider-id PROVIDER_ID \
+  --cycle-database /private/state/research-cycles.sqlite3 \
+  --output-root /private/state/reports \
+  --hermes-database /private/state/hermes.sqlite3 \
+  --config /private/config/research-runtime-v2.json \
+  --plist /private/config/research-runtime-v2.plist \
+  --source-outputs-root /absolute/outputs \
+  --source-market-context-root /absolute/outputs/market-context \
+  --source-day-session-root /absolute/outputs/live-sessions \
+  --source-swing-shadow-database /absolute/outputs/swing/shadow.sqlite3 \
+  --source-swing-review-database /absolute/outputs/swing/review.sqlite3 \
+  --source-experiment-ledger /absolute/outputs/experiments/ledger.sqlite3 \
+  --source-lane-review-database /absolute/outputs/reviews/lane.sqlite3 \
+  --systematic-context /private/systematic/context.json \
+  --systematic-experiment-ledger /private/systematic/experiment.sqlite3 \
+  --systematic-receipt-root /private/systematic/receipts \
+  --systematic-strategy-root /private/systematic/strategies \
+  --systematic-manifest-root /private/systematic/manifests \
+  --systematic-queue-root /private/systematic/queue \
+  --systematic-input-activation /private/systematic/input-activation.json \
+  --systematic-artifact-root /private/systematic/artifacts \
+  --systematic-review-root /private/systematic/reviews \
+  --systematic-runs-root /private/systematic/runs
+
+uv run python run_research_agent_runtime.py verify \
+  --config /private/config/research-runtime-v2.json \
+  --plist /private/config/research-runtime-v2.plist
+
+uv run python run_research_agent_runtime.py status \
+  --config /private/config/research-runtime-v2.json \
+  --plist /private/config/research-runtime-v2.plist
+```
+
 ## 실제 QA
 
 QA root: `/private/tmp/persistent-research-runtime-qa.P3kNQO`
 
 - 실제 Hermes binding: `provider=openai-codex`, `model=gpt-5.5`
 - 운영 `outputs/`는 source evidence로만 읽고, cycle/Hermes/Systematic 쓰기는 QA root에 격리했다.
-- 불변 config와 plist는 모두 mode `600`, verify 통과.
+- 당시 불변 config와 plist는 모두 mode `600`, verify 통과. 현재 schema v2 cutover에서는 별도
+  mode-600 activation 검증도 통과해야 한다.
 - 실제 actor 실행 순서:
   1. `day_trading` — no_action, model call 1, broker mutation 0
   2. `systematic_quant` — no_action, model call 1, broker mutation 0

@@ -93,6 +93,16 @@ flowchart LR
 따라서 다음 개발은 Telegram/Hermes 전달과 US/KR 실제 세션 수직에만 집중한다. 아래 내용은 이미
 구현된 기술 체크포인트의 상세 기록이며 추가 인프라 개발 순서가 아니다.
 
+**2026-08-03 Research Runtime schema v2 업데이트:** 상시 6-family 서비스의 Systematic 입력을
+mode-600 `ready|blocked` activation 포인터 하나로 결속했다. provision/verify는 v1 config,
+누락·변형·비공개 activation을 fail-closed하며 raw CSV/foundation override를 받지 않는다.
+여기서 `ready`는 activation pointer와 참조 artifact digest의 유효 상태이며 status 조회가 전체
+evidence graph를 다시 심사했다는 뜻은 아니다. `blocked` 상태에서는 Systematic heavy action만
+중단되고 다른 다섯 family는 계속 armed 상태를 유지한다. status/tick/run 보고서는 activation
+상태와 ready일 때의 입력·foundation SHA만 노출하고
+로컬 경로, model secret, broker 식별자는 노출하지 않는다. 이는 실제 시장 성과나 수익성 검증이
+아니다. 운영 명령은 [Persistent Research Runtime 체크포인트](docs/checkpoints/2026-08-02-persistent-research-runtime-ko.md)에 있다.
+
 > **현재 상태:** 분봉 수집·급등주 스캐너·ORB/VWAP/HOD/Gap-and-Go 추천·인과성 감사·과거 및 forward 평가에 더해 Alpaca Paper 시장시계·계좌·주문·포지션·Account Activities FILL GET, `trade_updates` 스트림 인증·구독·Ping/Pong, 단일 Writer 원장과 fail-closed 주문 승인 게이트까지 구현되어 있다. 수신 frame은 text/binary 원문 BLOB을 먼저 확정한 뒤 분류하며, 재시작 시 미분류 receipt를 원래 순서로 복구하고 매 연결 세대에서 REST 주문 snapshot·개별 FILL activity·nested 보호 OCO와 대사한다. 모호한 entry/OCO/cancel mutation은 deterministic client order ID 또는 broker order ID로 직접 GET하며, 정확한 targeted 증거가 없으면 재전송하지 않는다. 통합 운영 세션은 한 Writer lease와 한 WSS 안에서 current-epoch 복구·승인·Paper mutation·사후 대사를 직렬 실행한다. 부분체결 수량이 기존 보호 OCO보다 늘어나면 source-bound cancel만 먼저 실행하고 terminal 대사 뒤 다음 호출에서 새 client ID와 exact 수량으로 replacement OCO를 제출한다. 별도 append-only lane registry는 세 manifest·전용 Paper account binding·사전등록 experiment scope·final daily snapshot 계약을 보존하고 Reviewer용 query-only reader를 제공한다. ORB intraday producer는 장 종료 뒤 현재 GET/WSS readiness, flat broker 상태, 세 계층 account binding, exact-scope daily record와 query-only execution hash를 다시 검증해 immutable `LaneDailySnapshot`을 append한다. 독립 Reviewer는 이 snapshot과 exact daily/adaptive artifact만 읽어 별도 global append-only review ledger에 권고를 남기며 전략 상태·champion·allocation·주문권한을 바꾸지 않는다. lane·review·execution DB와 분리된 global experiment ledger schema v6는 기존 source lineage, legacy 가설·전략 버전·trial·lifecycle, exact `StrategyLaneRef` 기반 multi-market 가설·버전·shadow trial·next-session lifecycle을 append-only로 보존한다. ORB의 NYSE 거래일마다 pre-open 등록·정규장 시작·장후 terminal을 갖는 독립 `shadow_forward` trial을 만들고, exact daily/adaptive/snapshot/review evidence로 `completed`·`censored`·`failed` 중 하나를 확정하는 opt-in watch 연결도 구현됐다. local-only Lifecycle Controller v1은 exact finalized snapshot·review·현재 lifecycle chain을 다시 검증하고 성숙 구간의 명확한 5일 열화만 다음 NYSE 세션 `suspended` event로 append한다. 조기 reject, 비교·승격·복구·champion·allocation·주문권한은 계속 닫혀 있다. 전용 장후 runner는 snapshot 성공 뒤에만 Reviewer를 실행하고 단계별 audit와 redacted aggregate report를 남긴다. 일일 연구 원장은 schema v2에서 exact lane scope로만 표본을 누적한다. 신규 진입, 보호 OCO 수명주기, cutoff·kill switch·EOD cancel/flatten은 모두 정확한 arm 객체가 필요한 축소 smoke CLI로만 열렸고 실제 정규장 Paper mutation은 아직 0건이다.
 
 2026-07-15 뉴욕 정규장에는 실제 자격증명 loader, 빈 Paper 계좌 bootstrap, WSS·REST readiness, 현재 KIS source와 opening-history 보강, 15:30 ET one-shot cutoff monitor, 최종 flat GET 대사를 통과했다. 다만 exact current ORB setup이 0건이라 mutation을 만들지 않았으며 늦은 시작 세션을 정식 forward-validation 표본으로 사용하지 않는다.

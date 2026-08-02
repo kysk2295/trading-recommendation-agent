@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import datetime as dt
 import os
-from typing import Literal
+from dataclasses import dataclass
+from typing import Literal, assert_never
 
 import anyio
 from pydantic import BaseModel, ConfigDict
@@ -26,6 +27,13 @@ from trading_agent.research_agent_runtime import (
 from trading_agent.research_agent_runtime_lease import research_agent_runtime_lease
 from trading_agent.research_agent_service_config import ResearchAgentServiceConfig
 from trading_agent.research_agent_systematic import SystematicResearchActionExecutor
+from trading_agent.research_agent_systematic_input_models import (
+    BlockedSystematicInputActivation,
+    ReadySystematicInputActivation,
+)
+from trading_agent.research_agent_systematic_input_store import (
+    load_systematic_input_activation,
+)
 
 
 class ResearchAgentServiceReport(BaseModel):
@@ -39,8 +47,18 @@ class ResearchAgentServiceReport(BaseModel):
     model_calls: Literal[0, 1]
     recovered_cycles: int
     projected_results: int
+    systematic_input_status: Literal["ready", "blocked"]
+    systematic_input_sha256: str | None
+    systematic_foundation_sha256: str | None
     broker_mutation: Literal[0] = 0
     observed_at: dt.datetime
+
+
+@dataclass(frozen=True, slots=True)
+class SystematicInputReportBinding:
+    status: Literal["ready", "blocked"]
+    input_sha256: str | None
+    foundation_sha256: str | None
 
 
 class InvalidResearchAgentServiceRuntimeError(RuntimeError):
@@ -51,11 +69,12 @@ def run_service_tick(
     config: ResearchAgentServiceConfig,
     now: dt.datetime,
 ) -> ResearchAgentServiceReport:
+    systematic = _systematic_input_report(config)
     runtime = build_service_runtime(config)
     try:
         tick = runtime.tick(now)
         projected = _project_results(config, runtime)
-        report = _report("tick", tick, projected, now)
+        report = _report("tick", tick, projected, systematic, now)
         write_service_report(config, report)
         return report
     finally:
@@ -76,9 +95,10 @@ async def run_service_forever(
         try:
             while True:
                 now = dt.datetime.now(dt.UTC)
+                systematic = _systematic_input_report(config)
                 tick = runtime.tick(now)
                 projected = _project_results(config, runtime)
-                write_service_report(config, _report("run", tick, projected, now))
+                write_service_report(config, _report("run", tick, projected, systematic, now))
                 await anyio.sleep(tick_seconds)
         finally:
             runtime.close()
@@ -88,6 +108,7 @@ def service_status(
     config: ResearchAgentServiceConfig,
     now: dt.datetime,
 ) -> ResearchAgentServiceReport:
+    systematic = _systematic_input_report(config)
     if not config.cycle_database.exists():
         return ResearchAgentServiceReport(
             operation="status",
@@ -98,6 +119,9 @@ def service_status(
             model_calls=0,
             recovered_cycles=0,
             projected_results=0,
+            systematic_input_status=systematic.status,
+            systematic_input_sha256=systematic.input_sha256,
+            systematic_foundation_sha256=systematic.foundation_sha256,
             observed_at=now,
         )
     observations = read_cycle_runtime_observations(config.cycle_database)
@@ -118,6 +142,9 @@ def service_status(
         model_calls=0,
         recovered_cycles=0,
         projected_results=projected,
+        systematic_input_status=systematic.status,
+        systematic_input_sha256=systematic.input_sha256,
+        systematic_foundation_sha256=systematic.foundation_sha256,
         observed_at=now,
     )
 
@@ -158,6 +185,7 @@ def _report(
     operation: Literal["tick", "run"],
     tick: ResearchAgentTickResult,
     projected: int,
+    systematic: SystematicInputReportBinding,
     now: dt.datetime,
 ) -> ResearchAgentServiceReport:
     return ResearchAgentServiceReport(
@@ -169,8 +197,30 @@ def _report(
         model_calls=tick.model_calls,
         recovered_cycles=tick.recovered_cycles,
         projected_results=projected,
+        systematic_input_status=systematic.status,
+        systematic_input_sha256=systematic.input_sha256,
+        systematic_foundation_sha256=systematic.foundation_sha256,
         observed_at=now,
     )
+
+
+def _systematic_input_report(config: ResearchAgentServiceConfig) -> SystematicInputReportBinding:
+    activation = load_systematic_input_activation(config.systematic.input_activation)
+    match activation:
+        case BlockedSystematicInputActivation():
+            return SystematicInputReportBinding(
+                status="blocked",
+                input_sha256=None,
+                foundation_sha256=None,
+            )
+        case ReadySystematicInputActivation() as ready:
+            return SystematicInputReportBinding(
+                status="ready",
+                input_sha256=ready.input_sha256,
+                foundation_sha256=ready.foundation_sha256,
+            )
+        case unreachable:
+            assert_never(unreachable)
 
 
 def _prepare_private_runtime_paths(config: ResearchAgentServiceConfig) -> None:

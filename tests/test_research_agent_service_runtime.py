@@ -8,10 +8,14 @@ from pathlib import Path
 import pytest
 
 from run_research_agent_runtime import main
+from tests.research_agent_systematic_input_fixtures import (
+    write_ready_systematic_input_activation,
+)
 from tests.test_research_agent_service_cli import _config
 from trading_agent.dashboard_agent_family import AgentFamilyId
 from trading_agent.research_agent_actions import ResearchAgentActionConfig, ResearchAgentActionExecutor
 from trading_agent.research_agent_cycle_models import (
+    CycleId,
     DecisionId,
     ResearchAgentCycleV1,
     ResearchAgentDecisionKind,
@@ -25,8 +29,10 @@ from trading_agent.research_agent_runtime import (
     ConfiguredResearchAgentEvidenceCollector,
     ResearchAgentRuntime,
     ResearchAgentRuntimeServices,
+    ResearchAgentTickResult,
 )
 from trading_agent.research_agent_service_config import write_research_agent_service_config
+from trading_agent.research_agent_service_runtime import run_service_tick, service_status
 
 NOW = dt.datetime(2026, 8, 2, 12, 0, tzinfo=dt.UTC)
 
@@ -67,6 +73,24 @@ class UnreachableSystematicAction:
     ) -> ResearchAgentResultV1:
         del cycle, decision
         raise AssertionError
+
+
+@dataclass(frozen=True, slots=True)
+class NonSystematicTickRuntime:
+    store: ResearchAgentCycleStore
+
+    def tick(self, now: dt.datetime) -> ResearchAgentTickResult:
+        del now
+        return ResearchAgentTickResult(
+            status="completed",
+            agent_family_id="day_trading",
+            cycle_id=CycleId("c" * 64),
+            model_calls=1,
+            recovered_cycles=0,
+        )
+
+    def close(self) -> None:
+        self.store.close()
 
 
 def test_idle_service_tick_reports_zero_model_and_broker_mutations(
@@ -110,3 +134,67 @@ def test_idle_service_tick_reports_zero_model_and_broker_mutations(
     assert '"model_calls":0' in captured
     assert '"broker_mutation":0' in captured
     assert f'"projected_results":{seeded_calls}' in captured
+
+
+def test_blocked_systematic_input_keeps_service_armed_without_heavy_child(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    ResearchAgentCycleStore(config.cycle_database).close()
+    child_calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        "trading_agent.research_agent_systematic.subprocess.run",
+        lambda command, **_kwargs: child_calls.append(tuple(command)),
+    )
+
+    report = service_status(config, NOW)
+
+    assert report.status == "armed"
+    assert report.systematic_input_status == "blocked"
+    assert report.systematic_input_sha256 is None
+    assert report.systematic_foundation_sha256 is None
+    assert report.model_calls == report.broker_mutation == 0
+    assert child_calls == []
+
+
+def test_blocked_systematic_input_allows_non_systematic_tick(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    runtime = NonSystematicTickRuntime(ResearchAgentCycleStore(config.cycle_database))
+    child_calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        "trading_agent.research_agent_service_runtime.build_service_runtime",
+        lambda _config: runtime,
+    )
+    monkeypatch.setattr(
+        "trading_agent.research_agent_systematic.subprocess.run",
+        lambda command, **_kwargs: child_calls.append(tuple(command)),
+    )
+
+    report = run_service_tick(config, NOW)
+
+    assert report.status == "completed"
+    assert report.agent_family_id == "day_trading"
+    assert report.systematic_input_status == "blocked"
+    assert report.model_calls == 1
+    assert report.broker_mutation == 0
+    assert child_calls == []
+
+
+def test_ready_systematic_input_reports_only_bound_digests(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    fixture = write_ready_systematic_input_activation(
+        tmp_path / "production-input",
+        config.systematic.input_activation,
+    )
+    ResearchAgentCycleStore(config.cycle_database).close()
+
+    report = service_status(config, NOW)
+
+    assert report.systematic_input_status == "ready"
+    assert report.systematic_input_sha256 == fixture.activation.input_sha256
+    assert report.systematic_foundation_sha256 == fixture.activation.foundation_sha256
+    assert "path" not in report.model_dump_json()

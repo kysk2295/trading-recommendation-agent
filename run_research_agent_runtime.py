@@ -45,6 +45,9 @@ from trading_agent.research_agent_service_runtime import (
     service_status,
 )
 from trading_agent.research_agent_systematic import InvalidSystematicResearchActionError
+from trading_agent.research_agent_systematic_input_store import (
+    InvalidSystematicInputActivationError,
+)
 
 Clock = Callable[[], dt.datetime]
 CommandRunner = Callable[[tuple[str, ...]], int]
@@ -103,6 +106,7 @@ def main(
         InvalidResearchAgentServiceConfigError,
         InvalidResearchAgentServiceRuntimeError,
         InvalidSystematicResearchActionError,
+        InvalidSystematicInputActivationError,
         ResearchAgentCycleWriterLeaseUnavailableError,
         ResearchAgentRuntimeLeaseUnavailableError,
         OSError,

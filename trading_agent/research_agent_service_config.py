@@ -17,6 +17,10 @@ from trading_agent.private_immutable_file import (
 )
 from trading_agent.research_agent_sources import ResearchAgentSourcePaths
 from trading_agent.research_agent_systematic import SystematicResearchActionConfig
+from trading_agent.research_agent_systematic_input_store import (
+    InvalidSystematicInputActivationError,
+    load_systematic_input_activation,
+)
 
 RESEARCH_AGENT_SERVICE_LABEL: Final = "ai.trading-agent.research-agent-runtime"
 _SERVICE_SCRIPT: Final = "run_research_agent_runtime.py"
@@ -36,7 +40,7 @@ class InvalidResearchAgentServiceConfigError(RuntimeError):
 class ResearchAgentServiceConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     label: Literal["ai.trading-agent.research-agent-runtime"] = RESEARCH_AGENT_SERVICE_LABEL
     project_root: Path
     uv_path: Path
@@ -138,6 +142,7 @@ def verify_research_agent_launch_agent(
         absolute_config = config_path.expanduser().absolute()
         config_payload = read_private_text(absolute_config)
         config = load_research_agent_service_config(absolute_config)
+        _ = load_systematic_input_activation(config.systematic.input_activation)
         plist_payload = read_private_text(plist_path.expanduser().absolute())
         if plist_payload != _launch_agent_text(config, absolute_config):
             raise InvalidResearchAgentServiceConfigError(reason="launch_agent_contract_invalid")
@@ -162,6 +167,7 @@ def verify_research_agent_launch_agent(
     except (
         InvalidPrivateImmutableFileError,
         InvalidResearchAgentServiceConfigError,
+        InvalidSystematicInputActivationError,
         OSError,
         TypeError,
         ValidationError,

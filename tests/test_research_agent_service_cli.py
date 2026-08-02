@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import plistlib
 import shutil
@@ -11,6 +12,9 @@ from pathlib import Path
 import pytest
 
 from run_research_agent_runtime import main
+from tests.research_agent_systematic_input_fixtures import (
+    write_blocked_systematic_input_activation,
+)
 from trading_agent.research_agent_service_config import (
     RESEARCH_AGENT_SERVICE_LABEL,
     ResearchAgentServiceConfig,
@@ -56,6 +60,7 @@ def _config(tmp_path: Path, *, project_root: Path = WORKTREE) -> ResearchAgentSe
         runs_root=tmp_path / "systematic" / "runs",
         max_runtime_seconds=120.0,
     )
+    write_blocked_systematic_input_activation(systematic.input_activation)
     return ResearchAgentServiceConfig(
         label=RESEARCH_AGENT_SERVICE_LABEL,
         project_root=project_root,
@@ -97,6 +102,34 @@ def test_plist_contains_one_keepalive_service_and_no_secrets(tmp_path: Path) -> 
     assert "account" not in text.lower()
 
 
+def test_service_config_uses_strict_schema_v2_and_rejects_v1(tmp_path: Path) -> None:
+    config_path, plist_path = _provision(tmp_path)
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 2
+    payload["schema_version"] = 1
+    config_path.unlink()
+    config_path.write_text(
+        json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    config_path.chmod(0o600)
+
+    assert main(("verify", "--config", str(config_path), "--plist", str(plist_path))) == 2
+
+
+@pytest.mark.parametrize("failure", ["malformed", "nonprivate"])
+def test_verification_rejects_invalid_activation_pointer(tmp_path: Path, failure: str) -> None:
+    config_path, plist_path = _provision(tmp_path)
+    activation_path = tmp_path / "systematic" / "input-activation.json"
+    if failure == "malformed":
+        activation_path.write_text("{}\n", encoding="utf-8")
+        activation_path.chmod(0o600)
+    else:
+        activation_path.chmod(0o644)
+
+    assert main(("verify", "--config", str(config_path), "--plist", str(plist_path))) == 2
+
+
 def test_activation_rejects_non_main_project_before_launchctl(tmp_path: Path) -> None:
     repository = tmp_path / "feature"
     repository.mkdir()
@@ -134,6 +167,10 @@ def test_provision_help_exposes_activation_pointer_without_raw_input_overrides(
     assert "--systematic-input-activation" in output
     assert "--systematic-input-csv" not in output
     assert "--systematic-foundation-manifest" not in output
+
+
+def test_provision_rejects_deprecated_raw_input_flag() -> None:
+    assert main(("provision", "--systematic-input-csv", "/tmp/forbidden")) == 2
 
 
 def test_activation_calls_exact_bootstrap_and_kickstart_on_clean_current_main(tmp_path: Path) -> None:
