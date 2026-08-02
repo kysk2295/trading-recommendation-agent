@@ -14,14 +14,12 @@ from rich import print as rprint
 from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import WebSocketException
 
-from trading_agent.dashboard_agent_runtime import append_agent_runtime_readiness
-from trading_agent.dashboard_autonomous_publisher import DEFAULT_AUTONOMOUS_STATE
-from trading_agent.dashboard_autonomous_research import (
-    AutonomousTriggerV1,
-    trigger_fixture,
+from trading_agent.dashboard_agent_readiness import (
+    AgentReadinessRequest,
+    record_agent_readiness,
 )
+from trading_agent.dashboard_autonomous_publisher import DEFAULT_AUTONOMOUS_STATE
 from trading_agent.dashboard_commands import PairingTicketMessage, parse_dashboard_event
-from trading_agent.dashboard_execution_catalog import ProductionExecutionId
 from trading_agent.dashboard_models_v2 import DashboardSnapshotV2
 from trading_agent.dashboard_production_execution_boundary import (
     create_production_execution_boundary,
@@ -64,7 +62,6 @@ from trading_agent.dashboard_system_authority_config import (
 from trading_agent.dashboard_system_current_authority import (
     SystemAuthorityVerifierInput,
 )
-from trading_agent.dashboard_trigger_authority import TriggerAuthorityStore
 
 app = typer.Typer(
     help="로컬 산출물을 redacted 운영 snapshot으로 안전하게 전송합니다.",
@@ -72,9 +69,7 @@ app = typer.Typer(
 )
 DEFAULT_OUTPUTS = Path(__file__).resolve().parent / "outputs"
 DEFAULT_CREDENTIALS = Path.home() / ".config" / "trading-agent" / "dashboard.env"
-DEFAULT_SYSTEM_AUTHORITY_CONFIG = (
-    Path.home() / ".config" / "trading-agent" / "system-authority.json"
-)
+DEFAULT_SYSTEM_AUTHORITY_CONFIG = Path.home() / ".config" / "trading-agent" / "system-authority.json"
 DEFAULT_INTERACTIVE_STATE = Path.home() / ".local" / "state" / "trading-agent" / "dashboard-interactive"
 HERMES_EXECUTABLE = Path(shutil.which("hermes") or Path.home() / ".local/bin/hermes")
 WORKTREE = Path(__file__).resolve().parent
@@ -146,8 +141,6 @@ def publish(
             "outputs_directory_missing",
             param_hint="--outputs",
         )
-    if not dry_run:
-        _record_agent_readiness(outputs)
     system_authority_verifier = load_system_authority_verifier(
         system_authority_config,
         untrusted_root=outputs,
@@ -259,32 +252,15 @@ async def _pair_browser_once(socket: ClientConnection, dashboard_url: str) -> No
 
 
 def _record_agent_readiness(outputs: Path) -> None:
-    observed_at = dt.datetime.now(dt.UTC)
-    code_sha = current_code_sha()
-    source_root = DEFAULT_AUTONOMOUS_STATE / "authorities"
-    _ = TriggerAuthorityStore(source_root)
-    payload = trigger_fixture(now=observed_at)
-    environment = payload["environment_spec"]
-    assert isinstance(environment, dict)
-    environment["pinned_code_sha"] = code_sha
-    trigger = AutonomousTriggerV1.model_validate(payload)
-    model = create_production_execution_boundary(
-        repository=WORKTREE,
-        source_evidence_root=source_root,
-        execution_id=ProductionExecutionId.HERMES_MODEL,
-    )
-    broker = create_production_execution_boundary(
-        repository=WORKTREE,
-        source_evidence_root=source_root,
-        execution_id=ProductionExecutionId.RESEARCH_BROKER,
-    )
-    blocker = model.blocker(trigger) or broker.blocker(trigger)
-    _ = append_agent_runtime_readiness(
-        outputs,
-        observed_at=observed_at,
-        code_sha256=code_sha,
-        state="armed" if blocker is None else "unavailable",
-        reason=blocker,
+    record_agent_readiness(
+        AgentReadinessRequest(
+            outputs,
+            dt.datetime.now(dt.UTC),
+            current_code_sha(),
+            DEFAULT_AUTONOMOUS_STATE / "authorities",
+            WORKTREE,
+        ),
+        create_production_execution_boundary,
     )
 
 
