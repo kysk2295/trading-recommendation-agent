@@ -112,14 +112,12 @@ def test_idle_service_tick_reports_zero_model_and_broker_mutations(
             ),
         )
     )
-    for _ in range(5):
-        assert seed.tick(NOW).status == "completed"
+    seed_ticks = tuple(seed.tick(NOW) for _ in range(6))
+    assert sum(tick.status == "no_action" for tick in seed_ticks) == 3
+    assert sum(tick.status == "completed" for tick in seed_ticks) == 3
     qa_time = NOW + dt.timedelta(minutes=2, seconds=30)
-    for _ in range(8):
-        if seed.tick(qa_time).status == "idle":
-            break
-    else:
-        raise AssertionError
+    assert seed.tick(qa_time).status == "idle"
+    seeded_results = len(seed.store.results())
     seed.close()
     config_path = (tmp_path / "private" / "runtime.json").absolute()
     assert write_research_agent_service_config(config_path, config)
@@ -133,7 +131,7 @@ def test_idle_service_tick_reports_zero_model_and_broker_mutations(
     assert '"status":"idle"' in captured
     assert '"model_calls":0' in captured
     assert '"broker_mutation":0' in captured
-    assert f'"projected_results":{seeded_calls}' in captured
+    assert f'"projected_results":{seeded_results}' in captured
 
 
 def test_blocked_systematic_input_keeps_service_armed_without_heavy_child(

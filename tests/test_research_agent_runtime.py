@@ -252,9 +252,7 @@ def test_closed_session_primary_schedule_persists_no_action_before_model_call(tm
 def test_research_blocked_evidence_keeps_the_normal_decision_path(tmp_path: Path) -> None:
     # Given: a Research-family source admitted explicit blocked evidence.
     calls: list[AgentFamilyId] = []
-    evidence = _evidence("swing_trading", 1).model_copy(
-        update={"source_key": "swing.blocked.shadow_evidence_empty"}
-    )
+    evidence = _evidence("swing_trading", 1).model_copy(update={"source_key": "swing.blocked.shadow_evidence_empty"})
     runtime = _runtime(tmp_path / "cycles.sqlite3", EMPTY_COLLECTOR, calls)
     runtime.ingest((evidence,))
 
