@@ -17,6 +17,7 @@ export type WidthFinding = Readonly<{
   width: number;
   viewsDriven: number;
   selectedLegs: readonly string[];
+  researchFamilyCount: number;
   strategySynchronized: boolean;
   breakEven: string;
   traceFocusReturned: boolean;
@@ -126,6 +127,8 @@ export async function verifyHappyWidth(
   if (width === 375) requireEqual(localScroll.overflow, true, "375 local table overflow");
   await page.locator("#strategy_agent_tab").click();
   const agentLegs = await selectedLegIds(page, "#strategy_agent");
+  const researchFamilyCount = await page.locator("#strategy_agent [data-agent-family]").count();
+  requireEqual(researchFamilyCount, 6, `${width} primary research families`);
   const agentBreakEven = await requiredText(page, "#strategy_agent [data-break-even]");
   const strategySynchronized =
     agentLegs.join(",") === chainLegs.join(",") && agentBreakEven === chainBreakEven;
@@ -145,6 +148,7 @@ export async function verifyHappyWidth(
     width,
     viewsDriven: WORKBENCH_VIEWS.length,
     selectedLegs: chainLegs,
+    researchFamilyCount,
     strategySynchronized,
     breakEven: chainBreakEven,
     traceFocusReturned: trace.focusReturned,

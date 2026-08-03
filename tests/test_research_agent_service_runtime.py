@@ -33,7 +33,7 @@ from trading_agent.research_agent_runtime import (
     ResearchAgentTickResult,
 )
 from trading_agent.research_agent_service_config import write_research_agent_service_config
-from trading_agent.research_agent_service_runtime import run_service_tick, service_status
+from trading_agent.research_agent_service_runtime import run_service_cycle, run_service_tick, service_status
 
 NOW = dt.datetime(2026, 8, 2, 12, 0, tzinfo=dt.UTC)
 
@@ -163,6 +163,26 @@ def test_cycle_cli_runs_one_canonical_family_pass_and_replay_is_idle(
     assert second["status"] == "idle"
     assert second["outcomes"] == []
     assert second["family_count"] == second["model_calls"] == second["broker_mutation"] == 0
+
+
+def test_restarted_service_reports_persisted_family_cursors_and_next_wake(tmp_path: Path) -> None:
+    # Given: one bounded canonical pass has been closed before a process restart.
+    config = _config(tmp_path)
+    first = run_service_cycle(config, NOW)
+    assert first.family_count == 6
+    first_cursors = {item.agent_family_id: item.cursor for item in first.family_runtime}
+
+    # When: a new service runtime reads the same private cycle journal.
+    resumed = service_status(config, NOW + dt.timedelta(seconds=30))
+
+    # Then: all six persisted cursors and their next-wake contracts are observable.
+    assert tuple(item.agent_family_id for item in resumed.family_runtime) == PRIMARY_AGENT_FAMILIES
+    assert {item.agent_family_id: item.cursor for item in resumed.family_runtime} == first_cursors
+    assert all(item.cursor > 0 for item in resumed.family_runtime)
+    assert all(item.cycle_id is not None for item in resumed.family_runtime)
+    assert all(item.next_wake_kind is not None for item in resumed.family_runtime)
+    assert resumed.next_wake_kind is not None
+    assert resumed.broker_mutation == 0
 
 
 def test_blocked_systematic_input_keeps_service_armed_without_heavy_child(

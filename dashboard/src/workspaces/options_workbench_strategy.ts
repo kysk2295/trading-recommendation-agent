@@ -178,7 +178,26 @@ function agentRoom(workbench: OptionsWorkbench, context: WorkbenchTraceContext):
     ),
     receiptRow("Evidence path", terminal?.safe_ref ?? "Unavailable"),
   );
-  details.append(receipt, workbenchTraceButton("Agent Room", workbench.agent.trace_id, context));
+  const families = document.createElement("ol");
+  families.className = "options-agent-families";
+  for (const agent of context.snapshot.workspaces.command_center.agents) {
+    const item = document.createElement("li");
+    item.dataset["agentFamily"] = agent.agent_id;
+    item.append(
+      textElement("strong", agent.label),
+      textElement("span", `${agent.runtime_state} · ${agent.capabilities.join(", ")}`),
+    );
+    families.append(item);
+  }
+  if (families.childElementCount === 0) {
+    families.append(textElement("li", "Six-family runtime unavailable"));
+  }
+  details.append(
+    receipt,
+    textElement("h4", "Primary research families"),
+    families,
+    workbenchTraceButton("Agent Room", workbench.agent.trace_id, context),
+  );
   return details;
 }
 

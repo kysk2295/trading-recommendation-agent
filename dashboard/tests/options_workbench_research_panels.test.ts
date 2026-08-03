@@ -96,6 +96,27 @@ describe("complete options research panels", () => {
     expect(await room.getByRole("button", { name: /Agent Room Evidence Trace/ }).count()).toBe(1);
   });
 
+  test("shows every primary research family in the integrated Agent Room", async () => {
+    await mount(sixFamilyFixture());
+    await page.locator("#strategy_agent_tab").click();
+    const room = page.getByRole("group", { name: /Agent Room/ });
+
+    expect(await room.locator("[data-agent-family]").count()).toBe(6);
+    expect(
+      await room
+        .locator("[data-agent-family]")
+        .evaluateAll((rows) => rows.map((row) => row.getAttribute("data-agent-family"))),
+    ).toEqual([
+      "opportunity_manager",
+      "day_trading",
+      "swing_trading",
+      "systematic_quant",
+      "derivatives_research",
+      "market_context",
+    ]);
+    expect(await room.getByText(/Systematic Quant.*idle/).count()).toBe(1);
+  });
+
   test("aggregates an eight-place Greek without binary rounding drift", async () => {
     await mount(greekPrecisionFixture());
     await page.locator("#strategy_agent_tab").click();
@@ -143,7 +164,10 @@ describe("complete options research panels", () => {
     // Then: gates stay separate, reconciliation is read-only, and missing operations remain unavailable.
     expect(await operations.locator("[data-promotion-candidate]").count()).toBe(1);
     expect(await operations.locator("[data-promotion-gate]").count()).toBe(4);
-    expect(await operations.getByText(/held.*manual_approval_pending/).count()).toBe(1);
+    expect(await operations.getByText(/held.*manual_approval_required/).count()).toBe(1);
+    expect(
+      await operations.getByText(/accepted.*Independent Reviewer decision accepted/).count(),
+    ).toBe(1);
     expect(await operations.locator('[data-operations-summary="paper"]').textContent()).toContain(
       "populated · 9/9",
     );
@@ -269,6 +293,37 @@ function greekPrecisionFixture(): unknown {
             ),
           },
         },
+      },
+    },
+  };
+}
+
+function sixFamilyFixture(): unknown {
+  const families = [
+    "opportunity_manager",
+    "day_trading",
+    "swing_trading",
+    "systematic_quant",
+    "derivatives_research",
+    "market_context",
+  ] as const;
+  return {
+    ...derivativesPaperHappyFixture,
+    workspaces: {
+      ...derivativesPaperHappyFixture.workspaces,
+      command_center: {
+        ...derivativesPaperHappyFixture.workspaces.command_center,
+        agents: families.map((family) => ({
+          agent_id: family,
+          label: family
+            .split("_")
+            .map((word) => `${word[0]?.toUpperCase() ?? ""}${word.slice(1)}`)
+            .join(" "),
+          role: `${family} research`,
+          capabilities: ["autonomous_research"],
+          runtime_state: "idle",
+          trace_id: derivativesPaperHappyFixture.workspaces.command_center.trace_id,
+        })),
       },
     },
   };

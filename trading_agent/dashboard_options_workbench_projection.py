@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import os
 import sqlite3
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, assert_never, override
@@ -24,12 +27,20 @@ from trading_agent.canonical_derivatives_models import (
 from trading_agent.canonical_derivatives_projection import (
     project_canonical_derivatives_evidence,
 )
+from trading_agent.dashboard_models_v2 import SourceStateV2
 from trading_agent.dashboard_options_workbench_models import (
     OptionChainCellV2,
     OptionChainRowV2,
     OptionChainViewV2,
     OptionsWorkbenchV2,
+    PromotionSummaryV2,
     WorkbenchSectionV2,
+)
+from trading_agent.intraday_promotion_models import PromotionAssessmentStatus
+from trading_agent.intraday_promotion_store import (
+    InvalidIntradayPromotionArtifactError,
+    load_promotion_approval,
+    load_promotion_assessment,
 )
 
 _MAX_ROWS: Final = 41
@@ -48,7 +59,15 @@ class InvalidOptionsWorkbenchProjectionError(ValueError):
         return self.reason
 
 
-def project_options_workbench(*, outputs: Path, now: dt.datetime, derivatives_trace_id: str) -> OptionsWorkbenchV2:
+def project_options_workbench(
+    *,
+    outputs: Path,
+    now: dt.datetime,
+    derivatives_trace_id: str,
+    agent_workspace: SourceStateV2 | None = None,
+    research_workspace: SourceStateV2 | None = None,
+    strategies_workspace: SourceStateV2 | None = None,
+) -> OptionsWorkbenchV2:
     if now.tzinfo is None or now.utcoffset() is None:
         raise InvalidOptionsWorkbenchProjectionError(reason="projection_time_not_aware")
     root = outputs / "derivatives"
@@ -56,13 +75,33 @@ def project_options_workbench(*, outputs: Path, now: dt.datetime, derivatives_tr
         chain_id = _latest_id(root / "option-chain.sqlite3", "chain")
         catalog_id = _latest_id(root / "option-contracts.sqlite3", "catalog")
         if chain_id is None or catalog_id is None:
-            return _blocked_workbench(derivatives_trace_id, "canonical_option_chain_missing", "unavailable", None)
+            return _blocked_workbench(
+                outputs,
+                now,
+                derivatives_trace_id,
+                "canonical_option_chain_missing",
+                "unavailable",
+                None,
+                agent_workspace,
+                research_workspace,
+                strategies_workspace,
+            )
         chain_store = AlpacaOptionChainStore(root / "option-chain.sqlite3")
         catalog_store = AlpacaOptionContractStore(root / "option-contracts.sqlite3")
         chain = chain_store.run(chain_id)
         catalog = catalog_store.run(catalog_id)
         if chain is None or catalog is None:
-            return _blocked_workbench(derivatives_trace_id, "canonical_option_chain_missing", "unavailable", None)
+            return _blocked_workbench(
+                outputs,
+                now,
+                derivatives_trace_id,
+                "canonical_option_chain_missing",
+                "unavailable",
+                None,
+                agent_workspace,
+                research_workspace,
+                strategies_workspace,
+            )
         evidence = project_canonical_derivatives_evidence(
             catalog_store,
             chain_store,
@@ -73,17 +112,52 @@ def project_options_workbench(*, outputs: Path, now: dt.datetime, derivatives_tr
             ),
         )
     except (AlpacaOptionChainStoreError, AlpacaOptionContractStoreError, sqlite3.Error, ValueError):
-        return _blocked_workbench(derivatives_trace_id, "derivatives_source_invalid", "corrupt", now)
+        return _blocked_workbench(
+            outputs,
+            now,
+            derivatives_trace_id,
+            "derivatives_source_invalid",
+            "corrupt",
+            now,
+            agent_workspace,
+            research_workspace,
+            strategies_workspace,
+        )
     match evidence.status:
         case CanonicalDerivativesStatus.READY:
-            return _research_only_workbench(evidence.contracts, derivatives_trace_id)
+            return _research_only_workbench(
+                evidence.contracts,
+                outputs,
+                now,
+                derivatives_trace_id,
+                agent_workspace,
+                research_workspace,
+                strategies_workspace,
+            )
         case CanonicalDerivativesStatus.BLOCKED:
-            return _blocked_from_evidence(derivatives_trace_id, evidence.terminal_reason, evidence.observed_at)
+            return _blocked_from_evidence(
+                outputs,
+                now,
+                derivatives_trace_id,
+                evidence.terminal_reason,
+                evidence.observed_at,
+                agent_workspace,
+                research_workspace,
+                strategies_workspace,
+            )
         case unreachable:
             assert_never(unreachable)
 
 
-def _research_only_workbench(contracts: tuple[CanonicalDerivativeContract, ...], trace_id: str) -> OptionsWorkbenchV2:
+def _research_only_workbench(
+    contracts: tuple[CanonicalDerivativeContract, ...],
+    outputs: Path,
+    now: dt.datetime,
+    trace_id: str,
+    agent_workspace: SourceStateV2 | None,
+    research_workspace: SourceStateV2 | None,
+    strategies_workspace: SourceStateV2 | None,
+) -> OptionsWorkbenchV2:
     observed_at = max(contract.quote_observed_at for contract in contracts)
     rows = _rows(contracts, trace_id)
     blocker = "indicative_research_only"
@@ -113,11 +187,21 @@ def _research_only_workbench(contracts: tuple[CanonicalDerivativeContract, ...],
             rows=tuple(rows[:_MAX_ROWS]),
         ),
         scenario=None,
-        agent=_unavailable(
-            trace_id, "derivatives_agent_receipt_missing", "파생상품 Researcher 도구 receipt가 아직 연결되지 않았습니다"
+        agent=_connected_section(
+            agent_workspace,
+            trace_id,
+            "derivatives_agent_receipt_missing",
+            "파생상품 Researcher 도구 receipt가 아직 연결되지 않았습니다",
+            "Exact six-family runtime is observable",
         ),
-        experiment=_unavailable(trace_id, "options_experiment_missing", "옵션 실험 chain이 아직 연결되지 않았습니다"),
-        promotions=(),
+        experiment=_connected_section(
+            research_workspace,
+            trace_id,
+            "options_experiment_missing",
+            "옵션 실험 chain이 아직 연결되지 않았습니다",
+            "Source-backed experiment and Reviewer ledger is observable",
+        ),
+        promotions=_promotion_summaries(outputs, now, strategies_workspace),
     )
 
 
@@ -146,7 +230,14 @@ def _rows(contracts: tuple[CanonicalDerivativeContract, ...], trace_id: str) -> 
 
 
 def _blocked_from_evidence(
-    trace_id: str, reason: CanonicalDerivativesReason, observed_at: dt.datetime
+    outputs: Path,
+    now: dt.datetime,
+    trace_id: str,
+    reason: CanonicalDerivativesReason,
+    observed_at: dt.datetime,
+    agent_workspace: SourceStateV2 | None,
+    research_workspace: SourceStateV2 | None,
+    strategies_workspace: SourceStateV2 | None,
 ) -> OptionsWorkbenchV2:
     match reason:
         case CanonicalDerivativesReason.OPTIONS_ENTITLEMENT_MISSING:
@@ -165,14 +256,29 @@ def _blocked_from_evidence(
             raise InvalidOptionsWorkbenchProjectionError(reason="unexpected_indicative_terminal")
         case unreachable:
             assert_never(unreachable)
-    return _blocked_workbench(trace_id, reason.value, state, observation)
+    return _blocked_workbench(
+        outputs,
+        now,
+        trace_id,
+        reason.value,
+        state,
+        observation,
+        agent_workspace,
+        research_workspace,
+        strategies_workspace,
+    )
 
 
 def _blocked_workbench(
+    outputs: Path,
+    now: dt.datetime,
     trace_id: str,
     blocker: str,
     state: Literal["blocked", "unavailable", "corrupt", "stale"],
     observed_at: dt.datetime | None,
+    agent_workspace: SourceStateV2 | None,
+    research_workspace: SourceStateV2 | None,
+    strategies_workspace: SourceStateV2 | None,
 ) -> OptionsWorkbenchV2:
     summary = f"Option evidence blocked: {blocker}"
     return OptionsWorkbenchV2(
@@ -200,11 +306,21 @@ def _blocked_workbench(
             rows=(),
         ),
         scenario=None,
-        agent=_unavailable(
-            trace_id, "derivatives_agent_receipt_missing", "파생상품 Researcher 도구 receipt가 아직 연결되지 않았습니다"
+        agent=_connected_section(
+            agent_workspace,
+            trace_id,
+            "derivatives_agent_receipt_missing",
+            "파생상품 Researcher 도구 receipt가 아직 연결되지 않았습니다",
+            "Exact six-family runtime is observable",
         ),
-        experiment=_unavailable(trace_id, "options_experiment_missing", "옵션 실험 chain이 아직 연결되지 않았습니다"),
-        promotions=(),
+        experiment=_connected_section(
+            research_workspace,
+            trace_id,
+            "options_experiment_missing",
+            "옵션 실험 chain이 아직 연결되지 않았습니다",
+            "Source-backed experiment and Reviewer ledger is observable",
+        ),
+        promotions=_promotion_summaries(outputs, now, strategies_workspace),
     )
 
 
@@ -225,6 +341,129 @@ def _unavailable(trace_id: str, blocker: str, summary: str) -> WorkbenchSectionV
         summary=summary,
         trace_id=trace_id,
     )
+
+
+def _connected_section(
+    workspace: SourceStateV2 | None,
+    fallback_trace_id: str,
+    unavailable_blocker: str,
+    unavailable_summary: str,
+    connected_summary: str,
+) -> WorkbenchSectionV2:
+    if workspace is None:
+        return _unavailable(fallback_trace_id, unavailable_blocker, unavailable_summary)
+    summary = connected_summary
+    if workspace.total_count > 0:
+        summary = f"{connected_summary} · {workspace.projected_count}/{workspace.total_count}"
+    return WorkbenchSectionV2(
+        state=workspace.state,
+        observed_at=workspace.observed_at,
+        blocker_code=workspace.blocker_code,
+        summary=summary,
+        trace_id=workspace.trace_id,
+    )
+
+
+def _promotion_summaries(
+    outputs: Path,
+    now: dt.datetime,
+    strategies: SourceStateV2 | None,
+) -> tuple[PromotionSummaryV2, ...]:
+    root = outputs / "promotion_control"
+    assessments = ()
+    approvals = ()
+    if root.exists():
+        try:
+            metadata = root.lstat()
+            if (
+                root.is_symlink()
+                or not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) != 0o700
+            ):
+                raise InvalidIntradayPromotionArtifactError
+            assessment_paths = tuple(
+                sorted(root.glob("intraday_promotion_assessment_*.json"))
+            )
+            approval_paths = tuple(sorted(root.glob("intraday_promotion_approval_*.json")))
+            if len(assessment_paths) > 100 or len(approval_paths) > 100:
+                raise InvalidIntradayPromotionArtifactError
+            assessments = tuple(load_promotion_assessment(path) for path in assessment_paths)
+            approvals = tuple(load_promotion_approval(path) for path in approval_paths)
+        except (InvalidIntradayPromotionArtifactError, OSError):
+            return ()
+    approved = {
+        approval.content.assessment_id
+        for approval in approvals
+        if approval.content.approved_at <= now
+    }
+    summaries: list[PromotionSummaryV2] = []
+    assessed_versions: set[str] = set()
+    for assessment in sorted(
+        assessments,
+        key=lambda item: item.content.assessed_at,
+        reverse=True,
+    )[:20]:
+        if assessment.content.assessed_at > now:
+            continue
+        assessed_versions.add(assessment.content.strategy_version)
+        trace_id = _strategy_trace_id(strategies, assessment.content.strategy_version)
+        if assessment.assessment_id in approved:
+            state: Literal["held", "approved"] = "approved"
+            blockers: tuple[str, ...] = ()
+            passed = 7
+        else:
+            state = "held"
+            blockers = (
+                ("manual_approval_required",)
+                if assessment.content.status is PromotionAssessmentStatus.ELIGIBLE
+                else assessment.content.blockers
+            )
+            passed = (
+                6
+                if assessment.content.status
+                is PromotionAssessmentStatus.MANUAL_APPROVAL_PENDING
+                else max(0, 6 - len(blockers))
+            )
+        summaries.append(
+            PromotionSummaryV2(
+                promotion_id=assessment.assessment_id,
+                state=state,
+                passed_gate_count=passed,
+                total_gate_count=7,
+                blockers=blockers,
+                trace_id=trace_id,
+            )
+        )
+    if strategies is not None:
+        for item in strategies.items:
+            if len(summaries) >= 20 or item.kind != "strategy" or item.value is None:
+                continue
+            strategy_version = item.value.partition(" ·")[0]
+            if strategy_version in assessed_versions:
+                continue
+            summaries.append(
+                PromotionSummaryV2(
+                    promotion_id=hashlib.sha256(
+                        f"unassessed:{item.item_id}:{item.trace_id}".encode()
+                    ).hexdigest(),
+                    state="held",
+                    passed_gate_count=0,
+                    total_gate_count=7,
+                    blockers=("promotion_assessment_missing",),
+                    trace_id=item.trace_id,
+                )
+            )
+    return tuple(summaries)
+
+
+def _strategy_trace_id(strategies: SourceStateV2 | None, strategy_version: str) -> str:
+    if strategies is None:
+        return "trace.strategies.ledger"
+    for item in strategies.items:
+        if item.value is not None and item.value.startswith(f"{strategy_version} ·"):
+            return item.trace_id
+    return strategies.trace_id
 
 
 __all__ = ("InvalidOptionsWorkbenchProjectionError", "project_options_workbench")

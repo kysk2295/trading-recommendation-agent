@@ -116,6 +116,34 @@
   font-weight: 620;
 }
 
+.options-agent-room h4 {
+  margin-top: var(--space-4);
+}
+
+.options-agent-families {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-2) !important;
+  padding: 0;
+  list-style: none;
+}
+
+.options-agent-families li {
+  display: grid;
+  gap: var(--space-1);
+  min-inline-size: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-shell);
+}
+
+.options-agent-families span {
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: var(--type-small);
+}
+
 .options-operations-summary-tail {
   white-space: nowrap;
 }
@@ -147,11 +175,21 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .options-agent-families {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .options-experiment-trace li {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .options-operations-summary {
-    padding-block: var(--space-3);
+    padding-block: var(--space-2);
+  }
+}
+
+@media (max-width: 30rem) {
+  .options-agent-families {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

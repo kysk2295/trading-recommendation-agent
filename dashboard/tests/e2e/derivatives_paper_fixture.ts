@@ -10,6 +10,7 @@ const observedAt = snapshotV2.generated_at;
 const quoteTraceId = "trace.derivatives.options.current";
 const optionsTerminalTraceId = "trace.derivatives.options.reviewer";
 const promotionTraceId = "trace.derivatives.options.promotion";
+const promotionReviewerTraceId = "trace.derivatives.options.promotion.reviewer";
 const promotionBlockerTraceId = "trace.derivatives.options.promotion.blocker";
 
 const derivativeItems = [
@@ -82,6 +83,15 @@ const paperItems = [
   paper("paper.lifecycle.eod_flat", "EOD flat", "finalized", "populated"),
 ] as const;
 
+const primaryAgents = [
+  "opportunity_manager",
+  "day_trading",
+  "swing_trading",
+  "systematic_quant",
+  "derivatives_research",
+  "market_context",
+] as const;
+
 export function populatedOptionsWorkbenchFixture(
   firstCallOverride: Partial<Pick<OptionChainCellInput, "state" | "selectable">> = {},
 ): OptionsWorkbenchInput {
@@ -136,9 +146,9 @@ export function populatedOptionsWorkbenchFixture(
       {
         promotion_id: "promotion-options-research-001",
         state: "held",
-        passed_gate_count: 1,
-        total_gate_count: 2,
-        blockers: ["manual_approval_pending"],
+        passed_gate_count: 6,
+        total_gate_count: 7,
+        blockers: ["manual_approval_required"],
         trace_id: promotionTraceId,
       },
     ],
@@ -149,6 +159,20 @@ export const derivativesPaperHappyFixture = dashboardSnapshotV2Schema.parse({
   ...snapshotV2,
   workspaces: {
     ...snapshotV2.workspaces,
+    command_center: {
+      ...snapshotV2.workspaces.command_center,
+      agents: primaryAgents.map((agentId) => ({
+        agent_id: agentId,
+        label: agentId
+          .split("_")
+          .map((word) => `${word[0]?.toUpperCase() ?? ""}${word.slice(1)}`)
+          .join(" "),
+        role: `${agentId} autonomous research`,
+        capabilities: ["conversation", "directed_tool", "autonomous_research"],
+        runtime_state: "idle",
+        trace_id: snapshotV2.workspaces.command_center.trace_id,
+      })),
+    },
     derivatives: {
       ...snapshotV2.workspaces.derivatives,
       state: "populated",
@@ -197,12 +221,26 @@ export const derivativesPaperHappyFixture = dashboardSnapshotV2Schema.parse({
         state: "accepted",
         source_namespace: "derivatives.options.promotion",
       },
+      {
+        node_id: promotionReviewerTraceId,
+        kind: "reviewer_decision",
+        label: "Independent Reviewer decision accepted",
+        observed_at: observedAt,
+        safe_ref: "c".repeat(64),
+        state: "accepted",
+        source_namespace: "derivatives.options.promotion",
+      },
       blocker(promotionBlockerTraceId, "manual approval pending"),
     ],
     edges: [
       ...snapshotV2.traces.edges,
       { from_node_id: quoteTraceId, to_node_id: optionsTerminalTraceId, kind: "reviewed_by" },
-      { from_node_id: promotionTraceId, to_node_id: promotionBlockerTraceId, kind: "blocked_by" },
+      { from_node_id: promotionTraceId, to_node_id: promotionReviewerTraceId, kind: "reviewed_by" },
+      {
+        from_node_id: promotionReviewerTraceId,
+        to_node_id: promotionBlockerTraceId,
+        kind: "blocked_by",
+      },
     ],
   },
   projection: {
