@@ -8,6 +8,9 @@ import { snapshotV2 } from "../snapshot_v2_fixture";
 // Fixture-only exception: complete paper and options scenarios remain readable above 250 lines.
 const observedAt = snapshotV2.generated_at;
 const quoteTraceId = "trace.derivatives.options.current";
+const optionsTerminalTraceId = "trace.derivatives.options.reviewer";
+const promotionTraceId = "trace.derivatives.options.promotion";
+const promotionBlockerTraceId = "trace.derivatives.options.promotion.blocker";
 
 const derivativeItems = [
   derivative(
@@ -136,7 +139,7 @@ export function populatedOptionsWorkbenchFixture(
         passed_gate_count: 1,
         total_gate_count: 2,
         blockers: ["manual_approval_pending"],
-        trace_id: quoteTraceId,
+        trace_id: promotionTraceId,
       },
     ],
   };
@@ -149,7 +152,7 @@ export const derivativesPaperHappyFixture = dashboardSnapshotV2Schema.parse({
     derivatives: {
       ...snapshotV2.workspaces.derivatives,
       state: "populated",
-      summary: "Current licensed options plus bounded derivatives research context",
+      summary: "DEMONSTRATION · RESEARCH ONLY · bounded derivatives research context",
       total_count: derivativeItems.length,
       projected_count: derivativeItems.length,
       items: derivativeItems,
@@ -158,7 +161,7 @@ export const derivativesPaperHappyFixture = dashboardSnapshotV2Schema.parse({
     paper: {
       ...snapshotV2.workspaces.paper,
       state: "populated",
-      summary: "Finalized Paper ledger and complete lifecycle",
+      summary: "DEMONSTRATION · RESEARCH ONLY · finalized Paper lifecycle",
       total_count: paperItems.length,
       projected_count: paperItems.length,
       items: paperItems,
@@ -176,8 +179,31 @@ export const derivativesPaperHappyFixture = dashboardSnapshotV2Schema.parse({
         state: "accepted",
         source_namespace: "derivatives.options.current",
       },
+      {
+        node_id: optionsTerminalTraceId,
+        kind: "reviewer_decision",
+        label: "Options research review complete",
+        observed_at: observedAt,
+        safe_ref: "c".repeat(64),
+        state: "accepted",
+        source_namespace: "derivatives.options.current",
+      },
+      {
+        node_id: promotionTraceId,
+        kind: "source_receipt",
+        label: "Options promotion evidence",
+        observed_at: observedAt,
+        safe_ref: "c".repeat(64),
+        state: "accepted",
+        source_namespace: "derivatives.options.promotion",
+      },
+      blocker(promotionBlockerTraceId, "manual approval pending"),
     ],
-    edges: snapshotV2.traces.edges,
+    edges: [
+      ...snapshotV2.traces.edges,
+      { from_node_id: quoteTraceId, to_node_id: optionsTerminalTraceId, kind: "reviewed_by" },
+      { from_node_id: promotionTraceId, to_node_id: promotionBlockerTraceId, kind: "blocked_by" },
+    ],
   },
   projection: {
     ...snapshotV2.projection,
@@ -320,8 +346,14 @@ function unavailableOptionsWorkbenchFixture(): OptionsWorkbenchInput {
   const populated = populatedOptionsWorkbenchFixture({ state: "unavailable", selectable: false });
   return {
     ...populated,
+    market: { ...populated.market, trace_id: snapshotV2.workspaces.derivatives.trace_id },
+    agent: { ...populated.agent, trace_id: snapshotV2.workspaces.derivatives.trace_id },
+    experiment: { ...populated.experiment, trace_id: snapshotV2.workspaces.derivatives.trace_id },
+    scenario: null,
+    promotions: [],
     chain: {
       ...populated.chain,
+      trace_id: snapshotV2.workspaces.derivatives.trace_id,
       state: "unavailable",
       observed_at: null,
       blocker_code: "canonical_option_chain_missing",
