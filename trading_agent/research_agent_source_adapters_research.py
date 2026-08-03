@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 from typing import Final, Protocol, final
 
-from trading_agent.dashboard_projection_derivatives import project_derivatives
 from trading_agent.experiment_ledger_models import TrialEventKind
 from trading_agent.experiment_ledger_store import (
     ExperimentLedgerReader,
@@ -15,14 +14,13 @@ from trading_agent.experiment_ledger_store import (
 )
 from trading_agent.lane_review_store import InvalidLaneReviewSourceError, LaneReviewReader
 from trading_agent.research_agent_cycle_models import ResearchAgentEvidenceV1, ResearchAgentTriggerKind
-from trading_agent.research_agent_derivatives_payload import stable_derivatives_payload
+from trading_agent.research_agent_source_adapter_derivatives import DerivativesSourceAdapter
 from trading_agent.research_agent_source_common import (
     CapabilityEvidenceSpec,
     InvalidResearchAgentSourceError,
     ResearchAgentEvidenceMaterial,
     canonical_model_json,
     capability_evidence,
-    interval_bucket,
     require_private_source_file,
 )
 from trading_agent.swing_shadow_review_store import (
@@ -223,43 +221,6 @@ class SystematicSourceAdapter:
                 ),
                 now,
             ),
-        )
-
-
-@final
-class DerivativesSourceAdapter:
-    __slots__ = ()
-
-    def collect(
-        self,
-        paths: ResearchSourcePaths,
-        now: dt.datetime,
-    ) -> tuple[ResearchAgentEvidenceV1, ...]:
-        projection = project_derivatives(paths.outputs_root, now=now)
-        if projection.workspace.state in {"corrupt", "error"}:
-            raise InvalidResearchAgentSourceError(reason="derivatives_source_invalid")
-        blocker = projection.workspace.blocker_code
-        source_key = "derivatives.snapshot" if blocker is None else f"derivatives.blocked.{blocker}"
-        observed_at = projection.workspace.observed_at or interval_bucket(now, 15)
-        payload = json.dumps(
-            {
-                "interval_observed_at": observed_at.isoformat(),
-                "projection": json.loads(stable_derivatives_payload(projection)),
-            },
-            ensure_ascii=True,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        return (
-            ResearchAgentEvidenceMaterial(
-                family="derivatives_research",
-                trigger=ResearchAgentTriggerKind.MARKET_EVENT,
-                source_key=source_key,
-                observed_at=observed_at,
-                available_at=observed_at,
-                market_id="us_equities",
-                canonical_payload=payload,
-            ).evidence(),
         )
 
 

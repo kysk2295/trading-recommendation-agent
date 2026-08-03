@@ -9,7 +9,7 @@ from trading_agent.alpaca_option_chain_capability import (
     AlpacaOptionChainCapabilityError,
     project_alpaca_option_chain_capability,
 )
-from trading_agent.alpaca_option_chain_models import OptionChainStatus
+from trading_agent.alpaca_option_chain_models import OptionChainStatus, OptionFeed
 from trading_agent.alpaca_option_chain_store import (
     AlpacaOptionChainStore,
     AlpacaOptionChainStoreError,
@@ -70,9 +70,17 @@ def read_options_section(outputs: Path, now: dt.datetime) -> DerivativesSection:
         capability.entitlement.real_time
         and capability.entitlement.redistribution_policy is not RedistributionPolicy.NONE
     )
-    blocker = None if current and licensed else (
-        "current_quote_not_licensed" if not licensed else "options_receipt_stale"
-    )
+    match chain.request.feed:
+        case OptionFeed.INDICATIVE:
+            blocker = "indicative_research_only"
+        case OptionFeed.OPRA:
+            blocker = None if current and licensed else (
+                "current_quote_not_licensed"
+                if not licensed
+                else "options_receipt_stale"
+            )
+        case unreachable:
+            assert_never(unreachable)
     source_id = "trace.derivatives.options"
     items = tuple(
         WorkspaceItemV2(

@@ -9,8 +9,8 @@ from typing import Final, Literal, assert_never
 from pydantic import BaseModel, ConfigDict, Field
 
 from trading_agent.dashboard_agent_family import AgentFamilyId
-from trading_agent.dashboard_projection_derivatives import project_derivatives
 from trading_agent.research_agent_cycle_models import ResearchAgentEvidenceV1
+from trading_agent.research_agent_derivatives_supply_classifier import classify_derivatives_supply
 from trading_agent.research_agent_service_config import ResearchAgentServiceConfig
 from trading_agent.research_agent_source_supply import (
     InvalidMarketContextSupplyError,
@@ -218,28 +218,12 @@ def _derivatives(
     now: dt.datetime,
     facts: _FamilyEvidence,
 ) -> FamilySourceSupplyStatus:
-    projection = project_derivatives(outputs, now=now).workspace
-    if projection.state in {"corrupt", "error"}:
-        return _status(
-            facts, "blocked", _Classification("derivatives_source_invalid", "repair_derivatives_source_integrity")
-        )
-    if projection.projected_count > 0 and projection.blocker_code == "current_quote_not_licensed":
-        return _status(
-            facts,
-            "ready",
-            _Classification("research_shadow_available_realtime_entitlement_missing", "continue_research_shadow_only"),
-        )
-    if projection.blocker_code == "options_entitlement_missing":
-        return _status(
-            facts,
-            "operator_action_required",
-            _Classification(
-                "external_realtime_entitlement_unverified", "obtain_reviewed_derivatives_research_entitlement"
-            ),
-        )
-    if projection.blocker_code is not None:
-        return _status(facts, "blocked", _Classification(projection.blocker_code, "repair_derivatives_research_source"))
-    return _status(facts, "ready", _Classification("reviewed_research_source_ready", "continue_research_shadow_only"))
+    classification = classify_derivatives_supply(outputs, now)
+    return _status(
+        facts,
+        classification.state,
+        _Classification(classification.reason, classification.next_action),
+    )
 
 
 def _status(

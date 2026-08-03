@@ -13,6 +13,7 @@ import pytest
 
 from tests.research_agent_primary_fixtures import NOW, seed_day, seed_opportunity, source_paths, write_service_config
 from tests.research_agent_research_source_fixtures import populated_source_paths
+from tests.test_dashboard_projection_derivatives import seed_indicative_options
 from trading_agent.market_risk import MARKET_RISK_HEADER
 from trading_agent.research_agent_configured_collector import ConfiguredResearchAgentEvidenceCollector
 from trading_agent.research_agent_service_config import load_research_agent_service_config
@@ -220,6 +221,24 @@ def test_derivatives_research_shadow_is_ready_without_current_quote_authority(tm
     assert derivative.state == "ready"
     assert derivative.reason == "research_shadow_available_realtime_entitlement_missing"
     assert derivative.next_action == "continue_research_shadow_only"
+
+
+def test_free_indicative_derivatives_are_research_ready_but_never_opra(tmp_path: Path) -> None:
+    # Given a current bounded indicative chain with no OPRA authority artifact
+    paths = source_paths(tmp_path)
+    seed_indicative_options(paths.outputs_root, NOW)
+    config = load_research_agent_service_config(write_service_config(tmp_path, paths))
+
+    # When the host supply status classifies Derivatives Research
+    report = inspect_source_supply(config, NOW + dt.timedelta(minutes=1), False)
+
+    # Then it is research-ready while the non-OPRA limitation remains explicit
+    derivative = report.families[-1]
+    assert derivative.agent_family_id == "derivatives_research"
+    assert derivative.state == "ready"
+    assert derivative.reason == "indicative_research_ready_not_opra"
+    assert derivative.next_action == "continue_indicative_research_only"
+    assert report.provider_calls == report.network_calls == report.broker_mutation == 0
 
 
 def _mutate_risk(path: Path, mutation: RiskMutation) -> None:

@@ -1,0 +1,166 @@
+from __future__ import annotations
+
+import datetime as dt
+import plistlib
+import shutil
+import stat
+from pathlib import Path
+
+import run_alpaca_indicative_research as service_cli
+from trading_agent.alpaca_indicative_research import (
+    IndicativeResearchCollection,
+    IndicativeResearchPlan,
+    collect_indicative_research,
+    plan_indicative_research,
+)
+from trading_agent.alpaca_indicative_research_service_config import (
+    load_indicative_research_service_config,
+    verify_indicative_research_launch_agent,
+)
+from trading_agent.alpaca_option_chain_models import (
+    OptionChainRawResponse,
+    OptionChainRequest,
+    OptionContractType,
+)
+from trading_agent.alpaca_option_contract_models import (
+    OptionContractCatalogRequest,
+    OptionContractRawResponse,
+)
+
+PROJECT = Path(__file__).parents[1]
+FIXTURES = PROJECT / "tests" / "fixtures"
+
+
+class _FixtureChainFetcher:
+    def fetch_page(
+        self,
+        request: OptionChainRequest,
+        page_index: int,
+        page_token: str | None,
+    ) -> OptionChainRawResponse:
+        return OptionChainRawResponse(
+            request.request_id,
+            page_index,
+            page_token,
+            dt.datetime(2026, 7, 23, 14, 35, tzinfo=dt.UTC),
+            200,
+            "application/json",
+            (FIXTURES / "alpaca_option_chain" / "page-001.json").read_bytes(),
+        )
+
+
+class _FixtureCatalogFetcher:
+    def fetch_page(
+        self,
+        request: OptionContractCatalogRequest,
+        page_index: int,
+        page_token: str | None,
+    ) -> OptionContractRawResponse:
+        return OptionContractRawResponse(
+            request.request_id,
+            page_index,
+            page_token,
+            dt.datetime(2026, 7, 23, 14, 35, tzinfo=dt.UTC),
+            200,
+            "application/json",
+            (FIXTURES / "alpaca_option_contract" / "page-001.json").read_bytes(),
+        )
+
+
+def test_session_plan_waits_for_delayed_feed_and_uses_next_regular_friday() -> None:
+    # Given a regular New York session immediately before and at the 15-minute delay boundary
+    before = dt.datetime(2026, 7, 21, 13, 44, 59, tzinfo=dt.UTC)
+    eligible = dt.datetime(2026, 7, 21, 13, 45, tzinfo=dt.UTC)
+
+    # When the free indicative collection plan is evaluated
+    waiting = plan_indicative_research(before)
+    plan = plan_indicative_research(eligible)
+
+    # Then no premature collection occurs and the next tradable Friday expiry is bounded
+    assert waiting is None
+    assert plan is not None
+    assert plan.session_date == dt.date(2026, 7, 21)
+    assert plan.expiration_date == dt.date(2026, 7, 24)
+
+
+def test_fixture_collection_persists_once_and_replays_without_fetchers(tmp_path: Path) -> None:
+    # Given one bounded AAPL call-chain plan backed by provider-shaped fixtures
+    plan = IndicativeResearchPlan(
+        session_date=dt.date(2026, 7, 23),
+        expiration_date=dt.date(2026, 7, 24),
+        underlying_symbol="AAPL",
+        contract_type=OptionContractType.CALL,
+    )
+    outputs = tmp_path / "outputs"
+
+    # When it is collected and then repeated with no network fetchers
+    first = collect_indicative_research(plan, outputs, _FixtureCatalogFetcher(), _FixtureChainFetcher())
+    replay = collect_indicative_research(plan, outputs, None, None)
+
+    # Then both canonical stores contain research evidence and the repeat is local-only
+    assert first.chain_snapshots == first.contracts == 1
+    assert first.network_sources == 2
+    assert first.replayed is False
+    assert replay == IndicativeResearchCollection(
+        session_date=plan.session_date,
+        expiration_date=plan.expiration_date,
+        chain_snapshots=1,
+        contracts=1,
+        replayed=True,
+        network_sources=0,
+    )
+    assert stat.S_IMODE((outputs / "derivatives" / "option-chain.sqlite3").stat().st_mode) == 0o600
+    assert stat.S_IMODE((outputs / "derivatives" / "option-contracts.sqlite3").stat().st_mode) == 0o600
+
+
+def test_provision_is_secret_free_and_tick_waits_without_credentials(tmp_path: Path) -> None:
+    # Given a private service destination and no credentials file
+    config_path = tmp_path / "private" / "service.json"
+    plist_path = tmp_path / "private" / "com.example.indicative.plist"
+    reports = tmp_path / "reports"
+    uv_path = Path(shutil.which("uv") or "")
+    args = (
+        "provision",
+        "--label",
+        "com.example.indicative",
+        "--project-root",
+        str(PROJECT),
+        "--uv-path",
+        str(uv_path),
+        "--outputs-root",
+        str(tmp_path / "outputs"),
+        "--credentials-path",
+        str(tmp_path / "missing.env"),
+        "--runtime-output-root",
+        str(tmp_path / "runtime"),
+        "--config",
+        str(config_path),
+        "--plist",
+        str(plist_path),
+        "--output-dir",
+        str(reports),
+    )
+
+    # When the service is provisioned and ticked before the collection window
+    provisioned = service_cli.main(args)
+    ticked = service_cli.main(
+        ("tick", "--config", str(config_path), "--output-dir", str(reports)),
+        clock=lambda: dt.datetime(2026, 7, 21, 13, 44, tzinfo=dt.UTC),
+    )
+
+    # Then launchd polls every 15 minutes without credentials or mutation authority in the plist
+    assert provisioned == ticked == 0
+    config = load_indicative_research_service_config(config_path)
+    payload = plistlib.loads(plist_path.read_bytes())
+    assert payload["StartInterval"] == 900
+    assert payload["RunAtLoad"] is True
+    assert "EnvironmentVariables" not in payload
+    assert "paper-api.alpaca.markets" not in plist_path.read_text(encoding="utf-8")
+    assert stat.S_IMODE(config_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(plist_path.stat().st_mode) == 0o600
+    assert verify_indicative_research_launch_agent(config_path, plist_path).ready is True
+    assert config.credentials_path.name == "missing.env"
+    report = (reports / service_cli.REPORT_NAME).read_text(encoding="utf-8")
+    assert "result: waiting_session" in report
+    assert "OPRA authority: false" in report
+    assert "order mutation: none" in report

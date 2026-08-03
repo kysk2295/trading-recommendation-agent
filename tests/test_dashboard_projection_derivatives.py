@@ -102,6 +102,61 @@ def test_fresh_authority_never_launders_stale_underlying_quote(tmp_path: Path) -
     assert section.items == ()
 
 
+def test_indicative_chain_is_explicit_research_only_evidence(tmp_path: Path) -> None:
+    # Given a successful bounded Alpaca indicative chain and matching contract catalog
+    outputs = tmp_path / "outputs"
+    observed_at = dt.datetime(2026, 7, 23, 14, 35, tzinfo=dt.UTC)
+    seed_indicative_options(outputs, observed_at)
+
+    # When the derivatives workspace projects the free feed without OPRA authority
+    projection = project_derivatives(outputs, now=observed_at + dt.timedelta(minutes=1))
+
+    # Then the data is usable only as a populated non-OPRA research shadow
+    assert projection.workspace.state == "blocked"
+    assert projection.workspace.blocker_code == "indicative_research_only"
+    assert projection.workspace.projected_count > 0
+
+
+def seed_indicative_options(outputs: Path, observed_at: dt.datetime) -> None:
+    chain_request = OptionChainRequest(
+        collection_id="indicative-research-chain",
+        underlying_symbol="AAPL",
+        feed=OptionFeed.INDICATIVE,
+        expiration_date=dt.date(2026, 7, 24),
+        contract_type=OptionContractType.CALL,
+        limit=100,
+        max_pages=2,
+    )
+    catalog_request = OptionContractCatalogRequest(
+        collection_id="indicative-research-catalog",
+        underlying_symbol="AAPL",
+        expiration_date=dt.date(2026, 7, 24),
+        contract_type=OptionContractType.CALL,
+        limit=100,
+        max_pages=2,
+    )
+    chain_store = AlpacaOptionChainStore(
+        outputs / "derivatives" / "option-chain.sqlite3"
+    )
+    catalog_store = AlpacaOptionContractStore(
+        outputs / "derivatives" / "option-contracts.sqlite3"
+    )
+    chain_store.preflight_write()
+    catalog_store.preflight_write()
+    _ = collect_alpaca_option_chain(
+        _ChainFetcher(observed_at, observed_at - dt.timedelta(minutes=15)),
+        chain_store,
+        chain_request,
+        _clock=iter((observed_at - dt.timedelta(seconds=2), observed_at)).__next__,
+    )
+    _ = collect_alpaca_option_contracts(
+        _CatalogFetcher(observed_at),
+        catalog_store,
+        catalog_request,
+        _clock=iter((observed_at - dt.timedelta(seconds=2), observed_at)).__next__,
+    )
+
+
 def _licensed_quote_section(tmp_path: Path, *, quote_at: dt.datetime) -> DerivativesSection:
     observed_at = dt.datetime(2026, 7, 23, 14, 31, 30, tzinfo=dt.UTC)
     outputs = tmp_path / "outputs"
