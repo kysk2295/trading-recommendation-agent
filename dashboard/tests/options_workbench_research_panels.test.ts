@@ -96,6 +96,12 @@ describe("complete options research panels", () => {
     expect(await room.getByRole("button", { name: /Agent Room Evidence Trace/ }).count()).toBe(1);
   });
 
+  test("aggregates an eight-place Greek without binary rounding drift", async () => {
+    await mount(greekPrecisionFixture());
+    await page.locator("#strategy_agent_tab").click();
+    expect(await metric(page.locator("#strategy_agent"), "net-delta")).toBe("12.3457");
+  });
+
   test("renders the immutable experiment trace and explicit unprojected research gates", async () => {
     // Given: the experiment section references the current source-to-reviewer trace.
     await mount(derivativesPaperHappyFixture);
@@ -240,6 +246,30 @@ function systemSummaryFixture(summary: string): unknown {
     workspaces: {
       ...derivativesPaperHappyFixture.workspaces,
       system: { ...derivativesPaperHappyFixture.workspaces.system, summary },
+    },
+  };
+}
+
+function greekPrecisionFixture(): unknown {
+  const workbench = derivativesPaperHappyFixture.workspaces.derivatives.workbench;
+  return {
+    ...derivativesPaperHappyFixture,
+    workspaces: {
+      ...derivativesPaperHappyFixture.workspaces,
+      derivatives: {
+        ...derivativesPaperHappyFixture.workspaces.derivatives,
+        workbench: {
+          ...workbench,
+          chain: {
+            ...workbench.chain,
+            rows: workbench.chain.rows.map((row) =>
+              row.call?.contract_id === "aapl-20260821-c-200"
+                ? { ...row, call: { ...row.call, delta: "0.12345678" } }
+                : row,
+            ),
+          },
+        },
+      },
     },
   };
 }

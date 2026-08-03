@@ -1,4 +1,5 @@
 import { buttonElement, textElement } from "../dom";
+import { formatOperationalRatio, parseOperationalDecimal } from "../options_workbench_decimal";
 import type { OptionsWorkbench } from "../options_workbench_schema";
 import { selectableResearchLeg } from "./options_workbench_presenters";
 import { type WorkbenchTraceContext, workbenchTraceButton } from "./options_workbench_trace";
@@ -87,7 +88,7 @@ function quoteCells(
   return [
     valueCell(`${cell.provider} · ${cell.state}`, "state-badge state-neutral"),
     valueCell(pair(cell.bid, cell.ask)),
-    valueCell(midSpread(cell.bid, cell.ask)),
+    valueCell(operationalMidSpread(cell.bid, cell.ask)),
     valueCell(cell.last),
     valueCell(pair(integerText(cell.volume), integerText(cell.open_interest))),
     valueCell(cell.implied_volatility),
@@ -152,7 +153,8 @@ function legCell(
 ): HTMLTableCellElement {
   const tableCell = document.createElement("td");
   const selected = selectableResearchLeg(cell);
-  if (selected.kind === "blocked") {
+  const parsedStrike = parseOperationalDecimal(strike);
+  if (selected.kind === "blocked" || parsedStrike.kind === "blocked") {
     tableCell.textContent = cell.state;
     return tableCell;
   }
@@ -162,7 +164,7 @@ function legCell(
     onSelect({
       contractId: selected.contractId,
       side: selected.side,
-      strike: Number(strike),
+      strike: parsedStrike.decimal.value,
       premium: selected.premium,
       traceId: cell.trace_id,
     }),
@@ -179,12 +181,13 @@ function integerText(value: number | null): string | null {
   return value === null ? null : String(value);
 }
 
-function midSpread(bid: string | null, ask: string | null): string {
+export function operationalMidSpread(bid: string | null, ask: string | null): string {
   if (bid === null || ask === null) return "Unavailable / Unavailable";
-  const numericBid = Number(bid);
-  const numericAsk = Number(ask);
-  if (!Number.isFinite(numericBid) || !Number.isFinite(numericAsk)) {
+  const parsedBid = parseOperationalDecimal(bid);
+  const parsedAsk = parseOperationalDecimal(ask);
+  if (parsedBid.kind === "blocked" || parsedAsk.kind === "blocked")
     return "Unavailable / Unavailable";
-  }
-  return `${((numericBid + numericAsk) / 2).toFixed(2)} / ${(numericAsk - numericBid).toFixed(2)}`;
+  const bidScaled = parsedBid.decimal.scaled;
+  const askScaled = parsedAsk.decimal.scaled;
+  return `${formatOperationalRatio(bidScaled + askScaled, 2n, 2)} / ${formatOperationalRatio(askScaled - bidScaled, 1n, 2)}`;
 }

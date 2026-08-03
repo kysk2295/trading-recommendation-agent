@@ -112,6 +112,37 @@ describe("options workbench schema", () => {
     expect(issues).toContain("scenario_spots_not_strictly_ascending");
   });
 
+  test.each(["99999999999999999999999999999999", "0.123456789"])(
+    "rejects unsafe operational decimal %s",
+    (decimal) => {
+      const workbench = populatedOptionsWorkbenchFixture();
+      const first = workbench.chain.rows[0];
+      if (first?.call === null || first?.call === undefined)
+        throw new OptionsWorkbenchTestFixtureError();
+      const invalid = {
+        ...workbench,
+        chain: {
+          ...workbench.chain,
+          rows: [
+            { ...first, call: { ...first.call, bid: decimal } },
+            ...workbench.chain.rows.slice(1),
+          ],
+        },
+      };
+      expect(optionsWorkbenchSchema.safeParse(invalid).success).toBe(false);
+    },
+  );
+
+  test("accepts the eight-place operational fraction boundary", () => {
+    const workbench = populatedOptionsWorkbenchFixture();
+    const scenario = requireScenario(workbench);
+    const parsed = optionsWorkbenchSchema.safeParse({
+      ...workbench,
+      scenario: { ...scenario, spot: "200.12345678" },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
   test("rejects an incomplete approved promotion", () => {
     // Given: a held promotion rewritten as approved without satisfying its gates.
     const workbench = populatedOptionsWorkbenchFixture();

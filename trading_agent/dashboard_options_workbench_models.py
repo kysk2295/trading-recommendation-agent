@@ -7,14 +7,14 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validato
 
 _IDENTIFIER_PATTERN: Final = r"^[a-zA-Z0-9_.:-]{1,100}$"
 _SAFE_CODE_PATTERN: Final = r"^[a-z][a-z0-9_]{0,63}$"
-_DECIMAL_PATTERN: Final = r"^-?[0-9]+(?:\.[0-9]{1,8})?$"
-_NONNEGATIVE_DECIMAL_PATTERN: Final = r"^[0-9]+(?:\.[0-9]{1,8})?$"
+_DECIMAL_PATTERN: Final = r"^-?[0-9]{1,6}(?:\.[0-9]{1,8})?$"
+_NONNEGATIVE_DECIMAL_PATTERN: Final = r"^[0-9]{1,6}(?:\.[0-9]{1,8})?$"
 _ISO_DATE_PATTERN: Final = r"^\d{4}-\d{2}-\d{2}$"
 
 type Identifier = Annotated[str, Field(pattern=_IDENTIFIER_PATTERN, min_length=1, max_length=100)]
 type SafeCode = Annotated[str, Field(pattern=_SAFE_CODE_PATTERN, min_length=1, max_length=64)]
-type DecimalString = Annotated[str, Field(pattern=_DECIMAL_PATTERN, max_length=32)]
-type NonnegativeDecimalString = Annotated[str, Field(pattern=_NONNEGATIVE_DECIMAL_PATTERN, max_length=32)]
+type DecimalString = Annotated[str, Field(pattern=_DECIMAL_PATTERN, max_length=16)]
+type NonnegativeDecimalString = Annotated[str, Field(pattern=_NONNEGATIVE_DECIMAL_PATTERN, max_length=15)]
 type IsoDateString = Annotated[str, Field(pattern=_ISO_DATE_PATTERN)]
 
 

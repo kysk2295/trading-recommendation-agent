@@ -1,5 +1,6 @@
 import { buttonElement, textElement } from "../dom";
 import { resolveEvidenceTrace } from "../evidence_trace";
+import { parseOperationalDecimal } from "../options_workbench_decimal";
 import type { OptionsWorkbench } from "../options_workbench_schema";
 import type { ChainLegSelection } from "./options_chain_table";
 import { renderPayoffResearch, type ScenarioEntry } from "./options_workbench_payoff";
@@ -183,8 +184,19 @@ function scenarioBaseline(workbench: OptionsWorkbench): ScenarioBaseline {
     if (conversion.kind === "blocked") return { kind: "blocked" };
     entries.push({ contractId: fixture.contract_id, leg: conversion.leg });
   }
-  const spots = workbench.scenario.scenario_spots.map(Number);
-  if (spots.some((spot) => !Number.isFinite(spot))) return { kind: "blocked" };
+  const spots: number[] = [];
+  for (const spot of workbench.scenario.scenario_spots) {
+    const parsed = parseOperationalDecimal(spot);
+    if (parsed.kind === "blocked") return { kind: "blocked" };
+    spots.push(parsed.decimal.value);
+  }
+  if (
+    scenarioSeries(
+      entries.map((entry) => entry.leg),
+      spots,
+    ).some((point) => !Number.isFinite(point.payoff))
+  )
+    return { kind: "blocked" };
   return { kind: "ready", entries: Object.freeze(entries), spots: Object.freeze(spots) };
 }
 

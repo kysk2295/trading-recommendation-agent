@@ -1,3 +1,8 @@
+import {
+  operationalDecimalFromNumber,
+  parseOperationalDecimal,
+  safeOperationalNumber,
+} from "../options_workbench_decimal";
 import type { OptionChainCellInput, OptionsWorkbench } from "../options_workbench_schema";
 
 export type StrategyLeg = Readonly<{
@@ -26,31 +31,44 @@ export type WorkbenchStatePresentation = Readonly<{
 
 export type StrategyLegConversion =
   | Readonly<{ kind: "ready"; leg: StrategyLeg }>
-  | Readonly<{ kind: "blocked"; reason: "non_finite_decimal" }>;
+  | Readonly<{
+      kind: "blocked";
+      reason: "non_finite_decimal" | "unsafe_operational_decimal";
+    }>;
 
 export type SelectableResearchLeg =
   | Readonly<{ kind: "selected"; contractId: string; side: "call" | "put"; premium: number }>
   | Readonly<{
       kind: "blocked";
-      reason: "quote_not_selectable" | "quote_price_missing" | "non_finite_decimal";
+      reason:
+        | "quote_not_selectable"
+        | "quote_price_missing"
+        | "non_finite_decimal"
+        | "unsafe_operational_decimal";
     }>;
 
 type DecimalConversion =
   | Readonly<{ kind: "ready"; value: number }>
-  | Readonly<{ kind: "blocked"; reason: "non_finite_decimal" }>;
+  | Readonly<{
+      kind: "blocked";
+      reason: "non_finite_decimal" | "unsafe_operational_decimal";
+    }>;
 
 type WorkbenchState = OptionsWorkbench["market"]["state"];
 
 export function payoffAtExpiration(legs: readonly StrategyLeg[], spot: number): number {
-  return legs.reduce(
-    (total, leg) =>
-      total +
-      direction(leg.action) *
-        (intrinsic(leg.side, leg.strike, spot) - leg.premium) *
-        leg.quantity *
-        leg.multiplier,
-    0,
-  );
+  const parsedSpot = operationalDecimalFromNumber(spot);
+  if (parsedSpot.kind === "blocked") return Number.NaN;
+  let total = 0n;
+  for (const leg of legs) {
+    const strike = operationalDecimalFromNumber(leg.strike);
+    const premium = operationalDecimalFromNumber(leg.premium);
+    if (strike.kind === "blocked" || premium.kind === "blocked") return Number.NaN;
+    const intrinsic = scaledIntrinsic(leg.side, strike.decimal.scaled, parsedSpot.decimal.scaled);
+    const factor = BigInt(direction(leg.action) * leg.quantity * leg.multiplier);
+    total += factor * (intrinsic - premium.decimal.scaled);
+  }
+  return safeOperationalNumber(total) ?? Number.NaN;
 }
 
 export function scenarioSeries(
@@ -75,12 +93,9 @@ export function breakEvenPoints(legs: readonly StrategyLeg[]): readonly number[]
 export function strategyLegFromFixture(fixture: StrategyLegFixture): StrategyLegConversion {
   const strike = decimalNumber(fixture.strike);
   const premium = decimalNumber(fixture.premium);
-  if (
-    strike.kind === "blocked" ||
-    premium.kind === "blocked" ||
-    !Number.isFinite(fixture.quantity) ||
-    !Number.isFinite(fixture.multiplier)
-  ) {
+  if (strike.kind === "blocked") return strike;
+  if (premium.kind === "blocked") return premium;
+  if (!Number.isFinite(fixture.quantity) || !Number.isFinite(fixture.multiplier)) {
     return { kind: "blocked", reason: "non_finite_decimal" };
   }
   return {
@@ -147,6 +162,7 @@ function appendBreakEven(
   const slope = payoffSlope(legs, probe);
   if (slope === 0) return;
   const root = probe - payoffAtExpiration(legs, probe) / slope;
+  if (!Number.isFinite(root)) return;
   if (root < lower || (upper !== null && root > upper) || breakEvens.includes(root)) return;
   breakEvens.push(root);
 }
@@ -174,12 +190,12 @@ function activeSlope(side: StrategyLeg["side"], strike: number, spot: number): n
   }
 }
 
-function intrinsic(side: StrategyLeg["side"], strike: number, spot: number): number {
+function scaledIntrinsic(side: StrategyLeg["side"], strike: bigint, spot: bigint): bigint {
   switch (side) {
     case "call":
-      return Math.max(spot - strike, 0);
+      return spot > strike ? spot - strike : 0n;
     case "put":
-      return Math.max(strike - spot, 0);
+      return strike > spot ? strike - spot : 0n;
     default:
       return assertNever(side);
   }
@@ -198,9 +214,9 @@ function direction(action: StrategyLeg["action"]): 1 | -1 {
 
 function decimalNumber(value: string): DecimalConversion {
   const numeric = Number(value);
-  return Number.isFinite(numeric)
-    ? { kind: "ready", value: numeric }
-    : { kind: "blocked", reason: "non_finite_decimal" };
+  if (!Number.isFinite(numeric)) return { kind: "blocked", reason: "non_finite_decimal" };
+  const parsed = parseOperationalDecimal(value);
+  return parsed.kind === "ready" ? { kind: "ready", value: parsed.decimal.value } : parsed;
 }
 
 function assertNever(value: never): never {

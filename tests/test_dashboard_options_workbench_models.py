@@ -16,6 +16,8 @@ from trading_agent.dashboard_options_workbench_models import (
 )
 
 OVERLONG_DECIMAL = "1" * 33
+HUGE_FINITE_DECIMAL = "99999999999999999999999999999999"
+TOO_PRECISE_DECIMAL = "0.123456789"
 
 
 def observed_at() -> datetime:
@@ -123,6 +125,17 @@ def test_option_chain_cell_rejects_quote_longer_than_32_characters() -> None:
     # Given: an oversized quote; When: parsed; Then: its numeric-string boundary rejects it.
     with pytest.raises(ValidationError):
         OptionChainCellV2.model_validate(option_cell("call").model_dump() | {"bid": OVERLONG_DECIMAL})
+
+
+@pytest.mark.parametrize("invalid", (HUGE_FINITE_DECIMAL, TOO_PRECISE_DECIMAL))
+def test_option_chain_cell_rejects_unsafe_operational_decimal(invalid: str) -> None:
+    with pytest.raises(ValidationError):
+        OptionChainCellV2.model_validate(option_cell("call").model_dump() | {"bid": invalid})
+
+
+def test_option_chain_cell_accepts_eight_fractional_places() -> None:
+    parsed = OptionChainCellV2.model_validate(option_cell("call").model_dump() | {"bid": "0.12345678"})
+    assert parsed.bid == "0.12345678"
 
 
 def test_option_chain_row_rejects_call_side_mismatch() -> None:
@@ -250,6 +263,12 @@ def test_strategy_leg_rejects_numeric_string_longer_than_32_characters() -> None
     # Given: an oversized strategy premium; When: parsed; Then: its numeric-string boundary rejects it.
     with pytest.raises(ValidationError):
         StrategyLegV2.model_validate(scenario().legs[0].model_dump() | {"premium": OVERLONG_DECIMAL})
+
+
+@pytest.mark.parametrize("invalid", (HUGE_FINITE_DECIMAL, TOO_PRECISE_DECIMAL))
+def test_strategy_leg_rejects_unsafe_operational_decimal(invalid: str) -> None:
+    with pytest.raises(ValidationError):
+        StrategyLegV2.model_validate(scenario().legs[0].model_dump() | {"premium": invalid})
 
 
 def test_strategy_scenario_rejects_numeric_string_longer_than_32_characters() -> None:

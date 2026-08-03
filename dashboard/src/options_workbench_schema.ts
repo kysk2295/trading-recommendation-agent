@@ -1,15 +1,13 @@
 import { z } from "zod";
+import {
+  NONNEGATIVE_OPERATIONAL_DECIMAL_PATTERN,
+  OPERATIONAL_DECIMAL_PATTERN,
+} from "./options_workbench_decimal";
 
 const boundedIdSchema = z.string().regex(/^[a-zA-Z0-9_.:-]{1,100}$/);
 const safeCodeSchema = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/);
-const decimalSchema = z
-  .string()
-  .max(32)
-  .regex(/^-?[0-9]+(?:\.[0-9]{1,8})?$/);
-const nonnegativeDecimalSchema = z
-  .string()
-  .max(32)
-  .regex(/^[0-9]+(?:\.[0-9]{1,8})?$/);
+const decimalSchema = z.string().max(16).regex(OPERATIONAL_DECIMAL_PATTERN);
+const nonnegativeDecimalSchema = z.string().max(15).regex(NONNEGATIVE_OPERATIONAL_DECIMAL_PATTERN);
 const timestampSchema = z.iso.datetime({ offset: true });
 const dateSchema = z.iso.date();
 

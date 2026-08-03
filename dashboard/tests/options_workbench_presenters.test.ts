@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { OptionChainCellInput } from "../src/options_workbench_schema";
+import { operationalMidSpread } from "../src/workspaces/options_chain_cells";
 import {
   breakEvenPoints,
   payoffAtExpiration,
@@ -59,6 +60,41 @@ describe("options workbench presenters", () => {
 
     // Then: the expected conversion failure is discriminated rather than thrown.
     expect(result).toEqual({ kind: "blocked", reason: "non_finite_decimal" });
+  });
+
+  test("rejects a huge finite strategy decimal before Number precision collapses", () => {
+    const result = strategyLegFromFixture({
+      ...longCallFixture(),
+      strike: "99999999999999999999999999999999",
+    });
+    expect(result).toEqual({ kind: "blocked", reason: "unsafe_operational_decimal" });
+  });
+
+  test("rejects an unsafe selected-leg decimal", () => {
+    const result = selectableResearchLeg(optionCell({ ask: "99999999999999999999999999999999" }));
+    expect(result).toEqual({ kind: "blocked", reason: "unsafe_operational_decimal" });
+  });
+
+  test("rounds midpoint and spread from fixed operational decimals", () => {
+    expect(operationalMidSpread("1.004999", "1.005001")).toBe("1.01 / 0.00");
+    expect(operationalMidSpread("0.123456789", "0.12345679")).toBe("Unavailable / Unavailable");
+  });
+
+  test("fails closed when bounded decimals overflow safe payoff presentation", () => {
+    const payoff = payoffAtExpiration(
+      [
+        {
+          action: "long",
+          side: "call",
+          strike: 1,
+          premium: 999_999,
+          quantity: 100_000,
+          multiplier: 100_000,
+        },
+      ],
+      1,
+    );
+    expect(Number.isNaN(payoff)).toBe(true);
   });
 
   test("presents canonical workbench state without quote authority", () => {

@@ -1,4 +1,5 @@
 import { textElement } from "../dom";
+import { formatOperationalRatio, parseOperationalDecimal } from "../options_workbench_decimal";
 import type { OptionsWorkbench } from "../options_workbench_schema";
 import { breakEvenPoints, type StrategyLeg, scenarioSeries } from "./options_workbench_presenters";
 
@@ -13,6 +14,15 @@ export function renderPayoffResearch(
 ): readonly Node[] {
   const legs = entries.map((entry) => entry.leg);
   const points = scenarioSeries(legs, spots);
+  if (points.some((point) => !Number.isFinite(point.payoff))) {
+    return [
+      textElement(
+        "p",
+        "Scenario unavailable · operational arithmetic exceeded the safe presentation boundary",
+        "options-research-warning",
+      ),
+    ];
+  }
   const figure = document.createElement("figure");
   figure.className = "options-payoff";
   figure.setAttribute("aria-label", "Strategy payoff visualization");
@@ -35,7 +45,10 @@ export function renderPayoffResearch(
     option.selected = spot === selectedSpot;
     select.append(option);
   }
-  select.addEventListener("change", () => onSpot(Number(select.value)));
+  select.addEventListener("change", () => {
+    const parsed = parseOperationalDecimal(select.value);
+    if (parsed.kind === "ready") onSpot(parsed.decimal.value);
+  });
   control.append(select);
   return [
     control,
@@ -117,12 +130,7 @@ function strategyMetrics(
   metric(list, "Sampled max loss", "sampled-max-loss", money(Math.min(...payoffs), workbench));
   const greeks = netGreeks(workbench, entries);
   for (const key of ["delta", "gamma", "theta", "vega"] as const) {
-    metric(
-      list,
-      `Net ${key}`,
-      `net-${key}`,
-      greeks === null ? unavailableGreeks() : greeks[key].toFixed(4),
-    );
+    metric(list, `Net ${key}`, `net-${key}`, greeks === null ? unavailableGreeks() : greeks[key]);
   }
   metric(list, "Underlying", "underlying", workbench.chain.underlying ?? "Unavailable");
   metric(list, "Edit availability", "edit-availability", "Local research legs only");
@@ -132,9 +140,9 @@ function strategyMetrics(
 function netGreeks(
   workbench: OptionsWorkbench,
   entries: readonly ScenarioEntry[],
-): Readonly<Record<"delta" | "gamma" | "theta" | "vega", number>> | null {
+): Readonly<Record<"delta" | "gamma" | "theta" | "vega", string>> | null {
   const cells = workbench.chain.rows.flatMap((row) => [row.call, row.put]).filter(isChainCell);
-  const total = { delta: 0, gamma: 0, theta: 0, vega: 0 };
+  const total = { delta: 0n, gamma: 0n, theta: 0n, vega: 0n };
   for (const entry of entries) {
     const cell = cells.find((candidate) => candidate.contract_id === entry.contractId);
     if (
@@ -144,12 +152,18 @@ function netGreeks(
       return null;
     const sign = entry.leg.action === "long" ? 1 : -1;
     for (const key of ["delta", "gamma", "theta", "vega"] as const) {
-      const value = Number(cell[key]);
-      if (!Number.isFinite(value)) return null;
-      total[key] += sign * entry.leg.quantity * entry.leg.multiplier * value;
+      const parsed = parseOperationalDecimal(cell[key] ?? "");
+      if (parsed.kind === "blocked") return null;
+      const factor = BigInt(sign * entry.leg.quantity * entry.leg.multiplier);
+      total[key] += factor * parsed.decimal.scaled;
     }
   }
-  return total;
+  return {
+    delta: formatOperationalRatio(total.delta, 1n, 4),
+    gamma: formatOperationalRatio(total.gamma, 1n, 4),
+    theta: formatOperationalRatio(total.theta, 1n, 4),
+    vega: formatOperationalRatio(total.vega, 1n, 4),
+  };
 }
 
 function isChainCell<T>(cell: T | null): cell is T {
