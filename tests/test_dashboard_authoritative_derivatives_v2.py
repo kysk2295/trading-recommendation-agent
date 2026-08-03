@@ -24,6 +24,7 @@ from trading_agent.cftc_tff_collection import collect_cftc_tff
 from trading_agent.cftc_tff_models import CftcTffRawResponse, CftcTffRequest
 from trading_agent.cftc_tff_store import CftcTffStore
 from trading_agent.dashboard_derivatives_futures import FUTURES_MASTER_FILE, read_futures_section
+from trading_agent.dashboard_provider_alpaca import read_alpaca_provider
 from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
 from trading_agent.futures_roll_security_master import load_futures_roll_security_master
 
@@ -87,6 +88,75 @@ def test_option_stores_do_not_grant_current_redistribution(tmp_path: Path) -> No
     )
     assert alpaca.state == "blocked"
     assert alpaca.entitlement == "research_only"
+
+
+def test_snapshot_fails_closed_when_option_chain_store_is_not_private(tmp_path: Path) -> None:
+    # Given complete local option stores whose chain database violates private-file mode
+    outputs = tmp_path / "outputs"
+    chain_request = OptionChainRequest(
+        collection_id="dashboard-chain-corrupt",
+        underlying_symbol="AAPL",
+        feed=OptionFeed.INDICATIVE,
+        expiration_date=dt.date(2026, 7, 24),
+        contract_type=OptionContractType.CALL,
+        limit=100,
+        max_pages=2,
+    )
+    contract_request = OptionContractCatalogRequest(
+        collection_id="dashboard-contracts-corrupt",
+        underlying_symbol="AAPL",
+        expiration_date=dt.date(2026, 7, 24),
+        contract_type=OptionContractType.CALL,
+        limit=100,
+        max_pages=2,
+    )
+    chain_store = AlpacaOptionChainStore(outputs / "derivatives" / "option-chain.sqlite3")
+    contract_store = AlpacaOptionContractStore(
+        outputs / "derivatives" / "option-contracts.sqlite3"
+    )
+    chain_store.preflight_write()
+    contract_store.preflight_write()
+    _ = collect_alpaca_option_chain(
+        _OptionChainFetcher(
+            (Path(__file__).parent / "fixtures/alpaca_option_chain/page-001.json").read_bytes()
+        ),
+        chain_store,
+        chain_request,
+        _clock=iter((NOW - dt.timedelta(minutes=2), NOW)).__next__,
+    )
+    _ = collect_alpaca_option_contracts(
+        _OptionContractFetcher(
+            (Path(__file__).parent / "fixtures/alpaca_option_contract/page-001.json").read_bytes()
+        ),
+        contract_store,
+        contract_request,
+        _clock=iter((NOW - dt.timedelta(minutes=2), NOW)).__next__,
+    )
+    (outputs / "derivatives" / "option-chain.sqlite3").chmod(0o644)
+
+    # When the provider and complete dashboard snapshot read the invalid chain store
+    evidence = read_alpaca_provider(outputs, NOW)
+    snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW)
+
+    # Then Data Sources and Workbench expose independent corrupt, zero-row blockers
+    alpaca = next(
+        capability
+        for capability in snapshot.workspaces.data_sources.capabilities
+        if capability.provider == "alpaca"
+    )
+    workbench = snapshot.workspaces.derivatives.workbench
+    assert evidence.state == "corrupt"
+    assert evidence.blocker_code == "alpaca_receipt_invalid"
+    assert alpaca.state == "corrupt"
+    assert workbench.chain.state == "corrupt"
+    assert workbench.chain.blocker_code == "derivatives_source_invalid"
+    assert workbench.chain.total_count == 0
+    assert workbench.chain.rows == ()
+    assert any(
+        edge.from_node_id == "trace.derivatives.options"
+        and edge.to_node_id == "trace.derivatives.options.blocker"
+        for edge in snapshot.traces.edges
+    )
 
 
 def test_futures_master_and_cftc_project_with_explicit_currentness(tmp_path: Path) -> None:
