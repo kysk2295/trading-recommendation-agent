@@ -13,8 +13,8 @@ _ISO_DATE_PATTERN: Final = r"^\d{4}-\d{2}-\d{2}$"
 
 type Identifier = Annotated[str, Field(pattern=_IDENTIFIER_PATTERN, min_length=1, max_length=100)]
 type SafeCode = Annotated[str, Field(pattern=_SAFE_CODE_PATTERN, min_length=1, max_length=64)]
-type DecimalString = Annotated[str, Field(pattern=_DECIMAL_PATTERN)]
-type NonnegativeDecimalString = Annotated[str, Field(pattern=_NONNEGATIVE_DECIMAL_PATTERN)]
+type DecimalString = Annotated[str, Field(pattern=_DECIMAL_PATTERN, max_length=32)]
+type NonnegativeDecimalString = Annotated[str, Field(pattern=_NONNEGATIVE_DECIMAL_PATTERN, max_length=32)]
 type IsoDateString = Annotated[str, Field(pattern=_ISO_DATE_PATTERN)]
 
 

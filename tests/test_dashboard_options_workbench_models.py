@@ -14,6 +14,8 @@ from trading_agent.dashboard_options_workbench_models import (
     WorkbenchSectionV2,
 )
 
+OVERLONG_DECIMAL = "1" * 33
+
 
 def observed_at() -> datetime:
     return datetime(2026, 8, 3, 14, 30, tzinfo=UTC)
@@ -136,6 +138,12 @@ def test_option_chain_cell_rejects_selectable_stale_quote_with_exact_reason() ->
         OptionChainCellV2.model_validate(call_cell().model_dump() | {"state": "stale"})
 
 
+def test_option_chain_cell_rejects_quote_longer_than_32_characters() -> None:
+    # Given: an oversized quote; When: parsed; Then: its numeric-string boundary rejects it.
+    with pytest.raises(ValidationError):
+        OptionChainCellV2.model_validate(call_cell().model_dump() | {"bid": OVERLONG_DECIMAL})
+
+
 def test_option_chain_row_rejects_call_side_mismatch() -> None:
     # Given: put in call column; When: parsed; Then: exact error is raised.
     with pytest.raises(ValidationError, match="call_cell_side_mismatch"):
@@ -187,7 +195,7 @@ def test_option_chain_rejects_unlisted_selected_expiration() -> None:
 
 def test_unavailable_option_chain_accepts_empty_rows() -> None:
     # Given: unavailable empty chain; When: parsed; Then: it remains a valid unavailable snapshot.
-    unavailable = OptionChainViewV2.model_validate(
+    assert OptionChainViewV2.model_validate(
         chain().model_dump()
         | {
             "state": "unavailable",
@@ -200,8 +208,7 @@ def test_unavailable_option_chain_accepts_empty_rows() -> None:
             "projected_count": 0,
             "rows": (),
         }
-    )
-    assert unavailable.rows == ()
+    ).rows == ()
 
 
 def test_workbench_section_requires_blocker_for_non_usable_state() -> None:
@@ -236,6 +243,18 @@ def test_strategy_scenario_rejects_unsorted_or_duplicate_spots(scenario_spots: t
             scenario_spots=scenario_spots,
             trace_id="scenario-trace",
         )
+
+
+def test_strategy_leg_rejects_numeric_string_longer_than_32_characters() -> None:
+    # Given: an oversized strategy premium; When: parsed; Then: its numeric-string boundary rejects it.
+    with pytest.raises(ValidationError):
+        StrategyLegV2.model_validate(scenario().legs[0].model_dump() | {"premium": OVERLONG_DECIMAL})
+
+
+def test_strategy_scenario_rejects_numeric_string_longer_than_32_characters() -> None:
+    # Given: an oversized scenario spot; When: parsed; Then: its numeric-string boundary rejects it.
+    with pytest.raises(ValidationError):
+        StrategyScenarioV2.model_validate(scenario().model_dump() | {"spot": OVERLONG_DECIMAL})
 
 
 def test_promotion_rejects_impossible_gate_counts() -> None:
