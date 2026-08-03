@@ -78,7 +78,7 @@ def test_option_stores_do_not_grant_current_redistribution(tmp_path: Path) -> No
 
     # Then research evidence is visible but current redistribution remains blocked
     derivatives = snapshot.workspaces.derivatives
-    assert derivatives.blocker_code == "current_quote_not_licensed"
+    assert derivatives.blocker_code == "indicative_research_only"
     assert any(item.item_id.startswith("derivative.option.") for item in derivatives.items)
     alpaca = next(
         capability
