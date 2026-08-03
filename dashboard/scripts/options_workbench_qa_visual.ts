@@ -86,7 +86,14 @@ async function capture(
 ): Promise<VisualCapture> {
   const screenshot = join(directory, screenshotName(width, state));
   await asyncScreenshot(page, screenshot);
-  return { width, state, screenshot };
+  return { width, state, screenshot: optionsWorkbenchScreenshotArtifactReference(width, state) };
+}
+
+export function optionsWorkbenchScreenshotArtifactReference(
+  width: number,
+  state: VisualState,
+): string {
+  return `screenshots/${screenshotName(width, state)}`;
 }
 
 function screenshotName(width: number, state: VisualState): string {
