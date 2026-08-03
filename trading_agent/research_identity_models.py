@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal, Self
+from typing import Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -11,6 +12,14 @@ from trading_agent.lane_identity_models import LaneId
 
 _STRATEGY_ID = re.compile(r"^[a-z0-9][a-z0-9_]{0,63}$")
 _VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+
+
+@dataclass(frozen=True, slots=True)
+class InvalidResearchIdentityError(ValueError):
+    reason: str
+
+    def __str__(self) -> str:
+        return self.reason
 
 
 class MarketId(StrEnum):
@@ -23,13 +32,25 @@ class AgentFamily(StrEnum):
     DAY_TRADING = "day_trading"
     SWING_TRADING = "swing_trading"
     SYSTEMATIC_QUANT = "systematic_quant"
+    DERIVATIVES_RESEARCH = "derivatives_research"
     MARKET_CONTEXT = "market_context"
     ALLOCATION_MANAGER = "allocation_manager"
+
+
+RUNTIME_RESEARCH_AGENT_FAMILIES: Final[tuple[AgentFamily, ...]] = (
+    AgentFamily.OPPORTUNITY_MANAGER,
+    AgentFamily.DAY_TRADING,
+    AgentFamily.SWING_TRADING,
+    AgentFamily.SYSTEMATIC_QUANT,
+    AgentFamily.DERIVATIVES_RESEARCH,
+    AgentFamily.MARKET_CONTEXT,
+)
 
 
 class AgentOutputKind(StrEnum):
     OPPORTUNITY = "opportunity"
     TRADE_SIGNAL = "trade_signal"
+    DERIVATIVES_RESEARCH = "derivatives_research"
     MARKET_CONTEXT = "market_context"
     ALLOCATION = "allocation"
 
@@ -51,7 +72,7 @@ class StrategyLaneRef(BaseModel):
     @model_validator(mode="after")
     def validate_identity(self) -> Self:
         if _STRATEGY_ID.fullmatch(self.strategy_id) is None:
-            raise ValueError("invalid strategy lane identity")
+            raise InvalidResearchIdentityError(reason="invalid strategy lane identity")
         return self
 
     @property
@@ -79,6 +100,7 @@ class AgentManifest(BaseModel):
             AgentFamily.DAY_TRADING: AgentOutputKind.TRADE_SIGNAL,
             AgentFamily.SWING_TRADING: AgentOutputKind.TRADE_SIGNAL,
             AgentFamily.SYSTEMATIC_QUANT: AgentOutputKind.TRADE_SIGNAL,
+            AgentFamily.DERIVATIVES_RESEARCH: AgentOutputKind.DERIVATIVES_RESEARCH,
             AgentFamily.MARKET_CONTEXT: AgentOutputKind.MARKET_CONTEXT,
             AgentFamily.ALLOCATION_MANAGER: AgentOutputKind.ALLOCATION,
         }[self.agent_family]
@@ -98,7 +120,7 @@ class AgentManifest(BaseModel):
             or self.output_kind is not expected_output
             or (self.operating_mode is AgentOperatingMode.ALPACA_PAPER and not paper_authorized)
         ):
-            raise ValueError("invalid agent manifest")
+            raise InvalidResearchIdentityError(reason="invalid agent manifest")
         return self
 
 
@@ -117,7 +139,9 @@ class LegacyExecutionLaneBinding(BaseModel):
             (MarketId.US_EQUITIES, AgentFamily.MARKET_CONTEXT): LaneId.MARKET_REGIME,
         }.get((self.strategy_lane.market_id, self.strategy_lane.agent_family))
         if expected is None or self.legacy_lane_id is not expected:
-            raise ValueError("strategy lane has no approved legacy execution binding")
+            raise InvalidResearchIdentityError(
+                reason="strategy lane has no approved legacy execution binding"
+            )
         return self
 
 
