@@ -162,6 +162,21 @@ describe("complete options research panels", () => {
     ).toBe(0);
   });
 
+  test("keeps a long non-empty-marker operation tail ordinarily wrappable", async () => {
+    // Given: an empty 0/0 workspace whose canonical summary has a different long trailing clause.
+    const summary =
+      "권위 있는 읽기 완료, 길게 이어지는 다른 운영 상태 설명은 일반 줄바꿈을 유지합니다";
+    await mount(systemSummaryFixture(summary));
+
+    // When: the System operations summary is rendered.
+    await page.locator("#promotion_operations_tab").click();
+    const system = page.locator('[data-operations-summary="system"]');
+
+    // Then: the data remains exact and no arbitrary comma-delimited tail receives nowrap semantics.
+    expect(await system.textContent()).toContain(summary);
+    expect(await system.locator(".options-operations-summary-tail").count()).toBe(0);
+  });
+
   test("fails closed when experiments and promotions have no canonical projection", async () => {
     // Given: the adverse workbench has no scenario, promotions, or usable chain.
     await mount(derivativesPaperAdverseFixture);
@@ -215,6 +230,16 @@ function missingGreekFixture(): unknown {
           },
         },
       },
+    },
+  };
+}
+
+function systemSummaryFixture(summary: string): unknown {
+  return {
+    ...derivativesPaperHappyFixture,
+    workspaces: {
+      ...derivativesPaperHappyFixture.workspaces,
+      system: { ...derivativesPaperHappyFixture.workspaces.system, summary },
     },
   };
 }

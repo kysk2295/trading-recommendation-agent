@@ -128,19 +128,18 @@ function workspaceSummaryLine(workspace: Workspace): HTMLParagraphElement {
       `${workspace.state} · ${workspace.projected_count}/${workspace.total_count} · `,
     ),
   );
-  const finalClauseAt = workspace.summary.lastIndexOf(", ");
-  if (finalClauseAt === -1) {
+  const emptyMarker = "항목 없음";
+  const hasEmptyMarker =
+    workspace.state === "empty" &&
+    workspace.total_count === 0 &&
+    workspace.projected_count === 0 &&
+    (workspace.summary === emptyMarker || workspace.summary.endsWith(`, ${emptyMarker}`));
+  if (!hasEmptyMarker) {
     paragraph.append(document.createTextNode(workspace.summary));
     return paragraph;
   }
-  paragraph.append(document.createTextNode(`${workspace.summary.slice(0, finalClauseAt + 1)} `));
-  paragraph.append(
-    textElement(
-      "span",
-      workspace.summary.slice(finalClauseAt + 2),
-      "options-operations-summary-tail",
-    ),
-  );
+  paragraph.append(document.createTextNode(workspace.summary.slice(0, -emptyMarker.length)));
+  paragraph.append(textElement("span", emptyMarker, "options-operations-summary-tail"));
   return paragraph;
 }
 
