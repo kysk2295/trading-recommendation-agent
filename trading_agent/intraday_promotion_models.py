@@ -19,6 +19,7 @@ _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 class PromotionAssessmentStatus(StrEnum):
     BLOCKED = "blocked"
     ELIGIBLE = "eligible"
+    MANUAL_APPROVAL_PENDING = "manual_approval_pending"
 
 
 class PromotionAssessmentContent(BaseModel):
@@ -39,7 +40,21 @@ class PromotionAssessmentContent(BaseModel):
             StrategyLifecycleState.SHADOW_CHAMPION,
             StrategyLifecycleState.PAPER_CHAMPION,
         }
-        eligible = self.status is PromotionAssessmentStatus.ELIGIBLE
+        status_valid = (
+            (
+                self.status is PromotionAssessmentStatus.ELIGIBLE
+                and not self.blockers
+            )
+            or (
+                self.status is PromotionAssessmentStatus.MANUAL_APPROVAL_PENDING
+                and self.blockers == ("manual_approval_required",)
+            )
+            or (
+                self.status is PromotionAssessmentStatus.BLOCKED
+                and bool(self.blockers)
+                and self.blockers != ("manual_approval_required",)
+            )
+        )
         if (
             _IDENTIFIER.fullmatch(self.strategy_version) is None
             or not _aware(self.assessed_at)
@@ -49,7 +64,7 @@ class PromotionAssessmentContent(BaseModel):
             or len(self.evidence_keys) != 6
             or any(_HEX64.fullmatch(value) is None for value in self.evidence_keys)
             or self.blockers != tuple(sorted(set(self.blockers)))
-            or eligible is bool(self.blockers)
+            or not status_valid
         ):
             raise ValueError("invalid intraday promotion assessment content")
         return self

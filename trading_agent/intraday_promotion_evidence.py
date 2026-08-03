@@ -54,6 +54,12 @@ class VerifiedIntradayPromotionEvidence:
     evidence_keys: tuple[str, ...]
     observed_at: tuple[dt.datetime, ...]
     blockers: tuple[str, ...]
+    trial_id: str = ""
+    experiment_artifact_id: str = ""
+    review_artifact_id: str = ""
+    data_version: str = ""
+    evaluator_version: str = ""
+    strategy_code_version: str = ""
 
 
 def load_intraday_promotion_evidence(
@@ -147,6 +153,14 @@ def load_intraday_promotion_evidence(
         evidence_keys=keys,
         observed_at=observed_at,
         blockers=tuple(sorted(set(blockers))),
+        trial_id="" if candidate is None else candidate.trial_id,
+        experiment_artifact_id=(
+            "" if candidate is None else candidate.experiment_artifact_id
+        ),
+        review_artifact_id="" if candidate is None else candidate.review_artifact_id,
+        data_version=comparison.payload.data_version,
+        evaluator_version=comparison.payload.evaluator_version,
+        strategy_code_version=audit.payload.strategy_code_version,
     )
 
 

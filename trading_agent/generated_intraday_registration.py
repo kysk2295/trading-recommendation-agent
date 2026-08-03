@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import os
 import stat
@@ -11,7 +12,14 @@ from trading_agent.daily_research_contract import (
     CURRENT_DATA_CONTRACT,
     SHADOW_PORTFOLIO_POLICY,
 )
-from trading_agent.experiment_ledger_models import ResearchHypothesisCard, StrategyVersionRegistration
+from trading_agent.experiment_ledger_keys import strategy_version_registration_key
+from trading_agent.experiment_ledger_models import (
+    ResearchHypothesisCard,
+    StrategyLifecycleEvent,
+    StrategyLifecycleEventKind,
+    StrategyLifecycleState,
+    StrategyVersionRegistration,
+)
 from trading_agent.experiment_ledger_store import ExperimentLedgerReader, ExperimentLedgerStore
 from trading_agent.generated_intraday_research_models import (
     GeneratedIntradayResearchManifest,
@@ -26,6 +34,7 @@ from trading_agent.source_driven_hypothesis_queue_models import (
     HypothesisQueueRoute,
     SourceDrivenHypothesisQueueItem,
 )
+from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
 
 
 class GeneratedIntradayRegistrationError(ValueError):
@@ -77,8 +86,10 @@ def register_generated_intraday_strategy(
             )
         ):
             raise GeneratedIntradayRegistrationError
+        lifecycle = _lifecycle_registration(manifest, registration, card)
         with ledger.writer() as writer:
             created = writer.register_strategy_version(registration)
+            _ = writer.append_lifecycle_event(lifecycle)
         return registration, created
     except GeneratedIntradayRegistrationError:
         raise
@@ -138,3 +149,40 @@ def _source_matches(published: PublishedGeneratedStrategy) -> bool:
         and hashlib.sha256(source.read_bytes()).hexdigest()
         == published.artifact.payload.source_sha256
     )
+
+
+def _lifecycle_registration(
+    manifest: GeneratedIntradayResearchManifest,
+    registration: StrategyVersionRegistration,
+    card: ResearchHypothesisCard,
+) -> StrategyLifecycleEvent:
+    decision_date = manifest.registered_at.astimezone(NEW_YORK).date()
+    return StrategyLifecycleEvent(
+        strategy_version=registration.strategy_version,
+        sequence=1,
+        event_kind=StrategyLifecycleEventKind.REGISTRATION,
+        from_state=None,
+        to_state=StrategyLifecycleState.IDEA,
+        policy_version="generated_research_registration_v1",
+        decision_session_date=decision_date,
+        effective_session_date=_next_regular_session(decision_date),
+        decided_at=manifest.registered_at,
+        evidence_keys=tuple(
+            sorted(
+                (
+                    *card.research_source_keys,
+                    str(strategy_version_registration_key(registration)),
+                )
+            )
+        ),
+        reason_codes=("new_strategy_registration",),
+        previous_event_key=None,
+    )
+
+
+def _next_regular_session(decision_date: dt.date) -> dt.date:
+    for offset in range(1, 11):
+        candidate = decision_date + dt.timedelta(days=offset)
+        if regular_session_bounds(candidate) is not None:
+            return candidate
+    raise GeneratedIntradayRegistrationError
