@@ -12,18 +12,9 @@ from trading_agent.dashboard_provider_evidence import (
     ProviderName,
     unavailable_provider,
 )
-from trading_agent.fred_alfred_collection import FredArtifactStore, FredStoreError
-from trading_agent.fred_alfred_models import FredRunStatus
-from trading_agent.treasury_yield_models import TreasuryYieldStatus
-from trading_agent.treasury_yield_store import (
-    TreasuryYieldStore,
-    TreasuryYieldStoreError,
-)
 
 _REQUEST_ID_QUERIES: Final = {
-    "treasury_yield_runs": (
-        "SELECT request_id FROM treasury_yield_runs ORDER BY rowid DESC LIMIT 1"
-    ),
+    "treasury_yield_runs": ("SELECT request_id FROM treasury_yield_runs ORDER BY rowid DESC LIMIT 1"),
     "cftc_tff_runs": "SELECT request_id FROM cftc_tff_runs ORDER BY rowid DESC LIMIT 1",
 }
 
@@ -33,6 +24,9 @@ def read_fred_provider(
     provider: ProviderName,
     now: dt.datetime,
 ) -> ProviderEvidence:
+    from trading_agent.fred_alfred_collection import FredArtifactStore, FredStoreError
+    from trading_agent.fred_alfred_models import FredRunStatus
+
     root = outputs / "source_evidence" / "fred_alfred" / provider
     terminals = tuple(sorted(root.glob("*.terminal.json")))
     if not terminals:
@@ -76,6 +70,9 @@ def read_fred_provider(
 
 
 def read_treasury_provider(outputs: Path, now: dt.datetime) -> ProviderEvidence:
+    from trading_agent.treasury_yield_models import TreasuryYieldStatus
+    from trading_agent.treasury_yield_store import TreasuryYieldStore, TreasuryYieldStoreError
+
     provider: ProviderName = "treasury"
     path = outputs / "source_evidence" / "treasury-yield.sqlite3"
     request_id = _latest_request_id(path, "treasury_yield_runs")

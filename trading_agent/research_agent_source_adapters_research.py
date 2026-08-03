@@ -3,7 +3,8 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
-from typing import TYPE_CHECKING, final
+from pathlib import Path
+from typing import Final, Protocol, final
 
 from trading_agent.dashboard_projection_derivatives import project_derivatives
 from trading_agent.experiment_ledger_models import TrialEventKind
@@ -22,6 +23,7 @@ from trading_agent.research_agent_source_common import (
     canonical_model_json,
     capability_evidence,
     interval_bucket,
+    require_private_source_file,
 )
 from trading_agent.swing_shadow_review_store import (
     InvalidSwingShadowReviewSourceError,
@@ -29,8 +31,16 @@ from trading_agent.swing_shadow_review_store import (
 )
 from trading_agent.swing_shadow_store import InvalidSwingShadowLedgerError, SwingShadowReader
 
-if TYPE_CHECKING:
-    from trading_agent.research_agent_sources import ResearchAgentSourcePaths
+
+class ResearchSourcePaths(Protocol):
+    outputs_root: Path
+    swing_shadow_database: Path
+    swing_review_database: Path
+    experiment_ledger: Path
+    lane_review_database: Path
+
+
+_SYSTEMATIC_EVIDENCE_LIMIT: Final = 32
 
 
 @final
@@ -39,7 +49,7 @@ class SwingSourceAdapter:
 
     def collect(
         self,
-        paths: ResearchAgentSourcePaths,
+        paths: ResearchSourcePaths,
         now: dt.datetime,
     ) -> tuple[ResearchAgentEvidenceV1, ...]:
         if not paths.swing_shadow_database.exists() and not paths.swing_review_database.exists():
@@ -56,12 +66,14 @@ class SwingSourceAdapter:
         projected: list[ResearchAgentEvidenceV1] = []
         try:
             if paths.swing_shadow_database.exists():
+                require_private_source_file(paths.swing_shadow_database)
                 reader = SwingShadowReader(paths.swing_shadow_database)
                 if not reader.is_initialized():
                     raise InvalidSwingShadowLedgerError
                 signals = reader.signals()[-32:]
                 for signal in signals:
                     events = reader.events(signal.signal_id)
+                    observed_at = max((event.observed_at for event in events), default=signal.observed_at)
                     payload = json.dumps(
                         {
                             "events": [event.model_dump(mode="json") for event in events],
@@ -76,13 +88,14 @@ class SwingSourceAdapter:
                             family="swing_trading",
                             trigger=ResearchAgentTriggerKind.OPEN_WORK,
                             source_key=f"swing.signal.{_safe_identity(signal.signal_id)}",
-                            observed_at=max((event.observed_at for event in events), default=signal.observed_at),
-                            available_at=signal.observed_at,
+                            observed_at=observed_at,
+                            available_at=observed_at,
                             market_id=signal.strategy_lane.market_id.value,
                             canonical_payload=payload,
                         ).evidence()
                     )
             if paths.swing_review_database.exists():
+                require_private_source_file(paths.swing_review_database)
                 review_reader = SwingShadowReviewReader(paths.swing_review_database)
                 if not review_reader.is_initialized():
                     raise InvalidSwingShadowReviewSourceError
@@ -121,7 +134,7 @@ class SystematicSourceAdapter:
 
     def collect(
         self,
-        paths: ResearchAgentSourcePaths,
+        paths: ResearchSourcePaths,
         now: dt.datetime,
     ) -> tuple[ResearchAgentEvidenceV1, ...]:
         if not paths.experiment_ledger.exists() and not paths.lane_review_database.exists():
@@ -138,10 +151,11 @@ class SystematicSourceAdapter:
         projected: list[ResearchAgentEvidenceV1] = []
         try:
             if paths.experiment_ledger.exists():
+                require_private_source_file(paths.experiment_ledger)
                 reader = ExperimentLedgerReader(paths.experiment_ledger)
                 if not reader.is_initialized():
                     raise InvalidExperimentLedgerSourceError
-                for stored in reader.research_sources()[-32:]:
+                for stored in reader.research_sources()[-_SYSTEMATIC_EVIDENCE_LIMIT:]:
                     source = stored.source
                     projected.append(
                         ResearchAgentEvidenceMaterial(
@@ -154,26 +168,31 @@ class SystematicSourceAdapter:
                             canonical_payload=canonical_model_json(source),
                         ).evidence()
                     )
-                for trial in reader.trials()[-32:]:
-                    for stored in reader.trial_events(trial.registration.trial_id):
-                        event = stored.event
-                        if event.event_kind is not TrialEventKind.STARTED:
-                            projected.append(
-                                ResearchAgentEvidenceMaterial(
-                                    family="systematic_quant",
-                                    trigger=ResearchAgentTriggerKind.EXPERIMENT_RESULT,
-                                    source_key=f"systematic.trial.{_safe_identity(stored.event_key)}",
-                                    observed_at=event.occurred_at,
-                                    available_at=event.occurred_at,
-                                    market_id="none",
-                                    canonical_payload=canonical_model_json(event),
-                                ).evidence()
-                            )
+                trial_events = tuple(
+                    stored
+                    for trial in reader.trials()[-_SYSTEMATIC_EVIDENCE_LIMIT:]
+                    for stored in reader.trial_events(trial.registration.trial_id)
+                    if stored.event.event_kind is not TrialEventKind.STARTED
+                )[-_SYSTEMATIC_EVIDENCE_LIMIT:]
+                for stored in trial_events:
+                    event = stored.event
+                    projected.append(
+                        ResearchAgentEvidenceMaterial(
+                            family="systematic_quant",
+                            trigger=ResearchAgentTriggerKind.EXPERIMENT_RESULT,
+                            source_key=f"systematic.trial.{_safe_identity(stored.event_key)}",
+                            observed_at=event.occurred_at,
+                            available_at=event.occurred_at,
+                            market_id="none",
+                            canonical_payload=canonical_model_json(event),
+                        ).evidence()
+                    )
             if paths.lane_review_database.exists():
+                require_private_source_file(paths.lane_review_database)
                 reviews = LaneReviewReader(paths.lane_review_database)
                 if not reviews.is_initialized():
                     raise InvalidLaneReviewSourceError
-                for stored in reviews.events()[-32:]:
+                for stored in reviews.events()[-_SYSTEMATIC_EVIDENCE_LIMIT:]:
                     projected.append(
                         ResearchAgentEvidenceMaterial(
                             family="systematic_quant",
@@ -213,7 +232,7 @@ class DerivativesSourceAdapter:
 
     def collect(
         self,
-        paths: ResearchAgentSourcePaths,
+        paths: ResearchSourcePaths,
         now: dt.datetime,
     ) -> tuple[ResearchAgentEvidenceV1, ...]:
         projection = project_derivatives(paths.outputs_root, now=now)
@@ -248,4 +267,4 @@ def _safe_identity(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()[:24]
 
 
-__all__ = ("DerivativesSourceAdapter", "SwingSourceAdapter", "SystematicSourceAdapter")
+__all__ = ("DerivativesSourceAdapter", "ResearchSourcePaths", "SwingSourceAdapter", "SystematicSourceAdapter")

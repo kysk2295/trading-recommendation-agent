@@ -16,6 +16,7 @@ from trading_agent.market_context_breadth_producer import (
 from trading_agent.research_agent_cycle_models import ResearchAgentTriggerKind
 from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
 from trading_agent.research_agent_source_adapters_primary import OpportunitySourceAdapter
+from trading_agent.research_agent_source_adapters_research import SwingSourceAdapter
 from trading_agent.research_agent_sources import (
     InvalidResearchAgentSourceError,
     ResearchAgentSourcePaths,
@@ -29,6 +30,7 @@ from trading_agent.signal_contract_models import (
     OpportunitySnapshot,
     SourceCoverage,
 )
+from trading_agent.swing_shadow_store import SwingShadowStore
 
 NOW = dt.datetime(2026, 8, 3, 14, 35, tzinfo=dt.UTC)
 
@@ -176,3 +178,15 @@ def test_opportunity_prior_date_emits_family_blocked_evidence(tmp_path: Path) ->
 
     # Then: prior-date data is explicit blocked evidence, never admitted research input.
     assert tuple(item.source_key for item in evidence) == ("opportunity.blocked.prior_date",)
+
+
+def test_swing_rejects_mode_0644_shadow_ledger_before_projection(tmp_path: Path) -> None:
+    # Given: an initialized but non-private Swing shadow ledger.
+    paths = _source_paths(tmp_path)
+    with SwingShadowStore(paths.swing_shadow_database).writer():
+        pass
+    paths.swing_shadow_database.chmod(0o644)
+
+    # When / Then: the Research adapter refuses it before producing blocked evidence.
+    with pytest.raises(InvalidResearchAgentSourceError, match="swing_source_invalid"):
+        SwingSourceAdapter().collect(paths, NOW)
