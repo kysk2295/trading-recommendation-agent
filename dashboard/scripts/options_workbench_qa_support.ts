@@ -1,7 +1,7 @@
 import { parseArgs } from "node:util";
 import type { Page } from "playwright";
 import { WORKBENCH_VIEWS } from "../src/workspaces/options_workbench";
-import { analyzeAtScrollPositions } from "./browser_qa_support";
+import { analyzeAtScrollPositions, resetScrollableContent } from "./browser_qa_support";
 import {
   captureBlockedView,
   captureTraceAndReturnFocus,
@@ -36,6 +36,7 @@ export type BlockedFinding = Readonly<{
   pageOverflow: boolean;
   axeViolations: number;
   axeIncomplete: number;
+  topScrollReset: boolean;
   capture: VisualCapture;
 }>;
 
@@ -164,9 +165,20 @@ export async function verifyBlocked(
   requireEqual(axe.incomplete, 0, `blocked axe incomplete ${axe.incompleteKeys.join(",")}`);
   const pageOverflow = await hasPageOverflow(page);
   requireEqual(pageOverflow, false, "blocked page overflow");
+  await resetScrollableContent(page);
   await chainViewport.evaluate((element) => {
     element.scrollLeft = 0;
   });
+  const topScrollReset = await page.evaluate(() => {
+    const workspace = document.querySelector(".workspace-scroll-body");
+    return (
+      workspace instanceof HTMLElement &&
+      workspace.scrollTop === 0 &&
+      document.documentElement.scrollTop === 0 &&
+      document.body.scrollTop === 0
+    );
+  });
+  requireEqual(topScrollReset, true, `blocked top scroll reset ${width}`);
   const capture = await captureBlockedView(page, width, screenshotDirectory);
   return {
     width,
@@ -175,6 +187,7 @@ export async function verifyBlocked(
     pageOverflow,
     axeViolations: axe.violations,
     axeIncomplete: axe.incomplete,
+    topScrollReset,
     capture,
   };
 }
