@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionsWorkbenchSchema } from "./options_workbench_schema";
 import { validateSnapshotGraph } from "./snapshot_v2_graph";
 
 export const sourceStateNameSchema = z.enum([
@@ -90,6 +91,9 @@ const commandCenterSchema = z
 const dataSourcesSchema = z
   .strictObject({ ...sourceStateFields, capabilities: z.array(sourceCapabilitySchema).max(30) })
   .superRefine(checkSourceState);
+const derivativesSchema = z
+  .strictObject({ ...sourceStateFields, workbench: optionsWorkbenchSchema })
+  .superRefine(checkSourceState);
 
 const traceNodeSchema = z.strictObject({
   node_id: boundedIdSchema,
@@ -147,7 +151,7 @@ export const dashboardSnapshotV2Schema = z
       data_sources: dataSourcesSchema,
       research: workspaceSchema,
       strategies: workspaceSchema,
-      derivatives: workspaceSchema,
+      derivatives: derivativesSchema,
       paper: workspaceSchema,
       system: workspaceSchema,
     }),
