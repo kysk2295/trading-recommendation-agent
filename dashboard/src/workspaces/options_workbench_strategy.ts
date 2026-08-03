@@ -63,9 +63,21 @@ function chainScenarioContent(
   if (baseline.kind !== "ready") return unavailableScenario(baseline);
   const entries = [...baseline.entries, ...selectedEntries(selections)];
   const legs = entries.map((entry) => entry.leg);
+  const points = scenarioSeries(legs, baseline.spots);
+  if (points.some((point) => !Number.isFinite(point.payoff))) {
+    return [
+      textElement("h3", "Deterministic expiration scenario"),
+      selectedLegList(entries),
+      textElement(
+        "p",
+        "Scenario unavailable · operational arithmetic exceeded the safe presentation boundary",
+        "options-research-warning",
+      ),
+    ];
+  }
   const series = document.createElement("ol");
   series.dataset["scenarioSeries"] = "true";
-  for (const point of scenarioSeries(legs, baseline.spots)) {
+  for (const point of points) {
     const item = document.createElement("li");
     item.append(
       textElement("span", point.spot.toFixed(2)),

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { type Browser, chromium, type Page } from "playwright";
+import { dashboardSnapshotV2Schema } from "../src/schema_v2";
 import { WORKBENCH_VIEWS } from "../src/workspaces/options_workbench";
 import {
   derivativesPaperAdverseFixture,
@@ -199,4 +200,91 @@ describe("options workbench rendering", () => {
     ).toBeTrue();
     expect(await page.locator("body").getAttribute("data-opened-trace-status")).toBe("resolved");
   });
+
+  test("fails closed on both panels when a local leg makes combined payoff unsafe", async () => {
+    // Given: a contract-valid baseline whose payoff is safe before a local leg is selected.
+    await mount(combinedScenarioOverflowFixture());
+    await page.locator("#option_chain_tab").click();
+    const chain = page.locator("#option_chain");
+    expect(await chain.locator("[data-scenario-series]").count()).toBe(1);
+    expect(await chain.textContent()).not.toContain("NaN");
+
+    // When: a valid local call leg pushes the combined payoff past the safe Number boundary.
+    await page.getByRole("button", { name: "Select 999999 call leg" }).click();
+    const chainText = await chain.textContent();
+    const chainLegs = await selectedLegIds(chain);
+    await page.locator("#strategy_agent_tab").click();
+    const agent = page.locator("#strategy_agent");
+    const agentText = await agent.textContent();
+    const agentLegs = await selectedLegIds(agent);
+
+    // Then: both synchronized panels retain context and expose only the explicit fail-closed state.
+    const unavailable =
+      "Scenario unavailable · operational arithmetic exceeded the safe presentation boundary";
+    expect(chainText).toContain(unavailable);
+    expect(agentText).toContain(unavailable);
+    expect(chainText).not.toContain("NaN");
+    expect(agentText).not.toContain("NaN");
+    expect(chainLegs).toEqual(["baseline-call", "local-call"]);
+    expect(agentLegs).toEqual(chainLegs);
+    expect(await chain.locator("[data-scenario-series], [data-break-even]").count()).toBe(0);
+    expect(await agent.locator("[data-scenario-series], [data-break-even]").count()).toBe(0);
+  });
 });
+
+async function selectedLegIds(scope: ReturnType<Page["locator"]>): Promise<readonly string[]> {
+  return scope
+    .locator("[data-selected-leg]")
+    .evaluateAll((legs) => legs.map((leg) => leg.getAttribute("data-selected-leg") ?? ""));
+}
+
+function combinedScenarioOverflowFixture(): unknown {
+  const workbench = derivativesPaperHappyFixture.workspaces.derivatives.workbench;
+  return dashboardSnapshotV2Schema.parse({
+    ...derivativesPaperHappyFixture,
+    workspaces: {
+      ...derivativesPaperHappyFixture.workspaces,
+      derivatives: {
+        ...derivativesPaperHappyFixture.workspaces.derivatives,
+        workbench: {
+          ...workbench,
+          scenario: {
+            ...workbench.scenario,
+            spot: "1",
+            scenario_spots: ["1", "2"],
+            legs: [
+              {
+                contract_id: "baseline-call",
+                action: "long",
+                side: "call",
+                strike: "999999",
+                premium: "899999",
+                quantity: 1,
+                multiplier: 100,
+                trace_id: workbench.chain.trace_id,
+              },
+            ],
+          },
+          chain: {
+            ...workbench.chain,
+            rows: workbench.chain.rows.map((row, index) =>
+              index === 0 && row.call !== null
+                ? {
+                    ...row,
+                    strike: "999999",
+                    call: {
+                      ...row.call,
+                      contract_id: "local-call",
+                      bid: "999999",
+                      ask: "999999",
+                      last: "999999",
+                    },
+                  }
+                : row,
+            ),
+          },
+        },
+      },
+    },
+  });
+}
