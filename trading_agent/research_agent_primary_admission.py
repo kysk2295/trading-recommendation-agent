@@ -117,6 +117,36 @@ def day_source_admission(
     risk_screen: Path,
     now: dt.datetime,
 ) -> DaySourceAdmissionResult:
+    prepared = _prepare_day_source(database, risk_screen)
+    if isinstance(prepared, PrimaryAdmissionFailure):
+        return prepared
+    admission, timestamps = prepared
+    dated = _dated_failure(now, timestamps)
+    if dated is not None:
+        return dated
+    if any(timestamp > now or now - timestamp > _PRIMARY_MAX_FEED_DELAY for timestamp in timestamps):
+        return PrimaryAdmissionFailure.STALE
+    return admission
+
+
+def day_research_admission(
+    database: Path,
+    risk_screen: Path,
+    now: dt.datetime,
+) -> DaySourceAdmissionResult:
+    prepared = _prepare_day_source(database, risk_screen)
+    if isinstance(prepared, PrimaryAdmissionFailure):
+        return prepared
+    admission, timestamps = prepared
+    if any(timestamp > now for timestamp in timestamps):
+        return PrimaryAdmissionFailure.STALE
+    return admission
+
+
+def _prepare_day_source(
+    database: Path,
+    risk_screen: Path,
+) -> tuple[DaySourceAdmission, tuple[dt.datetime, dt.datetime]] | PrimaryAdmissionFailure:
     database_facts = _read_day_database(database)
     if database_facts.latest_checkpoint_at is None:
         return PrimaryAdmissionFailure.COMPLETED_BAR_UNAVAILABLE
@@ -125,14 +155,6 @@ def day_source_admission(
         return PrimaryAdmissionFailure.MISSING_SPREAD
     latest_risk_at = max(row.observed_at for row in risk_rows)
     latest_risk_rows = tuple(row for row in risk_rows if row.observed_at == latest_risk_at)
-    dated = _dated_failure(now, (database_facts.latest_checkpoint_at, latest_risk_at))
-    if dated is not None:
-        return dated
-    if any(
-        timestamp > now or now - timestamp > _PRIMARY_MAX_FEED_DELAY
-        for timestamp in (database_facts.latest_checkpoint_at, latest_risk_at)
-    ):
-        return PrimaryAdmissionFailure.STALE
     if not all(math.isfinite(row.spread_bps) and row.spread_bps >= 0 for row in latest_risk_rows):
         return PrimaryAdmissionFailure.MISSING_SPREAD
     database_sha256 = _file_sha256(database)
@@ -150,10 +172,13 @@ def day_source_admission(
             "session": database.parent.name,
         }
     )
-    return DaySourceAdmission(
-        observed_at=observed_at,
-        canonical_payload=payload,
-        provenance_sha256=tuple(sorted((database_sha256, risk_sha256))),
+    return (
+        DaySourceAdmission(
+            observed_at=observed_at,
+            canonical_payload=payload,
+            provenance_sha256=tuple(sorted((database_sha256, risk_sha256))),
+        ),
+        (database_facts.latest_checkpoint_at, latest_risk_at),
     )
 
 
@@ -227,6 +252,7 @@ __all__: Final = (
     "DaySourceAdmission",
     "DaySourceAdmissionResult",
     "PrimaryAdmissionFailure",
+    "day_research_admission",
     "day_source_admission",
     "market_context_admission",
     "opportunity_admission",

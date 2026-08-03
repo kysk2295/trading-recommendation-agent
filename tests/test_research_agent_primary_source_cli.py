@@ -116,8 +116,7 @@ def test_inspection_reports_closed_stale_and_missing_spread_without_mutation(tmp
     payload = json.loads(completed.stdout)
     assert payload["broker_mutation"] == payload["provider_calls"] == 0
     assert payload["status"] == "blocked"
-    assert [item["source_key"] for item in payload["families"]] == [
-        "opportunity.blocked.missing_spread",
-        "market_context.blocked.stale",
-        "day.session.20260803",
-    ]
+    source_keys = [item["source_key"] for item in payload["families"]]
+    assert source_keys[0] == "opportunity.blocked.missing_spread"
+    assert source_keys[1].startswith("market_context.research_archive.")
+    assert source_keys[2] == "day.session.20260803"

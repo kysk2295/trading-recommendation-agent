@@ -34,7 +34,6 @@ class IndicativeResearchPlan:
     session_date: dt.date
     expiration_date: dt.date
     underlying_symbol: str = "SPY"
-    contract_type: OptionContractType = OptionContractType.CALL
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,35 +62,21 @@ def plan_indicative_research(now: dt.datetime) -> IndicativeResearchPlan | None:
 
 def indicative_research_requests(
     plan: IndicativeResearchPlan,
-) -> tuple[OptionContractCatalogRequest, OptionChainRequest]:
-    identity = f"{plan.session_date.isoformat()}-{plan.underlying_symbol.lower()}-{plan.contract_type.value}"
-    return (
-        OptionContractCatalogRequest(
-            collection_id=f"indicative-catalog-{identity}",
-            underlying_symbol=plan.underlying_symbol,
-            expiration_date=plan.expiration_date,
-            contract_type=plan.contract_type,
-            limit=100,
-            max_pages=2,
-        ),
-        OptionChainRequest(
-            collection_id=f"indicative-chain-{identity}",
-            underlying_symbol=plan.underlying_symbol,
-            feed=OptionFeed.INDICATIVE,
-            expiration_date=plan.expiration_date,
-            contract_type=plan.contract_type,
-            limit=1_000,
-            max_pages=2,
-        ),
+) -> tuple[tuple[OptionContractCatalogRequest, OptionChainRequest], ...]:
+    return tuple(
+        _request_pair(plan, contract_type)
+        for contract_type in (OptionContractType.CALL, OptionContractType.PUT)
     )
 
 
 def indicative_research_requires_network(plan: IndicativeResearchPlan, outputs: Path) -> bool:
-    catalog_request, chain_request = indicative_research_requests(plan)
     root = outputs / "derivatives"
-    return (
-        AlpacaOptionContractStore(root / "option-contracts.sqlite3").run(catalog_request.request_id) is None
-        or AlpacaOptionChainStore(root / "option-chain.sqlite3").run(chain_request.request_id) is None
+    catalog_store = AlpacaOptionContractStore(root / "option-contracts.sqlite3")
+    chain_store = AlpacaOptionChainStore(root / "option-chain.sqlite3")
+    return any(
+        catalog_store.run(catalog_request.request_id) is None
+        or chain_store.run(chain_request.request_id) is None
+        for catalog_request, chain_request in indicative_research_requests(plan)
     )
 
 
@@ -101,36 +86,66 @@ def collect_indicative_research(
     catalog_fetcher: OptionContractPageFetcher | None,
     chain_fetcher: OptionChainPageFetcher | None,
 ) -> IndicativeResearchCollection:
-    catalog_request, chain_request = indicative_research_requests(plan)
     root = outputs / "derivatives"
     catalog_store = AlpacaOptionContractStore(root / "option-contracts.sqlite3")
     chain_store = AlpacaOptionChainStore(root / "option-chain.sqlite3")
-    catalog = catalog_store.run(catalog_request.request_id)
-    chain = chain_store.run(chain_request.request_id)
+    chain_snapshots = 0
+    contracts = 0
     network_sources = 0
-    if catalog is None:
-        if catalog_fetcher is None:
+    for catalog_request, chain_request in indicative_research_requests(plan):
+        catalog = catalog_store.run(catalog_request.request_id)
+        chain = chain_store.run(chain_request.request_id)
+        if catalog is None:
+            if catalog_fetcher is None:
+                raise IndicativeResearchCollectionError
+            catalog_store.preflight_write()
+            catalog = collect_alpaca_option_contracts(catalog_fetcher, catalog_store, catalog_request).run
+            network_sources += 1
+        if catalog.status is not OptionCatalogStatus.SUCCESS:
             raise IndicativeResearchCollectionError
-        catalog_store.preflight_write()
-        catalog = collect_alpaca_option_contracts(catalog_fetcher, catalog_store, catalog_request).run
-        network_sources += 1
-    if catalog.status is not OptionCatalogStatus.SUCCESS:
-        raise IndicativeResearchCollectionError
-    if chain is None:
-        if chain_fetcher is None:
+        if chain is None:
+            if chain_fetcher is None:
+                raise IndicativeResearchCollectionError
+            chain_store.preflight_write()
+            chain = collect_alpaca_option_chain(chain_fetcher, chain_store, chain_request).run
+            network_sources += 1
+        if chain.status is not OptionChainStatus.SUCCESS or not chain.snapshots:
             raise IndicativeResearchCollectionError
-        chain_store.preflight_write()
-        chain = collect_alpaca_option_chain(chain_fetcher, chain_store, chain_request).run
-        network_sources += 1
-    if chain.status is not OptionChainStatus.SUCCESS or not chain.snapshots:
-        raise IndicativeResearchCollectionError
+        contracts += len(catalog.contracts)
+        chain_snapshots += len(chain.snapshots)
     return IndicativeResearchCollection(
         session_date=plan.session_date,
         expiration_date=plan.expiration_date,
-        chain_snapshots=len(chain.snapshots),
-        contracts=len(catalog.contracts),
+        chain_snapshots=chain_snapshots,
+        contracts=contracts,
         replayed=network_sources == 0,
         network_sources=network_sources,
+    )
+
+
+def _request_pair(
+    plan: IndicativeResearchPlan,
+    contract_type: OptionContractType,
+) -> tuple[OptionContractCatalogRequest, OptionChainRequest]:
+    identity = f"{plan.session_date.isoformat()}-{plan.underlying_symbol.lower()}-{contract_type.value}"
+    return (
+        OptionContractCatalogRequest(
+            collection_id=f"indicative-catalog-{identity}",
+            underlying_symbol=plan.underlying_symbol,
+            expiration_date=plan.expiration_date,
+            contract_type=contract_type,
+            limit=100,
+            max_pages=2,
+        ),
+        OptionChainRequest(
+            collection_id=f"indicative-chain-{identity}",
+            underlying_symbol=plan.underlying_symbol,
+            feed=OptionFeed.INDICATIVE,
+            expiration_date=plan.expiration_date,
+            contract_type=contract_type,
+            limit=1_000,
+            max_pages=2,
+        ),
     )
 
 

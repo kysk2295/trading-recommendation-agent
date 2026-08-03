@@ -21,6 +21,13 @@ from trading_agent.research_agent_primary_admission import (
     opportunity_admission,
     primary_session_failure,
 )
+from trading_agent.research_agent_source_archives import (
+    archived_day_admission,
+    archived_day_evidence,
+    archived_market_context_evidence,
+    archived_market_context_from_latest_day,
+    archived_opportunity_evidence,
+)
 from trading_agent.research_agent_source_common import (
     CapabilityEvidenceSpec,
     InvalidResearchAgentSourceError,
@@ -48,13 +55,9 @@ class OpportunitySourceAdapter:
         now: dt.datetime,
     ) -> tuple[ResearchAgentEvidenceV1, ...]:
         session_failure = primary_session_failure(now)
-        if session_failure is not None:
-            return _blocked_opportunity(session_failure, now)
         outbox = _latest_session_artifact(paths.day_session_root, "opportunities.v1.jsonl")
         if outbox is None:
-            return _blocked_opportunity("snapshot_unavailable", now)
-        if not _session_is_current(outbox.parent, now):
-            return _blocked_opportunity(PrimaryAdmissionFailure.PRIOR_DATE, now)
+            return _blocked_opportunity(session_failure or "snapshot_unavailable", now)
         try:
             require_source_boundary(outbox)
             snapshots = read_opportunity_snapshots(outbox)
@@ -64,19 +67,22 @@ class OpportunitySourceAdapter:
             return _blocked_opportunity("snapshot_unavailable", now)
         snapshot = max(snapshots, key=lambda item: item.observed_at)
         failure = opportunity_admission(snapshot, now)
-        if failure is not None:
-            return _blocked_opportunity(failure, now)
-        return (
-            ResearchAgentEvidenceMaterial(
-                family="opportunity_manager",
-                trigger=ResearchAgentTriggerKind.NEW_DATA,
-                source_key=f"opportunity.{snapshot.opportunity_id}",
-                observed_at=snapshot.observed_at,
-                available_at=snapshot.observed_at,
-                market_id=snapshot.strategy_lane.market_id.value,
-                canonical_payload=canonical_model_json(snapshot),
-            ).evidence(),
-        )
+        if session_failure is None and _session_is_current(outbox.parent, now) and failure is None:
+            return (
+                ResearchAgentEvidenceMaterial(
+                    family="opportunity_manager",
+                    trigger=ResearchAgentTriggerKind.NEW_DATA,
+                    source_key=f"opportunity.{snapshot.opportunity_id}",
+                    observed_at=snapshot.observed_at,
+                    available_at=snapshot.observed_at,
+                    market_id=snapshot.strategy_lane.market_id.value,
+                    canonical_payload=canonical_model_json(snapshot),
+                ).evidence(),
+            )
+        archived = archived_opportunity_evidence(snapshot, now)
+        if archived is not None:
+            return (archived,)
+        return _blocked_opportunity(failure or session_failure or PrimaryAdmissionFailure.PRIOR_DATE, now)
 
 
 @final
@@ -89,14 +95,18 @@ class MarketContextSourceAdapter:
         now: dt.datetime,
     ) -> tuple[ResearchAgentEvidenceV1, ...]:
         session_failure = primary_session_failure(now)
-        if session_failure is not None:
-            return _blocked_market_context(session_failure, now)
         if not paths.market_context_root.exists():
-            return _blocked_market_context("snapshot_unavailable", now)
+            archived = archived_market_context_from_latest_day(paths.day_session_root, now)
+            return (archived,) if archived is not None else _blocked_market_context(
+                session_failure or "snapshot_unavailable", now
+            )
         require_source_boundary(paths.market_context_root)
         artifacts = tuple(sorted(paths.market_context_root.glob("*.market-context.json"))[-8:])
         if not artifacts:
-            return _blocked_market_context("snapshot_unavailable", now)
+            archived = archived_market_context_from_latest_day(paths.day_session_root, now)
+            return (archived,) if archived is not None else _blocked_market_context(
+                session_failure or "snapshot_unavailable", now
+            )
         try:
             snapshots: list[MarketContextSnapshot] = []
             for artifact in artifacts:
@@ -106,19 +116,22 @@ class MarketContextSourceAdapter:
             raise InvalidResearchAgentSourceError(reason="market_context_source_invalid") from None
         snapshot = max(snapshots, key=lambda item: item.observed_at)
         failure = market_context_admission(snapshot, now)
-        if failure is not None:
-            return _blocked_market_context(failure, now)
-        return (
-            ResearchAgentEvidenceMaterial(
-                family="market_context",
-                trigger=ResearchAgentTriggerKind.MARKET_EVENT,
-                source_key=f"market_context.{snapshot.context_id}",
-                observed_at=snapshot.observed_at,
-                available_at=snapshot.observed_at,
-                market_id=snapshot.market_id.value,
-                canonical_payload=canonical_model_json(snapshot),
-            ).evidence(),
-        )
+        if session_failure is None and failure is None:
+            return (
+                ResearchAgentEvidenceMaterial(
+                    family="market_context",
+                    trigger=ResearchAgentTriggerKind.MARKET_EVENT,
+                    source_key=f"market_context.{snapshot.context_id}",
+                    observed_at=snapshot.observed_at,
+                    available_at=snapshot.observed_at,
+                    market_id=snapshot.market_id.value,
+                    canonical_payload=canonical_model_json(snapshot),
+                ).evidence(),
+            )
+        archived = archived_market_context_evidence(snapshot, now)
+        if archived is not None:
+            return (archived,)
+        return _blocked_market_context(failure or session_failure or PrimaryAdmissionFailure.STALE, now)
 
 
 @final
@@ -131,14 +144,18 @@ class DaySourceAdapter:
         now: dt.datetime,
     ) -> tuple[ResearchAgentEvidenceV1, ...]:
         session_failure = primary_session_failure(now)
-        if session_failure is not None:
-            return _blocked_day(session_failure, now)
         sessions = _latest_session_directories(paths.day_session_root)
         if not sessions:
-            return _blocked_day("source_pair_unavailable", now)
-        session = sessions[-1]
-        if not _session_is_current(session, now):
-            return _blocked_day(PrimaryAdmissionFailure.PRIOR_DATE, now)
+            return _blocked_day(session_failure or "source_pair_unavailable", now)
+        session = next(
+            (
+                candidate
+                for candidate in reversed(sessions)
+                if (candidate / "paper_recommendations.sqlite3").exists()
+                and (candidate / "market_risk_screen.csv").exists()
+            ),
+            sessions[-1],
+        )
         database = session / "paper_recommendations.sqlite3"
         risk_screen = session / "market_risk_screen.csv"
         if not database.exists() or not risk_screen.exists():
@@ -147,12 +164,19 @@ class DaySourceAdapter:
             require_private_source_file(database)
             require_private_source_file(risk_screen)
             admission = day_source_admission(database, risk_screen, now)
+            archived = archived_day_admission(database, risk_screen, now)
         except (InvalidResearchAgentSourceError, OSError, sqlite3.Error, TypeError, ValueError):
             raise InvalidResearchAgentSourceError(reason="day_source_invalid") from None
         match admission:
             case PrimaryAdmissionFailure() as failure:
+                if archived is not None:
+                    return (archived_day_evidence(archived, session.name),)
                 return _blocked_day(failure, now)
             case DaySourceAdmission() as admitted:
+                if session_failure is not None or not _session_is_current(session, now):
+                    if archived is not None:
+                        return (archived_day_evidence(archived, session.name),)
+                    return _blocked_day(session_failure or PrimaryAdmissionFailure.PRIOR_DATE, now)
                 evidence = ResearchAgentEvidenceMaterial(
                     family="day_trading",
                     trigger=ResearchAgentTriggerKind.NEW_DATA,
@@ -177,7 +201,7 @@ def _latest_session_directories(root: Path) -> tuple[Path, ...]:
         for path in root.iterdir()
         if path.is_dir() and not path.is_symlink() and len(path.name) == 8 and path.name.isdigit()
     )
-    return tuple(sorted(sessions, key=lambda path: path.name)[-2:])
+    return tuple(sorted(sessions, key=lambda path: path.name)[-32:])
 
 
 def _latest_session_artifact(root: Path, name: str) -> Path | None:

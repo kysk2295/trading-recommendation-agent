@@ -114,7 +114,7 @@ def test_status_does_not_materialize_and_classifies_actionable_sources(tmp_path:
 
     states = {item.agent_family_id: (item.state, item.reason) for item in report.families}
     assert not paths.market_context_root.exists()
-    assert states["swing_trading"] == ("operator_action_required", "shadow_ledger_unavailable")
+    assert states["swing_trading"] == ("ready", "local_source_ready")
     assert states["systematic_quant"] == ("collecting", "minimum_clean_sessions_not_met")
     assert states["derivatives_research"] == (
         "operator_action_required",

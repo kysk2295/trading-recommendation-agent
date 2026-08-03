@@ -198,6 +198,15 @@ def _systematic(
         return _status(facts, "blocked", _Classification("activation_invalid", "repair_systematic_activation"))
     match activation:
         case BlockedSystematicInputActivation(reason_code="minimum_clean_sessions_not_met"):
+            if facts.evidence and all(".blocked." not in item.source_key for item in facts.evidence):
+                return _status(
+                    facts,
+                    "ready",
+                    _Classification(
+                        "research_design_ready_experiment_input_collecting",
+                        "continue_strategy_design_and_data_collection",
+                    ),
+                )
             return _status(
                 facts,
                 "collecting",

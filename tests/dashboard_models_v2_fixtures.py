@@ -4,7 +4,19 @@ import datetime as dt
 import uuid
 from typing import cast
 
-type ModelInput = str | int | bool | None | dt.datetime | uuid.UUID | list["ModelInput"] | dict[str, "ModelInput"]
+from tests.dashboard_options_workbench_fixtures import empty_workbench_payload
+
+type ModelInput = (
+    str
+    | int
+    | bool
+    | None
+    | dt.datetime
+    | uuid.UUID
+    | list["ModelInput"]
+    | tuple["ModelInput", ...]
+    | dict[str, "ModelInput"]
+)
 
 _NOW = dt.datetime(2026, 7, 26, 3, tzinfo=dt.UTC)
 _TRACE_IDS = {
@@ -45,6 +57,11 @@ def snapshot_payload() -> dict[str, ModelInput]:
             "trace_id": _TRACE_IDS["data_sources"],
         }
     ]
+    derivatives = cast(dict[str, ModelInput], workspaces["derivatives"])
+    derivatives["workbench"] = cast(
+        ModelInput,
+        empty_workbench_payload(_NOW, _TRACE_IDS["derivatives"]),
+    )
     nodes = [_node(trace_id, "source_receipt") for trace_id in _TRACE_IDS.values()]
     nodes.extend(
         [

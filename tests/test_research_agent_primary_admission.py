@@ -75,9 +75,9 @@ def test_closed_session_blocks_all_primary_families_before_source_access(tmp_pat
 @pytest.mark.parametrize(
     ("family", "expected"),
     [
-        ("opportunity", "opportunity.blocked.stale"),
-        ("market_context", "market_context.blocked.stale"),
-        ("day", "day.blocked.stale"),
+        ("opportunity", "opportunity.research_archive."),
+        ("market_context", "market_context.research_archive."),
+        ("day", "day.research_archive."),
     ],
 )
 def test_stale_primary_source_emits_family_blocked_evidence(
@@ -102,7 +102,8 @@ def test_stale_primary_source_emits_family_blocked_evidence(
     evidence = adapter.collect(paths, NOW)
 
     # Then
-    assert tuple(item.source_key for item in evidence) == (expected,)
+    assert len(evidence) == 1
+    assert evidence[0].source_key.startswith(expected)
 
 
 @pytest.mark.parametrize(

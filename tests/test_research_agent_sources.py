@@ -15,7 +15,11 @@ from trading_agent.market_context_breadth_producer import (
 )
 from trading_agent.research_agent_cycle_models import ResearchAgentTriggerKind
 from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
-from trading_agent.research_agent_source_adapters_primary import OpportunitySourceAdapter
+from trading_agent.research_agent_source_adapters_primary import (
+    DaySourceAdapter,
+    MarketContextSourceAdapter,
+    OpportunitySourceAdapter,
+)
 from trading_agent.research_agent_source_adapters_research import SwingSourceAdapter
 from trading_agent.research_agent_sources import (
     InvalidResearchAgentSourceError,
@@ -167,7 +171,7 @@ def test_source_paths_reject_relative_or_symlinked_boundaries(tmp_path: Path) ->
         )
 
 
-def test_opportunity_prior_date_emits_family_blocked_evidence(tmp_path: Path) -> None:
+def test_opportunity_prior_date_becomes_research_archive_evidence(tmp_path: Path) -> None:
     # Given: the only Opportunity snapshot belongs to the prior NY session.
     paths = _source_paths(tmp_path)
     _seed_opportunity(paths)
@@ -176,8 +180,42 @@ def test_opportunity_prior_date_emits_family_blocked_evidence(tmp_path: Path) ->
     # When: the Primary adapter inspects the current open session.
     evidence = OpportunitySourceAdapter().collect(paths, current_session)
 
-    # Then: prior-date data is explicit blocked evidence, never admitted research input.
-    assert tuple(item.source_key for item in evidence) == ("opportunity.blocked.prior_date",)
+    # Then: it remains usable as explicitly archived research input.
+    assert tuple(item.source_key for item in evidence) == (
+        "opportunity.research_archive.us-opportunity-20260803t143400-abcd1234",
+    )
+
+
+def test_expired_market_context_becomes_research_archive_evidence(tmp_path: Path) -> None:
+    paths = _source_paths(tmp_path)
+    _seed_market_context(paths)
+
+    evidence = MarketContextSourceAdapter().collect(paths, NOW + dt.timedelta(days=1))
+
+    assert len(evidence) == 1
+    assert evidence[0].source_key.startswith("market_context.research_archive.")
+
+
+def test_prior_day_pair_becomes_research_archive_evidence(tmp_path: Path) -> None:
+    paths = _source_paths(tmp_path)
+    from tests.research_agent_primary_fixtures import seed_day
+
+    seed_day(paths)
+    evidence = DaySourceAdapter().collect(paths, NOW + dt.timedelta(days=1))
+
+    assert tuple(item.source_key for item in evidence) == ("day.research_archive.20260803",)
+
+
+def test_latest_complete_day_pair_skips_newer_incomplete_session(tmp_path: Path) -> None:
+    paths = _source_paths(tmp_path)
+    from tests.research_agent_primary_fixtures import seed_day
+
+    seed_day(paths)
+    (paths.day_session_root / "20260804").mkdir()
+
+    evidence = DaySourceAdapter().collect(paths, NOW + dt.timedelta(days=2))
+
+    assert tuple(item.source_key for item in evidence) == ("day.research_archive.20260803",)
 
 
 def test_swing_rejects_mode_0644_shadow_ledger_before_projection(tmp_path: Path) -> None:

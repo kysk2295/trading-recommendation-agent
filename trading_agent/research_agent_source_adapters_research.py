@@ -4,7 +4,7 @@ import datetime as dt
 import hashlib
 import json
 from pathlib import Path
-from typing import Final, Protocol, final
+from typing import Final, Protocol, cast, final
 
 from trading_agent.experiment_ledger_models import TrialEventKind
 from trading_agent.experiment_ledger_store import (
@@ -15,6 +15,7 @@ from trading_agent.experiment_ledger_store import (
 from trading_agent.lane_review_store import InvalidLaneReviewSourceError, LaneReviewReader
 from trading_agent.research_agent_cycle_models import ResearchAgentEvidenceV1, ResearchAgentTriggerKind
 from trading_agent.research_agent_source_adapter_derivatives import DerivativesSourceAdapter
+from trading_agent.research_agent_source_archives import archived_swing_from_day
 from trading_agent.research_agent_source_common import (
     CapabilityEvidenceSpec,
     InvalidResearchAgentSourceError,
@@ -51,6 +52,9 @@ class SwingSourceAdapter:
         now: dt.datetime,
     ) -> tuple[ResearchAgentEvidenceV1, ...]:
         if not paths.swing_shadow_database.exists() and not paths.swing_review_database.exists():
+            archived = archived_swing_from_day(cast(Path | None, getattr(paths, "day_session_root", None)), now)
+            if archived is not None:
+                return (archived,)
             return (
                 capability_evidence(
                     CapabilityEvidenceSpec(

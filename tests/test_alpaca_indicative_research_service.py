@@ -11,6 +11,7 @@ from trading_agent.alpaca_indicative_research import (
     IndicativeResearchCollection,
     IndicativeResearchPlan,
     collect_indicative_research,
+    indicative_research_requests,
     plan_indicative_research,
 )
 from trading_agent.alpaca_indicative_research_service_config import (
@@ -38,6 +39,9 @@ class _FixtureChainFetcher:
         page_index: int,
         page_token: str | None,
     ) -> OptionChainRawResponse:
+        payload = (FIXTURES / "alpaca_option_chain" / "page-001.json").read_bytes()
+        if request.contract_type is OptionContractType.PUT:
+            payload = payload.replace(b"AAPL260724C00200000", b"AAPL260724P00200000")
         return OptionChainRawResponse(
             request.request_id,
             page_index,
@@ -45,7 +49,7 @@ class _FixtureChainFetcher:
             dt.datetime(2026, 7, 23, 14, 35, tzinfo=dt.UTC),
             200,
             "application/json",
-            (FIXTURES / "alpaca_option_chain" / "page-001.json").read_bytes(),
+            payload,
         )
 
 
@@ -56,6 +60,13 @@ class _FixtureCatalogFetcher:
         page_index: int,
         page_token: str | None,
     ) -> OptionContractRawResponse:
+        payload = (FIXTURES / "alpaca_option_contract" / "page-001.json").read_bytes()
+        if request.contract_type is OptionContractType.PUT:
+            payload = (
+                payload.replace(b"AAPL260724C00200000", b"AAPL260724P00200000")
+                .replace(b'"type":"call"', b'"type":"put"')
+                .replace(b"200 Call", b"200 Put")
+            )
         return OptionContractRawResponse(
             request.request_id,
             page_index,
@@ -63,7 +74,7 @@ class _FixtureCatalogFetcher:
             dt.datetime(2026, 7, 23, 14, 35, tzinfo=dt.UTC),
             200,
             "application/json",
-            (FIXTURES / "alpaca_option_contract" / "page-001.json").read_bytes(),
+            payload,
         )
 
 
@@ -83,13 +94,12 @@ def test_session_plan_waits_for_delayed_feed_and_uses_next_regular_friday() -> N
     assert plan.expiration_date == dt.date(2026, 7, 24)
 
 
-def test_fixture_collection_persists_once_and_replays_without_fetchers(tmp_path: Path) -> None:
-    # Given one bounded AAPL call-chain plan backed by provider-shaped fixtures
+def test_fixture_collection_persists_both_sides_once_and_replays_without_fetchers(tmp_path: Path) -> None:
+    # Given one bounded AAPL option-chain plan backed by provider-shaped fixtures
     plan = IndicativeResearchPlan(
         session_date=dt.date(2026, 7, 23),
         expiration_date=dt.date(2026, 7, 24),
         underlying_symbol="AAPL",
-        contract_type=OptionContractType.CALL,
     )
     outputs = tmp_path / "outputs"
 
@@ -97,17 +107,22 @@ def test_fixture_collection_persists_once_and_replays_without_fetchers(tmp_path:
     first = collect_indicative_research(plan, outputs, _FixtureCatalogFetcher(), _FixtureChainFetcher())
     replay = collect_indicative_research(plan, outputs, None, None)
 
-    # Then both canonical stores contain research evidence and the repeat is local-only
-    assert first.chain_snapshots == first.contracts == 1
-    assert first.network_sources == 2
+    # Then call and put evidence are persisted in both stores and the repeat is local-only
+    assert first.chain_snapshots == first.contracts == 2
+    assert first.network_sources == 4
     assert first.replayed is False
     assert replay == IndicativeResearchCollection(
         session_date=plan.session_date,
         expiration_date=plan.expiration_date,
-        chain_snapshots=1,
-        contracts=1,
+        chain_snapshots=2,
+        contracts=2,
         replayed=True,
         network_sources=0,
+    )
+    request_pairs = indicative_research_requests(plan)
+    assert tuple(pair[0].contract_type for pair in request_pairs) == (
+        OptionContractType.CALL,
+        OptionContractType.PUT,
     )
     assert stat.S_IMODE((outputs / "derivatives" / "option-chain.sqlite3").stat().st_mode) == 0o600
     assert stat.S_IMODE((outputs / "derivatives" / "option-contracts.sqlite3").stat().st_mode) == 0o600
