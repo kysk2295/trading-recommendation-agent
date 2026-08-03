@@ -25,9 +25,10 @@ _ITEM_CAP: Final = 24
 
 def project_derivatives(outputs: Path, *, now: dt.datetime) -> WorkspaceProjection:
     current_quotes = read_current_option_quotes(outputs, now)
+    options = read_options_section(outputs, now)
     sections = (
         current_quotes,
-        read_options_section(outputs, now),
+        options,
         read_volatility_section(outputs, now),
         read_futures_section(outputs, now),
     )
@@ -36,6 +37,8 @@ def project_derivatives(outputs: Path, *, now: dt.datetime) -> WorkspaceProjecti
         for section in sections
         if not (current_quotes.state == "populated" and section.blocker_code == "current_quote_not_licensed")
     )
+    if options.state == "populated":
+        state_sections = tuple(section for section in state_sections if section.state not in {"empty", "unavailable"})
     selected = max(state_sections, key=lambda section: _STATE_PRECEDENCE[section.state])
     blocker = selected.blocker_code
     items = tuple(item for section in sections for item in section.items)[:_ITEM_CAP]

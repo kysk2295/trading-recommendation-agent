@@ -111,10 +111,12 @@ def test_indicative_chain_is_explicit_research_only_evidence(tmp_path: Path) -> 
     # When the derivatives workspace projects the free feed without OPRA authority
     projection = project_derivatives(outputs, now=observed_at + dt.timedelta(minutes=1))
 
-    # Then the data is usable only as a populated non-OPRA research shadow
-    assert projection.workspace.state == "blocked"
-    assert projection.workspace.blocker_code == "indicative_research_only"
+    # Then the data is usable as a populated non-OPRA research input
+    assert projection.workspace.state == "populated"
+    assert projection.workspace.blocker_code is None
     assert projection.workspace.projected_count > 0
+    assert all(item.state == "populated" for item in projection.workspace.items)
+    assert all(item.value is not None and item.value.endswith(":research_only") for item in projection.workspace.items)
 
 
 def seed_indicative_options(outputs: Path, observed_at: dt.datetime) -> None:

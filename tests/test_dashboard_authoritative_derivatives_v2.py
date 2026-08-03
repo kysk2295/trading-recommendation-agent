@@ -77,10 +77,12 @@ def test_option_stores_do_not_grant_current_redistribution(tmp_path: Path) -> No
     # When derivatives and source capability projections read those stores
     snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW)
 
-    # Then research evidence is visible but current redistribution remains blocked
+    # Then research evidence is usable while current redistribution remains blocked
     derivatives = snapshot.workspaces.derivatives
-    assert derivatives.blocker_code == "indicative_research_only"
+    assert derivatives.state == "populated"
+    assert derivatives.blocker_code is None
     assert any(item.item_id.startswith("derivative.option.") for item in derivatives.items)
+    assert all(item.value is not None and item.value.endswith(":research_only") for item in derivatives.items)
     alpaca = next(
         capability
         for capability in snapshot.workspaces.data_sources.capabilities

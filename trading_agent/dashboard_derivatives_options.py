@@ -67,9 +67,10 @@ def read_options_section(outputs: Path, now: dt.datetime) -> DerivativesSection:
         capability.entitlement.real_time
         and capability.entitlement.redistribution_policy is not RedistributionPolicy.NONE
     )
+    research_only = chain.request.feed is OptionFeed.INDICATIVE
     match chain.request.feed:
         case OptionFeed.INDICATIVE:
-            blocker = "indicative_research_only"
+            blocker = None
         case OptionFeed.OPRA:
             blocker = (
                 None
@@ -85,7 +86,10 @@ def read_options_section(outputs: Path, now: dt.datetime) -> DerivativesSection:
             kind="derivative",
             label=contract.root_symbol,
             state="populated" if blocker is None else "blocked",
-            value=f"{contract.expiration_date.isoformat()}:{contract.contract_type.value}",
+            value=(
+                f"{contract.expiration_date.isoformat()}:{contract.contract_type.value}"
+                f"{':research_only' if research_only else ''}"
+            ),
             observed_at=contract.observed_at,
             trace_id=source_id,
         )

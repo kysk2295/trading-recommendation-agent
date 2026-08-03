@@ -25,7 +25,10 @@ def classify_derivatives_supply(outputs: Path, now: dt.datetime) -> DerivativesS
             "derivatives_source_invalid",
             "repair_derivatives_source_integrity",
         )
-    if projection.projected_count > 0 and projection.blocker_code == "indicative_research_only":
+    indicative_research = any(
+        item.value is not None and item.value.endswith(":research_only") for item in projection.items
+    )
+    if indicative_research:
         return DerivativesSupplyClassification(
             "ready",
             "indicative_research_ready_not_opra",
