@@ -6,6 +6,7 @@ import { analyzeAtScrollPositions, requireEqual } from "./browser_qa_support";
 import { reachableBlockerTerminal } from "./options_workbench_store_qa_support";
 
 type QaKind = "actual" | "blocked";
+type StoreQaCaptureKind = QaKind | `blocked-${string}`;
 
 export type StoreQaFinding = Readonly<{
   label: string;
@@ -102,7 +103,7 @@ async function preparePage(page: Page, baseUrl: string, width: number): Promise<
 async function visitViews(
   page: Page,
   width: number,
-  kind: QaKind | `blocked-${string}`,
+  kind: StoreQaCaptureKind,
   screenshotDirectory: string,
 ): Promise<readonly string[]> {
   const screenshots: string[] = [];
@@ -115,11 +116,20 @@ async function visitViews(
       1,
       `${kind}/${view} visible`,
     );
-    const screenshot = join(screenshotDirectory, `${kind}-${width}-${view}.png`);
+    const filename = `${kind}-${width}-${view}.png`;
+    const screenshot = join(screenshotDirectory, filename);
     await page.screenshot({ path: screenshot, fullPage: true });
-    screenshots.push(screenshot);
+    screenshots.push(storeQaScreenshotArtifactReference(kind, width, view));
   }
   return screenshots;
+}
+
+export function storeQaScreenshotArtifactReference(
+  kind: StoreQaCaptureKind,
+  width: number,
+  view: (typeof WORKBENCH_VIEWS)[number],
+): string {
+  return `options-workbench-store-screenshots/${kind}-${width}-${view}.png`;
 }
 
 async function assertProjectedChain(page: Page, snapshot: DashboardSnapshotV2): Promise<void> {
