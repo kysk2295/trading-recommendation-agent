@@ -12,6 +12,7 @@
     <link rel="stylesheet" href="/assets/components.css" />
     <link rel="stylesheet" href="/assets/data-components.css" />
     <link rel="stylesheet" href="/assets/workspace.css" />
+    <link rel="stylesheet" href="/assets/options-workbench.css" />
     <link rel="stylesheet" href="/assets/responsive.css" />
     <link rel="stylesheet" href="/assets/showcase.css" />
   </head>
@@ -26,6 +27,113 @@
         </p>
         <p class="fixture-notice" role="note">DEMONSTRATION DATA — NOT A MARKET VALUE, RECOMMENDATION, OR PAPER RESULT.</p>
       </header>
+
+      <section class="options-workbench" aria-labelledby="workbench-title">
+        <header class="options-workbench-header">
+          <div>
+            <p class="eyebrow">DERIVATIVES / OPTIONS WORKBENCH</p>
+            <h2 id="workbench-title">Options research primitives</h2>
+          </div>
+          <p class="options-workbench-notice" role="note">
+            DEMONSTRATION DATA — INDICATIVE RESEARCH ONLY. NOT A RECOMMENDATION OR PAPER RESULT.
+          </p>
+        </header>
+
+        <nav class="options-workbench-tabs" aria-label="Options Workbench views">
+          <a href="#workbench-market-pulse" aria-current="page">Market Pulse</a>
+          <a href="#workbench-option-chain">Option Chain</a>
+          <a href="#workbench-strategy-agent">Strategy &amp; Agent</a>
+          <a href="#workbench-experiment-lab">Experiment Lab</a>
+          <a href="#workbench-promotion-operations">Promotion &amp; Operations</a>
+        </nav>
+
+        <div class="options-workbench-panels">
+          <section class="options-workbench-panel" id="workbench-market-pulse" aria-labelledby="market-pulse-title">
+            <div class="options-workbench-panel-heading">
+              <h3 id="market-pulse-title">Market Pulse</h3>
+              <p>DEMONSTRATION DATA — INDICATIVE RESEARCH ONLY. NOT A RECOMMENDATION OR PAPER RESULT.</p>
+            </div>
+            <dl class="options-workbench-metrics">
+              <div><dt>Underlying</dt><dd>DEMO SPY · 527.40</dd></div>
+              <div><dt>Observed</dt><dd>2026-07-26 10:31:00 ET</dd></div>
+              <div><dt>Authority</dt><dd>Unavailable · receipt required</dd></div>
+            </dl>
+          </section>
+
+          <section class="options-workbench-panel" id="workbench-option-chain" aria-labelledby="option-chain-title">
+            <div class="options-workbench-panel-heading">
+              <h3 id="option-chain-title">Option Chain</h3>
+              <p>DEMONSTRATION DATA — INDICATIVE RESEARCH ONLY. NOT A RECOMMENDATION OR PAPER RESULT.</p>
+            </div>
+            <div class="options-chain-viewport" tabindex="0" aria-label="Three-strike demonstration option chain">
+              <table>
+                <caption>Three-strike options research chain. Calls left, strike center, puts right.</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Call bid</th>
+                    <th scope="col">Call ask</th>
+                    <th scope="col">Strike</th>
+                    <th scope="col">Put bid</th>
+                    <th scope="col">Put ask</th>
+                    <th scope="col">Trace ID</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td>4.82</td><td>5.06</td><th scope="row">525</th><td>1.48</td><td>1.67</td><td>DEMO-CHAIN-525-9F7C</td></tr>
+                  <tr><td>2.51</td><td>2.72</td><th scope="row">530</th><td>3.14</td><td>3.39</td><td>DEMO-CHAIN-530-0A4D</td></tr>
+                  <tr><td>1.13</td><td>1.29</td><th scope="row">535</th><td>5.81</td><td>6.09</td><td>DEMO-CHAIN-535-CJK-검증-3E1A</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="options-workbench-scroll-note">Table scrolls locally. Complete IDs remain available to assistive technology.</p>
+          </section>
+
+          <section class="options-workbench-panel" id="workbench-strategy-agent" aria-labelledby="strategy-agent-title">
+            <div class="options-workbench-panel-heading">
+              <h3 id="strategy-agent-title">Strategy &amp; Agent</h3>
+              <p>DEMONSTRATION DATA — INDICATIVE RESEARCH ONLY. NOT A RECOMMENDATION OR PAPER RESULT.</p>
+            </div>
+            <div class="options-workbench-split">
+              <article class="options-workbench-receipt" aria-labelledby="tool-receipt-title">
+                <p class="eyebrow">TOOL RECEIPT</p>
+                <h4 id="tool-receipt-title">Volatility surface reader</h4>
+                <dl><div><dt>State</dt><dd>Blocked</dd></div><div><dt>Receipt</dt><dd>DEMO-TOOL-7B2F-4D01-RESEARCH-ONLY</dd></div></dl>
+                <p>Required current authority is absent; no execution or recommendation path is available.</p>
+              </article>
+              <article class="options-workbench-scenario" aria-labelledby="scenario-title">
+                <p class="eyebrow">TWO-LEG SCENARIO</p>
+                <h4 id="scenario-title">Bounded payoff research</h4>
+                <ol><li><span>Leg 01</span><strong>Long DEMO 525 call</strong></li><li><span>Leg 02</span><strong>Short DEMO 530 call</strong></li></ol>
+                <p>Scenario remains unapproved and does not describe a paper order.</p>
+              </article>
+            </div>
+          </section>
+
+          <section class="options-workbench-panel" id="workbench-experiment-lab" aria-labelledby="experiment-title">
+            <div class="options-workbench-panel-heading">
+              <h3 id="experiment-title">Experiment Lab</h3>
+              <p>DEMONSTRATION DATA — INDICATIVE RESEARCH ONLY. NOT A RECOMMENDATION OR PAPER RESULT.</p>
+            </div>
+            <dl class="options-workbench-experiment">
+              <div><dt>Hypothesis</dt><dd>DEMO-IV-SKEW-42</dd></div>
+              <div><dt>Review state</dt><dd>Evidence incomplete</dd></div>
+              <div><dt>Trace</dt><dd>DEMO-EXPERIMENT-8C4A-LONG-ID-한국어</dd></div>
+            </dl>
+          </section>
+
+          <section class="options-workbench-panel" id="workbench-promotion-operations" aria-labelledby="promotion-title">
+            <div class="options-workbench-panel-heading">
+              <h3 id="promotion-title">Promotion &amp; Operations</h3>
+              <p>DEMONSTRATION DATA — INDICATIVE RESEARCH ONLY. NOT A RECOMMENDATION OR PAPER RESULT.</p>
+            </div>
+            <article class="options-workbench-promotion" aria-labelledby="promotion-gate-title">
+              <div><p class="eyebrow">PROMOTION GATE</p><h4 id="promotion-gate-title">Reviewer and lifecycle terminal</h4></div>
+              <p>BLOCKED · DEMO-PROMOTION-REVIEWER-TERMINAL-MISSING</p>
+              <span>Promotion unavailable. No strategy, recommendation, or paper result is produced.</span>
+            </article>
+          </section>
+        </div>
+      </section>
 
       <section class="showcase-section" aria-labelledby="navigation-heading">
         <div class="section-heading"><p class="eyebrow">01 / WORKSPACE NAV</p><h2 id="navigation-heading">Navigation item</h2></div>
