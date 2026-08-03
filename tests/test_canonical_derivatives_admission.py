@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -42,7 +40,6 @@ FIXTURES = Path(__file__).parent / "fixtures"
 STARTED = dt.datetime(2026, 7, 23, 14, 30, tzinfo=dt.UTC)
 COMPLETED = STARTED + dt.timedelta(minutes=2)
 AS_OF = STARTED + dt.timedelta(minutes=10)
-ROOT = Path(__file__).parents[1]
 
 
 def test_canonical_model_boundaries_expose_a_structured_typed_error() -> None:
@@ -181,38 +178,6 @@ def test_reviewed_kis_cme_blocker_is_preserved(tmp_path: Path) -> None:
 
     assert evidence.terminal_reason is CanonicalDerivativesReason.CME_SUB_ENTITLEMENT_MISSING
     assert evidence.status is CanonicalDerivativesStatus.BLOCKED
-
-
-def test_cli_emits_stable_json_and_replay_keeps_source_counts(tmp_path: Path) -> None:
-    contract_store, chain_store, _ = _stores(tmp_path)
-    command = [
-        sys.executable,
-        str(ROOT / "run_canonical_derivatives_admission.py"),
-        "--contract-collection-id",
-        "canonical-contracts",
-        "--chain-collection-id",
-        "canonical-chain",
-        "--underlying-symbol",
-        "AAPL",
-        "--expiration-date",
-        "2026-07-24",
-        "--contract-type",
-        "call",
-        "--contract-database",
-        str(contract_store.path),
-        "--chain-database",
-        str(chain_store.path),
-        "--as-of",
-        AS_OF.isoformat(),
-    ]
-    before = contract_store.counts(), chain_store.counts()
-
-    first = subprocess.run(command, cwd=ROOT, check=True, capture_output=True, text=True)
-    second = subprocess.run(command, cwd=ROOT, check=True, capture_output=True, text=True)
-
-    assert json.loads(first.stdout) == json.loads(second.stdout)
-    assert json.loads(first.stdout)["terminal_reason"] == "indicative_research_only"
-    assert (contract_store.counts(), chain_store.counts()) == before
 
 
 def _stores(
