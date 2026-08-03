@@ -132,6 +132,7 @@ def collect_dashboard_snapshot_v2(
         derivatives=DerivativesWorkspaceV2(
             **derivatives.model_dump(),
             workbench=project_options_workbench(
+                outputs=outputs,
                 now=generated_at,
                 derivatives_trace_id=derivatives.trace_id,
             ),
