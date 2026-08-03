@@ -64,7 +64,7 @@ function payoffChart(points: readonly Readonly<{ spot: number; payoff: number }>
   svg.setAttribute("viewBox", "0 0 600 180");
   svg.setAttribute("role", "img");
   svg.append(svgText("title", "Sampled expiration payoff"));
-  svg.append(svgText("desc", "Payoff line across the canonical bounded scenario spots."));
+  svg.append(svgText("desc", "Payoff line across the bounded scenario spots."));
   const axis = document.createElementNS(svg.namespaceURI, "line");
   axis.setAttribute("x1", "20");
   axis.setAttribute("x2", "580");
@@ -98,7 +98,7 @@ function payoffTable(
 ): HTMLTableElement {
   const table = document.createElement("table");
   table.setAttribute("aria-label", "Payoff samples");
-  table.append(textElement("caption", "Payoff samples · bounded canonical spots"));
+  table.append(textElement("caption", "Payoff samples · bounded scenario spots"));
   const head = document.createElement("thead");
   const headRow = document.createElement("tr");
   for (const label of ["Spot", "Payoff"]) headRow.append(textElement("th", label));

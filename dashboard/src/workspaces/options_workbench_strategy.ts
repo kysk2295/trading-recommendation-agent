@@ -1,19 +1,15 @@
 import { buttonElement, textElement } from "../dom";
 import { resolveEvidenceTrace } from "../evidence_trace";
-import { parseOperationalDecimal } from "../options_workbench_decimal";
 import type { OptionsWorkbench } from "../options_workbench_schema";
 import type { ChainLegSelection } from "./options_chain_table";
 import { renderPayoffResearch, type ScenarioEntry } from "./options_workbench_payoff";
+import { breakEvenPoints, scenarioSeries } from "./options_workbench_presenters";
 import {
-  breakEvenPoints,
-  scenarioSeries,
-  strategyLegFromFixture,
-} from "./options_workbench_presenters";
+  type ResolvedScenario,
+  resolveScenario,
+  scenarioBaseline,
+} from "./options_workbench_scenario_data";
 import { type WorkbenchTraceContext, workbenchTraceButton } from "./options_workbench_trace";
-
-type ScenarioBaseline =
-  | Readonly<{ kind: "ready"; entries: readonly ScenarioEntry[]; spots: readonly number[] }>
-  | Readonly<{ kind: "missing" | "blocked" }>;
 
 export type ScenarioPresentations = Readonly<{
   chain: HTMLElement;
@@ -31,9 +27,13 @@ export function createScenarioPresentations(
   let selections: readonly ChainLegSelection[] = [];
   let selectedSpot = baseline.kind === "ready" ? Number(workbench.scenario?.spot) : 0;
   const render = (): void => {
-    chain.replaceChildren(...chainScenarioContent(baseline, selections));
+    const resolved = resolveScenario(baseline, selections);
+    if (resolved.kind === "ready" && !resolved.spots.includes(selectedSpot)) {
+      selectedSpot = resolved.spots[Math.floor(resolved.spots.length / 2)] ?? 0;
+    }
+    chain.replaceChildren(...chainScenarioContent(resolved));
     agent.replaceChildren(
-      ...scenarioContent(workbench, baseline, selections, selectedSpot, setSpot, reset),
+      ...scenarioContent(workbench, resolved, selectedSpot, setSpot, reset),
       agentRoom(workbench, traceContext),
     );
   };
@@ -56,14 +56,11 @@ export function createScenarioPresentations(
   };
 }
 
-function chainScenarioContent(
-  baseline: ScenarioBaseline,
-  selections: readonly ChainLegSelection[],
-): readonly Node[] {
-  if (baseline.kind !== "ready") return unavailableScenario(baseline);
-  const entries = [...baseline.entries, ...selectedEntries(selections)];
+function chainScenarioContent(scenario: ResolvedScenario): readonly Node[] {
+  if (scenario.kind !== "ready") return unavailableScenario(scenario);
+  const { entries, spots } = scenario;
   const legs = entries.map((entry) => entry.leg);
-  const points = scenarioSeries(legs, baseline.spots);
+  const points = scenarioSeries(legs, spots);
   if (points.some((point) => !Number.isFinite(point.payoff))) {
     return [
       textElement("h3", "Deterministic expiration scenario"),
@@ -87,6 +84,7 @@ function chainScenarioContent(
   }
   return [
     textElement("h3", "Deterministic expiration scenario"),
+    textElement("p", scenario.local ? "LOCAL RESEARCH SCENARIO" : "CANONICAL RESEARCH SCENARIO"),
     selectedLegList(entries),
     breakEvenText(legs),
     series,
@@ -96,24 +94,22 @@ function chainScenarioContent(
 
 function scenarioContent(
   workbench: OptionsWorkbench,
-  baseline: ScenarioBaseline,
-  selections: readonly ChainLegSelection[],
+  scenario: ResolvedScenario,
   selectedSpot: number,
   onSpot: (spot: number) => void,
   onReset: () => void,
 ): readonly Node[] {
-  if (baseline.kind !== "ready") {
-    return unavailableScenario(baseline);
-  }
-  const entries = [...baseline.entries, ...selectedEntries(selections)];
+  if (scenario.kind !== "ready") return unavailableScenario(scenario);
+  const { entries, spots } = scenario;
   const reset = buttonElement("Reset local legs", "options-local-reset");
   reset.addEventListener("click", onReset);
   return [
     textElement("h3", "Deterministic expiration scenario"),
+    textElement("p", scenario.local ? "LOCAL RESEARCH SCENARIO" : "CANONICAL RESEARCH SCENARIO"),
     textElement("p", "Underlying and baseline are read-only; selected chain legs remain local."),
     selectedLegList(entries),
     reset,
-    ...renderPayoffResearch(workbench, entries, baseline.spots, selectedSpot, onSpot),
+    ...renderPayoffResearch(workbench, entries, spots, selectedSpot, onSpot),
   ];
 }
 
@@ -142,7 +138,7 @@ function breakEvenText(legs: readonly ScenarioEntry["leg"][]): HTMLElement {
 }
 
 function unavailableScenario(
-  baseline: Exclude<ScenarioBaseline, { kind: "ready" }>,
+  baseline: Exclude<ResolvedScenario, { kind: "ready" }>,
 ): readonly Node[] {
   return [
     textElement("h3", "Scenario unavailable"),
@@ -205,44 +201,6 @@ function receiptRow(label: string, value: string): HTMLElement {
   const row = document.createElement("div");
   row.append(textElement("dt", label), textElement("dd", value));
   return row;
-}
-
-function scenarioBaseline(workbench: OptionsWorkbench): ScenarioBaseline {
-  if (workbench.scenario === null) return { kind: "missing" };
-  const entries: ScenarioEntry[] = [];
-  for (const fixture of workbench.scenario.legs) {
-    const conversion = strategyLegFromFixture(fixture);
-    if (conversion.kind === "blocked") return { kind: "blocked" };
-    entries.push({ contractId: fixture.contract_id, leg: conversion.leg });
-  }
-  const spots: number[] = [];
-  for (const spot of workbench.scenario.scenario_spots) {
-    const parsed = parseOperationalDecimal(spot);
-    if (parsed.kind === "blocked") return { kind: "blocked" };
-    spots.push(parsed.decimal.value);
-  }
-  if (
-    scenarioSeries(
-      entries.map((entry) => entry.leg),
-      spots,
-    ).some((point) => !Number.isFinite(point.payoff))
-  )
-    return { kind: "blocked" };
-  return { kind: "ready", entries: Object.freeze(entries), spots: Object.freeze(spots) };
-}
-
-function selectedEntries(selections: readonly ChainLegSelection[]): readonly ScenarioEntry[] {
-  return selections.map((selection) => ({
-    contractId: selection.contractId,
-    leg: {
-      action: "long",
-      side: selection.side,
-      strike: selection.strike,
-      premium: selection.premium,
-      quantity: 1,
-      multiplier: 100,
-    },
-  }));
 }
 
 function scenarioPanel(): HTMLElement {
