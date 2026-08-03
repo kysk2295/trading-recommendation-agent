@@ -76,6 +76,19 @@ async function main(): Promise<void> {
   try {
     browser = await chromium.launch({ channel: "chrome", headless: true });
     context = await browser.newContext({ reducedMotion: "reduce" });
+    await context.route("**/__qa__/materialize.css", async (route) => {
+      await route.fulfill({
+        contentType: "text/css",
+        body: [
+          "html,body{block-size:auto!important;overflow:visible!important}",
+          ".workstation-shell{block-size:auto!important;min-block-size:100dvb;overflow:visible!important;grid-template-rows:56px auto 28px!important}",
+          ".workspace-scroll-body{overflow:visible!important}",
+          ".options-workbench-tabs{overflow:visible!important;flex-wrap:wrap!important}",
+          ".options-chain-viewport{overflow:visible!important;background:var(--surface-primary)!important}",
+          ".mobile-launcher{position:static!important}",
+        ].join(""),
+      });
+    });
     findings.push(
       ...(await runPublishedCase(
         context,

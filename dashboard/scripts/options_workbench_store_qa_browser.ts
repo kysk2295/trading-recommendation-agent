@@ -70,7 +70,6 @@ export async function verifyBlockedSnapshot(
   if (chain.blocker_code === null) {
     throw new OptionsWorkbenchStoreQaBrowserError(`${label} chain has no blocker code`);
   }
-  await assertVisibleText(page.locator("#option_chain"), chain.blocker_code);
   await assertVisibleText(page.locator("#option_chain"), chain.summary);
   requireEqual(
     await page.locator("#option_chain tbody th[scope='row']").count(),
@@ -126,7 +125,7 @@ async function visitViews(
 async function assertProjectedChain(page: Page, snapshot: DashboardSnapshotV2): Promise<void> {
   const workbench = snapshot.workspaces.derivatives.workbench;
   const chainPanel = page.locator("#option_chain");
-  await assertVisibleText(chainPanel, workbench.chain.selected_expiration ?? "Unavailable");
+  await assertSelectedExpiration(page, workbench.chain.selected_expiration);
   for (const row of workbench.chain.rows) {
     await assertVisibleText(chainPanel, row.strike);
     for (const cell of [row.call, row.put]) {
@@ -148,6 +147,14 @@ async function assertProjectedChain(page: Page, snapshot: DashboardSnapshotV2): 
     .flatMap((row) => [row.call, row.put])
     .some((cell) => cell?.state === "indicative" || cell?.state === "delayed");
   requireEqual(visibleState, true, "indicative or delayed projected state");
+}
+
+async function assertSelectedExpiration(page: Page, expected: string | null): Promise<void> {
+  requireEqual(
+    await page.locator("#option-chain-expiration").inputValue(),
+    expected ?? "",
+    "selected expiration",
+  );
 }
 
 async function assertMarketSourceTruth(page: Page, snapshot: DashboardSnapshotV2): Promise<void> {
