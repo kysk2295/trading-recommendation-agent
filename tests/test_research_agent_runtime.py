@@ -190,6 +190,20 @@ def test_bounded_cycle_processes_each_family_once_and_replay_is_idle(tmp_path: P
     assert calls == list(PRIMARY_AGENT_FAMILIES)
 
 
+def test_bounded_cycle_does_not_debounce_fresh_one_minute_opportunity_past_expiry(
+    tmp_path: Path,
+) -> None:
+    calls: list[AgentFamilyId] = []
+    runtime = _runtime(tmp_path / "cycles.sqlite3", EMPTY_COLLECTOR, calls)
+    runtime.ingest(tuple(_evidence(family, 1) for family in PRIMARY_AGENT_FAMILIES))
+
+    cycle = runtime.cycle(NOW + dt.timedelta(seconds=30))
+    runtime.close()
+
+    assert cycle.status == "complete"
+    assert tuple(item.agent_family_id for item in cycle.outcomes) == PRIMARY_AGENT_FAMILIES
+
+
 def test_source_failure_is_isolated_and_never_calls_the_model(tmp_path: Path) -> None:
     calls: list[AgentFamilyId] = []
     collector = StaticCollector(

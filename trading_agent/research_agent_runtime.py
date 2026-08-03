@@ -146,12 +146,12 @@ class ResearchAgentRuntime:
         return sum(self.store.append_evidence(item) for item in evidence)
 
     def tick(self, now: dt.datetime) -> ResearchAgentTickResult:
-        return self._tick(now, only_family=None)
+        return self._tick(now, only_family=None, apply_debounce=True)
 
     def cycle(self, now: dt.datetime) -> ResearchAgentBoundedCycleResult:
         outcomes: list[ResearchAgentTickResult] = []
         for family in PRIMARY_AGENT_FAMILIES:
-            outcome = self._tick(now, only_family=family)
+            outcome = self._tick(now, only_family=family, apply_debounce=False)
             if outcome.status != "idle":
                 outcomes.append(outcome)
         families = tuple(item.agent_family_id for item in outcomes)
@@ -174,6 +174,7 @@ class ResearchAgentRuntime:
         now: dt.datetime,
         *,
         only_family: AgentFamilyId | None,
+        apply_debounce: bool,
     ) -> ResearchAgentTickResult:
         recovered = self.store.recover_interrupted(now)
         batch = self._collector.collect(now)
@@ -184,7 +185,13 @@ class ResearchAgentRuntime:
         )
         work = tuple(item for family in PRIMARY_AGENT_FAMILIES for item in self.store.open_work(family))
         states = actor_wake_states(self.store.latest_cycles(), work)
-        selected = runnable_actors(pending, work, now=now, states=states)
+        selected = runnable_actors(
+            pending,
+            work,
+            now=now,
+            states=states,
+            apply_debounce=apply_debounce,
+        )
         if only_family is not None:
             selected = tuple(actor for actor in selected if actor.agent_family_id == only_family)
         if not selected:
