@@ -35,6 +35,11 @@ export interface SnapshotStore extends AgentTaskEventStore, DirectedJobEventStor
   pendingInteractions(): Promise<readonly Interaction[]>;
 }
 
+export function parseStoredCanonicalSnapshot(payload: unknown): DashboardSnapshotV2 | null {
+  const parsed = dashboardSnapshotV2Schema.safeParse(payload);
+  return parsed.success ? parsed.data : null;
+}
+
 export class MemorySnapshotStore implements SnapshotStore {
   private snapshot: NormalizedSnapshot | null = null;
   private readonly interactions: Interaction[] = [];
@@ -149,7 +154,7 @@ export class PostgresSnapshotStore implements SnapshotStore {
             SELECT payload FROM dashboard_snapshots_v2 WHERE singleton_id = 2
           `;
             const row = rows[0];
-            return row === undefined ? null : dashboardSnapshotV2Schema.parse(row.payload);
+            return row === undefined ? null : parseStoredCanonicalSnapshot(row.payload);
           },
           writeCanonical: async (canonical) => {
             await transaction`
@@ -179,7 +184,7 @@ export class PostgresSnapshotStore implements SnapshotStore {
       SELECT payload FROM dashboard_snapshots_v2 WHERE singleton_id = 2
     `;
     const row = rows[0];
-    return row === undefined ? null : dashboardSnapshotV2Schema.parse(row.payload);
+    return row === undefined ? null : parseStoredCanonicalSnapshot(row.payload);
   }
 
   async latestV1(): Promise<DashboardSnapshotV1 | null> {

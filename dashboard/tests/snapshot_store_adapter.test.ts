@@ -3,6 +3,7 @@ import type { DashboardSnapshotV1 } from "../src/schema";
 import type { DashboardSnapshotV2 } from "../src/schema_v2";
 import { parseAndNormalizeSnapshot } from "../src/snapshot_normalizer";
 import { type SnapshotPairTransaction, saveSnapshotPair } from "../src/snapshot_pair_store";
+import { parseStoredCanonicalSnapshot } from "../src/store";
 import { snapshotV2 } from "./snapshot_v2_fixture";
 
 class FakeTransaction implements SnapshotPairTransaction {
@@ -74,6 +75,15 @@ async function runTransaction(
 }
 
 describe("snapshot pair transaction adapter", () => {
+  test("treats a pre-workbench canonical row as absent so a valid snapshot can replace it", () => {
+    const legacySnapshot = structuredClone(snapshotV2) as Record<string, unknown>;
+    const workspaces = legacySnapshot["workspaces"] as Record<string, unknown>;
+    const derivatives = workspaces["derivatives"] as Record<string, unknown>;
+    delete derivatives["workbench"];
+
+    expect(parseStoredCanonicalSnapshot(legacySnapshot)).toBeNull();
+  });
+
   test("locks before reading and stages both versions in one transaction", async () => {
     const normalized = parseAndNormalizeSnapshot(snapshotV2);
     expect(normalized.ok).toBe(true);
