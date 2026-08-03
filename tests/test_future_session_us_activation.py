@@ -58,7 +58,7 @@ def test_activate_installs_exact_six_private_launch_agents_and_writes_receipt(
         launchctl_runner=launchctl,
     )
 
-    # Then: all five immutable source artifacts bind one private activation receipt.
+    # Then: all six immutable source artifacts bind one private activation receipt.
     receipt = json.loads(activation.receipt_path.read_text(encoding="utf-8"))
     assert receipt == {
         "labels": [entry.label for entry in activation.entries],
