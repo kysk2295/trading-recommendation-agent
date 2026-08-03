@@ -1,15 +1,12 @@
 import { buttonElement, textElement } from "../dom";
 import type { EvidenceTraceDrawer } from "../evidence_trace";
-import { resolveEvidenceTrace } from "../evidence_trace";
 import type { OptionsWorkbench } from "../options_workbench_schema";
 import type { DashboardSnapshotV2 } from "../schema_v2";
 import { renderOptionsChainTable } from "./options_chain_table";
-import {
-  createScenarioPresentations,
-  renderProviderStates,
-  renderWorkbenchHeader,
-} from "./options_workbench_panels";
+import { renderOptionsWorkbenchMarket } from "./options_workbench_market";
+import { createScenarioPresentations, renderWorkbenchHeader } from "./options_workbench_panels";
 import { workbenchStatePresentation } from "./options_workbench_presenters";
+import { workbenchTraceButton } from "./options_workbench_trace";
 
 export type WorkbenchView =
   | "market_pulse"
@@ -28,6 +25,12 @@ export const WORKBENCH_VIEWS: readonly WorkbenchView[] = Object.freeze([
 
 type TraceDrawer = Pick<EvidenceTraceDrawer, "open">;
 type WorkbenchSection = OptionsWorkbench["market"];
+type PanelContext = Readonly<{
+  workbench: OptionsWorkbench;
+  snapshot: DashboardSnapshotV2;
+  drawer: TraceDrawer;
+  scenario: HTMLElement;
+}>;
 
 const VIEW_LABELS: Readonly<Record<WorkbenchView, string>> = {
   market_pulse: "Market Pulse",
@@ -52,7 +55,7 @@ export function renderOptionsWorkbench(
   const panels = document.createElement("div");
   panels.className = "options-workbench-panels";
   const scenarios = createScenarioPresentations(workbench);
-  const panelByView = buildPanels(workbench, snapshot, drawer, scenarios.agent);
+  const panelByView = buildPanels({ workbench, snapshot, drawer, scenario: scenarios.agent });
   const tabByView = new Map<WorkbenchView, HTMLButtonElement>();
   for (const view of WORKBENCH_VIEWS) {
     const tab = workbenchTab(view);
@@ -77,7 +80,7 @@ export function renderOptionsWorkbench(
   bindTabs(tabByView, activate);
   const chain = panelByView.get("option_chain");
   chain?.append(
-    renderOptionsChainTable(workbench.chain, snapshot, drawer, (selection) => {
+    renderOptionsChainTable(workbench.chain, { snapshot, drawer }, (selection) => {
       scenarios.append(selection);
     }),
     textElement(
@@ -92,18 +95,11 @@ export function renderOptionsWorkbench(
   return section;
 }
 
-function buildPanels(
-  workbench: OptionsWorkbench,
-  snapshot: DashboardSnapshotV2,
-  drawer: TraceDrawer,
-  scenario: HTMLElement,
-): ReadonlyMap<WorkbenchView, HTMLElement> {
+function buildPanels(context: PanelContext): ReadonlyMap<WorkbenchView, HTMLElement> {
+  const { workbench, snapshot, drawer, scenario } = context;
   const panels = new Map<WorkbenchView, HTMLElement>();
   const market = panel("market_pulse");
-  market.append(
-    sectionPresentation(workbench.market, snapshot, drawer),
-    renderProviderStates(workbench),
-  );
+  market.append(renderOptionsWorkbenchMarket(workbench, snapshot, drawer));
   const chain = panel("option_chain");
   chain.append(
     panelHeading(
@@ -201,7 +197,7 @@ function panelHeading(
   heading.className = "options-workbench-panel-heading";
   const copy = document.createElement("div");
   copy.append(textElement("h3", title), textElement("p", summary));
-  heading.append(copy, traceButton(title, traceId, snapshot, drawer));
+  heading.append(copy, workbenchTraceButton(title, traceId, { snapshot, drawer }));
   return heading;
 }
 
@@ -221,27 +217,8 @@ function promotionRows(
         "p",
         `${promotion.state} · ${promotion.passed_gate_count}/${promotion.total_gate_count} · ${promotion.blockers.join(", ")}`,
       ),
-      traceButton(promotion.promotion_id, promotion.trace_id, snapshot, drawer),
+      workbenchTraceButton(promotion.promotion_id, promotion.trace_id, { snapshot, drawer }),
     );
     return row;
   });
-}
-
-function traceButton(
-  label: string,
-  traceId: string,
-  snapshot: DashboardSnapshotV2,
-  drawer: TraceDrawer,
-): HTMLButtonElement {
-  const button = buttonElement("Trace", "trace-button");
-  button.dataset["traceId"] = traceId;
-  button.setAttribute("aria-label", `${label} Evidence Trace 열기`);
-  button.addEventListener("click", () =>
-    drawer.open(
-      label,
-      resolveEvidenceTrace(traceId, snapshot.traces.nodes, snapshot.traces.edges),
-      button,
-    ),
-  );
-  return button;
 }

@@ -1,0 +1,92 @@
+.options-chain-explorer,
+.options-market-pulse,
+.options-market-truth {
+  display: grid;
+  gap: var(--space-4);
+  min-inline-size: 0;
+}
+
+.options-chain-controls,
+.options-market-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: end;
+}
+
+.options-chain-controls label {
+  display: grid;
+  gap: var(--space-1);
+  color: var(--text-tertiary);
+  font-size: var(--type-meta);
+  font-weight: 620;
+}
+
+.options-chain-controls select {
+  min-block-size: var(--control-touch);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.options-chain-controls select:focus-visible,
+.options-market-links a:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.options-chain-viewport table {
+  min-inline-size: calc(var(--space-10) * 42);
+}
+
+.options-chain-viewport td .state-badge {
+  display: inline-block;
+}
+
+.options-market-metrics,
+.options-market-truth-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(calc(var(--space-8) * 5), 100%), 1fr));
+  border-block-start: 1px solid var(--border-subtle);
+  border-inline-start: 1px solid var(--border-subtle);
+}
+
+.options-market-metrics > div,
+.options-market-truth-grid > div {
+  min-inline-size: 0;
+  padding: var(--space-3);
+  border-inline-end: 1px solid var(--border-subtle);
+  border-block-end: 1px solid var(--border-subtle);
+  background: var(--surface-secondary);
+}
+
+.options-market-metrics dd,
+.options-market-truth-grid dd {
+  overflow-wrap: anywhere;
+}
+
+.options-market-truth {
+  padding-block-start: var(--space-2);
+}
+
+.options-market-links a {
+  display: inline-flex;
+  min-block-size: var(--control-touch);
+  align-items: center;
+  padding-inline: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-secondary);
+  color: var(--ember-400);
+  font-size: var(--type-small);
+  font-weight: 620;
+  text-decoration: none;
+}
+
+.options-market-links a:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
