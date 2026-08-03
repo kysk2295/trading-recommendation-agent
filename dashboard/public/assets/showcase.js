@@ -12,7 +12,56 @@ const state = document.querySelector("#trace-state");
 const summary = document.querySelector("#trace-summary");
 const terminal = document.querySelector("#trace-terminal");
 const traceTitle = document.querySelector("#trace-title");
+const workbenchTablist = document.querySelector(".options-workbench-tabs");
+const workbenchTabs = [...document.querySelectorAll('.options-workbench-tabs [role="tab"]')];
 let traceInvoker = null;
+
+function activateWorkbenchTab(nextTab) {
+  for (const tab of workbenchTabs) {
+    const isSelected = tab === nextTab;
+    const panel = document.querySelector(`#${tab.getAttribute("aria-controls")}`);
+    tab.setAttribute("aria-selected", String(isSelected));
+    tab.tabIndex = isSelected ? 0 : -1;
+    panel.hidden = !isSelected;
+  }
+  nextTab.focus();
+}
+
+function moveWorkbenchTab(event) {
+  const currentIndex = workbenchTabs.indexOf(event.target);
+  if (currentIndex === -1) return;
+
+  const lastIndex = workbenchTabs.length - 1;
+  let nextIndex = currentIndex;
+  switch (event.key) {
+    case "ArrowLeft":
+      nextIndex = currentIndex === 0 ? lastIndex : currentIndex - 1;
+      break;
+    case "ArrowRight":
+      nextIndex = currentIndex === lastIndex ? 0 : currentIndex + 1;
+      break;
+    case "Home":
+      nextIndex = 0;
+      break;
+    case "End":
+      nextIndex = lastIndex;
+      break;
+    case "Enter":
+    case " ":
+      break;
+    default:
+      return;
+  }
+
+  event.preventDefault();
+  activateWorkbenchTab(workbenchTabs[nextIndex]);
+}
+
+workbenchTablist.addEventListener("click", (event) => {
+  const tab = event.target.closest('[role="tab"]');
+  if (tab) activateWorkbenchTab(tab);
+});
+workbenchTablist.addEventListener("keydown", moveWorkbenchTab);
 
 function focusTraceControl(event) {
   if (event.key !== "Tab") return;

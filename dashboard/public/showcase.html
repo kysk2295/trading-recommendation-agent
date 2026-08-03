@@ -39,16 +39,16 @@
           </p>
         </header>
 
-        <nav class="options-workbench-tabs" aria-label="Options Workbench views">
-          <a href="#workbench-market-pulse" aria-current="page">Market Pulse</a>
-          <a href="#workbench-option-chain">Option Chain</a>
-          <a href="#workbench-strategy-agent">Strategy &amp; Agent</a>
-          <a href="#workbench-experiment-lab">Experiment Lab</a>
-          <a href="#workbench-promotion-operations">Promotion &amp; Operations</a>
-        </nav>
+        <div class="options-workbench-tabs" role="tablist" aria-label="Options Workbench views">
+          <button id="workbench-tab-market-pulse" type="button" role="tab" aria-selected="true" aria-controls="workbench-market-pulse" tabindex="0">Market Pulse</button>
+          <button id="workbench-tab-option-chain" type="button" role="tab" aria-selected="false" aria-controls="workbench-option-chain" tabindex="-1">Option Chain</button>
+          <button id="workbench-tab-strategy-agent" type="button" role="tab" aria-selected="false" aria-controls="workbench-strategy-agent" tabindex="-1">Strategy &amp; Agent</button>
+          <button id="workbench-tab-experiment-lab" type="button" role="tab" aria-selected="false" aria-controls="workbench-experiment-lab" tabindex="-1">Experiment Lab</button>
+          <button id="workbench-tab-promotion-operations" type="button" role="tab" aria-selected="false" aria-controls="workbench-promotion-operations" tabindex="-1">Promotion &amp; Operations</button>
+        </div>
 
         <div class="options-workbench-panels">
-          <section class="options-workbench-panel" id="workbench-market-pulse" aria-labelledby="market-pulse-title">
+          <section class="options-workbench-panel" id="workbench-market-pulse" role="tabpanel" aria-labelledby="workbench-tab-market-pulse">
             <div class="options-workbench-panel-heading">
               <h3 id="market-pulse-title">Market Pulse</h3>
               <p>DEMONSTRATION DATA — INDICATIVE RESEARCH ONLY. NOT A RECOMMENDATION OR PAPER RESULT.</p>
@@ -60,7 +60,7 @@
             </dl>
           </section>
 
-          <section class="options-workbench-panel" id="workbench-option-chain" aria-labelledby="option-chain-title">
+          <section class="options-workbench-panel" id="workbench-option-chain" role="tabpanel" aria-labelledby="workbench-tab-option-chain" hidden>
             <div class="options-workbench-panel-heading">
               <h3 id="option-chain-title">Option Chain</h3>
               <p>DEMONSTRATION DATA — INDICATIVE RESEARCH ONLY. NOT A RECOMMENDATION OR PAPER RESULT.</p>
@@ -88,7 +88,7 @@
             <p class="options-workbench-scroll-note">Table scrolls locally. Complete IDs remain available to assistive technology.</p>
           </section>
 
-          <section class="options-workbench-panel" id="workbench-strategy-agent" aria-labelledby="strategy-agent-title">
+          <section class="options-workbench-panel" id="workbench-strategy-agent" role="tabpanel" aria-labelledby="workbench-tab-strategy-agent" hidden>
             <div class="options-workbench-panel-heading">
               <h3 id="strategy-agent-title">Strategy &amp; Agent</h3>
               <p>DEMONSTRATION DATA — INDICATIVE RESEARCH ONLY. NOT A RECOMMENDATION OR PAPER RESULT.</p>
@@ -109,7 +109,7 @@
             </div>
           </section>
 
-          <section class="options-workbench-panel" id="workbench-experiment-lab" aria-labelledby="experiment-title">
+          <section class="options-workbench-panel" id="workbench-experiment-lab" role="tabpanel" aria-labelledby="workbench-tab-experiment-lab" hidden>
             <div class="options-workbench-panel-heading">
               <h3 id="experiment-title">Experiment Lab</h3>
               <p>DEMONSTRATION DATA — INDICATIVE RESEARCH ONLY. NOT A RECOMMENDATION OR PAPER RESULT.</p>
@@ -121,7 +121,7 @@
             </dl>
           </section>
 
-          <section class="options-workbench-panel" id="workbench-promotion-operations" aria-labelledby="promotion-title">
+          <section class="options-workbench-panel" id="workbench-promotion-operations" role="tabpanel" aria-labelledby="workbench-tab-promotion-operations" hidden>
             <div class="options-workbench-panel-heading">
               <h3 id="promotion-title">Promotion &amp; Operations</h3>
               <p>DEMONSTRATION DATA — INDICATIVE RESEARCH ONLY. NOT A RECOMMENDATION OR PAPER RESULT.</p>

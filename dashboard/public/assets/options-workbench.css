@@ -64,32 +64,39 @@
   background: var(--surface-shell);
 }
 
-.options-workbench-tabs a {
+.options-workbench-tabs button {
   display: flex;
   min-block-size: var(--control-touch);
   align-items: center;
   flex: 1 0 max-content;
   padding: 0 var(--space-4);
+  border: 0;
   border-inline-start: 1px solid var(--border-default);
+  background: transparent;
   color: var(--text-secondary);
+  cursor: pointer;
   font-size: var(--type-small);
   font-weight: 620;
-  text-decoration: none;
   white-space: nowrap;
 }
 
-.options-workbench-tabs a:first-child {
+.options-workbench-tabs button:first-child {
   border-inline-start: 0;
 }
 
-.options-workbench-tabs a[aria-current="page"] {
+.options-workbench-tabs button[aria-selected="true"] {
   border-block-end: 2px solid var(--ember-500);
   background: var(--ember-soft);
   color: var(--text-primary);
 }
 
-.options-workbench-tabs a:hover {
+.options-workbench-tabs button:hover {
   color: var(--text-primary);
+}
+
+.options-workbench-tabs button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 .options-workbench-panels {
