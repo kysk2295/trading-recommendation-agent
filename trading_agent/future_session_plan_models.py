@@ -34,6 +34,7 @@ class FutureSessionUsRole(StrEnum):
     US_DAY_PREFLIGHT_OBSERVER = "us_day_preflight_observer"
     US_DAY_CLOSE_FINALIZER = "us_day_close_finalizer"
     US_DAY_ARM_OBSERVER = "us_day_arm_observer"
+    US_RESEARCH_POST_CLOSE_SWING = "us_research_post_close_swing"
 
 
 class FutureSessionPayloadMode(StrEnum):
@@ -418,8 +419,8 @@ class ReadyToPrepareSessionPlan(BaseModel):
         )
         us_roles = tuple(job.role for job in self.jobs)
         us_shape = (
-            len(self.jobs) == 5
-            and set(us_roles) == set(FutureSessionUsRole)
+            len(self.jobs) == len(FutureSessionUsRole)
+            and us_roles == tuple(FutureSessionUsRole)
             and all(
                 job.label is not None
                 and job.expires_at is not None

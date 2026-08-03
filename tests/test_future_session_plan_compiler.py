@@ -25,6 +25,7 @@ from trading_agent.future_session_plan_models import (
     FrozenRuntimeAuthority,
     FutureSessionMarket,
     FutureSessionPlanRequest,
+    FutureSessionUsRole,
     ReadyToPrepareSessionPlan,
     WaitingSessionAuthority,
     canonical_plan_json,
@@ -122,7 +123,7 @@ def test_us_plan_is_stable_and_binds_exact_runtime_authority(
         ReadyToPrepareSessionPlan.model_validate(tampered)
 
 
-def test_xnys_2026_07_31_five_role_timing_contract(tmp_path: Path) -> None:
+def test_xnys_2026_07_31_post_close_swing_role_timing_contract(tmp_path: Path) -> None:
     # Given
     runtime, required, head = _runtime(tmp_path)
     lane, experiment, execution = _stores(tmp_path, code_version=head)
@@ -160,6 +161,7 @@ def test_xnys_2026_07_31_five_role_timing_contract(tmp_path: Path) -> None:
         "us_day_preflight_observer",
         "us_day_close_finalizer",
         "us_day_arm_observer",
+        "us_research_post_close_swing",
     )
     assert tuple(job.run_at.isoformat() for job in jobs) == (
         "2026-07-31T08:00:00-04:00",
@@ -167,6 +169,7 @@ def test_xnys_2026_07_31_five_role_timing_contract(tmp_path: Path) -> None:
         "2026-07-31T08:00:00-04:00",
         "2026-07-31T08:00:00-04:00",
         "2026-07-31T09:00:00-04:00",
+        "2026-07-31T16:25:00-04:00",
     )
     assert tuple(
         job.expires_at.isoformat()
@@ -178,6 +181,7 @@ def test_xnys_2026_07_31_five_role_timing_contract(tmp_path: Path) -> None:
         "2026-07-31T15:35:00-04:00",
         "2026-07-31T16:20:00-04:00",
         "2026-07-31T15:31:00-04:00",
+        "2026-07-31T17:30:00-04:00",
     )
     assert "open=09:30" in jobs[4].purpose
     assert "entry_cutoff=15:30" in jobs[4].purpose
@@ -265,6 +269,60 @@ def test_xnys_2026_07_31_five_role_timing_contract(tmp_path: Path) -> None:
     assert jobs[4].command[
         jobs[4].command.index("--poll-interval-seconds") + 1
     ] == "5"
+    swing = jobs[5]
+    swing_root = runtime / "outputs" / "us_swing_shadow"
+    report_root = swing_root / "operating" / target.isoformat()
+    assert swing.role is FutureSessionUsRole.US_RESEARCH_POST_CLOSE_SWING
+    assert swing.dependencies == (FutureSessionUsRole.US_DAY_CLOSE_FINALIZER,)
+    assert swing.payload_mode.value == "once"
+    assert swing.command == (
+        str(request.runtime_interpreter),
+        str(runtime / "run_us_swing_operating_session.py"),
+        "--session-date",
+        target.isoformat(),
+        "--auto-universe",
+        "--feed",
+        "sip",
+        "--research-manifest",
+        str(runtime / "examples" / "research" / "us-swing-new-high-rvol-v1.json"),
+        "--experiment-ledger",
+        str(request.experiment_ledger),
+        "--shadow-ledger",
+        str(swing_root / "swing-shadow.sqlite3"),
+        "--delivery-store",
+        str(request.delivery_database),
+        "--review-ledger",
+        str(swing_root / "reviews.sqlite3"),
+        "--output-dir",
+        str(report_root),
+    )
+    assert swing.source_paths == (
+        runtime / "examples" / "research" / "us-swing-new-high-rvol-v1.json",
+        request.experiment_ledger,
+        swing_root / "swing-shadow.sqlite3",
+        request.delivery_database,
+        swing_root / "reviews.sqlite3",
+    )
+    assert swing.destination_paths == (
+        request.experiment_ledger,
+        swing_root / "swing-shadow.sqlite3",
+        request.delivery_database,
+        swing_root / "reviews.sqlite3",
+        report_root / "us_swing_operating_session_ko.md",
+    )
+    command_text = " ".join(swing.command)
+    assert "--secret-path" not in command_text
+    assert not any(
+        forbidden in command_text
+        for forbidden in (
+            "order",
+            "account",
+            "balance",
+            "position",
+            "paper-api.alpaca.markets",
+            "api.alpaca.markets",
+        )
+    )
 
 
 def test_us_job_builder_rejects_noncanonical_watch_database(

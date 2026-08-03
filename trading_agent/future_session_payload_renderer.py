@@ -36,6 +36,7 @@ def render_job_payload(job: JobTimingSpec) -> str:
             FutureSessionUsRole.US_ORB_WATCHER
             | FutureSessionUsRole.US_DAY_CLOSE_FINALIZER
             | FutureSessionUsRole.US_DAY_ARM_OBSERVER
+            | FutureSessionUsRole.US_RESEARCH_POST_CLOSE_SWING
             | None
         ):
             pass

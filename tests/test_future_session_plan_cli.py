@@ -14,6 +14,7 @@ from trading_agent.future_session_plan_models import (
     FrozenRuntimeAuthority,
     FutureSessionMarket,
     FutureSessionPlanRequest,
+    FutureSessionUsRole,
     canonical_request_json,
 )
 
@@ -140,6 +141,6 @@ def test_cli_reports_local_ready_plan_without_materializing_jobs(
     decision = json.loads(capsys.readouterr().out)
     assert exit_code == 0
     assert decision["status"] == "ready_to_prepare"
-    assert len(decision["jobs"]) == 5
+    assert len(decision["jobs"]) == len(FutureSessionUsRole)
     assert len(decision["strategy_registrations"]) == 4
     assert not (tmp_path / "artifacts").exists()

@@ -245,7 +245,58 @@ def build_us_jobs(
         source_paths=(_required(request.signing_key), _required(request.watch_database)),
         destination_paths=(_required(request.arm_database), _required(request.execution_database)),
     )
-    return (watcher, projection, preflight, finalizer, arm)
+    swing_root = runtime / "outputs" / "us_swing_shadow"
+    swing_report = (
+        swing_root
+        / "operating"
+        / target.isoformat()
+        / "us_swing_operating_session_ko.md"
+    )
+    swing = JobTimingSpec(
+        job_id=f"us-research-post-close-swing-{target}",
+        role=FutureSessionUsRole.US_RESEARCH_POST_CLOSE_SWING,
+        label=f"ai.trading-agent.us-research-post-close-swing-{target:%Y%m%d}",
+        run_at=dt.datetime.combine(target, dt.time(16, 25), tzinfo=_NY),
+        expires_at=dt.datetime.combine(target, dt.time(17, 30), tzinfo=_NY),
+        purpose="post_close_swing_research=read_only_sip",
+        command=(
+            str(interpreter),
+            str(runtime / "run_us_swing_operating_session.py"),
+            "--session-date",
+            target.isoformat(),
+            "--auto-universe",
+            "--feed",
+            "sip",
+            "--research-manifest",
+            str(runtime / "examples" / "research" / "us-swing-new-high-rvol-v1.json"),
+            "--experiment-ledger",
+            str(request.experiment_ledger),
+            "--shadow-ledger",
+            str(swing_root / "swing-shadow.sqlite3"),
+            "--delivery-store",
+            str(_required(request.delivery_database)),
+            "--review-ledger",
+            str(swing_root / "reviews.sqlite3"),
+            "--output-dir",
+            str(swing_report.parent),
+        ),
+        dependencies=(FutureSessionUsRole.US_DAY_CLOSE_FINALIZER,),
+        source_paths=(
+            runtime / "examples" / "research" / "us-swing-new-high-rvol-v1.json",
+            request.experiment_ledger,
+            swing_root / "swing-shadow.sqlite3",
+            _required(request.delivery_database),
+            swing_root / "reviews.sqlite3",
+        ),
+        destination_paths=(
+            request.experiment_ledger,
+            swing_root / "swing-shadow.sqlite3",
+            _required(request.delivery_database),
+            swing_root / "reviews.sqlite3",
+            swing_report,
+        ),
+    )
+    return (watcher, projection, preflight, finalizer, arm, swing)
 
 
 def _observer_job(

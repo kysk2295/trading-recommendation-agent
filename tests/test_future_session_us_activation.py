@@ -26,7 +26,7 @@ from trading_agent.future_session_us_materializer_models import (
 )
 
 
-def test_activate_installs_exact_five_private_launch_agents_and_writes_receipt(
+def test_activate_installs_exact_six_private_launch_agents_and_writes_receipt(
     tmp_path: Path,
 ) -> None:
     # Given: a prepared canonical manifest and no loaded launchd labels.

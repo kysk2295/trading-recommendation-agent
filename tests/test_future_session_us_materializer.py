@@ -29,7 +29,7 @@ from trading_agent.future_session_us_materializer_models import (
 )
 
 
-def test_prepare_atomically_materializes_exact_five_us_roles(
+def test_prepare_atomically_materializes_exact_six_us_roles(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -140,7 +140,28 @@ def test_prepare_atomically_materializes_exact_five_us_roles(
                 assert "watch_source_missing" in payload_text
                 assert "watch_source_unstable" in payload_text
                 assert "deadline_elapsed" not in payload_text
-            case FutureSessionUsRole.US_ORB_WATCHER | FutureSessionUsRole.US_DAY_ARM_OBSERVER:
+            case FutureSessionUsRole.US_RESEARCH_POST_CLOSE_SWING:
+                assert "exec " in payload_text
+                assert "--auto-universe --feed sip" in payload_text
+                assert "--secret-path" not in payload_text
+                assert not any(
+                    forbidden in payload_text
+                    for forbidden in (
+                        "order",
+                        "account",
+                        "balance",
+                        "position",
+                        "paper-api.alpaca.markets",
+                        "api.alpaca.markets",
+                    )
+                )
+                assert f"readonly run_epoch={int(job.run_at.timestamp())}" in wrapper_text
+                assert job.expires_at is not None
+                assert f"readonly expires_epoch={int(job.expires_at.timestamp())}" in wrapper_text
+            case (
+                FutureSessionUsRole.US_ORB_WATCHER
+                | FutureSessionUsRole.US_DAY_ARM_OBSERVER
+            ):
                 assert job.poll_until is None
             case None:
                 raise AssertionError
