@@ -56,12 +56,33 @@
   color: var(--ember-400);
 }
 
+.options-workbench-tabs-hint {
+  display: none;
+}
+
 .options-workbench-tabs {
   display: flex;
   margin-top: var(--space-6);
   overflow-x: auto;
   border: 1px solid var(--border-default);
   background: var(--surface-shell);
+}
+
+@media (max-width: 767px) {
+  .options-workbench .options-workbench-tabs-hint {
+    display: block;
+    margin-top: var(--space-6);
+    color: var(--text-tertiary);
+    font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+    font-size: var(--type-meta);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .options-workbench-tabs {
+    margin-top: var(--space-2);
+  }
 }
 
 .options-workbench-tabs button {

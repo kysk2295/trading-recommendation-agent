@@ -103,6 +103,11 @@ describe("options workbench rendering", () => {
     ).toEqual([...views]);
     expect(defaultPanelVisible).toBeTrue();
     expect(await page.locator("[role=tabpanel][hidden]").count()).toBe(4);
+    const tablist = page.getByRole("tablist", { name: "Options research views" });
+    expect(await tablist.getAttribute("aria-describedby")).toBe("options_workbench_tabs_hint");
+    expect(await page.locator("#options_workbench_tabs_hint").textContent()).toContain(
+      "swipe / scroll",
+    );
     expect(await page.getByText("alpaca · indicative").first().isVisible()).toBeTrue();
     await page.locator("#option_chain_tab").click();
     const table = page.getByRole("table", { name: /Calls left.*Puts right/ });

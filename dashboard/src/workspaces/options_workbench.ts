@@ -53,6 +53,9 @@ export function renderOptionsWorkbench(
   tabs.className = "options-workbench-tabs";
   tabs.setAttribute("role", "tablist");
   tabs.setAttribute("aria-label", "Options research views");
+  tabs.setAttribute("aria-describedby", "options_workbench_tabs_hint");
+  const tabsHint = textElement("p", "5 views · swipe / scroll ↔", "options-workbench-tabs-hint");
+  tabsHint.id = "options_workbench_tabs_hint";
   const panels = document.createElement("div");
   panels.className = "options-workbench-panels";
   const scenarios = createScenarioPresentations(workbench, { snapshot, drawer });
@@ -92,7 +95,7 @@ export function renderOptionsWorkbench(
     scenarios.chain,
   );
   activate("market_pulse", false);
-  section.append(tabs, panels);
+  section.append(tabsHint, tabs, panels);
   return section;
 }
 
