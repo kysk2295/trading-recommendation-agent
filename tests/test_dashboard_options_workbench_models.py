@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Literal, assert_never
 
 import pytest
 from pydantic import ValidationError
@@ -21,62 +22,42 @@ def observed_at() -> datetime:
     return datetime(2026, 8, 3, 14, 30, tzinfo=UTC)
 
 
-def call_cell() -> OptionChainCellV2:
+def option_cell(side: Literal["call", "put"]) -> OptionChainCellV2:
+    match side:
+        case "call":
+            quote = ("AAPL-20260821-C-00225000", "1.25", "1.30", "0.25", "0.50", 100, 500, "trace-1")
+        case "put":
+            quote = ("AAPL-20260821-P-00225000", "1.10", "1.15", "0.26", "-0.48", 80, 450, "trace-2")
+        case unreachable:
+            assert_never(unreachable)
+    contract_id, bid, ask, implied_volatility, delta, volume, open_interest, trace_id = quote
     return OptionChainCellV2(
-        contract_id="AAPL-20260821-C-00225000",
-        side="call",
+        contract_id=contract_id,
+        side=side,
         provider="alpaca",
         state="current",
-        bid="1.25",
-        ask="1.30",
-        last="1.28",
-        implied_volatility="0.25",
-        delta="0.50",
-        gamma="0.01",
-        theta="-0.02",
-        vega="0.10",
-        volume=100,
-        open_interest=500,
+        bid=bid,
+        ask=ask,
+        implied_volatility=implied_volatility,
+        delta=delta,
+        volume=volume,
+        open_interest=open_interest,
         observed_at=observed_at(),
-        trace_id="trace-1",
-        selectable=True,
-    )
-
-
-def put_cell() -> OptionChainCellV2:
-    return OptionChainCellV2(
-        contract_id="AAPL-20260821-P-00225000",
-        side="put",
-        provider="alpaca",
-        state="current",
-        bid="1.10",
-        ask="1.15",
-        last="1.12",
-        implied_volatility="0.26",
-        delta="-0.48",
-        gamma="0.01",
-        theta="-0.02",
-        vega="0.10",
-        volume=80,
-        open_interest=450,
-        observed_at=observed_at(),
-        trace_id="trace-2",
+        trace_id=trace_id,
         selectable=True,
     )
 
 
 def section() -> WorkbenchSectionV2:
     return WorkbenchSectionV2(
-        state="populated",
-        observed_at=observed_at(),
-        blocker_code=None,
-        summary="Ready",
-        trace_id="section-trace",
+        state="populated", observed_at=observed_at(), blocker_code=None, summary="Ready", trace_id="section-trace"
     )
 
 
 def chain(rows: tuple[OptionChainRowV2, ...] | None = None) -> OptionChainViewV2:
-    populated_rows = rows if rows is not None else (OptionChainRowV2(strike="225", call=call_cell(), put=put_cell()),)
+    populated_rows = rows if rows is not None else (
+        OptionChainRowV2(strike="225", call=option_cell("call"), put=option_cell("put")),
+    )
     return OptionChainViewV2(
         state="populated",
         observed_at=observed_at(),
@@ -128,32 +109,32 @@ def promotion() -> PromotionSummaryV2:
 
 def test_option_chain_row_accepts_same_strike_call_and_put() -> None:
     # Given: matching cells; When: parsed; Then: both sides remain available.
-    row = OptionChainRowV2(strike="225", call=call_cell(), put=put_cell())
+    row = OptionChainRowV2(strike="225", call=option_cell("call"), put=option_cell("put"))
     assert row.strike == "225"
 
 
 def test_option_chain_cell_rejects_selectable_stale_quote_with_exact_reason() -> None:
     # Given: stale selectable quote; When: parsed; Then: exact error is raised.
     with pytest.raises(ValidationError, match="selectable_quote_not_usable"):
-        OptionChainCellV2.model_validate(call_cell().model_dump() | {"state": "stale"})
+        OptionChainCellV2.model_validate(option_cell("call").model_dump() | {"state": "stale"})
 
 
 def test_option_chain_cell_rejects_quote_longer_than_32_characters() -> None:
     # Given: an oversized quote; When: parsed; Then: its numeric-string boundary rejects it.
     with pytest.raises(ValidationError):
-        OptionChainCellV2.model_validate(call_cell().model_dump() | {"bid": OVERLONG_DECIMAL})
+        OptionChainCellV2.model_validate(option_cell("call").model_dump() | {"bid": OVERLONG_DECIMAL})
 
 
 def test_option_chain_row_rejects_call_side_mismatch() -> None:
     # Given: put in call column; When: parsed; Then: exact error is raised.
     with pytest.raises(ValidationError, match="call_cell_side_mismatch"):
-        OptionChainRowV2(strike="225", call=put_cell(), put=None)
+        OptionChainRowV2(strike="225", call=option_cell("put"), put=None)
 
 
 def test_option_chain_row_rejects_put_side_mismatch() -> None:
     # Given: call in put column; When: parsed; Then: exact error is raised.
     with pytest.raises(ValidationError, match="put_cell_side_mismatch"):
-        OptionChainRowV2(strike="225", call=None, put=call_cell())
+        OptionChainRowV2(strike="225", call=None, put=option_cell("call"))
 
 
 def test_option_chain_row_rejects_empty_row() -> None:
@@ -164,7 +145,7 @@ def test_option_chain_row_rejects_empty_row() -> None:
 
 def test_option_chain_rejects_more_than_41_rows() -> None:
     # Given: 42 rows; When: parsed; Then: length validation rejects them.
-    rows = tuple(OptionChainRowV2(strike=str(index + 1), call=call_cell(), put=None) for index in range(42))
+    rows = tuple(OptionChainRowV2(strike=str(index + 1), call=option_cell("call"), put=None) for index in range(42))
     with pytest.raises(ValidationError):
         chain(rows)
 
@@ -228,6 +209,26 @@ def test_workbench_section_rejects_blocker_for_usable_state() -> None:
             blocker_code="provider_unavailable",
             summary="Ready",
             trace_id="section-trace",
+        )
+
+
+def test_workbench_section_accepts_transient_loading_state() -> None:
+    # Given: an unobserved loading section; When: parsed; Then: it remains transient.
+    loading = WorkbenchSectionV2.model_validate(section().model_dump() | {"state": "loading", "observed_at": None})
+    assert loading.state == "loading"
+
+
+@pytest.mark.parametrize(
+    ("loading_observed_at", "loading_blocker"), ((observed_at(), None), (None, "provider_unavailable"))
+)
+def test_workbench_section_rejects_loading_metadata(
+    loading_observed_at: datetime | None, loading_blocker: str | None
+) -> None:
+    # Given: loading metadata; When: parsed; Then: transient-state rule rejects it.
+    with pytest.raises(ValidationError, match="loading_section_metadata_forbidden"):
+        WorkbenchSectionV2.model_validate(
+            section().model_dump()
+            | {"state": "loading", "observed_at": loading_observed_at, "blocker_code": loading_blocker}
         )
 
 

@@ -83,7 +83,7 @@ class OptionChainRowV2(StrictOptionsWorkbenchModel):
 
 
 class WorkbenchSectionV2(StrictOptionsWorkbenchModel):
-    state: Literal["empty", "error", "blocked", "unavailable", "corrupt", "stale", "populated"]
+    state: Literal["empty", "error", "blocked", "unavailable", "corrupt", "stale", "populated", "loading"]
     observed_at: AwareDatetime | None
     blocker_code: SafeCode | None
     summary: Annotated[str, Field(min_length=1, max_length=160)]
@@ -94,17 +94,24 @@ class WorkbenchSectionV2(StrictOptionsWorkbenchModel):
         match self.state:
             case "empty" | "populated":
                 blocker_required = False
+                loading = False
+            case "loading":
+                blocker_required = False
+                loading = True
             case "error" | "blocked" | "unavailable" | "corrupt" | "stale":
                 blocker_required = True
+                loading = False
             case unreachable:
                 assert_never(unreachable)
         match self.state:
             case "populated" | "stale":
                 observation_required = True
-            case "empty" | "error" | "blocked" | "unavailable" | "corrupt":
+            case "empty" | "error" | "blocked" | "unavailable" | "corrupt" | "loading":
                 observation_required = False
             case unreachable:
                 assert_never(unreachable)
+        if loading and (self.observed_at is not None or self.blocker_code is not None):
+            raise InvalidOptionsWorkbenchError(reason="loading_section_metadata_forbidden")
         if blocker_required and self.blocker_code is None:
             raise InvalidOptionsWorkbenchError(reason="section_blocker_required")
         if not blocker_required and self.blocker_code is not None:
