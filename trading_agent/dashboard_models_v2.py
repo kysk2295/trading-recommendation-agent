@@ -9,6 +9,7 @@ from trading_agent.dashboard_models_v2_validation import (
     InvalidSnapshotMetadataError,
     validate_snapshot,
 )
+from trading_agent.dashboard_options_workbench_models import OptionsWorkbenchV2
 
 SourceStateName = Literal["loading", "empty", "error", "blocked", "unavailable", "corrupt", "stale", "populated"]
 PublicAgentId = Literal[
@@ -105,6 +106,10 @@ class DataSourcesV2(SourceStateV2):
     capabilities: tuple[SourceCapabilityV2, ...] = Field(max_length=30)
 
 
+class DerivativesWorkspaceV2(SourceStateV2):
+    workbench: OptionsWorkbenchV2
+
+
 class WorkspacesV2(StrictDashboardModelV2):
     command_center: CommandCenterV2
     overview: SourceStateV2
@@ -112,7 +117,7 @@ class WorkspacesV2(StrictDashboardModelV2):
     data_sources: DataSourcesV2
     research: SourceStateV2
     strategies: SourceStateV2
-    derivatives: SourceStateV2
+    derivatives: DerivativesWorkspaceV2
     paper: SourceStateV2
     system: SourceStateV2
 

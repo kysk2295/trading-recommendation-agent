@@ -8,7 +8,10 @@ from trading_agent.alpaca_option_chain_capability import (
     AlpacaOptionChainCapabilityError,
     project_alpaca_option_chain_capability,
 )
-from trading_agent.alpaca_option_chain_store import AlpacaOptionChainStore
+from trading_agent.alpaca_option_chain_store import (
+    AlpacaOptionChainStore,
+    AlpacaOptionChainStoreError,
+)
 from trading_agent.dashboard_provider_evidence import (
     ProviderEvidence,
     unavailable_provider,
@@ -26,7 +29,12 @@ def read_alpaca_provider(outputs: Path, now: dt.datetime) -> ProviderEvidence:
         if run is None:
             return unavailable_provider("alpaca", "alpaca_capability_missing")
         projection = project_alpaca_option_chain_capability(run)
-    except (AlpacaOptionChainCapabilityError, sqlite3.Error, ValueError):
+    except (
+        AlpacaOptionChainCapabilityError,
+        AlpacaOptionChainStoreError,
+        sqlite3.Error,
+        ValueError,
+    ):
         return ProviderEvidence(
             "alpaca",
             "corrupt",

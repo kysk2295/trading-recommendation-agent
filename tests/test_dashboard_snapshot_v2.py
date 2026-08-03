@@ -40,7 +40,11 @@ def test_v2_snapshot_reports_all_missing_authorities_section_locally(tmp_path: P
     }
     assert all(workspace.state in {"blocked", "unavailable"} for _, workspace in snapshot.workspaces)
     assert all(workspace.blocker_code is not None for _, workspace in snapshot.workspaces)
-    snapshot.model_validate_json(snapshot.model_dump_json())
+    derivatives = snapshot.workspaces.derivatives
+    assert derivatives.workbench.chain.blocker_code == "canonical_option_chain_missing"
+    assert derivatives.workbench.promotions == ()
+    assert derivatives.total_count == derivatives.projected_count == len(derivatives.items) == 0
+    assert snapshot.model_validate_json(snapshot.model_dump_json()) == snapshot
 
 
 def test_v2_snapshot_projects_finalized_paper_values_and_sha(tmp_path: Path) -> None:

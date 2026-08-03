@@ -1,16 +1,18 @@
 import type { z } from "zod";
+import {
+  derivativeWorkbenchReferenceGroups,
+  type WorkbenchGraphInput,
+} from "./snapshot_v2_workbench_references";
 
 type TraceNodeInput = {
   readonly node_id: string;
   readonly kind: string;
   readonly observed_at: string;
 };
-
 type TraceEdgeInput = {
   readonly from_node_id: string;
   readonly to_node_id: string;
 };
-
 type WorkspaceInput = {
   readonly state: string;
   readonly observed_at: string | null;
@@ -22,7 +24,6 @@ type WorkspaceInput = {
     readonly trace_id: string;
   }[];
 };
-
 type SnapshotGraphInput = {
   readonly generated_at: string;
   readonly workspaces: {
@@ -40,7 +41,7 @@ type SnapshotGraphInput = {
     };
     readonly research: WorkspaceInput;
     readonly strategies: WorkspaceInput;
-    readonly derivatives: WorkspaceInput;
+    readonly derivatives: WorkspaceInput & { readonly workbench: WorkbenchGraphInput };
     readonly paper: WorkspaceInput;
     readonly system: WorkspaceInput;
   };
@@ -49,9 +50,7 @@ type SnapshotGraphInput = {
     readonly edges: readonly TraceEdgeInput[];
   };
 };
-
 type WorkspaceName = keyof SnapshotGraphInput["workspaces"];
-
 const DECISION_TERMINALS = new Set([
   "reviewer_decision",
   "lifecycle_decision",
@@ -83,7 +82,6 @@ const TERMINALS_BY_WORKSPACE: Readonly<Record<WorkspaceName, ReadonlySet<string>
     "blocker_terminal",
   ]),
 };
-
 export function validateSnapshotGraph(
   snapshot: SnapshotGraphInput,
   context: z.RefinementCtx,
@@ -123,7 +121,6 @@ export function validateSnapshotGraph(
     issue(context, "snapshot_too_large");
   }
 }
-
 function referenceGroups(snapshot: SnapshotGraphInput) {
   const workspaces = snapshot.workspaces;
   return (Object.keys(TERMINALS_BY_WORKSPACE) as WorkspaceName[]).flatMap((name) => {
@@ -151,11 +148,16 @@ function referenceGroups(snapshot: SnapshotGraphInput) {
               terminals: terminalsForState(capability.state, TERMINALS_BY_WORKSPACE.data_sources),
               references: [capability.trace_id],
             }))
-          : [];
+          : name === "derivatives"
+            ? derivativeWorkbenchReferenceGroups(
+                workspaces.derivatives.workbench,
+                TERMINALS_BY_WORKSPACE.derivatives,
+                terminalsForState,
+              )
+            : [];
     return [...groups, ...nested];
   });
 }
-
 function terminalsForState(
   state: string,
   domainTerminals: ReadonlySet<string>,
@@ -164,7 +166,6 @@ function terminalsForState(
     ? new Set(["blocker_terminal"])
     : domainTerminals;
 }
-
 function validateObservationTimes(
   snapshot: SnapshotGraphInput,
   ceiling: number,
@@ -184,7 +185,6 @@ function validateObservationTimes(
     issue(context, "observation_too_far_future");
   }
 }
-
 function buildDirectedAdjacency(
   nodes: ReadonlyMap<string, TraceNodeInput>,
   edges: readonly TraceEdgeInput[],
@@ -205,7 +205,6 @@ function buildDirectedAdjacency(
   }
   return adjacency;
 }
-
 function reachableNodes(
   start: string,
   adjacency: ReadonlyMap<string, ReadonlySet<string>>,
@@ -222,7 +221,6 @@ function reachableNodes(
   }
   return reached;
 }
-
 function hasDirectedCycle(
   nodes: ReadonlyMap<string, TraceNodeInput>,
   edges: readonly TraceEdgeInput[],
@@ -246,7 +244,6 @@ function hasDirectedCycle(
   }
   return visited !== nodes.size;
 }
-
 function issue(context: z.RefinementCtx, message: string): void {
   context.addIssue({ code: "custom", message });
 }

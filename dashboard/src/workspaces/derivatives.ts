@@ -1,6 +1,7 @@
 import { textElement } from "../dom";
 import { renderWorkspace } from "../render";
 import { workspaceById } from "../workspace_registry";
+import { renderOptionsWorkbench } from "./options_workbench";
 import type { WorkspaceRenderer } from "./types";
 
 type SourceState =
@@ -81,6 +82,10 @@ export const renderDerivatives: WorkspaceRenderer = (snapshot, drawer) => {
       "Option chain, IV, skew, term structure, futures roll and CFTC context are read-only. Current quotes require active real-time entitlement, allowed redistribution, current healthy capability and fresh source authority together.",
     ),
   );
-  fragment.append(guard, renderWorkspace(workspaceById("derivatives"), snapshot, drawer));
+  fragment.append(
+    guard,
+    renderOptionsWorkbench(snapshot, drawer),
+    renderWorkspace(workspaceById("derivatives"), snapshot, drawer),
+  );
   return fragment;
 };

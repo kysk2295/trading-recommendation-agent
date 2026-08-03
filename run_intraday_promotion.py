@@ -22,6 +22,7 @@ from trading_agent.intraday_promotion_controller import (
     control_intraday_promotion,
 )
 from trading_agent.intraday_promotion_evidence import IntradayPromotionEvidencePaths
+from trading_agent.intraday_promotion_models import PromotionAssessmentStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +76,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                         assessment.content.blockers,
                     )
                 )
-                return 2
+                return (
+                    0
+                    if assessment.content.status
+                    is PromotionAssessmentStatus.MANUAL_APPROVAL_PENDING
+                    else 2
+                )
             case "approve":
                 approval, _, created = approve_intraday_promotion(
                     IntradayPromotionApprovalRequest(

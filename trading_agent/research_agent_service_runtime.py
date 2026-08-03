@@ -2,24 +2,35 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import sqlite3
 from dataclasses import dataclass
 from typing import Literal, assert_never
 
 import anyio
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from trading_agent.dashboard_agent_cycle_runtime import read_cycle_runtime_observations
+from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
 from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.hermes_delivery_reader import HermesDeliveryReader
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.private_directory_identity import open_private_parent, require_private_directory
 from trading_agent.private_stable_report import write_private_stable_report
 from trading_agent.research_agent_actions import ResearchAgentActionConfig, ResearchAgentActionExecutor
+from trading_agent.research_agent_cycle_models import (
+    ResearchAgentCycleState,
+    ResearchAgentCycleV1,
+    ResearchAgentResultStatus,
+    ResearchAgentResultV1,
+    ResearchAgentWakeKind,
+)
 from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
+from trading_agent.research_agent_cycle_store_codec import latest_cycles_from_rows, result_from_payload
 from trading_agent.research_agent_decision import HermesCliResearchAgentDecisionClient
 from trading_agent.research_agent_hermes import project_research_agent_results
 from trading_agent.research_agent_runtime import (
     ConfiguredResearchAgentEvidenceCollector,
+    ResearchAgentBoundedCycleResult,
     ResearchAgentRuntime,
     ResearchAgentRuntimeServices,
     ResearchAgentTickResult,
@@ -36,6 +47,18 @@ from trading_agent.research_agent_systematic_input_store import (
 )
 
 
+class ResearchAgentFamilyRuntimeReport(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    agent_family_id: AgentFamilyId
+    cursor: int = Field(ge=0)
+    cycle_id: str | None
+    cycle_state: ResearchAgentCycleState | None
+    result_status: ResearchAgentResultStatus | None
+    next_wake_kind: ResearchAgentWakeKind | None
+    next_wake_at: dt.datetime | None
+
+
 class ResearchAgentServiceReport(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
@@ -50,6 +73,29 @@ class ResearchAgentServiceReport(BaseModel):
     systematic_input_status: Literal["ready", "blocked"]
     systematic_input_sha256: str | None
     systematic_foundation_sha256: str | None
+    family_runtime: tuple[ResearchAgentFamilyRuntimeReport, ...]
+    next_wake_kind: ResearchAgentWakeKind | None
+    next_wake_at: dt.datetime | None
+    broker_mutation: Literal[0] = 0
+    observed_at: dt.datetime
+
+
+class ResearchAgentServiceCycleReport(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    operation: Literal["cycle"] = "cycle"
+    status: Literal["idle", "partial", "complete"]
+    outcomes: tuple[ResearchAgentTickResult, ...]
+    family_count: int
+    model_calls: int
+    recovered_cycles: int
+    projected_results: int
+    systematic_input_status: Literal["ready", "blocked"]
+    systematic_input_sha256: str | None
+    systematic_foundation_sha256: str | None
+    family_runtime: tuple[ResearchAgentFamilyRuntimeReport, ...]
+    next_wake_kind: ResearchAgentWakeKind | None
+    next_wake_at: dt.datetime | None
     broker_mutation: Literal[0] = 0
     observed_at: dt.datetime
 
@@ -74,7 +120,42 @@ def run_service_tick(
     try:
         tick = runtime.tick(now)
         projected = _project_results(config, runtime)
-        report = _report("tick", tick, projected, systematic, now)
+        family_runtime, next_wake_kind, next_wake_at = _runtime_report_from_store(runtime.store)
+        report = _report(
+            "tick",
+            tick,
+            projected,
+            systematic,
+            family_runtime,
+            next_wake_kind,
+            next_wake_at,
+            now,
+        )
+        write_service_report(config, report)
+        return report
+    finally:
+        runtime.close()
+
+
+def run_service_cycle(
+    config: ResearchAgentServiceConfig,
+    now: dt.datetime,
+) -> ResearchAgentServiceCycleReport:
+    systematic = _systematic_input_report(config)
+    runtime = build_service_runtime(config)
+    try:
+        cycle = runtime.cycle(now)
+        projected = _project_results(config, runtime)
+        family_runtime, next_wake_kind, next_wake_at = _runtime_report_from_store(runtime.store)
+        report = _cycle_report(
+            cycle,
+            projected,
+            systematic,
+            family_runtime,
+            next_wake_kind,
+            next_wake_at,
+            now,
+        )
         write_service_report(config, report)
         return report
     finally:
@@ -98,7 +179,20 @@ async def run_service_forever(
                 systematic = _systematic_input_report(config)
                 tick = runtime.tick(now)
                 projected = _project_results(config, runtime)
-                write_service_report(config, _report("run", tick, projected, systematic, now))
+                family_runtime, next_wake_kind, next_wake_at = _runtime_report_from_store(runtime.store)
+                write_service_report(
+                    config,
+                    _report(
+                        "run",
+                        tick,
+                        projected,
+                        systematic,
+                        family_runtime,
+                        next_wake_kind,
+                        next_wake_at,
+                        now,
+                    ),
+                )
                 await anyio.sleep(tick_seconds)
         finally:
             runtime.close()
@@ -122,9 +216,26 @@ def service_status(
             systematic_input_status=systematic.status,
             systematic_input_sha256=systematic.input_sha256,
             systematic_foundation_sha256=systematic.foundation_sha256,
+            family_runtime=tuple(
+                ResearchAgentFamilyRuntimeReport(
+                    agent_family_id=family,
+                    cursor=0,
+                    cycle_id=None,
+                    cycle_state=None,
+                    result_status=None,
+                    next_wake_kind=None,
+                    next_wake_at=None,
+                )
+                for family in PRIMARY_AGENT_FAMILIES
+            ),
+            next_wake_kind=None,
+            next_wake_at=None,
             observed_at=now,
         )
     observations = read_cycle_runtime_observations(config.cycle_database)
+    family_runtime, next_wake_kind, next_wake_at = _runtime_report_from_database(
+        config.cycle_database
+    )
     latest = max(observations, key=lambda item: item.observed_at, default=None)
     projected = (
         sum(
@@ -145,6 +256,9 @@ def service_status(
         systematic_input_status=systematic.status,
         systematic_input_sha256=systematic.input_sha256,
         systematic_foundation_sha256=systematic.foundation_sha256,
+        family_runtime=family_runtime,
+        next_wake_kind=next_wake_kind,
+        next_wake_at=next_wake_at,
         observed_at=now,
     )
 
@@ -168,7 +282,10 @@ def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRu
     return ResearchAgentRuntime(services)
 
 
-def write_service_report(config: ResearchAgentServiceConfig, report: ResearchAgentServiceReport) -> None:
+def write_service_report(
+    config: ResearchAgentServiceConfig,
+    report: ResearchAgentServiceReport | ResearchAgentServiceCycleReport,
+) -> None:
     write_private_stable_report(
         config.output_root / "research-agent-runtime-status.json",
         report.model_dump_json() + "\n",
@@ -186,6 +303,9 @@ def _report(
     tick: ResearchAgentTickResult,
     projected: int,
     systematic: SystematicInputReportBinding,
+    family_runtime: tuple[ResearchAgentFamilyRuntimeReport, ...],
+    next_wake_kind: ResearchAgentWakeKind | None,
+    next_wake_at: dt.datetime | None,
     now: dt.datetime,
 ) -> ResearchAgentServiceReport:
     return ResearchAgentServiceReport(
@@ -200,7 +320,132 @@ def _report(
         systematic_input_status=systematic.status,
         systematic_input_sha256=systematic.input_sha256,
         systematic_foundation_sha256=systematic.foundation_sha256,
+        family_runtime=family_runtime,
+        next_wake_kind=next_wake_kind,
+        next_wake_at=next_wake_at,
         observed_at=now,
+    )
+
+
+def _cycle_report(
+    cycle: ResearchAgentBoundedCycleResult,
+    projected: int,
+    systematic: SystematicInputReportBinding,
+    family_runtime: tuple[ResearchAgentFamilyRuntimeReport, ...],
+    next_wake_kind: ResearchAgentWakeKind | None,
+    next_wake_at: dt.datetime | None,
+    now: dt.datetime,
+) -> ResearchAgentServiceCycleReport:
+    return ResearchAgentServiceCycleReport(
+        status=cycle.status,
+        outcomes=cycle.outcomes,
+        family_count=len(cycle.outcomes),
+        model_calls=cycle.model_calls,
+        recovered_cycles=cycle.recovered_cycles,
+        projected_results=projected,
+        systematic_input_status=systematic.status,
+        systematic_input_sha256=systematic.input_sha256,
+        systematic_foundation_sha256=systematic.foundation_sha256,
+        family_runtime=family_runtime,
+        next_wake_kind=next_wake_kind,
+        next_wake_at=next_wake_at,
+        observed_at=now,
+    )
+
+
+def _runtime_report_from_store(
+    store: ResearchAgentCycleStore,
+) -> tuple[
+    tuple[ResearchAgentFamilyRuntimeReport, ...],
+    ResearchAgentWakeKind | None,
+    dt.datetime | None,
+]:
+    cycles = store.latest_cycles()
+    results = store.results()
+    cursors: dict[AgentFamilyId, int] = {
+        family: store.cursor(family) for family in PRIMARY_AGENT_FAMILIES
+    }
+    return _runtime_report(cycles, results, cursors)
+
+
+def _runtime_report_from_database(
+    path: os.PathLike[str],
+) -> tuple[
+    tuple[ResearchAgentFamilyRuntimeReport, ...],
+    ResearchAgentWakeKind | None,
+    dt.datetime | None,
+]:
+    with sqlite3.connect(f"file:{os.fspath(path)}?mode=ro", uri=True) as connection:
+        _ = connection.execute("PRAGMA query_only=ON")
+        cycles = latest_cycles_from_rows(
+            connection.execute(
+                "SELECT agent_family_id,payload_json FROM cycles ORDER BY evidence_sequence DESC"
+            ).fetchall()
+        )
+        results = tuple(
+            result_from_payload(row[0])
+            for row in connection.execute("SELECT payload_json FROM results ORDER BY rowid").fetchall()
+        )
+        cursors: dict[AgentFamilyId, int] = {
+            family: int(row[0]) if (row := connection.execute(
+                "SELECT evidence_sequence FROM cursors WHERE agent_family_id=?",
+                (family,),
+            ).fetchone()) is not None else 0
+            for family in PRIMARY_AGENT_FAMILIES
+        }
+    return _runtime_report(cycles, results, cursors)
+
+
+def _runtime_report(
+    cycles: tuple[ResearchAgentCycleV1, ...],
+    results: tuple[ResearchAgentResultV1, ...],
+    cursors: dict[AgentFamilyId, int],
+) -> tuple[
+    tuple[ResearchAgentFamilyRuntimeReport, ...],
+    ResearchAgentWakeKind | None,
+    dt.datetime | None,
+]:
+    cycle_by_family = {cycle.agent_family_id: cycle for cycle in cycles}
+    result_by_cycle = {result.cycle_id: result for result in results}
+    family_rows: list[ResearchAgentFamilyRuntimeReport] = []
+    for family in PRIMARY_AGENT_FAMILIES:
+        cycle = cycle_by_family.get(family)
+        result = None if cycle is None else result_by_cycle.get(cycle.cycle_id)
+        family_rows.append(
+            ResearchAgentFamilyRuntimeReport(
+                agent_family_id=family,
+                cursor=cursors[family],
+                cycle_id=None if cycle is None else str(cycle.cycle_id),
+                cycle_state=None if cycle is None else cycle.state,
+                result_status=None if result is None else result.status,
+                next_wake_kind=None if result is None else result.next_wake_kind,
+                next_wake_at=None if result is None else result.next_wake_at,
+            )
+        )
+    family_runtime = tuple(family_rows)
+    current_result_rows: list[ResearchAgentResultV1] = []
+    for cycle in cycles:
+        result = result_by_cycle.get(cycle.cycle_id)
+        if result is not None:
+            current_result_rows.append(result)
+    current_results = tuple(current_result_rows)
+    latest = max(current_results, key=lambda result: result.occurred_at, default=None)
+    scheduled = tuple(
+        result.next_wake_at
+        for result in current_results
+        if result.next_wake_at is not None
+    )
+    aggregate_wake_kind = (
+        ResearchAgentWakeKind.SCHEDULED
+        if scheduled
+        else None
+        if latest is None
+        else latest.next_wake_kind
+    )
+    return (
+        family_runtime,
+        aggregate_wake_kind,
+        min(scheduled, default=None),
     )
 
 
@@ -239,8 +484,11 @@ def _prepare_private_runtime_paths(config: ResearchAgentServiceConfig) -> None:
 
 __all__ = (
     "InvalidResearchAgentServiceRuntimeError",
+    "ResearchAgentFamilyRuntimeReport",
+    "ResearchAgentServiceCycleReport",
     "ResearchAgentServiceReport",
     "build_service_runtime",
+    "run_service_cycle",
     "run_service_forever",
     "run_service_tick",
     "service_status",

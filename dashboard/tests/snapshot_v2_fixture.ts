@@ -1,3 +1,4 @@
+// Fixture-only exception: canonical multi-state snapshot data remains readable above 250 lines.
 const generatedAt = "2026-07-26T03:00:00Z";
 const traceIds = {
   command_center: "trace-command",
@@ -10,6 +11,8 @@ const traceIds = {
   paper: "trace-paper",
   system: "trace-system",
 } as const;
+
+const derivativesWorkbenchBlockerTraceId = "trace-derivatives-workbench-blocker";
 
 function sourceState(traceId: string) {
   return {
@@ -30,6 +33,38 @@ function sourceState(traceId: string) {
   };
 }
 
+function unavailableOptionsWorkbench(traceId: string) {
+  return {
+    schema_version: 1 as const,
+    selected_view: "market_pulse" as const,
+    market: unavailableSection("canonical_option_market_missing", traceId),
+    chain: {
+      ...unavailableSection("canonical_option_chain_missing", traceId),
+      underlying: null,
+      selected_expiration: null,
+      expirations: [],
+      total_count: 0,
+      projected_count: 0,
+      truncated: false,
+      rows: [],
+    },
+    scenario: null,
+    agent: unavailableSection("derivatives_agent_receipt_missing", traceId),
+    experiment: unavailableSection("options_experiment_missing", traceId),
+    promotions: [],
+  };
+}
+
+function unavailableSection(blockerCode: string, traceId: string) {
+  return {
+    state: "unavailable" as const,
+    observed_at: null,
+    blocker_code: blockerCode,
+    summary: "Canonical options research evidence unavailable",
+    trace_id: traceId,
+  };
+}
+
 const baseNodes = [
   ...Object.entries(traceIds).map(([workspace, nodeId]) => ({
     node_id: nodeId,
@@ -45,6 +80,7 @@ const baseNodes = [
   terminalNode("trace-strategies-terminal", "reviewer_decision"),
   terminalNode("trace-paper-terminal", "paper_receipt"),
   terminalNode("trace-system-terminal", "process_receipt"),
+  terminalNode(derivativesWorkbenchBlockerTraceId, "blocker_terminal"),
 ];
 
 const baseEdges = [
@@ -53,6 +89,7 @@ const baseEdges = [
   edge(traceIds.strategies, "trace-strategies-terminal", "reviewed_by"),
   edge(traceIds.paper, "trace-paper-terminal", "reconciled_by"),
   edge(traceIds.system, "trace-system-terminal", "executed_as"),
+  edge(traceIds.derivatives, derivativesWorkbenchBlockerTraceId, "blocked_by"),
 ];
 
 export const snapshotV2 = {
@@ -67,7 +104,10 @@ export const snapshotV2 = {
     data_sources: { ...sourceState(traceIds.data_sources), capabilities: [] },
     research: sourceState(traceIds.research),
     strategies: sourceState(traceIds.strategies),
-    derivatives: sourceState(traceIds.derivatives),
+    derivatives: {
+      ...sourceState(traceIds.derivatives),
+      workbench: unavailableOptionsWorkbench(traceIds.derivatives),
+    },
     paper: sourceState(traceIds.paper),
     system: sourceState(traceIds.system),
   },
@@ -163,7 +203,10 @@ export const nearMaximumSnapshotV2 = {
     },
     research: populatedState("research", traceIds.research),
     strategies: populatedState("strategies", traceIds.strategies),
-    derivatives: populatedState("derivatives", traceIds.derivatives),
+    derivatives: {
+      ...populatedState("derivatives", traceIds.derivatives),
+      workbench: unavailableOptionsWorkbench(traceIds.derivatives),
+    },
     paper: populatedState("paper", traceIds.paper),
     system: populatedState("system", traceIds.system),
   },

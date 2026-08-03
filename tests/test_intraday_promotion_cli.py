@@ -33,7 +33,7 @@ def test_cli_runs_blocked_assessment_approval_transition_and_replay(
         cli.main(
             ("assess", *common, "--output-dir", str(tmp_path / "assessments"), "--timestamp", OBSERVED_AT.isoformat())
         )
-        == 2
+        == 0
     )
     assessed = json.loads(capsys.readouterr().out)
     assessment = next((tmp_path / "assessments").glob("intraday_promotion_assessment_*.json"))
@@ -72,7 +72,7 @@ def test_cli_runs_blocked_assessment_approval_transition_and_replay(
     replay = json.loads(capsys.readouterr().out)
 
     # Then: JSON is path-free and mutation counters prove exactly-once local control
-    assert assessed["result"] == "blocked"
+    assert assessed["result"] == "manual_approval_pending"
     assert assessed["blockers"] == ["manual_approval_required"]
     assert approved["result"] == "approved"
     assert (first["authority_bindings_created"], first["lifecycle_events_created"]) == (1, 1)

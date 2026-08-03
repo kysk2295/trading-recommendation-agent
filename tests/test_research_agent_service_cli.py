@@ -117,6 +117,33 @@ def test_service_config_uses_strict_schema_v2_and_rejects_v1(tmp_path: Path) -> 
     assert main(("verify", "--config", str(config_path), "--plist", str(plist_path))) == 2
 
 
+@pytest.mark.parametrize("failure", ("mode", "symlink", "malformed"))
+def test_service_config_rejects_untrusted_file_before_launchctl(
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    config_path, plist_path = _provision(tmp_path)
+    calls: list[tuple[str, ...]] = []
+    if failure == "mode":
+        config_path.chmod(0o644)
+    elif failure == "symlink":
+        target = config_path.with_name("runtime-target.json")
+        config_path.rename(target)
+        config_path.symlink_to(target)
+    else:
+        config_path.unlink()
+        config_path.write_text("{}\n", encoding="utf-8")
+        config_path.chmod(0o600)
+
+    code = main(
+        ("activate", "--config", str(config_path), "--plist", str(plist_path)),
+        runner=lambda argv: calls.append(argv) or 0,
+    )
+
+    assert code == 2
+    assert calls == []
+
+
 @pytest.mark.parametrize("failure", ["malformed", "nonprivate"])
 def test_verification_rejects_invalid_activation_pointer(tmp_path: Path, failure: str) -> None:
     config_path, plist_path = _provision(tmp_path)

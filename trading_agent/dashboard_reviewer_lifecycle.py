@@ -125,6 +125,8 @@ def _family_id(family: AgentFamily) -> AgentFamilyId | None:
             return "swing_trading"
         case AgentFamily.SYSTEMATIC_QUANT:
             return "systematic_quant"
+        case AgentFamily.DERIVATIVES_RESEARCH:
+            return "derivatives_research"
         case AgentFamily.MARKET_CONTEXT:
             return "market_context"
         case AgentFamily.ALLOCATION_MANAGER:

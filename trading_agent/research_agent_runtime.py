@@ -107,6 +107,26 @@ class ResearchAgentTickResult(BaseModel):
         return self
 
 
+class ResearchAgentBoundedCycleResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    status: Literal["idle", "partial", "complete"]
+    outcomes: tuple[ResearchAgentTickResult, ...] = Field(max_length=6)
+    model_calls: int = Field(ge=0, le=6)
+    recovered_cycles: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def require_canonical_family_pass(self) -> Self:
+        families = tuple(item.agent_family_id for item in self.outcomes)
+        canonical = tuple(family for family in PRIMARY_AGENT_FAMILIES if family in families)
+        if families != canonical or self.model_calls != sum(item.model_calls for item in self.outcomes):
+            raise InvalidResearchAgentRuntimeError(reason="bounded_cycle_identity_invalid")
+        expected_status = "idle" if not families else "complete" if families == PRIMARY_AGENT_FAMILIES else "partial"
+        if self.status != expected_status:
+            raise InvalidResearchAgentRuntimeError(reason="bounded_cycle_status_invalid")
+        return self
+
+
 @final
 class ResearchAgentRuntime:
     __slots__ = ("_actions", "_collector", "_decisions", "store")
@@ -126,6 +146,36 @@ class ResearchAgentRuntime:
         return sum(self.store.append_evidence(item) for item in evidence)
 
     def tick(self, now: dt.datetime) -> ResearchAgentTickResult:
+        return self._tick(now, only_family=None, apply_debounce=True)
+
+    def cycle(self, now: dt.datetime) -> ResearchAgentBoundedCycleResult:
+        outcomes: list[ResearchAgentTickResult] = []
+        for family in PRIMARY_AGENT_FAMILIES:
+            outcome = self._tick(now, only_family=family, apply_debounce=False)
+            if outcome.status != "idle":
+                outcomes.append(outcome)
+        families = tuple(item.agent_family_id for item in outcomes)
+        status: Literal["idle", "partial", "complete"]
+        if not families:
+            status = "idle"
+        elif families == PRIMARY_AGENT_FAMILIES:
+            status = "complete"
+        else:
+            status = "partial"
+        return ResearchAgentBoundedCycleResult(
+            status=status,
+            outcomes=tuple(outcomes),
+            model_calls=sum(item.model_calls for item in outcomes),
+            recovered_cycles=sum(item.recovered_cycles for item in outcomes),
+        )
+
+    def _tick(
+        self,
+        now: dt.datetime,
+        *,
+        only_family: AgentFamilyId | None,
+        apply_debounce: bool,
+    ) -> ResearchAgentTickResult:
         recovered = self.store.recover_interrupted(now)
         batch = self._collector.collect(now)
         failures = tuple(source_failure_evidence(failure) for failure in batch.failures)
@@ -135,7 +185,15 @@ class ResearchAgentRuntime:
         )
         work = tuple(item for family in PRIMARY_AGENT_FAMILIES for item in self.store.open_work(family))
         states = actor_wake_states(self.store.latest_cycles(), work)
-        selected = runnable_actors(pending, work, now=now, states=states)
+        selected = runnable_actors(
+            pending,
+            work,
+            now=now,
+            states=states,
+            apply_debounce=apply_debounce,
+        )
+        if only_family is not None:
+            selected = tuple(actor for actor in selected if actor.agent_family_id == only_family)
         if not selected:
             return ResearchAgentTickResult(
                 status="idle",
@@ -265,6 +323,7 @@ def _tick_result(outcome: RuntimeCycleOutcome) -> ResearchAgentTickResult:
 __all__ = (
     "ConfiguredResearchAgentEvidenceCollector",
     "InvalidResearchAgentRuntimeError",
+    "ResearchAgentBoundedCycleResult",
     "ResearchAgentEvidenceCollector",
     "ResearchAgentRuntime",
     "ResearchAgentRuntimeLeaseUnavailableError",

@@ -9,15 +9,18 @@ from trading_agent.dashboard_agent_runtime import (
     InvalidAgentRuntimeReceiptError,
     project_agent_runtime,
 )
+from trading_agent.dashboard_derivatives_options import OPTIONS_TRACE_ID
 from trading_agent.dashboard_market_calendar import project_market_calendar
 from trading_agent.dashboard_models_v2 import (
     CommandCenterV2,
     DashboardSnapshotV2,
     DataSourcesV2,
+    DerivativesWorkspaceV2,
     ProjectionMetadataV2,
     TraceGraphV2,
     WorkspacesV2,
 )
+from trading_agent.dashboard_options_workbench_projection import project_options_workbench
 from trading_agent.dashboard_projection_common import (
     WorkspaceProjection,
     receipt_projection,
@@ -113,6 +116,7 @@ def collect_dashboard_snapshot_v2(
     projections["command_center"] = agent_projection
     command = agent_projection.workspace
     sources = projections["data_sources"].workspace
+    derivatives = projections["derivatives"].workspace
     workspaces = WorkspacesV2(
         command_center=CommandCenterV2(
             **command.model_dump(),
@@ -126,7 +130,17 @@ def collect_dashboard_snapshot_v2(
         ),
         research=projections["research"].workspace,
         strategies=projections["strategies"].workspace,
-        derivatives=projections["derivatives"].workspace,
+        derivatives=DerivativesWorkspaceV2(
+            **derivatives.model_dump(),
+            workbench=project_options_workbench(
+                outputs=outputs,
+                now=generated_at,
+                derivatives_trace_id=OPTIONS_TRACE_ID,
+                agent_workspace=agent_projection.workspace,
+                research_workspace=projections["research"].workspace,
+                strategies_workspace=projections["strategies"].workspace,
+            ),
+        ),
         paper=projections["paper"].workspace,
         system=projections["system"].workspace,
     )

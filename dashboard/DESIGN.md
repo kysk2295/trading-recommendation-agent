@@ -252,6 +252,37 @@ Interactive primitives have default, hover, pressed, focus-visible, disabled, lo
 source states. The implementation must render all primitive states at `/showcase` before composing
 product workspaces.
 
+### Options Workbench inside Derivatives
+
+`#derivatives` remains one of the nine workspace routes. Its internal `OptionsWorkbench` has five
+views: Market Pulse, Option Chain, Strategy & Agent, Experiment Lab, and Promotion & Operations.
+It uses roving tab focus, exposes one active panel at a time, and returns to Market Pulse on route
+reload. Each view preserves section-local source states; a healthy Market Pulse never masks an
+unavailable option chain or a blocked promotion gate.
+
+| Primitive | Structure and variants | Required behavior |
+| --- | --- | --- |
+| `OptionsWorkbench` | Market Pulse, Option Chain, Strategy & Agent, Experiment Lab, Promotion & Operations internal views | no new route; roving Arrow/Home/End tab focus; exactly one active panel; route reload selects Market Pulse; every panel reports its own canonical source state |
+| `OptionChainTable` | calls left, strike center, puts right; expiration control; bounded option rows in a labeled local scroll viewport | expiration selection, cell Evidence Trace, and research-leg selection remain available only for current valid rows; horizontal overflow is local to the table; unavailable, stale, and blocked rows are visibly non-selectable and never enter a research leg |
+| `StrategyScenarioPanel` | immutable selected-leg list, expiry payoff, break-even values, and bounded scenario table | deterministic calculation only; explicit `RESEARCH ONLY` label; selected legs cannot be silently mutated; no LLM has numeric authority over payoff, break-even, or scenario results |
+| `ToolReceiptCard` | safe parameters, progress, terminal result, evidence links, and details/summary disclosure | exposes bounded, redacted facts only; progress has a terminal result; evidence links open the existing trace contract; secrets, raw payloads, local paths, and local-path-like identifiers are prohibited |
+| `PromotionGateLedger` | separate evidence, Reviewer, manual approval, and next-session authority rows | read-only ledger; every missing gate is explicit; no broker authority control or execution button; a completed Reviewer row never implies manual approval or next-session authority |
+
+The Workbench borrows comparison behavior from ORATS, OptionStrat, and Market Chameleon: dense
+calls/strike/puts comparison, expiration-led exploration, bounded strategy payoff/scenario review,
+and explicit option-research context. Ember tokens, public-read safety, and Evidence Trace remain
+authoritative; those references do not introduce a new visual language, a live quote substitute, or
+broker authority.
+
+Designpowers constraints apply to the existing `derivatives_research` persona and the connected
+operator/reviewer/lifecycle control-plane roles: keyboard-only tab, expiration, table-cell, detail,
+and trace flows preserve a visible focus return; long Korean/English labels and opaque IDs wrap
+without detaching a leg, status, or trace reference; CJK remains natural at narrow widths; reduced
+motion removes non-essential transitions; and 200% zoom retains one readable active panel with
+local table overflow only. The Workbench must be checked at 375/768/1280px, with current source
+states and the existing six product identities intact. It creates no new accepted Critical or Major
+persona, accessibility, keyboard, CJK, zoom, or motion debt.
+
 ### Evidence Trace graph and focus contract
 
 Allowed node kinds are `source_receipt`, `observation`, `dataset`, `code_revision`, `hypothesis`,

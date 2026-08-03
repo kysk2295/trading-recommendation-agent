@@ -9,6 +9,7 @@ from trading_agent.autonomous_research_cycle import (
     run_autonomous_research_cycle,
 )
 from trading_agent.critic_agent import DeterministicHypothesisCritic
+from trading_agent.experiment_ledger_models import StrategyLifecycleState
 from trading_agent.experiment_ledger_store import ExperimentLedgerReader, ExperimentLedgerStore
 from trading_agent.generated_strategy_artifact import GeneratedStrategyArtifactStore
 from trading_agent.generated_strategy_runtime import resolve_generated_strategy_runtime
@@ -82,5 +83,11 @@ def test_one_cycle_proposes_executes_reviews_and_rebuilds_feedback(tmp_path: Pat
     assert len(reader.strategy_versions()) == 1
     assert len(reader.trials()) == 1
     assert len(reader.trial_events(result.historical.trial_id)) == 2
+    lifecycle = reader.lifecycle_events(
+        f"generated-python:{result.accepted.strategy_artifact.artifact.artifact_id}"
+    )
+    assert len(lifecycle) == 1
+    assert lifecycle[0].event.to_state is StrategyLifecycleState.IDEA
+    assert lifecycle[0].event.reason_codes == ("new_strategy_registration",)
     assert len(tuple((tmp_path / "strategies").glob("*/strategy.py"))) == 1
     assert len(tuple((tmp_path / "reviews").glob("*.json"))) == 1

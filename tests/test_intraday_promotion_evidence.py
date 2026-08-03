@@ -90,6 +90,12 @@ def test_real_canonical_artifacts_satisfy_every_automatic_gate(tmp_path: Path) -
     assert verified.strategy_version == SELECTED
     assert verified.blockers == ()
     assert len(verified.evidence_keys) == 6
+    assert verified.trial_id == "trial-gamma"
+    assert verified.experiment_artifact_id == "c" * 64
+    assert verified.review_artifact_id == "f" * 64
+    assert verified.data_version == DATA_VERSION
+    assert verified.evaluator_version == "intraday_walk_forward_v2"
+    assert verified.strategy_code_version == "a" * 40
 
 
 def test_cross_artifact_identity_mismatch_fails_closed(tmp_path: Path) -> None:

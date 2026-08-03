@@ -94,13 +94,14 @@ def runnable_actors(
     *,
     now: dt.datetime,
     states: tuple[ActorWakeState, ...] = (),
+    apply_debounce: bool = True,
 ) -> tuple[RunnableResearchActor, ...]:
     policies = {policy.family_id: policy for policy in ACTOR_WAKE_POLICIES}
     state_by_family = {state.agent_family_id: state for state in states}
     latest_evidence: dict[AgentFamilyId, StoredResearchAgentEvidence] = {}
     for stored in evidence:
         policy = policies[stored.evidence.agent_family_id]
-        if stored.evidence.available_at + policy.debounce <= now:
+        if not apply_debounce or stored.evidence.available_at + policy.debounce <= now:
             current = latest_evidence.get(stored.evidence.agent_family_id)
             if current is None or stored.sequence > current.sequence:
                 latest_evidence[stored.evidence.agent_family_id] = stored
