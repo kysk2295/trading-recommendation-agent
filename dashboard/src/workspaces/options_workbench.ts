@@ -11,19 +11,25 @@ import {
 } from "./options_workbench_panels";
 import { workbenchStatePresentation } from "./options_workbench_presenters";
 
-export const OPTIONS_WORKBENCH_VIEWS = [
+export type WorkbenchView =
+  | "market_pulse"
+  | "option_chain"
+  | "strategy_agent"
+  | "experiment_lab"
+  | "promotion_operations";
+
+export const WORKBENCH_VIEWS: readonly WorkbenchView[] = Object.freeze([
   "market_pulse",
   "option_chain",
   "strategy_agent",
   "experiment_lab",
   "promotion_operations",
-] as const;
+]);
 
-type ViewId = (typeof OPTIONS_WORKBENCH_VIEWS)[number];
 type TraceDrawer = Pick<EvidenceTraceDrawer, "open">;
 type WorkbenchSection = OptionsWorkbench["market"];
 
-const VIEW_LABELS: Readonly<Record<ViewId, string>> = {
+const VIEW_LABELS: Readonly<Record<WorkbenchView, string>> = {
   market_pulse: "Market Pulse",
   option_chain: "Option Chain",
   strategy_agent: "Strategy & Agent",
@@ -47,16 +53,16 @@ export function renderOptionsWorkbench(
   panels.className = "options-workbench-panels";
   const scenarios = createScenarioPresentations(workbench);
   const panelByView = buildPanels(workbench, snapshot, drawer, scenarios.agent);
-  const tabByView = new Map<ViewId, HTMLButtonElement>();
-  for (const view of OPTIONS_WORKBENCH_VIEWS) {
+  const tabByView = new Map<WorkbenchView, HTMLButtonElement>();
+  for (const view of WORKBENCH_VIEWS) {
     const tab = workbenchTab(view);
     tabByView.set(view, tab);
     tabs.append(tab);
     const panel = panelByView.get(view);
     if (panel !== undefined) panels.append(panel);
   }
-  const activate = (view: ViewId, focus: boolean): void => {
-    for (const candidate of OPTIONS_WORKBENCH_VIEWS) {
+  const activate = (view: WorkbenchView, focus: boolean): void => {
+    for (const candidate of WORKBENCH_VIEWS) {
       const selected = candidate === view;
       const tab = tabByView.get(candidate);
       const panel = panelByView.get(candidate);
@@ -91,8 +97,8 @@ function buildPanels(
   snapshot: DashboardSnapshotV2,
   drawer: TraceDrawer,
   scenario: HTMLElement,
-): ReadonlyMap<ViewId, HTMLElement> {
-  const panels = new Map<ViewId, HTMLElement>();
+): ReadonlyMap<WorkbenchView, HTMLElement> {
+  const panels = new Map<WorkbenchView, HTMLElement>();
   const market = panel("market_pulse");
   market.append(
     sectionPresentation(workbench.market, snapshot, drawer),
@@ -122,7 +128,7 @@ function buildPanels(
   return panels;
 }
 
-function panel(view: ViewId): HTMLElement {
+function panel(view: WorkbenchView): HTMLElement {
   const element = document.createElement("section");
   element.id = view;
   element.className = "options-workbench-panel";
@@ -132,7 +138,7 @@ function panel(view: ViewId): HTMLElement {
   return element;
 }
 
-function workbenchTab(view: ViewId): HTMLButtonElement {
+function workbenchTab(view: WorkbenchView): HTMLButtonElement {
   const tab = buttonElement(VIEW_LABELS[view], "");
   tab.id = `${view}_tab`;
   tab.setAttribute("role", "tab");
@@ -143,10 +149,10 @@ function workbenchTab(view: ViewId): HTMLButtonElement {
 }
 
 function bindTabs(
-  tabs: ReadonlyMap<ViewId, HTMLButtonElement>,
-  activate: (view: ViewId, focus: boolean) => void,
+  tabs: ReadonlyMap<WorkbenchView, HTMLButtonElement>,
+  activate: (view: WorkbenchView, focus: boolean) => void,
 ): void {
-  for (const [index, view] of OPTIONS_WORKBENCH_VIEWS.entries()) {
+  for (const [index, view] of WORKBENCH_VIEWS.entries()) {
     const tab = tabs.get(view);
     if (tab === undefined) continue;
     tab.addEventListener("click", () => activate(view, true));
@@ -159,18 +165,13 @@ function bindTabs(
   }
 }
 
-function targetView(key: string, current: number): ViewId | null {
-  if (key === "Enter" || key === " ") return OPTIONS_WORKBENCH_VIEWS[current] ?? null;
-  if (key === "Home") return OPTIONS_WORKBENCH_VIEWS[0];
-  if (key === "End") return OPTIONS_WORKBENCH_VIEWS.at(-1) ?? null;
-  if (key === "ArrowRight")
-    return OPTIONS_WORKBENCH_VIEWS[(current + 1) % OPTIONS_WORKBENCH_VIEWS.length] ?? null;
+function targetView(key: string, current: number): WorkbenchView | null {
+  if (key === "Enter" || key === " ") return WORKBENCH_VIEWS[current] ?? null;
+  if (key === "Home") return WORKBENCH_VIEWS[0] ?? null;
+  if (key === "End") return WORKBENCH_VIEWS.at(-1) ?? null;
+  if (key === "ArrowRight") return WORKBENCH_VIEWS[(current + 1) % WORKBENCH_VIEWS.length] ?? null;
   if (key === "ArrowLeft")
-    return (
-      OPTIONS_WORKBENCH_VIEWS[
-        (current - 1 + OPTIONS_WORKBENCH_VIEWS.length) % OPTIONS_WORKBENCH_VIEWS.length
-      ] ?? null
-    );
+    return WORKBENCH_VIEWS[(current - 1 + WORKBENCH_VIEWS.length) % WORKBENCH_VIEWS.length] ?? null;
   return null;
 }
 

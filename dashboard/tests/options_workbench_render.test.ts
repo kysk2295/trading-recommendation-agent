@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { type Browser, chromium, type Page } from "playwright";
+import { WORKBENCH_VIEWS } from "../src/workspaces/options_workbench";
 import {
   derivativesPaperAdverseFixture,
   derivativesPaperHappyFixture,
@@ -58,6 +59,18 @@ async function activeElementId(): Promise<string> {
 }
 
 describe("options workbench rendering", () => {
+  test("exports the exact frozen workbench view contract", () => {
+    // Given
+    const expected = [...views];
+
+    // When
+    const frozen = Object.isFrozen(WORKBENCH_VIEWS);
+
+    // Then
+    expect(WORKBENCH_VIEWS).toEqual(expected);
+    expect(frozen).toBeTrue();
+  });
+
   test("renders semantic calls, strike, puts structure and exact five defaulted views", async () => {
     // Given
     const reloadFixture = {
