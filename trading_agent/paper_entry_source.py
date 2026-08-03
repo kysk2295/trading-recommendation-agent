@@ -3,7 +3,6 @@ from __future__ import annotations
 import datetime as dt
 import math
 import sqlite3
-from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, override
@@ -17,6 +16,8 @@ from trading_agent.paper_execution_models import (
 )
 from trading_agent.paper_operating_session_models import PaperOrderAdmissionRequest
 from trading_agent.paper_order_gate_models import LatestCompletedBar
+from trading_agent.research_agent_operations_models import InvalidResearchAgentOperationsSourceError
+from trading_agent.research_agent_operations_sqlite import open_cycle_database_query_only
 from trading_agent.strategy_factory import StrategyMode
 from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
 
@@ -68,10 +69,10 @@ def load_current_orb_paper_entry(
     path: Path,
     evaluated_at: dt.datetime,
 ) -> PaperOrderAdmissionRequest:
-    if not path.is_file() or not _is_aware(evaluated_at):
+    if evaluated_at.tzinfo is None or evaluated_at.utcoffset() is None:
         raise InvalidCurrentOrbPaperEntrySourceError
     try:
-        with closing(_connect_readonly(path)) as connection:
+        with open_cycle_database_query_only(path) as connection:
             _ = connection.execute("BEGIN")
             recommendations = _recommendations(connection)
             inputs = _candidate_inputs(connection)
@@ -82,17 +83,17 @@ def load_current_orb_paper_entry(
             bars,
             evaluated_at,
         )
-    except (OSError, sqlite3.Error, ValueError, OverflowError):
+    except (
+        InvalidResearchAgentOperationsSourceError,
+        OSError,
+        sqlite3.Error,
+        ValueError,
+        OverflowError,
+    ):
         raise InvalidCurrentOrbPaperEntrySourceError from None
     if len(requests) != 1:
         raise InvalidCurrentOrbPaperEntrySourceError
     return requests[0]
-
-
-def _connect_readonly(path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
-    _ = connection.execute("PRAGMA query_only = ON")
-    return connection
 
 
 def _recommendations(
@@ -275,10 +276,6 @@ def _request(
 
 def _aware_datetime(value: str) -> dt.datetime:
     parsed = dt.datetime.fromisoformat(value)
-    if not _is_aware(parsed):
-        raise ValueError("timestamp must have an offset")
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise InvalidCurrentOrbPaperEntrySourceError
     return parsed
-
-
-def _is_aware(value: dt.datetime) -> bool:
-    return value.tzinfo is not None and value.utcoffset() is not None

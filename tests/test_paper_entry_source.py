@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import sqlite3
 from contextlib import closing
 from pathlib import Path
+from typing import Literal, assert_never
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -20,7 +22,6 @@ from trading_agent.lane_defaults import INTRADAY_PILOT_PAPER_RISK_CONFIG
 from trading_agent.models import Recommendation, RecommendationState
 from trading_agent.paper_entry_source import (
     InvalidCurrentOrbPaperEntrySourceError,
-    _connect_readonly,
     load_current_orb_paper_entry,
 )
 from trading_agent.paper_execution_models import PaperOrderSide
@@ -85,6 +86,7 @@ def _write_valid_source(path: Path, symbol: str = "AAPL") -> str:
             ),
         ),
     )
+    path.chmod(0o600)
     return recommendation_id
 
 
@@ -125,6 +127,32 @@ def test_missing_database_is_rejected_without_creation(tmp_path: Path) -> None:
     assert str(database) not in str(captured.value)
     assert not database.exists()
     assert not database.parent.exists()
+
+
+@pytest.mark.parametrize("source_kind", ("symlink", "nonprivate", "hardlink"))
+def test_rejects_untrusted_current_orb_database_identity(
+    tmp_path: Path,
+    source_kind: Literal["symlink", "nonprivate", "hardlink"],
+) -> None:
+    # Given
+    database = tmp_path / "paper_recommendations.sqlite3"
+    _write_valid_source(database)
+    match source_kind:
+        case "symlink":
+            source = tmp_path / "watch.sqlite3"
+            source.symlink_to(database)
+        case "nonprivate":
+            source = database
+            source.chmod(0o640)
+        case "hardlink":
+            source = tmp_path / "watch.sqlite3"
+            os.link(database, source)
+        case unreachable:
+            assert_never(unreachable)
+
+    # When / Then
+    with pytest.raises(InvalidCurrentOrbPaperEntrySourceError):
+        _ = load_current_orb_paper_entry(source, EVALUATED_AT)
 
 
 @pytest.mark.parametrize(
@@ -187,6 +215,7 @@ def test_rejects_multiple_exact_current_candidates(tmp_path: Path) -> None:
     (
         "UPDATE recommendations SET recommendation_id = 'forged-id'",
         "UPDATE recommendations SET entry = -1",
+        "UPDATE recommendations SET state = 'entered'",
         "UPDATE recommendations SET target_1r = entry",
         "UPDATE candidate_input_snapshots SET spread_bps = -1",
         "UPDATE candidate_minute_bars SET volume = 0",
@@ -224,7 +253,8 @@ def test_source_connection_is_query_only(tmp_path: Path) -> None:
     database = tmp_path / "paper_recommendations.sqlite3"
     _write_valid_source(database)
 
-    with closing(_connect_readonly(database)) as connection:
+    with closing(sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True)) as connection:
+        _ = connection.execute("PRAGMA query_only = ON")
         assert connection.execute("PRAGMA query_only").fetchone() == (1,)
         with pytest.raises(sqlite3.OperationalError):
             _ = connection.execute("DELETE FROM recommendations")
