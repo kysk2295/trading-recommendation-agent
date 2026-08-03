@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { websocket } from "hono/bun";
 import { type Browser, type BrowserContext, chromium, type Page } from "playwright";
@@ -16,13 +16,15 @@ import {
   verifyHappyWidth,
   type WidthFinding,
 } from "./options_workbench_qa_support";
+import { prepareScreenshotDirectory, type VisualCapture } from "./options_workbench_qa_visual";
 
 type QaReport = Readonly<{
   observable: "OPTIONS_WORKBENCH_BROWSER_QA_OK";
   browser: "chrome";
   widths: readonly number[];
   findings: readonly WidthFinding[];
-  blocked: Awaited<ReturnType<typeof verifyBlocked>>;
+  blocked: readonly Awaited<ReturnType<typeof verifyBlocked>>[];
+  captures: readonly VisualCapture[];
   consoleErrors: readonly string[];
   cleanup: Readonly<{
     pageClosed: boolean;
@@ -46,7 +48,7 @@ if (options.kind === "help") {
 const ingestToken = "qa-ingest-options-workbench-token";
 const operatorToken = "qa-operator-options-workbench-token";
 const screenshotDirectory = join(dirname(options.output), "screenshots");
-await mkdir(screenshotDirectory, { recursive: true });
+await prepareScreenshotDirectory(screenshotDirectory, options.widths);
 const app = createApp(new MemorySnapshotStore(), ingestToken, operatorToken);
 const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: app.fetch, websocket });
 const baseUrl = `http://127.0.0.1:${server.port}`;
@@ -54,7 +56,7 @@ let browser: Browser | null = null;
 let context: BrowserContext | null = null;
 let page: Page | null = null;
 let findings: readonly WidthFinding[] = [];
-let blocked: Awaited<ReturnType<typeof verifyBlocked>> | null = null;
+let blocked: readonly Awaited<ReturnType<typeof verifyBlocked>>[] = [];
 const consoleErrors: string[] = [];
 const cleanup = {
   pageClosed: false,
@@ -68,6 +70,19 @@ try {
   await publishFixture(baseUrl, ingestToken, derivativesPaperHappyFixture);
   browser = await chromium.launch({ channel: "chrome", headless: true });
   context = await browser.newContext({ reducedMotion: "reduce" });
+  await context.route("**/__qa__/materialize.css", async (route) => {
+    await route.fulfill({
+      contentType: "text/css",
+      body: [
+        "html,body{block-size:auto!important;overflow:visible!important}",
+        ".workstation-shell{block-size:auto!important;min-block-size:100dvb;overflow:visible!important;grid-template-rows:56px auto 28px!important}",
+        ".workspace-scroll-body{overflow:visible!important}",
+        ".options-workbench-tabs{overflow:visible!important;flex-wrap:wrap!important}",
+        ".options-chain-viewport{overflow:visible!important}",
+        ".mobile-launcher{position:static!important}",
+      ].join(""),
+    });
+  });
   page = await context.newPage();
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
@@ -79,7 +94,11 @@ try {
   }
   findings = completed;
   await publishFixture(baseUrl, ingestToken, derivativesPaperAdverseFixture);
-  blocked = await verifyBlocked(page, baseUrl, screenshotDirectory);
+  const blockedCompleted: Awaited<ReturnType<typeof verifyBlocked>>[] = [];
+  for (const width of options.widths) {
+    blockedCompleted.push(await verifyBlocked(page, baseUrl, width, screenshotDirectory));
+  }
+  blocked = blockedCompleted;
   if (consoleErrors.length > 0) {
     throw new OptionsWorkbenchQaRuntimeError(`console errors: ${consoleErrors.join(" | ")}`);
   }
@@ -95,7 +114,8 @@ try {
   cleanup.listenerClosed = await listenerIsClosed(baseUrl);
 }
 
-if (blocked === null) throw new OptionsWorkbenchQaRuntimeError("blocked finding missing");
+if (blocked.length !== options.widths.length)
+  throw new OptionsWorkbenchQaRuntimeError("blocked findings incomplete");
 if (!cleanup.listenerClosed)
   throw new OptionsWorkbenchQaRuntimeError("ephemeral listener remains open");
 const report: QaReport = {
@@ -104,12 +124,16 @@ const report: QaReport = {
   widths: options.widths,
   findings,
   blocked,
+  captures: [
+    ...findings.flatMap((finding) => finding.captures),
+    ...blocked.map((finding) => finding.capture),
+  ],
   consoleErrors,
   cleanup,
 };
 await writeFile(options.output, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
 console.log(
-  `OPTIONS_WORKBENCH_BROWSER_QA_OK widths=${options.widths.join(",")} views=5 axe=0 incomplete=0 overflow=0 console_errors=0 cleanup=closed`,
+  `OPTIONS_WORKBENCH_BROWSER_QA_OK widths=${options.widths.join(",")} views=5 captures=${options.widths.length * 7} axe=0 incomplete=0 overflow=0 console_errors=0 cleanup=closed`,
 );
 
 async function publishFixture(

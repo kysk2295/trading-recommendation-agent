@@ -1,8 +1,13 @@
-import { join } from "node:path";
 import { parseArgs } from "node:util";
-import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "playwright";
 import { WORKBENCH_VIEWS } from "../src/workspaces/options_workbench";
+import { analyzeAtScrollPositions } from "./browser_qa_support";
+import {
+  captureBlockedView,
+  captureTraceAndReturnFocus,
+  captureVisibleViews,
+  type VisualCapture,
+} from "./options_workbench_qa_visual";
 
 export type QaOptions =
   | Readonly<{ kind: "help" }>
@@ -21,16 +26,17 @@ export type WidthFinding = Readonly<{
   axeViolations: number;
   axeIncomplete: number;
   reducedMotion: boolean;
-  screenshot: string;
+  captures: readonly VisualCapture[];
 }>;
 
 export type BlockedFinding = Readonly<{
+  width: number;
   selectionControls: number;
   summaryVisible: boolean;
   pageOverflow: boolean;
   axeViolations: number;
   axeIncomplete: number;
-  screenshot: string;
+  capture: VisualCapture;
 }>;
 
 export const HELP_TEXT = `Usage: bun run qa:options-workbench -- --output <report.json> [--widths 375,768,1280]
@@ -86,7 +92,7 @@ export async function verifyHappyWidth(
   requireEqual(chainLegs.join(","), "aapl-20260821-c-200,aapl-20260821-c-195", `${width} legs`);
   const chainBreakEven = await requiredText(page, "#option_chain [data-break-even]");
   requireEqual(chainBreakEven.includes("200.60"), true, `${width} break-even recomputed`);
-  const traceFocusReturned = await verifyTrace(page);
+  const trace = await captureTraceAndReturnFocus(page, width, screenshotDirectory);
   const viewport = page.locator(".options-chain-viewport");
   const localScroll = await viewport.evaluate((element) => ({
     owned: getComputedStyle(element).overflowX === "auto",
@@ -100,40 +106,40 @@ export async function verifyHappyWidth(
   const strategySynchronized =
     agentLegs.join(",") === chainLegs.join(",") && agentBreakEven === chainBreakEven;
   requireEqual(strategySynchronized, true, `${width} strategy synchronization`);
-  const axe = await new AxeBuilder({ page }).analyze();
-  requireEqual(axe.violations.length, 0, `${width} axe violations`);
-  requireEqual(axe.incomplete.length, 0, `${width} axe incomplete`);
+  const captures = await captureVisibleViews(page, width, screenshotDirectory);
+  const axe = await analyzeAtScrollPositions(page);
+  requireEqual(axe.violations, 0, `${width} axe violations ${axe.violationKeys.join(",")}`);
+  requireEqual(axe.incomplete, 0, `${width} axe incomplete ${axe.incompleteKeys.join(",")}`);
   const pageOverflow = await hasPageOverflow(page);
   requireEqual(pageOverflow, false, `${width} page overflow`);
   const reducedMotion = await page.evaluate(
     () => matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
   requireEqual(reducedMotion, true, `${width} reduced motion`);
-  const screenshot = join(screenshotDirectory, `options-workbench-${width}.png`);
-  await page.screenshot({ path: screenshot, fullPage: true });
   return {
     width,
     viewsDriven: WORKBENCH_VIEWS.length,
     selectedLegs: chainLegs,
     strategySynchronized,
     breakEven: chainBreakEven,
-    traceFocusReturned,
+    traceFocusReturned: trace.focusReturned,
     localScrollOwned: localScroll.owned,
     localOverflow: localScroll.overflow,
     pageOverflow,
-    axeViolations: axe.violations.length,
-    axeIncomplete: axe.incomplete.length,
+    axeViolations: axe.violations,
+    axeIncomplete: axe.incomplete,
     reducedMotion,
-    screenshot,
+    captures: [...captures, trace.capture],
   };
 }
 
 export async function verifyBlocked(
   page: Page,
   baseUrl: string,
+  width: number,
   screenshotDirectory: string,
 ): Promise<BlockedFinding> {
-  await page.setViewportSize({ width: 375, height: 900 });
+  await page.setViewportSize({ width, height: 900 });
   await page.goto(`${baseUrl}/#derivatives`, { waitUntil: "networkidle" });
   await page.locator("#option_chain_tab").click();
   const selectionControls = await page.getByRole("button", { name: /Select .* leg/ }).count();
@@ -144,20 +150,32 @@ export async function verifyBlocked(
     .first()
     .isVisible();
   requireEqual(summaryVisible, true, "blocked summary");
-  const axe = await new AxeBuilder({ page }).analyze();
-  requireEqual(axe.violations.length, 0, "blocked axe violations");
-  requireEqual(axe.incomplete.length, 0, "blocked axe incomplete");
+  const chainViewport = page.locator(".options-chain-viewport");
+  await chainViewport.evaluate((element) => {
+    const strike = element.querySelector('thead th[rowspan="2"]');
+    if (!(strike instanceof HTMLElement)) throw new Error("semantic strike header missing");
+    element.scrollLeft = Math.max(
+      strike.offsetLeft - element.clientWidth / 2 + strike.offsetWidth / 2,
+      0,
+    );
+  });
+  const axe = await analyzeAtScrollPositions(page);
+  requireEqual(axe.violations, 0, `blocked axe violations ${axe.violationKeys.join(",")}`);
+  requireEqual(axe.incomplete, 0, `blocked axe incomplete ${axe.incompleteKeys.join(",")}`);
   const pageOverflow = await hasPageOverflow(page);
   requireEqual(pageOverflow, false, "blocked page overflow");
-  const screenshot = join(screenshotDirectory, "options-workbench-blocked-375.png");
-  await page.screenshot({ path: screenshot, fullPage: true });
+  await chainViewport.evaluate((element) => {
+    element.scrollLeft = 0;
+  });
+  const capture = await captureBlockedView(page, width, screenshotDirectory);
   return {
+    width,
     selectionControls,
     summaryVisible,
     pageOverflow,
-    axeViolations: axe.violations.length,
-    axeIncomplete: axe.incomplete.length,
-    screenshot,
+    axeViolations: axe.violations,
+    axeIncomplete: axe.incomplete,
+    capture,
   };
 }
 
@@ -189,18 +207,6 @@ async function verifyTabs(page: Page): Promise<void> {
     requireEqual(await asyncActiveId(page), `${view}_tab`, `${view} focus`);
     requireEqual(await page.locator('[role="tabpanel"]:not([hidden])').count(), 1, `${view} panel`);
   }
-}
-
-async function verifyTrace(page: Page): Promise<boolean> {
-  const invoker = page.locator("#option_chain .trace-button").first();
-  await invoker.click();
-  const dialog = page.locator("#evidence-trace-dialog");
-  await dialog.waitFor({ state: "visible" });
-  await dialog.press("Escape");
-  await dialog.waitFor({ state: "hidden" });
-  const returned = await invoker.evaluate((element) => document.activeElement === element);
-  requireEqual(returned, true, "trace focus return");
-  return returned;
 }
 
 async function selectedLegIds(page: Page, scope: string): Promise<readonly string[]> {
