@@ -9,6 +9,7 @@ from trading_agent.dashboard_agent_runtime import (
     InvalidAgentRuntimeReceiptError,
     project_agent_runtime,
 )
+from trading_agent.dashboard_derivatives_options import OPTIONS_TRACE_ID
 from trading_agent.dashboard_market_calendar import project_market_calendar
 from trading_agent.dashboard_models_v2 import (
     CommandCenterV2,
@@ -134,7 +135,7 @@ def collect_dashboard_snapshot_v2(
             workbench=project_options_workbench(
                 outputs=outputs,
                 now=generated_at,
-                derivatives_trace_id=derivatives.trace_id,
+                derivatives_trace_id=OPTIONS_TRACE_ID,
             ),
         ),
         paper=projections["paper"].workspace,

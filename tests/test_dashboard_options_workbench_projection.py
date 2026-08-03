@@ -24,6 +24,7 @@ from trading_agent.dashboard_options_workbench_projection import (
     InvalidOptionsWorkbenchProjectionError,
     project_options_workbench,
 )
+from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
 
 NOW = dt.datetime(2026, 8, 3, tzinfo=dt.UTC)
 TRACE_ID = "trace-derivatives"
@@ -54,14 +55,18 @@ def test_projection_is_fail_closed_without_canonical_sources(tmp_path: Path) -> 
     assert result.promotions == ()
 
 
-def test_projection_preserves_one_trace_and_roundtrips(tmp_path: Path) -> None:
+def test_snapshot_binds_workbench_to_option_blocker_trace(tmp_path: Path) -> None:
     # Given / When
-    result = project_options_workbench(outputs=tmp_path / "outputs", now=NOW, derivatives_trace_id=TRACE_ID)
+    snapshot = collect_dashboard_snapshot_v2(tmp_path / "outputs", now=NOW)
+    result = snapshot.workspaces.derivatives.workbench
 
     # Then
-    assert {result.market.trace_id, result.chain.trace_id, result.agent.trace_id, result.experiment.trace_id} == {
-        TRACE_ID
-    }
+    assert result.chain.trace_id == "trace.derivatives.options"
+    assert result.chain.trace_id in {node.node_id for node in snapshot.traces.nodes}
+    assert any(
+        edge.from_node_id == result.chain.trace_id and edge.to_node_id == f"{result.chain.trace_id}.blocker"
+        for edge in snapshot.traces.edges
+    )
     assert OptionsWorkbenchV2.model_validate_json(result.model_dump_json()) == result
 
 
@@ -111,6 +116,7 @@ def test_projection_shows_actual_indicative_private_store_quotes_as_research_onl
     assert cell.trace_id == TRACE_ID
     assert cell.state == "indicative"
     assert cell.selectable is False
+    assert all(term not in result.model_dump_json().lower() for term in ("current", "realtime", "profit"))
 
 
 def test_projection_blocks_unlicensed_opra_without_rows(tmp_path: Path) -> None:

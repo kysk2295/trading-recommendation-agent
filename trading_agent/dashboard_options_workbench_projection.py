@@ -87,7 +87,7 @@ def _research_only_workbench(contracts: tuple[CanonicalDerivativeContract, ...],
     observed_at = max(contract.quote_observed_at for contract in contracts)
     rows = _rows(contracts, trace_id)
     blocker = "indicative_research_only"
-    summary = "Indicative Alpaca option research evidence; current authority unavailable"
+    summary = "Indicative Alpaca option research evidence; authority unavailable"
     return OptionsWorkbenchV2(
         schema_version=1,
         selected_view="market_pulse",

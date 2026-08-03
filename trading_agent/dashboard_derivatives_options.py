@@ -28,13 +28,10 @@ from trading_agent.dashboard_models_v2 import (
 from trading_agent.data_capability_models import RedistributionPolicy
 
 _REQUEST_ID_QUERIES: Final = {
-    "alpaca_option_chain_runs": (
-        "SELECT request_id FROM alpaca_option_chain_runs ORDER BY rowid DESC LIMIT 1"
-    ),
-    "alpaca_option_contract_runs": (
-        "SELECT request_id FROM alpaca_option_contract_runs ORDER BY rowid DESC LIMIT 1"
-    ),
+    "alpaca_option_chain_runs": ("SELECT request_id FROM alpaca_option_chain_runs ORDER BY rowid DESC LIMIT 1"),
+    "alpaca_option_contract_runs": ("SELECT request_id FROM alpaca_option_contract_runs ORDER BY rowid DESC LIMIT 1"),
 }
+OPTIONS_TRACE_ID: Final = "trace.derivatives.options"
 
 
 def read_options_section(outputs: Path, now: dt.datetime) -> DerivativesSection:
@@ -74,14 +71,14 @@ def read_options_section(outputs: Path, now: dt.datetime) -> DerivativesSection:
         case OptionFeed.INDICATIVE:
             blocker = "indicative_research_only"
         case OptionFeed.OPRA:
-            blocker = None if current and licensed else (
-                "current_quote_not_licensed"
-                if not licensed
-                else "options_receipt_stale"
+            blocker = (
+                None
+                if current and licensed
+                else ("current_quote_not_licensed" if not licensed else "options_receipt_stale")
             )
         case unreachable:
             assert_never(unreachable)
-    source_id = "trace.derivatives.options"
+    source_id = OPTIONS_TRACE_ID
     items = tuple(
         WorkspaceItemV2(
             item_id=f"derivative.option.{index}",
@@ -151,7 +148,7 @@ def _missing(
     *,
     corrupt: bool = False,
 ) -> DerivativesSection:
-    source_id = "trace.derivatives.options"
+    source_id = OPTIONS_TRACE_ID
     safe_ref = "0" * 64
     nodes = (
         TraceNodeV2(
@@ -183,4 +180,4 @@ def _missing(
     )
 
 
-__all__ = ("read_options_section",)
+__all__ = ("OPTIONS_TRACE_ID", "read_options_section")
