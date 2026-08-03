@@ -45,7 +45,7 @@ export function formatOperationalRatio(
 }
 
 export function safeOperationalNumber(scaled: bigint): number | null {
-  const maximum = BigInt(Number.MAX_SAFE_INTEGER) * OPERATIONAL_DECIMAL_SCALE;
+  const maximum = BigInt(Number.MAX_SAFE_INTEGER);
   if (scaled > maximum || scaled < -maximum) return null;
   return Number(scaled) / Number(OPERATIONAL_DECIMAL_SCALE);
 }

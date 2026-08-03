@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { OPERATIONAL_DECIMAL_SCALE, safeOperationalNumber } from "../src/options_workbench_decimal";
 import type { OptionChainCellInput } from "../src/options_workbench_schema";
 import { operationalMidSpread } from "../src/workspaces/options_chain_cells";
 import {
@@ -95,6 +96,45 @@ describe("options workbench presenters", () => {
       1,
     );
     expect(Number.isNaN(payoff)).toBe(true);
+  });
+
+  test("fails closed before reviewer payoff values lose integer precision", () => {
+    // Given: the exact accepted decimal and integer values from the precision regression.
+    const conversion = strategyLegFromFixture({
+      ...longCallFixture(),
+      premium: "999999.99999950",
+      quantity: 90_001,
+      multiplier: 99_999,
+    });
+    expect(conversion.kind).toBe("ready");
+    if (conversion.kind === "blocked") return;
+
+    // When: expiry payoff is projected through the operational decimal boundary.
+    const payoff = payoffAtExpiration([conversion.leg], 1);
+
+    // Then: the unsafe scaled integer is rejected instead of rounded by Number conversion.
+    expect(Number.isNaN(payoff)).toBe(true);
+  });
+
+  test("converts only scaled integers within the signed safe boundary", () => {
+    // Given: the positive and negative Number-safe BigInt boundaries.
+    const maximum = BigInt(Number.MAX_SAFE_INTEGER);
+
+    // When: the boundary and its immediately adjacent values are converted.
+    const values = [
+      safeOperationalNumber(maximum),
+      safeOperationalNumber(-maximum),
+      safeOperationalNumber(maximum + 1n),
+      safeOperationalNumber(-maximum - 1n),
+    ];
+
+    // Then: both exact boundaries convert and both unsafe neighbors fail closed.
+    expect(values).toEqual([
+      Number.MAX_SAFE_INTEGER / Number(OPERATIONAL_DECIMAL_SCALE),
+      -Number.MAX_SAFE_INTEGER / Number(OPERATIONAL_DECIMAL_SCALE),
+      null,
+      null,
+    ]);
   });
 
   test("presents canonical workbench state without quote authority", () => {
