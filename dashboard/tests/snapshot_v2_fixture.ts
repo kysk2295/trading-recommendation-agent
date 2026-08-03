@@ -12,6 +12,8 @@ const traceIds = {
   system: "trace-system",
 } as const;
 
+const derivativesWorkbenchBlockerTraceId = "trace-derivatives-workbench-blocker";
+
 function sourceState(traceId: string) {
   return {
     state: "empty" as const,
@@ -78,6 +80,7 @@ const baseNodes = [
   terminalNode("trace-strategies-terminal", "reviewer_decision"),
   terminalNode("trace-paper-terminal", "paper_receipt"),
   terminalNode("trace-system-terminal", "process_receipt"),
+  terminalNode(derivativesWorkbenchBlockerTraceId, "blocker_terminal"),
 ];
 
 const baseEdges = [
@@ -86,6 +89,7 @@ const baseEdges = [
   edge(traceIds.strategies, "trace-strategies-terminal", "reviewed_by"),
   edge(traceIds.paper, "trace-paper-terminal", "reconciled_by"),
   edge(traceIds.system, "trace-system-terminal", "executed_as"),
+  edge(traceIds.derivatives, derivativesWorkbenchBlockerTraceId, "blocked_by"),
 ];
 
 export const snapshotV2 = {

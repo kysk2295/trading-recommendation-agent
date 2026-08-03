@@ -61,8 +61,7 @@ function referenceGroup(
   terminalsForState: (state: string, domainTerminals: ReadonlySet<string>) => ReadonlySet<string>,
 ): TraceReferenceGroup {
   return {
-    terminals:
-      reference.state === "unavailable" ? terminals : terminalsForState(reference.state, terminals),
+    terminals: terminalsForState(reference.state, terminals),
     references: [reference.trace_id],
   };
 }

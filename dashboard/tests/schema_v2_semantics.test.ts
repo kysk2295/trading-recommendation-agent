@@ -116,6 +116,25 @@ describe("snapshot v2 evidence semantics", () => {
     // Then: every nested Workbench trace reference must resolve to the graph.
     expect(parsed.success).toBe(false);
   });
+
+  test("rejects unavailable Workbench sections without their blocker terminal edge", () => {
+    // Given: the canonical unavailable Workbench with its blocker edge removed.
+    const missingBlockerEdge = {
+      ...snapshotV2,
+      traces: {
+        ...snapshotV2.traces,
+        edges: snapshotV2.traces.edges.filter(
+          (edge) => edge.to_node_id !== "trace-derivatives-workbench-blocker",
+        ),
+      },
+    };
+
+    // When: the graph validates each unavailable nested Workbench trace.
+    const parsed = dashboardSnapshotV2Schema.safeParse(missingBlockerEdge);
+
+    // Then: unavailable sections fail closed without a reachable blocker terminal.
+    expect(parsed.success).toBe(false);
+  });
 });
 
 type FutureTarget = "trace" | "workspace" | "freshness" | "item" | "capability";
