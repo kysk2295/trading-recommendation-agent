@@ -98,10 +98,7 @@ function workspaceSummary(label: "Paper" | "System", workspace: Workspace): HTML
   section.dataset["operationsSummary"] = label.toLowerCase();
   section.append(
     textElement("h4", `${label} operations`),
-    textElement(
-      "p",
-      `${workspace.state} · ${workspace.projected_count}/${workspace.total_count} · ${workspace.summary}`,
-    ),
+    workspaceSummaryLine(workspace),
     textElement(
       "p",
       `Freshness · ${workspace.freshness.age_seconds === null ? "Unavailable" : `${workspace.freshness.age_seconds}s`}`,
@@ -122,6 +119,29 @@ function workspaceSummary(label: "Paper" | "System", workspace: Workspace): HTML
     );
   }
   return section;
+}
+
+function workspaceSummaryLine(workspace: Workspace): HTMLParagraphElement {
+  const paragraph = document.createElement("p");
+  paragraph.append(
+    document.createTextNode(
+      `${workspace.state} · ${workspace.projected_count}/${workspace.total_count} · `,
+    ),
+  );
+  const finalClauseAt = workspace.summary.lastIndexOf(", ");
+  if (finalClauseAt === -1) {
+    paragraph.append(document.createTextNode(workspace.summary));
+    return paragraph;
+  }
+  paragraph.append(document.createTextNode(`${workspace.summary.slice(0, finalClauseAt + 1)} `));
+  paragraph.append(
+    textElement(
+      "span",
+      workspace.summary.slice(finalClauseAt + 2),
+      "options-operations-summary-tail",
+    ),
+  );
+  return paragraph;
 }
 
 function capacitySummary(system: Workspace): HTMLElement {

@@ -144,6 +144,11 @@ describe("complete options research panels", () => {
     expect(await operations.locator('[data-operations-summary="system"]').textContent()).toContain(
       "empty · 0/0",
     );
+    const systemSummaryTail = operations.locator(
+      '[data-operations-summary="system"] .options-operations-summary-tail',
+    );
+    expect(await systemSummaryTail.count()).toBe(1);
+    expect(await systemSummaryTail.textContent()).toBe("항목 없음");
     expect(await operations.locator("[data-operations-capacity]").count()).toBe(4);
     expect(
       await operations

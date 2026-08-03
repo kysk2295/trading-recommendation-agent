@@ -116,6 +116,10 @@
   font-weight: 620;
 }
 
+.options-operations-summary-tail {
+  white-space: nowrap;
+}
+
 .options-experiment-trace {
   display: grid;
   gap: var(--space-2);
