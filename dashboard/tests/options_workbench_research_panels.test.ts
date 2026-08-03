@@ -56,10 +56,10 @@ describe("complete options research panels", () => {
     expect(await strategy.getByRole("table", { name: "Payoff samples" }).count()).toBe(1);
     expect(await metric(strategy, "sampled-max-gain")).toBe("1880.00 USD");
     expect(await metric(strategy, "sampled-max-loss")).toBe("-620.00 USD");
-    expect(await metric(strategy, "net-delta")).toBe("1.0000");
-    expect(await metric(strategy, "net-gamma")).toBe("0.0400");
-    expect(await metric(strategy, "net-theta")).toBe("-0.0200");
-    expect(await metric(strategy, "net-vega")).toBe("0.2000");
+    expect(await metric(strategy, "net-delta")).toBe("100.0000");
+    expect(await metric(strategy, "net-gamma")).toBe("4.0000");
+    expect(await metric(strategy, "net-theta")).toBe("-2.0000");
+    expect(await metric(strategy, "net-vega")).toBe("20.0000");
     expect(await metric(strategy, "underlying")).toBe("AAPL");
     expect(await metric(strategy, "edit-availability")).toBe("Local research legs only");
     await strategy.getByLabel("Scenario spot").selectOption("210");
@@ -69,6 +69,7 @@ describe("complete options research panels", () => {
     // Then: the baseline remains immutable, both panels resynchronize, and snapshot input is unchanged.
     expect(highlighted).toBe(1);
     expect(await strategy.getByText(/Indicative quote inputs/).count()).toBe(1);
+    expect(await metric(strategy, "net-delta")).toBe("50.0000");
     expect(await selectedLegIds(strategy)).toEqual(["aapl-20260821-c-200"]);
     await page.locator("#option_chain_tab").click();
     expect(await selectedLegIds(page.locator("#option_chain"))).toEqual(["aapl-20260821-c-200"]);

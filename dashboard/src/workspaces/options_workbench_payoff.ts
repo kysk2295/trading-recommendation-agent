@@ -146,7 +146,7 @@ function netGreeks(
     for (const key of ["delta", "gamma", "theta", "vega"] as const) {
       const value = Number(cell[key]);
       if (!Number.isFinite(value)) return null;
-      total[key] += sign * entry.leg.quantity * value;
+      total[key] += sign * entry.leg.quantity * entry.leg.multiplier * value;
     }
   }
   return total;
