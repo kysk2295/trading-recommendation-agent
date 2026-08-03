@@ -13,6 +13,7 @@ from trading_agent.research_agent_actions import (
     InvalidResearchAgentActionError,
     ResearchAgentActionExecutor,
 )
+from trading_agent.research_agent_configured_collector import ConfiguredResearchAgentEvidenceCollector
 from trading_agent.research_agent_cycle_models import (
     CycleId,
     ResearchAgentCycleV1,
@@ -44,25 +45,13 @@ from trading_agent.research_agent_runtime_support import (
     scheduled_evidence,
     source_failure_evidence,
 )
-from trading_agent.research_agent_sources import (
-    ResearchAgentSourceCollectionBatch,
-    ResearchAgentSourcePaths,
-    collect_research_agent_evidence_isolated,
-)
+from trading_agent.research_agent_sources import ResearchAgentSourceCollectionBatch
 from trading_agent.research_agent_systematic import InvalidSystematicResearchActionError
 from trading_agent.research_agent_wake_policy import ACTOR_WAKE_POLICIES, ActorWakeState, runnable_actors
 
 
 class ResearchAgentEvidenceCollector(Protocol):
     def collect(self, now: dt.datetime) -> ResearchAgentSourceCollectionBatch: ...
-
-
-@dataclass(frozen=True, slots=True)
-class ConfiguredResearchAgentEvidenceCollector:
-    paths: ResearchAgentSourcePaths
-
-    def collect(self, now: dt.datetime) -> ResearchAgentSourceCollectionBatch:
-        return collect_research_agent_evidence_isolated(self.paths, now=now)
 
 
 @dataclass(frozen=True, slots=True)
