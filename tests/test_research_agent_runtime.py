@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from trading_agent.dashboard_agent_family import AgentFamilyId
+from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
 from trading_agent.research_agent_actions import ResearchAgentActionConfig, ResearchAgentActionExecutor
 from trading_agent.research_agent_cycle_models import (
     DecisionId,
@@ -161,6 +161,33 @@ def test_two_families_run_separate_cycles_and_restart_without_duplicates(tmp_pat
     assert third.status == "idle"
     assert len(results) == 2
     assert calls == ["systematic_quant", "opportunity_manager"]
+
+
+def test_bounded_cycle_processes_each_family_once_and_replay_is_idle(tmp_path: Path) -> None:
+    path = tmp_path / "cycles.sqlite3"
+    calls: list[AgentFamilyId] = []
+    runtime = _runtime(path, EMPTY_COLLECTOR, calls)
+    runtime.ingest(tuple(_evidence(family, 1) for family in PRIMARY_AGENT_FAMILIES))
+
+    first = runtime.cycle(NOW + dt.timedelta(minutes=2))
+    cursors = tuple(runtime.store.cursor(family) for family in PRIMARY_AGENT_FAMILIES)
+    open_work = tuple(runtime.store.open_work(family) for family in PRIMARY_AGENT_FAMILIES)
+    runtime.close()
+    restarted = _runtime(path, EMPTY_COLLECTOR, calls)
+    replay = restarted.cycle(NOW + dt.timedelta(minutes=3))
+    results = restarted.store.results()
+    restarted.close()
+
+    assert first.status == "complete"
+    assert tuple(item.agent_family_id for item in first.outcomes) == PRIMARY_AGENT_FAMILIES
+    assert first.model_calls == 6
+    assert first.recovered_cycles == 0
+    assert all(cursor > 0 for cursor in cursors)
+    assert all(len(items) == 1 and items[0].state.value == "terminal" for items in open_work)
+    assert replay.status == "idle"
+    assert replay.outcomes == ()
+    assert len(results) == 6
+    assert calls == list(PRIMARY_AGENT_FAMILIES)
 
 
 def test_source_failure_is_isolated_and_never_calls_the_model(tmp_path: Path) -> None:

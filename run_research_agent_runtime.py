@@ -43,6 +43,7 @@ from trading_agent.research_agent_service_legacy_current import (
 )
 from trading_agent.research_agent_service_runtime import (
     InvalidResearchAgentServiceRuntimeError,
+    run_service_cycle,
     run_service_forever,
     run_service_tick,
     service_status,
@@ -87,6 +88,10 @@ def main(
             report = run_service_tick(load_research_agent_service_config(args.config), clock())
             print(report.model_dump_json())
             return 0 if report.status != "failed" else 1
+        if args.command == "cycle":
+            report = run_service_cycle(load_research_agent_service_config(args.config), clock())
+            print(report.model_dump_json())
+            return 1 if report.status == "partial" else 0
         if args.command == "run":
             anyio.run(run_service_forever, load_research_agent_service_config(args.config))
             return 0

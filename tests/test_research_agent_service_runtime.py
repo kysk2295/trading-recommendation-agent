@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from tests.research_agent_systematic_input_fixtures import (
     write_ready_systematic_input_activation,
 )
 from tests.test_research_agent_service_cli import _config
-from trading_agent.dashboard_agent_family import AgentFamilyId
+from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
 from trading_agent.research_agent_actions import ResearchAgentActionConfig, ResearchAgentActionExecutor
 from trading_agent.research_agent_cycle_models import (
     CycleId,
@@ -132,6 +133,36 @@ def test_idle_service_tick_reports_zero_model_and_broker_mutations(
     assert '"model_calls":0' in captured
     assert '"broker_mutation":0' in captured
     assert f'"projected_results":{seeded_results}' in captured
+
+
+def test_cycle_cli_runs_one_canonical_family_pass_and_replay_is_idle(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = _config(tmp_path)
+    config_path = (tmp_path / "private" / "runtime.json").absolute()
+    assert write_research_agent_service_config(config_path, config)
+
+    first_code = main(("cycle", "--config", str(config_path)), clock=lambda: NOW)
+    first_output = capsys.readouterr().out
+    assert first_code == 0
+    first = json.loads(first_output)
+    second_code = main(
+        ("cycle", "--config", str(config_path)),
+        clock=lambda: NOW + dt.timedelta(seconds=30),
+    )
+    second_output = capsys.readouterr().out
+    assert second_code == 0
+    second = json.loads(second_output)
+
+    assert first["status"] == "complete"
+    assert [item["agent_family_id"] for item in first["outcomes"]] == list(PRIMARY_AGENT_FAMILIES)
+    assert first["family_count"] == 6
+    assert first["model_calls"] == 3
+    assert first["broker_mutation"] == 0
+    assert second["status"] == "idle"
+    assert second["outcomes"] == []
+    assert second["family_count"] == second["model_calls"] == second["broker_mutation"] == 0
 
 
 def test_blocked_systematic_input_keeps_service_armed_without_heavy_child(

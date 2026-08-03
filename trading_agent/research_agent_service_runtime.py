@@ -20,6 +20,7 @@ from trading_agent.research_agent_decision import HermesCliResearchAgentDecision
 from trading_agent.research_agent_hermes import project_research_agent_results
 from trading_agent.research_agent_runtime import (
     ConfiguredResearchAgentEvidenceCollector,
+    ResearchAgentBoundedCycleResult,
     ResearchAgentRuntime,
     ResearchAgentRuntimeServices,
     ResearchAgentTickResult,
@@ -54,6 +55,23 @@ class ResearchAgentServiceReport(BaseModel):
     observed_at: dt.datetime
 
 
+class ResearchAgentServiceCycleReport(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    operation: Literal["cycle"] = "cycle"
+    status: Literal["idle", "partial", "complete"]
+    outcomes: tuple[ResearchAgentTickResult, ...]
+    family_count: int
+    model_calls: int
+    recovered_cycles: int
+    projected_results: int
+    systematic_input_status: Literal["ready", "blocked"]
+    systematic_input_sha256: str | None
+    systematic_foundation_sha256: str | None
+    broker_mutation: Literal[0] = 0
+    observed_at: dt.datetime
+
+
 @dataclass(frozen=True, slots=True)
 class SystematicInputReportBinding:
     status: Literal["ready", "blocked"]
@@ -75,6 +93,22 @@ def run_service_tick(
         tick = runtime.tick(now)
         projected = _project_results(config, runtime)
         report = _report("tick", tick, projected, systematic, now)
+        write_service_report(config, report)
+        return report
+    finally:
+        runtime.close()
+
+
+def run_service_cycle(
+    config: ResearchAgentServiceConfig,
+    now: dt.datetime,
+) -> ResearchAgentServiceCycleReport:
+    systematic = _systematic_input_report(config)
+    runtime = build_service_runtime(config)
+    try:
+        cycle = runtime.cycle(now)
+        projected = _project_results(config, runtime)
+        report = _cycle_report(cycle, projected, systematic, now)
         write_service_report(config, report)
         return report
     finally:
@@ -168,7 +202,10 @@ def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRu
     return ResearchAgentRuntime(services)
 
 
-def write_service_report(config: ResearchAgentServiceConfig, report: ResearchAgentServiceReport) -> None:
+def write_service_report(
+    config: ResearchAgentServiceConfig,
+    report: ResearchAgentServiceReport | ResearchAgentServiceCycleReport,
+) -> None:
     write_private_stable_report(
         config.output_root / "research-agent-runtime-status.json",
         report.model_dump_json() + "\n",
@@ -196,6 +233,26 @@ def _report(
         result_status=None if tick.status == "idle" else tick.status,
         model_calls=tick.model_calls,
         recovered_cycles=tick.recovered_cycles,
+        projected_results=projected,
+        systematic_input_status=systematic.status,
+        systematic_input_sha256=systematic.input_sha256,
+        systematic_foundation_sha256=systematic.foundation_sha256,
+        observed_at=now,
+    )
+
+
+def _cycle_report(
+    cycle: ResearchAgentBoundedCycleResult,
+    projected: int,
+    systematic: SystematicInputReportBinding,
+    now: dt.datetime,
+) -> ResearchAgentServiceCycleReport:
+    return ResearchAgentServiceCycleReport(
+        status=cycle.status,
+        outcomes=cycle.outcomes,
+        family_count=len(cycle.outcomes),
+        model_calls=cycle.model_calls,
+        recovered_cycles=cycle.recovered_cycles,
         projected_results=projected,
         systematic_input_status=systematic.status,
         systematic_input_sha256=systematic.input_sha256,
@@ -239,8 +296,10 @@ def _prepare_private_runtime_paths(config: ResearchAgentServiceConfig) -> None:
 
 __all__ = (
     "InvalidResearchAgentServiceRuntimeError",
+    "ResearchAgentServiceCycleReport",
     "ResearchAgentServiceReport",
     "build_service_runtime",
+    "run_service_cycle",
     "run_service_forever",
     "run_service_tick",
     "service_status",
