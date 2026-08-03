@@ -5,7 +5,7 @@ import re
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal, Self
+from typing import Literal, Self, override
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -36,6 +36,25 @@ class CanonicalDerivativesReason(StrEnum):
     CME_SUB_ENTITLEMENT_MISSING = "cme_sub_entitlement_missing"
 
 
+class CanonicalDerivativesModelErrorReason(StrEnum):
+    CONTRACT_INVALID = "contract_invalid"
+    REQUEST_INVALID = "request_invalid"
+    EVIDENCE_INVALID = "evidence_invalid"
+
+
+class CanonicalDerivativesModelError(ValueError):
+    def __init__(
+        self,
+        reason: CanonicalDerivativesModelErrorReason,
+    ) -> None:
+        self.reason = reason
+        super().__init__(reason.value)
+
+    @override
+    def __str__(self) -> str:
+        return f"canonical derivatives model is invalid: {self.reason.value}"
+
+
 class CanonicalDerivativeContract(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -59,7 +78,7 @@ class CanonicalDerivativeContract(BaseModel):
             or not _aware(self.quote_observed_at)
             or self.bid_price > self.ask_price
         ):
-            raise ValueError("canonical derivative contract is invalid")
+            raise CanonicalDerivativesModelError(CanonicalDerivativesModelErrorReason.CONTRACT_INVALID)
         return self
 
 
@@ -83,7 +102,7 @@ class CanonicalDerivativesAdmissionRequest(BaseModel):
             or contract.expiration_date != chain.expiration_date
             or contract.contract_type is not chain.contract_type
         ):
-            raise ValueError("canonical derivatives request is invalid")
+            raise CanonicalDerivativesModelError(CanonicalDerivativesModelErrorReason.REQUEST_INVALID)
         return self
 
 
@@ -129,7 +148,7 @@ class CanonicalDerivativesEvidence(BaseModel):
             and not self.contracts
         )
         if not _aware(self.observed_at) or not (ready or blocked):
-            raise ValueError("canonical derivatives evidence is invalid")
+            raise CanonicalDerivativesModelError(CanonicalDerivativesModelErrorReason.EVIDENCE_INVALID)
         return self
 
 
@@ -157,6 +176,8 @@ __all__ = (
     "CanonicalDerivativeContract",
     "CanonicalDerivativesAdmissionRequest",
     "CanonicalDerivativesEvidence",
+    "CanonicalDerivativesModelError",
+    "CanonicalDerivativesModelErrorReason",
     "CanonicalDerivativesReason",
     "CanonicalDerivativesStatus",
 )

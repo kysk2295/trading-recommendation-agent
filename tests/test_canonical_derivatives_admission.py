@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import trading_agent.canonical_derivatives_models as canonical_models
 from trading_agent.alpaca_option_chain_collection import collect_alpaca_option_chain
 from trading_agent.alpaca_option_chain_models import (
     OptionChainRawResponse,
@@ -42,6 +43,17 @@ STARTED = dt.datetime(2026, 7, 23, 14, 30, tzinfo=dt.UTC)
 COMPLETED = STARTED + dt.timedelta(minutes=2)
 AS_OF = STARTED + dt.timedelta(minutes=10)
 ROOT = Path(__file__).parents[1]
+
+
+def test_canonical_model_boundaries_expose_a_structured_typed_error() -> None:
+    assert hasattr(canonical_models, "CanonicalDerivativesModelError")
+    assert hasattr(canonical_models, "CanonicalDerivativesModelErrorReason")
+    error = canonical_models.CanonicalDerivativesModelError(
+        canonical_models.CanonicalDerivativesModelErrorReason.REQUEST_INVALID
+    )
+
+    assert error.reason is canonical_models.CanonicalDerivativesModelErrorReason.REQUEST_INVALID
+    assert str(error) == "canonical derivatives model is invalid: request_invalid"
 
 
 class _ContractFetcher:
