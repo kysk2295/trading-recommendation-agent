@@ -150,4 +150,8 @@
   .options-experiment-trace li {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  .options-operations-summary {
+    padding-block: var(--space-3);
+  }
 }

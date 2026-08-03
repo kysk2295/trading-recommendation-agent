@@ -26,7 +26,30 @@ export type WidthFinding = Readonly<{
   axeViolations: number;
   axeIncomplete: number;
   reducedMotion: boolean;
+  operationSummary: OperationSummaryFinding;
   captures: readonly VisualCapture[];
+}>;
+
+export type OperationSummaryFinding = Readonly<{
+  text: string;
+  whiteSpace: string;
+  visible: boolean;
+  positiveDimensions: boolean;
+  insideSystemSummary: boolean;
+  launcherVisible: boolean;
+  nonOverlappingLauncher: boolean;
+  tailBox: Box;
+  systemBox: Box;
+  launcherBox: Box;
+}>;
+
+type Box = Readonly<{
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+  width: number;
+  height: number;
 }>;
 
 export type BlockedFinding = Readonly<{
@@ -107,6 +130,7 @@ export async function verifyHappyWidth(
   const strategySynchronized =
     agentLegs.join(",") === chainLegs.join(",") && agentBreakEven === chainBreakEven;
   requireEqual(strategySynchronized, true, `${width} strategy synchronization`);
+  const operationSummary = await verifyOperationSummary(page, width);
   const captures = await captureVisibleViews(page, width, screenshotDirectory);
   const axe = await analyzeAtScrollPositions(page);
   requireEqual(axe.violations, 0, `${width} axe violations ${axe.violationKeys.join(",")}`);
@@ -130,8 +154,81 @@ export async function verifyHappyWidth(
     axeViolations: axe.violations,
     axeIncomplete: axe.incomplete,
     reducedMotion,
+    operationSummary,
     captures: [...captures, trace.capture],
   };
+}
+
+async function verifyOperationSummary(page: Page, width: number): Promise<OperationSummaryFinding> {
+  await page.locator("#promotion_operations_tab").click();
+  const tail = page.locator(
+    '#promotion_operations [data-operations-summary="system"] .options-operations-summary-tail',
+  );
+  await tail.waitFor({ state: "visible" });
+  const finding = await page.evaluate(
+    ({ tailSelector, systemSelector, launcherSelector }) => {
+      const tailElement = document.querySelector(tailSelector);
+      const systemElement = document.querySelector(systemSelector);
+      const launcherElement = document.querySelector(launcherSelector);
+      if (
+        !(tailElement instanceof HTMLElement) ||
+        !(systemElement instanceof HTMLElement) ||
+        !(launcherElement instanceof HTMLElement)
+      ) {
+        throw new Error("operation summary geometry target missing");
+      }
+      const box = (element: HTMLElement): Box => {
+        const rect = element.getBoundingClientRect();
+        return {
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom,
+          left: rect.left,
+          width: rect.width,
+          height: rect.height,
+        };
+      };
+      const tailBox = box(tailElement);
+      const systemBox = box(systemElement);
+      const launcherBox = box(launcherElement);
+      const launcherStyle = getComputedStyle(launcherElement);
+      const launcherVisible =
+        launcherStyle.display !== "none" && launcherBox.width > 0 && launcherBox.height > 0;
+      return {
+        text: tailElement.textContent ?? "",
+        whiteSpace: getComputedStyle(tailElement).whiteSpace,
+        visible: tailElement.getClientRects().length > 0,
+        positiveDimensions: tailBox.width > 0 && tailBox.height > 0,
+        insideSystemSummary:
+          tailBox.top >= systemBox.top &&
+          tailBox.right <= systemBox.right &&
+          tailBox.bottom <= systemBox.bottom &&
+          tailBox.left >= systemBox.left,
+        launcherVisible,
+        nonOverlappingLauncher: !launcherVisible || tailBox.bottom <= launcherBox.top,
+        tailBox,
+        systemBox,
+        launcherBox,
+      };
+    },
+    {
+      tailSelector:
+        '#promotion_operations [data-operations-summary="system"] .options-operations-summary-tail',
+      systemSelector: '[data-operations-summary="system"]',
+      launcherSelector: ".mobile-launcher",
+    },
+  );
+  requireEqual(finding.text, "항목 없음", `${width} operation summary tail text`);
+  requireEqual(finding.whiteSpace, "nowrap", `${width} operation summary tail whitespace`);
+  requireEqual(finding.visible, true, `${width} operation summary tail visible`);
+  requireEqual(finding.positiveDimensions, true, `${width} operation summary tail dimensions`);
+  requireEqual(finding.insideSystemSummary, true, `${width} operation summary inside System card`);
+  requireEqual(
+    finding.nonOverlappingLauncher,
+    true,
+    `${width} operation summary launcher overlap ${JSON.stringify({ tail: finding.tailBox, launcher: finding.launcherBox })}`,
+  );
+  return finding;
 }
 
 export async function verifyBlocked(
