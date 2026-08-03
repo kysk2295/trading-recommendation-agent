@@ -3,6 +3,7 @@ import {
   OptionsWorkbenchStoreQaError,
   parseStoreQaOptions,
 } from "../scripts/options_workbench_store_qa_support";
+import { formatExpectedCliError } from "../scripts/run-options-workbench-store-qa";
 
 const blockedArgs = [
   "--blocked",
@@ -65,5 +66,18 @@ describe("options workbench store QA CLI", () => {
 
     // Then: no external file is opened for an unrecognized state.
     expect(parse).toThrow(OptionsWorkbenchStoreQaError);
+  });
+
+  test("formats expected CLI failures without absolute paths", () => {
+    // Given: a known input error whose original file-read detail contains a local path.
+    const error = new OptionsWorkbenchStoreQaError(
+      "actual snapshot could not be read: ENOENT /Users/operator/worktree/actual.json",
+    );
+
+    // When: the top-level CLI boundary formats the expected error.
+    const formatted = formatExpectedCliError(error);
+
+    // Then: stderr receives one bounded message instead of a stack or local path.
+    expect(formatted).toBe("ERROR: snapshot could not be read");
   });
 });
