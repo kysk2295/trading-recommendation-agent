@@ -1,0 +1,149 @@
+.options-payoff-control,
+.options-experiment-panel > header,
+.options-promotion-candidate > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.options-payoff-control {
+  margin-top: var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--type-small);
+  font-weight: 620;
+}
+
+.options-payoff-control select,
+.options-local-reset {
+  min-block-size: var(--control-touch);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-default);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+}
+
+.options-local-reset {
+  margin-top: var(--space-3);
+  cursor: pointer;
+}
+
+.options-payoff {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--space-4);
+  margin: var(--space-4) 0;
+}
+
+.options-payoff svg {
+  min-inline-size: 0;
+  inline-size: 100%;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-shell);
+}
+
+.options-payoff-axis {
+  stroke: var(--border-default);
+  stroke-width: 2;
+}
+
+.options-payoff-line {
+  fill: none;
+  stroke: var(--ember-400);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 4;
+}
+
+.options-payoff table {
+  border-collapse: collapse;
+  inline-size: 100%;
+}
+
+.options-payoff caption,
+.options-payoff th,
+.options-payoff td {
+  padding: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  text-align: end;
+}
+
+.options-payoff tr[data-highlighted-spot] {
+  background: var(--ember-soft);
+  color: var(--text-primary);
+}
+
+.options-strategy-metrics,
+.options-experiment-gates,
+.options-promotion-candidate dl,
+.options-operations-capacity dl,
+.options-agent-room dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.options-strategy-metrics > div,
+.options-experiment-gates > div,
+.options-promotion-candidate dl > div,
+.options-operations-capacity dl > div,
+.options-agent-room dl > div {
+  min-inline-size: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-secondary);
+}
+
+.options-research-warning {
+  margin-top: var(--space-3) !important;
+  color: var(--ember-400);
+}
+
+.options-agent-room,
+.options-promotion-candidate,
+.options-operations-summary,
+.options-operations-capacity {
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-secondary);
+}
+
+.options-agent-room summary {
+  min-block-size: var(--control-touch);
+  cursor: pointer;
+  font-weight: 620;
+}
+
+.options-experiment-trace {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-4) !important;
+  padding: 0;
+  list-style: none;
+}
+
+.options-experiment-trace li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-inline-start: 2px solid var(--ember-500);
+  background: var(--surface-secondary);
+}
+
+@media (max-width: 48rem) {
+  .options-payoff,
+  .options-strategy-metrics,
+  .options-experiment-gates,
+  .options-promotion-candidate dl,
+  .options-operations-capacity dl,
+  .options-agent-room dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .options-experiment-trace li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

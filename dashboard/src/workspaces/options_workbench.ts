@@ -3,9 +3,11 @@ import type { EvidenceTraceDrawer } from "../evidence_trace";
 import type { OptionsWorkbench } from "../options_workbench_schema";
 import type { DashboardSnapshotV2 } from "../schema_v2";
 import { renderOptionsChainTable } from "./options_chain_table";
+import { renderOptionsWorkbenchExperiment } from "./options_workbench_experiment";
 import { renderOptionsWorkbenchMarket } from "./options_workbench_market";
-import { createScenarioPresentations, renderWorkbenchHeader } from "./options_workbench_panels";
-import { workbenchStatePresentation } from "./options_workbench_presenters";
+import { renderOptionsWorkbenchOperations } from "./options_workbench_operations";
+import { renderWorkbenchHeader } from "./options_workbench_panels";
+import { createScenarioPresentations } from "./options_workbench_strategy";
 import { workbenchTraceButton } from "./options_workbench_trace";
 
 export type WorkbenchView =
@@ -24,7 +26,6 @@ export const WORKBENCH_VIEWS: readonly WorkbenchView[] = Object.freeze([
 ]);
 
 type TraceDrawer = Pick<EvidenceTraceDrawer, "open">;
-type WorkbenchSection = OptionsWorkbench["market"];
 type PanelContext = Readonly<{
   workbench: OptionsWorkbench;
   snapshot: DashboardSnapshotV2;
@@ -54,7 +55,7 @@ export function renderOptionsWorkbench(
   tabs.setAttribute("aria-label", "Options research views");
   const panels = document.createElement("div");
   panels.className = "options-workbench-panels";
-  const scenarios = createScenarioPresentations(workbench);
+  const scenarios = createScenarioPresentations(workbench, { snapshot, drawer });
   const panelByView = buildPanels({ workbench, snapshot, drawer, scenario: scenarios.agent });
   const tabByView = new Map<WorkbenchView, HTMLButtonElement>();
   for (const view of WORKBENCH_VIEWS) {
@@ -111,11 +112,11 @@ function buildPanels(context: PanelContext): ReadonlyMap<WorkbenchView, HTMLElem
     ),
   );
   const agent = panel("strategy_agent");
-  agent.append(sectionPresentation(workbench.agent, snapshot, drawer), scenario);
+  agent.append(scenario);
   const experiment = panel("experiment_lab");
-  experiment.append(sectionPresentation(workbench.experiment, snapshot, drawer));
+  experiment.append(renderOptionsWorkbenchExperiment(workbench, snapshot, drawer));
   const promotions = panel("promotion_operations");
-  promotions.append(...promotionRows(workbench, snapshot, drawer));
+  promotions.append(renderOptionsWorkbenchOperations(workbench, snapshot, drawer));
   panels.set("market_pulse", market);
   panels.set("option_chain", chain);
   panels.set("strategy_agent", agent);
@@ -171,21 +172,6 @@ function targetView(key: string, current: number): WorkbenchView | null {
   return null;
 }
 
-function sectionPresentation(
-  section: WorkbenchSection,
-  snapshot: DashboardSnapshotV2,
-  drawer: TraceDrawer,
-): HTMLElement {
-  const presentation = workbenchStatePresentation(section.state);
-  const article = document.createElement("article");
-  article.className = "options-workbench-receipt";
-  article.append(
-    panelHeading(presentation.label, section.summary, section.trace_id, snapshot, drawer),
-    textElement("p", section.blocker_code ?? "No blocker recorded"),
-  );
-  return article;
-}
-
 function panelHeading(
   title: string,
   summary: string,
@@ -199,26 +185,4 @@ function panelHeading(
   copy.append(textElement("h3", title), textElement("p", summary));
   heading.append(copy, workbenchTraceButton(title, traceId, { snapshot, drawer }));
   return heading;
-}
-
-function promotionRows(
-  workbench: OptionsWorkbench,
-  snapshot: DashboardSnapshotV2,
-  drawer: TraceDrawer,
-): readonly HTMLElement[] {
-  if (workbench.promotions.length === 0)
-    return [textElement("p", "Promotion evidence unavailable")];
-  return workbench.promotions.map((promotion) => {
-    const row = document.createElement("article");
-    row.className = "options-workbench-promotion";
-    row.append(
-      textElement("h3", promotion.promotion_id),
-      textElement(
-        "p",
-        `${promotion.state} · ${promotion.passed_gate_count}/${promotion.total_gate_count} · ${promotion.blockers.join(", ")}`,
-      ),
-      workbenchTraceButton(promotion.promotion_id, promotion.trace_id, { snapshot, drawer }),
-    );
-    return row;
-  });
 }
