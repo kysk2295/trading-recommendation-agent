@@ -152,17 +152,35 @@ describe("options workbench rendering", () => {
     await mount(derivativesPaperHappyFixture);
     await page.locator("#option_chain_tab").click();
     const before = await page.locator("#option_chain [data-scenario-series]").textContent();
+    const initialBreakEven = await page.locator("#option_chain [data-break-even]").textContent();
+    expect(
+      await page.locator('#option_chain [data-selected-leg="aapl-20260821-c-200"]').isVisible(),
+    ).toBeTrue();
 
     // When
     await page.getByRole("button", { name: "Select 195 call leg" }).click();
     const after = await page.locator("#option_chain [data-scenario-series]").textContent();
+    const chainBreakEven = await page.locator("#option_chain [data-break-even]").textContent();
+    const chainLegs = await page
+      .locator("#option_chain [data-selected-leg]")
+      .evaluateAll((legs) => legs.map((leg) => leg.getAttribute("data-selected-leg")));
     await page.locator("#option_chain [data-trace-id]").first().click();
+    await page.locator("#strategy_agent_tab").click();
+    const agentSeries = await page.locator("#strategy_agent [data-scenario-series]").textContent();
+    const agentBreakEven = await page.locator("#strategy_agent [data-break-even]").textContent();
+    const agentLegs = await page
+      .locator("#strategy_agent [data-selected-leg]")
+      .evaluateAll((legs) => legs.map((leg) => leg.getAttribute("data-selected-leg")));
 
     // Then
     expect(after).not.toBe(before);
-    expect(await page.locator("#option_chain [data-selected-contract]").textContent()).toBe(
-      "aapl-20260821-c-195",
-    );
+    expect(initialBreakEven).toContain("205.00");
+    expect(chainBreakEven).toContain("200.60");
+    expect(chainBreakEven).not.toBe(initialBreakEven);
+    expect(chainLegs).toEqual(["aapl-20260821-c-200", "aapl-20260821-c-195"]);
+    expect(agentLegs).toEqual(chainLegs);
+    expect(agentSeries).toBe(after);
+    expect(agentBreakEven).toBe(chainBreakEven);
     expect(
       await page.evaluate("window.snapshotBefore === JSON.stringify(window.lastMountedSnapshot)"),
     ).toBeTrue();

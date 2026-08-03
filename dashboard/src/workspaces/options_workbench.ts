@@ -5,10 +5,9 @@ import type { OptionsWorkbench } from "../options_workbench_schema";
 import type { DashboardSnapshotV2 } from "../schema_v2";
 import { renderOptionsChainTable } from "./options_chain_table";
 import {
+  createScenarioPresentations,
   renderProviderStates,
-  renderScenarioPanel,
   renderWorkbenchHeader,
-  updateScenarioPanel,
 } from "./options_workbench_panels";
 import { workbenchStatePresentation } from "./options_workbench_presenters";
 
@@ -46,8 +45,8 @@ export function renderOptionsWorkbench(
   tabs.setAttribute("aria-label", "Options research views");
   const panels = document.createElement("div");
   panels.className = "options-workbench-panels";
-  const scenario = renderScenarioPanel(workbench);
-  const panelByView = buildPanels(workbench, snapshot, drawer, scenario);
+  const scenarios = createScenarioPresentations(workbench);
+  const panelByView = buildPanels(workbench, snapshot, drawer, scenarios.agent);
   const tabByView = new Map<ViewId, HTMLButtonElement>();
   for (const view of OPTIONS_WORKBENCH_VIEWS) {
     const tab = workbenchTab(view);
@@ -73,14 +72,14 @@ export function renderOptionsWorkbench(
   const chain = panelByView.get("option_chain");
   chain?.append(
     renderOptionsChainTable(workbench.chain, snapshot, drawer, (selection) => {
-      updateScenarioPanel(scenario, workbench, selection);
+      scenarios.append(selection);
     }),
     textElement(
       "p",
       "Horizontal scroll is local to the option chain.",
       "options-workbench-scroll-note",
     ),
-    scenario,
+    scenarios.chain,
   );
   activate("market_pulse", false);
   section.append(tabs, panels);
@@ -110,7 +109,7 @@ function buildPanels(
     ),
   );
   const agent = panel("strategy_agent");
-  agent.append(sectionPresentation(workbench.agent, snapshot, drawer), scenario.cloneNode(true));
+  agent.append(sectionPresentation(workbench.agent, snapshot, drawer), scenario);
   const experiment = panel("experiment_lab");
   experiment.append(sectionPresentation(workbench.experiment, snapshot, drawer));
   const promotions = panel("promotion_operations");
