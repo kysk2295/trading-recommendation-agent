@@ -187,11 +187,16 @@
   font-weight: 620;
 }
 
-.options-chain-viewport th:nth-child(3),
-.options-chain-viewport td:nth-child(3) {
+.options-chain-viewport thead th[rowspan="2"],
+.options-chain-viewport tbody th[scope="row"] {
   background: var(--surface-elevated);
   color: var(--ember-400);
   text-align: center;
+}
+
+.options-chain-viewport thead th[rowspan="2"] {
+  position: relative;
+  z-index: 1;
 }
 
 .options-chain-viewport th:last-child,
