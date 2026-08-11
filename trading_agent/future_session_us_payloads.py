@@ -136,6 +136,7 @@ def build_us_jobs(
     common_run = dt.datetime.combine(target, dt.time(8), tzinfo=_NY)
     common_expiry = dt.datetime.combine(target, dt.time(16, 20), tzinfo=_NY)
     session_id = f"XNYS-{target.isoformat()}"
+    run_terminal = root / "run-terminal.json"
     watcher = JobTimingSpec(
         job_id=f"us-orb-watcher-{target}",
         role=FutureSessionUsRole.US_ORB_WATCHER,
@@ -206,7 +207,7 @@ def build_us_jobs(
         FutureSessionUsRole.US_DAY_CLOSE_FINALIZER,
         "close-finalizer",
         (
-            "finalize",
+            "finalize-auto",
             "--delivery-database",
             str(request.delivery_database),
             "--execution-database",
@@ -219,6 +220,8 @@ def build_us_jobs(
             orb_strategy_version,
             "--source-artifact",
             str(watch_source),
+            "--terminal-input",
+            str(run_terminal),
             "--terminal-output",
             str(root / "terminal.json"),
         ),
@@ -240,10 +243,16 @@ def build_us_jobs(
             "--repository", str(runtime), "--signing-key", str(request.signing_key),
             "--session-id", session_id, "--entry-cutoff", f"{target}T15:30:00-04:00",
             "--poll-interval-seconds", "5",
+            "--source-artifact", str(watch_source),
+            "--terminal-output", str(run_terminal),
         ),
         dependencies=(FutureSessionUsRole.US_DAY_PREFLIGHT_OBSERVER,),
         source_paths=(_required(request.signing_key), _required(request.watch_database)),
-        destination_paths=(_required(request.arm_database), _required(request.execution_database)),
+        destination_paths=(
+            _required(request.arm_database),
+            _required(request.execution_database),
+            run_terminal,
+        ),
     )
     swing_root = runtime / "outputs" / "us_swing_shadow"
     swing_report = (
@@ -318,11 +327,23 @@ def _observer_job(
                 dt.time(15, 30),
                 tzinfo=_NY,
             )
+            source_paths = (_required(request.watch_database),)
+            destination_paths = (_required(request.execution_database),)
         case FutureSessionUsRole.US_DAY_CLOSE_FINALIZER:
             not_before = dt.datetime.combine(
                 target,
                 dt.time(16, 5),
                 tzinfo=_NY,
+            )
+            terminal_root = request.artifact_root / "us" / target.isoformat()
+            source_paths = (
+                _required(request.execution_database),
+                _required(request.watch_database),
+                terminal_root / "run-terminal.json",
+            )
+            destination_paths = (
+                _required(request.delivery_database),
+                terminal_root / "terminal.json",
             )
             poll_until = dt.datetime.combine(
                 target,
@@ -349,12 +370,8 @@ def _observer_job(
             *arguments,
         ),
         dependencies=dependencies,
-        source_paths=(
-            (_required(request.watch_database),)
-            if role is FutureSessionUsRole.US_DAY_PREFLIGHT_OBSERVER
-            else (request.experiment_ledger,)
-        ),
-        destination_paths=(_required(request.execution_database),),
+        source_paths=source_paths,
+        destination_paths=destination_paths,
         payload_mode=FutureSessionPayloadMode.RETRY_UNTIL_SUCCESS,
         not_before=not_before,
         poll_until=poll_until,

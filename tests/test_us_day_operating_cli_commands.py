@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from tests.test_run_us_day_operating_session import CapturingRunnerFactory, StaticRunner
 from tests.test_us_day_acceptance_evidence import _clean_repository, _git, _terminal
 from tests.us_day_operating_fixtures import AT, admission, readiness
@@ -115,7 +117,7 @@ def test_finalize_writes_flat_censored_no_setup_terminal(tmp_path: Path, capsys)
     assert terminal.reasons == ("censored_no_setup",)
 
 
-def test_finalize_writes_blocked_terminal_when_orb_recommendation_exists(tmp_path: Path, capsys) -> None:
+def test_finalize_writes_incident_terminal_when_orb_recommendation_exists(tmp_path: Path, capsys) -> None:
     # Given: the immutable source database contains a real-session ORB recommendation.
     repository = _clean_repository(tmp_path)
     source_path = Path("outputs/source/paper_recommendations.sqlite3")
@@ -168,16 +170,146 @@ def test_finalize_writes_blocked_terminal_when_orb_recommendation_exists(tmp_pat
         _dependencies(order_admission, inspection),
     )
 
-    # Then: the flat session has a blocked terminal and a durable Hermes incident.
+    # Then: the flat session has an incident terminal and a durable Hermes incident.
     terminal = UsDaySessionTerminal.model_validate_json(terminal_path.read_text(encoding="utf-8"))
     events = HermesDeliveryStore(delivery_database).events()
     assert exit_code == 0
-    assert json.loads(capsys.readouterr().out)["result"] == "blocked"
-    assert terminal.status is UsDayTerminalStatus.BLOCKED
+    assert json.loads(capsys.readouterr().out)["result"] == "incident"
+    assert terminal.status is UsDayTerminalStatus.INCIDENT
     assert terminal.reasons == ("natural_setup_without_terminal",)
     assert terminal.is_finally_reconciled is True
     assert len(events) == 1
     assert events[0].kind is HermesDeliveryKind.INCIDENT
+
+
+def test_finalize_auto_missing_run_projects_no_setup_exactly_once(tmp_path: Path, capsys) -> None:
+    # Given: close inspection is flat and the arm observer produced no run terminal.
+    repository = _clean_repository(tmp_path)
+    source_path = Path("outputs/source/paper_recommendations.sqlite3")
+    _ = PaperStore(repository / source_path)
+    order_admission = admission()
+    inspection = UsDaySessionInspection(
+        readiness(order_admission, 3).broker_state,
+        AT.replace(hour=20),
+        False,
+        True,
+        True,
+        (),
+    )
+    delivery_database = repository / "outputs/delivery.sqlite3"
+    terminal_path = repository / "outputs/acceptance/us_day/sessions/auto.json"
+    arguments = (
+        "finalize-auto",
+        "--delivery-database",
+        str(delivery_database),
+        "--execution-database",
+        str(repository / "outputs/execution.sqlite3"),
+        "--repository",
+        str(repository),
+        "--session-id",
+        "XNYS-2026-07-14",
+        "--source-artifact",
+        str(source_path),
+        "--strategy-version",
+        "orb-v1",
+        "--terminal-input",
+        str(repository / "outputs/acceptance/us_day/sessions/run.json"),
+        "--terminal-output",
+        str(terminal_path),
+    )
+
+    # When: the idempotent close contract is replayed.
+    first = main(arguments, _dependencies(order_admission, inspection))
+    _ = capsys.readouterr()
+    second = main(arguments, _dependencies(order_admission, inspection))
+
+    # Then: one NO_RECOMMENDATION event backs the one final terminal.
+    terminal = UsDaySessionTerminal.model_validate_json(terminal_path.read_text(encoding="utf-8"))
+    events = HermesDeliveryStore(delivery_database).events()
+    assert first == second == 0
+    assert json.loads(capsys.readouterr().out)["result"] == "censored"
+    assert terminal.status is UsDayTerminalStatus.CENSORED
+    assert len(events) == 1
+    assert events[0].kind is HermesDeliveryKind.NO_RECOMMENDATION
+
+
+@pytest.mark.parametrize(
+    ("status", "reasons"),
+    (
+        (UsDayTerminalStatus.COMPLETED, ()),
+        (UsDayTerminalStatus.BLOCKED, ("owner_arm_missing",)),
+        (UsDayTerminalStatus.INCIDENT, ("paper_order_failed",)),
+    ),
+)
+def test_finalize_auto_refreshes_operating_terminal_to_flat_reconciled(
+    tmp_path: Path,
+    status: UsDayTerminalStatus,
+    reasons: tuple[str, ...],
+) -> None:
+    # Given: one immutable operating terminal exists before the close inspection.
+    repository = _clean_repository(tmp_path)
+    commit_sha = _git(repository, "rev-parse", "HEAD")
+    run_terminal = _terminal(0, natural=True).model_copy(
+        update={
+            "commit_sha": commit_sha,
+            "status": status,
+            "reasons": reasons,
+            "transitions": (UsDayOperatingTransition.HERMES_RESULT_PROJECTED,),
+            "open_order_count": 1,
+            "reconciliation_passed": False,
+            "broker_shadow_ledger_equal": False,
+            "hermes_acknowledged": False,
+        }
+    )
+    source = repository / run_terminal.source_artifacts[0].path
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("source-0", encoding="utf-8")
+    run_path = repository / "outputs/acceptance/us_day/sessions/run.json"
+    final_path = repository / "outputs/acceptance/us_day/sessions/final.json"
+    write_private_stable_report(run_path, run_terminal.model_dump_json() + "\n")
+    order_admission = admission()
+    inspection = UsDaySessionInspection(
+        readiness(order_admission, 3).broker_state,
+        run_terminal.observed_through.replace(hour=21),
+        False,
+        True,
+        True,
+        (),
+    )
+
+    # When: finalize-auto detects and query-only refreshes the run terminal.
+    exit_code = main(
+        (
+            "finalize-auto",
+            "--delivery-database",
+            str(repository / "outputs/delivery.sqlite3"),
+            "--execution-database",
+            str(repository / "outputs/execution.sqlite3"),
+            "--repository",
+            str(repository),
+            "--session-id",
+            run_terminal.session_id,
+            "--source-artifact",
+            str(run_terminal.source_artifacts[0].path),
+            "--strategy-version",
+            run_terminal.strategy_version,
+            "--terminal-input",
+            str(run_path),
+            "--terminal-output",
+            str(final_path),
+        ),
+        _dependencies(order_admission, inspection),
+    )
+
+    # Then: status is preserved while flat/reconciliation state is appended to the final artifact.
+    terminal = UsDaySessionTerminal.model_validate_json(final_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert terminal.status is status
+    assert terminal.is_finally_reconciled is True
+    assert terminal.transitions[-2:] == (
+        UsDayOperatingTransition.FLAT,
+        UsDayOperatingTransition.RECONCILED,
+    )
 
 
 def test_finalize_rejects_missing_source_before_projecting_outcome(tmp_path: Path, capsys) -> None:

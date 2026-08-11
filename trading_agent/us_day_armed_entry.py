@@ -115,7 +115,7 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--session-id", required=True)
     root.add_argument("--entry-cutoff", type=_aware_datetime, required=True)
     root.add_argument("--poll-interval-seconds", type=_poll_interval, required=True)
-    root.add_argument("--source-artifact", type=_absolute_path, action="append", default=[])
+    root.add_argument("--source-artifact", type=Path, action="append", default=[])
     root.add_argument("--terminal-output", type=_absolute_path)
     root.add_argument("--once", action="store_true")
     return root
@@ -123,7 +123,7 @@ def parser() -> argparse.ArgumentParser:
 
 def parse_command(argv: Sequence[str] | None = None) -> UsDayArmedEntryCommand:
     args = parser().parse_args(argv)
-    source_artifacts = tuple(args.source_artifact)
+    source_artifacts = _canonical_source_paths(args.repository, tuple(args.source_artifact))
     if (args.terminal_output is None) is bool(source_artifacts):
         raise InvalidUsDayArmedEntryCommandError
     return UsDayArmedEntryCommand(
@@ -194,27 +194,16 @@ def _matching_arms(store: HermesArmStore, session_id: str, now: dt.datetime) -> 
 
 def _operating_argv(command: UsDayArmedEntryCommand, request: HermesArmRequest) -> tuple[str, ...]:
     arguments = (
-        "run",
-        "--arm-database",
-        str(command.arm_database),
-        "--arm-request-id",
-        request.request_id,
-        "--delivery-database",
-        str(command.delivery_database),
-        "--execution-database",
-        str(command.execution_database),
-        "--experiment-ledger",
-        str(command.experiment_ledger),
-        "--lane-registry",
-        str(command.lane_registry),
-        "--repository",
-        str(command.repository),
-        "--session-id",
-        command.session_id,
-        "--signing-key",
-        str(command.signing_key),
-        "--watch-database",
-        str(command.watch_database),
+        "run", "--arm-database", str(command.arm_database),
+        "--arm-request-id", request.request_id,
+        "--delivery-database", str(command.delivery_database),
+        "--execution-database", str(command.execution_database),
+        "--experiment-ledger", str(command.experiment_ledger),
+        "--lane-registry", str(command.lane_registry),
+        "--repository", str(command.repository),
+        "--session-id", command.session_id,
+        "--signing-key", str(command.signing_key),
+        "--watch-database", str(command.watch_database),
     )
     if command.terminal_output is None:
         return arguments
@@ -248,6 +237,19 @@ def _absolute_path(value: str) -> Path:
     if not path.is_absolute():
         raise argparse.ArgumentTypeError("path must be absolute")
     return path
+
+
+def _canonical_source_paths(repository: Path, paths: tuple[Path, ...]) -> tuple[Path, ...]:
+    root = repository.resolve(strict=False)
+    if any(
+        path.is_absolute()
+        or not path.parts
+        or path.parts[0] != "outputs"
+        or (root / path).resolve(strict=False) != root / path
+        for path in paths
+    ):
+        raise InvalidUsDayArmedEntryCommandError
+    return paths
 
 
 def _aware_datetime(value: str) -> dt.datetime:

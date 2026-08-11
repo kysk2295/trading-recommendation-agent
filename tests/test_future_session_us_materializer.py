@@ -171,6 +171,38 @@ def test_prepare_atomically_materializes_exact_six_us_roles(
             assert f"readonly not_before_epoch={int(job.not_before.timestamp())}" in payload_text
 
 
+def test_plan_binds_arm_run_terminal_and_close_auto_finalizer(tmp_path: Path) -> None:
+    # Given: a future US session plan compiled from one frozen runtime.
+    request, plan, _request_path, _plan_path = _authority_files(tmp_path)
+    assert isinstance(plan, ReadyToPrepareSessionPlan)
+    jobs = {job.role: job for job in plan.jobs}
+
+    # When: the arm and close payload contracts are inspected.
+    arm = jobs[FutureSessionUsRole.US_DAY_ARM_OBSERVER]
+    close = jobs[FutureSessionUsRole.US_DAY_CLOSE_FINALIZER]
+    runtime = request.frozen_runtime.directory.resolve(strict=False)
+    watch = request.watch_database
+    assert watch is not None
+    source = watch.resolve(strict=False).relative_to(runtime)
+
+    # Then: both jobs share a canonical repository-relative source and a separate run terminal.
+    run_terminal = plan.artifact_layout.root / "run-terminal.json"
+    final_terminal = plan.artifact_layout.root / "terminal.json"
+    assert _option_values(arm.command, "--source-artifact") == (str(source),)
+    assert _option_values(arm.command, "--terminal-output") == (str(run_terminal),)
+    assert close.command[2] == "finalize-auto"
+    assert _option_values(close.command, "--terminal-input") == (str(run_terminal),)
+    assert _option_values(close.command, "--terminal-output") == (str(final_terminal),)
+    assert run_terminal != final_terminal
+    assert run_terminal in close.source_paths
+    assert final_terminal in close.destination_paths
+    assert request.delivery_database in close.destination_paths
+
+
+def _option_values(command: tuple[str, ...], option: str) -> tuple[str, ...]:
+    return tuple(command[index + 1] for index, value in enumerate(command[:-1]) if value == option)
+
+
 def test_invalid_plan_leaves_no_partial_output(tmp_path: Path) -> None:
     # Given
     _, plan, request_path, plan_path = _authority_files(tmp_path)

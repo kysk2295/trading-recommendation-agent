@@ -19,6 +19,7 @@ from trading_agent.us_day_acceptance_evidence import (
 from trading_agent.us_day_no_setup_source import OrbSessionRecommendation, load_session_orb_recommendations
 from trading_agent.us_day_operating_cli_contract import (
     EvidenceUsDayCommand,
+    FinalizeAutoUsDayCommand,
     FinalizeUsDayCommand,
     RunUsDayCommand,
 )
@@ -60,6 +61,23 @@ def finalize_us_day_terminal(
         terminal = _finalize_session_without_run(command, inspection)
     write_us_day_session_terminal(command.paths.terminal_output, terminal)
     return terminal
+
+
+def finalize_auto_us_day_terminal(
+    command: FinalizeAutoUsDayCommand,
+    inspection: UsDaySessionInspection,
+) -> UsDaySessionTerminal:
+    terminal_input = command.terminal_input if command.terminal_input.is_file() else None
+    return finalize_us_day_terminal(
+        FinalizeUsDayCommand(
+            paths=command.paths,
+            session_id=command.session_id,
+            source_artifact_paths=command.source_artifact_paths,
+            strategy_version=command.strategy_version,
+            terminal_input=terminal_input,
+        ),
+        inspection,
+    )
 
 
 def publish_us_day_run_terminal(
@@ -169,7 +187,7 @@ def _finalize_session_without_run(
             delivery_store,
         )
         result = UsDayOperatingResult(
-            UsDayOperatingStatus.BLOCKED,
+            UsDayOperatingStatus.INCIDENT,
             (
                 UsDayOperatingTransition.FLAT,
                 UsDayOperatingTransition.RECONCILED,
@@ -227,9 +245,7 @@ def _finalize_session_without_run(
 
 
 def _validate_session_without_run(
-    command: FinalizeUsDayCommand,
-    inspection: UsDaySessionInspection,
-    session_bounds: tuple[dt.datetime, dt.datetime],
+    command: FinalizeUsDayCommand, inspection: UsDaySessionInspection, session_bounds: tuple[dt.datetime, dt.datetime]
 ) -> tuple[OrbSessionRecommendation, ...]:
     state = inspection.broker_state
     if (

@@ -125,6 +125,36 @@ def test_confirmed_matching_arm_dispatches_operating_run_once(tmp_path: Path, ca
     assert request.request_id not in capsys.readouterr().out
 
 
+def test_confirmed_arm_forwards_relative_source_and_run_terminal(tmp_path: Path) -> None:
+    # Given: a matching confirmed arm and an immutable repository-relative watch artifact.
+    signer = HermesArmSigner.from_bytes(b"x" * 32)
+    store = HermesArmStore(tmp_path / "arm.sqlite3", signer)
+    request = _request(signer, "a" * 64, HermesArmScope(session_id=SESSION, lane_id=LaneId.INTRADAY_MOMENTUM))
+    store.add_request(request)
+    _transition(store, signer, request, HermesArmTransitionKind.CONFIRMED)
+    operating = CapturingOperatingMain()
+    terminal = tmp_path / "run-terminal.json"
+
+    # When: the armed observer dispatches the operating run.
+    exit_code = main(
+        _args(
+            tmp_path,
+            "--once",
+            "--source-artifact",
+            "outputs/paper_recommendations.sqlite3",
+            "--terminal-output",
+            str(terminal),
+        ),
+        _deps(_current_source, lambda _: signer, operating, store),
+    )
+
+    # Then: the operating CLI receives both immutable terminal inputs.
+    assert exit_code == 0
+    assert len(operating.calls) == 1
+    assert _option_values(operating.calls[0], "--source-artifact") == ("outputs/paper_recommendations.sqlite3",)
+    assert _option_values(operating.calls[0], "--terminal-output") == (str(terminal),)
+
+
 def test_ambiguous_confirmed_arms_block_without_dispatch(tmp_path: Path, capsys) -> None:
     signer = HermesArmSigner.from_bytes(b"x" * 32)
     store = HermesArmStore(tmp_path / "arm.sqlite3", signer)
@@ -291,3 +321,7 @@ def _transition(
 
 def _payload(value: HermesArmRequest | HermesArmTransition) -> str:
     return json.dumps(value.model_dump(mode="json", exclude={"signature"}), separators=(",", ":"), sort_keys=True)
+
+
+def _option_values(command: Sequence[str], option: str) -> tuple[str, ...]:
+    return tuple(command[index + 1] for index, value in enumerate(command[:-1]) if value == option)

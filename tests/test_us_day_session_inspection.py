@@ -38,10 +38,10 @@ def test_preflight_and_recover_never_invoke_mutation_recovery(tmp_path: Path) ->
     assert recovered.reconciliation_passed is True
 
 
-def test_recover_does_not_claim_broker_shadow_equality_without_shadow_evidence(
+def test_recover_projects_ready_reconciliation_as_broker_shadow_equality(
     tmp_path: Path,
 ) -> None:
-    # Given: broker/local reconciliation is ready but no shadow ledger enters the API.
+    # Given: the paper runtime's reconciliation contract is ready.
     order_admission = admission()
     session = MutationRejectingPaperSession(order_admission)
 
@@ -57,6 +57,6 @@ def test_recover_does_not_claim_broker_shadow_equality_without_shadow_evidence(
     # When: the production read-only recovery projects the session inspection.
     recovered = operations.recover(tmp_path / "execution.sqlite3")
 
-    # Then: only reconciliation passes; broker/shadow equality remains unproven.
+    # Then: the inspection projects the same reconciliation meaning to both gates.
     assert recovered.reconciliation_passed is True
-    assert recovered.broker_shadow_ledger_equal is False
+    assert recovered.broker_shadow_ledger_equal is True

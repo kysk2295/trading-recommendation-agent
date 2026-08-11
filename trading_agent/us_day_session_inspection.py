@@ -82,6 +82,6 @@ def _inspection(readiness: PaperRuntimeReadiness) -> UsDaySessionInspection:
         observed_at,
         readiness.market_clock.is_open,
         reconciliation_passed,
-        False,
+        reconciliation_passed,
         readiness.reasons,
     )

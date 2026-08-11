@@ -11,12 +11,14 @@ from typing import Protocol, assert_never
 from trading_agent.paper_entry_source import load_current_orb_paper_entry
 from trading_agent.paper_operating_session_models import PaperOrderAdmissionRequest
 from trading_agent.us_day_operating_attestation import (
+    finalize_auto_us_day_terminal,
     finalize_us_day_terminal,
     publish_us_day_run_terminal,
     write_us_day_evidence,
 )
 from trading_agent.us_day_operating_cli_contract import (
     EvidenceUsDayCommand,
+    FinalizeAutoUsDayCommand,
     FinalizeUsDayCommand,
     PreflightUsDayCommand,
     RecoverUsDayCommand,
@@ -80,6 +82,8 @@ def main(
                 return _recover(command, dependencies)
             case FinalizeUsDayCommand():
                 return _finalize(command, dependencies)
+            case FinalizeAutoUsDayCommand():
+                return _finalize_auto(command, dependencies)
             case EvidenceUsDayCommand():
                 return _evidence(command, dependencies.clock())
             case unreachable:
@@ -125,6 +129,13 @@ def _recover(command: RecoverUsDayCommand, dependencies: UsDayCliDependencies) -
 def _finalize(command: FinalizeUsDayCommand, dependencies: UsDayCliDependencies) -> int:
     inspection = dependencies.read_only_operations.recover(command.paths.execution_store)
     terminal = finalize_us_day_terminal(command, inspection)
+    print_payload({"hermes_acknowledged": terminal.hermes_acknowledged, "result": terminal.status.value})
+    return 0 if terminal.is_finally_reconciled else 1
+
+
+def _finalize_auto(command: FinalizeAutoUsDayCommand, dependencies: UsDayCliDependencies) -> int:
+    inspection = dependencies.read_only_operations.recover(command.paths.execution_store)
+    terminal = finalize_auto_us_day_terminal(command, inspection)
     print_payload({"hermes_acknowledged": terminal.hermes_acknowledged, "result": terminal.status.value})
     return 0 if terminal.is_finally_reconciled else 1
 

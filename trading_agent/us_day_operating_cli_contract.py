@@ -70,6 +70,15 @@ class FinalizeUsDayCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class FinalizeAutoUsDayCommand:
+    paths: UsDayFinalizePaths
+    session_id: str
+    source_artifact_paths: tuple[Path, ...]
+    strategy_version: str
+    terminal_input: Path
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceUsDayCommand:
     repository: Path
     terminal_paths: tuple[Path, ...]
@@ -80,6 +89,7 @@ type UsDayCliCommand = (
     | PreflightUsDayCommand
     | RecoverUsDayCommand
     | FinalizeUsDayCommand
+    | FinalizeAutoUsDayCommand
     | EvidenceUsDayCommand
 )
 
@@ -96,6 +106,11 @@ def parser() -> argparse.ArgumentParser:
     recover.add_argument("--execution-database", type=Path, required=True)
     finalize = commands.add_parser("finalize", help="attest a flat terminal or refresh an existing terminal")
     _finalize_arguments(finalize)
+    finalize_auto = commands.add_parser(
+        "finalize-auto",
+        help="refresh a run terminal when present, otherwise attest the source outcome",
+    )
+    _finalize_auto_arguments(finalize_auto)
     evidence = commands.add_parser("evidence", help="build the US Day three-session acceptance bundle")
     evidence.add_argument("--repository", type=Path, default=Path.cwd())
     evidence.add_argument("--terminal", type=Path, action="append", required=True)
@@ -113,6 +128,8 @@ def parse_command(argv: Sequence[str] | None = None) -> UsDayCliCommand:
             return RecoverUsDayCommand(args.execution_database)
         case "finalize":
             return _finalize_command(args)
+        case "finalize-auto":
+            return _finalize_auto_command(args)
         case "evidence":
             return EvidenceUsDayCommand(args.repository, tuple(args.terminal))
         case unreachable:
@@ -145,8 +162,19 @@ def _finalize_arguments(finalize: argparse.ArgumentParser) -> None:
     finalize.add_argument("--terminal-output", type=Path, required=True)
 
 
+def _finalize_auto_arguments(finalize: argparse.ArgumentParser) -> None:
+    finalize.add_argument("--delivery-database", type=Path, required=True)
+    finalize.add_argument("--execution-database", type=Path, required=True)
+    finalize.add_argument("--repository", type=Path, default=Path.cwd())
+    finalize.add_argument("--session-id", required=True)
+    finalize.add_argument("--source-artifact", type=Path, action="append", required=True)
+    finalize.add_argument("--strategy-version", required=True)
+    finalize.add_argument("--terminal-input", type=Path, required=True)
+    finalize.add_argument("--terminal-output", type=Path, required=True)
+
+
 def _run_command(args: argparse.Namespace) -> RunUsDayCommand:
-    source_paths = tuple(args.source_artifact)
+    source_paths = _canonical_source_paths(args.repository, tuple(args.source_artifact))
     if (args.terminal_output is None and source_paths) or (args.terminal_output is not None and not source_paths):
         raise InvalidUsDayCliCommandError
     return RunUsDayCommand(
@@ -170,7 +198,7 @@ def _run_command(args: argparse.Namespace) -> RunUsDayCommand:
 
 
 def _finalize_command(args: argparse.Namespace) -> FinalizeUsDayCommand:
-    source_paths = tuple(args.source_artifact)
+    source_paths = _canonical_source_paths(args.repository, tuple(args.source_artifact))
     existing = args.terminal_input is not None
     no_setup = args.session_id is not None and args.strategy_version is not None and bool(source_paths)
     if existing == no_setup:
@@ -187,3 +215,31 @@ def _finalize_command(args: argparse.Namespace) -> FinalizeUsDayCommand:
         strategy_version=args.strategy_version,
         terminal_input=args.terminal_input,
     )
+
+
+def _finalize_auto_command(args: argparse.Namespace) -> FinalizeAutoUsDayCommand:
+    return FinalizeAutoUsDayCommand(
+        paths=UsDayFinalizePaths(
+            args.delivery_database,
+            args.execution_database,
+            args.repository,
+            args.terminal_output,
+        ),
+        session_id=args.session_id,
+        source_artifact_paths=_canonical_source_paths(args.repository, tuple(args.source_artifact)),
+        strategy_version=args.strategy_version,
+        terminal_input=args.terminal_input,
+    )
+
+
+def _canonical_source_paths(repository: Path, paths: tuple[Path, ...]) -> tuple[Path, ...]:
+    root = repository.resolve(strict=False)
+    if any(
+        path.is_absolute()
+        or not path.parts
+        or path.parts[0] != "outputs"
+        or (root / path).resolve(strict=False) != root / path
+        for path in paths
+    ):
+        raise InvalidUsDayCliCommandError
+    return paths
