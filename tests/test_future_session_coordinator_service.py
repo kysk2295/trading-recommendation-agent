@@ -194,11 +194,11 @@ def test_us_request_is_target_scoped_and_reused_across_restart(tmp_path: Path) -
     assert replay == first
     assert request_path == config.state_root / "requests" / "us" / "2026-07-06.json"
     assert plan_path == config.state_root / "plans" / "us" / "2026-07-06.json"
-    assert request.watch_database == config.state_root / "session-data" / "us" / "2026-07-06" / "watch.sqlite3"
-    assert request.opportunity_outbox == (
-        config.state_root / "session-data" / "us" / "2026-07-06" / "opportunities.jsonl"
-    )
-    assert request.signal_outbox == config.state_root / "session-data" / "us" / "2026-07-06" / "signals.jsonl"
+    session_root = runtime / "outputs" / "future-sessions" / "us" / "2026-07-06"
+    assert request.watch_database == session_root / "paper_recommendations.sqlite3"
+    assert request.opportunity_outbox == session_root / "opportunities.v1.jsonl"
+    assert request.signal_outbox == session_root / "trade-signals.v1.jsonl"
+    assert request.artifact_root == config.state_root / "artifacts"
     assert stat.S_IMODE(request_path.stat().st_mode) == 0o600
 
 

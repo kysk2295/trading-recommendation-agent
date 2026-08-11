@@ -124,18 +124,18 @@ def _dynamic_request(
         compiled_at=context.tick.observed_at,
         scheduler_main_sha=context.tick.scheduler_main_sha,
         authority_repository=context.config.authority_repository,
+        artifact_root=context.config.state_root / "artifacts",
         frozen_runtime=FrozenRuntimeAuthority(
             directory=context.tick.frozen_runtime,
             commit_sha=context.tick.scheduler_main_sha,
         ),
     )
-    if context.market is FutureSessionMarket.US and target is not None:
-        session_root = context.config.state_root / "session-data" / "us" / target.isoformat()
-        for field in ("watch_database", "opportunity_outbox", "signal_outbox"):
-            original = getattr(template, field)
-            if original is None:
-                raise ValueError("US template path missing")
-            values[field] = session_root / original.name
+    if context.market is FutureSessionMarket.US:
+        target_name = "pending-target" if target is None else target.isoformat()
+        session_root = context.tick.frozen_runtime / "outputs" / "future-sessions" / "us" / target_name
+        values["watch_database"] = session_root / "paper_recommendations.sqlite3"
+        values["opportunity_outbox"] = session_root / "opportunities.v1.jsonl"
+        values["signal_outbox"] = session_root / "trade-signals.v1.jsonl"
     return FutureSessionPlanRequest.model_validate(values)
 
 
