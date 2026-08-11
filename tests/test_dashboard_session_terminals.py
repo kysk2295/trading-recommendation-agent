@@ -10,6 +10,10 @@ from trading_agent.hermes_delivery_models import (
     build_hermes_delivery_event,
 )
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
+from trading_agent.kr_same_cycle_delivery import (
+    KrSameCycleDeliveryRequest,
+    project_kr_same_cycle_delivery,
+)
 
 NOW = dt.datetime(2026, 8, 1, tzinfo=dt.UTC)
 
@@ -28,15 +32,16 @@ def test_dashboard_projects_us_and_kr_hermes_session_terminals(tmp_path: Path) -
                 status="session_summary",
             )
         )
-        _ = writer.append_event(
-            _terminal(
-                source_event_id="kr-terminal:" + "b" * 64,
-                kind=HermesDeliveryKind.NO_RECOMMENDATION,
-                market_id="kr_equities",
-                occurred_at=dt.datetime(2026, 7, 31, 6, 30, tzinfo=dt.UTC),
-                status="no_shadow_entry_artifact",
-            )
-        )
+    projected = project_kr_same_cycle_delivery(
+        store,
+        KrSameCycleDeliveryRequest(
+            collection_cycle_id="kr-cycle-20260731",
+            strategy_version="kr-theme-day-v1",
+            occurred_at=dt.datetime(2026, 7, 31, 6, 30, tzinfo=dt.UTC),
+            opportunities=(),
+        ),
+    )
+    assert projected.inserted == 1
     store.path.parent.chmod(0o700)
 
     # When: the real Dashboard v2 snapshot boundary reads local outputs
@@ -44,9 +49,7 @@ def test_dashboard_projects_us_and_kr_hermes_session_terminals(tmp_path: Path) -
 
     # Then: both immutable terminal outcomes are visible without rendering raw Hermes text
     terminals = {
-        item.item_id: item
-        for item in snapshot.workspaces.markets.items
-        if item.item_id.startswith("session_terminal.")
+        item.item_id: item for item in snapshot.workspaces.markets.items if item.item_id.startswith("session_terminal.")
     }
     assert terminals["session_terminal.us_equities.20260731"].value == "recommendation"
     assert terminals["session_terminal.kr_equities.20260731"].value == "no_recommendation"
@@ -75,17 +78,14 @@ def test_dashboard_fails_closed_on_hermes_session_incident_and_replays_once(tmp_
 
     # Then: one blocked terminal is projected and the markets workspace cannot claim success
     incidents = tuple(
-        item
-        for item in snapshot.workspaces.markets.items
-        if item.item_id == "session_terminal.kr_equities.20260731"
+        item for item in snapshot.workspaces.markets.items if item.item_id == "session_terminal.kr_equities.20260731"
     )
     assert len(incidents) == 1
     assert incidents[0].state == "blocked"
     assert incidents[0].value == "incident"
     assert snapshot.workspaces.markets.state == "blocked"
     assert any(
-        node.kind == "blocker_terminal" and node.safe_ref == event.payload_sha256
-        for node in snapshot.traces.nodes
+        node.kind == "blocker_terminal" and node.safe_ref == event.payload_sha256 for node in snapshot.traces.nodes
     )
 
 
@@ -111,9 +111,7 @@ def test_dashboard_aggregates_verified_kr_exits_as_one_recommendation_terminal(t
 
     # Then: the completed session is one recommendation terminal rather than a duplicate conflict
     terminals = tuple(
-        item
-        for item in snapshot.workspaces.markets.items
-        if item.item_id == "session_terminal.kr_equities.20260730"
+        item for item in snapshot.workspaces.markets.items if item.item_id == "session_terminal.kr_equities.20260730"
     )
     assert len(terminals) == 1
     assert terminals[0].state == "populated"

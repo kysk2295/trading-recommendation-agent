@@ -18,6 +18,9 @@ from trading_agent.dashboard_models_v2 import (
     WorkspaceItemV2,
 )
 from trading_agent.dashboard_projection_common import WorkspaceProjection
+from trading_agent.dashboard_session_terminal_blocked import (
+    blocked_session_terminal_projection,
+)
 from trading_agent.dashboard_session_terminal_source import (
     InvalidDashboardSessionTerminalSourceError,
     read_private_session_terminal_events,
@@ -26,8 +29,12 @@ from trading_agent.hermes_delivery_models import HermesDeliveryEvent, HermesDeli
 
 _NEW_YORK: Final = ZoneInfo("America/New_York")
 _TERMINAL_PREFIXES: Final = (
-    "us-session-terminal-", "us-day-no-recommendation-",
-    "us-day-missing-terminal-", "kr-terminal:", "kr-exit:",
+    "us-session-terminal-",
+    "us-day-no-recommendation-",
+    "us-day-missing-terminal-",
+    "kr-terminal:",
+    "kr-exit:",
+    "kr-same-cycle-no-opportunity-",
     "kr-source-preflight-incident-",
 )
 
@@ -76,7 +83,7 @@ def project_session_terminals(
         events = read_private_session_terminal_events(database)
         terminals = _terminal_events(events, now)
     except (InvalidDashboardSessionTerminalError, InvalidDashboardSessionTerminalSourceError):
-        return _blocked_source(base, now)
+        return blocked_session_terminal_projection(base, now)
     if not terminals:
         return base
     items = tuple(_item(terminal) for terminal in terminals)
@@ -87,14 +94,22 @@ def project_session_terminals(
     base_blocked = base_state in {"error", "blocked", "unavailable", "corrupt"}
     state: SourceStateName = base_state if base_blocked or incident is None else "blocked"
     blocker = base.workspace.blocker_code if base_blocked or incident is None else "session_terminal_incident"
-    root_edges = () if base_blocked or incident is None else (
-        TraceEdgeV2(from_node_id=base.workspace.trace_id, to_node_id=_terminal_node_id(incident), kind="blocked_by"),
+    root_edges = (
+        ()
+        if base_blocked or incident is None
+        else (
+            TraceEdgeV2(
+                from_node_id=base.workspace.trace_id, to_node_id=_terminal_node_id(incident), kind="blocked_by"
+            ),
+        )
     )
-    observed_at = max(
-        terminal.observed_at for terminal in terminals
-    ) if base.workspace.observed_at is None else max(
-        base.workspace.observed_at,
-        *(terminal.observed_at for terminal in terminals),
+    observed_at = (
+        max(terminal.observed_at for terminal in terminals)
+        if base.workspace.observed_at is None
+        else max(
+            base.workspace.observed_at,
+            *(terminal.observed_at for terminal in terminals),
+        )
     )
     workspace = SourceStateV2(
         **base.workspace.model_dump(
@@ -138,8 +153,7 @@ def _terminal_events(
         terminal = _parse_terminal(event, now)
         grouped[(terminal.market_id, terminal.session_date)].append(terminal)
     terminals = tuple(
-        _terminal_group(market_id, session_date, tuple(group))
-        for (market_id, session_date), group in grouped.items()
+        _terminal_group(market_id, session_date, tuple(group)) for (market_id, session_date), group in grouped.items()
     )
     return tuple(sorted(terminals, key=lambda item: (item.observed_at, item.market_id), reverse=True)[:20])
 
@@ -256,30 +270,6 @@ def _source_node_id(terminal: _Terminal) -> str:
 
 def _terminal_node_id(terminal: _Terminal) -> str:
     return f"{_source_node_id(terminal)}.terminal"
-
-
-def _blocked_source(base: WorkspaceProjection, now: dt.datetime) -> WorkspaceProjection:
-    safe_ref = hashlib.sha256(b"invalid-session-terminal-database").hexdigest()
-    terminal_id = "trace.markets.session_terminals.blocker"
-    workspace = base.workspace.model_copy(
-        update={
-            "state": "corrupt",
-            "observed_at": now,
-            "blocker_code": "session_terminal_source_invalid",
-            "summary": "Hermes session terminal authority is invalid",
-        }
-    )
-    node = TraceNodeV2(
-        node_id=terminal_id,
-        kind="blocker_terminal",
-        label="Hermes session terminal authority invalid",
-        observed_at=now,
-        safe_ref=safe_ref,
-        state="blocked",
-        source_namespace="dashboard.session_terminal",
-    )
-    edge = TraceEdgeV2(from_node_id=base.workspace.trace_id, to_node_id=terminal_id, kind="blocked_by")
-    return WorkspaceProjection(workspace, (*base.nodes, node), (*base.edges, edge))
 
 
 __all__ = ("project_session_terminals",)

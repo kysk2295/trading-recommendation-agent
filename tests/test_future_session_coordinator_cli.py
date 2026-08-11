@@ -11,6 +11,9 @@ from tests.test_future_session_us_materializer import _authority_files
 from trading_agent.future_session_coordinator_models import (
     UsFutureSessionActivationReceipt,
 )
+from trading_agent.future_session_materialize_cli_parser import (
+    build_future_session_parser,
+)
 
 
 def test_coordinate_cli_reports_bad_input_and_canonical_waiting(
@@ -61,7 +64,7 @@ def test_coordinate_cli_reports_bad_input_and_canonical_waiting(
     waiting_payload = json.loads(capsys.readouterr().out)
 
     # Then
-    assert "coordinate" in run_future_session_materialize._parser().format_help()
+    assert "coordinate" in build_future_session_parser().format_help()
     assert bad_code == 2
     assert bad_payload == {"reason": "invalid_request", "result": "blocked"}
     assert waiting_code == 0
