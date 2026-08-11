@@ -43,7 +43,16 @@ def ensure_frozen_runtime(
     repository: Path,
     runtime_root: Path,
     expected_commit: str | None = None,
+    *,
+    require_current_main: bool = True,
 ) -> Path:
+    if not require_current_main:
+        if expected_commit is None:
+            raise FrozenRuntimeError("configured_main_authority_missing")
+        destination = runtime_root / expected_commit
+        if destination.exists():
+            _verify_runtime(destination, expected_commit)
+            return destination
     try:
         commit = current_main_commit(repository)
         if expected_commit is not None and commit != expected_commit:

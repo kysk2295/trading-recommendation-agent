@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import re
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from trading_agent.future_session_coordinator_models import (
     FutureSessionCoordinatorReceipt,
@@ -24,6 +25,11 @@ class FutureSessionServiceResult(StrEnum):
     ACTIVATED = "activated"
     WAITING_AUTHORITY = "waiting_authority"
     BLOCKED = "blocked"
+
+
+class FutureSessionCoordinatorServiceState(StrEnum):
+    READY = "ready"
+    FAILED = "failed"
 
 
 class FutureSessionCoordinatorServiceConfig(BaseModel):
@@ -93,8 +99,11 @@ class FutureSessionMarketStatus(BaseModel):
 class FutureSessionCoordinatorServiceReport(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
-    schema_version: Literal[1] = 1
-    observed_at: dt.datetime
+    schema_version: Literal[2] = 2
+    config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    service_started_at: AwareDatetime
+    observed_at: AwareDatetime
+    service_state: FutureSessionCoordinatorServiceState
     scheduler_main_sha: str | None
     frozen_runtime: Path | None
     us: FutureSessionMarketStatus
@@ -102,13 +111,19 @@ class FutureSessionCoordinatorServiceReport(BaseModel):
 
     @model_validator(mode="after")
     def validate_report(self) -> Self:
-        if self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None:
+        if self.observed_at < self.service_started_at or (
+            self.service_state is FutureSessionCoordinatorServiceState.READY
+        ) != (self.scheduler_main_sha is not None and self.frozen_runtime is not None):
             raise InvalidFutureSessionCoordinatorServiceModelError
         return self
 
 
 def canonical_service_config_json(value: FutureSessionCoordinatorServiceConfig) -> str:
     return _canonical(value)
+
+
+def canonical_service_config_sha256(value: FutureSessionCoordinatorServiceConfig) -> str:
+    return hashlib.sha256(canonical_service_config_json(value).encode()).hexdigest()
 
 
 def canonical_service_report_json(value: FutureSessionCoordinatorServiceReport) -> str:
@@ -130,10 +145,12 @@ def _canonical(value: BaseModel) -> str:
 __all__ = (
     "FutureSessionCoordinatorServiceConfig",
     "FutureSessionCoordinatorServiceReport",
+    "FutureSessionCoordinatorServiceState",
     "FutureSessionMarketStatus",
     "FutureSessionServiceResult",
     "FutureSessionTickAuthority",
     "InvalidFutureSessionCoordinatorServiceModelError",
     "canonical_service_config_json",
+    "canonical_service_config_sha256",
     "canonical_service_report_json",
 )

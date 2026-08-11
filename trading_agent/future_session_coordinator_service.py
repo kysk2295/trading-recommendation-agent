@@ -22,9 +22,11 @@ from trading_agent.future_session_coordinator_models import (
 from trading_agent.future_session_coordinator_service_models import (
     FutureSessionCoordinatorServiceConfig,
     FutureSessionCoordinatorServiceReport,
+    FutureSessionCoordinatorServiceState,
     FutureSessionMarketStatus,
     FutureSessionServiceResult,
     FutureSessionTickAuthority,
+    canonical_service_config_sha256,
     canonical_service_report_json,
 )
 from trading_agent.future_session_coordinator_service_runtime import (
@@ -154,13 +156,18 @@ def tick_service(
     config: FutureSessionCoordinatorServiceConfig,
     observed_at: dt.datetime,
     adapters: CoordinatorAdapters | None = None,
+    *,
+    service_started_at: dt.datetime | None = None,
 ) -> FutureSessionCoordinatorServiceReport:
     active_adapters = CoordinatorAdapters() if adapters is None else adapters
+    started_at = observed_at if service_started_at is None else service_started_at
+    failed = False
     try:
         runtime = ensure_frozen_runtime(
             config.authority_repository,
             config.state_root / "frozen-runtimes",
             config.scheduler_main_sha,
+            require_current_main=False,
         )
         commit = config.scheduler_main_sha
         authority = FutureSessionTickAuthority(
@@ -182,13 +189,19 @@ def tick_service(
         TypeError,
         ValueError,
     ) as error:
+        failed = True
         blocked = _blocked_status(type(error).__name__)
         runtime = None
         commit = None
         us = blocked
         kr = blocked
     report = FutureSessionCoordinatorServiceReport(
+        config_sha256=canonical_service_config_sha256(config),
+        service_started_at=started_at,
         observed_at=observed_at,
+        service_state=(
+            FutureSessionCoordinatorServiceState.FAILED if failed else FutureSessionCoordinatorServiceState.READY
+        ),
         scheduler_main_sha=commit,
         frozen_runtime=runtime,
         us=us,

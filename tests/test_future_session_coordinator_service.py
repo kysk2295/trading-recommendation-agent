@@ -19,6 +19,9 @@ from trading_agent.future_session_coordinator_service import (
     prepare_market_request,
     tick_service,
 )
+from trading_agent.future_session_coordinator_service_health import (
+    FutureSessionCoordinatorHealthEvaluation,
+)
 from trading_agent.future_session_coordinator_service_launchd import (
     ServicePlistError,
     provision_service_plist,
@@ -251,7 +254,7 @@ def test_tick_coordinates_us_then_kr_without_launching_waiting_authority(
     assert stat.S_IMODE(status_path.stat().st_mode) == 0o600
 
 
-def test_tick_fails_closed_when_main_moves_after_config_is_frozen(
+def test_tick_keeps_using_pinned_runtime_when_main_moves_after_freeze(
     tmp_path: Path,
 ) -> None:
     repository, configured_commit = _repository(tmp_path)
@@ -270,6 +273,11 @@ def test_tick_fails_closed_when_main_moves_after_config_is_frozen(
         scheduler_main_sha=configured_commit,
         poll_interval_seconds=30,
     )
+    frozen = ensure_frozen_runtime(
+        repository,
+        config.state_root / "frozen-runtimes",
+        configured_commit,
+    )
     (repository / "tracked.txt").write_text("new main\n", encoding="utf-8")
     _git(repository, "add", "tracked.txt")
     _git(repository, "commit", "-m", "move main")
@@ -280,11 +288,10 @@ def test_tick_fails_closed_when_main_moves_after_config_is_frozen(
         dt.datetime(2026, 7, 24, 20, tzinfo=dt.UTC),
     )
 
-    assert report.scheduler_main_sha is None
-    assert report.frozen_runtime is None
-    assert report.us.result == "blocked"
-    assert report.kr.result == "blocked"
-    assert not (config.state_root / "frozen-runtimes").exists()
+    assert report.scheduler_main_sha == configured_commit
+    assert report.frozen_runtime == frozen
+    assert report.us.result == "waiting_authority"
+    assert report.kr.result == "waiting_authority"
 
 
 def test_provisioned_plist_is_keepalive_with_visible_private_logs(tmp_path: Path) -> None:
@@ -401,6 +408,11 @@ def test_service_activation_uses_exact_launchd_target_and_rolls_back(
     result = run_future_session_coordinator_service.main(
         ("activate", "--config", str(config_path)),
         runner=runner,
+        health_evaluator=lambda _config, _started, _now: FutureSessionCoordinatorHealthEvaluation(
+            accepted=True,
+            reason="fresh_matching_ready",
+            report=None,
+        ),
     )
 
     domain = f"gui/{os.getuid()}"
