@@ -34,9 +34,7 @@ def acquire_coordinator_claim(path: Path) -> int:
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         os.close(descriptor)
-        raise CoordinatorInspectionError(
-            FutureSessionCoordinatorBlockReason.CONCURRENT_COORDINATOR
-        ) from None
+        raise CoordinatorInspectionError(FutureSessionCoordinatorBlockReason.CONCURRENT_COORDINATOR) from None
     return descriptor
 
 

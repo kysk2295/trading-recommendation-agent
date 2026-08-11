@@ -70,13 +70,9 @@ def inspect_request(path: Path) -> FutureSessionPlanRequest:
         payload = read_private_canonical_file(path)
         request = FutureSessionPlanRequest.model_validate_json(payload)
     except (FutureSessionMaterializationError, TypeError, ValidationError, ValueError):
-        raise CoordinatorInspectionError(
-            FutureSessionCoordinatorBlockReason.INVALID_REQUEST
-        ) from None
+        raise CoordinatorInspectionError(FutureSessionCoordinatorBlockReason.INVALID_REQUEST) from None
     if canonical_request_json(request).encode() != payload:
-        raise CoordinatorInspectionError(
-            FutureSessionCoordinatorBlockReason.INVALID_REQUEST
-        )
+        raise CoordinatorInspectionError(FutureSessionCoordinatorBlockReason.INVALID_REQUEST)
     return request
 
 
@@ -87,16 +83,9 @@ def inspect_plan(path: Path, expected: ReadyToPrepareSessionPlan) -> bool:
         payload = read_private_canonical_file(path)
         plan = _PLAN_ADAPTER.validate_json(payload)
     except (FutureSessionMaterializationError, TypeError, ValidationError, ValueError):
-        raise CoordinatorInspectionError(
-            FutureSessionCoordinatorBlockReason.PLAN_CONFLICT
-        ) from None
-    if (
-        canonical_plan_json(plan).encode() != payload
-        or canonical_plan_json(plan) != canonical_plan_json(expected)
-    ):
-        raise CoordinatorInspectionError(
-            FutureSessionCoordinatorBlockReason.PLAN_CONFLICT
-        )
+        raise CoordinatorInspectionError(FutureSessionCoordinatorBlockReason.PLAN_CONFLICT) from None
+    if canonical_plan_json(plan).encode() != payload or canonical_plan_json(plan) != canonical_plan_json(expected):
+        raise CoordinatorInspectionError(FutureSessionCoordinatorBlockReason.PLAN_CONFLICT)
     return True
 
 
@@ -111,9 +100,7 @@ def inspect_preparation(
         return None
     manifest_path = root / "preparation-manifest.json"
     if not os.path.lexists(manifest_path):
-        raise CoordinatorInspectionError(
-            FutureSessionCoordinatorBlockReason.PREPARATION_CONFLICT
-        )
+        raise CoordinatorInspectionError(FutureSessionCoordinatorBlockReason.PREPARATION_CONFLICT)
     try:
         match request.market:
             case FutureSessionMarket.US:
@@ -130,17 +117,13 @@ def inspect_preparation(
                     or manifest.canonical_plan_file_sha256
                     != hashlib.sha256(canonical_plan_json(plan).encode()).hexdigest()
                 ):
-                    raise CoordinatorInspectionError(
-                        FutureSessionCoordinatorBlockReason.PREPARATION_CONFLICT
-                    )
+                    raise CoordinatorInspectionError(FutureSessionCoordinatorBlockReason.PREPARATION_CONFLICT)
                 return PreparedSchedule(
                     manifest_path=manifest_path,
                     manifest_sha256=verified.manifest_sha256,
                     labels=tuple(entry.label for entry in verified.entries),
                     source_plists=tuple(entry.source_plist for entry in verified.entries),
-                    installed_plists=tuple(
-                        entry.installed_plist for entry in verified.entries
-                    ),
+                    installed_plists=tuple(entry.installed_plist for entry in verified.entries),
                     receipt_path=verified.receipt_path,
                 )
             case FutureSessionMarket.KR:
@@ -149,18 +132,14 @@ def inspect_preparation(
                     launch_agents_dir=launch_agents_dir,
                 )
                 payload = read_private_file(manifest_path, PRIVATE_FILE_MODE)
-                manifest_kr = KrFutureSessionPreparationManifest.model_validate_json(
-                    payload
-                )
+                manifest_kr = KrFutureSessionPreparationManifest.model_validate_json(payload)
                 if (
                     canonical_kr_manifest_json(manifest_kr).encode() != payload
                     or manifest_kr.request_sha256 != plan.source_request_sha256
                     or manifest_kr.plan_sha256 != plan.plan_sha256
                     or manifest_kr.plan_file != plan_path
                 ):
-                    raise CoordinatorInspectionError(
-                        FutureSessionCoordinatorBlockReason.PREPARATION_CONFLICT
-                    )
+                    raise CoordinatorInspectionError(FutureSessionCoordinatorBlockReason.PREPARATION_CONFLICT)
                 return PreparedSchedule(
                     manifest_path=manifest_path,
                     manifest_sha256=verified_kr.manifest_sha256,
@@ -172,9 +151,7 @@ def inspect_preparation(
     except CoordinatorInspectionError:
         raise
     except (FutureSessionActivationError, OSError, TypeError, ValidationError, ValueError):
-        raise CoordinatorInspectionError(
-            FutureSessionCoordinatorBlockReason.PREPARATION_CONFLICT
-        ) from None
+        raise CoordinatorInspectionError(FutureSessionCoordinatorBlockReason.PREPARATION_CONFLICT) from None
 
 
 __all__ = (

@@ -276,10 +276,7 @@ def test_concurrent_coordinator_claim_blocks_before_launchctl(tmp_path: Path) ->
     # Given: another coordinator owns the exact artifact-root claim.
     _request, plan, request_path, _seeded_plan_path = _authority_files(tmp_path)
     assert isinstance(plan, ReadyToPrepareSessionPlan)
-    claim = (
-        plan.artifact_layout.root.parent
-        / f".{plan.artifact_layout.root.name}.coordinator.lock"
-    )
+    claim = plan.artifact_layout.root.parent / f".{plan.artifact_layout.root.name}.coordinator.lock"
     claim.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     claim.write_bytes(b"")
     claim.chmod(0o600)
@@ -313,10 +310,7 @@ def test_unlocked_stable_claim_file_is_restart_safe(tmp_path: Path) -> None:
     # Given: a stable claim file remains after a previous coordinator process exited.
     _request, plan, request_path, _seeded_plan_path = _authority_files(tmp_path)
     assert isinstance(plan, ReadyToPrepareSessionPlan)
-    claim = (
-        plan.artifact_layout.root.parent
-        / f".{plan.artifact_layout.root.name}.coordinator.lock"
-    )
+    claim = plan.artifact_layout.root.parent / f".{plan.artifact_layout.root.name}.coordinator.lock"
     claim.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     claim.write_bytes(b"")
     claim.chmod(0o600)

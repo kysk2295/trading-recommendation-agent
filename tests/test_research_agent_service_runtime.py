@@ -266,15 +266,16 @@ def test_ready_systematic_input_reports_only_bound_digests(tmp_path: Path) -> No
 def test_status_binds_schema_v2_identity_to_the_canonical_config(tmp_path: Path) -> None:
     # Given: a valid v2 runtime configuration without a cycle journal.
     config = _config(tmp_path)
-    config_text = json.dumps(
-        config.model_dump(mode="json"),
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    ) + "\n"
-    expected_sha256 = hashlib.sha256(
-        config_text.encode()
-    ).hexdigest()
+    config_text = (
+        json.dumps(
+            config.model_dump(mode="json"),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    expected_sha256 = hashlib.sha256(config_text.encode()).hexdigest()
 
     # When: the query-only service status is projected.
     report = service_status(config, NOW)

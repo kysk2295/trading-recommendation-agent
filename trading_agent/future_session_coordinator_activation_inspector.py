@@ -35,9 +35,7 @@ def inspect_activation(
     if not any(installed) and not receipt_exists:
         return False
     if not all(installed) or not receipt_exists:
-        raise CoordinatorInspectionError(
-            FutureSessionCoordinatorBlockReason.PARTIAL_INSTALLED_SET
-        )
+        raise CoordinatorInspectionError(FutureSessionCoordinatorBlockReason.PARTIAL_INSTALLED_SET)
     _inspect_receipt(market, prepared)
     for source, destination in zip(
         prepared.source_plists,
@@ -49,17 +47,11 @@ def inspect_activation(
                 destination,
                 PRIVATE_FILE_MODE,
             ):
-                raise CoordinatorInspectionError(
-                    FutureSessionCoordinatorBlockReason.INSTALLED_PLIST_MISMATCH
-                )
+                raise CoordinatorInspectionError(FutureSessionCoordinatorBlockReason.INSTALLED_PLIST_MISMATCH)
         except FutureSessionActivationError:
-            raise CoordinatorInspectionError(
-                FutureSessionCoordinatorBlockReason.INSTALLED_PLIST_MISMATCH
-            ) from None
+            raise CoordinatorInspectionError(FutureSessionCoordinatorBlockReason.INSTALLED_PLIST_MISMATCH) from None
     if not all(label_status_reader(label) for label in prepared.labels):
-        raise CoordinatorInspectionError(
-            FutureSessionCoordinatorBlockReason.LAUNCHCTL_LABEL_MISMATCH
-        )
+        raise CoordinatorInspectionError(FutureSessionCoordinatorBlockReason.LAUNCHCTL_LABEL_MISMATCH)
     return True
 
 
@@ -87,9 +79,7 @@ def _inspect_receipt(
     except (FutureSessionActivationError, TypeError, ValidationError, ValueError):
         valid = False
     if not valid:
-        raise CoordinatorInspectionError(
-            FutureSessionCoordinatorBlockReason.ACTIVATION_RECEIPT_MISMATCH
-        )
+        raise CoordinatorInspectionError(FutureSessionCoordinatorBlockReason.ACTIVATION_RECEIPT_MISMATCH)
 
 
 def _canonical_json(

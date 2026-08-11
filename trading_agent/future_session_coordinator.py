@@ -118,16 +118,10 @@ def _coordinate_ready(
                     request.launch_agents_dir,
                 )
                 if prepared is None:
-                    raise CoordinatorInspectionError(
-                        FutureSessionCoordinatorBlockReason.MATERIALIZATION_FAILED
-                    )
+                    raise CoordinatorInspectionError(FutureSessionCoordinatorBlockReason.MATERIALIZATION_FAILED)
             else:
                 preparation = FutureSessionPreparationResult.ALREADY_PREPARED
-            reader = (
-                launchctl_label_is_loaded
-                if label_status_reader is None
-                else label_status_reader
-            )
+            reader = launchctl_label_is_loaded if label_status_reader is None else label_status_reader
             if inspect_activation(market, prepared, reader):
                 activation = FutureSessionActivationResult.ALREADY_ACTIVATED
             else:
@@ -171,8 +165,7 @@ def _coordinate_ready(
     except FutureSessionActivationError as error:
         reason = (
             FutureSessionCoordinatorBlockReason.DESTINATION_CLAIMED
-            if error.reason
-            in ("activation_already_claimed", "schedule_already_claimed")
+            if error.reason in ("activation_already_claimed", "schedule_already_claimed")
             else FutureSessionCoordinatorBlockReason.ACTIVATION_FAILED
         )
         return _blocked(

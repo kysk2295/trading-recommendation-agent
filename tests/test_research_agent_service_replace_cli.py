@@ -204,8 +204,7 @@ def test_replace_reports_current_restore_failure_with_a_typed_reason(
     # Then: the primary and restore-specific typed reasons are observable.
     assert code == 2
     assert capsys.readouterr().err == (
-        "replace_health_candidate_mismatch\n"
-        f"replace_current_restore_{restore_failure}_failed\n"
+        f"replace_health_candidate_mismatch\nreplace_current_restore_{restore_failure}_failed\n"
     )
     assert calls[-1][1] == restore_failure
 

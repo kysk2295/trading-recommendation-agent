@@ -158,10 +158,7 @@ def test_prepare_atomically_materializes_exact_six_us_roles(
                 assert f"readonly run_epoch={int(job.run_at.timestamp())}" in wrapper_text
                 assert job.expires_at is not None
                 assert f"readonly expires_epoch={int(job.expires_at.timestamp())}" in wrapper_text
-            case (
-                FutureSessionUsRole.US_ORB_WATCHER
-                | FutureSessionUsRole.US_DAY_ARM_OBSERVER
-            ):
+            case FutureSessionUsRole.US_ORB_WATCHER | FutureSessionUsRole.US_DAY_ARM_OBSERVER:
                 assert job.poll_until is None
             case None:
                 raise AssertionError

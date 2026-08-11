@@ -248,9 +248,7 @@ def service_status(
             observed_at=now,
         )
     observations = read_cycle_runtime_observations(config.cycle_database)
-    family_runtime, next_wake_kind, next_wake_at = _runtime_report_from_database(
-        config.cycle_database
-    )
+    family_runtime, next_wake_kind, next_wake_at = _runtime_report_from_database(config.cycle_database)
     latest = max(observations, key=lambda item: item.observed_at, default=None)
     projected = (
         sum(
@@ -390,9 +388,7 @@ def _runtime_report_from_store(
 ]:
     cycles = store.latest_cycles()
     results = store.results()
-    cursors: dict[AgentFamilyId, int] = {
-        family: store.cursor(family) for family in PRIMARY_AGENT_FAMILIES
-    }
+    cursors: dict[AgentFamilyId, int] = {family: store.cursor(family) for family in PRIMARY_AGENT_FAMILIES}
     return _runtime_report(cycles, results, cursors)
 
 
@@ -415,10 +411,15 @@ def _runtime_report_from_database(
             for row in connection.execute("SELECT payload_json FROM results ORDER BY rowid").fetchall()
         )
         cursors: dict[AgentFamilyId, int] = {
-            family: int(row[0]) if (row := connection.execute(
-                "SELECT evidence_sequence FROM cursors WHERE agent_family_id=?",
-                (family,),
-            ).fetchone()) is not None else 0
+            family: int(row[0])
+            if (
+                row := connection.execute(
+                    "SELECT evidence_sequence FROM cursors WHERE agent_family_id=?",
+                    (family,),
+                ).fetchone()
+            )
+            is not None
+            else 0
             for family in PRIMARY_AGENT_FAMILIES
         }
     return _runtime_report(cycles, results, cursors)
@@ -458,17 +459,9 @@ def _runtime_report(
             current_result_rows.append(result)
     current_results = tuple(current_result_rows)
     latest = max(current_results, key=lambda result: result.occurred_at, default=None)
-    scheduled = tuple(
-        result.next_wake_at
-        for result in current_results
-        if result.next_wake_at is not None
-    )
+    scheduled = tuple(result.next_wake_at for result in current_results if result.next_wake_at is not None)
     aggregate_wake_kind = (
-        ResearchAgentWakeKind.SCHEDULED
-        if scheduled
-        else None
-        if latest is None
-        else latest.next_wake_kind
+        ResearchAgentWakeKind.SCHEDULED if scheduled else None if latest is None else latest.next_wake_kind
     )
     return (
         family_runtime,

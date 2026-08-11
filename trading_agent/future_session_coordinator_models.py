@@ -187,12 +187,15 @@ class FutureSessionCoordinatorReceipt(BaseModel):
 def canonical_coordinator_receipt_json(
     value: FutureSessionCoordinatorReceipt,
 ) -> str:
-    return json.dumps(
-        value.model_dump(mode="json"),
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    ) + "\n"
+    return (
+        json.dumps(
+            value.model_dump(mode="json"),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n"
+    )
 
 
 __all__ = (
