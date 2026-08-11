@@ -128,3 +128,52 @@ def test_status_rejects_stale_or_config_mismatched_report(tmp_path: Path) -> Non
 
     assert fresh == 0
     assert stale == mismatch == 2
+
+
+def test_activation_reports_unrecoverable_cleanup_failure(tmp_path: Path, capsys) -> None:
+    import run_future_session_coordinator_service as cli
+    from tests.test_future_session_coordinator_service import _repository
+    from trading_agent.future_session_coordinator_service_health import (
+        FutureSessionCoordinatorHealthEvaluation,
+    )
+    from trading_agent.future_session_coordinator_service_launchd import (
+        provision_service_plist,
+    )
+    from trading_agent.future_session_coordinator_service_models import (
+        canonical_service_config_json,
+    )
+
+    config = _ready_config(tmp_path)
+    authority_fixture = tmp_path / "cleanup-authority"
+    authority_fixture.mkdir(mode=0o700)
+    repository, commit = _repository(authority_fixture)
+    config = config.model_copy(update={"authority_repository": repository, "scheduler_main_sha": commit})
+    config.state_root.mkdir(mode=0o700)
+    config_path = (tmp_path / "cleanup.json").absolute()
+    config_path.write_text(canonical_service_config_json(config), encoding="utf-8")
+    config_path.chmod(0o600)
+    _ = provision_service_plist(config, config_path)
+    bootout_seen = False
+
+    def runner(command, _descriptors):
+        nonlocal bootout_seen
+        if command[1] == "bootout":
+            bootout_seen = True
+            return 1
+        if command[1] == "print" and bootout_seen:
+            return 0
+        return 0
+
+    code = cli.main(
+        ("activate", "--config", str(config_path)),
+        runner=runner,
+        health_evaluator=lambda _config, _started, _now: FutureSessionCoordinatorHealthEvaluation(
+            accepted=False,
+            reason="runtime_failed",
+            report=None,
+        ),
+        sleeper=lambda _seconds: None,
+    )
+
+    assert code == 2
+    assert "activate_cleanup_bootout_failed" in capsys.readouterr().err

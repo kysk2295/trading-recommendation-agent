@@ -106,6 +106,115 @@ def test_restart_reloads_same_pinned_config_and_requires_fresh_health(tmp_path: 
     assert [command[1] for command in calls] == ["bootout", "bootstrap", "kickstart", "print"]
 
 
+def test_replace_failed_current_health_stops_restored_service(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    replacement = _replacement(tmp_path)
+    calls: list[tuple[str, ...]] = []
+
+    code = cli.main(
+        (
+            "replace",
+            "--current-config",
+            str(replacement.current_path),
+            "--candidate-config",
+            str(replacement.candidate_path),
+        ),
+        runner=lambda command, _descriptors: calls.append(command) or 0,
+        health_evaluator=lambda _config, _started, _now: FutureSessionCoordinatorHealthEvaluation(
+            accepted=False,
+            reason="runtime_failed",
+            report=None,
+        ),
+        sleeper=lambda _seconds: None,
+    )
+
+    assert code == 2
+    assert [command[1] for command in calls][-1] == "bootout"
+    assert "replace_current_restore_health_runtime_failed" in capsys.readouterr().err
+
+
+def test_replace_candidate_cleanup_failure_blocks_current_restore(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    replacement = _replacement(tmp_path)
+    calls: list[tuple[str, ...]] = []
+    bootouts = 0
+
+    def runner(command, _descriptors):
+        nonlocal bootouts
+        calls.append(command)
+        if command[1] == "bootout":
+            bootouts += 1
+            return int(bootouts == 2)
+        return 0
+
+    code = cli.main(
+        (
+            "replace",
+            "--current-config",
+            str(replacement.current_path),
+            "--candidate-config",
+            str(replacement.candidate_path),
+        ),
+        runner=runner,
+        health_evaluator=lambda _config, _started, _now: FutureSessionCoordinatorHealthEvaluation(
+            accepted=False,
+            reason="runtime_failed",
+            report=None,
+        ),
+        sleeper=lambda _seconds: None,
+    )
+
+    assert code == 2
+    assert [command[1] for command in calls] == [
+        "bootout",
+        "bootstrap",
+        "kickstart",
+        "print",
+        "bootout",
+        "print",
+    ]
+    assert "replace_candidate_cleanup_bootout_failed" in capsys.readouterr().err
+
+
+def test_replace_partial_current_restore_is_stopped(tmp_path: Path, capsys) -> None:
+    replacement = _replacement(tmp_path)
+    calls: list[tuple[str, ...]] = []
+    kickstarts = 0
+
+    def runner(command, _descriptors):
+        nonlocal kickstarts
+        calls.append(command)
+        if command[1] == "kickstart":
+            kickstarts += 1
+            return int(kickstarts == 2)
+        return 0
+
+    code = cli.main(
+        (
+            "replace",
+            "--current-config",
+            str(replacement.current_path),
+            "--candidate-config",
+            str(replacement.candidate_path),
+        ),
+        runner=runner,
+        health_evaluator=lambda _config, _started, _now: FutureSessionCoordinatorHealthEvaluation(
+            accepted=False,
+            reason="runtime_failed",
+            report=None,
+        ),
+        sleeper=lambda _seconds: None,
+    )
+
+    assert code == 2
+    assert [command[1] for command in calls][-2:] == ["kickstart", "bootout"]
+    assert "replace_current_restore_start_failed" in capsys.readouterr().err
+
+
 def _replacement(tmp_path: Path) -> _Replacement:
     fixture = tmp_path / "fixture"
     fixture.mkdir(mode=0o700)

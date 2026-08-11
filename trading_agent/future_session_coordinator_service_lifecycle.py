@@ -78,7 +78,11 @@ def activate_coordinator_service(
         start = _start_verified_service(verified, domain, target, runner)
         if start != "started":
             if start == "post_bootstrap_failed":
-                _ = runner(("/bin/launchctl", "bootout", target), ())
+                _ = _stop_service(
+                    target,
+                    runner,
+                    "activate_cleanup_bootout_failed",
+                )
             return 2
         health = await_fresh_coordinator_health(
             config,
@@ -89,7 +93,11 @@ def activate_coordinator_service(
         )
         if not health.accepted:
             sys.stderr.write(f"activate_health_{health.reason}\n")
-            _ = runner(("/bin/launchctl", "bootout", target), ())
+            _ = _stop_service(
+                target,
+                runner,
+                "activate_cleanup_bootout_failed",
+            )
             return 2
     return 0
 
@@ -106,11 +114,15 @@ def restart_coordinator_service(
     domain = f"gui/{os.getuid()}"
     target = f"{domain}/{LABEL}"
     with open_verified_service_plist(config, config_path) as verified:
-        if not _bootout_loaded_service(domain, target, runner):
+        if not _stop_service(target, runner, "restart_current_stop_bootout_failed"):
             return 2
         started_at = clock()
         if _start_verified_service(verified, domain, target, runner) != "started":
-            _ = runner(("/bin/launchctl", "bootout", target), ())
+            _ = _stop_service(
+                target,
+                runner,
+                "restart_cleanup_bootout_failed",
+            )
             return 2
         health = await_fresh_coordinator_health(
             config,
@@ -121,7 +133,11 @@ def restart_coordinator_service(
         )
         if not health.accepted:
             sys.stderr.write(f"restart_health_{health.reason}\n")
-            _ = runner(("/bin/launchctl", "bootout", target), ())
+            _ = _stop_service(
+                target,
+                runner,
+                "restart_cleanup_bootout_failed",
+            )
             return 2
     return 0
 
@@ -146,7 +162,7 @@ def replace_coordinator_service(
         open_verified_service_plist(current, current_path) as current_plist,
         open_verified_service_plist(candidate, candidate_path) as candidate_plist,
     ):
-        if not _bootout_loaded_service(domain, target, runner):
+        if not _stop_service(target, runner, "replace_current_stop_bootout_failed"):
             return 2
         started_at = clock()
         if _start_verified_service(candidate_plist, domain, target, runner) != "started":
@@ -183,15 +199,18 @@ def replace_coordinator_service(
     return 0
 
 
-def _bootout_loaded_service(
-    domain: str,
+def _stop_service(
     target: str,
     runner: CoordinatorCommandRunner,
+    failure_reason: str,
 ) -> bool:
-    return (
+    stopped = (
         runner(("/bin/launchctl", "bootout", target), ()) == 0
         or runner(("/bin/launchctl", "print", target), ()) == _NOT_LOADED_RETURN_CODE
     )
+    if not stopped:
+        sys.stderr.write(f"{failure_reason}\n")
+    return stopped
 
 
 def _start_verified_service(
@@ -232,10 +251,20 @@ def _rollback_replacement(
     reason: str,
 ) -> int:
     sys.stderr.write(f"replace_{reason}\n")
-    _ = runner(("/bin/launchctl", "bootout", target), ())
+    if not _stop_service(
+        target,
+        runner,
+        "replace_candidate_cleanup_bootout_failed",
+    ):
+        return 2
     started_at = clock()
     if _start_verified_service(current_plist, domain, target, runner) != "started":
         sys.stderr.write("replace_current_restore_start_failed\n")
+        _ = _stop_service(
+            target,
+            runner,
+            "replace_current_restore_cleanup_bootout_failed",
+        )
         return 2
     health = await_fresh_coordinator_health(
         current,
@@ -246,6 +275,11 @@ def _rollback_replacement(
     )
     if not health.accepted:
         sys.stderr.write(f"replace_current_restore_health_{health.reason}\n")
+        _ = _stop_service(
+            target,
+            runner,
+            "replace_current_restore_cleanup_bootout_failed",
+        )
     return 2
 
 

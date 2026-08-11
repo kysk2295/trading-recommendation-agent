@@ -42,7 +42,7 @@
    uv run --offline python run_future_session_coordinator_service.py replace --current-config /absolute/current/coordinator.json --candidate-config /absolute/candidate/coordinator.json
    ```
 
-4. replace는 현재 job을 내린 뒤 freshness 경계를 기록하고, descriptor로 고정된 candidate plist를 bootstrap한다. candidate의 fresh matching health가 없으면 candidate를 내리고 이전 descriptor-pinned plist를 복구한 뒤 이전 config의 fresh health도 확인한다.
+4. replace는 현재 job을 내린 뒤 freshness 경계를 기록하고, descriptor로 고정된 candidate plist를 bootstrap한다. candidate의 fresh matching health가 없으면 candidate를 내리고 이전 descriptor-pinned plist를 복구한 뒤 이전 config의 fresh health도 확인한다. candidate 또는 복구된 current의 중지를 확인할 수 없으면 `*_bootout_failed`를 별도로 기록하고 다음 서비스를 시작하지 않는다.
 5. 성공 후에도 이전 bundle/state/plist는 다음 운영 검증이 끝날 때까지 보존한다.
 
 ## 재시작과 장애 확인
