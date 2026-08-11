@@ -34,7 +34,6 @@ _TERMINAL_PREFIXES: Final = (
     "us-day-missing-terminal-",
     "kr-terminal:",
     "kr-exit:",
-    "kr-same-cycle-no-opportunity-",
     "kr-source-preflight-incident-",
 )
 

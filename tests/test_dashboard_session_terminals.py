@@ -3,7 +3,9 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 
+from tests.test_kr_theme_day_trial_terminal import _request, _trial_stores
 from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
+from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.hermes_delivery_models import (
     HermesDeliveryEvent,
     HermesDeliveryKind,
@@ -13,6 +15,13 @@ from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.kr_same_cycle_delivery import (
     KrSameCycleDeliveryRequest,
     project_kr_same_cycle_delivery,
+)
+from trading_agent.kr_theme_day_terminal_delivery import (
+    KrThemeDayTerminalDeliverySources,
+    project_kr_theme_day_terminal_delivery,
+)
+from trading_agent.kr_theme_day_trial_terminal import (
+    finalize_kr_theme_day_shadow_trial,
 )
 
 NOW = dt.datetime(2026, 8, 1, tzinfo=dt.UTC)
@@ -32,6 +41,42 @@ def test_dashboard_projects_us_and_kr_hermes_session_terminals(tmp_path: Path) -
                 status="session_summary",
             )
         )
+    kr_root = tmp_path / "kr-terminal-producer"
+    kr_root.mkdir()
+    stores, trial_id = _trial_stores(kr_root, with_entry=False)
+    sources = KrThemeDayTerminalDeliverySources(
+        entry_store=stores.entry_store,
+        exit_store=stores.exit_store,
+        terminal_store=stores.terminal_store,
+        delivery_store=store,
+    )
+    _ = finalize_kr_theme_day_shadow_trial(
+        ExperimentLedgerStore(kr_root / "experiment.sqlite3"),
+        stores,
+        _request(trial_id),
+    )
+    projected = project_kr_theme_day_terminal_delivery(sources, trial_id)
+    assert projected.inserted == 1
+    store.path.parent.chmod(0o700)
+
+    # When: the real Dashboard v2 snapshot boundary reads local outputs
+    snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW)
+
+    # Then: both immutable terminal outcomes are visible without rendering raw Hermes text
+    terminals = {
+        item.item_id: item for item in snapshot.workspaces.markets.items if item.item_id.startswith("session_terminal.")
+    }
+    assert terminals["session_terminal.us_equities.20260731"].value == "recommendation"
+    assert terminals["session_terminal.kr_equities.20260720"].value == "no_recommendation"
+    assert all("secret terminal detail" not in (item.value or "") for item in terminals.values())
+    assert sum(node.kind == "reviewer_decision" for node in snapshot.traces.nodes) >= 2
+
+
+def test_dashboard_does_not_treat_intraday_kr_no_opportunity_as_terminal(
+    tmp_path: Path,
+) -> None:
+    outputs = tmp_path / "outputs"
+    store = HermesDeliveryStore(outputs / "hermes" / "delivery.sqlite3")
     projected = project_kr_same_cycle_delivery(
         store,
         KrSameCycleDeliveryRequest(
@@ -44,17 +89,12 @@ def test_dashboard_projects_us_and_kr_hermes_session_terminals(tmp_path: Path) -
     assert projected.inserted == 1
     store.path.parent.chmod(0o700)
 
-    # When: the real Dashboard v2 snapshot boundary reads local outputs
     snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW)
 
-    # Then: both immutable terminal outcomes are visible without rendering raw Hermes text
-    terminals = {
-        item.item_id: item for item in snapshot.workspaces.markets.items if item.item_id.startswith("session_terminal.")
-    }
-    assert terminals["session_terminal.us_equities.20260731"].value == "recommendation"
-    assert terminals["session_terminal.kr_equities.20260731"].value == "no_recommendation"
-    assert all("secret terminal detail" not in (item.value or "") for item in terminals.values())
-    assert sum(node.kind == "reviewer_decision" for node in snapshot.traces.nodes) >= 2
+    terminals = tuple(
+        item for item in snapshot.workspaces.markets.items if item.item_id == "session_terminal.kr_equities.20260731"
+    )
+    assert terminals == ()
 
 
 def test_dashboard_fails_closed_on_hermes_session_incident_and_replays_once(tmp_path: Path) -> None:
