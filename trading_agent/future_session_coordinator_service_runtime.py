@@ -39,9 +39,15 @@ def load_service_config(path: Path) -> FutureSessionCoordinatorServiceConfig:
     return config
 
 
-def ensure_frozen_runtime(repository: Path, runtime_root: Path) -> Path:
+def ensure_frozen_runtime(
+    repository: Path,
+    runtime_root: Path,
+    expected_commit: str | None = None,
+) -> Path:
     try:
         commit = current_main_commit(repository)
+        if expected_commit is not None and commit != expected_commit:
+            raise FrozenRuntimeError("configured_main_authority_mismatch")
         if _git(repository, "status", "--porcelain=v1", "--untracked-files=all"):
             raise FrozenRuntimeError("current_main_authority_invalid")
     except CurrentMainAuthorityError:

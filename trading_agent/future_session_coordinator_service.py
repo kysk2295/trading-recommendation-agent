@@ -4,6 +4,7 @@ import datetime as dt
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import assert_never
 from zoneinfo import ZoneInfo
 
 from trading_agent.future_session_coordinator import coordinate_future_session
@@ -49,6 +50,10 @@ _KR_ZONE = ZoneInfo("Asia/Seoul")
 type LabelStatusReader = Callable[[str], bool]
 
 
+class FutureSessionCoordinatorServiceError(ValueError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class CoordinatorAdapters:
     launchctl_runner: LaunchctlRunner | None = None
@@ -67,7 +72,7 @@ def planning_after_date(
     observed_at: dt.datetime,
 ) -> dt.date:
     if observed_at.tzinfo is None or observed_at.utcoffset() is None:
-        raise ValueError("observed_at must be timezone aware")
+        raise FutureSessionCoordinatorServiceError
     match market:
         case FutureSessionMarket.US:
             local = observed_at.astimezone(_US_ZONE)
@@ -75,6 +80,8 @@ def planning_after_date(
         case FutureSessionMarket.KR:
             local = observed_at.astimezone(_KR_ZONE)
             cutoff = dt.time(8, 30)
+        case unreachable:
+            assert_never(unreachable)
     return local.date() - dt.timedelta(days=1) if local.time() < cutoff else local.date()
 
 
@@ -88,7 +95,7 @@ def prepare_market_request(
     )
     template = inspect_request(template_path)
     if template.market is not market:
-        raise ValueError("template market mismatch")
+        raise FutureSessionCoordinatorServiceError
     context = MarketAuthority(config=config, market=market, tick=authority)
     candidate = _dynamic_request(template, context, None)
     decision = compile_future_session_plan(candidate)
@@ -98,7 +105,9 @@ def prepare_market_request(
         case WaitingSessionAuthority(target_session=target) if target is not None:
             pass
         case WaitingSessionAuthority():
-            raise ValueError("target session authority unavailable")
+            raise FutureSessionCoordinatorServiceError
+        case unreachable:
+            assert_never(unreachable)
     request = _dynamic_request(template, context, target)
     request_path = config.state_root / "requests" / market.value / f"{target.isoformat()}.json"
     plan_path = config.state_root / "plans" / market.value / f"{target.isoformat()}.json"
@@ -107,7 +116,7 @@ def prepare_market_request(
         stored = inspect_request(request_path)
         dynamic_fields = {"after_date", "compiled_at"}
         if stored.model_dump(exclude=dynamic_fields) != request.model_dump(exclude=dynamic_fields):
-            raise ValueError("immutable request conflict")
+            raise FutureSessionCoordinatorServiceError
         return stored, request_path, plan_path
     write_private_file(request_path, payload, 0o600)
     return request, request_path, plan_path
@@ -136,6 +145,8 @@ def _dynamic_request(
         values["watch_database"] = session_root / "paper_recommendations.sqlite3"
         values["opportunity_outbox"] = session_root / "opportunities.v1.jsonl"
         values["signal_outbox"] = session_root / "trade-signals.v1.jsonl"
+    elif context.market is not FutureSessionMarket.KR:
+        assert_never(context.market)
     return FutureSessionPlanRequest.model_validate(values)
 
 
@@ -149,8 +160,9 @@ def tick_service(
         runtime = ensure_frozen_runtime(
             config.authority_repository,
             config.state_root / "frozen-runtimes",
+            config.scheduler_main_sha,
         )
-        commit = runtime.name
+        commit = config.scheduler_main_sha
         authority = FutureSessionTickAuthority(
             observed_at=observed_at,
             scheduler_main_sha=commit,
@@ -218,6 +230,8 @@ def _coordinate_market(
                 )
             case ReadyToPrepareSessionPlan() | WaitingSessionAuthority():
                 pass
+            case unreachable:
+                assert_never(unreachable)
         _request, request_path, plan_path = prepare_market_request(
             config,
             market,
@@ -252,6 +266,7 @@ def _blocked_status(reason: str) -> FutureSessionMarketStatus:
 
 __all__ = (
     "CoordinatorAdapters",
+    "FutureSessionCoordinatorServiceError",
     "planning_after_date",
     "prepare_market_request",
     "tick_service",

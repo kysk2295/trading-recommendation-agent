@@ -86,6 +86,7 @@ def _ready_config(tmp_path: Path) -> FutureSessionCoordinatorServiceConfig:
         state_root=(tmp_path / "state").absolute(),
         launch_agents_dir=(tmp_path / "LaunchAgents").absolute(),
         authority_repository=repository,
+        scheduler_main_sha=head,
         poll_interval_seconds=30,
     )
 

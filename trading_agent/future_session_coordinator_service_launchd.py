@@ -33,11 +33,12 @@ def canonical_service_plist(
     config_path: Path,
 ) -> bytes:
     logs = config.state_root / "logs"
+    runtime = config.state_root / "frozen-runtimes" / config.scheduler_main_sha
     payload = {
         "Label": LABEL,
         "ProgramArguments": [
             sys.executable,
-            str(config.authority_repository / "run_future_session_coordinator_service.py"),
+            str(runtime / "run_future_session_coordinator_service.py"),
             "run",
             "--config",
             str(config_path),
@@ -46,7 +47,7 @@ def canonical_service_plist(
         "RunAtLoad": True,
         "StandardOutPath": str(logs / "coordinator.stdout.log"),
         "StandardErrorPath": str(logs / "coordinator.stderr.log"),
-        "WorkingDirectory": str(config.authority_repository),
+        "WorkingDirectory": str(runtime),
     }
     return plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=True)
 

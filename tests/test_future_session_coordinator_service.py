@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+import run_future_session_coordinator_service
 from tests.future_session_kr_support import kr_authority_files
 from tests.test_future_session_us_materializer import _authority_files
 from trading_agent.future_session_coordinator_service import (
@@ -25,6 +26,7 @@ from trading_agent.future_session_coordinator_service_launchd import (
 from trading_agent.future_session_coordinator_service_models import (
     FutureSessionCoordinatorServiceConfig,
     FutureSessionTickAuthority,
+    canonical_service_config_json,
 )
 from trading_agent.future_session_coordinator_service_runtime import (
     FrozenRuntimeError,
@@ -57,7 +59,11 @@ def _repository(tmp_path: Path) -> tuple[Path, str]:
     _git(repository, "config", "user.email", "test@example.com")
     _git(repository, "config", "user.name", "Test")
     (repository / "tracked.txt").write_text("authority\n", encoding="utf-8")
-    _git(repository, "add", "tracked.txt")
+    (repository / "run_future_session_coordinator_service.py").write_text(
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    _git(repository, "add", "tracked.txt", "run_future_session_coordinator_service.py")
     _git(repository, "commit", "-m", "authority")
     _git(repository, "remote", "add", "origin", str(origin))
     _git(repository, "push", "-u", "origin", "main")
@@ -121,6 +127,7 @@ def test_private_config_rejects_noncanonical_or_public_file(tmp_path: Path) -> N
         state_root=(tmp_path / "state").absolute(),
         launch_agents_dir=(tmp_path / "LaunchAgents").absolute(),
         authority_repository=(tmp_path / "repo").absolute(),
+        scheduler_main_sha="a" * 40,
         poll_interval_seconds=30,
     )
     path = tmp_path / "config.json"
@@ -165,6 +172,7 @@ def test_us_request_is_target_scoped_and_reused_across_restart(tmp_path: Path) -
         state_root=(tmp_path / "state").absolute(),
         launch_agents_dir=(tmp_path / "LaunchAgents").absolute(),
         authority_repository=repository,
+        scheduler_main_sha=commit,
         poll_interval_seconds=30,
     )
     first_time = dt.datetime(2026, 7, 3, 13, tzinfo=dt.UTC)
@@ -206,7 +214,7 @@ def test_tick_coordinates_us_then_kr_without_launching_waiting_authority(
     tmp_path: Path,
 ) -> None:
     # Given: both templates are canonical but their runtime ledgers bind another commit.
-    repository, _commit = _repository(tmp_path)
+    repository, commit = _repository(tmp_path)
     us_root = tmp_path / "us"
     kr_root = tmp_path / "kr"
     us_root.mkdir()
@@ -219,6 +227,7 @@ def test_tick_coordinates_us_then_kr_without_launching_waiting_authority(
         state_root=(tmp_path / "state").absolute(),
         launch_agents_dir=(tmp_path / "LaunchAgents").absolute(),
         authority_repository=repository,
+        scheduler_main_sha=commit,
         poll_interval_seconds=30,
     )
     calls: list[tuple[str, ...]] = []
@@ -241,15 +250,52 @@ def test_tick_coordinates_us_then_kr_without_launching_waiting_authority(
     assert stat.S_IMODE(status_path.stat().st_mode) == 0o600
 
 
+def test_tick_fails_closed_when_main_moves_after_config_is_frozen(
+    tmp_path: Path,
+) -> None:
+    repository, configured_commit = _repository(tmp_path)
+    us_root = tmp_path / "us"
+    kr_root = tmp_path / "kr"
+    us_root.mkdir()
+    kr_root.mkdir()
+    _us_request, _us_plan, us_path, _us_plan_path = _authority_files(us_root)
+    _kr_request, _kr_plan, kr_path, _kr_plan_path = kr_authority_files(kr_root)
+    config = FutureSessionCoordinatorServiceConfig(
+        us_template_request_path=us_path,
+        kr_template_request_path=kr_path,
+        state_root=(tmp_path / "state").absolute(),
+        launch_agents_dir=(tmp_path / "LaunchAgents").absolute(),
+        authority_repository=repository,
+        scheduler_main_sha=configured_commit,
+        poll_interval_seconds=30,
+    )
+    (repository / "tracked.txt").write_text("new main\n", encoding="utf-8")
+    _git(repository, "add", "tracked.txt")
+    _git(repository, "commit", "-m", "move main")
+    _git(repository, "push", "origin", "main")
+
+    report = tick_service(
+        config,
+        dt.datetime(2026, 7, 24, 20, tzinfo=dt.UTC),
+    )
+
+    assert report.scheduler_main_sha is None
+    assert report.frozen_runtime is None
+    assert report.us.result == "blocked"
+    assert report.kr.result == "blocked"
+    assert not (config.state_root / "frozen-runtimes").exists()
+
+
 def test_provisioned_plist_is_keepalive_with_visible_private_logs(tmp_path: Path) -> None:
     # Given: a private service state and launch-agent destination.
-    repository, _commit = _repository(tmp_path)
+    repository, commit = _repository(tmp_path)
     config = FutureSessionCoordinatorServiceConfig(
         us_template_request_path=(tmp_path / "us.json").absolute(),
         kr_template_request_path=(tmp_path / "kr.json").absolute(),
         state_root=(tmp_path / "state").absolute(),
         launch_agents_dir=(tmp_path / "LaunchAgents").absolute(),
         authority_repository=repository,
+        scheduler_main_sha=commit,
         poll_interval_seconds=30,
     )
     config.state_root.mkdir(mode=0o700)
@@ -266,4 +312,67 @@ def test_provisioned_plist_is_keepalive_with_visible_private_logs(tmp_path: Path
     assert payload["KeepAlive"] is True
     assert payload["StandardOutPath"].endswith("coordinator.stdout.log")
     assert payload["StandardErrorPath"].endswith("coordinator.stderr.log")
+    frozen_runtime = config.state_root / "frozen-runtimes" / commit
+    assert payload["ProgramArguments"][1] == str(frozen_runtime / "run_future_session_coordinator_service.py")
+    assert payload["WorkingDirectory"] == str(frozen_runtime)
     assert stat.S_IMODE(plist_path.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize(
+    "failed_operation",
+    (None, "bootstrap", "kickstart", "print"),
+)
+def test_service_activation_uses_exact_launchd_target_and_rolls_back(
+    tmp_path: Path,
+    failed_operation: str | None,
+) -> None:
+    repository, commit = _repository(tmp_path)
+    us_root = tmp_path / "us"
+    kr_root = tmp_path / "kr"
+    us_root.mkdir()
+    kr_root.mkdir()
+    _us_request, _us_plan, us_path, _us_plan_path = _authority_files(us_root)
+    _kr_request, _kr_plan, kr_path, _kr_plan_path = kr_authority_files(kr_root)
+    config = FutureSessionCoordinatorServiceConfig(
+        us_template_request_path=us_path,
+        kr_template_request_path=kr_path,
+        state_root=(tmp_path / "state").absolute(),
+        launch_agents_dir=(tmp_path / "LaunchAgents").absolute(),
+        authority_repository=repository,
+        scheduler_main_sha=commit,
+        poll_interval_seconds=30,
+    )
+    config.state_root.mkdir(mode=0o700)
+    config_path = (tmp_path / "config.json").absolute()
+    config_path.write_text(canonical_service_config_json(config), encoding="utf-8")
+    config_path.chmod(0o600)
+    plist_path = provision_service_plist(config, config_path)
+    calls: list[tuple[str, ...]] = []
+
+    def runner(command: tuple[str, ...]) -> int:
+        calls.append(command)
+        return int(failed_operation is not None and command[1] == failed_operation)
+
+    result = run_future_session_coordinator_service.main(
+        ("activate", "--config", str(config_path)),
+        runner=runner,
+    )
+
+    domain = f"gui/{os.getuid()}"
+    target = f"{domain}/ai.trading-agent.future-session-coordinator"
+    expected = [
+        ("/bin/launchctl", "bootstrap", domain, str(plist_path)),
+        ("/bin/launchctl", "kickstart", target),
+    ]
+    if failed_operation == "bootstrap":
+        expected = expected[:1]
+        assert result == 2
+    elif failed_operation is None:
+        expected.append(("/bin/launchctl", "print", target))
+        assert result == 0
+    else:
+        if failed_operation == "print":
+            expected.append(("/bin/launchctl", "print", target))
+        expected.append(("/bin/launchctl", "bootout", domain, str(plist_path)))
+        assert result == 2
+    assert calls == expected

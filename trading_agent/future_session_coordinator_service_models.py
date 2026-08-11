@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal, Self
@@ -11,6 +12,12 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from trading_agent.future_session_coordinator_models import (
     FutureSessionCoordinatorReceipt,
 )
+
+_GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+class InvalidFutureSessionCoordinatorServiceModelError(ValueError):
+    pass
 
 
 class FutureSessionServiceResult(StrEnum):
@@ -22,12 +29,13 @@ class FutureSessionServiceResult(StrEnum):
 class FutureSessionCoordinatorServiceConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     us_template_request_path: Path
     kr_template_request_path: Path
     state_root: Path
     launch_agents_dir: Path
     authority_repository: Path
+    scheduler_main_sha: str
     poll_interval_seconds: int
 
     @model_validator(mode="after")
@@ -39,8 +47,12 @@ class FutureSessionCoordinatorServiceConfig(BaseModel):
             self.launch_agents_dir,
             self.authority_repository,
         )
-        if any(not path.is_absolute() for path in paths) or self.poll_interval_seconds <= 0:
-            raise ValueError("invalid future-session coordinator service config")
+        if (
+            any(not path.is_absolute() for path in paths)
+            or _GIT_SHA.fullmatch(self.scheduler_main_sha) is None
+            or self.poll_interval_seconds <= 0
+        ):
+            raise InvalidFutureSessionCoordinatorServiceModelError
         return self
 
 
@@ -58,7 +70,7 @@ class FutureSessionTickAuthority(BaseModel):
             or self.observed_at.utcoffset() is None
             or not self.frozen_runtime.is_absolute()
         ):
-            raise ValueError("invalid tick authority")
+            raise InvalidFutureSessionCoordinatorServiceModelError
         return self
 
 
@@ -74,7 +86,7 @@ class FutureSessionMarketStatus(BaseModel):
     @model_validator(mode="after")
     def validate_status(self) -> Self:
         if (self.receipt is None) == (self.reason is None):
-            raise ValueError("market status requires exactly one outcome")
+            raise InvalidFutureSessionCoordinatorServiceModelError
         return self
 
 
@@ -91,7 +103,7 @@ class FutureSessionCoordinatorServiceReport(BaseModel):
     @model_validator(mode="after")
     def validate_report(self) -> Self:
         if self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None:
-            raise ValueError("report timestamp must be timezone aware")
+            raise InvalidFutureSessionCoordinatorServiceModelError
         return self
 
 
@@ -121,6 +133,7 @@ __all__ = (
     "FutureSessionMarketStatus",
     "FutureSessionServiceResult",
     "FutureSessionTickAuthority",
+    "InvalidFutureSessionCoordinatorServiceModelError",
     "canonical_service_config_json",
     "canonical_service_report_json",
 )
