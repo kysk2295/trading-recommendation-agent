@@ -388,16 +388,14 @@ def test_service_activation_uses_exact_launchd_target_and_rolls_back(
         if failed_operation == "swap" and command[1] == "bootstrap":
             plist_path.unlink()
             plist_path.write_bytes(b"attacker replacement")
-            descriptor = inherited_descriptors[0]
-            _ = os.lseek(descriptor, 0, os.SEEK_SET)
-            assert os.read(descriptor, len(original_payload) + 1) == original_payload
             child = subprocess.run(
-                ("/usr/bin/plutil", "-lint", command[3]),
+                ("/bin/cat", command[3]),
                 check=False,
                 capture_output=True,
                 pass_fds=inherited_descriptors,
             )
             assert child.returncode == 0
+            assert child.stdout == original_payload
         return int(failed_operation is not None and command[1] == failed_operation)
 
     result = run_future_session_coordinator_service.main(

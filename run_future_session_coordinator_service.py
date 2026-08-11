@@ -117,6 +117,7 @@ def _activate(verified: VerifiedServicePlist, runner: CommandRunner) -> int:
         domain,
         f"/dev/fd/{verified.descriptor}",
     )
+    _ = os.lseek(verified.descriptor, 0, os.SEEK_SET)
     if runner(bootstrap, inherited) != 0:
         return 2
     try:
