@@ -19,7 +19,7 @@ from trading_agent.paper_auto_arm_policy import (
     load_paper_auto_arm_policy,
     write_paper_auto_arm_policy,
 )
-from trading_agent.paper_auto_arm_runtime import mint_paper_auto_arm_consumer
+from trading_agent.paper_auto_arm_runtime import verify_paper_auto_arm_session
 
 
 class PaperAutoArmPolicyAction(StrEnum):
@@ -90,12 +90,22 @@ def main(
         match command.action:
             case PaperAutoArmPolicyAction.PROVISION:
                 policy = PaperAutoArmPolicy.from_authority(authority)
-                _ = mint_paper_auto_arm_consumer(policy, authority, command.session_id, dependencies.clock())
+                _ = verify_paper_auto_arm_session(
+                    policy,
+                    authority,
+                    command.session_id,
+                    dependencies.clock(),
+                )
                 write_paper_auto_arm_policy(command.policy_path, policy)
                 result = "provisioned"
             case PaperAutoArmPolicyAction.VERIFY | PaperAutoArmPolicyAction.STATUS:
                 policy = load_paper_auto_arm_policy(command.policy_path)
-                _ = mint_paper_auto_arm_consumer(policy, authority, command.session_id, dependencies.clock())
+                _ = verify_paper_auto_arm_session(
+                    policy,
+                    authority,
+                    command.session_id,
+                    dependencies.clock(),
+                )
                 result = "valid"
             case unreachable:
                 assert_never(unreachable)

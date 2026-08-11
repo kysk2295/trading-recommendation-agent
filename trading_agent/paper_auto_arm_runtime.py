@@ -13,6 +13,10 @@ from trading_agent.hermes_arm_request import (
     InvalidHermesArmRequestError,
 )
 from trading_agent.lane_identity_models import LaneId
+from trading_agent.paper_auto_arm_consumption_store import (
+    PaperAutoArmConsumptionReceipt,
+    PaperAutoArmConsumptionStore,
+)
 from trading_agent.paper_auto_arm_policy import (
     PaperAutoArmPolicy,
     canonical_paper_auto_arm_policy_json,
@@ -23,13 +27,19 @@ from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
 
 
 class SessionScopedPaperAutoArmConsumer:
-    __slots__ = ("_consumed", "_request_id", "_scope", "_strategy_version")
+    __slots__ = ("_request_id", "_scope", "_store", "_strategy_version")
 
-    def __init__(self, request_id: str, scope: HermesArmScope, strategy_version: str) -> None:
+    def __init__(
+        self,
+        request_id: str,
+        scope: HermesArmScope,
+        strategy_version: str,
+        store: PaperAutoArmConsumptionStore,
+    ) -> None:
         self._request_id = request_id
         self._scope = scope
         self._strategy_version = strategy_version
-        self._consumed = False
+        self._store = store
 
     def consume(self, command: HermesArmConsumeCommand, expected_strategy_version: str) -> PaperMutationArm:
         if not hmac.compare_digest(command.request_id, self._request_id):
@@ -40,9 +50,13 @@ class SessionScopedPaperAutoArmConsumer:
             raise InvalidHermesArmRequestError(HermesArmFailure.WRONG_LANE)
         if not hmac.compare_digest(expected_strategy_version, self._strategy_version):
             raise InvalidHermesArmRequestError(HermesArmFailure.CHAMPION_MISMATCH)
-        if self._consumed:
-            raise InvalidHermesArmRequestError(HermesArmFailure.CONSUMED)
-        self._consumed = True
+        self._store.claim(
+            PaperAutoArmConsumptionReceipt(
+                request_id=self._request_id,
+                scope=self._scope,
+                strategy_version=self._strategy_version,
+            )
+        )
         return PaperMutationArm(PAPER_MUTATION_ARM_VALUE)
 
 
@@ -57,16 +71,31 @@ def mint_paper_auto_arm_consumer(
     authority: HermesArmAuthority,
     session_id: str,
     now: dt.datetime,
+    consumption_store: PaperAutoArmConsumptionStore,
 ) -> MintedPaperAutoArm:
+    request_id = verify_paper_auto_arm_session(policy, authority, session_id, now)
+    return MintedPaperAutoArm(
+        request_id=request_id,
+        consumer=SessionScopedPaperAutoArmConsumer(
+            request_id,
+            authority.scope,
+            authority.strategy_version,
+            consumption_store,
+        ),
+    )
+
+
+def verify_paper_auto_arm_session(
+    policy: PaperAutoArmPolicy,
+    authority: HermesArmAuthority,
+    session_id: str,
+    now: dt.datetime,
+) -> str:
     scope = _current_intraday_scope(session_id, now)
     if authority.scope != scope:
         raise InvalidHermesArmRequestError(HermesArmFailure.WRONG_SESSION)
     verify_paper_auto_arm_policy(policy, authority)
-    request_id = paper_auto_arm_request_id(policy, session_id)
-    return MintedPaperAutoArm(
-        request_id=request_id,
-        consumer=SessionScopedPaperAutoArmConsumer(request_id, scope, authority.strategy_version),
-    )
+    return paper_auto_arm_request_id(policy, session_id)
 
 
 def paper_auto_arm_request_id(policy: PaperAutoArmPolicy, session_id: str) -> str:

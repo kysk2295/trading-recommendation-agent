@@ -13,6 +13,9 @@ from trading_agent.hermes_arm_store import HermesArmStore
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.lane_identity_models import LaneId
 from trading_agent.paper_auto_arm_authority import require_current_clean_main, require_frozen_commit
+from trading_agent.paper_auto_arm_consumption_store import (
+    PaperAutoArmConsumptionStore,
+)
 from trading_agent.paper_auto_arm_policy import load_paper_auto_arm_policy
 from trading_agent.paper_auto_arm_runtime import mint_paper_auto_arm_consumer
 from trading_agent.us_day_operating_arm import StrategyBoundHermesArmConsumer
@@ -55,7 +58,13 @@ def _arm_consumer(command: RunUsDayCommand) -> UsDayArmConsumer:
         require_current_clean_main(command.authority.repository, authority.commit_sha)
         require_frozen_commit(command.source_repository, authority.commit_sha)
         policy = load_paper_auto_arm_policy(policy_path)
-        return mint_paper_auto_arm_consumer(policy, authority, command.session_id, now_utc()).consumer
+        return mint_paper_auto_arm_consumer(
+            policy,
+            authority,
+            command.session_id,
+            now_utc(),
+            PaperAutoArmConsumptionStore.for_execution_database(command.stores.execution),
+        ).consumer
     signer = HermesArmSigner(load_hermes_arm_signing_key(command.authority.signing_key))
     arm_store = HermesArmStore(command.stores.arm, signer)
     resolver = LedgerHermesArmAuthorityResolver(
