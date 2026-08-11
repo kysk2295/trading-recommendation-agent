@@ -6,6 +6,17 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from pydantic import ValidationError
+
+from trading_agent.future_session_coordinator import coordinate_future_session
+from trading_agent.future_session_coordinator_inspectors import (
+    CoordinatorInspectionError,
+)
+from trading_agent.future_session_coordinator_models import (
+    FutureSessionCoordinatorRequest,
+    FutureSessionCoordinatorResult,
+    canonical_coordinator_receipt_json,
+)
 from trading_agent.future_session_kr_activation import (
     activate_kr_future_session,
 )
@@ -45,6 +56,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _activate_kr(arguments)
         case "supervise-kr-preflight":
             return _supervise_kr_preflight(arguments)
+        case "coordinate":
+            return _coordinate(arguments)
         case _:
             parser.error("unknown command")
 
@@ -142,6 +155,28 @@ def _supervise_kr_preflight(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _coordinate(arguments: argparse.Namespace) -> int:
+    try:
+        receipt = coordinate_future_session(
+            FutureSessionCoordinatorRequest(
+                request_path=Path(arguments.request),
+                plan_path=Path(arguments.plan),
+                launch_agents_dir=Path(arguments.launch_agents_dir),
+            )
+        )
+    except (
+        CoordinatorInspectionError,
+        OSError,
+        TypeError,
+        ValidationError,
+        ValueError,
+    ):
+        _write({"reason": "invalid_request", "result": "blocked"})
+        return 2
+    sys.stdout.write(canonical_coordinator_receipt_json(receipt))
+    return 2 if receipt.result is FutureSessionCoordinatorResult.BLOCKED else 0
+
+
 def _write(payload: dict[str, bool | str | list[str]]) -> None:
     sys.stdout.write(json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n")
 
@@ -172,6 +207,13 @@ def _parser() -> argparse.ArgumentParser:
         help="Verify bound KR authorities without executing a session.",
     )
     preflight_kr.add_argument("--manifest", required=True)
+    coordinate = commands.add_parser(
+        "coordinate",
+        help="Compile, prepare, activate, or verify one future session.",
+    )
+    coordinate.add_argument("--request", required=True)
+    coordinate.add_argument("--plan", required=True)
+    coordinate.add_argument("--launch-agents-dir", required=True)
     return parser
 
 
