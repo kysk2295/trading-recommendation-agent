@@ -36,6 +36,7 @@ from trading_agent.dashboard_projection_receipts import (
     read_projection_receipts,
 )
 from trading_agent.dashboard_projection_sources import project_data_sources
+from trading_agent.dashboard_session_terminals import project_session_terminals
 from trading_agent.dashboard_system_current_authority import (
     SystemAuthorityVerifierInput,
 )
@@ -90,7 +91,11 @@ def collect_dashboard_snapshot_v2(
         }
     }
     projections["overview"] = project_market_calendar(outputs, now=generated_at, workspace="overview")
-    projections["markets"] = project_market_calendar(outputs, now=generated_at, workspace="markets")
+    projections["markets"] = project_session_terminals(
+        project_market_calendar(outputs, now=generated_at, workspace="markets"),
+        outputs,
+        now=generated_at,
+    )
     sources_projection, capabilities = project_data_sources(outputs, now=generated_at)
     projections["data_sources"] = sources_projection
     projections["research"] = project_research(outputs, now=generated_at)
@@ -168,6 +173,7 @@ def collect_dashboard_snapshot_v2(
                 "futures-security-master-reader-v1",
                 "kr-theme-provider-reader-v1",
                 "market-calendar-reader-v2",
+                "hermes-session-terminal-reader-v1",
                 "lane-registry-reader-v1",
                 "system-milestone-reader-v2",
                 "system-current-authority-reader-v2",

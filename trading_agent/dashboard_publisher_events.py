@@ -134,6 +134,7 @@ def watch_roots(outputs: Path) -> tuple[Path, ...]:
         root / "kr_theme",
         root / "derivatives",
         root / "paper",
+        root / "hermes",
         root / "system",
     )
     existing = tuple(path for path in candidates if path.is_dir())
