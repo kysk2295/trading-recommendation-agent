@@ -18,7 +18,10 @@ from trading_agent.future_session_coordinator_service import tick_service
 from trading_agent.future_session_coordinator_service_launchd import (
     LABEL,
     ServicePlistError,
+    VerifiedServicePlist,
+    open_verified_service_plist,
     provision_service_plist,
+    require_verified_service_plist_identity,
     verify_service_plist,
 )
 from trading_agent.future_session_coordinator_service_models import (
@@ -33,7 +36,7 @@ from trading_agent.future_session_coordinator_service_runtime import (
 )
 from trading_agent.future_session_us_activation_verifier import read_private_file
 
-type CommandRunner = Callable[[tuple[str, ...]], int]
+type CommandRunner = Callable[[tuple[str, ...], tuple[int, ...]], int]
 
 
 def main(
@@ -59,8 +62,11 @@ def main(
                 return 0
             case "activate":
                 _verify_authority(config)
-                path = verify_service_plist(config, config_path)
-                return _activate(path, _default_runner if runner is None else runner)
+                with open_verified_service_plist(config, config_path) as verified:
+                    return _activate(
+                        verified,
+                        _default_runner if runner is None else runner,
+                    )
             case "tick":
                 return _tick(config)
             case "run":
@@ -101,25 +107,40 @@ def _verify_authority(config: FutureSessionCoordinatorServiceConfig) -> None:
         raise FrozenRuntimeError("frozen_runtime_entrypoint_invalid")
 
 
-def _activate(plist_path: Path, runner: CommandRunner) -> int:
+def _activate(verified: VerifiedServicePlist, runner: CommandRunner) -> int:
     domain = f"gui/{os.getuid()}"
-    plist = str(plist_path)
     target = f"{domain}/{LABEL}"
-    if runner(("/bin/launchctl", "bootstrap", domain, plist)) != 0:
+    inherited = (verified.descriptor,)
+    bootstrap = (
+        "/bin/launchctl",
+        "bootstrap",
+        domain,
+        f"/dev/fd/{verified.descriptor}",
+    )
+    if runner(bootstrap, inherited) != 0:
         return 2
-    if runner(("/bin/launchctl", "kickstart", target)) != 0:
-        _ = runner(("/bin/launchctl", "bootout", domain, plist))
+    try:
+        require_verified_service_plist_identity(verified)
+    except ServicePlistError:
+        _ = runner(("/bin/launchctl", "bootout", target), ())
         return 2
-    if runner(("/bin/launchctl", "print", target)) != 0:
-        _ = runner(("/bin/launchctl", "bootout", domain, plist))
+    if runner(("/bin/launchctl", "kickstart", target), ()) != 0:
+        _ = runner(("/bin/launchctl", "bootout", target), ())
+        return 2
+    if runner(("/bin/launchctl", "print", target), ()) != 0:
+        _ = runner(("/bin/launchctl", "bootout", target), ())
         return 2
     return 0
 
 
-def _default_runner(command: tuple[str, ...]) -> int:
+def _default_runner(
+    command: tuple[str, ...],
+    inherited_descriptors: tuple[int, ...],
+) -> int:
     return subprocess.run(
         command,
         check=False,
+        pass_fds=inherited_descriptors,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

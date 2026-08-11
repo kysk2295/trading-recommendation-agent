@@ -20,6 +20,7 @@ from trading_agent.future_session_coordinator_service import (
     tick_service,
 )
 from trading_agent.future_session_coordinator_service_launchd import (
+    ServicePlistError,
     provision_service_plist,
     verify_service_plist,
 )
@@ -318,9 +319,38 @@ def test_provisioned_plist_is_keepalive_with_visible_private_logs(tmp_path: Path
     assert stat.S_IMODE(plist_path.stat().st_mode) == 0o600
 
 
+@pytest.mark.parametrize("parent_kind", ("public", "symlink"))
+def test_service_plist_rejects_unprotected_launch_agent_parent(
+    tmp_path: Path,
+    parent_kind: str,
+) -> None:
+    repository, commit = _repository(tmp_path)
+    launch_agents = tmp_path / "LaunchAgents"
+    if parent_kind == "public":
+        launch_agents.mkdir(mode=0o755)
+        launch_agents.chmod(0o755)
+    else:
+        target = tmp_path / "launch-agent-target"
+        target.mkdir(mode=0o700)
+        launch_agents.symlink_to(target, target_is_directory=True)
+    config = FutureSessionCoordinatorServiceConfig(
+        us_template_request_path=(tmp_path / "us.json").absolute(),
+        kr_template_request_path=(tmp_path / "kr.json").absolute(),
+        state_root=(tmp_path / "state").absolute(),
+        launch_agents_dir=launch_agents.absolute(),
+        authority_repository=repository,
+        scheduler_main_sha=commit,
+        poll_interval_seconds=30,
+    )
+    config.state_root.mkdir(mode=0o700)
+
+    with pytest.raises(ServicePlistError):
+        _ = provision_service_plist(config, (tmp_path / "config.json").absolute())
+
+
 @pytest.mark.parametrize(
     "failed_operation",
-    (None, "bootstrap", "kickstart", "print"),
+    (None, "bootstrap", "kickstart", "print", "swap"),
 )
 def test_service_activation_uses_exact_launchd_target_and_rolls_back(
     tmp_path: Path,
@@ -347,10 +377,27 @@ def test_service_activation_uses_exact_launchd_target_and_rolls_back(
     config_path.write_text(canonical_service_config_json(config), encoding="utf-8")
     config_path.chmod(0o600)
     plist_path = provision_service_plist(config, config_path)
-    calls: list[tuple[str, ...]] = []
+    calls: list[tuple[tuple[str, ...], tuple[int, ...]]] = []
+    original_payload = plist_path.read_bytes()
 
-    def runner(command: tuple[str, ...]) -> int:
-        calls.append(command)
+    def runner(
+        command: tuple[str, ...],
+        inherited_descriptors: tuple[int, ...],
+    ) -> int:
+        calls.append((command, inherited_descriptors))
+        if failed_operation == "swap" and command[1] == "bootstrap":
+            plist_path.unlink()
+            plist_path.write_bytes(b"attacker replacement")
+            descriptor = inherited_descriptors[0]
+            _ = os.lseek(descriptor, 0, os.SEEK_SET)
+            assert os.read(descriptor, len(original_payload) + 1) == original_payload
+            child = subprocess.run(
+                ("/usr/bin/plutil", "-lint", command[3]),
+                check=False,
+                capture_output=True,
+                pass_fds=inherited_descriptors,
+            )
+            assert child.returncode == 0
         return int(failed_operation is not None and command[1] == failed_operation)
 
     result = run_future_session_coordinator_service.main(
@@ -360,19 +407,28 @@ def test_service_activation_uses_exact_launchd_target_and_rolls_back(
 
     domain = f"gui/{os.getuid()}"
     target = f"{domain}/ai.trading-agent.future-session-coordinator"
-    expected = [
-        ("/bin/launchctl", "bootstrap", domain, str(plist_path)),
-        ("/bin/launchctl", "kickstart", target),
-    ]
+    bootstrap, inherited = calls[0]
+    assert bootstrap[:3] == ("/bin/launchctl", "bootstrap", domain)
+    assert len(inherited) == 1
+    assert bootstrap[3] == f"/dev/fd/{inherited[0]}"
+    commands = [command for command, _descriptors in calls]
+    assert all(not descriptors for _command, descriptors in calls[1:])
     if failed_operation == "bootstrap":
-        expected = expected[:1]
+        assert len(commands) == 1
+        assert result == 2
+    elif failed_operation == "swap":
+        assert commands[1:] == [("/bin/launchctl", "bootout", target)]
         assert result == 2
     elif failed_operation is None:
-        expected.append(("/bin/launchctl", "print", target))
+        assert commands[1:] == [
+            ("/bin/launchctl", "kickstart", target),
+            ("/bin/launchctl", "print", target),
+        ]
         assert result == 0
     else:
+        expected = [("/bin/launchctl", "kickstart", target)]
         if failed_operation == "print":
             expected.append(("/bin/launchctl", "print", target))
-        expected.append(("/bin/launchctl", "bootout", domain, str(plist_path)))
+        expected.append(("/bin/launchctl", "bootout", target))
+        assert commands[1:] == expected
         assert result == 2
-    assert calls == expected
