@@ -12,6 +12,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import sys
 from collections.abc import Callable, Sequence
 
 import anyio
@@ -33,10 +34,19 @@ from trading_agent.research_agent_service_cli_args import (
 from trading_agent.research_agent_service_config import (
     RESEARCH_AGENT_SERVICE_LABEL,
     InvalidResearchAgentServiceConfigError,
+    ResearchAgentServiceConfig,
+    canonical_research_agent_service_config_sha256,
     load_research_agent_service_config,
     verify_research_agent_launch_agent,
     write_research_agent_launch_agent,
     write_research_agent_service_config,
+)
+from trading_agent.research_agent_service_health import (
+    HealthEvaluator,
+    InvalidResearchAgentServiceHealthError,
+    ResearchAgentServiceHealthEvaluation,
+    await_fresh_research_agent_service_health,
+    evaluate_persisted_research_agent_service_health,
 )
 from trading_agent.research_agent_service_legacy_current import (
     verify_research_agent_replace_current,
@@ -63,6 +73,7 @@ def main(
     *,
     clock: Clock = lambda: dt.datetime.now(dt.UTC),
     runner: CommandRunner | None = None,
+    health_evaluator: HealthEvaluator | None = None,
 ) -> int:
     try:
         args = parse_service_args(argv)
@@ -103,7 +114,12 @@ def main(
         if args.command == "activate":
             return _activate(args, _default_runner if runner is None else runner)
         if args.command == "replace":
-            return _replace(args, _default_runner if runner is None else runner)
+            return _replace(
+                args,
+                _default_runner if runner is None else runner,
+                clock,
+                _default_health_evaluator if health_evaluator is None else health_evaluator,
+            )
         return 2
     except (
         CurrentMainAuthorityError,
@@ -112,6 +128,7 @@ def main(
         InvalidResearchAgentCycleStoreError,
         InvalidResearchAgentDecisionError,
         InvalidResearchAgentServiceConfigError,
+        InvalidResearchAgentServiceHealthError,
         InvalidResearchAgentServiceRuntimeError,
         InvalidSystematicResearchActionError,
         InvalidSystematicInputActivationError,
@@ -142,7 +159,12 @@ def _activate(args: argparse.Namespace, runner: CommandRunner) -> int:
     return 0
 
 
-def _replace(args: argparse.Namespace, runner: CommandRunner) -> int:
+def _replace(
+    args: argparse.Namespace,
+    runner: CommandRunner,
+    clock: Clock,
+    health_evaluator: HealthEvaluator,
+) -> int:
     current = verify_research_agent_replace_current(args.current_config, args.current_plist)
     _ = verify_research_agent_launch_agent(args.candidate_config, args.candidate_plist)
     candidate = load_research_agent_service_config(args.candidate_config)
@@ -158,12 +180,67 @@ def _replace(args: argparse.Namespace, runner: CommandRunner) -> int:
         and runner(("/bin/launchctl", "print", target)) != _NOT_LOADED_RETURN_CODE
     ):
         return 2
+    started_at = clock()
     if runner(("/bin/launchctl", "bootstrap", domain, candidate_plist)) != 0:
+        return _rollback_replacement(
+            runner,
+            domain,
+            target,
+            current_plist,
+            candidate_plist,
+            "candidate_bootstrap_failed",
+        )
+    if runner(("/bin/launchctl", "kickstart", target)) != 0:
+        return _rollback_replacement(
+            runner,
+            domain,
+            target,
+            current_plist,
+            candidate_plist,
+            "candidate_kickstart_failed",
+        )
+    health = await_fresh_research_agent_service_health(candidate, started_at, clock, health_evaluator)
+    if not health.accepted:
+        return _rollback_replacement(
+            runner,
+            domain,
+            target,
+            current_plist,
+            candidate_plist,
+            f"health_{health.reason}",
+        )
+    return 0
+
+
+def _rollback_replacement(
+    runner: CommandRunner,
+    domain: str,
+    target: str,
+    current_plist: str,
+    candidate_plist: str,
+    reason: str,
+) -> int:
+    _ = runner(("/bin/launchctl", "bootout", domain, candidate_plist))
+    print(f"replace_{reason}", file=sys.stderr)
+    if runner(("/bin/launchctl", "bootstrap", domain, current_plist)) != 0:
+        print("replace_current_restore_bootstrap_failed", file=sys.stderr)
         return 2
     if runner(("/bin/launchctl", "kickstart", target)) != 0:
-        _ = runner(("/bin/launchctl", "bootout", domain, candidate_plist))
-        return 2
-    return 0
+        print("replace_current_restore_kickstart_failed", file=sys.stderr)
+    return 2
+
+
+def _default_health_evaluator(
+    config: ResearchAgentServiceConfig,
+    started_at: dt.datetime,
+    evaluated_at: dt.datetime,
+) -> ResearchAgentServiceHealthEvaluation:
+    return evaluate_persisted_research_agent_service_health(
+        config.output_root,
+        canonical_research_agent_service_config_sha256(config),
+        started_at,
+        evaluated_at,
+    )
 
 
 def _default_runner(command: tuple[str, ...]) -> int:

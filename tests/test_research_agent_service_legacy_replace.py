@@ -14,6 +14,7 @@ from tests.test_research_agent_service_replace_cli import (
     _config,
     _current_main_repository,
     _provision,
+    _ready_health_evaluator,
 )
 from trading_agent.private_immutable_file import publish_private_immutable_text
 from trading_agent.research_agent_service_config import RESEARCH_AGENT_SERVICE_LABEL
@@ -23,7 +24,11 @@ def test_replace_accepts_exact_legacy_current_and_v2_candidate(tmp_path: Path) -
     fixture = _legacy_replacement_fixture(tmp_path)
     calls: list[tuple[str, ...]] = []
 
-    code = main(_argv(fixture), runner=lambda command: calls.append(command) or 0)
+    code = main(
+        _argv(fixture),
+        runner=lambda command: calls.append(command) or 0,
+        health_evaluator=_ready_health_evaluator,
+    )
 
     domain = f"gui/{os.getuid()}"
     assert code == 0

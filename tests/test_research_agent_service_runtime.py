@@ -32,7 +32,11 @@ from trading_agent.research_agent_runtime import (
     ResearchAgentRuntimeServices,
     ResearchAgentTickResult,
 )
-from trading_agent.research_agent_service_config import write_research_agent_service_config
+from trading_agent.research_agent_service_config import (
+    canonical_research_agent_service_config_sha256,
+    write_research_agent_service_config,
+)
+from trading_agent.research_agent_service_health import read_persisted_research_agent_service_health
 from trading_agent.research_agent_service_runtime import run_service_cycle, run_service_tick, service_status
 
 NOW = dt.datetime(2026, 8, 2, 12, 0, tzinfo=dt.UTC)
@@ -231,6 +235,16 @@ def test_blocked_systematic_input_allows_non_systematic_tick(
     assert report.model_calls == 1
     assert report.broker_mutation == 0
     assert child_calls == []
+    persisted_report = json.loads(
+        (config.output_root / "research-agent-runtime-status.json").read_text(encoding="utf-8")
+    )
+    assert persisted_report["schema_version"] == 2
+    assert persisted_report["config_sha256"] == canonical_research_agent_service_config_sha256(config)
+    health = read_persisted_research_agent_service_health(config.output_root)
+    assert health.config_sha256 == canonical_research_agent_service_config_sha256(config)
+    assert health.observed_at == NOW
+    assert health.state == "ready"
+    assert health.reason == "runtime_ready"
 
 
 def test_ready_systematic_input_reports_only_bound_digests(tmp_path: Path) -> None:
@@ -247,3 +261,24 @@ def test_ready_systematic_input_reports_only_bound_digests(tmp_path: Path) -> No
     assert report.systematic_input_sha256 == fixture.activation.input_sha256
     assert report.systematic_foundation_sha256 == fixture.activation.foundation_sha256
     assert "path" not in report.model_dump_json()
+
+
+def test_status_binds_schema_v2_identity_to_the_canonical_config(tmp_path: Path) -> None:
+    # Given: a valid v2 runtime configuration without a cycle journal.
+    config = _config(tmp_path)
+    config_text = json.dumps(
+        config.model_dump(mode="json"),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ) + "\n"
+    expected_sha256 = hashlib.sha256(
+        config_text.encode()
+    ).hexdigest()
+
+    # When: the query-only service status is projected.
+    report = service_status(config, NOW)
+
+    # Then: the persisted-report shape carries the exact candidate identity.
+    assert report.schema_version == 2
+    assert report.config_sha256 == expected_sha256

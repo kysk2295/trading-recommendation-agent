@@ -36,7 +36,14 @@ from trading_agent.research_agent_runtime import (
     ResearchAgentTickResult,
 )
 from trading_agent.research_agent_runtime_lease import research_agent_runtime_lease
-from trading_agent.research_agent_service_config import ResearchAgentServiceConfig
+from trading_agent.research_agent_service_config import (
+    ResearchAgentServiceConfig,
+    canonical_research_agent_service_config_sha256,
+)
+from trading_agent.research_agent_service_health import (
+    health_for_service_report,
+    write_persisted_research_agent_service_health,
+)
 from trading_agent.research_agent_systematic import SystematicResearchActionExecutor
 from trading_agent.research_agent_systematic_input_models import (
     BlockedSystematicInputActivation,
@@ -62,6 +69,8 @@ class ResearchAgentFamilyRuntimeReport(BaseModel):
 class ResearchAgentServiceReport(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
+    schema_version: Literal[2] = 2
+    config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     operation: Literal["tick", "run", "status"]
     status: str
     agent_family_id: str | None
@@ -83,6 +92,8 @@ class ResearchAgentServiceReport(BaseModel):
 class ResearchAgentServiceCycleReport(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
+    schema_version: Literal[2] = 2
+    config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     operation: Literal["cycle"] = "cycle"
     status: Literal["idle", "partial", "complete"]
     outcomes: tuple[ResearchAgentTickResult, ...]
@@ -122,6 +133,7 @@ def run_service_tick(
         projected = _project_results(config, runtime)
         family_runtime, next_wake_kind, next_wake_at = _runtime_report_from_store(runtime.store)
         report = _report(
+            canonical_research_agent_service_config_sha256(config),
             "tick",
             tick,
             projected,
@@ -148,6 +160,7 @@ def run_service_cycle(
         projected = _project_results(config, runtime)
         family_runtime, next_wake_kind, next_wake_at = _runtime_report_from_store(runtime.store)
         report = _cycle_report(
+            canonical_research_agent_service_config_sha256(config),
             cycle,
             projected,
             systematic,
@@ -183,6 +196,7 @@ async def run_service_forever(
                 write_service_report(
                     config,
                     _report(
+                        canonical_research_agent_service_config_sha256(config),
                         "run",
                         tick,
                         projected,
@@ -205,6 +219,7 @@ def service_status(
     systematic = _systematic_input_report(config)
     if not config.cycle_database.exists():
         return ResearchAgentServiceReport(
+            config_sha256=canonical_research_agent_service_config_sha256(config),
             operation="status",
             status="unavailable",
             agent_family_id=None,
@@ -245,6 +260,7 @@ def service_status(
         else 0
     )
     return ResearchAgentServiceReport(
+        config_sha256=canonical_research_agent_service_config_sha256(config),
         operation="status",
         status="armed" if latest is None else latest.state,
         agent_family_id=None if latest is None else latest.family,
@@ -290,6 +306,14 @@ def write_service_report(
         config.output_root / "research-agent-runtime-status.json",
         report.model_dump_json() + "\n",
     )
+    write_persisted_research_agent_service_health(
+        config.output_root,
+        health_for_service_report(
+            report.config_sha256,
+            report.observed_at,
+            report.status == "failed",
+        ),
+    )
 
 
 def _project_results(config: ResearchAgentServiceConfig, runtime: ResearchAgentRuntime) -> int:
@@ -299,6 +323,7 @@ def _project_results(config: ResearchAgentServiceConfig, runtime: ResearchAgentR
 
 
 def _report(
+    config_sha256: str,
     operation: Literal["tick", "run"],
     tick: ResearchAgentTickResult,
     projected: int,
@@ -309,6 +334,7 @@ def _report(
     now: dt.datetime,
 ) -> ResearchAgentServiceReport:
     return ResearchAgentServiceReport(
+        config_sha256=config_sha256,
         operation=operation,
         status=tick.status,
         agent_family_id=tick.agent_family_id,
@@ -328,6 +354,7 @@ def _report(
 
 
 def _cycle_report(
+    config_sha256: str,
     cycle: ResearchAgentBoundedCycleResult,
     projected: int,
     systematic: SystematicInputReportBinding,
@@ -337,6 +364,7 @@ def _cycle_report(
     now: dt.datetime,
 ) -> ResearchAgentServiceCycleReport:
     return ResearchAgentServiceCycleReport(
+        config_sha256=config_sha256,
         status=cycle.status,
         outcomes=cycle.outcomes,
         family_count=len(cycle.outcomes),

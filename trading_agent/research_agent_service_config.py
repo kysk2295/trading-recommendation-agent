@@ -140,7 +140,6 @@ def verify_research_agent_launch_agent(
 ) -> ResearchAgentLaunchAgentVerification:
     try:
         absolute_config = config_path.expanduser().absolute()
-        config_payload = read_private_text(absolute_config)
         config = load_research_agent_service_config(absolute_config)
         _ = load_systematic_input_activation(config.systematic.input_activation)
         plist_payload = read_private_text(plist_path.expanduser().absolute())
@@ -161,7 +160,7 @@ def verify_research_agent_launch_agent(
             raise InvalidResearchAgentServiceConfigError(reason="service_executable_binding_invalid")
         return ResearchAgentLaunchAgentVerification(
             ready=True,
-            config_sha256=hashlib.sha256(config_payload.encode()).hexdigest(),
+            config_sha256=canonical_research_agent_service_config_sha256(config),
             plist_sha256=hashlib.sha256(plist_payload.encode()).hexdigest(),
         )
     except (
@@ -178,6 +177,10 @@ def verify_research_agent_launch_agent(
 
 def _config_text(config: ResearchAgentServiceConfig) -> str:
     return json.dumps(config.model_dump(mode="json"), ensure_ascii=True, separators=(",", ":"), sort_keys=True) + "\n"
+
+
+def canonical_research_agent_service_config_sha256(config: ResearchAgentServiceConfig) -> str:
+    return hashlib.sha256(_config_text(config).encode()).hexdigest()
 
 
 def _launch_agent_text(config: ResearchAgentServiceConfig, config_path: Path) -> str:
@@ -210,6 +213,7 @@ __all__ = (
     "InvalidResearchAgentServiceConfigError",
     "ResearchAgentLaunchAgentVerification",
     "ResearchAgentServiceConfig",
+    "canonical_research_agent_service_config_sha256",
     "load_research_agent_service_config",
     "verify_research_agent_launch_agent",
     "write_research_agent_launch_agent",
