@@ -60,9 +60,7 @@ def attest_us_runtime(
     import_root = runtime if (runtime / "trading_agent").is_dir() else Path(__file__).parents[1]
     existing_pythonpath = environment.get("PYTHONPATH")
     environment["PYTHONPATH"] = (
-        str(import_root)
-        if existing_pythonpath is None
-        else os.pathsep.join((str(import_root), existing_pythonpath))
+        str(import_root) if existing_pythonpath is None else os.pathsep.join((str(import_root), existing_pythonpath))
     )
     try:
         completed = subprocess.run(
@@ -92,9 +90,7 @@ def attest_us_runtime(
             "python_version": str(payload["python"]),
             "runtime_commit": request.frozen_runtime.commit_sha,
         }
-        digest = hashlib.sha256(
-            json.dumps(content, separators=(",", ":"), sort_keys=True).encode()
-        ).hexdigest()
+        digest = hashlib.sha256(json.dumps(content, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
         return RuntimeEnvironmentAttestation(
             interpreter=interpreter,
             python_version=content["python_version"],
@@ -116,23 +112,13 @@ def build_us_jobs(
     requested_watch_database = _required(request.watch_database)
     watch_database = requested_watch_database.resolve(strict=False)
     if watch_database != requested_watch_database:
-        raise InvalidUsFutureSessionPayloadError(
-            "noncanonical_watch_database"
-        )
+        raise InvalidUsFutureSessionPayloadError("noncanonical_watch_database")
     try:
         watch_source = watch_database.relative_to(runtime)
     except ValueError:
-        raise InvalidUsFutureSessionPayloadError(
-            "watch_database_outside_frozen_runtime"
-        ) from None
-    if (
-        watch_database.name != _WATCH_DATABASE_NAME
-        or not watch_source.parts
-        or watch_source.parts[0] != "outputs"
-    ):
-        raise InvalidUsFutureSessionPayloadError(
-            "noncanonical_watch_database"
-        )
+        raise InvalidUsFutureSessionPayloadError("watch_database_outside_frozen_runtime") from None
+    if watch_database.name != _WATCH_DATABASE_NAME or not watch_source.parts or watch_source.parts[0] != "outputs":
+        raise InvalidUsFutureSessionPayloadError("noncanonical_watch_database")
     common_run = dt.datetime.combine(target, dt.time(8), tzinfo=_NY)
     common_expiry = dt.datetime.combine(target, dt.time(16, 20), tzinfo=_NY)
     session_id = f"XNYS-{target.isoformat()}"
@@ -145,22 +131,38 @@ def build_us_jobs(
         expires_at=common_expiry,
         purpose="watch_open=09:30;finalize=16:05",
         command=(
-            str(interpreter), str(runtime / "run_kis_paper_watch.py"),
-            "--output-dir", str(watch_database.parent),
-            "--cycles", str(request.cycles),
-            "--interval-seconds", str(request.interval_seconds),
-            "--max-wait-minutes", "720",
-            "--top", "10",
-            "--max-pages", "1",
+            str(interpreter),
+            str(runtime / "run_kis_paper_watch.py"),
+            "--output-dir",
+            str(watch_database.parent),
+            "--cycles",
+            str(request.cycles),
+            "--interval-seconds",
+            str(request.interval_seconds),
+            "--max-wait-minutes",
+            "720",
+            "--top",
+            "10",
+            "--max-pages",
+            "1",
             "--collect-premarket",
-            "--premarket-interval-seconds", "300",
-            "--wait-until-open", "--strategy", "orb",
-            "--lane-execution-database", str(request.execution_database),
-            "--lane-registry", str(request.lane_registry),
-            "--lane-review-ledger", str(request.lane_review_ledger),
-            "--lane-forward-output-dir", str(root / "lane-forward"),
-            "--experiment-ledger", str(request.experiment_ledger),
-            "--delivery-database", str(request.delivery_database),
+            "--premarket-interval-seconds",
+            "300",
+            "--wait-until-open",
+            "--strategy",
+            "orb",
+            "--lane-execution-database",
+            str(request.execution_database),
+            "--lane-registry",
+            str(request.lane_registry),
+            "--lane-review-ledger",
+            str(request.lane_review_ledger),
+            "--lane-forward-output-dir",
+            str(root / "lane-forward"),
+            "--experiment-ledger",
+            str(request.experiment_ledger),
+            "--delivery-database",
+            str(request.delivery_database),
         ),
         source_paths=(
             request.experiment_ledger,
@@ -177,10 +179,17 @@ def build_us_jobs(
         expires_at=common_expiry,
         purpose="poll_outboxes_until=16:15",
         command=(
-            str(interpreter), str(runtime / "run_hermes_delivery.py"), "project-session",
-            "--database", str(request.delivery_database), "--opportunities",
-            str(request.opportunity_outbox), "--signals", str(request.signal_outbox),
-            "--session-date", target.isoformat(),
+            str(interpreter),
+            str(runtime / "run_hermes_delivery.py"),
+            "project-session",
+            "--database",
+            str(request.delivery_database),
+            "--opportunities",
+            str(request.opportunity_outbox),
+            "--signals",
+            str(request.signal_outbox),
+            "--session-date",
+            target.isoformat(),
         ),
         dependencies=(FutureSessionUsRole.US_ORB_WATCHER,),
         source_paths=(_required(request.opportunity_outbox), _required(request.signal_outbox)),
@@ -190,7 +199,10 @@ def build_us_jobs(
         poll_interval_seconds=5,
     )
     preflight = _observer_job(
-        request, target, common_run, dt.time(15, 35),
+        request,
+        target,
+        common_run,
+        dt.time(15, 35),
         FutureSessionUsRole.US_DAY_PREFLIGHT_OBSERVER,
         "preflight",
         (
@@ -203,7 +215,10 @@ def build_us_jobs(
         "poll_watch_database;cutoff=15:30",
     )
     finalizer = _observer_job(
-        request, target, common_run, dt.time(16, 20),
+        request,
+        target,
+        common_run,
+        dt.time(16, 20),
         FutureSessionUsRole.US_DAY_CLOSE_FINALIZER,
         "close-finalizer",
         (
@@ -236,18 +251,51 @@ def build_us_jobs(
         expires_at=dt.datetime.combine(target, dt.time(15, 31), tzinfo=_NY),
         purpose="open=09:30;entry_cutoff=15:30",
         command=(
-            str(interpreter), str(runtime / "run_us_day_armed_entry.py"),
-            "--arm-database", str(request.arm_database), "--delivery-database", str(request.delivery_database),
-            "--execution-database", str(request.execution_database), "--watch-database", str(request.watch_database),
-            "--experiment-ledger", str(request.experiment_ledger), "--lane-registry", str(request.lane_registry),
-            "--repository", str(runtime), "--signing-key", str(request.signing_key),
-            "--session-id", session_id, "--entry-cutoff", f"{target}T15:30:00-04:00",
-            "--poll-interval-seconds", "5",
-            "--source-artifact", str(watch_source),
-            "--terminal-output", str(run_terminal),
+            str(interpreter),
+            str(runtime / "run_us_day_armed_entry.py"),
+            "--arm-database",
+            str(request.arm_database),
+            "--delivery-database",
+            str(request.delivery_database),
+            "--execution-database",
+            str(request.execution_database),
+            "--watch-database",
+            str(request.watch_database),
+            "--experiment-ledger",
+            str(request.experiment_ledger),
+            "--lane-registry",
+            str(request.lane_registry),
+            "--repository",
+            str(runtime),
+            "--authority-repository",
+            str(request.authority_repository),
+            "--signing-key",
+            str(request.signing_key),
+            "--session-id",
+            session_id,
+            "--entry-cutoff",
+            f"{target}T15:30:00-04:00",
+            "--poll-interval-seconds",
+            "5",
+            "--source-artifact",
+            str(watch_source),
+            "--terminal-output",
+            str(run_terminal),
+        )
+        + (
+            ()
+            if request.paper_auto_arm_policy is None
+            else (
+                "--paper-auto-arm-policy",
+                str(request.paper_auto_arm_policy),
+            )
         ),
         dependencies=(FutureSessionUsRole.US_DAY_PREFLIGHT_OBSERVER,),
-        source_paths=(_required(request.signing_key), _required(request.watch_database)),
+        source_paths=(
+            _required(request.signing_key),
+            _required(request.watch_database),
+            *(() if request.paper_auto_arm_policy is None else (request.paper_auto_arm_policy,)),
+        ),
         destination_paths=(
             _required(request.arm_database),
             _required(request.execution_database),
@@ -255,12 +303,7 @@ def build_us_jobs(
         ),
     )
     swing_root = runtime / "outputs" / "us_swing_shadow"
-    swing_report = (
-        swing_root
-        / "operating"
-        / target.isoformat()
-        / "us_swing_operating_session_ko.md"
-    )
+    swing_report = swing_root / "operating" / target.isoformat() / "us_swing_operating_session_ko.md"
     swing = JobTimingSpec(
         job_id=f"us-research-post-close-swing-{target}",
         role=FutureSessionUsRole.US_RESEARCH_POST_CLOSE_SWING,
@@ -351,9 +394,7 @@ def _observer_job(
                 tzinfo=_NY,
             )
         case _:
-            raise InvalidUsFutureSessionPayloadError(
-                "invalid_observer_role"
-            )
+            raise InvalidUsFutureSessionPayloadError("invalid_observer_role")
     return JobTimingSpec(
         job_id=f"us-day-{name}-{target}",
         role=role,
@@ -363,10 +404,7 @@ def _observer_job(
         purpose=purpose,
         command=(
             str(_required(request.runtime_interpreter)),
-            str(
-                request.frozen_runtime.directory
-                / "run_us_day_operating_session.py"
-            ),
+            str(request.frozen_runtime.directory / "run_us_day_operating_session.py"),
             *arguments,
         ),
         dependencies=dependencies,
@@ -377,9 +415,7 @@ def _observer_job(
         poll_until=poll_until,
         poll_interval_seconds=5,
         finalizer_gate=(
-            None
-            if role is FutureSessionUsRole.US_DAY_PREFLIGHT_OBSERVER
-            else _finalizer_gate(request, target)
+            None if role is FutureSessionUsRole.US_DAY_PREFLIGHT_OBSERVER else _finalizer_gate(request, target)
         ),
     )
 

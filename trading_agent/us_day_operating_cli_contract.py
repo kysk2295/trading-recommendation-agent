@@ -33,8 +33,10 @@ class UsDayAuthorityPaths:
 
 @dataclass(frozen=True, slots=True)
 class RunUsDayCommand:
-    arm_request_id: str
+    arm_request_id: str | None
+    paper_auto_arm_policy: Path | None
     authority: UsDayAuthorityPaths
+    source_repository: Path
     session_id: str
     stores: UsDayStorePaths
     source_artifact_paths: tuple[Path, ...]
@@ -138,12 +140,15 @@ def parse_command(argv: Sequence[str] | None = None) -> UsDayCliCommand:
 
 def _run_arguments(run: argparse.ArgumentParser) -> None:
     run.add_argument("--arm-database", type=Path, required=True)
-    run.add_argument("--arm-request-id", required=True)
+    authorization = run.add_mutually_exclusive_group(required=True)
+    authorization.add_argument("--arm-request-id")
+    authorization.add_argument("--paper-auto-arm-policy", type=Path)
     run.add_argument("--delivery-database", type=Path, required=True)
     run.add_argument("--execution-database", type=Path, required=True)
     run.add_argument("--experiment-ledger", type=Path, required=True)
     run.add_argument("--lane-registry", type=Path, required=True)
     run.add_argument("--repository", type=Path, default=Path.cwd())
+    run.add_argument("--authority-repository", type=Path)
     run.add_argument("--session-id", required=True)
     run.add_argument("--signing-key", type=Path, default=DEFAULT_HERMES_ARM_SIGNING_KEY_PATH)
     run.add_argument("--source-artifact", type=Path, action="append", default=[])
@@ -179,6 +184,8 @@ def _run_command(args: argparse.Namespace) -> RunUsDayCommand:
         raise InvalidUsDayCliCommandError
     return RunUsDayCommand(
         arm_request_id=args.arm_request_id,
+        paper_auto_arm_policy=args.paper_auto_arm_policy,
+        source_repository=args.repository,
         session_id=args.session_id,
         stores=UsDayStorePaths(
             arm=args.arm_database,
@@ -189,7 +196,7 @@ def _run_command(args: argparse.Namespace) -> RunUsDayCommand:
         authority=UsDayAuthorityPaths(
             experiment_ledger=args.experiment_ledger,
             lane_registry=args.lane_registry,
-            repository=args.repository,
+            repository=args.authority_repository or args.repository,
             signing_key=args.signing_key,
         ),
         source_artifact_paths=source_paths,

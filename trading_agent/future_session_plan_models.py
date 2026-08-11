@@ -50,9 +50,7 @@ class WaitingAuthorityReason(StrEnum):
     RUNTIME_AUTHORITY_MISSING = "runtime_authority_missing"
     RUNTIME_AUTHORITY_AMBIGUOUS = "runtime_authority_ambiguous"
     SCHEDULER_AUTHORITY_INVALID = "scheduler_authority_invalid"
-    FROZEN_RUNTIME_STORE_SCHEMA_INCOMPATIBLE = (
-        "frozen_runtime_store_schema_incompatible"
-    )
+    FROZEN_RUNTIME_STORE_SCHEMA_INCOMPATIBLE = "frozen_runtime_store_schema_incompatible"
     RUNTIME_ENVIRONMENT_INVALID = "runtime_environment_invalid"
     ROLLOVER_BUNDLE_INVALID = "rollover_bundle_invalid"
     ROLLOVER_BUNDLE_MISMATCH = "rollover_bundle_mismatch"
@@ -132,6 +130,7 @@ class FutureSessionPlanRequest(BaseModel):
     delivery_database: Path | None = None
     arm_database: Path | None = None
     signing_key: Path | None = None
+    paper_auto_arm_policy: Path | None = None
     opportunity_outbox: Path | None = None
     signal_outbox: Path | None = None
     lane_review_ledger: Path | None = None
@@ -151,6 +150,7 @@ class FutureSessionPlanRequest(BaseModel):
             *(() if self.delivery_database is None else (self.delivery_database,)),
             *(() if self.arm_database is None else (self.arm_database,)),
             *(() if self.signing_key is None else (self.signing_key,)),
+            *(() if self.paper_auto_arm_policy is None else (self.paper_auto_arm_policy,)),
             *(() if self.opportunity_outbox is None else (self.opportunity_outbox,)),
             *(() if self.signal_outbox is None else (self.signal_outbox,)),
             *(() if self.lane_review_ledger is None else (self.lane_review_ledger,)),
@@ -189,14 +189,14 @@ class FutureSessionPlanRequest(BaseModel):
                     and self.execution_database is None
                     and self.kr_calendar_store is not None
                     and self.kr_rollover_bundle is not None
-                    and (self.runtime_interpreter is None)
-                    == (self.delivery_database is None)
+                    and (self.runtime_interpreter is None) == (self.delivery_database is None)
                     and all(
                         value is None
                         for value in (
                             self.watch_database,
                             self.arm_database,
                             self.signing_key,
+                            self.paper_auto_arm_policy,
                             self.opportunity_outbox,
                             self.signal_outbox,
                             self.lane_review_ledger,
@@ -219,14 +219,17 @@ class StrategyRegistrationIdentity(BaseModel):
 
     @model_validator(mode="after")
     def validate_identity(self) -> Self:
-        if not all(
-            (
-                self.strategy_version,
-                self.code_version,
-                self.lane_id,
-                self.operating_mode,
+        if (
+            not all(
+                (
+                    self.strategy_version,
+                    self.code_version,
+                    self.lane_id,
+                    self.operating_mode,
+                )
             )
-        ) or _SHA256.fullmatch(self.registration_sha256) is None:
+            or _SHA256.fullmatch(self.registration_sha256) is None
+        ):
             raise ValueError("invalid strategy registration identity")
         return self
 
@@ -245,10 +248,7 @@ class SessionCalendarProvenance(BaseModel):
             not self.source
             or not self.source_version
             or _SHA256.fullmatch(self.evidence_sha256) is None
-            or (
-                self.observed_at is not None
-                and not _aware(self.observed_at)
-            )
+            or (self.observed_at is not None and not _aware(self.observed_at))
         ):
             raise ValueError("invalid calendar provenance")
         return self
@@ -296,9 +296,7 @@ class JobTimingSpec(BaseModel):
 
     @model_validator(mode="after")
     def validate_timing(self) -> Self:
-        optional_times_valid = self.expires_at is None or (
-            _aware(self.expires_at) and self.expires_at > self.run_at
-        )
+        optional_times_valid = self.expires_at is None or (_aware(self.expires_at) and self.expires_at > self.run_at)
         paths = (*self.source_paths, *self.destination_paths)
         gate_valid = self.finalizer_gate is None or (
             self.role is FutureSessionUsRole.US_DAY_CLOSE_FINALIZER
@@ -307,9 +305,7 @@ class JobTimingSpec(BaseModel):
         match self.payload_mode:
             case FutureSessionPayloadMode.ONCE:
                 payload_valid = (
-                    self.not_before is None
-                    and self.poll_until is None
-                    and self.poll_interval_seconds is None
+                    self.not_before is None and self.poll_until is None and self.poll_interval_seconds is None
                 )
             case FutureSessionPayloadMode.REPEAT_THROUGH_DEADLINE:
                 payload_valid = (
@@ -317,10 +313,7 @@ class JobTimingSpec(BaseModel):
                     and self.poll_until is not None
                     and _aware(self.poll_until)
                     and self.poll_until >= self.run_at
-                    and (
-                        self.expires_at is None
-                        or self.poll_until <= self.expires_at
-                    )
+                    and (self.expires_at is None or self.poll_until <= self.expires_at)
                     and self.poll_interval_seconds is not None
                     and self.poll_interval_seconds > 0
                 )
@@ -329,16 +322,10 @@ class JobTimingSpec(BaseModel):
                     self.poll_until is not None
                     and _aware(self.poll_until)
                     and self.poll_until >= self.run_at
-                    and (
-                        self.expires_at is None
-                        or self.poll_until <= self.expires_at
-                    )
+                    and (self.expires_at is None or self.poll_until <= self.expires_at)
                     and (
                         self.not_before is None
-                        or (
-                            _aware(self.not_before)
-                            and self.run_at <= self.not_before <= self.poll_until
-                        )
+                        or (_aware(self.not_before) and self.run_at <= self.not_before <= self.poll_until)
                     )
                     and self.poll_interval_seconds is not None
                     and self.poll_interval_seconds > 0
@@ -380,9 +367,7 @@ class ReadyToPrepareSessionPlan(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     schema_version: Literal[2] = 2
-    status: Literal[FutureSessionPlanStatus.READY_TO_PREPARE] = (
-        FutureSessionPlanStatus.READY_TO_PREPARE
-    )
+    status: Literal[FutureSessionPlanStatus.READY_TO_PREPARE] = FutureSessionPlanStatus.READY_TO_PREPARE
     plan_sha256: str
     source_request_sha256: str
     market: FutureSessionMarket
@@ -401,9 +386,7 @@ class ReadyToPrepareSessionPlan(BaseModel):
 
     @model_validator(mode="after")
     def validate_plan(self) -> Self:
-        registration_ids = tuple(
-            item.strategy_version for item in self.strategy_registrations
-        )
+        registration_ids = tuple(item.strategy_version for item in self.strategy_registrations)
         run_times = tuple(job.run_at for job in self.jobs)
         kr_hashes = (
             self.kr_rollover_bundle_sha256,
@@ -412,25 +395,16 @@ class ReadyToPrepareSessionPlan(BaseModel):
         kr_shape = (
             all(value is None for value in kr_hashes)
             if self.market is FutureSessionMarket.US
-            else all(
-                value is not None and _SHA256.fullmatch(value) is not None
-                for value in kr_hashes
-            )
+            else all(value is not None and _SHA256.fullmatch(value) is not None for value in kr_hashes)
         )
         us_roles = tuple(job.role for job in self.jobs)
         us_shape = (
             len(self.jobs) == len(FutureSessionUsRole)
             and us_roles == tuple(FutureSessionUsRole)
-            and all(
-                job.label is not None
-                and job.expires_at is not None
-                and bool(job.command)
-                for job in self.jobs
-            )
+            and all(job.label is not None and job.expires_at is not None and bool(job.command) for job in self.jobs)
             and self.runtime_environment is not None
             if self.market is FutureSessionMarket.US
-            else all(job.role is None for job in self.jobs)
-            and self.runtime_environment is None
+            else all(job.role is None for job in self.jobs) and self.runtime_environment is None
         )
         if (
             not self.strategy_registrations
@@ -450,9 +424,7 @@ class WaitingSessionAuthority(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     schema_version: Literal[2] = 2
-    status: Literal[FutureSessionPlanStatus.WAITING_AUTHORITY] = (
-        FutureSessionPlanStatus.WAITING_AUTHORITY
-    )
+    status: Literal[FutureSessionPlanStatus.WAITING_AUTHORITY] = FutureSessionPlanStatus.WAITING_AUTHORITY
     market: FutureSessionMarket
     target_session: dt.date | None
     compiled_at: dt.datetime
@@ -465,8 +437,7 @@ class WaitingSessionAuthority(BaseModel):
     def validate_waiting(self) -> Self:
         if (
             not self.reasons
-            or self.reasons
-            != tuple(sorted(set(self.reasons), key=lambda reason: reason.value))
+            or self.reasons != tuple(sorted(set(self.reasons), key=lambda reason: reason.value))
             or self.jobs
         ):
             raise ValueError("invalid waiting future-session authority")
@@ -482,21 +453,27 @@ FutureSessionPlanDecision = Annotated[
 def canonical_plan_json(
     value: ReadyToPrepareSessionPlan | WaitingSessionAuthority,
 ) -> str:
-    return json.dumps(
-        value.model_dump(mode="json"),
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    ) + "\n"
+    return (
+        json.dumps(
+            value.model_dump(mode="json"),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n"
+    )
 
 
 def canonical_request_json(value: FutureSessionPlanRequest) -> str:
-    return json.dumps(
-        value.model_dump(mode="json"),
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    ) + "\n"
+    return (
+        json.dumps(
+            value.model_dump(mode="json"),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n"
+    )
 
 
 def plan_content_sha256(payload: BaseModel) -> str:

@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, assert_never
 
+from trading_agent.paper_auto_arm_policy import load_paper_auto_arm_policy
+from trading_agent.paper_auto_arm_runtime import paper_auto_arm_request_id
 from trading_agent.paper_entry_source import load_current_orb_paper_entry
 from trading_agent.paper_operating_session_models import PaperOrderAdmissionRequest
 from trading_agent.us_day_operating_attestation import (
@@ -20,6 +22,7 @@ from trading_agent.us_day_operating_cli_contract import (
     EvidenceUsDayCommand,
     FinalizeAutoUsDayCommand,
     FinalizeUsDayCommand,
+    InvalidUsDayCliCommandError,
     PreflightUsDayCommand,
     RecoverUsDayCommand,
     parse_command,
@@ -163,8 +166,14 @@ def _request(
         ensure_ascii=True,
         separators=(",", ":"),
     )
+    request_id = command.arm_request_id
+    if request_id is None:
+        policy_path = command.paper_auto_arm_policy
+        if policy_path is None:
+            raise InvalidUsDayCliCommandError
+        request_id = paper_auto_arm_request_id(load_paper_auto_arm_policy(policy_path), command.session_id)
     return UsDayOperatingRequest(
-        arm_request_id=command.arm_request_id,
+        arm_request_id=request_id,
         session_id=command.session_id,
         strategy_version=intent.strategy_version,
         order_admission=admission,

@@ -28,6 +28,7 @@ from trading_agent.paper_account_activity_store import (
     InvalidPaperAccountActivityError,
     PaperAccountActivityConflictError,
 )
+from trading_agent.paper_auto_arm_policy import InvalidPaperAutoArmPolicyError
 from trading_agent.paper_entry_source import InvalidCurrentOrbPaperEntrySourceError
 from trading_agent.paper_mutation_recovery import (
     InvalidPaperMutationRecoverySnapshotError,
@@ -76,6 +77,7 @@ US_DAY_OPERATIONAL_ERRORS: Final[tuple[type[BaseException], ...]] = (
     InvalidHermesArmRequestError,
     InvalidHermesProjectionSourceError,
     InvalidPaperAccountActivityError,
+    InvalidPaperAutoArmPolicyError,
     InvalidPaperMutationRecordError,
     InvalidPaperMutationRecoverySnapshotError,
     InvalidPaperMutationTransitionError,
@@ -115,6 +117,8 @@ US_DAY_OPERATIONAL_ERRORS: Final[tuple[type[BaseException], ...]] = (
 
 
 def safe_operational_reason(error: BaseException) -> str:
+    if isinstance(error, InvalidPaperAutoArmPolicyError):
+        return error.reason.value
     if isinstance(error, InvalidHermesArmRequestError):
         return error.reason.value
     if isinstance(error, UninitializedUsDayExecutionStoreError):

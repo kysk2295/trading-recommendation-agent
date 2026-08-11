@@ -51,12 +51,14 @@ class UsDayArmedEntryCommand:
     experiment_ledger: Path
     lane_registry: Path
     repository: Path
+    authority_repository: Path | None
     signing_key: Path
     session_id: str
     entry_cutoff: dt.datetime
     poll_interval_seconds: float
     source_artifacts: tuple[Path, ...]
     terminal_output: Path | None
+    paper_auto_arm_policy: Path | None
     once: bool
 
 
@@ -112,11 +114,13 @@ def parser() -> argparse.ArgumentParser:
     for flag, _ in paths:
         root.add_argument(flag, type=_absolute_path, required=True)
     root.add_argument("--signing-key", type=_absolute_path, default=DEFAULT_HERMES_ARM_SIGNING_KEY_PATH.expanduser())
+    root.add_argument("--authority-repository", type=_absolute_path)
     root.add_argument("--session-id", required=True)
     root.add_argument("--entry-cutoff", type=_aware_datetime, required=True)
     root.add_argument("--poll-interval-seconds", type=_poll_interval, required=True)
     root.add_argument("--source-artifact", type=Path, action="append", default=[])
     root.add_argument("--terminal-output", type=_absolute_path)
+    root.add_argument("--paper-auto-arm-policy", type=_absolute_path)
     root.add_argument("--once", action="store_true")
     return root
 
@@ -134,12 +138,14 @@ def parse_command(argv: Sequence[str] | None = None) -> UsDayArmedEntryCommand:
         args.experiment_ledger,
         args.lane_registry,
         args.repository,
+        args.authority_repository,
         args.signing_key,
         args.session_id,
         args.entry_cutoff,
         args.poll_interval_seconds,
         source_artifacts,
         args.terminal_output,
+        args.paper_auto_arm_policy,
         args.once,
     )
 
@@ -158,6 +164,8 @@ def _observe(command: UsDayArmedEntryCommand, dependencies: UsDayArmedEntryDepen
                 return 0
             dependencies.sleeper(command.poll_interval_seconds)
             continue
+        if command.paper_auto_arm_policy is not None:
+            return dependencies.operating_main(_auto_operating_argv(command))
         matching: tuple[HermesArmRequest, ...]
         if os.path.lexists(command.arm_database):
             store = dependencies.store_factory(command.arm_database, dependencies.signer_loader(command.signing_key))
@@ -194,27 +202,79 @@ def _matching_arms(store: HermesArmStore, session_id: str, now: dt.datetime) -> 
 
 def _operating_argv(command: UsDayArmedEntryCommand, request: HermesArmRequest) -> tuple[str, ...]:
     arguments = (
-        "run", "--arm-database", str(command.arm_database),
-        "--arm-request-id", request.request_id,
-        "--delivery-database", str(command.delivery_database),
-        "--execution-database", str(command.execution_database),
-        "--experiment-ledger", str(command.experiment_ledger),
-        "--lane-registry", str(command.lane_registry),
-        "--repository", str(command.repository),
-        "--session-id", command.session_id,
-        "--signing-key", str(command.signing_key),
-        "--watch-database", str(command.watch_database),
+        "run",
+        "--arm-database",
+        str(command.arm_database),
+        "--arm-request-id",
+        request.request_id,
+        "--delivery-database",
+        str(command.delivery_database),
+        "--execution-database",
+        str(command.execution_database),
+        "--experiment-ledger",
+        str(command.experiment_ledger),
+        "--lane-registry",
+        str(command.lane_registry),
+        "--repository",
+        str(command.repository),
+        "--session-id",
+        command.session_id,
+        "--signing-key",
+        str(command.signing_key),
+        "--watch-database",
+        str(command.watch_database),
+        *_authority_repository_argv(command),
     )
     if command.terminal_output is None:
         return arguments
     return (
         arguments
         + tuple(item for path in command.source_artifacts for item in ("--source-artifact", str(path)))
-        + (
-            "--terminal-output",
-            str(command.terminal_output),
-        )
+        + ("--terminal-output", str(command.terminal_output))
     )
+
+
+def _auto_operating_argv(command: UsDayArmedEntryCommand) -> tuple[str, ...]:
+    policy = command.paper_auto_arm_policy
+    if policy is None:
+        raise InvalidUsDayArmedEntryCommandError
+    arguments = (
+        "run",
+        "--arm-database",
+        str(command.arm_database),
+        "--paper-auto-arm-policy",
+        str(policy),
+        "--delivery-database",
+        str(command.delivery_database),
+        "--execution-database",
+        str(command.execution_database),
+        "--experiment-ledger",
+        str(command.experiment_ledger),
+        "--lane-registry",
+        str(command.lane_registry),
+        "--repository",
+        str(command.repository),
+        "--session-id",
+        command.session_id,
+        "--signing-key",
+        str(command.signing_key),
+        "--watch-database",
+        str(command.watch_database),
+        *_authority_repository_argv(command),
+    )
+    if command.terminal_output is None:
+        return arguments
+    return (
+        arguments
+        + tuple(item for path in command.source_artifacts for item in ("--source-artifact", str(path)))
+        + ("--terminal-output", str(command.terminal_output))
+    )
+
+
+def _authority_repository_argv(command: UsDayArmedEntryCommand) -> tuple[str, ...]:
+    if command.authority_repository is None:
+        return ()
+    return ("--authority-repository", str(command.authority_repository))
 
 
 def _validate_session(command: UsDayArmedEntryCommand, now: dt.datetime) -> None:

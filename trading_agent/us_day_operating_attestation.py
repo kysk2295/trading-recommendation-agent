@@ -111,7 +111,7 @@ def publish_us_day_run_terminal(
             inspection.broker_shadow_ledger_equal,
         ),
         UsDayTerminalPublication(
-            command.authority.repository,
+            command.source_repository,
             command.source_artifact_paths,
             AcceptanceSessionKind.REAL,
             "real_session",
