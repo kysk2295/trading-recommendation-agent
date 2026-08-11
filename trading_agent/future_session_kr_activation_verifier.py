@@ -66,8 +66,7 @@ def verify_kr_future_session_activation(
     verify_frozen_runtime(manifest.frozen_runtime, manifest.runtime_commit_sha)
     if (
         not manifest.runtime_interpreter.is_file()
-        or experiment_ledger_v7_identity(manifest.experiment_ledger)
-        != manifest.experiment_ledger_identity_sha256
+        or experiment_ledger_v7_identity(manifest.experiment_ledger) != manifest.experiment_ledger_identity_sha256
     ):
         raise FutureSessionActivationError("kr_runtime_authority_invalid")
     entry = manifest.entry
@@ -93,8 +92,7 @@ def verify_kr_future_session_activation(
     rendered_plist = read_private_file(entry.persistent_plist, PRIVATE_FILE_MODE)
     if (
         hashlib.sha256(rendered_payload).hexdigest() != entry.payload_sha256
-        or hashlib.sha256(rendered_wrapper).hexdigest()
-        != entry.persistent_wrapper_sha256
+        or hashlib.sha256(rendered_wrapper).hexdigest() != entry.persistent_wrapper_sha256
         or hashlib.sha256(rendered_plist).hexdigest() != entry.persistent_plist_sha256
     ):
         raise FutureSessionActivationError("artifact_hash_mismatch")
@@ -113,6 +111,19 @@ def verify_kr_future_session_activation(
 
 
 def verify_kr_supervisor_preflight(manifest_path: Path) -> None:
+    manifest = _verify_kr_supervisor_runtime_preflight(manifest_path)
+    if experiment_ledger_v7_identity(manifest.experiment_ledger) != manifest.experiment_ledger_identity_sha256:
+        raise FutureSessionActivationError("bound_authority_changed")
+
+
+def verify_kr_supervisor_restart_preflight(manifest_path: Path) -> None:
+    manifest = _verify_kr_supervisor_runtime_preflight(manifest_path)
+    _ = experiment_ledger_v7_identity(manifest.experiment_ledger)
+
+
+def _verify_kr_supervisor_runtime_preflight(
+    manifest_path: Path,
+) -> KrFutureSessionPreparationManifest:
     payload = read_private_file(manifest_path, PRIVATE_FILE_MODE)
     try:
         manifest = KrFutureSessionPreparationManifest.model_validate_json(payload)
@@ -125,11 +136,7 @@ def verify_kr_supervisor_preflight(manifest_path: Path) -> None:
         current_main = current_main_commit(manifest.authority_repository)
     except CurrentMainAuthorityError:
         raise FutureSessionActivationError("current_main_authority_invalid") from None
-    if (
-        current_main != manifest.scheduler_main_sha
-        or experiment_ledger_v7_identity(manifest.experiment_ledger)
-        != manifest.experiment_ledger_identity_sha256
-    ):
+    if current_main != manifest.scheduler_main_sha:
         raise FutureSessionActivationError("bound_authority_changed")
     verify_frozen_runtime(manifest.frozen_runtime, manifest.runtime_commit_sha)
     entry = manifest.entry
@@ -138,16 +145,14 @@ def verify_kr_supervisor_preflight(manifest_path: Path) -> None:
     rendered_plist = read_private_file(entry.persistent_plist, PRIVATE_FILE_MODE)
     if (
         hashlib.sha256(rendered_payload).hexdigest() != entry.payload_sha256
-        or hashlib.sha256(rendered_wrapper).hexdigest()
-        != entry.persistent_wrapper_sha256
+        or hashlib.sha256(rendered_wrapper).hexdigest() != entry.persistent_wrapper_sha256
         or hashlib.sha256(rendered_plist).hexdigest() != entry.persistent_plist_sha256
         or len(manifest.internal_phase_epochs) != 6
         or not manifest.runtime_interpreter.is_file()
-        or not (
-            manifest.authority_repository / "run_future_session_materialize.py"
-        ).is_file()
+        or not (manifest.authority_repository / "run_future_session_materialize.py").is_file()
     ):
         raise FutureSessionActivationError("invalid_internal_phase_count")
+    return manifest
 
 
 def _verify_bound_authority_files(
@@ -157,8 +162,7 @@ def _verify_bound_authority_files(
     plan_payload = read_private_file(manifest.plan_file, PRIVATE_FILE_MODE)
     if (
         hashlib.sha256(request_payload).hexdigest() != manifest.request_sha256
-        or hashlib.sha256(plan_payload).hexdigest()
-        != manifest.canonical_plan_file_sha256
+        or hashlib.sha256(plan_payload).hexdigest() != manifest.canonical_plan_file_sha256
         or manifest.plan_sha256.encode() not in plan_payload
     ):
         raise FutureSessionActivationError("authority_file_hash_mismatch")
@@ -168,4 +172,5 @@ __all__ = (
     "VerifiedKrActivation",
     "verify_kr_future_session_activation",
     "verify_kr_supervisor_preflight",
+    "verify_kr_supervisor_restart_preflight",
 )

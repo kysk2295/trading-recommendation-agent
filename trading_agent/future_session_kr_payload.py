@@ -18,13 +18,23 @@ class KrSupervisorPayloadSpec:
     policy_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class KrRestartableRunnerSpec:
+    label: str
+    run_epoch: int
+    expires_epoch: int
+    receipt: Path
+    command: tuple[str, ...]
+    persistent_plist: Path
+
+
 def render_kr_supervisor_payload(spec: KrSupervisorPayloadSpec) -> str:
     epochs = " ".join(str(epoch) for epoch in spec.phase_epochs)
     command = shlex.join(
         (
             str(spec.interpreter),
             str(spec.current_main_entrypoint),
-            "supervise-kr-preflight",
+            "supervise-kr",
             "--manifest",
             str(spec.manifest),
         )
@@ -50,4 +60,61 @@ exec {command}
 """
 
 
-__all__ = ("KrSupervisorPayloadSpec", "render_kr_supervisor_payload")
+def render_kr_restartable_runner(spec: KrRestartableRunnerSpec) -> str:
+    command = shlex.join(spec.command)
+    return f"""#!/bin/zsh
+
+set -u
+umask 077
+
+readonly job_label={shlex.quote(spec.label)}
+readonly run_epoch={spec.run_epoch}
+readonly expires_epoch={spec.expires_epoch}
+readonly receipt={shlex.quote(str(spec.receipt))}
+readonly claim={shlex.quote(f"{spec.receipt}.claim")}
+readonly persistent_plist={shlex.quote(str(spec.persistent_plist))}
+
+cleanup_job() {{
+  /bin/launchctl remove $job_label >/dev/null 2>&1 || true
+  /bin/rm -f $persistent_plist
+}}
+
+write_receipt() {{
+  local result=$1
+  local temporary_receipt="${{receipt}}.tmp.$$"
+  /usr/bin/printf '{{"completed_at_epoch":%s,"result":"%s","schema_version":1}}\n' \
+    "$(/bin/date +%s)" "$result" > $temporary_receipt
+  /bin/chmod 600 $temporary_receipt
+  /bin/mv -f $temporary_receipt $receipt
+}}
+
+if [[ -f $receipt ]]; then
+  cleanup_job
+  exit 0
+fi
+while (( $(/bin/date +%s) < run_epoch )); do /bin/sleep 30; done
+if (( $(/bin/date +%s) > expires_epoch )); then
+  write_receipt expired
+  cleanup_job
+  exit 0
+fi
+/bin/rmdir $claim 2>/dev/null || true
+if ! /bin/mkdir $claim 2>/dev/null; then exit 75; fi
+/bin/chmod 700 $claim
+{command}
+exit_code=$?
+/bin/rmdir $claim 2>/dev/null || true
+if (( exit_code == 0 )); then
+  write_receipt terminal
+  cleanup_job
+fi
+exit $exit_code
+"""
+
+
+__all__ = (
+    "KrRestartableRunnerSpec",
+    "KrSupervisorPayloadSpec",
+    "render_kr_restartable_runner",
+    "render_kr_supervisor_payload",
+)

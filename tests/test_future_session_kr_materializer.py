@@ -5,6 +5,8 @@ import json
 import plistlib
 import shutil
 import stat
+import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -17,6 +19,13 @@ from trading_agent.future_session_kr_materializer import (
 )
 from trading_agent.future_session_kr_materializer_models import (
     KrFutureSessionMaterializationRequest,
+)
+from trading_agent.future_session_kr_payload import (
+    KrRestartableRunnerSpec,
+    render_kr_restartable_runner,
+)
+from trading_agent.future_session_materialize_cli_parser import (
+    build_future_session_parser,
 )
 from trading_agent.future_session_plan_models import (
     canonical_request_json,
@@ -39,10 +48,41 @@ def test_prepare_kr_command_is_exposed() -> None:
     )
 
     # When
-    parsed = run_future_session_materialize._parser().parse_args(arguments)
+    parsed = build_future_session_parser().parse_args(arguments)
 
     # Then
     assert parsed.command == "prepare-kr"
+
+
+def test_kr_restartable_wrapper_leaves_abnormal_exit_unreceipted(tmp_path: Path) -> None:
+    # Given
+    receipt = tmp_path / "receipt.json"
+    plist = tmp_path / "job.plist"
+    plist.write_text("fixture", encoding="utf-8")
+    now = int(time.time())
+    failed = tmp_path / "failed.zsh"
+    failed.write_text(
+        render_kr_restartable_runner(
+            KrRestartableRunnerSpec(
+                label="ai.trading-agent.fixture",
+                run_epoch=now - 1,
+                expires_epoch=now + 60,
+                receipt=receipt,
+                command=("/usr/bin/false",),
+                persistent_plist=plist,
+            )
+        ),
+        encoding="utf-8",
+    )
+    failed.chmod(0o700)
+
+    # When
+    failed_result = subprocess.run(("/bin/zsh", str(failed)), check=False)
+
+    # Then
+    assert failed_result.returncode == 1
+    assert not receipt.exists()
+    assert plist.exists()
 
 
 def test_prepare_kr_materializes_exactly_one_restartable_supervisor(
@@ -66,34 +106,30 @@ def test_prepare_kr_materializes_exactly_one_restartable_supervisor(
     # Then
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     entry = manifest["entry"]
-    assert manifest["request_sha256"] == hashlib.sha256(
-        canonical_request_json(request).encode()
-    ).hexdigest()
+    assert manifest["request_sha256"] == hashlib.sha256(canonical_request_json(request).encode()).hexdigest()
     assert manifest["plan_sha256"] == plan.plan_sha256
     assert manifest["scheduler_main_sha"] == request.scheduler_main_sha
     assert manifest["runtime_commit_sha"] == request.frozen_runtime.commit_sha
     assert manifest["experiment_ledger_schema_version"] == 7
     assert manifest["kr_rollover_bundle_sha256"] == plan.kr_rollover_bundle_sha256
     assert manifest["kr_policy_sha256"] == plan.kr_policy_sha256
-    assert manifest["internal_phase_epochs"] == [
-        int(job.run_at.timestamp()) for job in plan.jobs
-    ]
+    assert manifest["internal_phase_epochs"] == [int(job.run_at.timestamp()) for job in plan.jobs]
     assert request.experiment_ledger.read_bytes() == ledger_before
     assert len(tuple((plan.artifact_layout.root / "jobs").glob("*.plist"))) == 1
     assert len(tuple((plan.artifact_layout.root / "jobs").glob("*.persistent.zsh"))) == 1
     assert len(tuple((plan.artifact_layout.root / "jobs").glob("*.payload.zsh"))) == 1
     assert len(tuple((plan.artifact_layout.root / "receipts").glob("*.json"))) == 0
-    assert "finalizer" not in "\n".join(
-        str(path) for path in plan.artifact_layout.root.rglob("*")
-    )
+    assert "finalizer" not in "\n".join(str(path) for path in plan.artifact_layout.root.rglob("*"))
     with Path(entry["persistent_plist"]).open("rb") as handle:
         launch_agent = plistlib.load(handle)
-    assert "KeepAlive" not in launch_agent
-    assert launch_agent["Label"].endswith(
-        f".{plan.target_session.isoformat()}.supervisor"
-    )
+    assert launch_agent["KeepAlive"] == {"SuccessfulExit": False}
+    assert launch_agent["Label"].endswith(f".{plan.target_session.isoformat()}.supervisor")
     payload = Path(entry["payload_wrapper"]).read_text(encoding="utf-8")
-    assert "supervise-kr-preflight" in payload
+    assert "supervise-kr" in payload
+    assert "supervise-kr-preflight" not in payload
+    wrapper = Path(entry["persistent_wrapper"]).read_text(encoding="utf-8")
+    assert "if (( exit_code == 0 ))" in wrapper
+    assert "write_receipt" in wrapper
     assert "readonly -a internal_phase_epochs=(" in payload
     assert stat.S_IMODE(manifest_path.stat().st_mode) == 0o600
 
@@ -201,7 +237,7 @@ def test_kr_cli_help_bad_prepare_happy_prepare_and_typed_preflight(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # Given
-    help_text = run_future_session_materialize._parser().format_help()
+    help_text = build_future_session_parser().format_help()
     invalid_request = tmp_path / "invalid-request.json"
     invalid_plan = tmp_path / "invalid-plan.json"
     invalid_request.write_text("{\n", encoding="utf-8")

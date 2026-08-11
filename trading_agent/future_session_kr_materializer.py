@@ -21,7 +21,9 @@ from trading_agent.future_session_kr_materializer_models import (
     KrFutureSessionMaterializationRequest,
 )
 from trading_agent.future_session_kr_payload import (
+    KrRestartableRunnerSpec,
     KrSupervisorPayloadSpec,
+    render_kr_restartable_runner,
     render_kr_supervisor_payload,
 )
 from trading_agent.future_session_plan_compiler import compile_future_session_plan
@@ -44,10 +46,6 @@ from trading_agent.future_session_us_materializer_io import (
 from trading_agent.future_session_us_materializer_reader import (
     read_private_canonical_file,
 )
-from trading_agent.launchd_one_shot_runner import (
-    OneShotRunnerSpec,
-    render_persistent_runner,
-)
 
 _PLAN_ADAPTER = TypeAdapter(FutureSessionPlanDecision)
 _FILE_MODE = 0o600
@@ -59,9 +57,7 @@ def materialize_kr_future_session(
     materialization: KrFutureSessionMaterializationRequest,
 ) -> Path:
     output = materialization.output_dir
-    launch_agents = materialization.launch_agents_dir or (
-        Path.home() / "Library" / "LaunchAgents"
-    )
+    launch_agents = materialization.launch_agents_dir or (Path.home() / "Library" / "LaunchAgents")
     if not output.is_absolute() or not launch_agents.is_absolute():
         raise FutureSessionMaterializationError("absolute_output_required")
     request_payload = read_private_canonical_file(materialization.request_path)
@@ -197,22 +193,14 @@ def _prepare_supervisor(
     ).encode()
     write_private_file(stage_path(stage, output, payload), payload_content, _EXECUTABLE_MODE)
     installed_plist = launch_agents / f"{label}.plist"
-    wrapper_content = render_persistent_runner(
-        OneShotRunnerSpec(
+    wrapper_content = render_kr_restartable_runner(
+        KrRestartableRunnerSpec(
             label=label,
-            run_at=plan.jobs[0].run_at,
-            expires_at=plan.jobs[-1].run_at,
+            run_epoch=int(plan.jobs[0].run_at.timestamp()),
+            expires_epoch=int(plan.jobs[-1].run_at.timestamp()) + 900,
             receipt=receipt,
             command=(str(payload),),
             persistent_plist=installed_plist,
-            authority_repository=request.authority_repository,
-            source_commit=plan.scheduler_main_sha,
-            role="kr_full_session_supervisor",
-            request_sha256=plan.source_request_sha256,
-            plan_sha256=plan.plan_sha256,
-            runtime_commit_sha=plan.frozen_runtime.commit_sha,
-            runtime_attestation_sha256=ledger_identity,
-            preparation_manifest=manifest_path,
         )
     ).encode()
     write_private_file(stage_path(stage, output, wrapper), wrapper_content, _EXECUTABLE_MODE)
@@ -221,6 +209,7 @@ def _prepare_supervisor(
             "Label": label,
             "ProcessType": "Background",
             "ProgramArguments": ["/bin/zsh", str(wrapper)],
+            "KeepAlive": {"SuccessfulExit": False},
             "RunAtLoad": True,
             "StandardErrorPath": str(stderr_log),
             "StandardOutPath": str(stdout_log),
