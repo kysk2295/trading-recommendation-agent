@@ -15,6 +15,8 @@ from trading_agent.future_session_coordinator_models import (
 )
 
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
+MIN_COORDINATOR_POLL_SECONDS = 1
+MAX_COORDINATOR_POLL_SECONDS = 3600
 
 
 class InvalidFutureSessionCoordinatorServiceModelError(ValueError):
@@ -42,7 +44,10 @@ class FutureSessionCoordinatorServiceConfig(BaseModel):
     launch_agents_dir: Path
     authority_repository: Path
     scheduler_main_sha: str
-    poll_interval_seconds: int
+    poll_interval_seconds: int = Field(
+        ge=MIN_COORDINATOR_POLL_SECONDS,
+        le=MAX_COORDINATOR_POLL_SECONDS,
+    )
 
     @model_validator(mode="after")
     def validate_config(self) -> Self:
@@ -53,11 +58,7 @@ class FutureSessionCoordinatorServiceConfig(BaseModel):
             self.launch_agents_dir,
             self.authority_repository,
         )
-        if (
-            any(not path.is_absolute() for path in paths)
-            or _GIT_SHA.fullmatch(self.scheduler_main_sha) is None
-            or self.poll_interval_seconds <= 0
-        ):
+        if any(not path.is_absolute() for path in paths) or _GIT_SHA.fullmatch(self.scheduler_main_sha) is None:
             raise InvalidFutureSessionCoordinatorServiceModelError
         return self
 
@@ -143,6 +144,8 @@ def _canonical(value: BaseModel) -> str:
 
 
 __all__ = (
+    "MAX_COORDINATOR_POLL_SECONDS",
+    "MIN_COORDINATOR_POLL_SECONDS",
     "FutureSessionCoordinatorServiceConfig",
     "FutureSessionCoordinatorServiceReport",
     "FutureSessionCoordinatorServiceState",

@@ -6,7 +6,9 @@
 
 - bootstrap manifest, 생성된 config, US/KR template은 현재 사용자 소유의 일반 파일이며 mode `600`이어야 한다.
 - bundle, state root, LaunchAgents 디렉터리는 현재 사용자 소유의 실제 디렉터리이며 mode `700`이어야 한다. 심볼릭 링크와 공개 디렉터리는 거부된다.
+- bundle, state root, LaunchAgents, authority repository는 서로 같거나 조상·자손 관계일 수 없다.
 - manifest의 `scheduler_main_sha`는 clean local `main` 및 `origin/main`과 정확히 같아야 한다.
+- poll interval은 1초 이상 3600초 이하만 허용한다.
 - US template의 `paper_auto_arm_policy`는 수동 Paper pilot 승인 receipt가 검토되기 전까지 설정하지 않는다. champion이 없거나 세션 권한이 맞지 않으면 auto-arm은 계속 fail-closed 상태다.
 - 어떤 단계에서도 Alpaca live URL, KIS/LS 주문·잔고·계좌 변경 API를 사용하지 않는다.
 
@@ -47,7 +49,7 @@
 
 ## 재시작과 장애 확인
 
-동일 SHA의 frozen runtime을 재시작할 때는 `restart`를 사용한다. mutable `main`이 이후 이동했더라도 이미 검증·동결된 SHA만 실행하며, 재시작 후 fresh health가 없으면 job을 다시 내린다.
+동일 SHA의 frozen runtime을 재시작할 때는 `restart`를 사용한다. mutable `main`이 이후 이동했더라도 compiler는 명시적인 `frozen_runtime` authority mode에서 clean exact-commit runtime을 다시 검증하며, 재시작 후 fresh health가 없으면 job을 다시 내린다.
 
 ```text
 uv run --offline python run_future_session_coordinator_service.py restart --config /absolute/current/coordinator.json

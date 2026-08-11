@@ -22,7 +22,6 @@ from trading_agent.future_session_coordinator_service_health import (
     CoordinatorSleeper,
     evaluate_current_coordinator_health,
     evaluate_persisted_coordinator_health,
-    read_persisted_coordinator_report,
 )
 from trading_agent.future_session_coordinator_service_launchd import (
     ServicePlistError,
@@ -124,6 +123,7 @@ def main(
                 assert_never(unreachable)
     except (
         FrozenRuntimeError,
+        OverflowError,
         ServicePlistError,
         OSError,
         TypeError,
@@ -180,8 +180,9 @@ def _status(
     health = evaluate_current_coordinator_health(config, evaluated_at)
     if not health.accepted:
         raise FrozenRuntimeError(f"status_health_{health.reason}")
-    report = read_persisted_coordinator_report(config)
-    sys.stdout.write(canonical_service_report_json(report))
+    if health.report is None:
+        raise FrozenRuntimeError("status_health_report_missing")
+    sys.stdout.write(canonical_service_report_json(health.report))
     return 0
 
 

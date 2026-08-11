@@ -5,13 +5,19 @@ import os
 import stat
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from tests.test_future_session_coordinator_service import _repository
 from tests.test_future_session_coordinator_service_ready import _ready_config
 from trading_agent.future_session_coordinator_service import tick_service
 from trading_agent.future_session_coordinator_service_health import (
+    FutureSessionCoordinatorHealthEvaluation,
+    evaluate_current_coordinator_health,
     evaluate_persisted_coordinator_health,
 )
 from trading_agent.future_session_coordinator_service_models import (
+    FutureSessionCoordinatorServiceConfig,
     canonical_service_config_sha256,
 )
 
@@ -177,3 +183,59 @@ def test_activation_reports_unrecoverable_cleanup_failure(tmp_path: Path, capsys
 
     assert code == 2
     assert "activate_cleanup_bootout_failed" in capsys.readouterr().err
+
+
+def test_poll_interval_is_bounded_before_timing_apis(tmp_path: Path) -> None:
+    config = _ready_config(tmp_path)
+
+    with pytest.raises(ValidationError):
+        FutureSessionCoordinatorServiceConfig.model_validate(
+            config.model_dump(mode="python") | {"poll_interval_seconds": 10**100}
+        )
+
+    upper = config.model_copy(update={"poll_interval_seconds": 3600})
+    evaluation = evaluate_current_coordinator_health(
+        upper,
+        dt.datetime(2026, 7, 24, 20, tzinfo=dt.UTC),
+    )
+    assert evaluation.reason in {
+        "report_missing_or_invalid",
+        "config_mismatch",
+        "not_fresh",
+    }
+
+
+def test_health_evaluation_cannot_accept_without_validated_report() -> None:
+    with pytest.raises(ValidationError):
+        FutureSessionCoordinatorHealthEvaluation(
+            accepted=True,
+            reason="fresh_matching_ready",
+            report=None,
+        )
+
+
+def test_status_emits_the_exact_report_returned_by_health_evaluation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    import run_future_session_coordinator_service as cli
+
+    config = _ready_config(tmp_path)
+    observed_at = dt.datetime(2026, 7, 24, 20, tzinfo=dt.UTC)
+    report = tick_service(config, observed_at, service_started_at=observed_at)
+    evaluation = FutureSessionCoordinatorHealthEvaluation(
+        accepted=True,
+        reason="fresh_matching_ready",
+        report=report,
+    )
+    monkeypatch.setattr(cli, "evaluate_current_coordinator_health", lambda _config, _now: evaluation)
+    monkeypatch.setattr(
+        cli,
+        "read_persisted_coordinator_report",
+        lambda _config: (_ for _ in ()).throw(AssertionError("unvalidated second read")),
+        raising=False,
+    )
+
+    assert cli._status(config, observed_at) == 0
+    assert capsys.readouterr().out == cli.canonical_service_report_json(report)

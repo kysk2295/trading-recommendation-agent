@@ -134,6 +134,7 @@ def _dynamic_request(
         after_date=planning_after_date(context.market, context.tick.observed_at),
         compiled_at=context.tick.observed_at,
         scheduler_main_sha=context.tick.scheduler_main_sha,
+        scheduler_authority_mode="frozen_runtime",
         authority_repository=context.config.authority_repository,
         artifact_root=context.config.state_root / "artifacts",
         frozen_runtime=FrozenRuntimeAuthority(

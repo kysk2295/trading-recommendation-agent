@@ -21,6 +21,7 @@ from trading_agent.future_session_coordinator_service import (
 )
 from trading_agent.future_session_coordinator_service_health import (
     FutureSessionCoordinatorHealthEvaluation,
+    evaluate_persisted_coordinator_health,
 )
 from trading_agent.future_session_coordinator_service_launchd import (
     ServicePlistError,
@@ -249,6 +250,8 @@ def test_tick_coordinates_us_then_kr_without_launching_waiting_authority(
     # Then: each market reaches an authority terminal and no launchctl mutation occurs.
     assert report.us.result == "waiting_authority"
     assert report.kr.result == "waiting_authority"
+    assert report.us.reason != "scheduler_authority_invalid"
+    assert report.kr.reason != "scheduler_authority_invalid"
     assert calls == []
     status_path = config.state_root / "future-session-coordinator-status.json"
     assert stat.S_IMODE(status_path.stat().st_mode) == 0o600
@@ -287,11 +290,22 @@ def test_tick_keeps_using_pinned_runtime_when_main_moves_after_freeze(
         config,
         dt.datetime(2026, 7, 24, 20, tzinfo=dt.UTC),
     )
+    request, request_path, _plan_path = prepare_market_request(
+        config,
+        FutureSessionMarket.US,
+        FutureSessionTickAuthority(
+            observed_at=dt.datetime(2026, 7, 24, 20, tzinfo=dt.UTC),
+            scheduler_main_sha=configured_commit,
+            frozen_runtime=frozen,
+        ),
+    )
 
     assert report.scheduler_main_sha == configured_commit
     assert report.frozen_runtime == frozen
     assert report.us.result == "waiting_authority"
     assert report.kr.result == "waiting_authority"
+    assert request.scheduler_authority_mode == "frozen_runtime"
+    assert request_path.is_file()
 
 
 def test_provisioned_plist_is_keepalive_with_visible_private_logs(tmp_path: Path) -> None:
@@ -408,11 +422,7 @@ def test_service_activation_uses_exact_launchd_target_and_rolls_back(
     result = run_future_session_coordinator_service.main(
         ("activate", "--config", str(config_path)),
         runner=runner,
-        health_evaluator=lambda _config, _started, _now: FutureSessionCoordinatorHealthEvaluation(
-            accepted=True,
-            reason="fresh_matching_ready",
-            report=None,
-        ),
+        health_evaluator=_healthy_coordinator_evaluation,
     )
 
     domain = f"gui/{os.getuid()}"
@@ -442,3 +452,20 @@ def test_service_activation_uses_exact_launchd_target_and_rolls_back(
         expected.append(("/bin/launchctl", "bootout", target))
         assert commands[1:] == expected
         assert result == 2
+
+
+def _healthy_coordinator_evaluation(
+    config: FutureSessionCoordinatorServiceConfig,
+    started_at: dt.datetime,
+    observed_at: dt.datetime,
+) -> FutureSessionCoordinatorHealthEvaluation:
+    _ = tick_service(
+        config,
+        observed_at,
+        CoordinatorAdapters(
+            launchctl_runner=lambda _command: 0,
+            label_status_reader=lambda _label: False,
+        ),
+        service_started_at=observed_at,
+    )
+    return evaluate_persisted_coordinator_health(config, started_at, observed_at)

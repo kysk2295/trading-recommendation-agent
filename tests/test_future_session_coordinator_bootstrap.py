@@ -3,6 +3,9 @@ from __future__ import annotations
 import stat
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 import run_future_session_coordinator_service as cli
 from tests.test_future_session_coordinator_service import _repository
 from tests.test_future_session_coordinator_service_ready import _ready_config
@@ -80,9 +83,55 @@ def test_bootstrap_cli_builds_reviewed_manifest_and_provisions_plist(
     manifest_path.chmod(0o600)
 
     code = cli.main(("bootstrap", "--manifest", str(manifest_path)))
+    replay = cli.main(("bootstrap", "--manifest", str(manifest_path)))
     output = capsys.readouterr().out
 
-    assert code == 0
+    assert code == replay == 0
     assert '"result":"bootstrapped"' in output
     config = load_service_config(manifest.bundle_path / "coordinator.json")
     assert (config.launch_agents_dir / "ai.trading-agent.future-session-coordinator.plist").is_file()
+
+
+@pytest.mark.parametrize(
+    "overlap",
+    ("state", "launch", "authority", "state_child"),
+)
+def test_bootstrap_manifest_rejects_overlapping_operational_roots(
+    tmp_path: Path,
+    overlap: str,
+) -> None:
+    base = _ready_config(tmp_path)
+    bundle = (tmp_path / "bundle").absolute()
+    state_root = bundle if overlap == "state" else (tmp_path / "state").absolute()
+    launch_agents_dir = bundle if overlap == "launch" else (tmp_path / "launch").absolute()
+    authority_repository = bundle if overlap == "authority" else base.authority_repository
+    if overlap == "state_child":
+        state_root = bundle / "state"
+
+    with pytest.raises(ValidationError):
+        FutureSessionCoordinatorBootstrapManifest(
+            bundle_path=bundle,
+            state_root=state_root,
+            launch_agents_dir=launch_agents_dir,
+            authority_repository=authority_repository,
+            scheduler_main_sha=base.scheduler_main_sha,
+            poll_interval_seconds=30,
+            us_template=inspect_request(base.us_template_request_path),
+            kr_template=inspect_request(base.kr_template_request_path),
+        )
+
+
+def test_bootstrap_manifest_rejects_unbounded_poll_interval(tmp_path: Path) -> None:
+    base = _ready_config(tmp_path)
+
+    with pytest.raises(ValidationError):
+        FutureSessionCoordinatorBootstrapManifest(
+            bundle_path=(tmp_path / "bundle").absolute(),
+            state_root=(tmp_path / "state").absolute(),
+            launch_agents_dir=(tmp_path / "launch").absolute(),
+            authority_repository=base.authority_repository,
+            scheduler_main_sha=base.scheduler_main_sha,
+            poll_interval_seconds=10**100,
+            us_template=inspect_request(base.us_template_request_path),
+            kr_template=inspect_request(base.kr_template_request_path),
+        )

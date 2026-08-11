@@ -11,6 +11,8 @@ from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from trading_agent.future_session_coordinator_inspectors import inspect_request
 from trading_agent.future_session_coordinator_service_models import (
+    MAX_COORDINATOR_POLL_SECONDS,
+    MIN_COORDINATOR_POLL_SECONDS,
     FutureSessionCoordinatorServiceConfig,
     canonical_service_config_json,
 )
@@ -49,8 +51,12 @@ class FutureSessionCoordinatorBootstrapManifest(BaseModel):
             self.launch_agents_dir,
             self.authority_repository,
         )
+        normalized = tuple(Path(os.path.abspath(path)) for path in paths)
         if (
             any(not path.is_absolute() for path in paths)
+            or normalized != paths
+            or _roots_overlap(normalized)
+            or not (MIN_COORDINATOR_POLL_SECONDS <= self.poll_interval_seconds <= MAX_COORDINATOR_POLL_SECONDS)
             or self.us_template.market is not FutureSessionMarket.US
             or self.kr_template.market is not FutureSessionMarket.KR
             or self.us_template.scheduler_main_sha != self.scheduler_main_sha
@@ -180,6 +186,14 @@ def _fsync_directory(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def _roots_overlap(paths: tuple[Path, ...]) -> bool:
+    return any(
+        left == right or left.is_relative_to(right) or right.is_relative_to(left)
+        for index, left in enumerate(paths)
+        for right in paths[index + 1 :]
+    )
 
 
 __all__ = (

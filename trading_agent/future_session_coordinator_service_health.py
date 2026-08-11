@@ -5,7 +5,7 @@ import time
 from collections.abc import Callable
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from trading_agent.future_session_coordinator_service_models import (
     FutureSessionCoordinatorServiceConfig,
@@ -27,6 +27,10 @@ type CoordinatorHealthEvaluator = Callable[
 type CoordinatorSleeper = Callable[[float], None]
 
 
+class InvalidFutureSessionCoordinatorHealthError(ValueError):
+    pass
+
+
 class FutureSessionCoordinatorHealthEvaluation(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
@@ -42,6 +46,12 @@ class FutureSessionCoordinatorHealthEvaluation(BaseModel):
     ]
     report: FutureSessionCoordinatorServiceReport | None
 
+    @model_validator(mode="after")
+    def validate_evaluation(self) -> FutureSessionCoordinatorHealthEvaluation:
+        if self.accepted != (self.reason == "fresh_matching_ready" and self.report is not None):
+            raise InvalidFutureSessionCoordinatorHealthError
+        return self
+
 
 def read_persisted_coordinator_report(
     config: FutureSessionCoordinatorServiceConfig,
@@ -49,7 +59,7 @@ def read_persisted_coordinator_report(
     payload = read_private_text_query_only(config.state_root / "future-session-coordinator-status.json")
     report = FutureSessionCoordinatorServiceReport.model_validate_json(payload)
     if canonical_service_report_json(report) != payload:
-        raise ValueError("invalid coordinator report")
+        raise InvalidFutureSessionCoordinatorHealthError
     return report
 
 
@@ -137,6 +147,7 @@ __all__ = (
     "CoordinatorHealthEvaluator",
     "CoordinatorSleeper",
     "FutureSessionCoordinatorHealthEvaluation",
+    "InvalidFutureSessionCoordinatorHealthError",
     "await_fresh_coordinator_health",
     "evaluate_current_coordinator_health",
     "evaluate_persisted_coordinator_health",

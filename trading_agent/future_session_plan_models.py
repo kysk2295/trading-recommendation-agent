@@ -112,6 +112,7 @@ class FutureSessionPlanRequest(BaseModel):
     after_date: dt.date
     compiled_at: dt.datetime
     scheduler_main_sha: str
+    scheduler_authority_mode: Literal["current_main", "frozen_runtime"] = "current_main"
     authority_repository: Path
     frozen_runtime: FrozenRuntimeAuthority
     artifact_root: Path

@@ -7,8 +7,13 @@ from pathlib import Path
 import run_future_session_coordinator_service as cli
 from tests.test_future_session_coordinator_service import _git, _repository
 from tests.test_future_session_coordinator_service_ready import _ready_config
+from trading_agent.future_session_coordinator_service import (
+    CoordinatorAdapters,
+    tick_service,
+)
 from trading_agent.future_session_coordinator_service_health import (
     FutureSessionCoordinatorHealthEvaluation,
+    evaluate_persisted_coordinator_health,
 )
 from trading_agent.future_session_coordinator_service_launchd import (
     provision_service_plist,
@@ -259,9 +264,14 @@ def _write_and_provision(
     return path
 
 
-def _healthy(_config, _started, _now) -> FutureSessionCoordinatorHealthEvaluation:
-    return FutureSessionCoordinatorHealthEvaluation(
-        accepted=True,
-        reason="fresh_matching_ready",
-        report=None,
+def _healthy(config, started, now) -> FutureSessionCoordinatorHealthEvaluation:
+    _ = tick_service(
+        config,
+        now,
+        CoordinatorAdapters(
+            launchctl_runner=lambda _command: 0,
+            label_status_reader=lambda _label: False,
+        ),
+        service_started_at=now,
     )
+    return evaluate_persisted_coordinator_health(config, started, now)
