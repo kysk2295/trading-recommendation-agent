@@ -14,6 +14,7 @@ from trading_agent.future_session_execution_incident import (
     canonical_execution_incident_json,
 )
 from trading_agent.future_session_execution_incident_artifact import (
+    InvalidExecutionIncidentPublisherArtifactError,
     read_execution_incident_publisher_at_commit,
 )
 from trading_agent.future_session_execution_incident_queue import (
@@ -132,6 +133,38 @@ def test_publisher_artifact_ignores_dirty_worktree_replacements_and_path(
 
     assert read_execution_incident_publisher_at_commit(repository, commit) == b"trusted publisher\n"
     assert not fake_marker.exists()
+
+
+def test_publisher_artifact_does_not_lazy_fetch_missing_blob(tmp_path: Path) -> None:
+    repository = tmp_path / "runtime"
+    repository.mkdir(mode=0o700)
+    _git(repository, "init", "--quiet")
+    _git(repository, "config", "user.email", "publisher@example.invalid")
+    _git(repository, "config", "user.name", "Publisher Test")
+    source = repository / "run_future_session_execution_incident_publisher.py"
+    source.write_bytes(b"trusted publisher\n")
+    _git(repository, "add", source.name)
+    _git(repository, "commit", "--quiet", "-m", "publisher")
+    commit = _git(repository, "rev-parse", "HEAD")
+    blob = _git(repository, "rev-parse", f"{commit}:{source.name}")
+    helper_marker = tmp_path / "transport-helper-executed"
+    helper = tmp_path / "transport-helper"
+    helper.write_text(
+        f"#!/bin/sh\n/usr/bin/touch {helper_marker}\nexit 1\n",
+        encoding="utf-8",
+    )
+    helper.chmod(0o700)
+    _git(repository, "config", "remote.origin.url", f"ext::{helper}")
+    _git(repository, "config", "remote.origin.promisor", "true")
+    _git(repository, "config", "remote.origin.partialclonefilter", "blob:none")
+    _git(repository, "config", "protocol.ext.allow", "always")
+    object_path = repository / ".git" / "objects" / blob[:2] / blob[2:]
+    assert object_path.is_file()
+    object_path.unlink()
+
+    with pytest.raises(InvalidExecutionIncidentPublisherArtifactError):
+        _ = read_execution_incident_publisher_at_commit(repository, commit)
+    assert not helper_marker.exists()
 
 
 def _layout(tmp_path: Path) -> tuple[Path, Path, Path, dt.date]:
