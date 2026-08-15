@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -13,6 +14,10 @@ from trading_agent.future_session_execution_incident import (
     FutureSessionExecutionIncidentReceipt,
     canonical_execution_incident_json,
     project_execution_incident,
+)
+from trading_agent.future_session_execution_incident_queue import (
+    FutureSessionExecutionIncidentQueuePointer,
+    canonical_execution_incident_queue_json,
 )
 from trading_agent.future_session_kr_payload import (
     KrRestartableRunnerSpec,
@@ -34,12 +39,15 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
     incident_dir.mkdir(mode=0o700)
     role = "us_orb_watcher" if market == "us" else "kr_supervisor"
     incident = incident_dir / f"{role}.json"
+    queue_dir = tmp_path / "pending-execution-incidents"
+    queue_dir.mkdir(mode=0o700)
     wrapper = tmp_path / "runner.zsh"
     plist = tmp_path / "job.plist"
     plist.touch(mode=0o600)
     dashboard_now = dt.datetime.now(dt.UTC)
     target = (dashboard_now - dt.timedelta(days=1)).date()
     target_compact = target.strftime("%Y%m%d")
+    queue_receipt = queue_dir / f"{market}--{target.isoformat()}--{role}.json"
     request_sha256 = "a" * 64
     plan_sha256 = "b" * 64
     runtime_commit_sha = "c" * 40
@@ -75,6 +83,7 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
                 market="us",
                 target_session=target,
                 execution_incident_receipt=incident,
+                execution_incident_queue_receipt=queue_receipt,
             )
         )
         (repository / "untracked.py").write_text("raise RuntimeError\n", encoding="utf-8")
@@ -89,6 +98,7 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
                 persistent_plist=plist,
                 target_session=target,
                 incident_receipt=incident,
+                incident_queue_receipt=queue_receipt,
                 manifest=manifest,
                 request_sha256=request_sha256,
                 plan_sha256=plan_sha256,
@@ -101,9 +111,12 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
 
     completed = subprocess.run((str(wrapper),), check=False, capture_output=True, text=True)
     original_incident = incident.read_bytes()
+    original_pointer = queue_receipt.read_bytes()
     receipt.unlink()
+    queue_receipt.unlink()
     replayed = subprocess.run((str(wrapper),), check=False, capture_output=True, text=True)
     execution_incident = FutureSessionExecutionIncidentReceipt.model_validate_json(incident.read_bytes())
+    pointer = FutureSessionExecutionIncidentQueuePointer.model_validate_json(queue_receipt.read_bytes())
     delivery = tmp_path / "outputs" / "hermes" / "delivery.sqlite3"
     project_execution_incident(execution_incident, delivery)
     delivery.parent.chmod(0o700)
@@ -115,6 +128,9 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
     assert completed.returncode == 78
     assert replayed.returncode == 78
     assert incident.read_bytes() == original_incident
+    assert queue_receipt.read_bytes() == original_pointer
+    assert canonical_execution_incident_queue_json(pointer).encode() == original_pointer
+    assert pointer.incident_sha256 == hashlib.sha256(original_incident).hexdigest()
     assert canonical_execution_incident_json(execution_incident).encode() == incident.read_bytes()
     terminal = next(
         item

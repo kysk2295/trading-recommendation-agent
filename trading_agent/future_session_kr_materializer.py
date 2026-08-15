@@ -5,6 +5,7 @@ import os
 import plistlib
 import shutil
 import tempfile
+from contextlib import suppress
 from pathlib import Path
 
 from pydantic import TypeAdapter, ValidationError
@@ -35,6 +36,7 @@ from trading_agent.future_session_plan_models import (
     canonical_plan_json,
     canonical_request_json,
 )
+from trading_agent.future_session_us_activation_verifier import verify_private_directory
 from trading_agent.future_session_us_materializer_errors import (
     FutureSessionMaterializationError,
 )
@@ -101,6 +103,8 @@ def materialize_kr_future_session(
         raise FutureSessionMaterializationError("kr_supervisor_command_missing")
     if os.path.lexists(output):
         raise FutureSessionMaterializationError("output_already_exists")
+    incident_queue_root = request.artifact_root.parent / "pending-execution-incidents"
+    _ensure_incident_queue_root(incident_queue_root)
     output.parent.mkdir(mode=_DIRECTORY_MODE, parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp(prefix=f".{output.name}.prepare-", dir=output.parent))
     stage.chmod(_DIRECTORY_MODE)
@@ -122,6 +126,7 @@ def materialize_kr_future_session(
             ledger_identity=ledger_identity,
             bundle_hash=bundle_hash,
             policy_hash=policy_hash,
+            incident_queue_root=incident_queue_root,
         )
         manifest = KrFutureSessionPreparationManifest(
             target_session=plan.target_session.isoformat(),
@@ -168,6 +173,7 @@ def _prepare_supervisor(
     ledger_identity: str,
     bundle_hash: str,
     policy_hash: str,
+    incident_queue_root: Path,
 ) -> PreparedKrSupervisorArtifact:
     if len(epochs) != 6 or request.runtime_interpreter is None:
         raise FutureSessionMaterializationError("invalid_kr_phase_count")
@@ -210,6 +216,7 @@ def _prepare_supervisor(
             persistent_plist=installed_plist,
             target_session=plan.target_session,
             incident_receipt=output / "execution-incidents" / "kr_supervisor.json",
+            incident_queue_receipt=(incident_queue_root / f"kr--{plan.target_session.isoformat()}--kr_supervisor.json"),
             manifest=manifest_path,
             request_sha256=plan.source_request_sha256,
             plan_sha256=plan.plan_sha256,
@@ -245,6 +252,12 @@ def _prepare_supervisor(
         stdout_log=stdout_log,
         stderr_log=stderr_log,
     )
+
+
+def _ensure_incident_queue_root(path: Path) -> None:
+    with suppress(FileExistsError):
+        path.mkdir(mode=_DIRECTORY_MODE, parents=True, exist_ok=False)
+    verify_private_directory(path)
 
 
 __all__ = ("FutureSessionMaterializationError", "materialize_kr_future_session")

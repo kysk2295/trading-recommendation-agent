@@ -33,6 +33,7 @@ class KrRestartableRunnerSpec:
     persistent_plist: Path
     target_session: dt.date | None = None
     incident_receipt: Path | None = None
+    incident_queue_receipt: Path | None = None
     manifest: Path | None = None
     request_sha256: str | None = None
     plan_sha256: str | None = None
@@ -77,6 +78,7 @@ def render_kr_restartable_runner(spec: KrRestartableRunnerSpec) -> str:
     incident_provenance = (
         spec.target_session,
         spec.incident_receipt,
+        spec.incident_queue_receipt,
         spec.manifest,
         spec.request_sha256,
         spec.plan_sha256,
@@ -90,6 +92,7 @@ def render_kr_restartable_runner(spec: KrRestartableRunnerSpec) -> str:
         if (
             spec.target_session is None
             or spec.incident_receipt is None
+            or spec.incident_queue_receipt is None
             or spec.manifest is None
             or spec.request_sha256 is None
             or spec.plan_sha256 is None
@@ -100,6 +103,7 @@ def render_kr_restartable_runner(spec: KrRestartableRunnerSpec) -> str:
         incident_declarations, incident_writer = render_kr_execution_incident_shell(
             spec.target_session,
             spec.incident_receipt,
+            spec.incident_queue_receipt,
             spec.manifest,
             spec.request_sha256,
             spec.plan_sha256,

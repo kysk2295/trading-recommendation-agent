@@ -25,6 +25,7 @@ from trading_agent.future_session_coordinator_service_lifecycle import (
 from trading_agent.future_session_coordinator_service_models import (
     FutureSessionCoordinatorServiceConfig,
     canonical_service_config_json,
+    canonical_service_config_sha256,
 )
 
 
@@ -200,6 +201,118 @@ def test_replace_unhealthy_candidate_restores_fresh_current(tmp_path: Path) -> N
     ]
 
 
+def test_replace_cleans_candidate_children_before_restoring_current(tmp_path: Path) -> None:
+    replacement = _replacement(tmp_path)
+    label = "ai.trading-agent.future-session.kr.2026-07-27.supervisor"
+    loaded: set[str] = set()
+    calls: list[tuple[str, ...]] = []
+    candidate_plist: Path | None = None
+
+    def runner(command: tuple[str, ...], _descriptors: tuple[int, ...]) -> int:
+        calls.append(command)
+        target = command[-1]
+        if target.endswith(label):
+            if command[1] == "print":
+                return 0 if label in loaded else 113
+            if command[1] == "bootout":
+                loaded.discard(label)
+                return 0
+        return 0
+
+    def health(config, _started, _now):
+        nonlocal candidate_plist
+        if config == replacement.candidate:
+            candidate_plist = _candidate_child(replacement.candidate, label)
+            loaded.add(label)
+            return FutureSessionCoordinatorHealthEvaluation(
+                accepted=False,
+                reason="runtime_failed",
+                report=None,
+            )
+        return _healthy(config, _started, _now)
+
+    code = cli.main(
+        (
+            "replace",
+            "--current-config",
+            str(replacement.current_path),
+            "--candidate-config",
+            str(replacement.candidate_path),
+        ),
+        runner=runner,
+        health_evaluator=health,
+        sleeper=lambda _seconds: None,
+    )
+
+    assert code == 2
+    assert candidate_plist is not None
+    assert not candidate_plist.exists()
+    assert label not in loaded
+    child_bootout = calls.index(("/bin/launchctl", "bootout", f"gui/{os.getuid()}/{label}"))
+    restore_bootstrap = max(index for index, command in enumerate(calls) if command[1] == "bootstrap")
+    assert child_bootout < restore_bootstrap
+    config_sha256 = canonical_service_config_sha256(replacement.candidate)
+    cleanup = replacement.candidate.state_root / "replacement-child-cleanup" / f"{config_sha256}.json"
+    assert cleanup.stat().st_mode & 0o777 == 0o600
+    assert json.loads(cleanup.read_text(encoding="utf-8")) == {
+        "config_sha256": config_sha256,
+        "labels": [label],
+        "result": "absent",
+        "scheduler_main_sha": replacement.candidate.scheduler_main_sha,
+        "schema_version": 1,
+    }
+
+
+def test_replace_refuses_current_restore_when_candidate_child_cleanup_is_ambiguous(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    replacement = _replacement(tmp_path)
+    label = "ai.trading-agent.future-session.kr.2026-07-27.supervisor"
+    loaded: set[str] = set()
+    calls: list[tuple[str, ...]] = []
+
+    def runner(command: tuple[str, ...], _descriptors: tuple[int, ...]) -> int:
+        calls.append(command)
+        target = command[-1]
+        if target.endswith(label):
+            if command[1] == "print":
+                return 0 if label in loaded else 113
+            if command[1] == "bootout":
+                loaded.discard(label)
+                return 0
+        return 0
+
+    def health(config, _started, _now):
+        if config == replacement.candidate:
+            child = _candidate_child(replacement.candidate, label)
+            child.chmod(0o644)
+            loaded.add(label)
+            return FutureSessionCoordinatorHealthEvaluation(
+                accepted=False,
+                reason="runtime_failed",
+                report=None,
+            )
+        return _healthy(config, _started, _now)
+
+    code = cli.main(
+        (
+            "replace",
+            "--current-config",
+            str(replacement.current_path),
+            "--candidate-config",
+            str(replacement.candidate_path),
+        ),
+        runner=runner,
+        health_evaluator=health,
+        sleeper=lambda _seconds: None,
+    )
+
+    assert code == 2
+    assert [command[1] for command in calls].count("bootstrap") == 1
+    assert "replace_candidate_child_cleanup_failed" in capsys.readouterr().err
+
+
 def test_restart_reloads_same_pinned_config_and_requires_fresh_health(tmp_path: Path) -> None:
     replacement = _replacement(tmp_path)
     calls: list[tuple[str, ...]] = []
@@ -365,6 +478,23 @@ def _write_and_provision(
     verify_coordinator_authority(config)
     _ = provision_service_plist(config, path)
     return path
+
+
+def _candidate_child(
+    config: FutureSessionCoordinatorServiceConfig,
+    label: str,
+) -> Path:
+    manifest = config.state_root / "artifacts" / "kr" / "2026-07-27" / "preparation-manifest.json"
+    manifest.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if not manifest.exists():
+        manifest.write_text(json.dumps({"entry": {"label": label}}), encoding="utf-8")
+        manifest.chmod(0o600)
+    config.launch_agents_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+    child = config.launch_agents_dir / f"{label}.plist"
+    if not child.exists():
+        child.write_text("fixture\n", encoding="utf-8")
+        child.chmod(0o600)
+    return child
 
 
 def _healthy(config, started, now) -> FutureSessionCoordinatorHealthEvaluation:

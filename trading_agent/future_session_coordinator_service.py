@@ -34,7 +34,7 @@ from trading_agent.future_session_coordinator_service_runtime import (
     ensure_frozen_runtime,
 )
 from trading_agent.future_session_coordinator_template_authority import inspect_bound_template
-from trading_agent.future_session_execution_incident import (
+from trading_agent.future_session_execution_incident_queue import (
     project_pending_execution_incidents,
 )
 from trading_agent.future_session_plan_compiler import compile_future_session_plan

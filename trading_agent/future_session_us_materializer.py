@@ -4,6 +4,7 @@ import os
 import plistlib
 import shutil
 import tempfile
+from contextlib import suppress
 from pathlib import Path
 from typing import Literal
 
@@ -25,6 +26,7 @@ from trading_agent.future_session_plan_models import (
     canonical_plan_json,
     canonical_request_json,
 )
+from trading_agent.future_session_us_activation_verifier import verify_private_directory
 from trading_agent.future_session_us_materializer_errors import (
     FutureSessionMaterializationError,
 )
@@ -94,6 +96,8 @@ def materialize_us_future_session(
         raise FutureSessionMaterializationError("runtime_environment_invalid")
     if os.path.lexists(output_dir):
         raise FutureSessionMaterializationError("output_already_exists")
+    incident_queue_root = future_session_request.artifact_root.parent / "pending-execution-incidents"
+    _ensure_incident_queue_root(incident_queue_root)
     output_dir.parent.mkdir(mode=_PRIVATE_DIRECTORY_MODE, parents=True, exist_ok=True)
     stage = Path(
         tempfile.mkdtemp(
@@ -118,6 +122,7 @@ def materialize_us_future_session(
                 scheduler_authority_mode=future_session_request.scheduler_authority_mode,
                 manifest_path=manifest_path,
                 launch_agents_dir=resolved_launch_agents_dir,
+                incident_queue_root=incident_queue_root,
             )
             for job in plan.jobs
         )
@@ -155,6 +160,7 @@ def _prepare_role(
     scheduler_authority_mode: Literal["current_main", "frozen_runtime"],
     manifest_path: Path,
     launch_agents_dir: Path,
+    incident_queue_root: Path,
 ) -> PreparedUsRoleArtifact:
     if job.role is None or job.label is None or job.expires_at is None or not job.command:
         raise FutureSessionMaterializationError("invalid_us_role")
@@ -202,6 +208,9 @@ def _prepare_role(
             market="us",
             target_session=plan.target_session,
             execution_incident_receipt=incident_receipt,
+            execution_incident_queue_receipt=(
+                incident_queue_root / f"us--{plan.target_session.isoformat()}--{role.value}.json"
+            ),
         )
     ).encode()
     write_private_file(
@@ -240,6 +249,12 @@ def _prepare_role(
         stdout_log=stdout_log,
         stderr_log=stderr_log,
     )
+
+
+def _ensure_incident_queue_root(path: Path) -> None:
+    with suppress(FileExistsError):
+        path.mkdir(mode=_PRIVATE_DIRECTORY_MODE, parents=True, exist_ok=False)
+    verify_private_directory(path)
 
 
 __all__ = (

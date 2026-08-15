@@ -10,6 +10,7 @@ def render_us_execution_incident_shell(
     market: Literal["us", "kr"],
     target_session: dt.date,
     receipt: Path,
+    queue_receipt: Path,
 ) -> tuple[str, str]:
     incident_format = (
         '{"completed_at_epoch":%s,"manifest_sha256":"%s","market":"%s",'
@@ -19,25 +20,42 @@ def render_us_execution_incident_shell(
     )
     declarations = (
         f"readonly execution_incident_receipt={shlex.quote(str(receipt))}\n"
+        f"readonly execution_incident_queue_receipt={shlex.quote(str(queue_receipt))}\n"
         f"readonly market={market}\n"
         f"readonly target_session={target_session}\n"
     )
     writer = """
-write_execution_incident() {
-  if [[ -f $execution_incident_receipt ]]; then return 0; fi
-  local temporary_incident="${execution_incident_receipt}.tmp.$$"
-  local manifest_sha256
-  manifest_sha256=$(/usr/bin/shasum -a 256 "$preparation_manifest" | /usr/bin/awk '{print $1}')
-  /usr/bin/printf '__INCIDENT_FORMAT__' \
-    "$(/bin/date +%s)" "$manifest_sha256" "$market" "$plan_sha256" "$request_sha256" \
-    "$role" "$runtime_commit_sha" "$source_commit" "$target_session" > "$temporary_incident"
-  /bin/chmod 600 "$temporary_incident"
-  if /bin/ln "$temporary_incident" "$execution_incident_receipt"; then
-    /bin/rm -f "$temporary_incident"
+write_execution_incident_queue_pointer() {
+  local incident_sha256
+  local temporary_pointer="${execution_incident_queue_receipt}.tmp.$$"
+  incident_sha256=$(/usr/bin/shasum -a 256 "$execution_incident_receipt" | /usr/bin/awk '{print $1}')
+  /usr/bin/printf \
+    '{"incident_sha256":"%s","market":"%s","role":"%s","schema_version":1,"target_session":"%s"}\n' \
+    "$incident_sha256" "$market" "$role" "$target_session" > "$temporary_pointer"
+  /bin/chmod 600 "$temporary_pointer"
+  if /bin/ln "$temporary_pointer" "$execution_incident_queue_receipt"; then
+    /bin/rm -f "$temporary_pointer"
     return 0
   fi
-  /bin/rm -f "$temporary_incident"
-  [[ -f $execution_incident_receipt ]]
+  /usr/bin/cmp -s "$temporary_pointer" "$execution_incident_queue_receipt"
+  local comparison=$?
+  /bin/rm -f "$temporary_pointer"
+  return $comparison
+}
+
+write_execution_incident() {
+  if [[ ! -f $execution_incident_receipt ]]; then
+    local temporary_incident="${execution_incident_receipt}.tmp.$$"
+    local manifest_sha256
+    manifest_sha256=$(/usr/bin/shasum -a 256 "$preparation_manifest" | /usr/bin/awk '{print $1}')
+    /usr/bin/printf '__INCIDENT_FORMAT__' \
+      "$(/bin/date +%s)" "$manifest_sha256" "$market" "$plan_sha256" "$request_sha256" \
+      "$role" "$runtime_commit_sha" "$source_commit" "$target_session" > "$temporary_incident"
+    /bin/chmod 600 "$temporary_incident"
+    /bin/ln "$temporary_incident" "$execution_incident_receipt" || true
+    /bin/rm -f "$temporary_incident"
+  fi
+  [[ -f $execution_incident_receipt ]] && write_execution_incident_queue_pointer
 }
 """.replace("__INCIDENT_FORMAT__", incident_format)
     return declarations, writer
@@ -47,20 +65,22 @@ def render_optional_us_execution_incident_shell(
     market: Literal["us", "kr"] | None,
     target_session: dt.date | None,
     receipt: Path | None,
+    queue_receipt: Path | None,
     provenance_enabled: bool,
 ) -> tuple[str, str, str]:
-    enabled = market is not None or target_session is not None or receipt is not None
+    enabled = any(value is not None for value in (market, target_session, receipt, queue_receipt))
     if not enabled:
         return "", "", ""
-    if not provenance_enabled or market is None or target_session is None or receipt is None:
+    if not provenance_enabled or market is None or target_session is None or receipt is None or queue_receipt is None:
         raise ValueError
-    declarations, writer = render_us_execution_incident_shell(market, target_session, receipt)
+    declarations, writer = render_us_execution_incident_shell(market, target_session, receipt, queue_receipt)
     return declarations, writer, "  write_execution_incident\n"
 
 
 def render_kr_execution_incident_shell(
     target_session: dt.date,
     receipt: Path,
+    queue_receipt: Path,
     manifest: Path,
     request_sha256: str,
     plan_sha256: str,
@@ -75,6 +95,7 @@ def render_kr_execution_incident_shell(
     )
     declarations = (
         f"readonly incident_receipt={shlex.quote(str(receipt))}\n"
+        f"readonly incident_queue_receipt={shlex.quote(str(queue_receipt))}\n"
         f"readonly manifest={shlex.quote(str(manifest))}\n"
         f"readonly request_sha256={request_sha256}\n"
         f"readonly plan_sha256={plan_sha256}\n"
@@ -83,21 +104,37 @@ def render_kr_execution_incident_shell(
         f"readonly target_session={target_session}\n"
     )
     writer = """
-write_execution_incident() {
-  if [[ -f $incident_receipt ]]; then return 0; fi
-  local temporary_incident="${incident_receipt}.tmp.$$"
-  local manifest_sha256
-  manifest_sha256=$(/usr/bin/shasum -a 256 "$manifest" | /usr/bin/awk '{print $1}')
-  /usr/bin/printf '__INCIDENT_FORMAT__' \
-    "$(/bin/date +%s)" "$manifest_sha256" "$plan_sha256" "$request_sha256" \
-    "$runtime_commit_sha" "$scheduler_main_sha" "$target_session" > "$temporary_incident"
-  /bin/chmod 600 "$temporary_incident"
-  if /bin/ln "$temporary_incident" "$incident_receipt"; then
-    /bin/rm -f "$temporary_incident"
+write_execution_incident_queue_pointer() {
+  local incident_sha256
+  local temporary_pointer="${incident_queue_receipt}.tmp.$$"
+  incident_sha256=$(/usr/bin/shasum -a 256 "$incident_receipt" | /usr/bin/awk '{print $1}')
+  /usr/bin/printf \
+    '{"incident_sha256":"%s","market":"kr","role":"kr_supervisor","schema_version":1,"target_session":"%s"}\n' \
+    "$incident_sha256" "$target_session" > "$temporary_pointer"
+  /bin/chmod 600 "$temporary_pointer"
+  if /bin/ln "$temporary_pointer" "$incident_queue_receipt"; then
+    /bin/rm -f "$temporary_pointer"
     return 0
   fi
-  /bin/rm -f "$temporary_incident"
-  [[ -f $incident_receipt ]]
+  /usr/bin/cmp -s "$temporary_pointer" "$incident_queue_receipt"
+  local comparison=$?
+  /bin/rm -f "$temporary_pointer"
+  return $comparison
+}
+
+write_execution_incident() {
+  if [[ ! -f $incident_receipt ]]; then
+    local temporary_incident="${incident_receipt}.tmp.$$"
+    local manifest_sha256
+    manifest_sha256=$(/usr/bin/shasum -a 256 "$manifest" | /usr/bin/awk '{print $1}')
+    /usr/bin/printf '__INCIDENT_FORMAT__' \
+      "$(/bin/date +%s)" "$manifest_sha256" "$plan_sha256" "$request_sha256" \
+      "$runtime_commit_sha" "$scheduler_main_sha" "$target_session" > "$temporary_incident"
+    /bin/chmod 600 "$temporary_incident"
+    /bin/ln "$temporary_incident" "$incident_receipt" || true
+    /bin/rm -f "$temporary_incident"
+  fi
+  [[ -f $incident_receipt ]] && write_execution_incident_queue_pointer
 }
 """.replace("__INCIDENT_FORMAT__", incident_format)
     return declarations, writer

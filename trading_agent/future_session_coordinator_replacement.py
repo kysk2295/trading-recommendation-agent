@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 
+from trading_agent.future_session_coordinator_child_inventory import cleanup_owned_child_jobs
 from trading_agent.future_session_coordinator_launchd_transaction import (
     CoordinatorCommandRunner,
     start_verified_service,
@@ -21,6 +22,7 @@ from trading_agent.future_session_coordinator_service_models import (
 
 def rollback_replacement(
     current: FutureSessionCoordinatorServiceConfig,
+    candidate: FutureSessionCoordinatorServiceConfig | None,
     current_plist: VerifiedServicePlist,
     domain: str,
     target: str,
@@ -36,6 +38,8 @@ def rollback_replacement(
         runner,
         "replace_candidate_cleanup_bootout_failed",
     ):
+        return 2
+    if candidate is not None and not cleanup_owned_child_jobs(candidate, domain, runner):
         return 2
     started_at = clock()
     if start_verified_service(current_plist, domain, target, runner) != "started":

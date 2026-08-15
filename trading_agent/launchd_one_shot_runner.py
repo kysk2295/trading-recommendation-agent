@@ -31,6 +31,7 @@ class OneShotRunnerSpec:
     market: Literal["us", "kr"] | None = None
     target_session: dt.date | None = None
     execution_incident_receipt: Path | None = None
+    execution_incident_queue_receipt: Path | None = None
 
 
 def render_runner(spec: OneShotRunnerSpec) -> str:
@@ -118,6 +119,7 @@ def render_persistent_runner(spec: OneShotRunnerSpec) -> str:
         spec.market,
         spec.target_session,
         spec.execution_incident_receipt,
+        spec.execution_incident_queue_receipt,
         provenance_enabled,
     )
     if provenance_enabled:

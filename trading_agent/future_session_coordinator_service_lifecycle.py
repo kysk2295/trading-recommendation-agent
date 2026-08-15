@@ -165,6 +165,7 @@ def replace_coordinator_service(
         if not require_no_loaded_child_jobs(current, domain, runner):
             return rollback_replacement(
                 current,
+                None,
                 current_plist,
                 domain,
                 target,
@@ -178,6 +179,7 @@ def replace_coordinator_service(
         if start_verified_service(candidate_plist, domain, target, runner) != "started":
             return rollback_replacement(
                 current,
+                candidate,
                 current_plist,
                 domain,
                 target,
@@ -197,6 +199,7 @@ def replace_coordinator_service(
         if not health.accepted:
             return rollback_replacement(
                 current,
+                candidate,
                 current_plist,
                 domain,
                 target,

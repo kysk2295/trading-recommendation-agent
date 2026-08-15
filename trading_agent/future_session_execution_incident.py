@@ -9,26 +9,9 @@ from pathlib import Path
 from typing import Literal, Self
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from trading_agent.future_session_coordinator_inspectors import CoordinatorInspectionError, inspect_request
-from trading_agent.future_session_coordinator_service_models import (
-    FutureSessionCoordinatorServiceConfig,
-)
-from trading_agent.future_session_kr_manifest import (
-    KrFutureSessionPreparationManifest,
-    canonical_kr_manifest_json,
-)
-from trading_agent.future_session_materialization_models import (
-    FutureSessionPreparationManifest,
-    canonical_manifest_json,
-)
-from trading_agent.future_session_plan_models import (
-    FutureSessionMarket,
-    FutureSessionUsRole,
-    canonical_request_json,
-)
-from trading_agent.future_session_us_activation_verifier import read_private_file
+from trading_agent.future_session_plan_models import FutureSessionMarket
 from trading_agent.hermes_delivery_errors import (
     HermesDeliveryConflictError,
     HermesDeliveryWriterLeaseUnavailableError,
@@ -93,21 +76,6 @@ def canonical_execution_incident_json(receipt: FutureSessionExecutionIncidentRec
     )
 
 
-def project_pending_execution_incidents(
-    config: FutureSessionCoordinatorServiceConfig,
-) -> frozenset[tuple[FutureSessionMarket, dt.date]]:
-    artifact_root = config.state_root / "artifacts"
-    if not artifact_root.exists():
-        return frozenset()
-    projected: set[tuple[FutureSessionMarket, dt.date]] = set()
-    for path in sorted(artifact_root.glob("*/*/execution-incidents/*.json")):
-        receipt = _read_receipt(path)
-        delivery_database = _validate_receipt_authority(config, path, receipt)
-        project_execution_incident(receipt, delivery_database)
-        projected.add((receipt.market, receipt.target_session))
-    return frozenset(projected)
-
-
 def project_execution_incident(
     receipt: FutureSessionExecutionIncidentReceipt,
     delivery_database: Path,
@@ -166,80 +134,9 @@ def project_execution_incident(
         raise InvalidFutureSessionExecutionIncidentError from None
 
 
-def _read_receipt(path: Path) -> FutureSessionExecutionIncidentReceipt:
-    try:
-        payload = read_private_file(path, 0o600)
-        receipt = FutureSessionExecutionIncidentReceipt.model_validate_json(payload)
-    except (OSError, TypeError, ValidationError, ValueError):
-        raise InvalidFutureSessionExecutionIncidentError from None
-    if canonical_execution_incident_json(receipt).encode() != payload:
-        raise InvalidFutureSessionExecutionIncidentError
-    return receipt
-
-
-def _validate_receipt_authority(
-    config: FutureSessionCoordinatorServiceConfig,
-    path: Path,
-    receipt: FutureSessionExecutionIncidentReceipt,
-) -> Path:
-    root = path.parent.parent
-    if (
-        path.parent.name != "execution-incidents"
-        or root.name != receipt.target_session.isoformat()
-        or root.parent.name != receipt.market.value
-        or path.name != f"{receipt.role}.json"
-    ):
-        raise InvalidFutureSessionExecutionIncidentError
-    manifest_path = root / "preparation-manifest.json"
-    payload = read_private_file(manifest_path, 0o600)
-    if hashlib.sha256(payload).hexdigest() != receipt.manifest_sha256:
-        raise InvalidFutureSessionExecutionIncidentError
-    try:
-        if receipt.market is FutureSessionMarket.US:
-            manifest = FutureSessionPreparationManifest.model_validate_json(payload)
-            valid_manifest = (
-                canonical_manifest_json(manifest).encode() == payload
-                and manifest.request_sha256 == receipt.request_sha256
-                and manifest.plan_sha256 == receipt.plan_sha256
-                and manifest.scheduler_main_sha == receipt.scheduler_main_sha
-                and manifest.runtime_commit_sha == receipt.runtime_commit_sha
-                and receipt.role in {role.value for role in FutureSessionUsRole}
-            )
-        else:
-            manifest_kr = KrFutureSessionPreparationManifest.model_validate_json(payload)
-            valid_manifest = (
-                canonical_kr_manifest_json(manifest_kr).encode() == payload
-                and manifest_kr.target_session == receipt.target_session.isoformat()
-                and manifest_kr.request_sha256 == receipt.request_sha256
-                and manifest_kr.plan_sha256 == receipt.plan_sha256
-                and manifest_kr.scheduler_main_sha == receipt.scheduler_main_sha
-                and manifest_kr.runtime_commit_sha == receipt.runtime_commit_sha
-                and receipt.role == "kr_supervisor"
-            )
-    except (TypeError, ValidationError, ValueError):
-        raise InvalidFutureSessionExecutionIncidentError from None
-    if not valid_manifest:
-        raise InvalidFutureSessionExecutionIncidentError
-    request_path = config.state_root / "requests" / receipt.market.value / f"{receipt.target_session.isoformat()}.json"
-    try:
-        request = inspect_request(request_path)
-    except CoordinatorInspectionError:
-        raise InvalidFutureSessionExecutionIncidentError from None
-    if (
-        hashlib.sha256(canonical_request_json(request).encode()).hexdigest() != receipt.request_sha256
-        or request.market is not receipt.market
-        or request.scheduler_main_sha != receipt.scheduler_main_sha
-        or request.frozen_runtime.commit_sha != receipt.runtime_commit_sha
-        or request.delivery_database is None
-    ):
-        raise InvalidFutureSessionExecutionIncidentError
-    return request.delivery_database
-
-
 __all__ = (
     "FutureSessionExecutionIncidentReceipt",
     "InvalidFutureSessionExecutionIncidentError",
     "canonical_execution_incident_json",
     "project_execution_incident",
-    "project_pending_execution_incidents",
 )

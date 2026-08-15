@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from tests.test_forward_runtime_readiness_cli import _runtime, _stores
 from tests.test_future_session_coordinator import _LaunchdFixture
 from trading_agent.future_session_coordinator_service import (
@@ -18,7 +20,15 @@ from trading_agent.future_session_coordinator_service_models import (
 from trading_agent.future_session_coordinator_service_runtime import ensure_frozen_runtime
 from trading_agent.future_session_execution_incident import (
     FutureSessionExecutionIncidentReceipt,
+    InvalidFutureSessionExecutionIncidentError,
     canonical_execution_incident_json,
+)
+from trading_agent.future_session_execution_incident_queue import (
+    MAX_PENDING_EXECUTION_INCIDENTS,
+    FutureSessionExecutionIncidentQueuePointer,
+    canonical_execution_incident_queue_json,
+    execution_incident_queue_path,
+    project_pending_execution_incidents,
 )
 from trading_agent.future_session_materialization_models import FutureSessionPreparationManifest
 from trading_agent.future_session_plan_models import (
@@ -205,14 +215,35 @@ def test_tick_projects_materialized_execution_incident_once(tmp_path: Path) -> N
     incident_path = manifest_path.parent / "execution-incidents" / "us_orb_watcher.json"
     incident_path.write_text(canonical_execution_incident_json(incident), encoding="utf-8")
     incident_path.chmod(0o600)
+    queue_path = execution_incident_queue_path(
+        config.state_root,
+        incident.market,
+        incident.target_session,
+        incident.role,
+    )
+    pointer = FutureSessionExecutionIncidentQueuePointer(
+        market=incident.market,
+        target_session=incident.target_session,
+        role=incident.role,
+        incident_sha256=hashlib.sha256(incident_path.read_bytes()).hexdigest(),
+    )
+    queue_path.write_text(canonical_execution_incident_queue_json(pointer), encoding="utf-8")
+    queue_path.chmod(0o600)
+
+    foreign_config = config.model_copy(update={"scheduler_main_sha": "f" * 40})
+    with pytest.raises(InvalidFutureSessionExecutionIncidentError):
+        project_pending_execution_incidents(foreign_config)
+    assert request.delivery_database is not None
+    assert not request.delivery_database.exists()
 
     first = tick_service(config, observed_at + dt.timedelta(minutes=1), adapters)
+    assert not queue_path.exists()
+    incident_path.write_text("tampered historical incident\n", encoding="utf-8")
     replay = tick_service(config, observed_at + dt.timedelta(minutes=2), adapters)
 
     assert first.us.result == "blocked"
     assert first.us.reason == "execution_incident"
-    assert replay.us.result == "blocked"
-    assert request.delivery_database is not None
+    assert replay.us.result != "blocked"
     events = HermesDeliveryStore(request.delivery_database).events()
     assert len(events) == 1
     assert events[0].kind is HermesDeliveryKind.INCIDENT
@@ -226,10 +257,15 @@ def test_tick_projects_materialized_execution_incident_once(tmp_path: Path) -> N
     assert next_session.us.receipt is not None
     assert next_session.us.receipt.target_session != incident.target_session
 
-    prepared.us.request_path.write_text("{", encoding="utf-8")
-    invalid = tick_service(
-        config,
-        dt.datetime(2026, 7, 27, 17, 1, tzinfo=dt.UTC),
-        adapters,
-    )
-    assert invalid.service_state == "failed"
+
+def test_pending_execution_incident_queue_is_bounded(tmp_path: Path) -> None:
+    config = _ready_config(tmp_path)
+    queue_root = config.state_root / "pending-execution-incidents"
+    queue_root.mkdir(parents=True, mode=0o700)
+    for index in range(MAX_PENDING_EXECUTION_INCIDENTS + 1):
+        path = queue_root / f"fixture-{index:03d}.json"
+        path.write_text("{}\n", encoding="utf-8")
+        path.chmod(0o600)
+
+    with pytest.raises(InvalidFutureSessionExecutionIncidentError):
+        project_pending_execution_incidents(config)
