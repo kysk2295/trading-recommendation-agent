@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -15,12 +16,19 @@ from trading_agent.future_session_coordinator_service_models import (
     FutureSessionCoordinatorServiceConfig,
 )
 from trading_agent.future_session_coordinator_service_runtime import ensure_frozen_runtime
+from trading_agent.future_session_execution_incident import (
+    FutureSessionExecutionIncidentReceipt,
+    canonical_execution_incident_json,
+)
+from trading_agent.future_session_materialization_models import FutureSessionPreparationManifest
 from trading_agent.future_session_plan_models import (
     FrozenRuntimeAuthority,
     FutureSessionMarket,
     FutureSessionPlanRequest,
     canonical_request_json,
 )
+from trading_agent.hermes_delivery_models import HermesDeliveryKind
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
 
 
 def _git(repository: Path, *arguments: str) -> str:
@@ -84,6 +92,8 @@ def _ready_config(tmp_path: Path) -> FutureSessionCoordinatorServiceConfig:
     return FutureSessionCoordinatorServiceConfig(
         us_template_request_path=us_path,
         kr_template_request_path=kr_path,
+        us_template_sha256=hashlib.sha256(canonical_request_json(us).encode()).hexdigest(),
+        kr_template_sha256=hashlib.sha256(canonical_request_json(kr).encode()).hexdigest(),
         state_root=(tmp_path / "state").absolute(),
         launch_agents_dir=(tmp_path / "LaunchAgents").absolute(),
         authority_repository=repository,
@@ -163,3 +173,63 @@ def test_ready_us_tick_activates_frozen_authority_after_main_advances(
     assert report.us.receipt is not None
     assert report.us.receipt.preparation == "prepared"
     assert report.us.receipt.activation == "activated"
+
+
+def test_tick_projects_materialized_execution_incident_once(tmp_path: Path) -> None:
+    config = _ready_config(tmp_path)
+    launchd = _LaunchdFixture()
+    adapters = CoordinatorAdapters(
+        launchctl_runner=launchd.run,
+        label_status_reader=launchd.is_loaded,
+    )
+    observed_at = dt.datetime(2026, 7, 24, 20, tzinfo=dt.UTC)
+    prepared = tick_service(config, observed_at, adapters)
+    assert prepared.us.request_path is not None
+    assert prepared.us.receipt is not None
+    assert prepared.us.receipt.manifest_path is not None
+    request = FutureSessionPlanRequest.model_validate_json(prepared.us.request_path.read_bytes())
+    manifest_path = prepared.us.receipt.manifest_path
+    manifest = FutureSessionPreparationManifest.model_validate_json(manifest_path.read_bytes())
+    incident = FutureSessionExecutionIncidentReceipt(
+        completed_at_epoch=int(dt.datetime(2026, 7, 27, 16, tzinfo=dt.UTC).timestamp()),
+        market=FutureSessionMarket.US,
+        target_session=dt.date(2026, 7, 27),
+        role="us_orb_watcher",
+        reason="runtime_authority_invalid",
+        manifest_sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        request_sha256=manifest.request_sha256,
+        plan_sha256=manifest.plan_sha256,
+        scheduler_main_sha=manifest.scheduler_main_sha,
+        runtime_commit_sha=manifest.runtime_commit_sha,
+    )
+    incident_path = manifest_path.parent / "execution-incidents" / "us_orb_watcher.json"
+    incident_path.write_text(canonical_execution_incident_json(incident), encoding="utf-8")
+    incident_path.chmod(0o600)
+
+    first = tick_service(config, observed_at + dt.timedelta(minutes=1), adapters)
+    replay = tick_service(config, observed_at + dt.timedelta(minutes=2), adapters)
+
+    assert first.us.result == "blocked"
+    assert first.us.reason == "execution_incident"
+    assert replay.us.result == "blocked"
+    assert request.delivery_database is not None
+    events = HermesDeliveryStore(request.delivery_database).events()
+    assert len(events) == 1
+    assert events[0].kind is HermesDeliveryKind.INCIDENT
+
+    next_session = tick_service(
+        config,
+        dt.datetime(2026, 7, 27, 17, tzinfo=dt.UTC),
+        adapters,
+    )
+    assert next_session.us.result != "blocked"
+    assert next_session.us.receipt is not None
+    assert next_session.us.receipt.target_session != incident.target_session
+
+    prepared.us.request_path.write_text("{", encoding="utf-8")
+    invalid = tick_service(
+        config,
+        dt.datetime(2026, 7, 27, 17, 1, tzinfo=dt.UTC),
+        adapters,
+    )
+    assert invalid.service_state == "failed"

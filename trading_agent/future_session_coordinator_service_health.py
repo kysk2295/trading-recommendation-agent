@@ -39,10 +39,12 @@ class FutureSessionCoordinatorHealthEvaluation(BaseModel):
         "fresh_matching_ready",
         "report_missing_or_invalid",
         "config_mismatch",
+        "template_mismatch",
         "sha_mismatch",
         "not_fresh",
         "observed_in_future",
         "runtime_failed",
+        "market_blocked",
     ]
     report: FutureSessionCoordinatorServiceReport | None
 
@@ -74,6 +76,8 @@ def evaluate_persisted_coordinator_health(
         return _rejected("report_missing_or_invalid")
     if report.config_sha256 != canonical_service_config_sha256(config):
         return _rejected("config_mismatch", report)
+    if report.us_template_sha256 != config.us_template_sha256 or report.kr_template_sha256 != config.kr_template_sha256:
+        return _rejected("template_mismatch", report)
     if report.scheduler_main_sha != config.scheduler_main_sha:
         return _rejected("sha_mismatch", report)
     if report.service_started_at <= started_at or report.observed_at <= started_at:
@@ -82,6 +86,8 @@ def evaluate_persisted_coordinator_health(
         return _rejected("observed_in_future", report)
     if report.service_state is FutureSessionCoordinatorServiceState.FAILED:
         return _rejected("runtime_failed", report)
+    if report.us.result == "blocked" or report.kr.result == "blocked":
+        return _rejected("market_blocked", report)
     return FutureSessionCoordinatorHealthEvaluation(
         accepted=True,
         reason="fresh_matching_ready",
@@ -128,10 +134,12 @@ def _rejected(
     reason: Literal[
         "report_missing_or_invalid",
         "config_mismatch",
+        "template_mismatch",
         "sha_mismatch",
         "not_fresh",
         "observed_in_future",
         "runtime_failed",
+        "market_blocked",
     ],
     report: FutureSessionCoordinatorServiceReport | None = None,
 ) -> FutureSessionCoordinatorHealthEvaluation:

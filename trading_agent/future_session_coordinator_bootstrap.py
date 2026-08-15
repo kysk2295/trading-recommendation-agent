@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -138,9 +139,13 @@ def bootstrap_coordinator_bundle(
 def _service_config(
     manifest: FutureSessionCoordinatorBootstrapManifest,
 ) -> FutureSessionCoordinatorServiceConfig:
+    us_template_sha256 = hashlib.sha256(canonical_request_json(manifest.us_template).encode()).hexdigest()
+    kr_template_sha256 = hashlib.sha256(canonical_request_json(manifest.kr_template).encode()).hexdigest()
     return FutureSessionCoordinatorServiceConfig(
         us_template_request_path=manifest.bundle_path / "us-template.json",
         kr_template_request_path=manifest.bundle_path / "kr-template.json",
+        us_template_sha256=us_template_sha256,
+        kr_template_sha256=kr_template_sha256,
         state_root=manifest.state_root,
         launch_agents_dir=manifest.launch_agents_dir,
         authority_repository=manifest.authority_repository,

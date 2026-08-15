@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,6 +57,108 @@ def test_replace_upgrades_exact_sha_after_fresh_candidate_health(tmp_path: Path)
     assert replacement.current.scheduler_main_sha != replacement.candidate.scheduler_main_sha
     assert [command[1] for command in calls] == ["bootout", "bootstrap", "kickstart", "print"]
     assert calls[0] == ("/bin/launchctl", "bootout", target)
+
+
+def test_replace_rejects_loaded_child_job_before_stopping_current(tmp_path: Path, capsys) -> None:
+    replacement = _replacement(tmp_path)
+    child = replacement.current.launch_agents_dir / "ai.trading-agent.us-orb-watcher-20260727.plist"
+    child.write_text("fixture\n", encoding="utf-8")
+    child.chmod(0o600)
+    calls: list[tuple[str, ...]] = []
+
+    def runner(command: tuple[str, ...], _descriptors: tuple[int, ...]) -> int:
+        calls.append(command)
+        return 0
+
+    code = cli.main(
+        (
+            "replace",
+            "--current-config",
+            str(replacement.current_path),
+            "--candidate-config",
+            str(replacement.candidate_path),
+        ),
+        runner=runner,
+        health_evaluator=_healthy,
+    )
+
+    assert code == 2
+    assert calls == [
+        (
+            "/bin/launchctl",
+            "print",
+            f"gui/{os.getuid()}/ai.trading-agent.us-orb-watcher-20260727",
+        )
+    ]
+    assert "replace_active_child_job" in capsys.readouterr().err
+
+
+def test_replace_finds_loaded_child_from_manifest_without_plist(tmp_path: Path, capsys) -> None:
+    replacement = _replacement(tmp_path)
+    label = "ai.trading-agent.future-session.kr.2026-07-27.supervisor"
+    manifest = replacement.current.state_root / "artifacts" / "kr" / "2026-07-27" / "preparation-manifest.json"
+    manifest.parent.mkdir(parents=True, mode=0o700)
+    manifest.write_text(json.dumps({"entry": {"label": label}}), encoding="utf-8")
+    manifest.chmod(0o600)
+    calls: list[tuple[str, ...]] = []
+
+    code = cli.main(
+        (
+            "replace",
+            "--current-config",
+            str(replacement.current_path),
+            "--candidate-config",
+            str(replacement.candidate_path),
+        ),
+        runner=lambda command, _descriptors: calls.append(command) or 0,
+        health_evaluator=_healthy,
+    )
+
+    assert code == 2
+    assert calls == [("/bin/launchctl", "print", f"gui/{os.getuid()}/{label}")]
+    assert "replace_active_child_job" in capsys.readouterr().err
+
+
+def test_replace_restores_current_when_child_appears_at_stop_boundary(tmp_path: Path, capsys) -> None:
+    replacement = _replacement(tmp_path)
+    label = "ai.trading-agent.us-orb-watcher-20260727"
+    child = replacement.current.launch_agents_dir / f"{label}.plist"
+    child.write_text("fixture\n", encoding="utf-8")
+    child.chmod(0o600)
+    calls: list[tuple[str, ...]] = []
+    child_checks = 0
+    restored_payload = b""
+
+    def runner(command: tuple[str, ...], descriptors: tuple[int, ...]) -> int:
+        nonlocal child_checks, restored_payload
+        calls.append(command)
+        if command[1] == "print" and command[-1].endswith(label):
+            child_checks += 1
+            return 113 if child_checks == 1 else 0
+        if command[1] == "bootstrap":
+            restored_payload = os.pread(descriptors[0], 1024 * 1024, 0)
+        return 0
+
+    code = cli.main(
+        (
+            "replace",
+            "--current-config",
+            str(replacement.current_path),
+            "--candidate-config",
+            str(replacement.candidate_path),
+        ),
+        runner=runner,
+        health_evaluator=_healthy,
+    )
+
+    assert code == 2
+    assert child_checks == 2
+    assert (
+        restored_payload
+        == (replacement.current.launch_agents_dir / "ai.trading-agent.future-session-coordinator.plist").read_bytes()
+    )
+    assert "replace_child_inventory_changed" in capsys.readouterr().err
+    assert [command[1] for command in calls].count("bootstrap") == 1
 
 
 def test_replace_unhealthy_candidate_restores_fresh_current(tmp_path: Path) -> None:

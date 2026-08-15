@@ -161,14 +161,16 @@ def _prepare_role(
     role = job.role
     jobs_stage = stage / "jobs"
     receipts_stage = stage / "receipts"
+    incidents_stage = stage / "execution-incidents"
     logs_stage = stage / "logs"
-    for directory in (jobs_stage, receipts_stage, logs_stage):
+    for directory in (jobs_stage, receipts_stage, incidents_stage, logs_stage):
         directory.mkdir(mode=_PRIVATE_DIRECTORY_MODE, parents=True, exist_ok=True)
         directory.chmod(_PRIVATE_DIRECTORY_MODE)
     payload = output_dir / "jobs" / f"{role.value}.payload.zsh"
     wrapper = output_dir / "jobs" / f"{role.value}.persistent.zsh"
     plist = output_dir / "jobs" / f"{role.value}.plist"
     receipt = output_dir / "receipts" / f"{role.value}.json"
+    incident_receipt = output_dir / "execution-incidents" / f"{role.value}.json"
     stdout_log = output_dir / "logs" / f"{role.value}.stdout.log"
     stderr_log = output_dir / "logs" / f"{role.value}.stderr.log"
     payload_content = render_job_payload(job).encode()
@@ -197,6 +199,9 @@ def _prepare_role(
             runtime_attestation_sha256=runtime_environment.attestation_sha256,
             preparation_manifest=manifest_path,
             authority_mode=scheduler_authority_mode,
+            market="us",
+            target_session=plan.target_session,
+            execution_incident_receipt=incident_receipt,
         )
     ).encode()
     write_private_file(

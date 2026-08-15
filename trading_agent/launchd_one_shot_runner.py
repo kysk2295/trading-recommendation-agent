@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, assert_never
 
+from trading_agent.future_session_execution_incident_shell import (
+    render_optional_us_execution_incident_shell,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class OneShotRunnerSpec:
@@ -24,6 +28,9 @@ class OneShotRunnerSpec:
     runtime_attestation_sha256: str | None = None
     preparation_manifest: Path | None = None
     authority_mode: Literal["current_main", "frozen_runtime"] = "current_main"
+    market: Literal["us", "kr"] | None = None
+    target_session: dt.date | None = None
+    execution_incident_receipt: Path | None = None
 
 
 def render_runner(spec: OneShotRunnerSpec) -> str:
@@ -107,6 +114,12 @@ def render_persistent_runner(spec: OneShotRunnerSpec) -> str:
     provenance_enabled = any(value is not None for value in provenance)
     if provenance_enabled and any(value is None for value in provenance):
         raise ValueError
+    incident_declarations, incident_writer, incident_call = render_optional_us_execution_incident_shell(
+        spec.market,
+        spec.target_session,
+        spec.execution_incident_receipt,
+        provenance_enabled,
+    )
     if provenance_enabled:
         manifest = shlex.quote(str(spec.preparation_manifest))
         provenance_declarations = (
@@ -144,23 +157,27 @@ def render_persistent_runner(spec: OneShotRunnerSpec) -> str:
         manifest_hash = ""
     match spec.authority_mode:
         case "current_main":
-            authority_check = """branch=$(/usr/bin/git -C $repository symbolic-ref --quiet --short HEAD 2>/dev/null)
-tracked=$(/usr/bin/git -C $repository status --porcelain=v1 --untracked-files=no 2>/dev/null)
-head=$(/usr/bin/git -C $repository rev-parse HEAD 2>/dev/null)
-local_main=$(/usr/bin/git -C $repository rev-parse refs/heads/main 2>/dev/null)
-origin_main=$(/usr/bin/git -C $repository rev-parse refs/remotes/origin/main 2>/dev/null)
-if [[ $branch != main || -n $tracked || $head != $source_commit || \\
-  $head != $local_main || $head != $origin_main ]]; then
-  write_receipt blocked 78
-  cleanup_job
-  exit 78
-fi"""
+            authority_check = (
+                "branch=$(/usr/bin/git -C $repository symbolic-ref --quiet --short HEAD 2>/dev/null)\n"
+                "tracked=$(/usr/bin/git -C $repository status --porcelain=v1 --untracked-files=no 2>/dev/null)\n"
+                "head=$(/usr/bin/git -C $repository rev-parse HEAD 2>/dev/null)\n"
+                "local_main=$(/usr/bin/git -C $repository rev-parse refs/heads/main 2>/dev/null)\n"
+                "origin_main=$(/usr/bin/git -C $repository rev-parse refs/remotes/origin/main 2>/dev/null)\n"
+                "if [[ $branch != main || -n $tracked || $head != $source_commit || \\\n"
+                "  $head != $local_main || $head != $origin_main ]]; then\n"
+                f"{incident_call}"
+                "  write_receipt blocked 78\n"
+                "  cleanup_job\n"
+                "  exit 78\n"
+                "fi"
+            )
         case "frozen_runtime":
             authority_check = (
                 "tracked=$(/usr/bin/git -C $repository status --porcelain=v1 "
                 "--untracked-files=all 2>/dev/null)\n"
                 "head=$(/usr/bin/git -C $repository rev-parse HEAD 2>/dev/null)\n"
                 "if [[ -n $tracked || $head != $source_commit ]]; then\n"
+                f"{incident_call}"
                 "  write_receipt blocked 78\n"
                 "  cleanup_job\n"
                 "  exit 78\n"
@@ -182,6 +199,7 @@ readonly persistent_plist={persistent_plist}
 readonly repository={repository}
 readonly source_commit={spec.source_commit}
 {provenance_declarations}
+{incident_declarations}
 
 cleanup_job() {{
   /bin/launchctl remove $job_label >/dev/null 2>&1 || true
@@ -198,6 +216,7 @@ write_receipt() {{
   /bin/chmod 600 $temporary_receipt
   /bin/mv -f $temporary_receipt $receipt
 }}
+{incident_writer}
 
 if [[ -f $receipt ]]; then
   cleanup_job

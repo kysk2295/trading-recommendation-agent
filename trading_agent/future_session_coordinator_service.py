@@ -5,7 +5,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import assert_never
-from zoneinfo import ZoneInfo
 
 from trading_agent.future_session_coordinator import coordinate_future_session
 from trading_agent.future_session_coordinator_inspectors import (
@@ -19,6 +18,7 @@ from trading_agent.future_session_coordinator_models import (
     FutureSessionCoordinatorResult,
     FutureSessionPreparationResult,
 )
+from trading_agent.future_session_coordinator_request import dynamic_request, planning_after_date
 from trading_agent.future_session_coordinator_service_models import (
     FutureSessionCoordinatorServiceConfig,
     FutureSessionCoordinatorServiceReport,
@@ -33,9 +33,12 @@ from trading_agent.future_session_coordinator_service_runtime import (
     FrozenRuntimeError,
     ensure_frozen_runtime,
 )
+from trading_agent.future_session_coordinator_template_authority import inspect_bound_template
+from trading_agent.future_session_execution_incident import (
+    project_pending_execution_incidents,
+)
 from trading_agent.future_session_plan_compiler import compile_future_session_plan
 from trading_agent.future_session_plan_models import (
-    FrozenRuntimeAuthority,
     FutureSessionMarket,
     FutureSessionPlanRequest,
     ReadyToPrepareSessionPlan,
@@ -45,9 +48,6 @@ from trading_agent.future_session_plan_models import (
 from trading_agent.future_session_us_activation_models import LaunchctlRunner
 from trading_agent.future_session_us_materializer_io import write_private_file
 from trading_agent.private_stable_report import write_private_stable_report
-
-_US_ZONE = ZoneInfo("America/New_York")
-_KR_ZONE = ZoneInfo("Asia/Seoul")
 
 type LabelStatusReader = Callable[[str], bool]
 
@@ -69,37 +69,13 @@ class MarketAuthority:
     tick: FutureSessionTickAuthority
 
 
-def planning_after_date(
-    market: FutureSessionMarket,
-    observed_at: dt.datetime,
-) -> dt.date:
-    if observed_at.tzinfo is None or observed_at.utcoffset() is None:
-        raise FutureSessionCoordinatorServiceError
-    match market:
-        case FutureSessionMarket.US:
-            local = observed_at.astimezone(_US_ZONE)
-            cutoff = dt.time(8, 0)
-        case FutureSessionMarket.KR:
-            local = observed_at.astimezone(_KR_ZONE)
-            cutoff = dt.time(8, 30)
-        case unreachable:
-            assert_never(unreachable)
-    return local.date() - dt.timedelta(days=1) if local.time() < cutoff else local.date()
-
-
 def prepare_market_request(
     config: FutureSessionCoordinatorServiceConfig,
     market: FutureSessionMarket,
     authority: FutureSessionTickAuthority,
 ) -> tuple[FutureSessionPlanRequest, Path, Path]:
-    template_path = (
-        config.us_template_request_path if market is FutureSessionMarket.US else config.kr_template_request_path
-    )
-    template = inspect_request(template_path)
-    if template.market is not market:
-        raise FutureSessionCoordinatorServiceError
-    context = MarketAuthority(config=config, market=market, tick=authority)
-    candidate = _dynamic_request(template, context, None)
+    template = inspect_bound_template(config, market)
+    candidate = dynamic_request(template, config, market, authority, None)
     decision = compile_future_session_plan(candidate)
     match decision:
         case ReadyToPrepareSessionPlan(target_session=target):
@@ -110,7 +86,7 @@ def prepare_market_request(
             raise FutureSessionCoordinatorServiceError
         case unreachable:
             assert_never(unreachable)
-    request = _dynamic_request(template, context, target)
+    request = dynamic_request(template, config, market, authority, target)
     request_path = config.state_root / "requests" / market.value / f"{target.isoformat()}.json"
     plan_path = config.state_root / "plans" / market.value / f"{target.isoformat()}.json"
     payload = canonical_request_json(request).encode()
@@ -124,35 +100,6 @@ def prepare_market_request(
     return request, request_path, plan_path
 
 
-def _dynamic_request(
-    template: FutureSessionPlanRequest,
-    context: MarketAuthority,
-    target: dt.date | None,
-) -> FutureSessionPlanRequest:
-    values = template.model_dump(mode="python")
-    values.update(
-        after_date=planning_after_date(context.market, context.tick.observed_at),
-        compiled_at=context.tick.observed_at,
-        scheduler_main_sha=context.tick.scheduler_main_sha,
-        scheduler_authority_mode="frozen_runtime",
-        authority_repository=context.config.authority_repository,
-        artifact_root=context.config.state_root / "artifacts",
-        frozen_runtime=FrozenRuntimeAuthority(
-            directory=context.tick.frozen_runtime,
-            commit_sha=context.tick.scheduler_main_sha,
-        ),
-    )
-    if context.market is FutureSessionMarket.US:
-        target_name = "pending-target" if target is None else target.isoformat()
-        session_root = context.tick.frozen_runtime / "outputs" / "future-sessions" / "us" / target_name
-        values["watch_database"] = session_root / "paper_recommendations.sqlite3"
-        values["opportunity_outbox"] = session_root / "opportunities.v1.jsonl"
-        values["signal_outbox"] = session_root / "trade-signals.v1.jsonl"
-    elif context.market is not FutureSessionMarket.KR:
-        assert_never(context.market)
-    return FutureSessionPlanRequest.model_validate(values)
-
-
 def tick_service(
     config: FutureSessionCoordinatorServiceConfig,
     observed_at: dt.datetime,
@@ -164,6 +111,7 @@ def tick_service(
     started_at = observed_at if service_started_at is None else service_started_at
     failed = False
     try:
+        execution_incidents = project_pending_execution_incidents(config)
         runtime = ensure_frozen_runtime(
             config.authority_repository,
             config.state_root / "frozen-runtimes",
@@ -184,6 +132,10 @@ def tick_service(
             MarketAuthority(config, FutureSessionMarket.KR, authority),
             active_adapters,
         )
+        if _status_has_incident(us, FutureSessionMarket.US, execution_incidents):
+            us = _blocked_status("execution_incident")
+        if _status_has_incident(kr, FutureSessionMarket.KR, execution_incidents):
+            kr = _blocked_status("execution_incident")
     except (
         FrozenRuntimeError,
         OSError,
@@ -198,6 +150,8 @@ def tick_service(
         kr = blocked
     report = FutureSessionCoordinatorServiceReport(
         config_sha256=canonical_service_config_sha256(config),
+        us_template_sha256=config.us_template_sha256,
+        kr_template_sha256=config.kr_template_sha256,
         service_started_at=started_at,
         observed_at=observed_at,
         service_state=(
@@ -222,11 +176,8 @@ def _coordinate_market(
     config = context.config
     market = context.market
     try:
-        template_path = (
-            config.us_template_request_path if market is FutureSessionMarket.US else config.kr_template_request_path
-        )
-        template = inspect_request(template_path)
-        candidate = _dynamic_request(template, context, None)
+        template = inspect_bound_template(config, market)
+        candidate = dynamic_request(template, config, market, context.tick, None)
         decision = compile_future_session_plan(candidate)
         match decision:
             case WaitingSessionAuthority(target_session=None):
@@ -276,6 +227,15 @@ def _blocked_status(reason: str) -> FutureSessionMarketStatus:
         result=FutureSessionServiceResult.BLOCKED,
         reason=reason,
     )
+
+
+def _status_has_incident(
+    status: FutureSessionMarketStatus,
+    market: FutureSessionMarket,
+    incidents: frozenset[tuple[FutureSessionMarket, dt.date]],
+) -> bool:
+    target = None if status.receipt is None else status.receipt.target_session
+    return target is not None and (market, target) in incidents
 
 
 __all__ = (

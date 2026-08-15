@@ -51,7 +51,7 @@ def verify_kr_future_session_activation(
     root = manifest_path.parent
     if manifest_path != root / "preparation-manifest.json":
         raise FutureSessionActivationError("noncanonical_manifest_path")
-    for directory in (root, root / "jobs", root / "receipts", root / "logs"):
+    for directory in (root, root / "jobs", root / "receipts", root / "execution-incidents", root / "logs"):
         verify_private_directory(directory)
     verify_scheduler_activation_authority(
         mode=manifest.scheduler_authority_mode,

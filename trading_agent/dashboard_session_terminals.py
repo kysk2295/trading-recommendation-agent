@@ -35,6 +35,8 @@ _TERMINAL_PREFIXES: Final = (
     "kr-terminal:",
     "kr-exit:",
     "kr-source-preflight-incident-",
+    "us-future-session-incident-",
+    "kr-future-session-incident-",
 )
 
 

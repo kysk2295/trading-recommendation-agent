@@ -37,9 +37,11 @@ class FutureSessionCoordinatorServiceState(StrEnum):
 class FutureSessionCoordinatorServiceConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
-    schema_version: Literal[2] = 2
+    schema_version: Literal[3] = 3
     us_template_request_path: Path
     kr_template_request_path: Path
+    us_template_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    kr_template_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     state_root: Path
     launch_agents_dir: Path
     authority_repository: Path
@@ -100,8 +102,10 @@ class FutureSessionMarketStatus(BaseModel):
 class FutureSessionCoordinatorServiceReport(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
-    schema_version: Literal[2] = 2
+    schema_version: Literal[3] = 3
     config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    us_template_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    kr_template_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     service_started_at: AwareDatetime
     observed_at: AwareDatetime
     service_state: FutureSessionCoordinatorServiceState

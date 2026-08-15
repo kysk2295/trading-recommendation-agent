@@ -16,10 +16,17 @@ from trading_agent.future_session_coordinator_service_health import (
     evaluate_current_coordinator_health,
     evaluate_persisted_coordinator_health,
 )
+from trading_agent.future_session_coordinator_service_lifecycle import verify_coordinator_authority
 from trading_agent.future_session_coordinator_service_models import (
     FutureSessionCoordinatorServiceConfig,
+    FutureSessionMarketStatus,
+    FutureSessionServiceResult,
     canonical_service_config_sha256,
+    canonical_service_report_json,
 )
+from trading_agent.future_session_coordinator_service_runtime import FrozenRuntimeError
+from trading_agent.future_session_plan_models import FutureSessionPlanRequest, canonical_request_json
+from trading_agent.private_stable_report import write_private_stable_report
 
 
 def test_tick_report_is_bound_to_config_sha_and_service_start(tmp_path: Path) -> None:
@@ -238,6 +245,79 @@ def test_health_evaluation_cannot_accept_without_validated_report() -> None:
             reason="fresh_matching_ready",
             report=None,
         )
+
+
+def test_template_drift_blocks_tick_before_planning(tmp_path: Path) -> None:
+    config = _ready_config(tmp_path)
+    template = FutureSessionPlanRequest.model_validate_json(config.us_template_request_path.read_bytes())
+    changed = template.model_copy(update={"cycles": template.cycles + 1})
+    config.us_template_request_path.write_text(canonical_request_json(changed), encoding="utf-8")
+
+    report = tick_service(
+        config,
+        dt.datetime(2026, 7, 24, 20, tzinfo=dt.UTC),
+    )
+
+    assert report.service_state == "ready"
+    assert report.us.result == "blocked"
+    assert report.kr.result == "waiting_authority"
+    assert report.us_template_sha256 == config.us_template_sha256
+    assert report.kr_template_sha256 == config.kr_template_sha256
+
+
+def test_corrupt_template_is_a_typed_authority_failure(tmp_path: Path) -> None:
+    config = _ready_config(tmp_path)
+    config.us_template_request_path.write_text("{", encoding="utf-8")
+
+    with pytest.raises(FrozenRuntimeError, match="template_authority_mismatch"):
+        verify_coordinator_authority(config)
+
+
+def test_health_rejects_ready_report_with_blocked_market(tmp_path: Path) -> None:
+    config = _ready_config(tmp_path)
+    observed_at = dt.datetime(2026, 7, 24, 20, tzinfo=dt.UTC)
+    report = tick_service(config, observed_at, service_started_at=observed_at)
+    blocked = report.model_copy(
+        update={
+            "us": FutureSessionMarketStatus(
+                result=FutureSessionServiceResult.BLOCKED,
+                reason="execution_incident",
+            )
+        }
+    )
+    write_private_stable_report(
+        config.state_root / "future-session-coordinator-status.json",
+        canonical_service_report_json(blocked),
+    )
+
+    health = evaluate_persisted_coordinator_health(
+        config,
+        observed_at - dt.timedelta(seconds=1),
+        observed_at,
+    )
+
+    assert health.accepted is False
+    assert health.reason == "market_blocked"
+
+
+def test_health_rejects_report_with_forged_template_digest(tmp_path: Path) -> None:
+    config = _ready_config(tmp_path)
+    observed_at = dt.datetime(2026, 7, 24, 20, tzinfo=dt.UTC)
+    report = tick_service(config, observed_at, service_started_at=observed_at)
+    forged = report.model_copy(update={"us_template_sha256": "f" * 64})
+    write_private_stable_report(
+        config.state_root / "future-session-coordinator-status.json",
+        canonical_service_report_json(forged),
+    )
+
+    health = evaluate_persisted_coordinator_health(
+        config,
+        observed_at - dt.timedelta(seconds=1),
+        observed_at,
+    )
+
+    assert health.accepted is False
+    assert health.reason == "template_mismatch"
 
 
 def test_status_emits_the_exact_report_returned_by_health_evaluation(

@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import datetime as dt
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
+
+from trading_agent.future_session_execution_incident_shell import (
+    render_kr_execution_incident_shell,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +31,13 @@ class KrRestartableRunnerSpec:
     receipt: Path
     command: tuple[str, ...]
     persistent_plist: Path
+    target_session: dt.date | None = None
+    incident_receipt: Path | None = None
+    manifest: Path | None = None
+    request_sha256: str | None = None
+    plan_sha256: str | None = None
+    scheduler_main_sha: str | None = None
+    runtime_commit_sha: str | None = None
 
 
 def render_kr_supervisor_payload(spec: KrSupervisorPayloadSpec) -> str:
@@ -62,6 +74,48 @@ exec {command}
 
 def render_kr_restartable_runner(spec: KrRestartableRunnerSpec) -> str:
     command = shlex.join(spec.command)
+    incident_provenance = (
+        spec.target_session,
+        spec.incident_receipt,
+        spec.manifest,
+        spec.request_sha256,
+        spec.plan_sha256,
+        spec.scheduler_main_sha,
+        spec.runtime_commit_sha,
+    )
+    incident_enabled = any(value is not None for value in incident_provenance)
+    if incident_enabled and any(value is None for value in incident_provenance):
+        raise ValueError
+    if incident_enabled:
+        if (
+            spec.target_session is None
+            or spec.incident_receipt is None
+            or spec.manifest is None
+            or spec.request_sha256 is None
+            or spec.plan_sha256 is None
+            or spec.scheduler_main_sha is None
+            or spec.runtime_commit_sha is None
+        ):
+            raise ValueError
+        incident_declarations, incident_writer = render_kr_execution_incident_shell(
+            spec.target_session,
+            spec.incident_receipt,
+            spec.manifest,
+            spec.request_sha256,
+            spec.plan_sha256,
+            spec.scheduler_main_sha,
+            spec.runtime_commit_sha,
+        )
+        incident_failure = """if (( exit_code == 78 )); then
+  write_execution_incident
+  write_receipt blocked
+  cleanup_job
+fi
+"""
+    else:
+        incident_declarations = ""
+        incident_writer = ""
+        incident_failure = ""
     return f"""#!/bin/zsh
 
 set -u
@@ -73,6 +127,7 @@ readonly expires_epoch={spec.expires_epoch}
 readonly receipt={shlex.quote(str(spec.receipt))}
 readonly claim={shlex.quote(f"{spec.receipt}.claim")}
 readonly persistent_plist={shlex.quote(str(spec.persistent_plist))}
+{incident_declarations}
 
 cleanup_job() {{
   /bin/launchctl remove $job_label >/dev/null 2>&1 || true
@@ -87,6 +142,7 @@ write_receipt() {{
   /bin/chmod 600 $temporary_receipt
   /bin/mv -f $temporary_receipt $receipt
 }}
+{incident_writer}
 
 if [[ -f $receipt ]]; then
   cleanup_job
@@ -104,6 +160,7 @@ if ! /bin/mkdir $claim 2>/dev/null; then exit 75; fi
 {command}
 exit_code=$?
 /bin/rmdir $claim 2>/dev/null || true
+{incident_failure}\
 if (( exit_code == 0 )); then
   write_receipt terminal
   cleanup_job

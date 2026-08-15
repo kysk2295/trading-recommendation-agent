@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import stat
 from pathlib import Path
 
@@ -16,7 +17,10 @@ from trading_agent.future_session_coordinator_bootstrap import (
 )
 from trading_agent.future_session_coordinator_inspectors import inspect_request
 from trading_agent.future_session_coordinator_service_runtime import load_service_config
-from trading_agent.future_session_plan_models import FrozenRuntimeAuthority
+from trading_agent.future_session_plan_models import (
+    FrozenRuntimeAuthority,
+    canonical_request_json,
+)
 
 
 def test_bootstrap_atomically_publishes_private_idempotent_bundle(tmp_path: Path) -> None:
@@ -39,6 +43,12 @@ def test_bootstrap_atomically_publishes_private_idempotent_bundle(tmp_path: Path
     assert replay == first == manifest.bundle_path / "coordinator.json"
     assert config.us_template_request_path == manifest.bundle_path / "us-template.json"
     assert config.kr_template_request_path == manifest.bundle_path / "kr-template.json"
+    assert (
+        config.us_template_sha256 == hashlib.sha256(canonical_request_json(manifest.us_template).encode()).hexdigest()
+    )
+    assert (
+        config.kr_template_sha256 == hashlib.sha256(canonical_request_json(manifest.kr_template).encode()).hexdigest()
+    )
     assert stat.S_IMODE(manifest.bundle_path.stat().st_mode) == 0o700
     assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in manifest.bundle_path.iterdir())
 

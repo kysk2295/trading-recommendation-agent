@@ -175,7 +175,8 @@ def _prepare_supervisor(
     jobs = stage / "jobs"
     receipts = stage / "receipts"
     logs = stage / "logs"
-    for directory in (jobs, receipts, logs):
+    incidents = stage / "execution-incidents"
+    for directory in (jobs, receipts, incidents, logs):
         directory.mkdir(mode=_DIRECTORY_MODE)
     label = f"ai.trading-agent.future-session.kr.{plan.target_session.isoformat()}.supervisor"
     payload = output / "jobs" / "kr-supervisor.payload.zsh"
@@ -207,6 +208,13 @@ def _prepare_supervisor(
             receipt=receipt,
             command=(str(payload),),
             persistent_plist=installed_plist,
+            target_session=plan.target_session,
+            incident_receipt=output / "execution-incidents" / "kr_supervisor.json",
+            manifest=manifest_path,
+            request_sha256=plan.source_request_sha256,
+            plan_sha256=plan.plan_sha256,
+            scheduler_main_sha=plan.scheduler_main_sha,
+            runtime_commit_sha=plan.frozen_runtime.commit_sha,
         )
     ).encode()
     write_private_file(stage_path(stage, output, wrapper), wrapper_content, _EXECUTABLE_MODE)

@@ -51,7 +51,7 @@ def verify_us_future_session_activation(*, manifest_path: Path, launch_agents_di
     root = manifest_path.parent
     if not manifest_path.is_absolute() or not root.is_absolute():
         raise FutureSessionActivationError("invalid_manifest_path")
-    for directory in (root, root / "jobs", root / "receipts", root / "logs"):
+    for directory in (root, root / "jobs", root / "receipts", root / "execution-incidents", root / "logs"):
         verify_private_directory(directory)
     verify_scheduler_activation_authority(
         mode=manifest.scheduler_authority_mode,

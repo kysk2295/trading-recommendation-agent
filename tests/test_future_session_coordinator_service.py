@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import os
 import plistlib
@@ -54,6 +55,10 @@ def _git(repository: Path, *arguments: str) -> str:
         text=True,
     )
     return completed.stdout.strip()
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _repository(tmp_path: Path) -> tuple[Path, str]:
@@ -129,6 +134,8 @@ def test_private_config_rejects_noncanonical_or_public_file(tmp_path: Path) -> N
     config = FutureSessionCoordinatorServiceConfig(
         us_template_request_path=(tmp_path / "us.json").absolute(),
         kr_template_request_path=(tmp_path / "kr.json").absolute(),
+        us_template_sha256="a" * 64,
+        kr_template_sha256="b" * 64,
         state_root=(tmp_path / "state").absolute(),
         launch_agents_dir=(tmp_path / "LaunchAgents").absolute(),
         authority_repository=(tmp_path / "repo").absolute(),
@@ -174,6 +181,8 @@ def test_us_request_is_target_scoped_and_reused_across_restart(tmp_path: Path) -
     config = FutureSessionCoordinatorServiceConfig(
         us_template_request_path=template_path,
         kr_template_request_path=(tmp_path / "kr-template.json").absolute(),
+        us_template_sha256=_sha256(template_path),
+        kr_template_sha256="b" * 64,
         state_root=(tmp_path / "state").absolute(),
         launch_agents_dir=(tmp_path / "LaunchAgents").absolute(),
         authority_repository=repository,
@@ -229,6 +238,8 @@ def test_tick_coordinates_us_then_kr_without_launching_waiting_authority(
     config = FutureSessionCoordinatorServiceConfig(
         us_template_request_path=us_path,
         kr_template_request_path=kr_path,
+        us_template_sha256=_sha256(us_path),
+        kr_template_sha256=_sha256(kr_path),
         state_root=(tmp_path / "state").absolute(),
         launch_agents_dir=(tmp_path / "LaunchAgents").absolute(),
         authority_repository=repository,
@@ -270,6 +281,8 @@ def test_tick_keeps_using_pinned_runtime_when_main_moves_after_freeze(
     config = FutureSessionCoordinatorServiceConfig(
         us_template_request_path=us_path,
         kr_template_request_path=kr_path,
+        us_template_sha256=_sha256(us_path),
+        kr_template_sha256=_sha256(kr_path),
         state_root=(tmp_path / "state").absolute(),
         launch_agents_dir=(tmp_path / "LaunchAgents").absolute(),
         authority_repository=repository,
@@ -314,6 +327,8 @@ def test_provisioned_plist_is_keepalive_with_visible_private_logs(tmp_path: Path
     config = FutureSessionCoordinatorServiceConfig(
         us_template_request_path=(tmp_path / "us.json").absolute(),
         kr_template_request_path=(tmp_path / "kr.json").absolute(),
+        us_template_sha256="a" * 64,
+        kr_template_sha256="b" * 64,
         state_root=(tmp_path / "state").absolute(),
         launch_agents_dir=(tmp_path / "LaunchAgents").absolute(),
         authority_repository=repository,
@@ -357,6 +372,8 @@ def test_service_plist_rejects_unprotected_launch_agent_parent(
     config = FutureSessionCoordinatorServiceConfig(
         us_template_request_path=(tmp_path / "us.json").absolute(),
         kr_template_request_path=(tmp_path / "kr.json").absolute(),
+        us_template_sha256="a" * 64,
+        kr_template_sha256="b" * 64,
         state_root=(tmp_path / "state").absolute(),
         launch_agents_dir=launch_agents.absolute(),
         authority_repository=repository,
@@ -387,6 +404,8 @@ def test_service_activation_uses_exact_launchd_target_and_rolls_back(
     config = FutureSessionCoordinatorServiceConfig(
         us_template_request_path=us_path,
         kr_template_request_path=kr_path,
+        us_template_sha256=_sha256(us_path),
+        kr_template_sha256=_sha256(kr_path),
         state_root=(tmp_path / "state").absolute(),
         launch_agents_dir=(tmp_path / "LaunchAgents").absolute(),
         authority_repository=repository,
