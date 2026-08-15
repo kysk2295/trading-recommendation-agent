@@ -63,6 +63,7 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
     plan_sha256 = "b" * 64
     runtime_commit_sha = "c" * 40
     scheduler_main_sha = runtime_commit_sha
+    marker = tmp_path / "invalid-runtime-code-executed"
     if market == "us":
         repository = tmp_path / "runtime"
         repository.mkdir(mode=0o700)
@@ -100,7 +101,6 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
                 execution_incident_publisher_sha256=publisher_sha256,
             )
         )
-        marker = tmp_path / "invalid-runtime-code-executed"
         malicious = repository / "run_future_session_execution_incident_publisher.py"
         malicious.write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n", encoding="utf-8")
     else:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import stat
 import subprocess
 from pathlib import Path
 from typing import Final
@@ -15,13 +16,36 @@ class InvalidExecutionIncidentPublisherArtifactError(ValueError):
 
 
 def read_execution_incident_publisher_at_commit(repository: Path, commit: str) -> bytes:
-    if not repository.is_absolute() or _COMMIT.fullmatch(commit) is None:
+    try:
+        git_directory = (repository / ".git").lstat()
+        repository_owner = repository.stat().st_uid
+    except OSError:
+        raise InvalidExecutionIncidentPublisherArtifactError from None
+    if (
+        not repository.is_absolute()
+        or _COMMIT.fullmatch(commit) is None
+        or not stat.S_ISDIR(git_directory.st_mode)
+        or git_directory.st_uid != repository_owner
+    ):
         raise InvalidExecutionIncidentPublisherArtifactError
     try:
         completed = subprocess.run(
-            ("git", "-C", str(repository), "show", f"{commit}:{_PUBLISHER_SOURCE}"),
+            (
+                "/usr/bin/git",
+                "--no-replace-objects",
+                "-C",
+                str(repository),
+                "show",
+                f"{commit}:{_PUBLISHER_SOURCE}",
+            ),
             check=False,
             capture_output=True,
+            env={
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_NO_REPLACE_OBJECTS": "1",
+                "LC_ALL": "C",
+                "PATH": "/usr/bin:/bin",
+            },
             timeout=10,
         )
     except (OSError, subprocess.SubprocessError):

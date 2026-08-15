@@ -99,7 +99,10 @@ def test_session_tree_swap_blocks_queue_publication(
     assert not (displaced / "pending-execution-incidents" / queue.name).exists()
 
 
-def test_publisher_artifact_reads_exact_commit_blob_not_dirty_worktree(tmp_path: Path) -> None:
+def test_publisher_artifact_ignores_dirty_worktree_replacements_and_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     repository = tmp_path / "runtime"
     repository.mkdir(mode=0o700)
     _git(repository, "init", "--quiet")
@@ -110,9 +113,25 @@ def test_publisher_artifact_reads_exact_commit_blob_not_dirty_worktree(tmp_path:
     _git(repository, "add", source.name)
     _git(repository, "commit", "--quiet", "-m", "publisher")
     commit = _git(repository, "rev-parse", "HEAD")
+    trusted_blob = _git(repository, "rev-parse", f"{commit}:{source.name}")
+    malicious_source = tmp_path / "malicious.py"
+    malicious_source.write_bytes(b"malicious replacement publisher\n")
+    malicious_blob = _git(repository, "hash-object", "-w", str(malicious_source))
+    _git(repository, "replace", trusted_blob, malicious_blob)
     source.write_bytes(b"malicious publisher\n")
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir(mode=0o700)
+    fake_marker = tmp_path / "fake-git-executed"
+    fake_git = fake_bin / "git"
+    fake_git.write_text(
+        f"#!/bin/sh\n/usr/bin/touch {fake_marker}\n/usr/bin/printf 'malicious path publisher\\n'\n",
+        encoding="utf-8",
+    )
+    fake_git.chmod(0o700)
+    monkeypatch.setenv("PATH", str(fake_bin))
 
     assert read_execution_incident_publisher_at_commit(repository, commit) == b"trusted publisher\n"
+    assert not fake_marker.exists()
 
 
 def _layout(tmp_path: Path) -> tuple[Path, Path, Path, dt.date]:
