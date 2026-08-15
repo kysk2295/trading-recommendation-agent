@@ -34,6 +34,7 @@ class KrRestartableRunnerSpec:
     target_session: dt.date | None = None
     incident_receipt: Path | None = None
     incident_queue_receipt: Path | None = None
+    incident_fsync_interpreter: Path | None = None
     manifest: Path | None = None
     request_sha256: str | None = None
     plan_sha256: str | None = None
@@ -79,6 +80,7 @@ def render_kr_restartable_runner(spec: KrRestartableRunnerSpec) -> str:
         spec.target_session,
         spec.incident_receipt,
         spec.incident_queue_receipt,
+        spec.incident_fsync_interpreter,
         spec.manifest,
         spec.request_sha256,
         spec.plan_sha256,
@@ -93,6 +95,7 @@ def render_kr_restartable_runner(spec: KrRestartableRunnerSpec) -> str:
             spec.target_session is None
             or spec.incident_receipt is None
             or spec.incident_queue_receipt is None
+            or spec.incident_fsync_interpreter is None
             or spec.manifest is None
             or spec.request_sha256 is None
             or spec.plan_sha256 is None
@@ -104,6 +107,7 @@ def render_kr_restartable_runner(spec: KrRestartableRunnerSpec) -> str:
             spec.target_session,
             spec.incident_receipt,
             spec.incident_queue_receipt,
+            spec.incident_fsync_interpreter,
             spec.manifest,
             spec.request_sha256,
             spec.plan_sha256,
@@ -111,7 +115,10 @@ def render_kr_restartable_runner(spec: KrRestartableRunnerSpec) -> str:
             spec.runtime_commit_sha,
         )
         incident_failure = """if (( exit_code == 78 )); then
-  write_execution_incident
+  if ! write_execution_incident; then
+    print -u2 -r -- '{"reason":"execution_incident_publication_failed","result":"retryable"}'
+    exit 75
+  fi
   write_receipt blocked
   cleanup_job
 fi

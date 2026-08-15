@@ -4,6 +4,7 @@ import datetime as dt
 import hashlib
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -84,6 +85,7 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
                 target_session=target,
                 execution_incident_receipt=incident,
                 execution_incident_queue_receipt=queue_receipt,
+                execution_incident_fsync_interpreter=Path(sys.executable),
             )
         )
         (repository / "untracked.py").write_text("raise RuntimeError\n", encoding="utf-8")
@@ -99,6 +101,7 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
                 target_session=target,
                 incident_receipt=incident,
                 incident_queue_receipt=queue_receipt,
+                incident_fsync_interpreter=Path(sys.executable),
                 manifest=manifest,
                 request_sha256=request_sha256,
                 plan_sha256=plan_sha256,
@@ -108,6 +111,23 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
         )
     wrapper.write_text(wrapper_text, encoding="utf-8")
     wrapper.chmod(0o700)
+
+    queue_dir.chmod(0o500)
+    publication_failed = subprocess.run(
+        (str(wrapper),),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert publication_failed.returncode == 75
+    assert "execution_incident_publication_failed" in publication_failed.stderr
+    assert incident.exists()
+    assert not queue_receipt.exists()
+    assert not receipt.exists()
+    assert plist.exists()
+    assert not tuple(queue_dir.glob("*.tmp.*"))
+    assert not tuple(incident_dir.glob("*.tmp.*"))
+    queue_dir.chmod(0o700)
 
     completed = subprocess.run((str(wrapper),), check=False, capture_output=True, text=True)
     original_incident = incident.read_bytes()

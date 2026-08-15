@@ -5,12 +5,27 @@ import shlex
 from pathlib import Path
 from typing import Literal
 
+_FSYNC_PROGRAM = """import os
+import sys
+
+path = sys.argv[1]
+file_descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+directory_descriptor = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    os.fsync(file_descriptor)
+    os.fsync(directory_descriptor)
+finally:
+    os.close(directory_descriptor)
+    os.close(file_descriptor)
+"""
+
 
 def render_us_execution_incident_shell(
     market: Literal["us", "kr"],
     target_session: dt.date,
     receipt: Path,
     queue_receipt: Path,
+    fsync_interpreter: Path,
 ) -> tuple[str, str]:
     incident_format = (
         '{"completed_at_epoch":%s,"manifest_sha256":"%s","market":"%s",'
@@ -21,13 +36,15 @@ def render_us_execution_incident_shell(
     declarations = (
         f"readonly execution_incident_receipt={shlex.quote(str(receipt))}\n"
         f"readonly execution_incident_queue_receipt={shlex.quote(str(queue_receipt))}\n"
+        f"readonly execution_incident_fsync_interpreter={shlex.quote(str(fsync_interpreter))}\n"
         f"readonly market={market}\n"
         f"readonly target_session={target_session}\n"
     )
     writer = """
 write_execution_incident_queue_pointer() {
   local incident_sha256
-  local temporary_pointer="${execution_incident_queue_receipt}.tmp.$$"
+  local temporary_pointer
+  temporary_pointer=$(/usr/bin/mktemp "${execution_incident_receipt}.queue.tmp.XXXXXXXX") || return 1
   incident_sha256=$(/usr/bin/shasum -a 256 "$execution_incident_receipt" | /usr/bin/awk '{print $1}')
   /usr/bin/printf \
     '{"incident_sha256":"%s","market":"%s","role":"%s","schema_version":1,"target_session":"%s"}\n' \
@@ -35,17 +52,22 @@ write_execution_incident_queue_pointer() {
   /bin/chmod 600 "$temporary_pointer"
   if /bin/ln "$temporary_pointer" "$execution_incident_queue_receipt"; then
     /bin/rm -f "$temporary_pointer"
-    return 0
+    "$execution_incident_fsync_interpreter" -c __FSYNC_PROGRAM__ \
+      "$execution_incident_queue_receipt"
+    return $?
   fi
   /usr/bin/cmp -s "$temporary_pointer" "$execution_incident_queue_receipt"
   local comparison=$?
   /bin/rm -f "$temporary_pointer"
-  return $comparison
+  if (( comparison != 0 )); then return $comparison; fi
+  "$execution_incident_fsync_interpreter" -c __FSYNC_PROGRAM__ \
+    "$execution_incident_queue_receipt"
 }
 
 write_execution_incident() {
   if [[ ! -f $execution_incident_receipt ]]; then
-    local temporary_incident="${execution_incident_receipt}.tmp.$$"
+    local temporary_incident
+    temporary_incident=$(/usr/bin/mktemp "${execution_incident_receipt}.tmp.XXXXXXXX") || return 1
     local manifest_sha256
     manifest_sha256=$(/usr/bin/shasum -a 256 "$preparation_manifest" | /usr/bin/awk '{print $1}')
     /usr/bin/printf '__INCIDENT_FORMAT__' \
@@ -55,9 +77,12 @@ write_execution_incident() {
     /bin/ln "$temporary_incident" "$execution_incident_receipt" || true
     /bin/rm -f "$temporary_incident"
   fi
-  [[ -f $execution_incident_receipt ]] && write_execution_incident_queue_pointer
+  if [[ ! -f $execution_incident_receipt ]]; then return 1; fi
+  "$execution_incident_fsync_interpreter" -c __FSYNC_PROGRAM__ \
+    "$execution_incident_receipt" || return 1
+  write_execution_incident_queue_pointer
 }
-""".replace("__INCIDENT_FORMAT__", incident_format)
+""".replace("__INCIDENT_FORMAT__", incident_format).replace("__FSYNC_PROGRAM__", shlex.quote(_FSYNC_PROGRAM))
     return declarations, writer
 
 
@@ -66,21 +91,41 @@ def render_optional_us_execution_incident_shell(
     target_session: dt.date | None,
     receipt: Path | None,
     queue_receipt: Path | None,
+    fsync_interpreter: Path | None,
     provenance_enabled: bool,
 ) -> tuple[str, str, str]:
-    enabled = any(value is not None for value in (market, target_session, receipt, queue_receipt))
+    enabled = any(value is not None for value in (market, target_session, receipt, queue_receipt, fsync_interpreter))
     if not enabled:
         return "", "", ""
-    if not provenance_enabled or market is None or target_session is None or receipt is None or queue_receipt is None:
+    if (
+        not provenance_enabled
+        or market is None
+        or target_session is None
+        or receipt is None
+        or queue_receipt is None
+        or fsync_interpreter is None
+    ):
         raise ValueError
-    declarations, writer = render_us_execution_incident_shell(market, target_session, receipt, queue_receipt)
-    return declarations, writer, "  write_execution_incident\n"
+    declarations, writer = render_us_execution_incident_shell(
+        market,
+        target_session,
+        receipt,
+        queue_receipt,
+        fsync_interpreter,
+    )
+    call = """  if ! write_execution_incident; then
+    print -u2 -r -- '{"reason":"execution_incident_publication_failed","result":"retryable"}'
+    exit 75
+  fi
+"""
+    return declarations, writer, call
 
 
 def render_kr_execution_incident_shell(
     target_session: dt.date,
     receipt: Path,
     queue_receipt: Path,
+    fsync_interpreter: Path,
     manifest: Path,
     request_sha256: str,
     plan_sha256: str,
@@ -96,6 +141,7 @@ def render_kr_execution_incident_shell(
     declarations = (
         f"readonly incident_receipt={shlex.quote(str(receipt))}\n"
         f"readonly incident_queue_receipt={shlex.quote(str(queue_receipt))}\n"
+        f"readonly incident_fsync_interpreter={shlex.quote(str(fsync_interpreter))}\n"
         f"readonly manifest={shlex.quote(str(manifest))}\n"
         f"readonly request_sha256={request_sha256}\n"
         f"readonly plan_sha256={plan_sha256}\n"
@@ -106,7 +152,8 @@ def render_kr_execution_incident_shell(
     writer = """
 write_execution_incident_queue_pointer() {
   local incident_sha256
-  local temporary_pointer="${incident_queue_receipt}.tmp.$$"
+  local temporary_pointer
+  temporary_pointer=$(/usr/bin/mktemp "${incident_receipt}.queue.tmp.XXXXXXXX") || return 1
   incident_sha256=$(/usr/bin/shasum -a 256 "$incident_receipt" | /usr/bin/awk '{print $1}')
   /usr/bin/printf \
     '{"incident_sha256":"%s","market":"kr","role":"kr_supervisor","schema_version":1,"target_session":"%s"}\n' \
@@ -114,17 +161,20 @@ write_execution_incident_queue_pointer() {
   /bin/chmod 600 "$temporary_pointer"
   if /bin/ln "$temporary_pointer" "$incident_queue_receipt"; then
     /bin/rm -f "$temporary_pointer"
-    return 0
+    "$incident_fsync_interpreter" -c __FSYNC_PROGRAM__ "$incident_queue_receipt"
+    return $?
   fi
   /usr/bin/cmp -s "$temporary_pointer" "$incident_queue_receipt"
   local comparison=$?
   /bin/rm -f "$temporary_pointer"
-  return $comparison
+  if (( comparison != 0 )); then return $comparison; fi
+  "$incident_fsync_interpreter" -c __FSYNC_PROGRAM__ "$incident_queue_receipt"
 }
 
 write_execution_incident() {
   if [[ ! -f $incident_receipt ]]; then
-    local temporary_incident="${incident_receipt}.tmp.$$"
+    local temporary_incident
+    temporary_incident=$(/usr/bin/mktemp "${incident_receipt}.tmp.XXXXXXXX") || return 1
     local manifest_sha256
     manifest_sha256=$(/usr/bin/shasum -a 256 "$manifest" | /usr/bin/awk '{print $1}')
     /usr/bin/printf '__INCIDENT_FORMAT__' \
@@ -134,9 +184,11 @@ write_execution_incident() {
     /bin/ln "$temporary_incident" "$incident_receipt" || true
     /bin/rm -f "$temporary_incident"
   fi
-  [[ -f $incident_receipt ]] && write_execution_incident_queue_pointer
+  if [[ ! -f $incident_receipt ]]; then return 1; fi
+  "$incident_fsync_interpreter" -c __FSYNC_PROGRAM__ "$incident_receipt" || return 1
+  write_execution_incident_queue_pointer
 }
-""".replace("__INCIDENT_FORMAT__", incident_format)
+""".replace("__INCIDENT_FORMAT__", incident_format).replace("__FSYNC_PROGRAM__", shlex.quote(_FSYNC_PROGRAM))
     return declarations, writer
 
 

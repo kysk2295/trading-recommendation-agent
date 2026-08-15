@@ -222,7 +222,11 @@ def test_replace_cleans_candidate_children_before_restoring_current(tmp_path: Pa
     def health(config, _started, _now):
         nonlocal candidate_plist
         if config == replacement.candidate:
-            candidate_plist = _candidate_child(replacement.candidate, label)
+            candidate_plist = _candidate_child(
+                replacement.candidate,
+                label,
+                include_manifest=False,
+            )
             loaded.add(label)
             return FutureSessionCoordinatorHealthEvaluation(
                 accepted=False,
@@ -483,12 +487,15 @@ def _write_and_provision(
 def _candidate_child(
     config: FutureSessionCoordinatorServiceConfig,
     label: str,
+    *,
+    include_manifest: bool = True,
 ) -> Path:
     manifest = config.state_root / "artifacts" / "kr" / "2026-07-27" / "preparation-manifest.json"
-    manifest.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-    if not manifest.exists():
-        manifest.write_text(json.dumps({"entry": {"label": label}}), encoding="utf-8")
-        manifest.chmod(0o600)
+    if include_manifest:
+        manifest.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        if not manifest.exists():
+            manifest.write_text(json.dumps({"entry": {"label": label}}), encoding="utf-8")
+            manifest.chmod(0o600)
     config.launch_agents_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
     child = config.launch_agents_dir / f"{label}.plist"
     if not child.exists():

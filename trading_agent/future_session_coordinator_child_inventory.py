@@ -50,7 +50,7 @@ def cleanup_owned_child_jobs(
     runner: ChildStatusRunner,
 ) -> bool:
     try:
-        labels = _artifact_child_labels(config)
+        labels = _owned_child_labels(config)
         for label in sorted(labels):
             target = f"{domain}/{label}"
             status = runner(("/bin/launchctl", "print", target), ())

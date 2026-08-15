@@ -108,6 +108,7 @@ def test_prepare_atomically_materializes_exact_six_us_roles(
         with plist.open("rb") as handle:
             launch_agent = plistlib.load(handle)
         assert launch_agent["Label"] == entry["label"]
+        assert launch_agent["KeepAlive"] == {"SuccessfulExit": False}
         wrapper_text = wrapper.read_text(encoding="utf-8")
         assert '"schema_version":2' in wrapper_text
         assert plan.plan_sha256 in wrapper_text

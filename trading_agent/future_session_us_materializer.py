@@ -211,6 +211,7 @@ def _prepare_role(
             execution_incident_queue_receipt=(
                 incident_queue_root / f"us--{plan.target_session.isoformat()}--{role.value}.json"
             ),
+            execution_incident_fsync_interpreter=runtime_environment.interpreter,
         )
     ).encode()
     write_private_file(
@@ -221,6 +222,7 @@ def _prepare_role(
     plist_content = plistlib.dumps(
         {
             "Label": job.label,
+            "KeepAlive": {"SuccessfulExit": False},
             "ProcessType": "Background",
             "ProgramArguments": ["/bin/zsh", str(wrapper)],
             "RunAtLoad": True,
