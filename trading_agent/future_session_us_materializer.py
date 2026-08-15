@@ -212,6 +212,7 @@ def _prepare_role(
                 incident_queue_root / f"us--{plan.target_session.isoformat()}--{role.value}.json"
             ),
             execution_incident_fsync_interpreter=runtime_environment.interpreter,
+            execution_incident_publisher_root=authority_repository,
         )
     ).encode()
     write_private_file(

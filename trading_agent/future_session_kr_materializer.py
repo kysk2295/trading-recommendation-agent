@@ -218,6 +218,7 @@ def _prepare_supervisor(
             incident_receipt=output / "execution-incidents" / "kr_supervisor.json",
             incident_queue_receipt=(incident_queue_root / f"kr--{plan.target_session.isoformat()}--kr_supervisor.json"),
             incident_fsync_interpreter=request.runtime_interpreter,
+            incident_publisher_root=entrypoint.parent,
             manifest=manifest_path,
             request_sha256=plan.source_request_sha256,
             plan_sha256=plan.plan_sha256,

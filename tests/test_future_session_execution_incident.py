@@ -32,22 +32,24 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
     tmp_path: Path,
     market: str,
 ) -> None:
-    manifest = tmp_path / "preparation-manifest.json"
+    dashboard_now = dt.datetime.now(dt.UTC)
+    target = (dashboard_now - dt.timedelta(days=1)).date()
+    target_compact = target.strftime("%Y%m%d")
+    artifact = tmp_path / "state" / "artifacts" / market / target.isoformat()
+    manifest = artifact / "preparation-manifest.json"
+    manifest.parent.mkdir(parents=True, mode=0o700)
     manifest.write_text("fixture\n", encoding="utf-8")
     manifest.chmod(0o600)
     receipt = tmp_path / "receipt.json"
-    incident_dir = tmp_path / "execution-incidents"
+    incident_dir = artifact / "execution-incidents"
     incident_dir.mkdir(mode=0o700)
     role = "us_orb_watcher" if market == "us" else "kr_supervisor"
     incident = incident_dir / f"{role}.json"
-    queue_dir = tmp_path / "pending-execution-incidents"
+    queue_dir = tmp_path / "state" / "pending-execution-incidents"
     queue_dir.mkdir(mode=0o700)
     wrapper = tmp_path / "runner.zsh"
     plist = tmp_path / "job.plist"
     plist.touch(mode=0o600)
-    dashboard_now = dt.datetime.now(dt.UTC)
-    target = (dashboard_now - dt.timedelta(days=1)).date()
-    target_compact = target.strftime("%Y%m%d")
     queue_receipt = queue_dir / f"{market}--{target.isoformat()}--{role}.json"
     request_sha256 = "a" * 64
     plan_sha256 = "b" * 64
@@ -86,6 +88,7 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
                 execution_incident_receipt=incident,
                 execution_incident_queue_receipt=queue_receipt,
                 execution_incident_fsync_interpreter=Path(sys.executable),
+                execution_incident_publisher_root=Path(__file__).parents[1],
             )
         )
         (repository / "untracked.py").write_text("raise RuntimeError\n", encoding="utf-8")
@@ -102,6 +105,7 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
                 incident_receipt=incident,
                 incident_queue_receipt=queue_receipt,
                 incident_fsync_interpreter=Path(sys.executable),
+                incident_publisher_root=Path(__file__).parents[1],
                 manifest=manifest,
                 request_sha256=request_sha256,
                 plan_sha256=plan_sha256,
@@ -112,7 +116,38 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
     wrapper.write_text(wrapper_text, encoding="utf-8")
     wrapper.chmod(0o700)
 
-    queue_dir.chmod(0o500)
+    manifest.chmod(0o644)
+    manifest_failed = subprocess.run(
+        (str(wrapper),),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert manifest_failed.returncode == 75
+    assert not incident.exists()
+    assert not queue_receipt.exists()
+    assert not receipt.exists()
+    assert plist.exists()
+    manifest.chmod(0o600)
+
+    incident_dir.rmdir()
+    incident_dir.touch(mode=0o600)
+    incident_failed = subprocess.run(
+        (str(wrapper),),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert incident_failed.returncode == 75
+    assert not incident.exists()
+    assert not queue_receipt.exists()
+    assert not receipt.exists()
+    assert plist.exists()
+    incident_dir.unlink()
+    incident_dir.mkdir(mode=0o700)
+
+    queue_dir.rmdir()
+    queue_dir.touch(mode=0o600)
     publication_failed = subprocess.run(
         (str(wrapper),),
         check=False,
@@ -125,9 +160,10 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
     assert not queue_receipt.exists()
     assert not receipt.exists()
     assert plist.exists()
-    assert not tuple(queue_dir.glob("*.tmp.*"))
+    assert queue_dir.is_file()
     assert not tuple(incident_dir.glob("*.tmp.*"))
-    queue_dir.chmod(0o700)
+    queue_dir.unlink()
+    queue_dir.mkdir(mode=0o700)
 
     completed = subprocess.run((str(wrapper),), check=False, capture_output=True, text=True)
     original_incident = incident.read_bytes()

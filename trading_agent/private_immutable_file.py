@@ -48,6 +48,24 @@ def publish_private_immutable_text(path: Path, payload: str) -> bool:
         raise InvalidPrivateImmutableFileError from None
 
 
+def publish_private_immutable_text_once(path: Path, payload: str) -> bool:
+    try:
+        target = absolute_private_path(path)
+        if not target.name or not payload:
+            raise InvalidPrivateImmutableFileError
+        parent_descriptor = open_private_parent(target.parent, create=True)
+        try:
+            require_private_directory(parent_descriptor)
+            with _PROCESS_PUBLICATION_LOCK:
+                created = _publish_locked(parent_descriptor, target.name, payload)
+                require_open_directory_path(target.parent, parent_descriptor)
+                return created
+        finally:
+            os.close(parent_descriptor)
+    except (OSError, TypeError, ValueError):
+        raise InvalidPrivateImmutableFileError from None
+
+
 def read_private_text(path: Path) -> str:
     try:
         target = absolute_private_path(path)

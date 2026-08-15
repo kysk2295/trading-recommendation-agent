@@ -5,20 +5,6 @@ import shlex
 from pathlib import Path
 from typing import Literal
 
-_FSYNC_PROGRAM = """import os
-import sys
-
-path = sys.argv[1]
-file_descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-directory_descriptor = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-try:
-    os.fsync(file_descriptor)
-    os.fsync(directory_descriptor)
-finally:
-    os.close(directory_descriptor)
-    os.close(file_descriptor)
-"""
-
 
 def render_us_execution_incident_shell(
     market: Literal["us", "kr"],
@@ -26,63 +12,33 @@ def render_us_execution_incident_shell(
     receipt: Path,
     queue_receipt: Path,
     fsync_interpreter: Path,
+    publisher_root: Path,
 ) -> tuple[str, str]:
-    incident_format = (
-        '{"completed_at_epoch":%s,"manifest_sha256":"%s","market":"%s",'
-        '"plan_sha256":"%s","reason":"runtime_authority_invalid",'
-        '"request_sha256":"%s","role":"%s","runtime_commit_sha":"%s",'
-        '"scheduler_main_sha":"%s","schema_version":1,"target_session":"%s"}\\n'
-    )
     declarations = (
         f"readonly execution_incident_receipt={shlex.quote(str(receipt))}\n"
         f"readonly execution_incident_queue_receipt={shlex.quote(str(queue_receipt))}\n"
         f"readonly execution_incident_fsync_interpreter={shlex.quote(str(fsync_interpreter))}\n"
+        f"readonly execution_incident_publisher_root={shlex.quote(str(publisher_root))}\n"
         f"readonly market={market}\n"
         f"readonly target_session={target_session}\n"
     )
     writer = """
-write_execution_incident_queue_pointer() {
-  local incident_sha256
-  local temporary_pointer
-  temporary_pointer=$(/usr/bin/mktemp "${execution_incident_receipt}.queue.tmp.XXXXXXXX") || return 1
-  incident_sha256=$(/usr/bin/shasum -a 256 "$execution_incident_receipt" | /usr/bin/awk '{print $1}')
-  /usr/bin/printf \
-    '{"incident_sha256":"%s","market":"%s","role":"%s","schema_version":1,"target_session":"%s"}\n' \
-    "$incident_sha256" "$market" "$role" "$target_session" > "$temporary_pointer"
-  /bin/chmod 600 "$temporary_pointer"
-  if /bin/ln "$temporary_pointer" "$execution_incident_queue_receipt"; then
-    /bin/rm -f "$temporary_pointer"
-    "$execution_incident_fsync_interpreter" -c __FSYNC_PROGRAM__ \
-      "$execution_incident_queue_receipt"
-    return $?
-  fi
-  /usr/bin/cmp -s "$temporary_pointer" "$execution_incident_queue_receipt"
-  local comparison=$?
-  /bin/rm -f "$temporary_pointer"
-  if (( comparison != 0 )); then return $comparison; fi
-  "$execution_incident_fsync_interpreter" -c __FSYNC_PROGRAM__ \
-    "$execution_incident_queue_receipt"
-}
-
 write_execution_incident() {
-  if [[ ! -f $execution_incident_receipt ]]; then
-    local temporary_incident
-    temporary_incident=$(/usr/bin/mktemp "${execution_incident_receipt}.tmp.XXXXXXXX") || return 1
-    local manifest_sha256
-    manifest_sha256=$(/usr/bin/shasum -a 256 "$preparation_manifest" | /usr/bin/awk '{print $1}')
-    /usr/bin/printf '__INCIDENT_FORMAT__' \
-      "$(/bin/date +%s)" "$manifest_sha256" "$market" "$plan_sha256" "$request_sha256" \
-      "$role" "$runtime_commit_sha" "$source_commit" "$target_session" > "$temporary_incident"
-    /bin/chmod 600 "$temporary_incident"
-    /bin/ln "$temporary_incident" "$execution_incident_receipt" || true
-    /bin/rm -f "$temporary_incident"
-  fi
-  if [[ ! -f $execution_incident_receipt ]]; then return 1; fi
-  "$execution_incident_fsync_interpreter" -c __FSYNC_PROGRAM__ \
-    "$execution_incident_receipt" || return 1
-  write_execution_incident_queue_pointer
+  PYTHONPATH="$execution_incident_publisher_root" \
+    "$execution_incident_fsync_interpreter" \
+    -m trading_agent.future_session_execution_incident_publisher \
+    --receipt "$execution_incident_receipt" \
+    --queue "$execution_incident_queue_receipt" \
+    --manifest "$preparation_manifest" \
+    --market "$market" \
+    --target-session "$target_session" \
+    --role "$role" \
+    --request-sha256 "$request_sha256" \
+    --plan-sha256 "$plan_sha256" \
+    --scheduler-main-sha "$source_commit" \
+    --runtime-commit-sha "$runtime_commit_sha"
 }
-""".replace("__INCIDENT_FORMAT__", incident_format).replace("__FSYNC_PROGRAM__", shlex.quote(_FSYNC_PROGRAM))
+"""
     return declarations, writer
 
 
@@ -92,9 +48,20 @@ def render_optional_us_execution_incident_shell(
     receipt: Path | None,
     queue_receipt: Path | None,
     fsync_interpreter: Path | None,
+    publisher_root: Path | None,
     provenance_enabled: bool,
 ) -> tuple[str, str, str]:
-    enabled = any(value is not None for value in (market, target_session, receipt, queue_receipt, fsync_interpreter))
+    enabled = any(
+        value is not None
+        for value in (
+            market,
+            target_session,
+            receipt,
+            queue_receipt,
+            fsync_interpreter,
+            publisher_root,
+        )
+    )
     if not enabled:
         return "", "", ""
     if (
@@ -104,6 +71,7 @@ def render_optional_us_execution_incident_shell(
         or receipt is None
         or queue_receipt is None
         or fsync_interpreter is None
+        or publisher_root is None
     ):
         raise ValueError
     declarations, writer = render_us_execution_incident_shell(
@@ -112,6 +80,7 @@ def render_optional_us_execution_incident_shell(
         receipt,
         queue_receipt,
         fsync_interpreter,
+        publisher_root,
     )
     call = """  if ! write_execution_incident; then
     print -u2 -r -- '{"reason":"execution_incident_publication_failed","result":"retryable"}'
@@ -126,22 +95,18 @@ def render_kr_execution_incident_shell(
     receipt: Path,
     queue_receipt: Path,
     fsync_interpreter: Path,
+    publisher_root: Path,
     manifest: Path,
     request_sha256: str,
     plan_sha256: str,
     scheduler_main_sha: str,
     runtime_commit_sha: str,
 ) -> tuple[str, str]:
-    incident_format = (
-        '{"completed_at_epoch":%s,"manifest_sha256":"%s","market":"kr",'
-        '"plan_sha256":"%s","reason":"runtime_authority_invalid",'
-        '"request_sha256":"%s","role":"kr_supervisor","runtime_commit_sha":"%s",'
-        '"scheduler_main_sha":"%s","schema_version":1,"target_session":"%s"}\\n'
-    )
     declarations = (
         f"readonly incident_receipt={shlex.quote(str(receipt))}\n"
         f"readonly incident_queue_receipt={shlex.quote(str(queue_receipt))}\n"
         f"readonly incident_fsync_interpreter={shlex.quote(str(fsync_interpreter))}\n"
+        f"readonly incident_publisher_root={shlex.quote(str(publisher_root))}\n"
         f"readonly manifest={shlex.quote(str(manifest))}\n"
         f"readonly request_sha256={request_sha256}\n"
         f"readonly plan_sha256={plan_sha256}\n"
@@ -150,45 +115,22 @@ def render_kr_execution_incident_shell(
         f"readonly target_session={target_session}\n"
     )
     writer = """
-write_execution_incident_queue_pointer() {
-  local incident_sha256
-  local temporary_pointer
-  temporary_pointer=$(/usr/bin/mktemp "${incident_receipt}.queue.tmp.XXXXXXXX") || return 1
-  incident_sha256=$(/usr/bin/shasum -a 256 "$incident_receipt" | /usr/bin/awk '{print $1}')
-  /usr/bin/printf \
-    '{"incident_sha256":"%s","market":"kr","role":"kr_supervisor","schema_version":1,"target_session":"%s"}\n' \
-    "$incident_sha256" "$target_session" > "$temporary_pointer"
-  /bin/chmod 600 "$temporary_pointer"
-  if /bin/ln "$temporary_pointer" "$incident_queue_receipt"; then
-    /bin/rm -f "$temporary_pointer"
-    "$incident_fsync_interpreter" -c __FSYNC_PROGRAM__ "$incident_queue_receipt"
-    return $?
-  fi
-  /usr/bin/cmp -s "$temporary_pointer" "$incident_queue_receipt"
-  local comparison=$?
-  /bin/rm -f "$temporary_pointer"
-  if (( comparison != 0 )); then return $comparison; fi
-  "$incident_fsync_interpreter" -c __FSYNC_PROGRAM__ "$incident_queue_receipt"
-}
-
 write_execution_incident() {
-  if [[ ! -f $incident_receipt ]]; then
-    local temporary_incident
-    temporary_incident=$(/usr/bin/mktemp "${incident_receipt}.tmp.XXXXXXXX") || return 1
-    local manifest_sha256
-    manifest_sha256=$(/usr/bin/shasum -a 256 "$manifest" | /usr/bin/awk '{print $1}')
-    /usr/bin/printf '__INCIDENT_FORMAT__' \
-      "$(/bin/date +%s)" "$manifest_sha256" "$plan_sha256" "$request_sha256" \
-      "$runtime_commit_sha" "$scheduler_main_sha" "$target_session" > "$temporary_incident"
-    /bin/chmod 600 "$temporary_incident"
-    /bin/ln "$temporary_incident" "$incident_receipt" || true
-    /bin/rm -f "$temporary_incident"
-  fi
-  if [[ ! -f $incident_receipt ]]; then return 1; fi
-  "$incident_fsync_interpreter" -c __FSYNC_PROGRAM__ "$incident_receipt" || return 1
-  write_execution_incident_queue_pointer
+  PYTHONPATH="$incident_publisher_root" \
+    "$incident_fsync_interpreter" \
+    -m trading_agent.future_session_execution_incident_publisher \
+    --receipt "$incident_receipt" \
+    --queue "$incident_queue_receipt" \
+    --manifest "$manifest" \
+    --market kr \
+    --target-session "$target_session" \
+    --role kr_supervisor \
+    --request-sha256 "$request_sha256" \
+    --plan-sha256 "$plan_sha256" \
+    --scheduler-main-sha "$scheduler_main_sha" \
+    --runtime-commit-sha "$runtime_commit_sha"
 }
-""".replace("__INCIDENT_FORMAT__", incident_format).replace("__FSYNC_PROGRAM__", shlex.quote(_FSYNC_PROGRAM))
+"""
     return declarations, writer
 
 

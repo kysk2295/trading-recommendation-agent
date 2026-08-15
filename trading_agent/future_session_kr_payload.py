@@ -35,6 +35,7 @@ class KrRestartableRunnerSpec:
     incident_receipt: Path | None = None
     incident_queue_receipt: Path | None = None
     incident_fsync_interpreter: Path | None = None
+    incident_publisher_root: Path | None = None
     manifest: Path | None = None
     request_sha256: str | None = None
     plan_sha256: str | None = None
@@ -81,6 +82,7 @@ def render_kr_restartable_runner(spec: KrRestartableRunnerSpec) -> str:
         spec.incident_receipt,
         spec.incident_queue_receipt,
         spec.incident_fsync_interpreter,
+        spec.incident_publisher_root,
         spec.manifest,
         spec.request_sha256,
         spec.plan_sha256,
@@ -96,6 +98,7 @@ def render_kr_restartable_runner(spec: KrRestartableRunnerSpec) -> str:
             or spec.incident_receipt is None
             or spec.incident_queue_receipt is None
             or spec.incident_fsync_interpreter is None
+            or spec.incident_publisher_root is None
             or spec.manifest is None
             or spec.request_sha256 is None
             or spec.plan_sha256 is None
@@ -108,6 +111,7 @@ def render_kr_restartable_runner(spec: KrRestartableRunnerSpec) -> str:
             spec.incident_receipt,
             spec.incident_queue_receipt,
             spec.incident_fsync_interpreter,
+            spec.incident_publisher_root,
             spec.manifest,
             spec.request_sha256,
             spec.plan_sha256,
