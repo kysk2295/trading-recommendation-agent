@@ -33,7 +33,8 @@ class OneShotRunnerSpec:
     execution_incident_receipt: Path | None = None
     execution_incident_queue_receipt: Path | None = None
     execution_incident_fsync_interpreter: Path | None = None
-    execution_incident_publisher_root: Path | None = None
+    execution_incident_publisher: Path | None = None
+    execution_incident_publisher_sha256: str | None = None
 
 
 def render_runner(spec: OneShotRunnerSpec) -> str:
@@ -123,7 +124,8 @@ def render_persistent_runner(spec: OneShotRunnerSpec) -> str:
         spec.execution_incident_receipt,
         spec.execution_incident_queue_receipt,
         spec.execution_incident_fsync_interpreter,
-        spec.execution_incident_publisher_root,
+        spec.execution_incident_publisher,
+        spec.execution_incident_publisher_sha256,
         provenance_enabled,
     )
     if provenance_enabled:

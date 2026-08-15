@@ -10,6 +10,9 @@ from typing import Literal
 
 from pydantic import TypeAdapter, ValidationError
 
+from trading_agent.future_session_execution_incident_artifact import (
+    read_execution_incident_publisher_at_commit,
+)
 from trading_agent.future_session_materialization_models import (
     FutureSessionPreparationManifest,
     PreparedUsRoleArtifact,
@@ -108,21 +111,35 @@ def materialize_us_future_session(
     stage.chmod(_PRIVATE_DIRECTORY_MODE)
     try:
         manifest_path = output_dir / "preparation-manifest.json"
+        authority_repository = (
+            plan.frozen_runtime.directory
+            if future_session_request.scheduler_authority_mode == "frozen_runtime"
+            else future_session_request.authority_repository
+        )
+        publisher = output_dir / "jobs" / "execution-incident-publisher.py"
+        publisher_source = read_execution_incident_publisher_at_commit(
+            authority_repository,
+            plan.scheduler_main_sha,
+        )
+        write_private_file(
+            stage_path(stage, output_dir, publisher),
+            publisher_source,
+            _PRIVATE_FILE_MODE,
+        )
+        publisher_sha256 = sha256(publisher_source).hexdigest()
         entries = tuple(
             _prepare_role(
                 job=job,
                 stage=stage,
                 output_dir=output_dir,
                 plan=plan,
-                authority_repository=(
-                    plan.frozen_runtime.directory
-                    if future_session_request.scheduler_authority_mode == "frozen_runtime"
-                    else future_session_request.authority_repository
-                ),
+                authority_repository=authority_repository,
                 scheduler_authority_mode=future_session_request.scheduler_authority_mode,
                 manifest_path=manifest_path,
                 launch_agents_dir=resolved_launch_agents_dir,
                 incident_queue_root=incident_queue_root,
+                incident_publisher=publisher,
+                incident_publisher_sha256=publisher_sha256,
             )
             for job in plan.jobs
         )
@@ -161,6 +178,8 @@ def _prepare_role(
     manifest_path: Path,
     launch_agents_dir: Path,
     incident_queue_root: Path,
+    incident_publisher: Path,
+    incident_publisher_sha256: str,
 ) -> PreparedUsRoleArtifact:
     if job.role is None or job.label is None or job.expires_at is None or not job.command:
         raise FutureSessionMaterializationError("invalid_us_role")
@@ -212,7 +231,8 @@ def _prepare_role(
                 incident_queue_root / f"us--{plan.target_session.isoformat()}--{role.value}.json"
             ),
             execution_incident_fsync_interpreter=runtime_environment.interpreter,
-            execution_incident_publisher_root=authority_repository,
+            execution_incident_publisher=incident_publisher,
+            execution_incident_publisher_sha256=incident_publisher_sha256,
         )
     ).encode()
     write_private_file(

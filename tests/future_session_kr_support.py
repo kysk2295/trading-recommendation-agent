@@ -29,7 +29,17 @@ def kr_authority_files(
             Path(__file__).parents[1] / "run_future_session_materialize.py",
             runtime / "run_future_session_materialize.py",
         )
-        _git(runtime, "add", "run_future_session_materialize.py")
+        publisher = runtime / "run_future_session_execution_incident_publisher.py"
+        shutil.copy2(
+            Path(__file__).parents[1] / publisher.name,
+            publisher,
+        )
+        _git(
+            runtime,
+            "add",
+            "run_future_session_materialize.py",
+            str(publisher.relative_to(runtime)),
+        )
         _git(runtime, "commit", "--quiet", "-m", "KR frozen supervisor entrypoint")
     request, _ledger, _day = _kr_request(tmp_path, runtime=runtime)
     authority = request.authority_repository

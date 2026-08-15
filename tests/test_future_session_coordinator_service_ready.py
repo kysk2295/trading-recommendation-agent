@@ -54,7 +54,11 @@ def _git(repository: Path, *arguments: str) -> str:
 def _ready_config(tmp_path: Path) -> FutureSessionCoordinatorServiceConfig:
     repository, required, _initial_head = _runtime(tmp_path)
     (repository / ".gitignore").write_text("/outputs/\n", encoding="utf-8")
-    _git(repository, "add", ".gitignore")
+    publisher = repository / "run_future_session_execution_incident_publisher.py"
+    publisher.write_bytes(
+        (Path(__file__).parents[1] / "run_future_session_execution_incident_publisher.py").read_bytes()
+    )
+    _git(repository, "add", ".gitignore", publisher.name)
     _git(repository, "commit", "--quiet", "-m", "ignore durable outputs")
     head = _git(repository, "rev-parse", "HEAD")
     _git(repository, "branch", "-M", "main")

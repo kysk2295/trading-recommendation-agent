@@ -10,6 +10,9 @@ from pathlib import Path
 
 from pydantic import TypeAdapter, ValidationError
 
+from trading_agent.future_session_execution_incident_artifact import (
+    read_execution_incident_publisher_at_commit,
+)
 from trading_agent.future_session_kr_ledger_identity import (
     experiment_ledger_v7_identity,
 )
@@ -110,6 +113,17 @@ def materialize_kr_future_session(
     stage.chmod(_DIRECTORY_MODE)
     try:
         manifest_path = output / "preparation-manifest.json"
+        publisher = output / "jobs" / "execution-incident-publisher.py"
+        publisher_source = read_execution_incident_publisher_at_commit(
+            entrypoint_root,
+            plan.scheduler_main_sha,
+        )
+        write_private_file(
+            stage_path(stage, output, publisher),
+            publisher_source,
+            _FILE_MODE,
+        )
+        publisher_sha256 = hashlib.sha256(publisher_source).hexdigest()
         epochs = tuple(int(job.run_at.timestamp()) for job in plan.jobs)
         if len(epochs) != 6:
             raise FutureSessionMaterializationError("invalid_kr_phase_count")
@@ -127,6 +141,8 @@ def materialize_kr_future_session(
             bundle_hash=bundle_hash,
             policy_hash=policy_hash,
             incident_queue_root=incident_queue_root,
+            incident_publisher=publisher,
+            incident_publisher_sha256=publisher_sha256,
         )
         manifest = KrFutureSessionPreparationManifest(
             target_session=plan.target_session.isoformat(),
@@ -174,6 +190,8 @@ def _prepare_supervisor(
     bundle_hash: str,
     policy_hash: str,
     incident_queue_root: Path,
+    incident_publisher: Path,
+    incident_publisher_sha256: str,
 ) -> PreparedKrSupervisorArtifact:
     if len(epochs) != 6 or request.runtime_interpreter is None:
         raise FutureSessionMaterializationError("invalid_kr_phase_count")
@@ -183,7 +201,7 @@ def _prepare_supervisor(
     logs = stage / "logs"
     incidents = stage / "execution-incidents"
     for directory in (jobs, receipts, incidents, logs):
-        directory.mkdir(mode=_DIRECTORY_MODE)
+        directory.mkdir(mode=_DIRECTORY_MODE, exist_ok=True)
     label = f"ai.trading-agent.future-session.kr.{plan.target_session.isoformat()}.supervisor"
     payload = output / "jobs" / "kr-supervisor.payload.zsh"
     wrapper = output / "jobs" / "kr-supervisor.persistent.zsh"
@@ -218,7 +236,8 @@ def _prepare_supervisor(
             incident_receipt=output / "execution-incidents" / "kr_supervisor.json",
             incident_queue_receipt=(incident_queue_root / f"kr--{plan.target_session.isoformat()}--kr_supervisor.json"),
             incident_fsync_interpreter=request.runtime_interpreter,
-            incident_publisher_root=entrypoint.parent,
+            incident_publisher=incident_publisher,
+            incident_publisher_sha256=incident_publisher_sha256,
             manifest=manifest_path,
             request_sha256=plan.source_request_sha256,
             plan_sha256=plan.plan_sha256,

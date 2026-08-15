@@ -742,7 +742,14 @@ def _authority_repository(tmp_path: Path) -> tuple[Path, str]:
     _git(repository, "config", "user.email", "authority@example.invalid")
     _git(repository, "config", "user.name", "Authority Test")
     (repository / "authority.txt").write_text("main\n", encoding="utf-8")
-    _git(repository, "add", "authority.txt")
+    publisher = repository / "run_future_session_execution_incident_publisher.py"
+    publisher.write_bytes(
+        (
+            Path(__file__).parents[1]
+            / "run_future_session_execution_incident_publisher.py"
+        ).read_bytes()
+    )
+    _git(repository, "add", "authority.txt", str(publisher.relative_to(repository)))
     _git(repository, "commit", "--quiet", "-m", "authority")
     head = _git(repository, "rev-parse", "HEAD")
     _git(repository, "update-ref", "refs/remotes/origin/main", head)

@@ -14,10 +14,7 @@ from typing import Protocol
 import pytest
 
 import trading_agent.private_immutable_file as private_file
-from trading_agent.private_immutable_file import (
-    publish_private_immutable_text,
-    publish_private_immutable_text_once,
-)
+from trading_agent.private_immutable_file import publish_private_immutable_text
 
 
 class _ManagedProcess(Protocol):
@@ -40,27 +37,6 @@ def _terminate_processes(processes: Sequence[_ManagedProcess]) -> None:
             process.terminate()
     for process in processes:
         process.join(timeout=10)
-
-
-def test_one_shot_publication_is_durable_without_persistent_lock(tmp_path: Path) -> None:
-    path = tmp_path / "session.json"
-
-    assert publish_private_immutable_text_once(path, '{"session":"fixture"}\n') is True
-    assert tuple(item.name for item in tmp_path.iterdir()) == ("session.json",)
-    assert publish_private_immutable_text_once(path, '{"session":"fixture"}\n') is False
-
-
-def test_one_shot_publication_fails_closed_before_link_on_fsync_error(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    path = tmp_path / "session.json"
-
-    monkeypatch.setattr(private_file.os, "fsync", lambda _descriptor: (_ for _ in ()).throw(OSError()))
-
-    with pytest.raises(private_file.InvalidPrivateImmutableFileError):
-        _ = publish_private_immutable_text_once(path, '{"session":"fixture"}\n')
-    assert not path.exists()
 
 
 def test_publication_repairs_interrupted_hard_link_cleanup(tmp_path: Path) -> None:

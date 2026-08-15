@@ -38,6 +38,8 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
     artifact = tmp_path / "state" / "artifacts" / market / target.isoformat()
     manifest = artifact / "preparation-manifest.json"
     manifest.parent.mkdir(parents=True, mode=0o700)
+    for directory in (tmp_path / "state", tmp_path / "state" / "artifacts", artifact.parent, artifact):
+        directory.chmod(0o700)
     manifest.write_text("fixture\n", encoding="utf-8")
     manifest.chmod(0o600)
     receipt = tmp_path / "receipt.json"
@@ -51,6 +53,12 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
     plist = tmp_path / "job.plist"
     plist.touch(mode=0o600)
     queue_receipt = queue_dir / f"{market}--{target.isoformat()}--{role}.json"
+    publisher = tmp_path / "execution-incident-publisher.py"
+    publisher_payload = (Path(__file__).parents[1] / "run_future_session_execution_incident_publisher.py").read_bytes()
+    publisher.write_bytes(publisher_payload)
+    publisher.chmod(0o600)
+    publisher_sha256 = hashlib.sha256(publisher_payload).hexdigest()
+    publisher_tamper_marker = tmp_path / "tampered-publisher-executed"
     request_sha256 = "a" * 64
     plan_sha256 = "b" * 64
     runtime_commit_sha = "c" * 40
@@ -88,10 +96,13 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
                 execution_incident_receipt=incident,
                 execution_incident_queue_receipt=queue_receipt,
                 execution_incident_fsync_interpreter=Path(sys.executable),
-                execution_incident_publisher_root=Path(__file__).parents[1],
+                execution_incident_publisher=publisher,
+                execution_incident_publisher_sha256=publisher_sha256,
             )
         )
-        (repository / "untracked.py").write_text("raise RuntimeError\n", encoding="utf-8")
+        marker = tmp_path / "invalid-runtime-code-executed"
+        malicious = repository / "run_future_session_execution_incident_publisher.py"
+        malicious.write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n", encoding="utf-8")
     else:
         wrapper_text = render_kr_restartable_runner(
             KrRestartableRunnerSpec(
@@ -105,7 +116,8 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
                 incident_receipt=incident,
                 incident_queue_receipt=queue_receipt,
                 incident_fsync_interpreter=Path(sys.executable),
-                incident_publisher_root=Path(__file__).parents[1],
+                incident_publisher=publisher,
+                incident_publisher_sha256=publisher_sha256,
                 manifest=manifest,
                 request_sha256=request_sha256,
                 plan_sha256=plan_sha256,
@@ -115,6 +127,26 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
         )
     wrapper.write_text(wrapper_text, encoding="utf-8")
     wrapper.chmod(0o700)
+
+    publisher.write_text(
+        f"from pathlib import Path\nPath({str(publisher_tamper_marker)!r}).touch()\n",
+        encoding="utf-8",
+    )
+    publisher.chmod(0o600)
+    publisher_failed = subprocess.run(
+        (str(wrapper),),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert publisher_failed.returncode == 75
+    assert not publisher_tamper_marker.exists()
+    assert not incident.exists()
+    assert not queue_receipt.exists()
+    assert not receipt.exists()
+    assert plist.exists()
+    publisher.write_bytes(publisher_payload)
+    publisher.chmod(0o600)
 
     manifest.chmod(0o644)
     manifest_failed = subprocess.run(
@@ -156,7 +188,7 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
     )
     assert publication_failed.returncode == 75
     assert "execution_incident_publication_failed" in publication_failed.stderr
-    assert incident.exists()
+    assert not incident.exists()
     assert not queue_receipt.exists()
     assert not receipt.exists()
     assert plist.exists()
@@ -197,3 +229,5 @@ def test_runtime_authority_failure_projects_one_dashboard_incident(
     assert terminal.value == "incident"
     assert snapshot.workspaces.markets.state == "blocked"
     assert json.loads(receipt.read_text(encoding="utf-8"))["result"] == "blocked"
+    if market == "us":
+        assert not marker.exists()
