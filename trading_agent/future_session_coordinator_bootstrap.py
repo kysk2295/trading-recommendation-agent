@@ -30,6 +30,10 @@ from trading_agent.future_session_us_materializer_io import write_private_file
 from trading_agent.repository_current_main import CurrentMainAuthorityError, current_main_commit
 
 
+class InvalidFutureSessionCoordinatorBootstrapManifestError(ValueError):
+    pass
+
+
 class FutureSessionCoordinatorBootstrapManifest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
@@ -51,11 +55,16 @@ class FutureSessionCoordinatorBootstrapManifest(BaseModel):
             self.launch_agents_dir,
             self.authority_repository,
         )
-        normalized = tuple(Path(os.path.abspath(path)) for path in paths)
+        lexical = tuple(Path(os.path.abspath(path)) for path in paths)
+        try:
+            resolved = tuple(path.resolve(strict=False) for path in paths)
+        except (OSError, RuntimeError):
+            raise InvalidFutureSessionCoordinatorBootstrapManifestError from None
         if (
             any(not path.is_absolute() for path in paths)
-            or normalized != paths
-            or _roots_overlap(normalized)
+            or lexical != paths
+            or resolved != paths
+            or _roots_overlap(resolved)
             or not (MIN_COORDINATOR_POLL_SECONDS <= self.poll_interval_seconds <= MAX_COORDINATOR_POLL_SECONDS)
             or self.us_template.market is not FutureSessionMarket.US
             or self.kr_template.market is not FutureSessionMarket.KR
@@ -64,7 +73,7 @@ class FutureSessionCoordinatorBootstrapManifest(BaseModel):
             or self.us_template.authority_repository != self.authority_repository
             or self.kr_template.authority_repository != self.authority_repository
         ):
-            raise ValueError("invalid coordinator bootstrap manifest")
+            raise InvalidFutureSessionCoordinatorBootstrapManifestError
         return self
 
 
@@ -198,6 +207,7 @@ def _roots_overlap(paths: tuple[Path, ...]) -> bool:
 
 __all__ = (
     "FutureSessionCoordinatorBootstrapManifest",
+    "InvalidFutureSessionCoordinatorBootstrapManifestError",
     "bootstrap_coordinator_bundle",
     "canonical_bootstrap_manifest_json",
     "load_bootstrap_manifest",

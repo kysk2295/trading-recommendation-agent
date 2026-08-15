@@ -91,7 +91,12 @@ def materialize_kr_future_session(
     policy_hash = plan.kr_policy_sha256
     if bundle_hash is None or policy_hash is None:
         raise FutureSessionMaterializationError("kr_hash_authority_missing")
-    entrypoint = request.authority_repository / "run_future_session_materialize.py"
+    entrypoint_root = (
+        plan.frozen_runtime.directory
+        if request.scheduler_authority_mode == "frozen_runtime"
+        else request.authority_repository
+    )
+    entrypoint = entrypoint_root / "run_future_session_materialize.py"
     if not entrypoint.is_file() or not interpreter.is_file():
         raise FutureSessionMaterializationError("kr_supervisor_command_missing")
     if os.path.lexists(output):
@@ -126,6 +131,7 @@ def materialize_kr_future_session(
             request_file=materialization.request_path,
             plan_file=materialization.plan_path,
             scheduler_main_sha=plan.scheduler_main_sha,
+            scheduler_authority_mode=request.scheduler_authority_mode,
             runtime_commit_sha=plan.frozen_runtime.commit_sha,
             authority_repository=request.authority_repository,
             frozen_runtime=plan.frozen_runtime.directory,

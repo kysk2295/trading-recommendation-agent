@@ -135,3 +135,46 @@ def test_bootstrap_manifest_rejects_unbounded_poll_interval(tmp_path: Path) -> N
             us_template=inspect_request(base.us_template_request_path),
             kr_template=inspect_request(base.kr_template_request_path),
         )
+
+
+@pytest.mark.parametrize(
+    "aliased_root",
+    ("bundle", "state", "launch", "authority"),
+)
+def test_bootstrap_manifest_rejects_symlink_root_aliases(
+    tmp_path: Path,
+    aliased_root: str,
+) -> None:
+    # Given: one lexical root is a symlink to another operational root.
+    base = _ready_config(tmp_path)
+    bundle = (tmp_path / "bundle").absolute()
+    bundle.mkdir()
+    state_root = (tmp_path / "state").absolute()
+    launch_agents_dir = (tmp_path / "launch").absolute()
+    authority_repository = base.authority_repository
+    alias = (tmp_path / "alias").absolute()
+    target = state_root if aliased_root == "bundle" else bundle
+    alias.symlink_to(target, target_is_directory=True)
+    bundle_path = alias if aliased_root == "bundle" else bundle
+    state_root = alias if aliased_root == "state" else state_root
+    launch_agents_dir = alias if aliased_root == "launch" else launch_agents_dir
+    authority_repository = alias if aliased_root == "authority" else authority_repository
+    us_template = inspect_request(base.us_template_request_path).model_copy(
+        update={"authority_repository": authority_repository}
+    )
+    kr_template = inspect_request(base.kr_template_request_path).model_copy(
+        update={"authority_repository": authority_repository}
+    )
+
+    # When / Then: physical aliases are rejected before bootstrap I/O.
+    with pytest.raises(ValidationError):
+        FutureSessionCoordinatorBootstrapManifest(
+            bundle_path=bundle_path,
+            state_root=state_root,
+            launch_agents_dir=launch_agents_dir,
+            authority_repository=authority_repository,
+            scheduler_main_sha=base.scheduler_main_sha,
+            poll_interval_seconds=30,
+            us_template=us_template,
+            kr_template=kr_template,
+        )

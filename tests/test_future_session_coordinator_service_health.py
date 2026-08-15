@@ -205,6 +205,32 @@ def test_poll_interval_is_bounded_before_timing_apis(tmp_path: Path) -> None:
     }
 
 
+def test_run_rejects_unvalidated_poll_copy_before_timing_api(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import run_future_session_coordinator_service as cli
+
+    # Given: an internal non-validating copy bypassed the model field constraint.
+    config = _ready_config(tmp_path).model_copy(update={"poll_interval_seconds": 10**100})
+    timing_calls: list[float] = []
+
+    def fail_sleep(seconds: float) -> None:
+        timing_calls.append(seconds)
+        raise AssertionError("timing API called")
+
+    monkeypatch.setattr(cli, "_tick", lambda *_arguments: 0)
+    monkeypatch.setattr(cli.time, "sleep", fail_sleep)
+
+    # When / Then: the run boundary rejects it without calling the timing API.
+    with pytest.raises(ValidationError):
+        cli._run(
+            config,
+            lambda: dt.datetime(2026, 7, 24, 20, tzinfo=dt.UTC),
+        )
+    assert timing_calls == []
+
+
 def test_health_evaluation_cannot_accept_without_validated_report() -> None:
     with pytest.raises(ValidationError):
         FutureSessionCoordinatorHealthEvaluation(

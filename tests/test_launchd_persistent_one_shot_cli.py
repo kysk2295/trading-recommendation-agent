@@ -31,7 +31,7 @@ def test_persistent_runner_survives_stale_claim_and_executes_once(tmp_path: Path
     source_commit = _git(repository, "rev-parse", "HEAD").stdout.strip()
     payload = tmp_path / "payload.zsh"
     counter = tmp_path / "payload-runs.txt"
-    payload.write_text("#!/bin/zsh\nprint -r -- run >> \"$1\"\n", encoding="utf-8")
+    payload.write_text('#!/bin/zsh\nprint -r -- run >> "$1"\n', encoding="utf-8")
     payload.chmod(0o700)
     output = tmp_path / "scheduled"
     wrapper = output / "runner.zsh"
@@ -86,9 +86,7 @@ def test_persistent_runner_survives_stale_claim_and_executes_once(tmp_path: Path
     assert second.returncode == 0
     assert counter.read_text(encoding="utf-8").splitlines() == ["run"]
     assert json.loads(receipt.read_text(encoding="utf-8")) == {
-        "completed_at_epoch": int(
-            json.loads(receipt.read_text(encoding="utf-8"))["completed_at_epoch"]
-        ),
+        "completed_at_epoch": int(json.loads(receipt.read_text(encoding="utf-8"))["completed_at_epoch"]),
         "exit_code": 0,
         "label": "ai.trading-agent.pytest-persistent",
         "result": "completed",
@@ -116,7 +114,7 @@ def test_expired_persistent_runner_does_not_execute_payload(tmp_path: Path) -> N
     _git(repository, "update-ref", "refs/remotes/origin/main", "HEAD")
     payload = tmp_path / "payload.zsh"
     counter = tmp_path / "payload-runs.txt"
-    payload.write_text("#!/bin/zsh\nprint -r -- run >> \"$1\"\n", encoding="utf-8")
+    payload.write_text('#!/bin/zsh\nprint -r -- run >> "$1"\n', encoding="utf-8")
     payload.chmod(0o700)
     output = tmp_path / "scheduled"
     wrapper = output / "runner.zsh"
@@ -265,9 +263,7 @@ def test_provenance_bound_runner_writes_schema_v2_receipt(tmp_path: Path) -> Non
         "exit_code": 0,
         "label": "ai.trading-agent.pytest-provenance",
         "plan_sha256": "b" * 64,
-        "preparation_manifest_sha256": hashlib.sha256(
-            manifest.read_bytes()
-        ).hexdigest(),
+        "preparation_manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
         "request_sha256": "a" * 64,
         "result": "completed",
         "role": "us_orb_watcher",
@@ -276,6 +272,70 @@ def test_provenance_bound_runner_writes_schema_v2_receipt(tmp_path: Path) -> Non
         "schema_version": 2,
         "source_commit_sha": source_commit,
     }
+
+
+def test_frozen_runtime_runner_executes_from_clean_detached_commit(tmp_path: Path) -> None:
+    # Given: an exact clean runtime is detached from mutable branch authority.
+    repository = tmp_path / "frozen-runtime"
+    repository.mkdir()
+    _git(repository, "init", "-b", "main")
+    _git(repository, "config", "user.name", "Scheduler Test")
+    _git(repository, "config", "user.email", "scheduler@example.invalid")
+    (repository / "tracked.txt").write_text("clean\n", encoding="utf-8")
+    _git(repository, "add", "tracked.txt")
+    _git(repository, "commit", "-m", "fixture")
+    source_commit = _git(repository, "rev-parse", "HEAD").stdout.strip()
+    _git(repository, "checkout", "--detach", source_commit)
+    receipt = tmp_path / "receipt.json"
+    plist = tmp_path / "persistent.plist"
+    plist.touch(mode=0o600)
+    wrapper = tmp_path / "runner.zsh"
+    wrapper.write_text(
+        render_persistent_runner(
+            OneShotRunnerSpec(
+                label="ai.trading-agent.pytest-frozen-runtime",
+                run_at=dt.datetime(1970, 1, 1, tzinfo=dt.UTC),
+                receipt=receipt,
+                command=("/usr/bin/true",),
+                expires_at=dt.datetime(2100, 1, 1, tzinfo=dt.UTC),
+                persistent_plist=plist,
+                authority_repository=repository,
+                source_commit=source_commit,
+                authority_mode="frozen_runtime",
+            )
+        ),
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o700)
+
+    untracked = repository / "untracked.py"
+    untracked.write_text("raise RuntimeError\n", encoding="utf-8")
+
+    # When / Then: an untracked runtime file blocks execution before the command.
+    blocked = subprocess.run(
+        (str(wrapper),),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert blocked.returncode == 78
+    assert json.loads(receipt.read_text(encoding="utf-8"))["result"] == "blocked"
+
+    untracked.unlink()
+    receipt.unlink()
+    plist.touch(mode=0o600)
+
+    # When: launchd executes the clean rendered persistent wrapper.
+    completed = subprocess.run(
+        (str(wrapper),),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    # Then: detached frozen authority reaches the command and records completion.
+    assert completed.returncode == 0
+    assert json.loads(receipt.read_text(encoding="utf-8"))["result"] == "completed"
 
 
 def _git(repository: Path, *arguments: str) -> subprocess.CompletedProcess[str]:

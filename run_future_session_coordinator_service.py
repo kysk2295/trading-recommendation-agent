@@ -167,6 +167,7 @@ def _run(
     config: FutureSessionCoordinatorServiceConfig,
     clock: CoordinatorClock,
 ) -> int:
+    config = FutureSessionCoordinatorServiceConfig.model_validate(config.model_dump(mode="python"))
     service_started_at = clock()
     while True:
         _ = _tick(config, clock(), service_started_at)

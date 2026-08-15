@@ -5,6 +5,7 @@ import plistlib
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Literal
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -109,7 +110,12 @@ def materialize_us_future_session(
                 stage=stage,
                 output_dir=output_dir,
                 plan=plan,
-                authority_repository=future_session_request.authority_repository,
+                authority_repository=(
+                    plan.frozen_runtime.directory
+                    if future_session_request.scheduler_authority_mode == "frozen_runtime"
+                    else future_session_request.authority_repository
+                ),
+                scheduler_authority_mode=future_session_request.scheduler_authority_mode,
                 manifest_path=manifest_path,
                 launch_agents_dir=resolved_launch_agents_dir,
             )
@@ -120,6 +126,7 @@ def materialize_us_future_session(
             plan_sha256=plan.plan_sha256,
             canonical_plan_file_sha256=sha256(plan_payload).hexdigest(),
             scheduler_main_sha=plan.scheduler_main_sha,
+            scheduler_authority_mode=future_session_request.scheduler_authority_mode,
             runtime_commit_sha=plan.frozen_runtime.commit_sha,
             runtime_attestation_sha256=runtime_environment.attestation_sha256,
             authority_repository=future_session_request.authority_repository,
@@ -145,6 +152,7 @@ def _prepare_role(
     output_dir: Path,
     plan: ReadyToPrepareSessionPlan,
     authority_repository: Path,
+    scheduler_authority_mode: Literal["current_main", "frozen_runtime"],
     manifest_path: Path,
     launch_agents_dir: Path,
 ) -> PreparedUsRoleArtifact:
@@ -188,6 +196,7 @@ def _prepare_role(
             runtime_commit_sha=plan.frozen_runtime.commit_sha,
             runtime_attestation_sha256=runtime_environment.attestation_sha256,
             preparation_manifest=manifest_path,
+            authority_mode=scheduler_authority_mode,
         )
     ).encode()
     write_private_file(

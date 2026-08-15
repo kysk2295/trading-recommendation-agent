@@ -21,12 +21,8 @@ from trading_agent.future_session_us_activation_verifier import (
     PRIVATE_EXECUTABLE_MODE,
     PRIVATE_FILE_MODE,
     read_private_file,
-    verify_frozen_runtime,
     verify_private_directory,
-)
-from trading_agent.repository_current_main import (
-    CurrentMainAuthorityError,
-    current_main_commit,
+    verify_scheduler_activation_authority,
 )
 
 
@@ -57,13 +53,13 @@ def verify_kr_future_session_activation(
         raise FutureSessionActivationError("noncanonical_manifest_path")
     for directory in (root, root / "jobs", root / "receipts", root / "logs"):
         verify_private_directory(directory)
-    try:
-        current_main = current_main_commit(manifest.authority_repository)
-    except CurrentMainAuthorityError:
-        raise FutureSessionActivationError("current_main_authority_invalid") from None
-    if current_main != manifest.scheduler_main_sha:
-        raise FutureSessionActivationError("current_main_authority_invalid")
-    verify_frozen_runtime(manifest.frozen_runtime, manifest.runtime_commit_sha)
+    verify_scheduler_activation_authority(
+        mode=manifest.scheduler_authority_mode,
+        authority_repository=manifest.authority_repository,
+        scheduler_main_sha=manifest.scheduler_main_sha,
+        frozen_runtime=manifest.frozen_runtime,
+        runtime_commit_sha=manifest.runtime_commit_sha,
+    )
     if (
         not manifest.runtime_interpreter.is_file()
         or experiment_ledger_v7_identity(manifest.experiment_ledger) != manifest.experiment_ledger_identity_sha256
@@ -132,13 +128,13 @@ def _verify_kr_supervisor_runtime_preflight(
     if canonical_kr_manifest_json(manifest).encode() != payload:
         raise FutureSessionActivationError("invalid_manifest")
     _verify_bound_authority_files(manifest)
-    try:
-        current_main = current_main_commit(manifest.authority_repository)
-    except CurrentMainAuthorityError:
-        raise FutureSessionActivationError("current_main_authority_invalid") from None
-    if current_main != manifest.scheduler_main_sha:
-        raise FutureSessionActivationError("bound_authority_changed")
-    verify_frozen_runtime(manifest.frozen_runtime, manifest.runtime_commit_sha)
+    verify_scheduler_activation_authority(
+        mode=manifest.scheduler_authority_mode,
+        authority_repository=manifest.authority_repository,
+        scheduler_main_sha=manifest.scheduler_main_sha,
+        frozen_runtime=manifest.frozen_runtime,
+        runtime_commit_sha=manifest.runtime_commit_sha,
+    )
     entry = manifest.entry
     rendered_payload = read_private_file(entry.payload_wrapper, PRIVATE_EXECUTABLE_MODE)
     rendered_wrapper = read_private_file(entry.persistent_wrapper, PRIVATE_EXECUTABLE_MODE)
@@ -149,7 +145,14 @@ def _verify_kr_supervisor_runtime_preflight(
         or hashlib.sha256(rendered_plist).hexdigest() != entry.persistent_plist_sha256
         or len(manifest.internal_phase_epochs) != 6
         or not manifest.runtime_interpreter.is_file()
-        or not (manifest.authority_repository / "run_future_session_materialize.py").is_file()
+        or not (
+            (
+                manifest.frozen_runtime
+                if manifest.scheduler_authority_mode == "frozen_runtime"
+                else manifest.authority_repository
+            )
+            / "run_future_session_materialize.py"
+        ).is_file()
     ):
         raise FutureSessionActivationError("invalid_internal_phase_count")
     return manifest

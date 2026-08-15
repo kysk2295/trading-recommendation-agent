@@ -33,6 +33,7 @@ class FutureSessionPreparationManifest(BaseModel):
     plan_sha256: str
     canonical_plan_file_sha256: str
     scheduler_main_sha: str
+    scheduler_authority_mode: Literal["current_main", "frozen_runtime"] = "current_main"
     runtime_commit_sha: str
     runtime_attestation_sha256: str
     authority_repository: Path
@@ -41,22 +42,23 @@ class FutureSessionPreparationManifest(BaseModel):
 
     @model_validator(mode="after")
     def validate_manifest(self) -> Self:
-        if (
-            tuple(entry.role for entry in self.entries)
-            != tuple(FutureSessionUsRole)
-            or len({entry.label for entry in self.entries}) != len(FutureSessionUsRole)
-        ):
+        if tuple(entry.role for entry in self.entries) != tuple(FutureSessionUsRole) or len(
+            {entry.label for entry in self.entries}
+        ) != len(FutureSessionUsRole):
             raise ValueError("invalid US preparation entries")
         return self
 
 
 def canonical_manifest_json(value: FutureSessionPreparationManifest) -> str:
-    return json.dumps(
-        value.model_dump(mode="json"),
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    ) + "\n"
+    return (
+        json.dumps(
+            value.model_dump(mode="json"),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n"
+    )
 
 
 __all__ = (

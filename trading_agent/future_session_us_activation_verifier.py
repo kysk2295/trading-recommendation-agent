@@ -7,7 +7,7 @@ import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal, assert_never
 
 from pydantic import ValidationError
 
@@ -53,13 +53,13 @@ def verify_us_future_session_activation(*, manifest_path: Path, launch_agents_di
         raise FutureSessionActivationError("invalid_manifest_path")
     for directory in (root, root / "jobs", root / "receipts", root / "logs"):
         verify_private_directory(directory)
-    try:
-        authority_commit = current_main_commit(manifest.authority_repository)
-    except CurrentMainAuthorityError:
-        raise FutureSessionActivationError("current_main_authority_invalid") from None
-    if authority_commit != manifest.scheduler_main_sha:
-        raise FutureSessionActivationError("current_main_authority_invalid")
-    verify_frozen_runtime(manifest.frozen_runtime, manifest.runtime_commit_sha)
+    verify_scheduler_activation_authority(
+        mode=manifest.scheduler_authority_mode,
+        authority_repository=manifest.authority_repository,
+        scheduler_main_sha=manifest.scheduler_main_sha,
+        frozen_runtime=manifest.frozen_runtime,
+        runtime_commit_sha=manifest.runtime_commit_sha,
+    )
     entries = tuple(verify_entry(entry, root=root, launch_agents_dir=launch_agents_dir) for entry in manifest.entries)
     if tuple(entry.role for entry in entries) != tuple(FutureSessionUsRole):
         raise FutureSessionActivationError("invalid_manifest_entries")
@@ -136,6 +136,30 @@ def verify_frozen_runtime(runtime: Path, expected_commit: str) -> None:
         raise FutureSessionActivationError("frozen_runtime_invalid")
 
 
+def verify_scheduler_activation_authority(
+    *,
+    mode: Literal["current_main", "frozen_runtime"],
+    authority_repository: Path,
+    scheduler_main_sha: str,
+    frozen_runtime: Path,
+    runtime_commit_sha: str,
+) -> None:
+    match mode:
+        case "current_main":
+            try:
+                authority_commit = current_main_commit(authority_repository)
+            except CurrentMainAuthorityError:
+                raise FutureSessionActivationError("current_main_authority_invalid") from None
+            if authority_commit != scheduler_main_sha:
+                raise FutureSessionActivationError("current_main_authority_invalid")
+        case "frozen_runtime":
+            if runtime_commit_sha != scheduler_main_sha:
+                raise FutureSessionActivationError("frozen_runtime_invalid")
+        case unreachable:
+            assert_never(unreachable)
+    verify_frozen_runtime(frozen_runtime, runtime_commit_sha)
+
+
 def verify_entry(entry: PreparedUsRoleArtifact, *, root: Path, launch_agents_dir: Path) -> ActivatedUsRoleArtifact:
     role = entry.role.value
     expected_paths = (
@@ -194,5 +218,6 @@ __all__ = (
     "VerifiedActivation",
     "prepare_launch_agents_directory",
     "read_private_file",
+    "verify_scheduler_activation_authority",
     "verify_us_future_session_activation",
 )

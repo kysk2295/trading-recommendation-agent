@@ -37,6 +37,7 @@ class KrFutureSessionPreparationManifest(BaseModel):
     request_file: Path
     plan_file: Path
     scheduler_main_sha: str
+    scheduler_authority_mode: Literal["current_main", "frozen_runtime"] = "current_main"
     runtime_commit_sha: str
     authority_repository: Path
     frozen_runtime: Path
@@ -80,12 +81,15 @@ class KrFutureSessionPreparationManifest(BaseModel):
 
 
 def canonical_kr_manifest_json(value: KrFutureSessionPreparationManifest) -> str:
-    return json.dumps(
-        value.model_dump(mode="json"),
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    ) + "\n"
+    return (
+        json.dumps(
+            value.model_dump(mode="json"),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n"
+    )
 
 
 __all__ = (

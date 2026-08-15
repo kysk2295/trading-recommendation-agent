@@ -232,6 +232,43 @@ def test_kr_activation_installs_one_label_and_one_activation_receipt(
     assert len(tuple(plan.artifact_layout.root.glob("activation-receipt.json"))) == 1
 
 
+def test_kr_activation_uses_frozen_authority_after_main_advances(
+    tmp_path: Path,
+) -> None:
+    # Given: preparation is bound to a clean frozen runtime before mutable main advances.
+    request, plan, request_path, plan_path = kr_authority_files(
+        tmp_path,
+        scheduler_authority_mode="frozen_runtime",
+    )
+    launch_agents = tmp_path / "Library" / "LaunchAgents"
+    manifest_path = materialize_kr_future_session(
+        KrFutureSessionMaterializationRequest(
+            request_path=request_path,
+            plan_path=plan_path,
+            output_dir=plan.artifact_layout.root,
+            launch_agents_dir=launch_agents,
+        )
+    )
+    authority = request.authority_repository
+    (authority / "authority.txt").write_text("advanced\n", encoding="utf-8")
+    subprocess.run(("git", "-C", str(authority), "add", "authority.txt"), check=True)
+    subprocess.run(
+        ("git", "-C", str(authority), "commit", "--quiet", "-m", "advance main"),
+        check=True,
+    )
+
+    # When: activation verifies the pinned scheduler authority.
+    activation = activate_kr_future_session(
+        manifest_path=manifest_path,
+        launch_agents_dir=launch_agents,
+        launchctl_runner=lambda arguments: 113 if arguments[0] == "print" else 0,
+    )
+
+    # Then: mutable main does not invalidate the frozen session authority.
+    assert activation.installed_plist.is_file()
+    assert activation.receipt_path.is_file()
+
+
 def test_kr_cli_help_bad_prepare_happy_prepare_and_typed_preflight(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

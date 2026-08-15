@@ -4,6 +4,7 @@ import datetime as dt
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, assert_never
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +23,7 @@ class OneShotRunnerSpec:
     runtime_commit_sha: str | None = None
     runtime_attestation_sha256: str | None = None
     preparation_manifest: Path | None = None
+    authority_mode: Literal["current_main", "frozen_runtime"] = "current_main"
 
 
 def render_runner(spec: OneShotRunnerSpec) -> str:
@@ -138,10 +140,34 @@ def render_persistent_runner(spec: OneShotRunnerSpec) -> str:
             '{"completed_at_epoch":%s,"exit_code":%d,"label":"%s",'
             '"result":"%s","schema_version":1,"source_commit_sha":"%s"}\\n'
         )
-        receipt_arguments = (
-            "$(/bin/date +%s) $exit_code $job_label $result $source_commit"
-        )
+        receipt_arguments = "$(/bin/date +%s) $exit_code $job_label $result $source_commit"
         manifest_hash = ""
+    match spec.authority_mode:
+        case "current_main":
+            authority_check = """branch=$(/usr/bin/git -C $repository symbolic-ref --quiet --short HEAD 2>/dev/null)
+tracked=$(/usr/bin/git -C $repository status --porcelain=v1 --untracked-files=no 2>/dev/null)
+head=$(/usr/bin/git -C $repository rev-parse HEAD 2>/dev/null)
+local_main=$(/usr/bin/git -C $repository rev-parse refs/heads/main 2>/dev/null)
+origin_main=$(/usr/bin/git -C $repository rev-parse refs/remotes/origin/main 2>/dev/null)
+if [[ $branch != main || -n $tracked || $head != $source_commit || \\
+  $head != $local_main || $head != $origin_main ]]; then
+  write_receipt blocked 78
+  cleanup_job
+  exit 78
+fi"""
+        case "frozen_runtime":
+            authority_check = (
+                "tracked=$(/usr/bin/git -C $repository status --porcelain=v1 "
+                "--untracked-files=all 2>/dev/null)\n"
+                "head=$(/usr/bin/git -C $repository rev-parse HEAD 2>/dev/null)\n"
+                "if [[ -n $tracked || $head != $source_commit ]]; then\n"
+                "  write_receipt blocked 78\n"
+                "  cleanup_job\n"
+                "  exit 78\n"
+                "fi"
+            )
+        case unreachable:
+            assert_never(unreachable)
     return f"""#!/bin/zsh
 
 set -u
@@ -193,17 +219,7 @@ if (( $(/bin/date +%s) > expires_epoch )); then
   exit 0
 fi
 
-branch=$(/usr/bin/git -C $repository symbolic-ref --quiet --short HEAD 2>/dev/null)
-tracked=$(/usr/bin/git -C $repository status --porcelain=v1 --untracked-files=no 2>/dev/null)
-head=$(/usr/bin/git -C $repository rev-parse HEAD 2>/dev/null)
-local_main=$(/usr/bin/git -C $repository rev-parse refs/heads/main 2>/dev/null)
-origin_main=$(/usr/bin/git -C $repository rev-parse refs/remotes/origin/main 2>/dev/null)
-if [[ $branch != main || -n $tracked || $head != $source_commit || \\
-  $head != $local_main || $head != $origin_main ]]; then
-  write_receipt blocked 78
-  cleanup_job
-  exit 78
-fi
+{authority_check}
 
 if [[ -d $claim ]]; then
   /bin/rmdir $claim 2>/dev/null || {{

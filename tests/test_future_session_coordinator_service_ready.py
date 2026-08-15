@@ -14,6 +14,7 @@ from trading_agent.future_session_coordinator_service import (
 from trading_agent.future_session_coordinator_service_models import (
     FutureSessionCoordinatorServiceConfig,
 )
+from trading_agent.future_session_coordinator_service_runtime import ensure_frozen_runtime
 from trading_agent.future_session_plan_models import (
     FrozenRuntimeAuthority,
     FutureSessionMarket,
@@ -130,3 +131,35 @@ def test_ready_us_tick_materializes_and_replays_without_duplicate_launchctl(
     assert request.signal_outbox.name == "trade-signals.v1.jsonl"
     assert replay.us.receipt.manifest_path is not None
     assert replay.us.receipt.manifest_path.is_relative_to(config.state_root / "artifacts")
+
+
+def test_ready_us_tick_activates_frozen_authority_after_main_advances(
+    tmp_path: Path,
+) -> None:
+    # Given: the configured runtime is frozen before mutable local and origin main advance.
+    config = _ready_config(tmp_path)
+    frozen = ensure_frozen_runtime(
+        config.authority_repository,
+        config.state_root / "frozen-runtimes",
+        config.scheduler_main_sha,
+    )
+    _git(config.authority_repository, "commit", "--allow-empty", "--quiet", "-m", "advance main")
+    _git(config.authority_repository, "push", "origin", "main")
+    launchd = _LaunchdFixture()
+    adapters = CoordinatorAdapters(
+        launchctl_runner=launchd.run,
+        label_status_reader=launchd.is_loaded,
+    )
+
+    # When: the old configured Coordinator performs its first ready tick.
+    report = tick_service(
+        config,
+        dt.datetime(2026, 7, 24, 20, tzinfo=dt.UTC),
+        adapters,
+    )
+
+    # Then: activation remains bound to the clean exact frozen SHA.
+    assert report.frozen_runtime == frozen
+    assert report.us.receipt is not None
+    assert report.us.receipt.preparation == "prepared"
+    assert report.us.receipt.activation == "activated"
