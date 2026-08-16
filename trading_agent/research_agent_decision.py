@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ _MAX_RESPONSE_BYTES: Final = 64 * 1024
 _MAX_PROMPT_EVIDENCE_BYTES: Final = 48 * 1024
 _MODEL_ID: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{2,127}$")
 _PROVIDER_ID: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,127}$")
+_CLAUDE_MAX_BUDGET_USD: Final = "0.03"
 _FAMILY_DEFINITIONS: Final = {definition.family_id: definition for definition in AGENT_FAMILY_REGISTRY}
 _FAMILY_DECISIONS: Final[dict[AgentFamilyId, tuple[ResearchAgentDecisionKind, ...]]] = {
     "opportunity_manager": (
@@ -138,6 +140,88 @@ class ResearchAgentDecisionParseContext:
 
 class ResearchAgentDecisionClient(Protocol):
     def decide(self, request: ResearchAgentDecisionRequest) -> ResearchAgentDecisionV1: ...
+
+
+@final
+class ClaudeCliResearchAgentDecisionClient:
+    __slots__ = ("_executable", "_model_id", "_timeout_seconds")
+
+    _executable: FileIdentity
+    _model_id: str
+    _timeout_seconds: float
+
+    def __init__(self, executable: Path, model_id: str, *, timeout_seconds: float = 120.0) -> None:
+        try:
+            self._executable = capture_file(executable, executable=True)
+        except InvalidExecutableBindingError:
+            raise InvalidResearchAgentDecisionError(reason="claude_executable_invalid") from None
+        if _MODEL_ID.fullmatch(model_id) is None or timeout_seconds <= 0 or timeout_seconds > 300:
+            raise InvalidResearchAgentDecisionError(reason="claude_client_config_invalid")
+        self._model_id = model_id
+        self._timeout_seconds = timeout_seconds
+
+    def decide(self, request: ResearchAgentDecisionRequest) -> ResearchAgentDecisionV1:
+        prompt = render_research_agent_prompt(request)
+        prompt_sha256 = hashlib.sha256(prompt.encode()).hexdigest()
+        schema = json.dumps(
+            HermesResearchAgentDecisionResponse.model_json_schema(),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        try:
+            revalidate(self._executable, executable=True)
+            completed = subprocess.run(
+                (
+                    str(self._executable.path),
+                    "-p",
+                    "--safe-mode",
+                    "--disable-slash-commands",
+                    "--tools",
+                    "",
+                    "--no-session-persistence",
+                    "--model",
+                    self._model_id,
+                    "--max-budget-usd",
+                    _CLAUDE_MAX_BUDGET_USD,
+                    "--json-schema",
+                    schema,
+                    "--output-format",
+                    "json",
+                    prompt,
+                ),
+                check=False,
+                capture_output=True,
+                stdin=subprocess.DEVNULL,
+                timeout=min(self._timeout_seconds, request.max_runtime_seconds),
+                env={
+                    "HOME": str(Path.home()),
+                    "PATH": f"{self._executable.path.parent}{os.pathsep}{os.defpath}",
+                },
+            )
+        except (InvalidExecutableBindingError, OSError, subprocess.SubprocessError, ValueError):
+            raise InvalidResearchAgentDecisionError(reason="claude_decision_call_failed") from None
+        if completed.returncode != 0 or not completed.stdout or len(completed.stdout) > _MAX_RESPONSE_BYTES:
+            raise InvalidResearchAgentDecisionError(reason="claude_decision_call_failed")
+        try:
+            wrapper = json.loads(completed.stdout)
+            if not isinstance(wrapper, dict) or wrapper.get("is_error") is not False:
+                raise ValueError
+            structured = wrapper["structured_output"]
+            if not isinstance(structured, dict):
+                raise ValueError
+            payload = json.dumps(
+                structured,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+        except (KeyError, TypeError, ValueError):
+            raise InvalidResearchAgentDecisionError(reason="claude_decision_response_invalid") from None
+        return parse_research_agent_decision(
+            payload,
+            ResearchAgentDecisionParseContext(request, self._model_id, prompt_sha256),
+        )
 
 
 @final
@@ -319,6 +403,7 @@ def _safe_reference(reference: str) -> bool:
 
 
 __all__ = (
+    "ClaudeCliResearchAgentDecisionClient",
     "HermesCliResearchAgentDecisionClient",
     "HermesResearchAgentDecisionResponse",
     "InvalidResearchAgentDecisionError",

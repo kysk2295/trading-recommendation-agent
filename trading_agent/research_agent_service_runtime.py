@@ -28,7 +28,11 @@ from trading_agent.research_agent_cycle_models import (
 from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
 from trading_agent.research_agent_cycle_store_codec import latest_cycles_from_rows, result_from_payload
 from trading_agent.research_agent_day_actions import DayResearchActionExecutor
-from trading_agent.research_agent_decision import HermesCliResearchAgentDecisionClient
+from trading_agent.research_agent_decision import (
+    ClaudeCliResearchAgentDecisionClient,
+    HermesCliResearchAgentDecisionClient,
+    ResearchAgentDecisionClient,
+)
 from trading_agent.research_agent_derivatives_actions import DerivativesResearchActionExecutor
 from trading_agent.research_agent_hermes import project_research_agent_results
 from trading_agent.research_agent_primary_actions import (
@@ -315,14 +319,20 @@ def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRu
             config.source_paths,
             systematic_review_root=config.systematic.review_root,
         ),
-        decisions=HermesCliResearchAgentDecisionClient(
-            config.hermes_executable,
-            config.model_id,
-            config.provider_id,
-        ),
+        decisions=_decision_client(config),
         actions=actions,
     )
     return ResearchAgentRuntime(services)
+
+
+def _decision_client(config: ResearchAgentServiceConfig) -> ResearchAgentDecisionClient:
+    if config.provider_id == "claude-code":
+        return ClaudeCliResearchAgentDecisionClient(config.hermes_executable, config.model_id)
+    return HermesCliResearchAgentDecisionClient(
+        config.hermes_executable,
+        config.model_id,
+        config.provider_id,
+    )
 
 
 def write_service_report(

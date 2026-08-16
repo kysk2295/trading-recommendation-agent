@@ -16,6 +16,7 @@ from trading_agent.research_agent_cycle_models import (
     ResearchAgentWakeKind,
 )
 from trading_agent.research_agent_decision import (
+    ClaudeCliResearchAgentDecisionClient,
     HermesCliResearchAgentDecisionClient,
     InvalidResearchAgentDecisionError,
     ResearchAgentDecisionParseContext,
@@ -222,6 +223,27 @@ def test_hermes_cli_client_returns_validated_decision(tmp_path: Path) -> None:
         "hermes-research-actor-v1",
         "openai-codex",
     )
+
+    decision = client.decide(_request())
+
+    assert decision.primary_decision is ResearchAgentDecisionKind.PUBLISH_CONTEXT
+
+
+def test_claude_cli_client_returns_schema_validated_decision(tmp_path: Path) -> None:
+    executable = tmp_path / "claude-fixture"
+    wrapper = json.dumps(
+        {"is_error": False, "structured_output": json.loads(_response())},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    executable.write_bytes(
+        b"#!/bin/sh\n"
+        b"[ \"$1\" = \"-p\" ] && [ \"$7\" = \"--model\" ] && [ \"$8\" = \"haiku\" ] || exit 42\n"
+        b"[ \"${13}\" = \"--output-format\" ] && [ \"${14}\" = \"json\" ] || exit 43\n"
+        b"printf '%s' '" + wrapper + b"'\n"
+    )
+    executable.chmod(0o700)
+    client = ClaudeCliResearchAgentDecisionClient(executable, "haiku")
 
     decision = client.decide(_request())
 
