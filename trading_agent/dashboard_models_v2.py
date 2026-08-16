@@ -106,6 +106,24 @@ class DataSourcesV2(SourceStateV2):
     capabilities: tuple[SourceCapabilityV2, ...] = Field(max_length=30)
 
 
+class ResearchAgentCycleViewV2(StrictDashboardModelV2):
+    agent_family_id: PublicAgentId
+    cycle_state: Literal["started", "completed", "interrupted", "failed", "blocked", "unavailable"]
+    result_status: Literal["completed", "no_action", "failed", "blocked"] | None
+    input_source: str | None = Field(max_length=160)
+    decision_kind: str | None = Field(max_length=80)
+    result_summary: str | None = Field(max_length=160)
+    artifact_count: int = Field(ge=0, le=32)
+    observed_at: AwareDatetime | None
+    next_wake_kind: Literal["new_evidence", "scheduled", "open_work", "terminal"] | None
+    next_wake_at: AwareDatetime | None
+    order_authority: Literal[False] = False
+
+
+class ResearchWorkspaceV2(SourceStateV2):
+    agent_cycles: tuple[ResearchAgentCycleViewV2, ...] = Field(min_length=6, max_length=6)
+
+
 class DerivativesWorkspaceV2(SourceStateV2):
     workbench: OptionsWorkbenchV2
 
@@ -115,7 +133,7 @@ class WorkspacesV2(StrictDashboardModelV2):
     overview: SourceStateV2
     markets: SourceStateV2
     data_sources: DataSourcesV2
-    research: SourceStateV2
+    research: ResearchWorkspaceV2
     strategies: SourceStateV2
     derivatives: DerivativesWorkspaceV2
     paper: SourceStateV2

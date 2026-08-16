@@ -11,6 +11,7 @@ from trading_agent.dashboard_agent_runtime import (
 from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
 from trading_agent.research_agent_cycle_models import (
     EvidenceId,
+    ResearchAgentDecisionKind,
     ResearchAgentEvidenceV1,
     ResearchAgentResultStatus,
     ResearchAgentResultV1,
@@ -77,6 +78,7 @@ def test_dashboard_readiness_comes_from_real_actor_cycles(tmp_path: Path) -> Non
         occurred_at=NOW,
         next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
         next_wake_at=None,
+        decision_kind=ResearchAgentDecisionKind.INVESTIGATE_CANDIDATE,
     )
     store.finish_cycle(cycle, result)
     store.close()
@@ -90,3 +92,19 @@ def test_dashboard_readiness_comes_from_real_actor_cycles(tmp_path: Path) -> Non
     assert projection.workspace.state == "blocked"
     assert next(item for item in agents if item.agent_id == "opportunity_manager").runtime_state == "idle"
     assert next(item for item in agents if item.agent_id == "day_trading").runtime_state == "unavailable"
+
+    snapshot = collect_dashboard_snapshot_v2(
+        tmp_path / "outputs",
+        now=NOW,
+        cycle_database=database,
+    )
+    rows = snapshot.workspaces.research.agent_cycles
+    opportunity = next(row for row in rows if row.agent_family_id == "opportunity_manager")
+
+    assert len(rows) == 6
+    assert opportunity.input_source == "dashboard.runtime.fixture"
+    assert opportunity.decision_kind == "investigate_candidate"
+    assert opportunity.result_status == "completed"
+    assert opportunity.artifact_count == 1
+    assert opportunity.next_wake_kind == "new_evidence"
+    assert opportunity.order_authority is False

@@ -5,6 +5,11 @@ import uuid
 from pathlib import Path
 from typing import Final, override
 
+from trading_agent.dashboard_agent_cycle_runtime import (
+    InvalidAgentCycleRuntimeError,
+    read_research_board_cycles,
+)
+from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES
 from trading_agent.dashboard_agent_runtime import (
     InvalidAgentRuntimeReceiptError,
     project_agent_runtime,
@@ -17,6 +22,8 @@ from trading_agent.dashboard_models_v2 import (
     DataSourcesV2,
     DerivativesWorkspaceV2,
     ProjectionMetadataV2,
+    ResearchAgentCycleViewV2,
+    ResearchWorkspaceV2,
     TraceGraphV2,
     WorkspacesV2,
 )
@@ -133,7 +140,10 @@ def collect_dashboard_snapshot_v2(
             **sources.model_dump(),
             capabilities=capabilities,
         ),
-        research=projections["research"].workspace,
+        research=ResearchWorkspaceV2(
+            **projections["research"].workspace.model_dump(),
+            agent_cycles=_research_board(cycle_database),
+        ),
         strategies=projections["strategies"].workspace,
         derivatives=DerivativesWorkspaceV2(
             **derivatives.model_dump(),
@@ -186,6 +196,29 @@ def collect_dashboard_snapshot_v2(
             projected_count=projected,
             truncated=total > projected,
         ),
+    )
+
+
+def _research_board(cycle_database: Path | None) -> tuple[ResearchAgentCycleViewV2, ...]:
+    if cycle_database is not None and cycle_database.exists():
+        try:
+            return read_research_board_cycles(cycle_database)
+        except InvalidAgentCycleRuntimeError:
+            pass
+    return tuple(
+        ResearchAgentCycleViewV2(
+            agent_family_id=family,
+            cycle_state="unavailable",
+            result_status=None,
+            input_source=None,
+            decision_kind=None,
+            result_summary=None,
+            artifact_count=0,
+            observed_at=None,
+            next_wake_kind=None,
+            next_wake_at=None,
+        )
+        for family in PRIMARY_AGENT_FAMILIES
     )
 
 
