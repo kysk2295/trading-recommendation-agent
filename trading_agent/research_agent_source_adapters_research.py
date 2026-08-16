@@ -12,6 +12,10 @@ from trading_agent.experiment_ledger_store import (
     InvalidExperimentLedgerSourceError,
     UnsupportedExperimentLedgerSchemaError,
 )
+from trading_agent.intraday_research_reviewer import (
+    InvalidIntradayResearchReviewError,
+    load_intraday_review_artifact,
+)
 from trading_agent.lane_review_store import InvalidLaneReviewSourceError, LaneReviewReader
 from trading_agent.research_agent_cycle_models import ResearchAgentEvidenceV1, ResearchAgentTriggerKind
 from trading_agent.research_agent_source_adapter_derivatives import DerivativesSourceAdapter
@@ -23,6 +27,7 @@ from trading_agent.research_agent_source_common import (
     canonical_model_json,
     capability_evidence,
     require_private_source_file,
+    require_source_boundary,
 )
 from trading_agent.swing_shadow_review_store import (
     InvalidSwingShadowReviewSourceError,
@@ -240,8 +245,47 @@ class SystematicSourceAdapter:
         )
 
 
+@final
+class SystematicGeneratedReviewSourceAdapter:
+    __slots__ = ()
+
+    def collect(
+        self,
+        review_root: Path,
+    ) -> tuple[ResearchAgentEvidenceV1, ...]:
+        if not review_root.exists():
+            return ()
+        try:
+            require_source_boundary(review_root)
+            artifacts = tuple(
+                load_intraday_review_artifact(path)
+                for path in sorted(review_root.glob("intraday_research_review_*.json"))[-32:]
+            )
+        except (InvalidIntradayResearchReviewError, OSError, ValueError):
+            raise InvalidResearchAgentSourceError(reason="systematic_generated_review_source_invalid") from None
+        return tuple(
+            ResearchAgentEvidenceMaterial(
+                family="systematic_quant",
+                trigger=ResearchAgentTriggerKind.REVIEWER_FEEDBACK,
+                source_key=f"systematic.generated_review.{artifact.artifact_id}",
+                observed_at=artifact.payload.reviewed_at,
+                available_at=artifact.payload.reviewed_at,
+                market_id="none",
+                canonical_payload=canonical_model_json(artifact),
+                subject_refs=(f"systematic_review.{artifact.artifact_id}",),
+            ).evidence()
+            for artifact in artifacts
+        )
+
+
 def _safe_identity(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()[:24]
 
 
-__all__ = ("DerivativesSourceAdapter", "ResearchSourcePaths", "SwingSourceAdapter", "SystematicSourceAdapter")
+__all__ = (
+    "DerivativesSourceAdapter",
+    "ResearchSourcePaths",
+    "SwingSourceAdapter",
+    "SystematicGeneratedReviewSourceAdapter",
+    "SystematicSourceAdapter",
+)

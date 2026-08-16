@@ -289,7 +289,7 @@ def service_status(
 def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRuntime:
     _prepare_private_runtime_paths(config)
     store = ResearchAgentCycleStore(config.cycle_database)
-    systematic = SystematicResearchActionExecutor(config.systematic)
+    systematic = SystematicResearchActionExecutor(config.systematic, prior_results=store.results)
     opportunity = OpportunityResearchActionExecutor(
         ExperimentLedgerOpportunityHypothesisResolver(
             ExperimentLedgerReader(config.source_paths.experiment_ledger)
@@ -311,7 +311,10 @@ def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRu
     )
     services = ResearchAgentRuntimeServices(
         store=store,
-        collector=ConfiguredResearchAgentEvidenceCollector(config.source_paths),
+        collector=ConfiguredResearchAgentEvidenceCollector(
+            config.source_paths,
+            systematic_review_root=config.systematic.review_root,
+        ),
         decisions=HermesCliResearchAgentDecisionClient(
             config.hermes_executable,
             config.model_id,

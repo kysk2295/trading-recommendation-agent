@@ -220,9 +220,17 @@ def actor_state_work(context: ActorStateContext) -> ResearchAgentOpenWorkV1:
     prior_failures = context.prior_failures
     failed = result.status in {ResearchAgentResultStatus.FAILED, ResearchAgentResultStatus.BLOCKED}
     failure_count = min(4, prior_failures + 1) if failed else 0
-    state = ResearchAgentOpenWorkState.OPEN if failed and failure_count < 4 else ResearchAgentOpenWorkState.TERMINAL
+    pending = result.open_work_ref is not None and result.reason in {
+        "review_pending",
+        "systematic_run_pending",
+    }
+    state = (
+        ResearchAgentOpenWorkState.OPEN
+        if (failed and failure_count < 4) or pending
+        else ResearchAgentOpenWorkState.TERMINAL
+    )
     return ResearchAgentOpenWorkV1(
-        work_id=f"actor-state.{cycle.agent_family_id}",
+        work_id=result.open_work_ref or f"actor-state.{cycle.agent_family_id}",
         cycle_id=cycle.cycle_id,
         agent_family_id=cycle.agent_family_id,
         state=state,

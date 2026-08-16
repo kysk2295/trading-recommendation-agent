@@ -18,7 +18,6 @@ from trading_agent.research_agent_actions import (
 from trading_agent.research_agent_cycle_models import (
     DecisionId,
     EvidenceId,
-    ResearchAgentCycleV1,
     ResearchAgentDecisionKind,
     ResearchAgentDecisionV1,
     ResearchAgentEvidenceV1,
@@ -107,12 +106,8 @@ class RecordingDecisionClient:
 
 @dataclass(frozen=True, slots=True)
 class UnreachableSystematicAction:
-    def execute(
-        self,
-        cycle: ResearchAgentCycleV1,
-        decision: ResearchAgentDecisionV1,
-    ) -> ResearchAgentResultV1:
-        del cycle, decision
+    def execute_context(self, context: ResearchAgentActionContext) -> ResearchAgentResultV1:
+        del context
         raise AssertionError
 
 

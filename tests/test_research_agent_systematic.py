@@ -5,6 +5,7 @@ import hashlib
 import json
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Literal, assert_never
 from unittest.mock import Mock
@@ -30,9 +31,16 @@ from trading_agent.research_agent_cycle_models import (
     ResearchAgentDecisionKind,
     ResearchAgentDecisionV1,
     ResearchAgentEvidenceV1,
+    ResearchAgentOpenWorkState,
+    ResearchAgentOpenWorkV1,
     ResearchAgentResultStatus,
+    ResearchAgentResultV1,
     ResearchAgentTriggerKind,
     ResearchAgentWakeKind,
+)
+from trading_agent.research_agent_runtime_support import ActorStateContext, actor_state_work
+from trading_agent.research_agent_source_adapters_research import (
+    SystematicGeneratedReviewSourceAdapter,
 )
 from trading_agent.research_agent_systematic import (
     SystematicResearchActionConfig,
@@ -195,16 +203,122 @@ def test_systematic_hermes_command_binds_explicit_provider(tmp_path: Path) -> No
 
 
 def test_systematic_action_runs_generated_strategy_and_parses_reviewer_result(tmp_path: Path) -> None:
-    systematic = SystematicResearchActionExecutor(_config(tmp_path))
+    results = []
+    systematic = SystematicResearchActionExecutor(_config(tmp_path), prior_results=lambda: tuple(results))
     executor = ResearchAgentActionExecutor(ResearchAgentActionConfig(systematic=systematic))
 
-    result = executor.execute(_context())
+    started = time.monotonic()
+    request = executor.execute(_context())
+    launch_seconds = time.monotonic() - started
+    results.append(request)
+    report = tmp_path / "runs" / _cycle().cycle_id / "output" / "autonomous_research_cycle_ko.md"
+    deadline = time.monotonic() + 30
+    while not report.is_file() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    feedback = SystematicGeneratedReviewSourceAdapter().collect(tmp_path / "reviews")
+    result = executor.execute(_review_context(request, feedback[0]))
 
+    assert launch_seconds < 2
+    assert request.status is ResearchAgentResultStatus.COMPLETED
+    assert request.reason == "review_pending"
+    assert request.open_work_ref == f"systematic.run.{_cycle().cycle_id}"
+    assert request.next_wake_kind is ResearchAgentWakeKind.SCHEDULED
+    assert (tmp_path / "runs" / _cycle().cycle_id / "request.json").is_file()
     assert result.status is ResearchAgentResultStatus.COMPLETED
     assert result.reason == "reviewer_hold"
     assert len(result.artifact_refs) == 4
-    assert (tmp_path / "runs" / _cycle().cycle_id / "output" / "autonomous_research_cycle_ko.md").is_file()
+    assert result.open_work_ref == request.open_work_ref
+    assert report.is_file()
+    assert len(feedback) == 1
+    assert feedback[0].trigger_kind is ResearchAgentTriggerKind.REVIEWER_FEEDBACK
+    assert '"decision":"hold"' in (feedback[0].bounded_payload_json or "")
+    assert result.evidence_refs == feedback[0].evidence_refs
     assert not (tmp_path / "paper_execution").exists()
+    requested_work = actor_state_work(ActorStateContext(_cycle(), _evidence(), request, 0))
+    terminal_work = actor_state_work(
+        ActorStateContext(_review_context(request).cycle, _evidence(), result, 0)
+    )
+    assert requested_work.state is ResearchAgentOpenWorkState.OPEN
+    assert terminal_work.state is ResearchAgentOpenWorkState.TERMINAL
+    assert requested_work.work_id == terminal_work.work_id == request.open_work_ref
+
+
+def test_systematic_pending_child_reuses_one_request_without_blocking_fast_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[tuple[str, ...], bool]] = []
+
+    class PendingProcess:
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            return 0
+
+    def spawn(command: tuple[str, ...], **kwargs: object) -> PendingProcess:
+        calls.append((command, kwargs.get("start_new_session") is True))
+        return PendingProcess()
+
+    monkeypatch.setattr("trading_agent.research_agent_systematic.subprocess.Popen", spawn)
+    results: list[ResearchAgentResultV1] = []
+    systematic = SystematicResearchActionExecutor(
+        _config(tmp_path),
+        prior_results=lambda: tuple(results),
+    )
+    executor = ResearchAgentActionExecutor(ResearchAgentActionConfig(systematic=systematic))
+
+    request = executor.execute(_context())
+    results.append(request)
+    pending = executor.execute(_review_context(request))
+
+    assert len(calls) == 1
+    assert calls[0][1] is True
+    assert pending.status is ResearchAgentResultStatus.NO_ACTION
+    assert pending.reason == "systematic_run_pending"
+    assert pending.open_work_ref == request.open_work_ref
+    assert pending.next_wake_kind is ResearchAgentWakeKind.SCHEDULED
+
+
+def _review_context(
+    request: ResearchAgentResultV1,
+    evidence: ResearchAgentEvidenceV1 | None = None,
+) -> ResearchAgentActionContext:
+    work_id = request.open_work_ref
+    if work_id is None:
+        raise AssertionError("systematic request did not publish open work")
+    selected_evidence = evidence or _evidence()
+    cycle = _cycle().model_copy(
+        update={
+            "cycle_id": CycleId("2" * 64),
+            "action_request_id": ActionId("3" * 64),
+            "evidence_id": selected_evidence.evidence_id,
+        }
+    )
+    decision = _decision().model_copy(
+        update={
+            "cycle_id": cycle.cycle_id,
+            "decision_id": DecisionId("4" * 64),
+            "primary_decision": ResearchAgentDecisionKind.REVIEW_OPEN_STATE,
+            "requested_action": ResearchAgentDecisionKind.REVIEW_OPEN_STATE,
+            "subject_refs": (work_id,),
+            "evidence_refs": selected_evidence.evidence_refs,
+        }
+    )
+    work = ResearchAgentOpenWorkV1(
+        work_id=work_id,
+        cycle_id=request.cycle_id,
+        agent_family_id="systematic_quant",
+        state=ResearchAgentOpenWorkState.OPEN,
+        evidence_refs=request.evidence_refs,
+        next_wake_at=request.next_wake_at,
+        updated_at=request.occurred_at,
+    )
+    return ResearchAgentActionContext(
+        cycle,
+        (selected_evidence,),
+        (work,),
+        decision,
+        NOW + dt.timedelta(seconds=30),
+    )
 
 
 def test_blocked_systematic_cycle_is_failed_with_fixed_retry_and_never_completed(tmp_path: Path) -> None:

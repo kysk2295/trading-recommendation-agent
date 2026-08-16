@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
+import os
+import signal
 import subprocess
+import threading
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self, assert_never, final
@@ -10,6 +16,7 @@ from typing import Self, assert_never, final
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from run_autonomous_research_cycle import (
+    REPORT_NAME,
     AutonomousCycleCliResult,
     InvalidAutonomousCycleCliResultError,
     load_autonomous_cycle_cli_result,
@@ -20,8 +27,14 @@ from trading_agent.dashboard_executable_binding import (
     capture_file,
     revalidate,
 )
+from trading_agent.private_stable_report import (
+    InvalidPrivateStableReportError,
+    write_private_stable_report,
+)
+from trading_agent.research_agent_actions import ResearchAgentActionContext
 from trading_agent.research_agent_cycle_models import (
     ResearchAgentCycleV1,
+    ResearchAgentDecisionKind,
     ResearchAgentDecisionV1,
     ResearchAgentResultStatus,
     ResearchAgentResultV1,
@@ -29,6 +42,7 @@ from trading_agent.research_agent_cycle_models import (
     research_agent_result_id,
 )
 from trading_agent.research_agent_systematic_input_evidence import SystematicInputEvidenceError
+from trading_agent.research_agent_systematic_input_models import ReadySystematicInputActivation
 from trading_agent.research_agent_systematic_input_runtime import (
     resolve_ready_systematic_input,
     systematic_cycle_command,
@@ -104,25 +118,170 @@ class SystematicResearchActionConfig(BaseModel):
 
 @final
 class SystematicResearchActionExecutor:
-    __slots__ = ("_clock", "_config", "_script", "_uv")
+    __slots__ = ("_clock", "_config", "_prior_results", "_script", "_uv")
 
     _clock: Callable[[], dt.datetime]
     _config: SystematicResearchActionConfig
     _script: FileIdentity
     _uv: FileIdentity
+    _prior_results: Callable[[], tuple[ResearchAgentResultV1, ...]]
 
     def __init__(
         self,
         config: SystematicResearchActionConfig,
         clock: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
+        prior_results: Callable[[], tuple[ResearchAgentResultV1, ...]] = lambda: (),
     ) -> None:
         self._config = config
         self._clock = clock
+        self._prior_results = prior_results
         try:
             self._uv = capture_file(config.uv_executable, executable=True)
             self._script = capture_file(config.project_root / "run_autonomous_research_cycle.py", executable=False)
         except InvalidExecutableBindingError:
             raise InvalidSystematicResearchActionError(reason="systematic_executable_binding_invalid") from None
+
+    def execute_context(self, context: ResearchAgentActionContext) -> ResearchAgentResultV1:
+        cycle = context.cycle
+        decision = context.decision
+        if cycle.agent_family_id != "systematic_quant":
+            raise InvalidSystematicResearchActionError(reason="systematic_family_identity_mismatch")
+        if decision.primary_decision not in {
+            ResearchAgentDecisionKind.REQUEST_HEAVY_EXPERIMENT,
+            ResearchAgentDecisionKind.REVIEW_OPEN_STATE,
+        }:
+            raise InvalidSystematicResearchActionError(reason="systematic_action_invalid")
+        pending = self._pending_request()
+        if pending is not None:
+            return self._review_request(context, pending)
+        if decision.primary_decision is ResearchAgentDecisionKind.REVIEW_OPEN_STATE:
+            raise InvalidSystematicResearchActionError(reason="systematic_open_work_unresolved")
+        return self._launch_request(context)
+
+    def _launch_request(self, context: ResearchAgentActionContext) -> ResearchAgentResultV1:
+        cycle = context.cycle
+        decision = context.decision
+        self._revalidate_executables()
+        ready = self._ready_input(cycle, decision)
+        if isinstance(ready, ResearchAgentResultV1):
+            return ready
+        command = systematic_cycle_command(self._config, cycle, ready)
+        request_payload = json.dumps(
+            {
+                "command_sha256": hashlib.sha256("\0".join(command).encode()).hexdigest(),
+                "cycle_id": cycle.cycle_id,
+                "evidence_refs": decision.evidence_refs,
+                "launched_at": context.observed_at.isoformat(),
+                "schema_version": 1,
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        request_sha = hashlib.sha256(request_payload.encode()).hexdigest()
+        try:
+            write_private_stable_report(
+                self._config.runs_root / cycle.cycle_id / "request.json",
+                request_payload + "\n",
+            )
+            process = subprocess.Popen(
+                command,
+                cwd=self._config.project_root,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env={"PATH": "/usr/bin:/bin"},
+                start_new_session=True,
+            )
+        except (InvalidPrivateStableReportError, OSError, subprocess.SubprocessError, ValueError):
+            raise InvalidSystematicResearchActionError(reason="systematic_cycle_launch_failed") from None
+        threading.Thread(
+            target=_reap_child,
+            args=(process, _cycle_output(self._config, cycle), self._config.max_runtime_seconds),
+            name="systematic-child-reaper",
+            daemon=True,
+        ).start()
+        return ResearchAgentResultV1(
+            result_id=research_agent_result_id(cycle.cycle_id),
+            cycle_id=cycle.cycle_id,
+            agent_family_id=cycle.agent_family_id,
+            market_id=cycle.market_id,
+            status=ResearchAgentResultStatus.COMPLETED,
+            question=decision.question,
+            summary="The bounded generated strategy experiment was launched outside the fast actor loop.",
+            reason="review_pending",
+            continuation="Review the immutable experiment and Reviewer report at the scheduled wake.",
+            open_work_ref=f"systematic.run.{cycle.cycle_id}",
+            evidence_refs=decision.evidence_refs,
+            artifact_refs=(f"systematic_request.{request_sha}",),
+            occurred_at=context.observed_at,
+            next_wake_kind=ResearchAgentWakeKind.SCHEDULED,
+            next_wake_at=context.observed_at + dt.timedelta(seconds=30),
+        )
+
+    def _review_request(
+        self,
+        context: ResearchAgentActionContext,
+        pending: ResearchAgentResultV1,
+    ) -> ResearchAgentResultV1:
+        work_ref = pending.open_work_ref or ""
+        request_cycle_id = work_ref.removeprefix("systematic.run.")
+        if len(request_cycle_id) != 64 or any(character not in "0123456789abcdef" for character in request_cycle_id):
+            raise InvalidSystematicResearchActionError(reason="systematic_open_work_unresolved")
+        output = self._config.runs_root / request_cycle_id / "output"
+        report_path = output / REPORT_NAME
+        if not report_path.exists():
+            if context.observed_at <= pending.occurred_at + dt.timedelta(seconds=self._config.max_runtime_seconds + 30):
+                return _pending_result(context, pending.open_work_ref)
+            raise InvalidSystematicResearchActionError(reason="systematic_cycle_execution_failed")
+        try:
+            report = load_autonomous_cycle_cli_result(output)
+        except InvalidAutonomousCycleCliResultError:
+            raise InvalidSystematicResearchActionError(reason="systematic_cycle_execution_failed") from None
+        result = _result_from_report(
+            SystematicResultContext(context.cycle, context.decision, report, context.observed_at)
+        )
+        return result.model_copy(update={"open_work_ref": pending.open_work_ref})
+
+    def _pending_request(self) -> ResearchAgentResultV1 | None:
+        for result in reversed(self._prior_results()):
+            work = result.open_work_ref
+            if result.agent_family_id != "systematic_quant" or work is None or not work.startswith("systematic.run."):
+                continue
+            return result if result.reason in {"review_pending", "systematic_run_pending"} else None
+        return None
+
+    def _revalidate_executables(self) -> None:
+        try:
+            revalidate(self._uv, executable=True)
+            revalidate(self._script, executable=False)
+        except InvalidExecutableBindingError:
+            raise InvalidSystematicResearchActionError(reason="systematic_cycle_execution_failed") from None
+
+    def _ready_input(
+        self,
+        cycle: ResearchAgentCycleV1,
+        decision: ResearchAgentDecisionV1,
+    ) -> ReadySystematicInputActivation | ResearchAgentResultV1:
+        try:
+            return resolve_ready_systematic_input(self._config.input_activation)
+        except (
+            InvalidSystematicInputActivationError,
+            OSError,
+            SystematicInputEvidenceError,
+            TypeError,
+            ValueError,
+        ):
+            return _failed_result(
+                SystematicFailureContext(
+                    cycle=cycle,
+                    decision=decision,
+                    occurred_at=self._clock(),
+                    reason="production_input_unavailable",
+                    summary="The production Systematic input is unavailable.",
+                    continuation="Retry after a verified production input activation is available.",
+                )
+            )
 
     def execute(
         self,
@@ -180,6 +339,47 @@ class SystematicResearchActionExecutor:
 
 def _cycle_output(config: SystematicResearchActionConfig, cycle: ResearchAgentCycleV1) -> Path:
     return config.runs_root / cycle.cycle_id / "output"
+
+
+def _reap_child(
+    process: subprocess.Popen[bytes],
+    output: Path,
+    max_runtime_seconds: float,
+) -> None:
+    reason: str | None = None
+    try:
+        return_code = process.wait(timeout=max_runtime_seconds)
+        if return_code not in {0, 1}:
+            reason = "systematic_child_failed"
+    except subprocess.TimeoutExpired:
+        reason = "systematic_child_timeout"
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+            _ = process.wait(timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            with suppress(OSError):
+                os.killpg(process.pid, signal.SIGKILL)
+            with suppress(subprocess.TimeoutExpired):
+                _ = process.wait(timeout=5)
+    if reason is not None and not (output / REPORT_NAME).exists():
+        with suppress(InvalidPrivateStableReportError):
+            write_private_stable_report(output / REPORT_NAME, _blocked_child_report(reason))
+
+
+def _blocked_child_report(reason: str) -> str:
+    return "\n".join(
+        (
+            "# Autonomous generated strategy research cycle",
+            "",
+            "- result: blocked",
+            f"- {reason}",
+            "- lifecycle authority: false",
+            "- allocation authority: false",
+            "- order authority: false",
+            "- trading mutation: 0",
+            "",
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,6 +457,31 @@ def _failed_result(context: SystematicFailureContext) -> ResearchAgentResultV1:
         occurred_at=context.occurred_at,
         next_wake_kind=ResearchAgentWakeKind.SCHEDULED,
         next_wake_at=context.occurred_at + dt.timedelta(minutes=15),
+    )
+
+
+def _pending_result(
+    context: ResearchAgentActionContext,
+    open_work_ref: str | None,
+) -> ResearchAgentResultV1:
+    if open_work_ref is None:
+        raise InvalidSystematicResearchActionError(reason="systematic_open_work_unresolved")
+    return ResearchAgentResultV1(
+        result_id=research_agent_result_id(context.cycle.cycle_id),
+        cycle_id=context.cycle.cycle_id,
+        agent_family_id="systematic_quant",
+        market_id=context.cycle.market_id,
+        status=ResearchAgentResultStatus.NO_ACTION,
+        question=context.decision.question,
+        summary="The generated strategy child is still running outside the fast actor loop.",
+        reason="systematic_run_pending",
+        continuation="Poll the same immutable Systematic request at the next scheduled wake.",
+        open_work_ref=open_work_ref,
+        evidence_refs=context.decision.evidence_refs,
+        artifact_refs=(),
+        occurred_at=context.observed_at,
+        next_wake_kind=ResearchAgentWakeKind.SCHEDULED,
+        next_wake_at=context.observed_at + dt.timedelta(seconds=30),
     )
 
 

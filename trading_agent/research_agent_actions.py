@@ -30,11 +30,7 @@ class InvalidResearchAgentActionError(RuntimeError):
 
 
 class SystematicResearchAction(Protocol):
-    def execute(
-        self,
-        cycle: ResearchAgentCycleV1,
-        decision: ResearchAgentDecisionV1,
-    ) -> ResearchAgentResultV1: ...
+    def execute_context(self, context: ResearchAgentActionContext) -> ResearchAgentResultV1: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,10 +110,13 @@ class ResearchAgentActionExecutor:
                 if self._config.derivatives is None:
                     raise InvalidResearchAgentActionError(reason="action_not_configured")
                 return self._config.derivatives.execute(context)
+            case (
+                ResearchAgentDecisionKind.REQUEST_HEAVY_EXPERIMENT
+                | ResearchAgentDecisionKind.REVIEW_OPEN_STATE
+            ) if cycle.agent_family_id == "systematic_quant":
+                return self._config.systematic.execute_context(context)
             case ResearchAgentDecisionKind.REQUEST_HEAVY_EXPERIMENT:
-                if cycle.agent_family_id != "systematic_quant":
-                    raise InvalidResearchAgentActionError(reason="heavy_experiment_systematic_only")
-                return self._config.systematic.execute(cycle, decision)
+                raise InvalidResearchAgentActionError(reason="heavy_experiment_systematic_only")
             case (
                 ResearchAgentDecisionKind.INVESTIGATE_CANDIDATE
                 | ResearchAgentDecisionKind.PROPOSE_HYPOTHESIS
