@@ -204,8 +204,8 @@ def test_blocked_systematic_input_keeps_service_armed_without_heavy_child(
     ResearchAgentCycleStore(config.cycle_database).close()
     child_calls: list[tuple[str, ...]] = []
     monkeypatch.setattr(
-        "trading_agent.research_agent_systematic.subprocess.run",
-        lambda command, **_kwargs: child_calls.append(tuple(command)),
+        "trading_agent.research_agent_systematic_executor.launch_systematic_child",
+        lambda command, _project_root: child_calls.append(tuple(command)),
     )
 
     report = service_status(config, NOW)
@@ -230,8 +230,8 @@ def test_blocked_systematic_input_allows_non_systematic_tick(
         lambda _config: runtime,
     )
     monkeypatch.setattr(
-        "trading_agent.research_agent_systematic.subprocess.run",
-        lambda command, **_kwargs: child_calls.append(tuple(command)),
+        "trading_agent.research_agent_systematic_executor.launch_systematic_child",
+        lambda command, _project_root: child_calls.append(tuple(command)),
     )
 
     report = run_service_tick(config, NOW)

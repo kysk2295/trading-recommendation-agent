@@ -29,6 +29,35 @@ class SystematicChildProcess(Protocol):
 type ProcessGroupRssReader = Callable[[int], int | None]
 
 
+def launch_systematic_child(command: tuple[str, ...], project_root: Path) -> SystematicChildProcess:
+    return subprocess.Popen(
+        command,
+        cwd=project_root,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env={"PATH": "/usr/bin:/bin"},
+        start_new_session=True,
+    )
+
+
+def run_systematic_child(
+    command: tuple[str, ...],
+    project_root: Path,
+    max_runtime_seconds: float,
+) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        command,
+        cwd=project_root,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        timeout=max_runtime_seconds,
+        env={"PATH": "/usr/bin:/bin"},
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class SystematicChildSupervisorConfig:
     output: Path
@@ -135,6 +164,8 @@ def _blocked_child_report(reason: str) -> str:
 __all__ = (
     "SystematicChildProcess",
     "SystematicChildSupervisorConfig",
+    "launch_systematic_child",
     "process_group_rss_bytes",
     "reap_systematic_child",
+    "run_systematic_child",
 )

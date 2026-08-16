@@ -254,11 +254,11 @@ def test_systematic_pending_child_reuses_one_request_without_blocking_fast_loop(
             del timeout
             return 0
 
-    def spawn(command: tuple[str, ...], **kwargs: object) -> PendingProcess:
-        calls.append((command, kwargs.get("start_new_session") is True))
+    def spawn(command: tuple[str, ...], project_root: Path) -> PendingProcess:
+        calls.append((command, project_root == PROJECT))
         return PendingProcess()
 
-    monkeypatch.setattr("trading_agent.research_agent_systematic.subprocess.Popen", spawn)
+    monkeypatch.setattr("trading_agent.research_agent_systematic_executor.launch_systematic_child", spawn)
     results: list[ResearchAgentResultV1] = []
     systematic = SystematicResearchActionExecutor(
         _config(tmp_path),
@@ -376,7 +376,7 @@ def test_unavailable_production_input_fails_without_subprocess(
         case unreachable:
             assert_never(unreachable)
     run = Mock(side_effect=AssertionError("subprocess must not run"))
-    monkeypatch.setattr("trading_agent.research_agent_systematic.subprocess.run", run)
+    monkeypatch.setattr("trading_agent.research_agent_systematic_executor.run_systematic_child", run)
     executor = SystematicResearchActionExecutor(_config(tmp_path, ready), clock=lambda: NOW)
 
     result = executor.execute(_cycle(), _decision())
@@ -410,7 +410,7 @@ def test_pointer_swap_during_graph_verification_fails_without_subprocess(
         "trading_agent.research_agent_systematic_input_runtime.verify_systematic_input_evidence_graph",
         swap_pointer,
     )
-    monkeypatch.setattr("trading_agent.research_agent_systematic.subprocess.run", run)
+    monkeypatch.setattr("trading_agent.research_agent_systematic_executor.run_systematic_child", run)
     executor = SystematicResearchActionExecutor(_config(tmp_path, ready), clock=lambda: NOW)
 
     result = executor.execute(_cycle(), _decision())

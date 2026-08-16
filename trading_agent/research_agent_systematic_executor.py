@@ -51,8 +51,10 @@ from trading_agent.research_agent_systematic_models import (
 )
 from trading_agent.research_agent_systematic_supervision import (
     SystematicChildSupervisorConfig,
+    launch_systematic_child,
     process_group_rss_bytes,
     reap_systematic_child,
+    run_systematic_child,
 )
 
 
@@ -123,15 +125,7 @@ class SystematicResearchActionExecutor:
                 self._config.runs_root / cycle.cycle_id / "request.json",
                 request_payload + "\n",
             )
-            process = subprocess.Popen(
-                command,
-                cwd=self._config.project_root,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env={"PATH": "/usr/bin:/bin"},
-                start_new_session=True,
-            )
+            process = launch_systematic_child(command, self._config.project_root)
         except (InvalidPrivateStableReportError, OSError, subprocess.SubprocessError, ValueError):
             raise InvalidSystematicResearchActionError(reason="systematic_cycle_launch_failed") from None
         threading.Thread(
@@ -240,15 +234,10 @@ class SystematicResearchActionExecutor:
             )
         command = systematic_cycle_command(self._config, cycle, ready)
         try:
-            completed = subprocess.run(
+            completed = run_systematic_child(
                 command,
-                cwd=self._config.project_root,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-                timeout=self._config.max_runtime_seconds,
-                env={"PATH": "/usr/bin:/bin"},
+                self._config.project_root,
+                self._config.max_runtime_seconds,
             )
             report = load_autonomous_cycle_cli_result(self._config.runs_root / cycle.cycle_id / "output")
         except (
