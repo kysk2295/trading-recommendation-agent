@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from enum import StrEnum, unique
 from typing import Literal, NewType, Self
@@ -16,6 +17,7 @@ DecisionId = NewType("DecisionId", str)
 ResultId = NewType("ResultId", str)
 
 MarketId = Literal["us_equities", "kr_equities", "cross_market", "none"]
+_MAX_BOUNDED_PAYLOAD_BYTES = 48 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,12 +94,32 @@ class ResearchAgentEvidenceV1(BaseModel):
     available_at: AwareDatetime
     payload_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     market_id: MarketId
+    bounded_payload_json: str | None = None
+    payload_truncated: bool = False
+    subject_refs: tuple[str, ...] = Field(default=(), max_length=32)
 
     @model_validator(mode="after")
     def require_ordered_evidence(self) -> Self:
         if self.available_at < self.observed_at:
             raise InvalidResearchAgentCycleFieldError(reason="evidence_time_order_invalid")
         _require_references(self.evidence_refs, allow_empty=False)
+        _require_references(self.subject_refs, allow_empty=self.bounded_payload_json is None)
+        if self.bounded_payload_json is None:
+            if self.payload_truncated or self.subject_refs:
+                raise InvalidResearchAgentCycleFieldError(reason="bounded_payload_identity_invalid")
+            return self
+        encoded = self.bounded_payload_json.encode()
+        if len(encoded) > _MAX_BOUNDED_PAYLOAD_BYTES:
+            raise InvalidResearchAgentCycleFieldError(reason="bounded_payload_too_large")
+        try:
+            value = json.loads(self.bounded_payload_json)
+        except (TypeError, ValueError):
+            raise InvalidResearchAgentCycleFieldError(reason="bounded_payload_invalid") from None
+        canonical = json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        if canonical != self.bounded_payload_json:
+            raise InvalidResearchAgentCycleFieldError(reason="bounded_payload_not_canonical")
+        if hashlib.sha256(encoded).hexdigest() != self.payload_sha256:
+            raise InvalidResearchAgentCycleFieldError(reason="bounded_payload_hash_mismatch")
         return self
 
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
 from decimal import Decimal
 from pathlib import Path
 
@@ -116,6 +118,12 @@ def test_source_projection_routes_evidence_without_cross_family_leakage(tmp_path
     assert all(item.payload_sha256 in item.evidence_refs for item in by_family["systematic_quant"])
     assert all(item.market_id == "none" for item in by_family["systematic_quant"])
     assert all(item.trigger_kind is ResearchAgentTriggerKind.MARKET_EVENT for item in by_family["market_context"])
+    opportunity = next(item for item in projected if item.agent_family_id == "opportunity_manager")
+    payload = json.loads(opportunity.bounded_payload_json or "{}")
+    assert "ACME" in json.dumps(payload)
+    assert opportunity.subject_refs == (opportunity.source_key,)
+    assert opportunity.bounded_payload_json is not None
+    assert opportunity.payload_sha256 == hashlib.sha256(opportunity.bounded_payload_json.encode()).hexdigest()
 
 
 def test_missing_derivatives_entitlement_is_explicit_evidence(tmp_path: Path) -> None:

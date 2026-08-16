@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
 
 import pytest
 from pydantic import ValidationError
@@ -36,6 +38,59 @@ def _evidence() -> ResearchAgentEvidenceV1:
         payload_sha256="b" * 64,
         market_id="kr_equities",
     )
+
+
+def test_evidence_binds_canonical_payload_hash_and_subjects() -> None:
+    payload = '{"candidates":[{"symbol":"AAPL"}],"schema_version":1}'
+    digest = hashlib.sha256(payload.encode()).hexdigest()
+
+    evidence = ResearchAgentEvidenceV1(
+        evidence_id=EvidenceId("e" * 64),
+        agent_family_id="opportunity_manager",
+        trigger_kind=ResearchAgentTriggerKind.NEW_DATA,
+        source_key="opportunity.current.001",
+        evidence_refs=(digest,),
+        observed_at=NOW,
+        available_at=NOW,
+        payload_sha256=digest,
+        market_id="us_equities",
+        bounded_payload_json=payload,
+        payload_truncated=False,
+        subject_refs=("opportunity.current.001",),
+    )
+
+    assert json.loads(evidence.bounded_payload_json or "{}") == {
+        "candidates": [{"symbol": "AAPL"}],
+        "schema_version": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    ("payload", "digest", "reason"),
+    (
+        ('{"b":1,"a":2}', hashlib.sha256(b'{"a":2,"b":1}').hexdigest(), "bounded_payload_not_canonical"),
+        ('{"a":1}', "0" * 64, "bounded_payload_hash_mismatch"),
+    ),
+)
+def test_evidence_rejects_noncanonical_or_mismatched_payload(
+    payload: str,
+    digest: str,
+    reason: str,
+) -> None:
+    with pytest.raises(ValidationError, match=reason):
+        ResearchAgentEvidenceV1(
+            evidence_id=EvidenceId("e" * 64),
+            agent_family_id="opportunity_manager",
+            trigger_kind=ResearchAgentTriggerKind.NEW_DATA,
+            source_key="opportunity.current.001",
+            evidence_refs=(digest,),
+            observed_at=NOW,
+            available_at=NOW,
+            payload_sha256=digest,
+            market_id="us_equities",
+            bounded_payload_json=payload,
+            subject_refs=("opportunity.current.001",),
+        )
 
 
 def test_cycle_identity_binds_actor_trigger_and_cursor() -> None:

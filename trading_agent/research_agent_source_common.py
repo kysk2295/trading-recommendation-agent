@@ -42,12 +42,15 @@ class ResearchAgentEvidenceMaterial:
     available_at: dt.datetime
     market_id: MarketId
     canonical_payload: str
+    subject_refs: tuple[str, ...] = ()
+    payload_truncated: bool = False
 
     def evidence(self) -> ResearchAgentEvidenceV1:
         payload_sha256 = hashlib.sha256(self.canonical_payload.encode()).hexdigest()
         identity = hashlib.sha256(
             f"{self.family}:{self.trigger}:{self.source_key}:{payload_sha256}:evidence-v1".encode()
         ).hexdigest()
+        subjects = self.subject_refs or (self.source_key,)
         return ResearchAgentEvidenceV1(
             evidence_id=EvidenceId(identity),
             agent_family_id=self.family,
@@ -58,6 +61,9 @@ class ResearchAgentEvidenceMaterial:
             available_at=self.available_at,
             payload_sha256=payload_sha256,
             market_id=self.market_id,
+            bounded_payload_json=self.canonical_payload,
+            payload_truncated=self.payload_truncated,
+            subject_refs=tuple(sorted(set(subjects))),
         )
 
 
