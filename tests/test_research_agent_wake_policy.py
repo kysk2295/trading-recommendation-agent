@@ -116,6 +116,23 @@ def test_cooldown_and_terminal_failure_wait_for_new_evidence() -> None:
     )[0].agent_family_id == "systematic_quant"
 
 
+def test_distinct_new_evidence_bypasses_prior_failure_cooldown() -> None:
+    original = _stored_evidence("systematic_quant")
+    replacement = _stored_evidence("systematic_quant", sequence=2)
+    state = ActorWakeState(
+        agent_family_id="systematic_quant",
+        last_terminal_at=NOW,
+        cooldown_until=NOW + dt.timedelta(minutes=15),
+        consecutive_failures=1,
+        last_failed_evidence_id=original.evidence.evidence_id,
+    )
+
+    selected = runnable_actors((replacement,), (), now=NOW, states=(state,))
+
+    assert tuple(item.agent_family_id for item in selected) == ("systematic_quant",)
+    assert selected[0].reason is ResearchActorWakeReason.SOURCE_EVENT
+
+
 def test_scheduled_actor_requires_prior_terminal_and_round_robins_oldest_first() -> None:
     states = (
         ActorWakeState(

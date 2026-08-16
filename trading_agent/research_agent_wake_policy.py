@@ -118,10 +118,15 @@ def runnable_actors(
     candidates: list[RunnableResearchActor] = []
     for policy in ACTOR_WAKE_POLICIES:
         state = state_by_family.get(policy.family_id)
-        if state is not None and state.cooldown_until is not None and state.cooldown_until > now:
-            continue
         item = due_work.get(policy.family_id)
         stored = latest_evidence.get(policy.family_id)
+        if (
+            state is not None
+            and state.cooldown_until is not None
+            and state.cooldown_until > now
+            and (stored is None or stored.evidence.evidence_id == state.last_failed_evidence_id)
+        ):
+            continue
         candidate = _candidate_for_actor(ActorWakeEvaluation(policy, state, stored, item, now))
         if candidate is not None:
             candidates.append(candidate)
