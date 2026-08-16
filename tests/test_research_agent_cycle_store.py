@@ -137,6 +137,16 @@ def test_store_reads_legacy_hash_only_evidence(tmp_path: Path) -> None:
     assert restored.subject_refs == ()
 
 
+def test_all_evidence_returns_canonical_insertion_order(tmp_path: Path) -> None:
+    first = _evidence("market_context", 1)
+    second = _evidence("opportunity_manager", 2)
+    with ResearchAgentCycleStore(tmp_path / "cycles.sqlite3") as store:
+        assert store.append_evidence(first)
+        assert store.append_evidence(second)
+
+        assert store.all_evidence() == (first, second)
+
+
 def test_store_is_private_rejects_symlink_and_holds_one_writer_lease(tmp_path: Path) -> None:
     path = tmp_path / "cycles.sqlite3"
     with ResearchAgentCycleStore(path):

@@ -4,17 +4,28 @@ import datetime as dt
 import hashlib
 from pathlib import Path
 
+from tests.test_research_agent_primary_actions import (
+    CardResolver,
+    _context,
+    _context_evidence,
+    _opportunity_evidence,
+)
 from trading_agent.dashboard_agent_family import AgentFamilyId
 from trading_agent.hermes_delivery_reader import HermesDeliveryReader
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.research_agent_cycle_models import (
     CycleId,
+    ResearchAgentDecisionKind,
     ResearchAgentResultStatus,
     ResearchAgentResultV1,
     ResearchAgentWakeKind,
     ResultId,
 )
 from trading_agent.research_agent_hermes import project_research_agent_results
+from trading_agent.research_agent_primary_actions import (
+    MarketContextResearchActionExecutor,
+    OpportunityResearchActionExecutor,
+)
 
 NOW = dt.datetime(2026, 8, 2, 12, 0, tzinfo=dt.UTC)
 
@@ -57,3 +68,33 @@ def test_results_project_as_separate_agent_families_and_replay_once(tmp_path: Pa
     }
     assert all(event.kind.value == "research" for event in events)
     assert all(len(event.rendered_text) <= 4096 for event in events)
+
+
+def test_primary_results_render_resolved_artifact_rows(tmp_path: Path) -> None:
+    opportunity = _opportunity_evidence()
+    context = _context_evidence()
+    opportunity_result = OpportunityResearchActionExecutor(CardResolver(None)).execute(
+        _context(opportunity, ResearchAgentDecisionKind.INVESTIGATE_CANDIDATE)
+    )
+    context_result = MarketContextResearchActionExecutor(lambda: ()).execute(
+        _context(context, ResearchAgentDecisionKind.PUBLISH_CONTEXT)
+    )
+    store = HermesDeliveryStore(tmp_path / "delivery.sqlite3")
+
+    with store.writer() as writer:
+        projected = project_research_agent_results(
+            (opportunity_result, context_result),
+            writer,
+            evidence=(opportunity, context),
+        )
+    events = HermesDeliveryReader(store.path).events()
+    by_family = {event.agent_family: event.rendered_text for event in events}
+
+    assert projected.inserted == 2
+    assert "ACME" in by_family["opportunity_manager"]
+    assert "rank=1" in by_family["opportunity_manager"]
+    assert "source=ranking_source" in by_family["opportunity_manager"]
+    assert "investigation_reason=ranked_candidate" in by_family["opportunity_manager"]
+    assert "risk_on" in by_family["market_context"]
+    assert "advance_ratio=0.61" in by_family["market_context"]
+    assert all("order authority: false" in text for text in by_family.values())

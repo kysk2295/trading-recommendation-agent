@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from trading_agent.dashboard_agent_cycle_runtime import read_cycle_runtime_observations
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
+from trading_agent.experiment_ledger_store import ExperimentLedgerReader
 from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.hermes_delivery_reader import HermesDeliveryReader
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
@@ -28,6 +29,11 @@ from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
 from trading_agent.research_agent_cycle_store_codec import latest_cycles_from_rows, result_from_payload
 from trading_agent.research_agent_decision import HermesCliResearchAgentDecisionClient
 from trading_agent.research_agent_hermes import project_research_agent_results
+from trading_agent.research_agent_primary_actions import (
+    ExperimentLedgerOpportunityHypothesisResolver,
+    MarketContextResearchActionExecutor,
+    OpportunityResearchActionExecutor,
+)
 from trading_agent.research_agent_runtime import (
     ConfiguredResearchAgentEvidenceCollector,
     ResearchAgentBoundedCycleResult,
@@ -279,10 +285,23 @@ def service_status(
 
 def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRuntime:
     _prepare_private_runtime_paths(config)
+    store = ResearchAgentCycleStore(config.cycle_database)
     systematic = SystematicResearchActionExecutor(config.systematic)
-    actions = ResearchAgentActionExecutor(ResearchAgentActionConfig(systematic=systematic))
+    opportunity = OpportunityResearchActionExecutor(
+        ExperimentLedgerOpportunityHypothesisResolver(
+            ExperimentLedgerReader(config.source_paths.experiment_ledger)
+        )
+    )
+    context = MarketContextResearchActionExecutor(store.results)
+    actions = ResearchAgentActionExecutor(
+        ResearchAgentActionConfig(
+            systematic=systematic,
+            opportunity=opportunity,
+            market_context=context,
+        )
+    )
     services = ResearchAgentRuntimeServices(
-        store=ResearchAgentCycleStore(config.cycle_database),
+        store=store,
         collector=ConfiguredResearchAgentEvidenceCollector(config.source_paths),
         decisions=HermesCliResearchAgentDecisionClient(
             config.hermes_executable,
@@ -314,7 +333,11 @@ def write_service_report(
 
 def _project_results(config: ResearchAgentServiceConfig, runtime: ResearchAgentRuntime) -> int:
     with HermesDeliveryStore(config.hermes_database).writer() as writer:
-        result = project_research_agent_results(runtime.store.results(), writer)
+        result = project_research_agent_results(
+            runtime.store.results(),
+            writer,
+            evidence=runtime.store.all_evidence(),
+        )
     return result.inserted
 
 

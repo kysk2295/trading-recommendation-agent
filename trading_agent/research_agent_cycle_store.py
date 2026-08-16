@@ -193,6 +193,13 @@ class ResearchAgentCycleStore:
             rows = connection.execute("SELECT payload_json FROM results ORDER BY rowid").fetchall()
         return tuple(result_from_payload(row[0]) for row in rows)
 
+    def all_evidence(self) -> tuple[ResearchAgentEvidenceV1, ...]:
+        with self._database.reader() as connection:
+            rows = connection.execute(
+                "SELECT sequence,evidence_id,agent_family_id,payload_json FROM evidence ORDER BY sequence"
+            ).fetchall()
+        return tuple(stored_evidence(row).evidence for row in rows)
+
     def cycle_events(self, cycle_id: CycleId) -> tuple[StoredResearchAgentCycleEvent, ...]:
         with self._database.reader() as connection:
             rows = connection.execute(

@@ -10,27 +10,45 @@ from trading_agent.hermes_delivery_projection import (
     project_outcomes,
 )
 from trading_agent.hermes_delivery_store import HermesDeliveryWriter
-from trading_agent.research_agent_cycle_models import ResearchAgentResultV1
+from trading_agent.research_agent_cycle_models import ResearchAgentEvidenceV1, ResearchAgentResultV1
 
 
 def project_research_agent_results(
     results: tuple[ResearchAgentResultV1, ...],
     writer: HermesDeliveryWriter,
+    *,
+    evidence: tuple[ResearchAgentEvidenceV1, ...] = (),
 ) -> HermesProjectionResult:
-    records = tuple(_projection_record(result) for result in results)
+    records = tuple(_projection_record(result, evidence) for result in results)
     return project_outcomes(records, writer)
 
 
-def render_research_agent_result(result: ResearchAgentResultV1) -> str:
+def render_research_agent_result(
+    result: ResearchAgentResultV1,
+    evidence: tuple[ResearchAgentEvidenceV1, ...] = (),
+) -> str:
+    resolved = next(
+        (
+            item
+            for item in evidence
+            if item.agent_family_id == result.agent_family_id and item.payload_sha256 in result.artifact_refs
+        ),
+        None,
+    )
+    artifact = "none" if resolved is None else resolved.payload_sha256
     text = redact_outbound_text(
-        f"{result.agent_family_id}: {result.summary} Status: {result.status.value}.",
+        f"{result.agent_family_id}: {result.summary} Status: {result.status.value}. "
+        f"artifact={artifact}. order authority: false.",
         max_chars=4096,
     ).strip()
     require_safe_outbound_text(text)
     return text
 
 
-def _projection_record(result: ResearchAgentResultV1) -> HermesProjectionRecord:
+def _projection_record(
+    result: ResearchAgentResultV1,
+    evidence: tuple[ResearchAgentEvidenceV1, ...],
+) -> HermesProjectionRecord:
     validated = ResearchAgentResultV1.model_validate(result.model_dump(mode="python"))
     return HermesProjectionRecord(
         source_event_id=validated.result_id,
@@ -44,7 +62,7 @@ def _projection_record(result: ResearchAgentResultV1) -> HermesProjectionRecord:
         occurred_at=validated.occurred_at,
         status=validated.status.value,
         evidence_refs=validated.evidence_refs,
-        rendered_text=render_research_agent_result(validated),
+        rendered_text=render_research_agent_result(validated, evidence),
         payload_sha256=hashlib.sha256(validated.model_dump_json().encode()).hexdigest(),
     )
 
