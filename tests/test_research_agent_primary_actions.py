@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+from decimal import Decimal
 
 import pytest
 
@@ -67,7 +68,7 @@ def _opportunity() -> OpportunitySnapshot:
             OpportunityCandidate(
                 symbol="ACME",
                 rank=1,
-                score="0.12",
+                score=Decimal("0.12"),
                 features=(
                     FeatureValue(name="change_pct", value="0.12"),
                     FeatureValue(name="spread_bps", value="12.5"),
