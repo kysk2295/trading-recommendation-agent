@@ -117,6 +117,22 @@ def test_service_config_uses_strict_schema_v2_and_rejects_v1(tmp_path: Path) -> 
     assert main(("verify", "--config", str(config_path), "--plist", str(plist_path))) == 2
 
 
+def test_service_config_accepts_namespaced_model_id(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    systematic = SystematicResearchActionConfig.model_validate(
+        config.systematic.model_dump(mode="python")
+        | {"model_id": "openrouter/free", "provider_id": "openrouter"}
+    )
+
+    candidate = ResearchAgentServiceConfig.model_validate(
+        config.model_dump(mode="python")
+        | {"model_id": "openrouter/free", "provider_id": "openrouter", "systematic": systematic}
+    )
+
+    assert candidate.model_id == candidate.systematic.model_id == "openrouter/free"
+    assert candidate.provider_id == "openrouter"
+
+
 @pytest.mark.parametrize("failure", ("mode", "symlink", "malformed"))
 def test_service_config_rejects_untrusted_file_before_launchctl(
     tmp_path: Path,

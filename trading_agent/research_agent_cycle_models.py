@@ -143,7 +143,7 @@ class ResearchAgentDecisionV1(BaseModel):
     decided_at: AwareDatetime
     next_wake_kind: ResearchAgentWakeKind
     next_wake_at: AwareDatetime | None
-    model_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,127}$")
+    model_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{2,127}$")
     prompt_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     response_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
 

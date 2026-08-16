@@ -39,7 +39,7 @@ class SystematicResearchActionConfig(BaseModel):
     context: Path
     response_fixture: Path | None
     hermes_executable: Path | None
-    model_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,127}$")
+    model_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{2,127}$")
     provider_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,127}$")
     experiment_ledger: Path
     receipt_root: Path

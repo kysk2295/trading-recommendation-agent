@@ -29,8 +29,38 @@ from trading_agent.research_agent_cycle_models import (
 
 _MAX_RESPONSE_BYTES: Final = 64 * 1024
 _MAX_PROMPT_EVIDENCE_BYTES: Final = 48 * 1024
-_MODEL_ID: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,127}$")
+_MODEL_ID: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{2,127}$")
+_PROVIDER_ID: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,127}$")
 _FAMILY_DEFINITIONS: Final = {definition.family_id: definition for definition in AGENT_FAMILY_REGISTRY}
+_FAMILY_DECISIONS: Final[dict[AgentFamilyId, tuple[ResearchAgentDecisionKind, ...]]] = {
+    "opportunity_manager": (
+        ResearchAgentDecisionKind.NO_ACTION,
+        ResearchAgentDecisionKind.INVESTIGATE_CANDIDATE,
+        ResearchAgentDecisionKind.PROPOSE_HYPOTHESIS,
+    ),
+    "day_trading": (
+        ResearchAgentDecisionKind.NO_ACTION,
+        ResearchAgentDecisionKind.PUBLISH_RECOMMENDATION,
+        ResearchAgentDecisionKind.REVIEW_OPEN_STATE,
+    ),
+    "swing_trading": (
+        ResearchAgentDecisionKind.NO_ACTION,
+        ResearchAgentDecisionKind.REVIEW_OPEN_STATE,
+    ),
+    "systematic_quant": (
+        ResearchAgentDecisionKind.NO_ACTION,
+        ResearchAgentDecisionKind.REQUEST_HEAVY_EXPERIMENT,
+        ResearchAgentDecisionKind.REVIEW_OPEN_STATE,
+    ),
+    "derivatives_research": (
+        ResearchAgentDecisionKind.NO_ACTION,
+        ResearchAgentDecisionKind.PUBLISH_CONTEXT,
+    ),
+    "market_context": (
+        ResearchAgentDecisionKind.NO_ACTION,
+        ResearchAgentDecisionKind.PUBLISH_CONTEXT,
+    ),
+}
 
 
 class InvalidResearchAgentDecisionError(RuntimeError):
@@ -133,7 +163,7 @@ class HermesCliResearchAgentDecisionClient:
             raise InvalidResearchAgentDecisionError(reason="hermes_executable_invalid") from None
         if (
             _MODEL_ID.fullmatch(model_id) is None
-            or _MODEL_ID.fullmatch(provider_id) is None
+            or _PROVIDER_ID.fullmatch(provider_id) is None
             or timeout_seconds <= 0
             or timeout_seconds > 300
         ):
@@ -179,6 +209,7 @@ class HermesCliResearchAgentDecisionClient:
 
 def render_research_agent_prompt(request: ResearchAgentDecisionRequest) -> str:
     definition = _FAMILY_DEFINITIONS[request.agent_family_id]
+    allowed_decisions = ",".join(kind.value for kind in _FAMILY_DECISIONS[request.agent_family_id])
     evidence: list[dict[str, object]] = []
     payload_bytes = 0
     for item in request.evidence:
@@ -217,6 +248,7 @@ def render_research_agent_prompt(request: ResearchAgentDecisionRequest) -> str:
         f"<agent-family>{definition.family_id}</agent-family>\n"
         f"<memory-namespace>{definition.memory_namespace}</memory-namespace>\n"
         f"<role>{definition.role}</role>\n"
+        f"Allowed primary_decisions for this family: {allowed_decisions}.\n"
         "Make exactly one evidence-bound research decision. Return one raw JSON object and no prose. "
         "primary_decision=no_action requires requested_action=null and non-null reason and continuation; "
         "primary_decision=no_action requires subject_refs=[]; every other primary_decision requires "
@@ -240,6 +272,8 @@ def parse_research_agent_decision(
         response = HermesResearchAgentDecisionResponse.model_validate_json(payload)
     except (ValidationError, ValueError):
         raise InvalidResearchAgentDecisionError(reason="hermes_decision_response_invalid") from None
+    if response.primary_decision not in _FAMILY_DECISIONS[context.request.agent_family_id]:
+        raise InvalidResearchAgentDecisionError(reason="decision_kind_not_allowed")
     available_subjects = {
         reference
         for item in context.request.evidence

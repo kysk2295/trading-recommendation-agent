@@ -103,6 +103,17 @@ def test_decision_prompt_contains_bounded_values_and_available_subjects() -> Non
     assert '"subject_refs":["market_context.us.current"]' in prompt
 
 
+def test_decision_prompt_limits_derivatives_to_executable_kinds() -> None:
+    evidence = _evidence().model_copy(update={"agent_family_id": "derivatives_research"})
+    request = _request().model_copy(
+        update={"agent_family_id": "derivatives_research", "evidence": (evidence,)}
+    )
+
+    prompt = render_research_agent_prompt(request)
+
+    assert "Allowed primary_decisions for this family: no_action,publish_context." in prompt
+
+
 def test_decision_prompt_rejects_legacy_hash_only_evidence() -> None:
     legacy = _evidence().model_copy(
         update={"bounded_payload_json": None, "payload_truncated": False, "subject_refs": ()}
@@ -132,6 +143,19 @@ def test_parser_produces_one_audited_decision() -> None:
     assert decision.subject_refs == ("market_context.us.current",)
 
 
+def test_parser_accepts_namespaced_model_id() -> None:
+    request = _request()
+    context = ResearchAgentDecisionParseContext(
+        request=request,
+        model_id="openrouter/free",
+        prompt_sha256="d" * 64,
+    )
+
+    decision = parse_research_agent_decision(_response(), context)
+
+    assert decision.model_id == "openrouter/free"
+
+
 def test_parser_rejects_subject_not_present_in_request() -> None:
     payload = json.loads(_response()) | {"subject_refs": ["market_context.fabricated"]}
     context = ResearchAgentDecisionParseContext(
@@ -141,6 +165,25 @@ def test_parser_rejects_subject_not_present_in_request() -> None:
     )
 
     with pytest.raises(InvalidResearchAgentDecisionError, match="decision_subject_unresolved"):
+        parse_research_agent_decision(json.dumps(payload).encode(), context)
+
+
+def test_parser_rejects_decision_kind_not_executable_by_family() -> None:
+    evidence = _evidence().model_copy(update={"agent_family_id": "derivatives_research"})
+    request = _request().model_copy(
+        update={"agent_family_id": "derivatives_research", "evidence": (evidence,)}
+    )
+    payload = json.loads(_response()) | {
+        "primary_decision": "propose_hypothesis",
+        "requested_action": "propose_hypothesis",
+    }
+    context = ResearchAgentDecisionParseContext(
+        request=request,
+        model_id="openrouter/free",
+        prompt_sha256="d" * 64,
+    )
+
+    with pytest.raises(InvalidResearchAgentDecisionError, match="decision_kind_not_allowed"):
         parse_research_agent_decision(json.dumps(payload).encode(), context)
 
 
@@ -183,6 +226,21 @@ def test_hermes_cli_client_returns_validated_decision(tmp_path: Path) -> None:
     decision = client.decide(_request())
 
     assert decision.primary_decision is ResearchAgentDecisionKind.PUBLISH_CONTEXT
+
+
+def test_hermes_cli_client_accepts_namespaced_model_id(tmp_path: Path) -> None:
+    executable = tmp_path / "hermes-fixture"
+    executable.write_bytes(b"#!/bin/sh\nexit 3\n")
+    executable.chmod(0o700)
+
+    client = HermesCliResearchAgentDecisionClient(
+        executable,
+        "openrouter/free",
+        "openrouter",
+    )
+
+    with pytest.raises(InvalidResearchAgentDecisionError, match="hermes_decision_call_failed"):
+        client.decide(_request())
 
 
 @pytest.mark.parametrize("body", (b"#!/bin/sh\nexit 3\n", b"#!/bin/sh\nsleep 1\n"))
