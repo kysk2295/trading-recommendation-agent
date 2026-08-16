@@ -60,7 +60,7 @@ def cycle_from_payload(payload: str) -> ResearchAgentCycleV1:
 
 def result_from_payload(payload: str) -> ResearchAgentResultV1:
     try:
-        return ResearchAgentResultV1.model_validate_json(payload)
+        return ResearchAgentResultV1.model_validate_persisted_json(payload)
     except ValidationError:
         raise InvalidResearchAgentCycleStoreError(reason="stored_result_invalid") from None
 

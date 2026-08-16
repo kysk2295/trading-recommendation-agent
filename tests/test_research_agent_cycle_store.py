@@ -25,6 +25,7 @@ from trading_agent.research_agent_cycle_store import (
     ResearchAgentCycleStore,
     ResearchAgentCycleWriterLeaseUnavailableError,
 )
+from trading_agent.research_agent_cycle_store_codec import result_from_payload
 
 NOW = dt.datetime(2026, 8, 2, 12, 0, tzinfo=dt.UTC)
 
@@ -135,6 +136,37 @@ def test_store_reads_legacy_hash_only_evidence(tmp_path: Path) -> None:
 
     assert restored.bounded_payload_json is None
     assert restored.subject_refs == ()
+
+
+def test_result_decoder_preserves_shipped_no_action_artifacts() -> None:
+    result = ResearchAgentResultV1(
+        result_id=research_agent_result_id(CycleId("d" * 64)),
+        cycle_id=CycleId("d" * 64),
+        agent_family_id="market_context",
+        market_id="us_equities",
+        status=ResearchAgentResultStatus.NO_ACTION,
+        question="Did the current market regime change materially?",
+        summary="No completed eligible context change exists.",
+        reason="no_material_change",
+        continuation="Wait for the next completed market observation.",
+        evidence_refs=("a" * 64,),
+        artifact_refs=(),
+        occurred_at=NOW,
+        next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
+        next_wake_at=None,
+    )
+    payload = result.model_dump(mode="json")
+    payload["artifact_refs"] = ["b" * 64]
+
+    with pytest.raises(InvalidResearchAgentCycleStoreError, match="stored_result_invalid"):
+        result_from_payload(json.dumps(payload))
+
+    del payload["decision_kind"]
+    restored = result_from_payload(json.dumps(payload))
+
+    assert restored.status is ResearchAgentResultStatus.NO_ACTION
+    assert restored.artifact_refs == ("b" * 64,)
+    assert "decision_kind" not in restored.model_fields_set
 
 
 def test_all_evidence_returns_canonical_insertion_order(tmp_path: Path) -> None:

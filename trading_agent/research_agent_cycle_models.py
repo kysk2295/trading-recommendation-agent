@@ -4,9 +4,9 @@ import hashlib
 import json
 from dataclasses import dataclass
 from enum import StrEnum, unique
-from typing import Literal, NewType, Self
+from typing import Final, Literal, NewType, Self
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
 from trading_agent.dashboard_agent_family import AgentFamilyId
 
@@ -18,6 +18,7 @@ ResultId = NewType("ResultId", str)
 
 MarketId = Literal["us_equities", "kr_equities", "cross_market", "none"]
 _MAX_BOUNDED_PAYLOAD_BYTES = 48 * 1024
+_PERSISTED_RESULT_CONTEXT: Final = "persisted_result"
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,15 +191,24 @@ class ResearchAgentResultV1(BaseModel):
     lifecycle_authority: Literal[False] = False
     allocation_authority: Literal[False] = False
 
+    @classmethod
+    def model_validate_persisted_json(cls, payload: str) -> Self:
+        return cls.model_validate_json(payload, context=_PERSISTED_RESULT_CONTEXT)
+
     @model_validator(mode="after")
-    def require_result_invariants(self) -> Self:
+    def require_result_invariants(self, info: ValidationInfo) -> Self:
         _require_references(self.evidence_refs, allow_empty=False)
         _require_references(self.artifact_refs, allow_empty=True)
         _require_wake_time(self.next_wake_kind, self.next_wake_at)
         if self.status is ResearchAgentResultStatus.COMPLETED and not self.artifact_refs:
             raise InvalidResearchAgentCycleFieldError(reason="completed_artifact_required")
+        shipped_no_action = (
+            info.context == _PERSISTED_RESULT_CONTEXT and "decision_kind" not in self.model_fields_set
+        )
         if self.status is ResearchAgentResultStatus.NO_ACTION and (
-            self.reason is None or self.continuation is None or self.artifact_refs
+            self.reason is None
+            or self.continuation is None
+            or (self.artifact_refs and not shipped_no_action)
         ):
             raise InvalidResearchAgentCycleFieldError(reason="no_action_terminal_invalid")
         if self.status in {ResearchAgentResultStatus.FAILED, ResearchAgentResultStatus.BLOCKED} and self.reason is None:
