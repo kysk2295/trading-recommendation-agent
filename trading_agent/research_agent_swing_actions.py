@@ -41,9 +41,14 @@ class SwingResearchActionExecutor:
             raise InvalidResearchAgentActionError(reason="action_family_identity_mismatch")
         if context.decision.primary_decision is not ResearchAgentDecisionKind.REVIEW_OPEN_STATE:
             raise InvalidResearchAgentActionError(reason="prose_only_result")
-        evidence = _selected_evidence(context)
-        if evidence.source_key.startswith("swing.research_archive.day."):
+        cycle_evidence = tuple(
+            evidence for evidence in context.evidence if evidence.evidence_id == context.cycle.evidence_id
+        )
+        if len(cycle_evidence) != 1:
+            raise InvalidResearchAgentActionError(reason="action_evidence_identity_mismatch")
+        if cycle_evidence[0].source_key.startswith("swing.research_archive.day."):
             return _archive_open_state_unavailable(context)
+        evidence = _selected_evidence(context)
         signal, evidence_events = _selected_artifacts(evidence)
         try:
             store = SwingShadowStore(self.shadow_database)

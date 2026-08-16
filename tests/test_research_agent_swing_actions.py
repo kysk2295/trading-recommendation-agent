@@ -15,6 +15,8 @@ from trading_agent.research_agent_cycle_models import (
     ResearchAgentCycleV1,
     ResearchAgentDecisionKind,
     ResearchAgentDecisionV1,
+    ResearchAgentOpenWorkState,
+    ResearchAgentOpenWorkV1,
     ResearchAgentResultStatus,
     ResearchAgentTriggerKind,
     ResearchAgentWakeKind,
@@ -102,6 +104,42 @@ def test_archived_day_fallback_without_swing_state_is_no_action(tmp_path: Path) 
     ).evidence()
 
     result = SwingResearchActionExecutor(paths.swing_shadow_database).execute(_context(evidence))
+
+    assert result.status is ResearchAgentResultStatus.NO_ACTION
+    assert result.reason == "swing_archive_open_state_unavailable"
+
+
+def test_archived_day_fallback_uses_cycle_evidence_when_decision_selects_open_work(tmp_path: Path) -> None:
+    paths, _ = _seed_signal(tmp_path)
+    evidence = ResearchAgentEvidenceMaterial(
+        family="swing_trading",
+        trigger=ResearchAgentTriggerKind.NEW_DATA,
+        source_key="swing.research_archive.day.20260715",
+        observed_at=_observed_after_close(SIGNAL_SESSION),
+        available_at=_observed_after_close(SIGNAL_SESSION),
+        market_id="us_equities",
+        canonical_payload=canonical_payload_json({"session": "20260715"}),
+    ).evidence()
+    context = _context(evidence)
+    work = ResearchAgentOpenWorkV1(
+        work_id="swing-open-work-archive-001",
+        cycle_id=context.cycle.cycle_id,
+        agent_family_id="swing_trading",
+        state=ResearchAgentOpenWorkState.OPEN,
+        evidence_refs=evidence.evidence_refs,
+        next_wake_at=context.observed_at,
+        updated_at=context.observed_at,
+    )
+    decision = context.decision.model_copy(update={"subject_refs": (work.work_id,)})
+    selected_work = ResearchAgentActionContext(
+        context.cycle,
+        context.evidence,
+        (work,),
+        decision,
+        context.observed_at,
+    )
+
+    result = SwingResearchActionExecutor(paths.swing_shadow_database).execute(selected_work)
 
     assert result.status is ResearchAgentResultStatus.NO_ACTION
     assert result.reason == "swing_archive_open_state_unavailable"
