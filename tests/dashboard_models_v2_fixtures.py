@@ -62,6 +62,30 @@ def snapshot_payload() -> dict[str, ModelInput]:
         ModelInput,
         empty_workbench_payload(_NOW, _TRACE_IDS["derivatives"]),
     )
+    research = cast(dict[str, ModelInput], workspaces["research"])
+    research["agent_cycles"] = [
+        {
+            "agent_family_id": family,
+            "cycle_state": "unavailable",
+            "result_status": None,
+            "input_source": None,
+            "decision_kind": None,
+            "result_summary": None,
+            "artifact_count": 0,
+            "observed_at": None,
+            "next_wake_kind": None,
+            "next_wake_at": None,
+            "order_authority": False,
+        }
+        for family in (
+            "opportunity_manager",
+            "day_trading",
+            "swing_trading",
+            "systematic_quant",
+            "derivatives_research",
+            "market_context",
+        )
+    ]
     nodes = [_node(trace_id, "source_receipt") for trace_id in _TRACE_IDS.values()]
     nodes.extend(
         [
