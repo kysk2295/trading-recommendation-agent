@@ -278,6 +278,28 @@ def test_systematic_pending_child_reuses_one_request_without_blocking_fast_loop(
     assert pending.next_wake_kind is ResearchAgentWakeKind.SCHEDULED
 
 
+def test_systematic_review_without_open_request_is_no_action(tmp_path: Path) -> None:
+    context = _context()
+    decision = context.decision.model_copy(
+        update={
+            "primary_decision": ResearchAgentDecisionKind.REVIEW_OPEN_STATE,
+            "requested_action": ResearchAgentDecisionKind.REVIEW_OPEN_STATE,
+        }
+    )
+    review = ResearchAgentActionContext(
+        context.cycle,
+        context.evidence,
+        context.open_work,
+        decision,
+        context.observed_at,
+    )
+
+    result = SystematicResearchActionExecutor(_config(tmp_path)).execute_context(review)
+
+    assert result.status is ResearchAgentResultStatus.NO_ACTION
+    assert result.reason == "systematic_no_open_work"
+
+
 def _review_context(
     request: ResearchAgentResultV1,
     evidence: ResearchAgentEvidenceV1 | None = None,

@@ -186,6 +186,25 @@ def pending_result(
     )
 
 
+def no_open_work_result(context: ResearchAgentActionContext) -> ResearchAgentResultV1:
+    return ResearchAgentResultV1(
+        result_id=research_agent_result_id(context.cycle.cycle_id),
+        cycle_id=context.cycle.cycle_id,
+        agent_family_id="systematic_quant",
+        market_id=context.cycle.market_id,
+        status=ResearchAgentResultStatus.NO_ACTION,
+        question=context.decision.question,
+        summary="No generated strategy request is open for review.",
+        reason="systematic_no_open_work",
+        continuation="Wait for new evidence or request a bounded experiment.",
+        evidence_refs=context.decision.evidence_refs,
+        artifact_refs=(),
+        occurred_at=context.observed_at,
+        next_wake_kind=context.decision.next_wake_kind,
+        next_wake_at=context.decision.next_wake_at,
+    )
+
+
 def launched_result(context: ResearchAgentActionContext, request_sha: str) -> ResearchAgentResultV1:
     cycle = context.cycle
     decision = context.decision
@@ -227,6 +246,7 @@ __all__ = (
     "SystematicResultContext",
     "failed_result",
     "launched_result",
+    "no_open_work_result",
     "pending_result",
     "result_from_report",
 )

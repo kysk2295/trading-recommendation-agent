@@ -46,6 +46,7 @@ from trading_agent.research_agent_systematic_models import (
     SystematicResultContext,
     failed_result,
     launched_result,
+    no_open_work_result,
     pending_result,
     result_from_report,
 )
@@ -96,7 +97,7 @@ class SystematicResearchActionExecutor:
         if pending is not None:
             return self._review_request(context, pending)
         if context.decision.primary_decision is ResearchAgentDecisionKind.REVIEW_OPEN_STATE:
-            raise InvalidSystematicResearchActionError(reason="systematic_open_work_unresolved")
+            return no_open_work_result(context)
         return self._launch_request(context)
 
     def _launch_request(self, context: ResearchAgentActionContext) -> ResearchAgentResultV1:

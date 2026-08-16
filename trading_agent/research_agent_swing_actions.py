@@ -101,6 +101,10 @@ def _selected_artifacts(context: ResearchAgentActionContext):
         raise InvalidResearchAgentActionError(reason="authority_artifact_unresolved")
     try:
         payload = json.loads(matches[0].bounded_payload_json)
+        if isinstance(payload, dict) and "source_payload" in payload:
+            if payload.get("research_only") is not True or payload.get("trading_authority") is not False:
+                raise ValueError
+            payload = payload["source_payload"]
         if not isinstance(payload, dict) or set(payload) != {"events", "signal"}:
             raise ValueError
         signal = TradeSignalEnvelope.model_validate(payload["signal"])

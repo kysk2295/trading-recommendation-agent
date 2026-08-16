@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 from decimal import Decimal
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from trading_agent.research_agent_cycle_models import (
     ResearchAgentWakeKind,
 )
 from trading_agent.research_agent_source_adapters_research import SwingSourceAdapter
+from trading_agent.research_agent_source_common import ResearchAgentEvidenceMaterial, canonical_payload_json
 from trading_agent.research_agent_sources import ResearchAgentSourcePaths
 from trading_agent.research_agent_swing_actions import SwingResearchActionExecutor
 from trading_agent.swing_new_high_rvol import project_new_high_rvol_signals
@@ -50,6 +52,33 @@ def test_review_open_state_resolves_latest_existing_event_without_mutation(tmp_p
     assert result.status is ResearchAgentResultStatus.NO_ACTION
     assert result.reason == "shadow_state_unchanged"
     assert len(SwingShadowStore(paths.swing_shadow_database).events(_signal_id(paths))) == 1
+
+
+def test_review_open_state_accepts_research_archive_envelope(tmp_path: Path) -> None:
+    paths, _ = _seed_signal(tmp_path)
+    evidence = SwingSourceAdapter().collect(paths, _observed_after_close(SIGNAL_SESSION))[0]
+    archive_source = f"swing.research_archive.{SIGNAL_SESSION:%Y%m%d}"
+    archived = ResearchAgentEvidenceMaterial(
+        family="swing_trading",
+        trigger=evidence.trigger_kind,
+        source_key=archive_source,
+        observed_at=evidence.observed_at,
+        available_at=evidence.available_at,
+        market_id=evidence.market_id,
+        canonical_payload=canonical_payload_json(
+            {
+                "research_only": True,
+                "source_payload": json.loads(evidence.bounded_payload_json or "null"),
+                "trading_authority": False,
+            }
+        ),
+        subject_refs=tuple(sorted((archive_source, *evidence.subject_refs))),
+    ).evidence()
+
+    result = SwingResearchActionExecutor(paths.swing_shadow_database).execute(_context(archived))
+
+    assert result.status is ResearchAgentResultStatus.NO_ACTION
+    assert result.reason == "shadow_state_unchanged"
 
 
 def test_completed_daily_source_advances_existing_signal_stop_first(tmp_path: Path) -> None:
