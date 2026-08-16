@@ -27,6 +27,7 @@ from trading_agent.research_agent_cycle_models import (
 )
 from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
 from trading_agent.research_agent_cycle_store_codec import latest_cycles_from_rows, result_from_payload
+from trading_agent.research_agent_day_actions import DayResearchActionExecutor
 from trading_agent.research_agent_decision import HermesCliResearchAgentDecisionClient
 from trading_agent.research_agent_hermes import project_research_agent_results
 from trading_agent.research_agent_primary_actions import (
@@ -293,11 +294,13 @@ def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRu
         )
     )
     context = MarketContextResearchActionExecutor(store.results)
+    day = DayResearchActionExecutor(config.source_paths.day_session_root)
     actions = ResearchAgentActionExecutor(
         ResearchAgentActionConfig(
             systematic=systematic,
             opportunity=opportunity,
             market_context=context,
+            day=day,
         )
     )
     services = ResearchAgentRuntimeServices(

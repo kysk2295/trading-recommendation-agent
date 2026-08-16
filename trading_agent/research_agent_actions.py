@@ -55,6 +55,7 @@ class ResearchAgentActionConfig:
     systematic: SystematicResearchAction
     opportunity: ResearchAgentActionClient | None = None
     market_context: ResearchAgentActionClient | None = None
+    day: ResearchAgentActionClient | None = None
 
 
 @final
@@ -96,6 +97,13 @@ class ResearchAgentActionExecutor:
                 if self._config.market_context is None:
                     raise InvalidResearchAgentActionError(reason="action_not_configured")
                 return self._config.market_context.execute(context)
+            case (
+                ResearchAgentDecisionKind.PUBLISH_RECOMMENDATION
+                | ResearchAgentDecisionKind.REVIEW_OPEN_STATE
+            ) if cycle.agent_family_id == "day_trading":
+                if self._config.day is None:
+                    raise InvalidResearchAgentActionError(reason="action_not_configured")
+                return self._config.day.execute(context)
             case ResearchAgentDecisionKind.REQUEST_HEAVY_EXPERIMENT:
                 if cycle.agent_family_id != "systematic_quant":
                     raise InvalidResearchAgentActionError(reason="heavy_experiment_systematic_only")
