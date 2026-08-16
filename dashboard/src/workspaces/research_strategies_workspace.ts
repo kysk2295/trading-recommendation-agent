@@ -70,8 +70,8 @@ function renderResearchBoard(
         `${agentLabels[cycle.agent_family_id][0]} · ${agentLabels[cycle.agent_family_id][1]}`,
         "research-board-agent",
       ),
-      tableCell(cycle.input_source ?? "입력 없음"),
-      tableCell(cycle.decision_kind ?? "결정 없음"),
+      tableCell(cycle.input_source ?? "입력 없음", "research-board-source"),
+      tableCell(decisionLabel(cycle.decision_kind)),
       tableCell(resultLabel(cycle)),
       elementCell(nextWake(cycle.next_wake_kind, cycle.next_wake_at)),
       elementCell(
@@ -100,14 +100,51 @@ function resultLabel(
 ): string {
   const state = cycle.result_status ?? cycle.cycle_state;
   const summary = cycle.result_summary ?? "결과 없음";
-  return `${state} · ${summary} · artifacts:${cycle.artifact_count} · order:false`;
+  return `${resultStatusLabel(state)} · ${summary} · 산출물 ${cycle.artifact_count} · 주문 권한 false`;
 }
 
 function nextWake(kind: string | null, at: string | null): HTMLElement {
   const wrapper = document.createElement("span");
-  wrapper.append(textElement("span", kind ?? "기상 없음"));
+  wrapper.append(textElement("span", wakeLabel(kind)));
   if (at !== null) wrapper.append(document.createTextNode(" · "), timeElement(at));
   return wrapper;
+}
+
+function decisionLabel(kind: string | null): string {
+  const labels: Readonly<Record<string, string>> = {
+    investigate_candidate: "후보 조사",
+    propose_hypothesis: "가설 제안",
+    publish_context: "맥락 발행",
+    publish_recommendation: "추천 발행",
+    request_heavy_experiment: "중량 실험 요청",
+    review_open_state: "열린 상태 검토",
+    run_light_experiment: "경량 실험",
+    no_action: "행동 없음",
+  };
+  return kind === null ? "결정 없음" : (labels[kind] ?? kind);
+}
+
+function resultStatusLabel(status: string): string {
+  const labels: Readonly<Record<string, string>> = {
+    blocked: "차단",
+    completed: "완료",
+    failed: "실패",
+    interrupted: "중단",
+    no_action: "행동 없음",
+    started: "실행 중",
+    unavailable: "사용 불가",
+  };
+  return labels[status] ?? status;
+}
+
+function wakeLabel(kind: string | null): string {
+  const labels: Readonly<Record<string, string>> = {
+    new_evidence: "새로운 증거",
+    open_work: "열린 작업",
+    scheduled: "예약 기상",
+    terminal: "종료",
+  };
+  return kind === null ? "기상 없음" : (labels[kind] ?? kind);
 }
 
 function renderSummary(

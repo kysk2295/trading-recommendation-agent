@@ -68,9 +68,9 @@ describe("6-Agent Research Board", () => {
     expect(await board.getByText("기회 관리자 · OPPORTUNITY MANAGER").count()).toBe(1);
     expect(await board.getByText("파생상품 연구 · DERIVATIVES RESEARCH").count()).toBe(1);
     expect(await board.getByText("opportunity.candidates").count()).toBe(1);
-    expect(await board.getByText("investigate_candidate").count()).toBe(1);
-    expect(await board.getByText(/artifacts:1 · order:false/).count()).toBe(1);
-    expect(await board.getByText("new_evidence").count()).toBe(1);
+    expect(await board.getByText("후보 조사").count()).toBe(1);
+    expect(await board.getByText(/산출물 1 · 주문 권한 false/).count()).toBe(1);
+    expect(await board.getByText("새로운 증거").count()).toBe(1);
   });
 });
 

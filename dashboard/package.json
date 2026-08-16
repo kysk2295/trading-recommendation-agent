@@ -6,9 +6,10 @@
     "build": "bun build src/client.ts --outdir public/assets --minify --sourcemap=external",
     "check": "bun run typecheck && bun run lint && bun run test",
     "dev": "bun --hot src/server.ts",
-    "lint": "biome check src tests scripts/run-markets-cjk-qa.ts scripts/markets_cjk_fixture.ts scripts/run-options-workbench-qa.ts scripts/options_workbench_qa_support.ts scripts/options_workbench_qa_visual.ts scripts/run-options-workbench-store-qa.ts scripts/options_workbench_store_qa_browser.ts scripts/options_workbench_store_qa_support.ts",
+    "lint": "biome check src tests scripts/run-markets-cjk-qa.ts scripts/markets_cjk_fixture.ts scripts/run-options-workbench-qa.ts scripts/options_workbench_qa_support.ts scripts/options_workbench_qa_visual.ts scripts/run-options-workbench-store-qa.ts scripts/options_workbench_store_qa_browser.ts scripts/options_workbench_store_qa_support.ts scripts/run-research-board-qa.ts",
     "qa:options-workbench": "bun scripts/run-options-workbench-qa.ts",
     "qa:options-workbench-store": "bun scripts/run-options-workbench-store-qa.ts",
+    "qa:research-board": "bun scripts/run-research-board-qa.ts",
     "start": "bun src/server.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"

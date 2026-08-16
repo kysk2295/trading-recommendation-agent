@@ -146,6 +146,16 @@
 .research-board-agent {
   color: var(--text-primary);
   font-weight: 620;
+  word-break: keep-all;
+}
+
+.research-board td {
+  word-break: keep-all;
+}
+
+.research-board-source {
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 48rem) {
