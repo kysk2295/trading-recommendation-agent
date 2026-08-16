@@ -78,7 +78,7 @@ def canonical_model_json(model: BaseModel) -> str:
     return json.dumps(model.model_dump(mode="json"), ensure_ascii=True, separators=(",", ":"), sort_keys=True)
 
 
-def canonical_payload_json(payload: Mapping[str, int | str]) -> str:
+def canonical_payload_json(payload: Mapping[str, object]) -> str:
     return json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 from pathlib import Path
 
 import pytest
@@ -12,12 +13,14 @@ from tests.research_agent_primary_fixtures import (
     seed_opportunity,
     source_paths,
 )
+from trading_agent.models import Recommendation, RecommendationState
 from trading_agent.research_agent_source_adapters_primary import (
     DaySourceAdapter,
     MarketContextSourceAdapter,
     OpportunitySourceAdapter,
 )
 from trading_agent.research_agent_source_common import InvalidResearchAgentSourceError
+from trading_agent.store import PaperStore
 
 
 def test_current_primary_sources_are_admitted_with_bound_provenance(tmp_path: Path) -> None:
@@ -37,6 +40,77 @@ def test_current_primary_sources_are_admitted_with_bound_provenance(tmp_path: Pa
     # Then
     assert all(len(items) == 1 and ".blocked." not in items[0].source_key for items in evidence)
     assert all(items[0].payload_sha256 in items[0].evidence_refs for items in evidence)
+
+
+def test_day_evidence_contains_existing_plan_checkpoint_and_immutable_outcome_history(
+    tmp_path: Path,
+) -> None:
+    paths = source_paths(tmp_path)
+    seed_day(paths)
+    database = paths.day_session_root / "20260803" / "paper_recommendations.sqlite3"
+    store = PaperStore(database)
+    recommendation = Recommendation(
+        recommendation_id="rec-acme-1",
+        symbol="ACME",
+        strategy="orb",
+        created_at=NOW - dt.timedelta(seconds=50),
+        entry=10.0,
+        stop=9.5,
+        target_1r=10.5,
+        target_2r=11.0,
+        state=RecommendationState.SETUP,
+        rationale="completed bar breakout with bounded spread",
+    )
+    store.save(recommendation)
+    store.set_state(
+        recommendation.recommendation_id,
+        RecommendationState.STOPPED,
+        NOW - dt.timedelta(seconds=10),
+        9.5,
+        "same-bar collision resolved to stop",
+    )
+    database.chmod(0o600)
+
+    evidence = DaySourceAdapter().collect(paths, NOW)[0]
+    payload = json.loads(evidence.bounded_payload_json or "{}")
+
+    assert payload["checkpoints"] == [
+        {"last_close": 10.0, "processed_at": (NOW - dt.timedelta(minutes=1)).isoformat(), "symbol": "ACME"}
+    ]
+    assert payload["recommendations"] == [
+        {
+            "created_at": (NOW - dt.timedelta(seconds=50)).isoformat(),
+            "entry": 10.0,
+            "events": [
+                {
+                    "event_id": 1,
+                    "note": "\ucd94\ucc9c \uc0dd\uc131",
+                    "occurred_at": (NOW - dt.timedelta(seconds=50)).isoformat(),
+                    "price": None,
+                    "state": "setup",
+                },
+                {
+                    "event_id": 2,
+                    "note": "same-bar collision resolved to stop",
+                    "occurred_at": (NOW - dt.timedelta(seconds=10)).isoformat(),
+                    "price": 9.5,
+                    "state": "stopped",
+                },
+            ],
+            "rationale": "completed bar breakout with bounded spread",
+            "recommendation_id": "rec-acme-1",
+            "state": "stopped",
+            "stop": 9.5,
+            "strategy": "orb",
+            "symbol": "ACME",
+            "target_1r": 10.5,
+            "target_2r": 11.0,
+        }
+    ]
+    assert evidence.source_key in evidence.subject_refs
+    assert len(evidence.subject_refs) == 4
+    assert any(subject.startswith("day_recommendation.") for subject in evidence.subject_refs)
+    assert sum(subject.startswith("day_event.") for subject in evidence.subject_refs) == 2
 
 
 def test_breadth_producer_market_context_is_admitted_without_spread(tmp_path: Path) -> None:

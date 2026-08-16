@@ -97,6 +97,7 @@ def archived_day_evidence(
         available_at=admission.observed_at,
         market_id="us_equities",
         canonical_payload=_archive_payload(admission.canonical_payload),
+        subject_refs=(f"day.research_archive.{session}", *admission.subject_refs),
     ).evidence()
     references = tuple(sorted((evidence.payload_sha256, *admission.provenance_sha256)))
     return evidence.model_copy(update={"evidence_refs": references})

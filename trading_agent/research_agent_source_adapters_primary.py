@@ -198,6 +198,7 @@ class DaySourceAdapter:
                     available_at=admitted.observed_at,
                     market_id="us_equities",
                     canonical_payload=admitted.canonical_payload,
+                    subject_refs=(f"day.session.{session.name}", *admitted.subject_refs),
                 ).evidence()
                 references = tuple(sorted((evidence.payload_sha256, *admitted.provenance_sha256)))
                 return (evidence.model_copy(update={"evidence_refs": references}),)
