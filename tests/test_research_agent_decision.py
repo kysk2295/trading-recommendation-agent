@@ -229,7 +229,11 @@ def test_hermes_cli_client_returns_validated_decision(tmp_path: Path) -> None:
     assert decision.primary_decision is ResearchAgentDecisionKind.PUBLISH_CONTEXT
 
 
-def test_claude_cli_client_returns_schema_validated_decision(tmp_path: Path) -> None:
+def test_claude_cli_client_returns_schema_validated_decision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "must-not-reach-child")
     executable = tmp_path / "claude-fixture"
     wrapper = json.dumps(
         {"is_error": False, "structured_output": json.loads(_response())},
@@ -238,6 +242,7 @@ def test_claude_cli_client_returns_schema_validated_decision(tmp_path: Path) -> 
     ).encode()
     executable.write_bytes(
         b"#!/bin/sh\n"
+        b"[ -n \"$USER\" ] && [ -n \"$TMPDIR\" ] && [ -z \"$ANTHROPIC_API_KEY\" ] || exit 41\n"
         b"[ \"$1\" = \"-p\" ] && [ \"$7\" = \"--model\" ] && [ \"$8\" = \"haiku\" ] || exit 42\n"
         b"[ \"${13}\" = \"--output-format\" ] && [ \"${14}\" = \"json\" ] || exit 43\n"
         b"printf '%s' '" + wrapper + b"'\n"

@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import pwd
 import re
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, Protocol, Self, final
@@ -194,10 +196,7 @@ class ClaudeCliResearchAgentDecisionClient:
                 capture_output=True,
                 stdin=subprocess.DEVNULL,
                 timeout=min(self._timeout_seconds, request.max_runtime_seconds),
-                env={
-                    "HOME": str(Path.home()),
-                    "PATH": f"{self._executable.path.parent}{os.pathsep}{os.defpath}",
-                },
+                env=_claude_environment(self._executable.path),
             )
         except (InvalidExecutableBindingError, OSError, subprocess.SubprocessError, ValueError):
             raise InvalidResearchAgentDecisionError(reason="claude_decision_call_failed") from None
@@ -222,6 +221,18 @@ class ClaudeCliResearchAgentDecisionClient:
             payload,
             ResearchAgentDecisionParseContext(request, self._model_id, prompt_sha256),
         )
+
+
+def _claude_environment(executable: Path) -> dict[str, str]:
+    account = pwd.getpwuid(os.geteuid())
+    return {
+        "HOME": account.pw_dir,
+        "LOGNAME": account.pw_name,
+        "PATH": f"{executable.parent}{os.pathsep}{os.defpath}",
+        "SHELL": account.pw_shell,
+        "TMPDIR": tempfile.gettempdir(),
+        "USER": account.pw_name,
+    }
 
 
 @final
