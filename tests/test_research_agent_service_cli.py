@@ -76,6 +76,22 @@ def _config(tmp_path: Path, *, project_root: Path = WORKTREE) -> ResearchAgentSe
     )
 
 
+def test_service_config_allows_distinct_decision_and_systematic_providers(tmp_path: Path) -> None:
+    source = _config(tmp_path)
+
+    config = ResearchAgentServiceConfig.model_validate(
+        source.model_dump(mode="python")
+        | {
+            "hermes_executable": Path("/bin/echo"),
+            "model_id": "haiku",
+            "provider_id": "claude-code",
+        }
+    )
+
+    assert config.provider_id == "claude-code"
+    assert config.systematic.provider_id == source.systematic.provider_id
+
+
 def _provision(tmp_path: Path, *, project_root: Path = WORKTREE) -> tuple[Path, Path]:
     config = _config(tmp_path, project_root=project_root)
     config_path = (tmp_path / "private" / "runtime.json").absolute()

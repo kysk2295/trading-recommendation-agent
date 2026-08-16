@@ -67,13 +67,6 @@ class ResearchAgentServiceConfig(BaseModel):
             raise InvalidResearchAgentServiceConfigError(reason="service_path_not_absolute")
         if self.systematic.project_root != self.project_root or self.systematic.uv_executable != self.uv_path:
             raise InvalidResearchAgentServiceConfigError(reason="systematic_service_binding_invalid")
-        if (
-            self.systematic.hermes_executable is not None
-            and self.systematic.hermes_executable != self.hermes_executable
-        ):
-            raise InvalidResearchAgentServiceConfigError(reason="systematic_hermes_binding_invalid")
-        if self.systematic.provider_id != self.provider_id:
-            raise InvalidResearchAgentServiceConfigError(reason="systematic_provider_binding_invalid")
         return self
 
 
