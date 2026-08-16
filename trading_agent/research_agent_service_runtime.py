@@ -51,6 +51,7 @@ from trading_agent.research_agent_service_health import (
     health_for_service_report,
     write_persisted_research_agent_service_health,
 )
+from trading_agent.research_agent_swing_actions import SwingResearchActionExecutor
 from trading_agent.research_agent_systematic import SystematicResearchActionExecutor
 from trading_agent.research_agent_systematic_input_models import (
     BlockedSystematicInputActivation,
@@ -295,12 +296,14 @@ def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRu
     )
     context = MarketContextResearchActionExecutor(store.results)
     day = DayResearchActionExecutor(config.source_paths.day_session_root)
+    swing = SwingResearchActionExecutor(config.source_paths.swing_shadow_database)
     actions = ResearchAgentActionExecutor(
         ResearchAgentActionConfig(
             systematic=systematic,
             opportunity=opportunity,
             market_context=context,
             day=day,
+            swing=swing,
         )
     )
     services = ResearchAgentRuntimeServices(

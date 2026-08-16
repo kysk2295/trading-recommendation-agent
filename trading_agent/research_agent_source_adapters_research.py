@@ -94,6 +94,18 @@ class SwingSourceAdapter:
                             available_at=observed_at,
                             market_id=signal.strategy_lane.market_id.value,
                             canonical_payload=payload,
+                            subject_refs=tuple(
+                                sorted(
+                                    (
+                                        f"swing.signal.{_safe_identity(signal.signal_id)}",
+                                        f"swing_signal.{_safe_identity(signal.signal_id)}",
+                                        *(
+                                            f"swing_event.{_safe_identity(event.event_id)}"
+                                            for event in events
+                                        ),
+                                    )
+                                )
+                            ),
                         ).evidence()
                     )
             if paths.swing_review_database.exists():
