@@ -168,9 +168,11 @@ def test_runtime_passes_action_context_with_evidence_subjects_and_observation_ti
     runtime.ingest((_evidence("swing_trading", 1),))
 
     tick = runtime.tick(NOW + dt.timedelta(minutes=2))
+    stored = runtime.store.results()
     runtime.close()
 
     assert tick.status == "completed"
+    assert stored[0].decision_kind is ResearchAgentDecisionKind.PROPOSE_HYPOTHESIS
     assert contexts[0].evidence[0].bounded_payload_json == '{"sequence":1}'
     assert contexts[0].decision.subject_refs == contexts[0].evidence[0].subject_refs
     assert contexts[0].observed_at == NOW + dt.timedelta(minutes=2)

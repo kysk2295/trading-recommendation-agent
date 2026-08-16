@@ -185,6 +185,7 @@ class ResearchAgentResultV1(BaseModel):
     occurred_at: AwareDatetime
     next_wake_kind: ResearchAgentWakeKind
     next_wake_at: AwareDatetime | None
+    decision_kind: ResearchAgentDecisionKind | None = None
     order_authority: Literal[False] = False
     lifecycle_authority: Literal[False] = False
     allocation_authority: Literal[False] = False

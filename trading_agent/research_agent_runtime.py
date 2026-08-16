@@ -260,6 +260,8 @@ class ResearchAgentRuntime:
             result = runtime_failure_result(
                 RuntimeFailureContext(cycle, stored.evidence, error.reason, now, prior_failures)
             )
+        if result.decision_kind is None:
+            result = result.model_copy(update={"decision_kind": decision.primary_decision})
         outcome = RuntimeCycleOutcome(cycle, stored.evidence, result, prior_failures, 1, len(recovered))
         self._persist(outcome)
         return _tick_result(outcome)
