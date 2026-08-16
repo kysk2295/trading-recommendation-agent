@@ -53,6 +53,8 @@ class ResearchAgentActionClient(Protocol):
 @dataclass(frozen=True, slots=True)
 class ResearchAgentActionConfig:
     systematic: SystematicResearchAction
+    opportunity: ResearchAgentActionClient | None = None
+    market_context: ResearchAgentActionClient | None = None
 
 
 @final
@@ -84,6 +86,16 @@ class ResearchAgentActionExecutor:
         match decision.primary_decision:
             case ResearchAgentDecisionKind.NO_ACTION:
                 return _no_action_result(context)
+            case (
+                ResearchAgentDecisionKind.INVESTIGATE_CANDIDATE | ResearchAgentDecisionKind.PROPOSE_HYPOTHESIS
+            ) if cycle.agent_family_id == "opportunity_manager":
+                if self._config.opportunity is None:
+                    raise InvalidResearchAgentActionError(reason="action_not_configured")
+                return self._config.opportunity.execute(context)
+            case ResearchAgentDecisionKind.PUBLISH_CONTEXT if cycle.agent_family_id == "market_context":
+                if self._config.market_context is None:
+                    raise InvalidResearchAgentActionError(reason="action_not_configured")
+                return self._config.market_context.execute(context)
             case ResearchAgentDecisionKind.REQUEST_HEAVY_EXPERIMENT:
                 if cycle.agent_family_id != "systematic_quant":
                     raise InvalidResearchAgentActionError(reason="heavy_experiment_systematic_only")

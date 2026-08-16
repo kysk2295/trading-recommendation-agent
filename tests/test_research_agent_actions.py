@@ -4,6 +4,7 @@ import datetime as dt
 import hashlib
 import shutil
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -29,8 +30,10 @@ from trading_agent.research_agent_cycle_models import (
     ResearchAgentDecisionV1,
     ResearchAgentEvidenceV1,
     ResearchAgentResultStatus,
+    ResearchAgentResultV1,
     ResearchAgentTriggerKind,
     ResearchAgentWakeKind,
+    research_agent_result_id,
 )
 from trading_agent.research_agent_systematic import (
     SystematicResearchActionConfig,
@@ -39,6 +42,28 @@ from trading_agent.research_agent_systematic import (
 
 NOW = dt.datetime(2026, 8, 2, 12, 0, tzinfo=dt.UTC)
 PROJECT = Path(__file__).resolve().parents[1]
+
+
+@dataclass(frozen=True, slots=True)
+class RecordingPrimaryActionClient:
+    contexts: list[ResearchAgentActionContext]
+
+    def execute(self, context: ResearchAgentActionContext) -> ResearchAgentResultV1:
+        self.contexts.append(context)
+        return ResearchAgentResultV1(
+            result_id=research_agent_result_id(context.cycle.cycle_id),
+            cycle_id=context.cycle.cycle_id,
+            agent_family_id=context.cycle.agent_family_id,
+            market_id=context.cycle.market_id,
+            status=ResearchAgentResultStatus.COMPLETED,
+            question=context.decision.question,
+            summary="The configured primary client resolved an authority artifact.",
+            evidence_refs=context.decision.evidence_refs,
+            artifact_refs=(context.evidence[0].payload_sha256,),
+            occurred_at=context.observed_at,
+            next_wake_kind=context.decision.next_wake_kind,
+            next_wake_at=context.decision.next_wake_at,
+        )
 
 
 def _cycle(family: AgentFamilyId) -> ResearchAgentCycleV1:
@@ -156,7 +181,7 @@ def test_non_systematic_prose_action_is_rejected(tmp_path: Path) -> None:
     executor = ResearchAgentActionExecutor(_config(tmp_path))
 
     with pytest.raises(InvalidResearchAgentActionError, match="prose_only_result"):
-        executor.execute(_context("market_context", ResearchAgentDecisionKind.PUBLISH_CONTEXT))
+        executor.execute(_context("market_context", ResearchAgentDecisionKind.RUN_LIGHT_EXPERIMENT))
 
 
 def test_no_action_remains_a_valid_terminal_without_artifact(tmp_path: Path) -> None:
@@ -167,3 +192,20 @@ def test_no_action_remains_a_valid_terminal_without_artifact(tmp_path: Path) -> 
     assert result.status is ResearchAgentResultStatus.NO_ACTION
     assert result.reason == "no_eligible_action"
     assert result.artifact_refs == ()
+
+
+def test_primary_family_action_dispatches_to_configured_client(tmp_path: Path) -> None:
+    contexts: list[ResearchAgentActionContext] = []
+    primary = RecordingPrimaryActionClient(contexts)
+    base = _config(tmp_path)
+    executor = ResearchAgentActionExecutor(
+        ResearchAgentActionConfig(
+            systematic=base.systematic,
+            market_context=primary,
+        )
+    )
+
+    result = executor.execute(_context("market_context", ResearchAgentDecisionKind.PUBLISH_CONTEXT))
+
+    assert result.status is ResearchAgentResultStatus.COMPLETED
+    assert len(contexts) == 1
