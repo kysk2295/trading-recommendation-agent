@@ -57,6 +57,7 @@ class ResearchAgentActionConfig:
     market_context: ResearchAgentActionClient | None = None
     day: ResearchAgentActionClient | None = None
     swing: ResearchAgentActionClient | None = None
+    derivatives: ResearchAgentActionClient | None = None
 
 
 @final
@@ -109,6 +110,10 @@ class ResearchAgentActionExecutor:
                 if self._config.swing is None:
                     raise InvalidResearchAgentActionError(reason="action_not_configured")
                 return self._config.swing.execute(context)
+            case ResearchAgentDecisionKind.PUBLISH_CONTEXT if cycle.agent_family_id == "derivatives_research":
+                if self._config.derivatives is None:
+                    raise InvalidResearchAgentActionError(reason="action_not_configured")
+                return self._config.derivatives.execute(context)
             case ResearchAgentDecisionKind.REQUEST_HEAVY_EXPERIMENT:
                 if cycle.agent_family_id != "systematic_quant":
                     raise InvalidResearchAgentActionError(reason="heavy_experiment_systematic_only")

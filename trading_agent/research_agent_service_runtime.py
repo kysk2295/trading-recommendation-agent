@@ -29,6 +29,7 @@ from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
 from trading_agent.research_agent_cycle_store_codec import latest_cycles_from_rows, result_from_payload
 from trading_agent.research_agent_day_actions import DayResearchActionExecutor
 from trading_agent.research_agent_decision import HermesCliResearchAgentDecisionClient
+from trading_agent.research_agent_derivatives_actions import DerivativesResearchActionExecutor
 from trading_agent.research_agent_hermes import project_research_agent_results
 from trading_agent.research_agent_primary_actions import (
     ExperimentLedgerOpportunityHypothesisResolver,
@@ -297,6 +298,7 @@ def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRu
     context = MarketContextResearchActionExecutor(store.results)
     day = DayResearchActionExecutor(config.source_paths.day_session_root)
     swing = SwingResearchActionExecutor(config.source_paths.swing_shadow_database)
+    derivatives = DerivativesResearchActionExecutor(store.results)
     actions = ResearchAgentActionExecutor(
         ResearchAgentActionConfig(
             systematic=systematic,
@@ -304,6 +306,7 @@ def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRu
             market_context=context,
             day=day,
             swing=swing,
+            derivatives=derivatives,
         )
     )
     services = ResearchAgentRuntimeServices(
