@@ -86,6 +86,17 @@ describe("snapshot v2 compatibility boundary", () => {
     expect(dashboardSnapshotV2Schema.safeParse(overCap).success).toBe(false);
   });
 
+  test("rejects duplicate families in the six-agent research board", () => {
+    const fixture = structuredClone(snapshotV2);
+    const secondCycle = fixture.workspaces.research.agent_cycles[1];
+    if (secondCycle === undefined) throw new Error("missing second research agent fixture");
+    secondCycle.agent_family_id = "opportunity_manager";
+
+    const result = dashboardSnapshotV2Schema.safeParse(fixture);
+
+    expect(result.success).toBe(false);
+  });
+
   test("rejects a deterministic valid-shape fixture above 256 KiB", () => {
     expect(
       new TextEncoder().encode(JSON.stringify(oversizedSnapshotV2)).byteLength,

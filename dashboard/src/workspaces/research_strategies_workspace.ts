@@ -1,3 +1,4 @@
+import { agentLabels } from "../agent_workspace_catalog";
 import { textElement, timeElement } from "../dom";
 import type { EvidenceTraceDrawer } from "../evidence_trace";
 import { resolveEvidenceTrace } from "../evidence_trace";
@@ -30,11 +31,83 @@ export function renderResearchStrategiesWorkspace(
   const workspace = snapshot.workspaces[workspaceKey];
   const fragment = document.createDocumentFragment();
   fragment.append(renderSummary(workspace, snapshot, drawer));
+  if (workspaceKey === "research") fragment.append(renderResearchBoard(snapshot, drawer));
   fragment.append(renderCausalLedger(workspaceKey, workspace, snapshot, drawer));
   if (workspaceKey === "strategies")
     fragment.append(renderStrategyGovernance(workspace, snapshot, drawer));
   fragment.append(renderAutonomousLedger(workspace, snapshot, drawer, receipts));
   return fragment;
+}
+
+function renderResearchBoard(
+  snapshot: DashboardSnapshotV2,
+  drawer: EvidenceTraceDrawer,
+): HTMLElement {
+  const section = document.createElement("section");
+  section.className = "provider-capability-section research-board";
+  const header = document.createElement("header");
+  header.className = "research-board-heading";
+  header.append(
+    textElement("h2", "6-Agent Research Board"),
+    textElement("p", "입력 → 결정 → 결과 → 다음 기상 · 주문 권한 없음", "state-guidance"),
+  );
+  const viewport = document.createElement("div");
+  viewport.className = "table-viewport";
+  viewport.tabIndex = 0;
+  viewport.setAttribute("role", "region");
+  viewport.setAttribute("aria-label", "6-Agent Research Board");
+  const table = document.createElement("table");
+  const caption = textElement("caption", "6개 연구 에이전트의 최신 실행 주기");
+  const body = document.createElement("tbody");
+  for (const cycle of snapshot.workspaces.research.agent_cycles) {
+    const agent = snapshot.workspaces.command_center.agents.find(
+      (candidate) => candidate.agent_id === cycle.agent_family_id,
+    );
+    const row = document.createElement("tr");
+    row.dataset["cycleState"] = cycle.cycle_state;
+    row.append(
+      tableCell(
+        `${agentLabels[cycle.agent_family_id][0]} · ${agentLabels[cycle.agent_family_id][1]}`,
+        "research-board-agent",
+      ),
+      tableCell(cycle.input_source ?? "입력 없음"),
+      tableCell(cycle.decision_kind ?? "결정 없음"),
+      tableCell(resultLabel(cycle)),
+      elementCell(nextWake(cycle.next_wake_kind, cycle.next_wake_at)),
+      elementCell(
+        traceButton(
+          agentLabels[cycle.agent_family_id][0],
+          agent?.trace_id ?? snapshot.workspaces.research.trace_id,
+          snapshot,
+          drawer,
+        ),
+      ),
+    );
+    body.append(row);
+  }
+  table.append(
+    caption,
+    tableHead(["Agent", "Input", "Decision", "Result", "Next wake", "Evidence Trace"]),
+    body,
+  );
+  viewport.append(table);
+  section.append(header, viewport);
+  return section;
+}
+
+function resultLabel(
+  cycle: DashboardSnapshotV2["workspaces"]["research"]["agent_cycles"][number],
+): string {
+  const state = cycle.result_status ?? cycle.cycle_state;
+  const summary = cycle.result_summary ?? "결과 없음";
+  return `${state} · ${summary} · artifacts:${cycle.artifact_count} · order:false`;
+}
+
+function nextWake(kind: string | null, at: string | null): HTMLElement {
+  const wrapper = document.createElement("span");
+  wrapper.append(textElement("span", kind ?? "기상 없음"));
+  if (at !== null) wrapper.append(document.createTextNode(" · "), timeElement(at));
+  return wrapper;
 }
 
 function renderSummary(

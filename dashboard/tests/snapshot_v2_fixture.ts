@@ -14,6 +14,27 @@ const traceIds = {
 
 const derivativesWorkbenchBlockerTraceId = "trace-derivatives-workbench-blocker";
 
+const agentCycles = [
+  "opportunity_manager",
+  "day_trading",
+  "swing_trading",
+  "systematic_quant",
+  "derivatives_research",
+  "market_context",
+].map((agentFamilyId) => ({
+  agent_family_id: agentFamilyId,
+  cycle_state: "unavailable" as const,
+  result_status: null,
+  input_source: null,
+  decision_kind: null,
+  result_summary: null,
+  artifact_count: 0,
+  observed_at: null,
+  next_wake_kind: null,
+  next_wake_at: null,
+  order_authority: false as const,
+}));
+
 function sourceState(traceId: string) {
   return {
     state: "empty" as const,
@@ -102,7 +123,7 @@ export const snapshotV2 = {
     overview: sourceState(traceIds.overview),
     markets: sourceState(traceIds.markets),
     data_sources: { ...sourceState(traceIds.data_sources), capabilities: [] },
-    research: sourceState(traceIds.research),
+    research: { ...sourceState(traceIds.research), agent_cycles: agentCycles },
     strategies: sourceState(traceIds.strategies),
     derivatives: {
       ...sourceState(traceIds.derivatives),
@@ -201,7 +222,10 @@ export const nearMaximumSnapshotV2 = {
         trace_id: traceIds.data_sources,
       })),
     },
-    research: populatedState("research", traceIds.research),
+    research: {
+      ...populatedState("research", traceIds.research),
+      agent_cycles: agentCycles,
+    },
     strategies: populatedState("strategies", traceIds.strategies),
     derivatives: {
       ...populatedState("derivatives", traceIds.derivatives),

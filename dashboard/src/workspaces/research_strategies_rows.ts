@@ -9,7 +9,7 @@ import {
 } from "./research_strategies_evidence";
 
 export function renderAutonomousLedger(
-  workspace: DashboardSnapshotV2["workspaces"]["research"],
+  workspace: Pick<DashboardSnapshotV2["workspaces"]["research"], "trace_id">,
   snapshot: DashboardSnapshotV2,
   drawer: EvidenceTraceDrawer,
   receipts: ReceiptOriginInputs,

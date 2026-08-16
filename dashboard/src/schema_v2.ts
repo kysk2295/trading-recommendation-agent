@@ -85,6 +85,53 @@ const sourceStateFields = {
 } as const;
 
 const workspaceSchema = z.strictObject(sourceStateFields).superRefine(checkSourceState);
+const researchAgentCycleSchema = z.strictObject({
+  agent_family_id: z.enum([
+    "opportunity_manager",
+    "day_trading",
+    "swing_trading",
+    "systematic_quant",
+    "derivatives_research",
+    "market_context",
+  ]),
+  cycle_state: z.enum(["started", "completed", "failed", "interrupted", "blocked", "unavailable"]),
+  result_status: z.enum(["completed", "failed", "blocked", "no_action"]).nullable(),
+  input_source: z.string().min(1).max(160).nullable(),
+  decision_kind: z
+    .enum([
+      "investigate_candidate",
+      "propose_hypothesis",
+      "run_light_experiment",
+      "request_heavy_experiment",
+      "publish_context",
+      "publish_recommendation",
+      "review_open_state",
+      "no_action",
+    ])
+    .nullable(),
+  result_summary: z.string().min(1).max(160).nullable(),
+  artifact_count: z.number().int().nonnegative().max(32),
+  observed_at: timestampSchema.nullable(),
+  next_wake_kind: z.enum(["new_evidence", "scheduled", "open_work", "terminal"]).nullable(),
+  next_wake_at: timestampSchema.nullable(),
+  order_authority: z.literal(false),
+});
+const researchSchema = z
+  .strictObject({ ...sourceStateFields, agent_cycles: z.array(researchAgentCycleSchema).length(6) })
+  .superRefine((value, context) => {
+    checkSourceState(value, context);
+    const expected = [
+      "opportunity_manager",
+      "day_trading",
+      "swing_trading",
+      "systematic_quant",
+      "derivatives_research",
+      "market_context",
+    ];
+    if (!value.agent_cycles.every((cycle, index) => cycle.agent_family_id === expected[index])) {
+      context.addIssue({ code: "custom", message: "invalid_research_agent_roster" });
+    }
+  });
 const commandCenterSchema = z
   .strictObject({ ...sourceStateFields, agents: z.array(publicAgentSchema).max(12) })
   .superRefine(checkSourceState);
@@ -149,7 +196,7 @@ export const dashboardSnapshotV2Schema = z
       overview: workspaceSchema,
       markets: workspaceSchema,
       data_sources: dataSourcesSchema,
-      research: workspaceSchema,
+      research: researchSchema,
       strategies: workspaceSchema,
       derivatives: derivativesSchema,
       paper: workspaceSchema,

@@ -126,6 +126,38 @@
   contain-intrinsic-size: auto 220px;
 }
 
+.research-board-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  border-block-end: 1px solid var(--border-default);
+}
+
+.research-board-heading h2 {
+  color: var(--text-primary);
+  font-size: var(--type-h2);
+}
+
+.research-board-heading p {
+  text-align: end;
+}
+
+.research-board-agent {
+  color: var(--text-primary);
+  font-weight: 620;
+}
+
+@media (max-width: 48rem) {
+  .research-board-heading {
+    display: grid;
+  }
+
+  .research-board-heading p {
+    text-align: start;
+  }
+}
+
 .market-session-section,
 .market-context-section,
 .provider-capability-section {
