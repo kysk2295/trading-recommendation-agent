@@ -137,6 +137,7 @@ class ResearchAgentDecisionV1(BaseModel):
     reason: str | None = Field(default=None, min_length=3, max_length=160)
     continuation: str | None = Field(default=None, min_length=8, max_length=500)
     open_work_ref: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{7,159}$")
+    subject_refs: tuple[str, ...] = Field(max_length=32)
     evidence_refs: tuple[str, ...] = Field(min_length=1, max_length=32)
     decided_at: AwareDatetime
     next_wake_kind: ResearchAgentWakeKind
@@ -148,7 +149,11 @@ class ResearchAgentDecisionV1(BaseModel):
     @model_validator(mode="after")
     def require_decision_invariants(self) -> Self:
         _require_references(self.evidence_refs, allow_empty=False)
+        _require_references(self.subject_refs, allow_empty=True)
         _require_wake_time(self.next_wake_kind, self.next_wake_at)
+        no_action = self.primary_decision is ResearchAgentDecisionKind.NO_ACTION
+        if no_action != (not self.subject_refs):
+            raise InvalidResearchAgentCycleFieldError(reason="decision_subject_required")
         if self.primary_decision is ResearchAgentDecisionKind.NO_ACTION and (
             self.reason is None or self.continuation is None or self.requested_action is not None
         ):

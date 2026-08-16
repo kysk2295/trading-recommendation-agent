@@ -28,16 +28,20 @@ NOW = dt.datetime(2026, 8, 2, 12, 0, tzinfo=dt.UTC)
 
 
 def _evidence() -> ResearchAgentEvidenceV1:
+    payload = '{"regime":"risk_on"}'
+    digest = hashlib.sha256(payload.encode()).hexdigest()
     return ResearchAgentEvidenceV1(
         evidence_id=EvidenceId("a" * 64),
         agent_family_id="market_context",
         trigger_kind=ResearchAgentTriggerKind.MARKET_EVENT,
         source_key="market_context.us.current",
-        evidence_refs=("b" * 64,),
+        evidence_refs=(digest,),
         observed_at=NOW,
         available_at=NOW,
-        payload_sha256="b" * 64,
+        payload_sha256=digest,
         market_id="us_equities",
+        bounded_payload_json=payload,
+        subject_refs=("market_context.us.current",),
     )
 
 
@@ -64,6 +68,7 @@ def _response() -> bytes:
             "continuation": None,
             "open_work_ref": None,
             "requested_action": "publish_context",
+            "subject_refs": ["market_context.us.current"],
             "next_wake_kind": "new_evidence",
             "next_wake_at": None,
         },
@@ -91,6 +96,23 @@ def test_decision_prompt_exposes_cross_field_response_contract() -> None:
     assert "every other next_wake_kind requires next_wake_at=null" in prompt
 
 
+def test_decision_prompt_contains_bounded_values_and_available_subjects() -> None:
+    prompt = render_research_agent_prompt(_request())
+
+    assert '"regime":"risk_on"' in prompt
+    assert '"subject_refs":["market_context.us.current"]' in prompt
+
+
+def test_decision_prompt_rejects_legacy_hash_only_evidence() -> None:
+    legacy = _evidence().model_copy(
+        update={"bounded_payload_json": None, "payload_truncated": False, "subject_refs": ()}
+    )
+    request = _request().model_copy(update={"evidence": (legacy,)})
+
+    with pytest.raises(InvalidResearchAgentDecisionError, match="bounded_payload_missing"):
+        render_research_agent_prompt(request)
+
+
 def test_parser_produces_one_audited_decision() -> None:
     request = _request()
     prompt = render_research_agent_prompt(request)
@@ -107,6 +129,19 @@ def test_parser_produces_one_audited_decision() -> None:
     assert decision.next_wake_kind is ResearchAgentWakeKind.NEW_EVIDENCE
     assert decision.model_id == "hermes-research-actor-v1"
     assert decision.response_sha256 == hashlib.sha256(_response()).hexdigest()
+    assert decision.subject_refs == ("market_context.us.current",)
+
+
+def test_parser_rejects_subject_not_present_in_request() -> None:
+    payload = json.loads(_response()) | {"subject_refs": ["market_context.fabricated"]}
+    context = ResearchAgentDecisionParseContext(
+        request=_request(),
+        model_id="hermes-research-actor-v1",
+        prompt_sha256="d" * 64,
+    )
+
+    with pytest.raises(InvalidResearchAgentDecisionError, match="decision_subject_unresolved"):
+        parse_research_agent_decision(json.dumps(payload).encode(), context)
 
 
 @pytest.mark.parametrize(

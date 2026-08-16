@@ -28,6 +28,7 @@ from trading_agent.research_agent_cycle_models import (
 )
 
 _MAX_RESPONSE_BYTES: Final = 64 * 1024
+_MAX_PROMPT_EVIDENCE_BYTES: Final = 48 * 1024
 _MODEL_ID: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,127}$")
 _FAMILY_DEFINITIONS: Final = {definition.family_id: definition for definition in AGENT_FAMILY_REGISTRY}
 
@@ -74,12 +75,19 @@ class HermesResearchAgentDecisionResponse(BaseModel):
     continuation: str | None = Field(min_length=8, max_length=500)
     open_work_ref: str | None = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{7,159}$")
     requested_action: ResearchAgentDecisionKind | None
+    subject_refs: tuple[str, ...] = Field(max_length=32)
     next_wake_kind: ResearchAgentWakeKind
     next_wake_at: AwareDatetime | None
 
     @model_validator(mode="after")
     def require_single_action(self) -> Self:
         no_action = self.primary_decision is ResearchAgentDecisionKind.NO_ACTION
+        if self.subject_refs != tuple(sorted(set(self.subject_refs))) or any(
+            not _safe_reference(reference) for reference in self.subject_refs
+        ):
+            raise InvalidResearchAgentDecisionError(reason="decision_subject_invalid")
+        if no_action != (not self.subject_refs):
+            raise InvalidResearchAgentDecisionError(reason="decision_subject_required")
         if no_action != (self.requested_action is None):
             raise InvalidResearchAgentDecisionError(reason="single_primary_action_required")
         if not no_action and self.requested_action is not self.primary_decision:
@@ -171,17 +179,27 @@ class HermesCliResearchAgentDecisionClient:
 
 def render_research_agent_prompt(request: ResearchAgentDecisionRequest) -> str:
     definition = _FAMILY_DEFINITIONS[request.agent_family_id]
-    evidence = tuple(
-        {
-            "evidence_id": item.evidence_id,
-            "evidence_refs": item.evidence_refs,
-            "market_id": item.market_id,
-            "observed_at": item.observed_at.isoformat(),
-            "source_key": item.source_key,
-            "trigger_kind": item.trigger_kind,
-        }
-        for item in request.evidence
-    )
+    evidence: list[dict[str, object]] = []
+    payload_bytes = 0
+    for item in request.evidence:
+        if item.bounded_payload_json is None:
+            raise InvalidResearchAgentDecisionError(reason="bounded_payload_missing")
+        payload_bytes += len(item.bounded_payload_json.encode())
+        if payload_bytes > _MAX_PROMPT_EVIDENCE_BYTES:
+            raise InvalidResearchAgentDecisionError(reason="bounded_payload_limit_exceeded")
+        evidence.append(
+            {
+                "evidence_id": item.evidence_id,
+                "evidence_refs": item.evidence_refs,
+                "market_id": item.market_id,
+                "observed_at": item.observed_at.isoformat(),
+                "payload": json.loads(item.bounded_payload_json),
+                "payload_truncated": item.payload_truncated,
+                "source_key": item.source_key,
+                "subject_refs": item.subject_refs,
+                "trigger_kind": item.trigger_kind,
+            }
+        )
     open_work = tuple(item.model_dump(mode="json") for item in request.open_work)
     payload = json.dumps(
         {"cycle_id": request.cycle_id, "evidence": evidence, "open_work": open_work},
@@ -201,7 +219,8 @@ def render_research_agent_prompt(request: ResearchAgentDecisionRequest) -> str:
         f"<role>{definition.role}</role>\n"
         "Make exactly one evidence-bound research decision. Return one raw JSON object and no prose. "
         "primary_decision=no_action requires requested_action=null and non-null reason and continuation; "
-        "every other primary_decision requires requested_action to equal primary_decision. "
+        "primary_decision=no_action requires subject_refs=[]; every other primary_decision requires "
+        "requested_action to equal primary_decision and at least one available subject_ref. "
         "next_wake_kind=scheduled requires next_wake_at to be a non-null RFC 3339 timestamp; "
         "every other next_wake_kind requires next_wake_at=null. "
         "Never emit argv, executable or filesystem paths, credentials, account identifiers, price calculations, "
@@ -219,6 +238,16 @@ def parse_research_agent_decision(
     response_sha256 = hashlib.sha256(payload).hexdigest()
     try:
         response = HermesResearchAgentDecisionResponse.model_validate_json(payload)
+    except (ValidationError, ValueError):
+        raise InvalidResearchAgentDecisionError(reason="hermes_decision_response_invalid") from None
+    available_subjects = {
+        reference
+        for item in context.request.evidence
+        for reference in (str(item.evidence_id), *item.subject_refs)
+    } | {item.work_id for item in context.request.open_work}
+    if not set(response.subject_refs).issubset(available_subjects):
+        raise InvalidResearchAgentDecisionError(reason="decision_subject_unresolved")
+    try:
         evidence_refs = tuple(
             sorted({reference for item in context.request.evidence for reference in item.evidence_refs})
         )
@@ -238,6 +267,7 @@ def parse_research_agent_decision(
             reason=response.reason,
             continuation=response.continuation,
             open_work_ref=response.open_work_ref,
+            subject_refs=response.subject_refs,
             evidence_refs=evidence_refs,
             decided_at=context.request.requested_at,
             next_wake_kind=response.next_wake_kind,
@@ -246,8 +276,12 @@ def parse_research_agent_decision(
             prompt_sha256=context.prompt_sha256,
             response_sha256=response_sha256,
         )
-    except (InvalidResearchAgentDecisionError, ValidationError, ValueError):
+    except (ValidationError, ValueError):
         raise InvalidResearchAgentDecisionError(reason="hermes_decision_response_invalid") from None
+
+
+def _safe_reference(reference: str) -> bool:
+    return 1 <= len(reference) <= 160 and all(character.isalnum() or character in "._:-" for character in reference)
 
 
 __all__ = (

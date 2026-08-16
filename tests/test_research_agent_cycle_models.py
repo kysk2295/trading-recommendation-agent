@@ -156,6 +156,7 @@ def test_no_action_decision_requires_reason_and_continuation() -> None:
             summary="No completed eligible setup exists.",
             reason=None,
             continuation=None,
+            subject_refs=(),
             evidence_refs=("a" * 64,),
             decided_at=NOW,
             next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
