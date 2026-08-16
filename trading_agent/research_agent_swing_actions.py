@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from trading_agent.research_agent_actions import InvalidResearchAgentActionError, ResearchAgentActionContext
 from trading_agent.research_agent_cycle_models import (
     ResearchAgentDecisionKind,
+    ResearchAgentEvidenceV1,
     ResearchAgentResultStatus,
     ResearchAgentResultV1,
     research_agent_result_id,
@@ -40,7 +41,10 @@ class SwingResearchActionExecutor:
             raise InvalidResearchAgentActionError(reason="action_family_identity_mismatch")
         if context.decision.primary_decision is not ResearchAgentDecisionKind.REVIEW_OPEN_STATE:
             raise InvalidResearchAgentActionError(reason="prose_only_result")
-        evidence, signal, evidence_events = _selected_artifacts(context)
+        evidence = _selected_evidence(context)
+        if evidence.source_key.startswith("swing.research_archive.day."):
+            return _archive_open_state_unavailable(context)
+        signal, evidence_events = _selected_artifacts(evidence)
         try:
             store = SwingShadowStore(self.shadow_database)
             matching = tuple(item for item in store.signals() if item.signal_id == signal.signal_id)
@@ -90,7 +94,7 @@ class SwingResearchActionExecutor:
         return tuple(appended)
 
 
-def _selected_artifacts(context: ResearchAgentActionContext):
+def _selected_evidence(context: ResearchAgentActionContext) -> ResearchAgentEvidenceV1:
     selected = set(context.decision.subject_refs)
     matches = tuple(
         evidence
@@ -99,8 +103,12 @@ def _selected_artifacts(context: ResearchAgentActionContext):
     )
     if len(matches) != 1 or matches[0].bounded_payload_json is None:
         raise InvalidResearchAgentActionError(reason="authority_artifact_unresolved")
+    return matches[0]
+
+
+def _selected_artifacts(evidence: ResearchAgentEvidenceV1):
     try:
-        payload = json.loads(matches[0].bounded_payload_json)
+        payload = json.loads(evidence.bounded_payload_json or "")
         if isinstance(payload, dict) and "source_payload" in payload:
             if payload.get("research_only") is not True or payload.get("trading_authority") is not False:
                 raise ValueError
@@ -111,7 +119,7 @@ def _selected_artifacts(context: ResearchAgentActionContext):
         events = tuple(SwingShadowEvent.model_validate(event) for event in payload["events"])
         if not events or any(event.signal_id != signal.signal_id for event in events):
             raise ValueError
-        return matches[0], signal, events
+        return signal, events
     except (TypeError, ValidationError, ValueError):
         raise InvalidResearchAgentActionError(reason="authority_artifact_unresolved") from None
 
@@ -153,6 +161,25 @@ def _unchanged_result(
         summary=_summary(signal, event),
         reason="shadow_state_unchanged",
         continuation="Wait for a newer completed Swing daily-source artifact.",
+        evidence_refs=context.decision.evidence_refs,
+        artifact_refs=(),
+        occurred_at=context.observed_at,
+        next_wake_kind=context.decision.next_wake_kind,
+        next_wake_at=context.decision.next_wake_at,
+    )
+
+
+def _archive_open_state_unavailable(context: ResearchAgentActionContext) -> ResearchAgentResultV1:
+    return ResearchAgentResultV1(
+        result_id=research_agent_result_id(context.cycle.cycle_id),
+        cycle_id=context.cycle.cycle_id,
+        agent_family_id="swing_trading",
+        market_id=context.cycle.market_id,
+        status=ResearchAgentResultStatus.NO_ACTION,
+        question=context.decision.question,
+        summary="Archived Day research evidence does not contain a Swing open state.",
+        reason="swing_archive_open_state_unavailable",
+        continuation="Wait for a verified Swing signal and event artifact.",
         evidence_refs=context.decision.evidence_refs,
         artifact_refs=(),
         occurred_at=context.observed_at,

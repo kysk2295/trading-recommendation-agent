@@ -16,6 +16,7 @@ from trading_agent.research_agent_cycle_models import (
     ResearchAgentDecisionKind,
     ResearchAgentDecisionV1,
     ResearchAgentResultStatus,
+    ResearchAgentTriggerKind,
     ResearchAgentWakeKind,
 )
 from trading_agent.research_agent_source_adapters_research import SwingSourceAdapter
@@ -79,6 +80,31 @@ def test_review_open_state_accepts_research_archive_envelope(tmp_path: Path) -> 
 
     assert result.status is ResearchAgentResultStatus.NO_ACTION
     assert result.reason == "shadow_state_unchanged"
+
+
+def test_archived_day_fallback_without_swing_state_is_no_action(tmp_path: Path) -> None:
+    paths, _ = _seed_signal(tmp_path)
+    source_key = "swing.research_archive.day.20260715"
+    evidence = ResearchAgentEvidenceMaterial(
+        family="swing_trading",
+        trigger=ResearchAgentTriggerKind.NEW_DATA,
+        source_key=source_key,
+        observed_at=_observed_after_close(SIGNAL_SESSION),
+        available_at=_observed_after_close(SIGNAL_SESSION),
+        market_id="us_equities",
+        canonical_payload=canonical_payload_json(
+            {
+                "research_only": True,
+                "source_payload": {"session": "20260715"},
+                "trading_authority": False,
+            }
+        ),
+    ).evidence()
+
+    result = SwingResearchActionExecutor(paths.swing_shadow_database).execute(_context(evidence))
+
+    assert result.status is ResearchAgentResultStatus.NO_ACTION
+    assert result.reason == "swing_archive_open_state_unavailable"
 
 
 def test_completed_daily_source_advances_existing_signal_stop_first(tmp_path: Path) -> None:
