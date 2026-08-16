@@ -4,9 +4,14 @@ import datetime as dt
 from pathlib import Path
 from typing import Literal
 
+import pytest
+
+from tests.test_research_agent_service_cli import _config
 from trading_agent.private_stable_report import write_private_stable_report
 from trading_agent.research_agent_service_health import (
     ResearchAgentServiceHealth,
+    ResearchAgentServiceHealthEvaluation,
+    await_fresh_research_agent_service_health,
     evaluate_persisted_research_agent_service_health,
     research_agent_service_health_path,
 )
@@ -161,6 +166,61 @@ def test_evaluator_rejects_failed_health(tmp_path: Path) -> None:
     # Then: failed health cannot satisfy candidate readiness.
     assert evaluation.accepted is False
     assert evaluation.reason == "runtime_failed"
+
+
+def test_health_wait_accepts_slow_candidate_within_thirty_seconds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+    monkeypatch.setattr("trading_agent.research_agent_service_health.time.sleep", lambda _seconds: None)
+
+    def evaluator(*_args) -> ResearchAgentServiceHealthEvaluation:
+        nonlocal attempts
+        attempts += 1
+        accepted = attempts == 25
+        return ResearchAgentServiceHealthEvaluation(
+            accepted=accepted,
+            state="healthy" if accepted else "unhealthy",
+            reason="fresh_matching_ready" if accepted else "report_missing_or_invalid",
+            health=None,
+        )
+
+    evaluation = await_fresh_research_agent_service_health(
+        _config(tmp_path),
+        NOW,
+        lambda: NOW + dt.timedelta(seconds=1),
+        evaluator,
+    )
+
+    assert evaluation.accepted
+    assert attempts == 25
+
+
+def test_health_wait_returns_terminal_candidate_mismatch_without_sleep(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr(
+        "trading_agent.research_agent_service_health.time.sleep",
+        lambda seconds: sleeps.append(seconds),
+    )
+
+    evaluation = await_fresh_research_agent_service_health(
+        _config(tmp_path),
+        NOW,
+        lambda: NOW + dt.timedelta(seconds=1),
+        lambda *_args: ResearchAgentServiceHealthEvaluation(
+            accepted=False,
+            state="unhealthy",
+            reason="candidate_mismatch",
+            health=None,
+        ),
+    )
+
+    assert evaluation.reason == "candidate_mismatch"
+    assert sleeps == []
 
 
 def _write_health(

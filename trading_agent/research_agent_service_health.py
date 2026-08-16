@@ -21,7 +21,7 @@ from trading_agent.research_agent_service_config import ResearchAgentServiceConf
 
 _HEALTH_FILENAME: Final = "research-agent-runtime-health.json"
 _SHA256_PATTERN: Final = r"^[0-9a-f]{64}$"
-_HEALTH_CHECK_RETRIES: Final = 20
+_HEALTH_CHECK_RETRIES: Final = 120
 _HEALTH_CHECK_INTERVAL_SECONDS: Final = 0.25
 
 HealthEvaluator = Callable[
@@ -159,11 +159,17 @@ def await_fresh_research_agent_service_health(
     health_evaluator: HealthEvaluator,
 ) -> ResearchAgentServiceHealthEvaluation:
     health = health_evaluator(candidate, started_at, clock())
-    for _ in range(_HEALTH_CHECK_RETRIES):
-        if health.accepted:
-            return health
-        time.sleep(_HEALTH_CHECK_INTERVAL_SECONDS)
-        health = health_evaluator(candidate, started_at, clock())
+    for _ in range(_HEALTH_CHECK_RETRIES - 1):
+        match health:
+            case ResearchAgentServiceHealthEvaluation(accepted=True):
+                return health
+            case ResearchAgentServiceHealthEvaluation(
+                reason="report_missing_or_invalid" | "not_fresh"
+            ):
+                time.sleep(_HEALTH_CHECK_INTERVAL_SECONDS)
+                health = health_evaluator(candidate, started_at, clock())
+            case ResearchAgentServiceHealthEvaluation():
+                return health
     return health
 
 
