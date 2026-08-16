@@ -36,9 +36,14 @@ def render_research_agent_result(
         None,
     )
     artifact = "none" if resolved is None else resolved.payload_sha256
+    next_wake = (
+        result.next_wake_kind.value
+        if result.next_wake_at is None
+        else f"{result.next_wake_kind.value}@{result.next_wake_at.isoformat()}"
+    )
     text = redact_outbound_text(
         f"{result.agent_family_id}: {result.summary} Status: {result.status.value}. "
-        f"artifact={artifact}. order authority: false.",
+        f"artifact={artifact}. next wake={next_wake}. order authority: false.",
         max_chars=4096,
     ).strip()
     require_safe_outbound_text(text)

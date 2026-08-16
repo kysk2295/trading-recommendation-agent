@@ -61,6 +61,7 @@ def test_completed_daily_source_advances_existing_signal_stop_first(tmp_path: Pa
 
     result = SwingResearchActionExecutor(paths.swing_shadow_database).execute(_context(evidence))
     events = SwingShadowStore(paths.swing_shadow_database).events(signal.signal_id)
+    feedback = SwingSourceAdapter().collect(paths, result.occurred_at)[0]
 
     assert result.status is ResearchAgentResultStatus.COMPLETED
     assert tuple(event.kind for event in events) == (
@@ -70,6 +71,8 @@ def test_completed_daily_source_advances_existing_signal_stop_first(tmp_path: Pa
     )
     assert "state=stopped" in result.summary
     assert events[-1].source_key in result.artifact_refs
+    assert feedback.evidence_id != evidence.evidence_id
+    assert '"kind":"stopped"' in (feedback.bounded_payload_json or "")
 
 
 def test_replay_does_not_duplicate_swing_event(tmp_path: Path) -> None:

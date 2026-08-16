@@ -18,6 +18,7 @@ from trading_agent.research_agent_cycle_models import (
     ResearchAgentDecisionKind,
     ResearchAgentResultStatus,
     ResearchAgentResultV1,
+    ResearchAgentTriggerKind,
     ResearchAgentWakeKind,
     ResultId,
 )
@@ -26,6 +27,7 @@ from trading_agent.research_agent_primary_actions import (
     MarketContextResearchActionExecutor,
     OpportunityResearchActionExecutor,
 )
+from trading_agent.research_agent_source_common import ResearchAgentEvidenceMaterial, canonical_payload_json
 
 NOW = dt.datetime(2026, 8, 2, 12, 0, tzinfo=dt.UTC)
 
@@ -98,3 +100,56 @@ def test_primary_results_render_resolved_artifact_rows(tmp_path: Path) -> None:
     assert "risk_on" in by_family["market_context"]
     assert "advance_ratio=0.61" in by_family["market_context"]
     assert all("order authority: false" in text for text in by_family.values())
+
+
+def test_day_and_swing_results_render_existing_plan_and_outcome_rows(tmp_path: Path) -> None:
+    day = _artifact_evidence("day_trading", "day.session.20260803", "day-plan")
+    swing = _artifact_evidence("swing_trading", "swing.signal.abc12345", "swing-outcome")
+    day_result = _result("day_trading").model_copy(
+        update={
+            "summary": (
+                "recommendation=rec-1,symbol=ACME,timestamp=2026-08-03T14:34:00+00:00,"
+                "entry=10.0,stop=9.5,targets=10.5,11.0,state=stopped,rationale=completed bar breakout"
+            ),
+            "artifact_refs": (day.payload_sha256,),
+        }
+    )
+    swing_result = _result("swing_trading").model_copy(
+        update={
+            "summary": (
+                "signal=swing-1,symbol=ACME,entry=15.04800,stop=13.86900,"
+                "state=stopped,event=swing-1:stopped"
+            ),
+            "artifact_refs": (swing.payload_sha256,),
+        }
+    )
+    store = HermesDeliveryStore(tmp_path / "delivery.sqlite3")
+
+    with store.writer() as writer:
+        projected = project_research_agent_results(
+            (day_result, swing_result),
+            writer,
+            evidence=(day, swing),
+        )
+    rows = {event.agent_family: event.rendered_text for event in HermesDeliveryReader(store.path).events()}
+
+    assert projected.inserted == 2
+    assert "timestamp=2026-08-03T14:34:00+00:00" in rows["day_trading"]
+    assert "targets=10.5,11.0" in rows["day_trading"]
+    assert "rationale=completed bar breakout" in rows["day_trading"]
+    assert "state=stopped" in rows["swing_trading"]
+    assert "event=swing-1:stopped" in rows["swing_trading"]
+    assert all("next wake=new_evidence" in row for row in rows.values())
+    assert all("order authority: false" in row for row in rows.values())
+
+
+def _artifact_evidence(family: AgentFamilyId, source_key: str, value: str):
+    return ResearchAgentEvidenceMaterial(
+        family=family,
+        trigger=ResearchAgentTriggerKind.OPEN_WORK,
+        source_key=source_key,
+        observed_at=NOW,
+        available_at=NOW,
+        market_id="us_equities",
+        canonical_payload=canonical_payload_json({"artifact": value}),
+    ).evidence()

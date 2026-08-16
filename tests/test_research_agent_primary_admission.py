@@ -113,6 +113,42 @@ def test_day_evidence_contains_existing_plan_checkpoint_and_immutable_outcome_hi
     assert sum(subject.startswith("day_event.") for subject in evidence.subject_refs) == 2
 
 
+def test_day_terminal_event_becomes_fresh_feedback_evidence(tmp_path: Path) -> None:
+    paths = source_paths(tmp_path)
+    seed_day(paths)
+    database = paths.day_session_root / "20260803" / "paper_recommendations.sqlite3"
+    store = PaperStore(database)
+    recommendation = Recommendation(
+        "rec-feedback-1",
+        "ACME",
+        "opening_range_breakout",
+        NOW - dt.timedelta(seconds=50),
+        10.0,
+        9.5,
+        10.5,
+        11.0,
+        RecommendationState.SETUP,
+        "completed bar breakout",
+    )
+    store.save(recommendation)
+    database.chmod(0o600)
+    initial = DaySourceAdapter().collect(paths, NOW)[0]
+
+    store.set_state(
+        recommendation.recommendation_id,
+        RecommendationState.STOPPED,
+        NOW - dt.timedelta(seconds=10),
+        9.5,
+        "stop observed",
+    )
+    database.chmod(0o600)
+    feedback = DaySourceAdapter().collect(paths, NOW)[0]
+
+    assert feedback.evidence_id != initial.evidence_id
+    assert '"state":"stopped"' in (feedback.bounded_payload_json or "")
+    assert len(feedback.subject_refs) == len(initial.subject_refs) + 1
+
+
 def test_breadth_producer_market_context_is_admitted_without_spread(tmp_path: Path) -> None:
     # Given
     paths = source_paths(tmp_path)
