@@ -34,11 +34,13 @@ class ArchivedMarketContextEvidenceV1(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     checkpoint_count: int = Field(ge=0)
+    checkpoints: tuple[dict[str, object], ...]
     database_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     event_count: int = Field(ge=0)
     latest_checkpoint_at: str | None
     latest_risk_at: str | None
     recommendation_count: int = Field(ge=0)
+    recommendations: tuple[dict[str, object], ...]
     risk_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     session: str = Field(pattern=r"^[0-9]{8}$")
 

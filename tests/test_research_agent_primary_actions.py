@@ -203,11 +203,13 @@ def test_context_action_accepts_exact_archived_day_context() -> None:
             "research_only": True,
             "source_payload": {
                 "checkpoint_count": 2,
+                "checkpoints": [],
                 "database_sha256": "a" * 64,
                 "event_count": 4,
                 "latest_checkpoint_at": NOW.isoformat(),
                 "latest_risk_at": NOW.isoformat(),
                 "recommendation_count": 1,
+                "recommendations": [],
                 "risk_sha256": "b" * 64,
                 "session": "20260803",
             },
