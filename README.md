@@ -350,6 +350,7 @@ setup이나 current data가 없으면 추천·주문을 만들지 않고 `no_rec
 | [Persistent Runtime](docs/checkpoints/2026-08-02-persistent-research-runtime-ko.md) | 6-family runtime checkpoint |
 | [자율 Python 전략 설계](docs/superpowers/specs/2026-08-02-autonomous-unrestricted-python-strategy-loop-design.md) | sandbox·artifact·Reviewer 계약 |
 | [Options Workbench 설계](docs/superpowers/specs/2026-08-03-integrated-options-research-workbench-design.md) | 통합 옵션 연구 화면 계약 |
+| [Alpaca Paper smoke 이력](docs/checkpoints/2026-08-14-paper-closed-session-smoke-skip-ko.md) | 2026-07-15~08-14 Stage 1 실행·안전 중단 체크포인트 |
 | [전체 구현 히스토리](IMPLEMENTATION_HISTORY_KO.md) | 기능별 상세 기록과 검증 이력 |
 
 이 저장소의 출력은 교육·연구·Paper Trading을 위한 결과이며 투자 자문이나 수익 보장이 아니다.
