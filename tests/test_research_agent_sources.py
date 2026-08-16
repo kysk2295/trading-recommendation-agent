@@ -120,8 +120,9 @@ def test_source_projection_routes_evidence_without_cross_family_leakage(tmp_path
     assert all(item.trigger_kind is ResearchAgentTriggerKind.MARKET_EVENT for item in by_family["market_context"])
     opportunity = next(item for item in projected if item.agent_family_id == "opportunity_manager")
     payload = json.loads(opportunity.bounded_payload_json or "{}")
+    candidate_ref = f"opportunity_candidate.{hashlib.sha256(opportunity.source_key.encode()).hexdigest()[:16]}.1"
     assert "ACME" in json.dumps(payload)
-    assert opportunity.subject_refs == (opportunity.source_key,)
+    assert opportunity.subject_refs == tuple(sorted((opportunity.source_key, candidate_ref)))
     assert opportunity.bounded_payload_json is not None
     assert opportunity.payload_sha256 == hashlib.sha256(opportunity.bounded_payload_json.encode()).hexdigest()
 
@@ -192,6 +193,9 @@ def test_opportunity_prior_date_becomes_research_archive_evidence(tmp_path: Path
     assert tuple(item.source_key for item in evidence) == (
         "opportunity.research_archive.us-opportunity-20260803t143400-abcd1234",
     )
+    expected = evidence[0]
+    candidate_ref = f"opportunity_candidate.{hashlib.sha256(expected.source_key.encode()).hexdigest()[:16]}.1"
+    assert expected.subject_refs == tuple(sorted((expected.source_key, candidate_ref)))
 
 
 def test_expired_market_context_becomes_research_archive_evidence(tmp_path: Path) -> None:

@@ -16,6 +16,7 @@ from trading_agent.research_agent_source_common import (
     ResearchAgentEvidenceMaterial,
     canonical_model_json,
     canonical_payload_json,
+    opportunity_candidate_subject_ref,
     require_private_source_file,
     require_source_boundary,
 )
@@ -35,14 +36,23 @@ def archived_opportunity_evidence(
         snapshot, snapshot.observed_at
     ) is not None:
         return None
+    source_key = f"opportunity.research_archive.{snapshot.opportunity_id}"
     return ResearchAgentEvidenceMaterial(
         family="opportunity_manager",
         trigger=ResearchAgentTriggerKind.NEW_DATA,
-        source_key=f"opportunity.research_archive.{snapshot.opportunity_id}",
+        source_key=source_key,
         observed_at=snapshot.observed_at,
         available_at=snapshot.observed_at,
         market_id=snapshot.strategy_lane.market_id.value,
         canonical_payload=_archive_payload(canonical_model_json(snapshot)),
+        subject_refs=tuple(
+            sorted(
+                (
+                    source_key,
+                    *(opportunity_candidate_subject_ref(source_key, item.rank) for item in snapshot.candidates),
+                )
+            )
+        ),
     ).evidence()
 
 

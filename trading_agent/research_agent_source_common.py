@@ -82,6 +82,11 @@ def canonical_payload_json(payload: Mapping[str, int | str]) -> str:
     return json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
 
 
+def opportunity_candidate_subject_ref(source_key: str, rank: int) -> str:
+    digest = hashlib.sha256(source_key.encode()).hexdigest()[:16]
+    return f"opportunity_candidate.{digest}.{rank}"
+
+
 def capability_evidence(
     spec: CapabilityEvidenceSpec,
     now: dt.datetime,
@@ -131,6 +136,7 @@ __all__ = (
     "canonical_payload_json",
     "capability_evidence",
     "interval_bucket",
+    "opportunity_candidate_subject_ref",
     "require_private_source_file",
     "require_source_boundary",
 )
