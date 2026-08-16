@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from typing import Final
 
 from trading_agent.dashboard_outbound_redaction import redact_outbound_text, require_safe_outbound_text
 from trading_agent.hermes_delivery_models import HermesDeliveryKind
@@ -12,14 +13,21 @@ from trading_agent.hermes_delivery_projection import (
 from trading_agent.hermes_delivery_store import HermesDeliveryWriter
 from trading_agent.research_agent_cycle_models import ResearchAgentEvidenceV1, ResearchAgentResultV1
 
+_NO_PROJECTED_RESULT_IDS: Final[frozenset[str]] = frozenset()
+
 
 def project_research_agent_results(
     results: tuple[ResearchAgentResultV1, ...],
     writer: HermesDeliveryWriter,
     *,
     evidence: tuple[ResearchAgentEvidenceV1, ...] = (),
+    projected_result_ids: frozenset[str] = _NO_PROJECTED_RESULT_IDS,
 ) -> HermesProjectionResult:
-    records = tuple(_projection_record(result, evidence) for result in results)
+    records = tuple(
+        _projection_record(result, evidence)
+        for result in results
+        if result.result_id not in projected_result_ids
+    )
     return project_outcomes(records, writer)
 
 
@@ -54,7 +62,7 @@ def _projection_record(
     result: ResearchAgentResultV1,
     evidence: tuple[ResearchAgentEvidenceV1, ...],
 ) -> HermesProjectionRecord:
-    validated = ResearchAgentResultV1.model_validate(result.model_dump(mode="python"))
+    validated = result
     return HermesProjectionRecord(
         source_event_id=validated.result_id,
         root_source_event_id=None,
@@ -68,7 +76,7 @@ def _projection_record(
         status=validated.status.value,
         evidence_refs=validated.evidence_refs,
         rendered_text=render_research_agent_result(validated, evidence),
-        payload_sha256=hashlib.sha256(validated.model_dump_json().encode()).hexdigest(),
+        payload_sha256=hashlib.sha256(validated.model_dump_json(exclude_unset=True).encode()).hexdigest(),
     )
 
 

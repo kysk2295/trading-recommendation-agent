@@ -118,6 +118,15 @@ def test_store_reads_legacy_hash_only_evidence(tmp_path: Path) -> None:
     with ResearchAgentCycleStore(path):
         pass
     evidence = _evidence("market_context", 1)
+    bounded_payload_json = '{"symbol":"SPY"}'
+    evidence = ResearchAgentEvidenceV1.model_validate(
+        evidence.model_dump(mode="python")
+        | {
+            "bounded_payload_json": bounded_payload_json,
+            "payload_sha256": hashlib.sha256(bounded_payload_json.encode()).hexdigest(),
+            "subject_refs": ("SPY",),
+        }
+    )
     payload = evidence.model_dump(mode="json")
     for key in ("bounded_payload_json", "payload_truncated", "subject_refs"):
         del payload[key]
@@ -133,9 +142,11 @@ def test_store_reads_legacy_hash_only_evidence(tmp_path: Path) -> None:
         )
     with ResearchAgentCycleStore(path) as store:
         restored = store.runnable_evidence("market_context", NOW)[0].evidence
+        replayed = store.append_evidence(evidence)
 
     assert restored.bounded_payload_json is None
     assert restored.subject_refs == ()
+    assert not replayed
 
 
 def test_result_decoder_preserves_shipped_no_action_artifacts() -> None:

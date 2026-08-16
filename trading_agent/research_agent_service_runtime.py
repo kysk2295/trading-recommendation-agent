@@ -344,11 +344,15 @@ def write_service_report(
 
 
 def _project_results(config: ResearchAgentServiceConfig, runtime: ResearchAgentRuntime) -> int:
+    projected_result_ids = frozenset(
+        event.source_event_id for event in HermesDeliveryReader(config.hermes_database).events()
+    )
     with HermesDeliveryStore(config.hermes_database).writer() as writer:
         result = project_research_agent_results(
             runtime.store.results(),
             writer,
             evidence=runtime.store.all_evidence(),
+            projected_result_ids=projected_result_ids,
         )
     return result.inserted
 

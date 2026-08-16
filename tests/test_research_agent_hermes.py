@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import json
 from pathlib import Path
 
 from tests.test_research_agent_primary_actions import (
@@ -22,6 +23,7 @@ from trading_agent.research_agent_cycle_models import (
     ResearchAgentWakeKind,
     ResultId,
 )
+from trading_agent.research_agent_cycle_store_codec import result_from_payload
 from trading_agent.research_agent_hermes import project_research_agent_results
 from trading_agent.research_agent_primary_actions import (
     MarketContextResearchActionExecutor,
@@ -70,6 +72,47 @@ def test_results_project_as_separate_agent_families_and_replay_once(tmp_path: Pa
     }
     assert all(event.kind.value == "research" for event in events)
     assert all(len(event.rendered_text) <= 4096 for event in events)
+
+
+def test_known_result_ids_are_not_rerendered(tmp_path: Path) -> None:
+    result = _result("market_context")
+    store = HermesDeliveryStore(tmp_path / "delivery.sqlite3")
+
+    with store.writer() as writer:
+        skipped = project_research_agent_results(
+            (result,),
+            writer,
+            projected_result_ids=frozenset({result.result_id}),
+        )
+
+    assert skipped.examined == skipped.inserted == skipped.replayed == 0
+    assert HermesDeliveryReader(store.path).events() == ()
+
+
+def test_shipped_no_action_result_projects_after_store_validation(tmp_path: Path) -> None:
+    current = _result("market_context").model_copy(
+        update={
+            "artifact_refs": (),
+            "continuation": "Wait for the next completed market observation.",
+            "reason": "no_material_change",
+            "status": ResearchAgentResultStatus.NO_ACTION,
+        }
+    )
+    payload = current.model_dump(mode="json")
+    payload["artifact_refs"] = ["b" * 64]
+    del payload["decision_kind"]
+    shipped = result_from_payload(json.dumps(payload))
+    store = HermesDeliveryStore(tmp_path / "delivery.sqlite3")
+
+    with store.writer() as writer:
+        projected = project_research_agent_results((shipped,), writer)
+
+    event = HermesDeliveryReader(store.path).events()[0]
+    assert projected.inserted == 1
+    assert event.status == "no_action"
+    assert event.payload_sha256 == hashlib.sha256(
+        shipped.model_dump_json(exclude_unset=True).encode()
+    ).hexdigest()
 
 
 def test_primary_results_render_resolved_artifact_rows(tmp_path: Path) -> None:

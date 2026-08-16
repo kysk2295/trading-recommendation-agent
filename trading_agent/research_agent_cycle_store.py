@@ -62,11 +62,24 @@ class ResearchAgentCycleStore:
         payload = canonical_cycle_json(evidence)
         with self._database.writer() as connection:
             existing = connection.execute(
-                "SELECT payload_json FROM evidence WHERE evidence_id=?",
+                "SELECT sequence,evidence_id,agent_family_id,payload_json FROM evidence WHERE evidence_id=?",
                 (evidence.evidence_id,),
             ).fetchone()
             if existing is not None:
-                if existing[0] == payload:
+                stored = stored_evidence(existing).evidence
+                shipped_projection = evidence.model_copy(
+                    update={
+                        "bounded_payload_json": None,
+                        "payload_truncated": False,
+                        "subject_refs": (),
+                    }
+                )
+                if stored == evidence or (
+                    stored.bounded_payload_json is None
+                    and not stored.payload_truncated
+                    and not stored.subject_refs
+                    and stored == shipped_projection
+                ):
                     return False
                 raise InvalidResearchAgentCycleStoreError(reason="evidence_identity_conflict")
             with connection:
