@@ -169,6 +169,22 @@ def test_parser_rejects_subject_not_present_in_request() -> None:
         parse_research_agent_decision(json.dumps(payload).encode(), context)
 
 
+def test_parser_canonicalizes_available_subject_order() -> None:
+    request = _request()
+    payload = json.loads(_response()) | {
+        "subject_refs": [request.evidence[0].subject_refs[0], str(request.evidence[0].evidence_id)]
+    }
+    context = ResearchAgentDecisionParseContext(
+        request=request,
+        model_id="haiku",
+        prompt_sha256="d" * 64,
+    )
+
+    decision = parse_research_agent_decision(json.dumps(payload).encode(), context)
+
+    assert decision.subject_refs == tuple(sorted(payload["subject_refs"]))
+
+
 def test_parser_rejects_decision_kind_not_executable_by_family() -> None:
     evidence = _evidence().model_copy(update={"agent_family_id": "derivatives_research"})
     request = _request().model_copy(

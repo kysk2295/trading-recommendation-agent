@@ -364,7 +364,14 @@ def parse_research_agent_decision(
 ) -> ResearchAgentDecisionV1:
     response_sha256 = hashlib.sha256(payload).hexdigest()
     try:
-        response = HermesResearchAgentDecisionResponse.model_validate_json(payload)
+        decoded = json.loads(payload)
+        if isinstance(decoded, dict) and isinstance(subject_refs := decoded.get("subject_refs"), list) and all(
+            isinstance(reference, str) for reference in subject_refs
+        ):
+            decoded["subject_refs"] = sorted(set(subject_refs))
+        response = HermesResearchAgentDecisionResponse.model_validate_json(
+            json.dumps(decoded, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        )
     except (ValidationError, ValueError):
         raise InvalidResearchAgentDecisionError(reason="hermes_decision_response_invalid") from None
     if response.primary_decision not in _FAMILY_DECISIONS[context.request.agent_family_id]:
