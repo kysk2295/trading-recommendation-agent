@@ -129,6 +129,26 @@ def test_result_cannot_claim_order_or_lifecycle_authority() -> None:
     assert result.allocation_authority is False
 
 
+def test_completed_result_requires_authority_artifact() -> None:
+    with pytest.raises(ValidationError, match="completed_artifact_required"):
+        ResearchAgentResultV1(
+            result_id=research_agent_result_id(CycleId("d" * 64)),
+            cycle_id=CycleId("d" * 64),
+            agent_family_id="market_context",
+            market_id="us_equities",
+            status=ResearchAgentResultStatus.COMPLETED,
+            question="Did the current market regime change materially?",
+            summary="The context action did not produce a durable artifact.",
+            reason=None,
+            continuation=None,
+            evidence_refs=("a" * 64,),
+            artifact_refs=(),
+            occurred_at=NOW,
+            next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
+            next_wake_at=None,
+        )
+
+
 def test_evidence_rejects_duplicate_or_unsorted_references() -> None:
     with pytest.raises(ValidationError, match="sorted_unique_references_required"):
         ResearchAgentEvidenceV1(

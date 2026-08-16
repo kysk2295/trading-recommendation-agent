@@ -194,6 +194,14 @@ class ResearchAgentResultV1(BaseModel):
         _require_references(self.evidence_refs, allow_empty=False)
         _require_references(self.artifact_refs, allow_empty=True)
         _require_wake_time(self.next_wake_kind, self.next_wake_at)
+        if self.status is ResearchAgentResultStatus.COMPLETED and not self.artifact_refs:
+            raise InvalidResearchAgentCycleFieldError(reason="completed_artifact_required")
+        if self.status is ResearchAgentResultStatus.NO_ACTION and (
+            self.reason is None or self.continuation is None or self.artifact_refs
+        ):
+            raise InvalidResearchAgentCycleFieldError(reason="no_action_terminal_invalid")
+        if self.status in {ResearchAgentResultStatus.FAILED, ResearchAgentResultStatus.BLOCKED} and self.reason is None:
+            raise InvalidResearchAgentCycleFieldError(reason="failure_reason_required")
         return self
 
 

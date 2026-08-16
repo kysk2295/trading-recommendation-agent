@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import shutil
 import sys
@@ -14,7 +15,11 @@ from tests.research_agent_systematic_input_fixtures import (
     ReadySystematicInputFixture,
     write_ready_systematic_input_activation,
 )
-from trading_agent.research_agent_actions import ResearchAgentActionConfig, ResearchAgentActionExecutor
+from trading_agent.research_agent_actions import (
+    ResearchAgentActionConfig,
+    ResearchAgentActionContext,
+    ResearchAgentActionExecutor,
+)
 from trading_agent.research_agent_cycle_models import (
     ActionId,
     CycleId,
@@ -24,7 +29,9 @@ from trading_agent.research_agent_cycle_models import (
     ResearchAgentCycleV1,
     ResearchAgentDecisionKind,
     ResearchAgentDecisionV1,
+    ResearchAgentEvidenceV1,
     ResearchAgentResultStatus,
+    ResearchAgentTriggerKind,
     ResearchAgentWakeKind,
 )
 from trading_agent.research_agent_systematic import (
@@ -82,6 +89,7 @@ def _decision() -> ResearchAgentDecisionV1:
         reason=None,
         continuation=None,
         open_work_ref=None,
+        subject_refs=("systematic_quant.subject.001",),
         evidence_refs=("e" * 64,),
         decided_at=NOW,
         next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
@@ -89,6 +97,34 @@ def _decision() -> ResearchAgentDecisionV1:
         model_id="fixture-model-v1",
         prompt_sha256="f" * 64,
         response_sha256="1" * 64,
+    )
+
+
+def _evidence() -> ResearchAgentEvidenceV1:
+    payload = '{"status":"ready"}'
+    digest = hashlib.sha256(payload.encode()).hexdigest()
+    return ResearchAgentEvidenceV1(
+        evidence_id=EvidenceId("b" * 64),
+        agent_family_id="systematic_quant",
+        trigger_kind=ResearchAgentTriggerKind.NEW_DATA,
+        source_key="systematic_quant.subject.001",
+        evidence_refs=(digest,),
+        observed_at=NOW,
+        available_at=NOW,
+        payload_sha256=digest,
+        market_id="none",
+        bounded_payload_json=payload,
+        subject_refs=("systematic_quant.subject.001",),
+    )
+
+
+def _context() -> ResearchAgentActionContext:
+    return ResearchAgentActionContext(
+        cycle=_cycle(),
+        evidence=(_evidence(),),
+        open_work=(),
+        decision=_decision(),
+        observed_at=NOW,
     )
 
 
@@ -160,11 +196,9 @@ def test_systematic_hermes_command_binds_explicit_provider(tmp_path: Path) -> No
 
 def test_systematic_action_runs_generated_strategy_and_parses_reviewer_result(tmp_path: Path) -> None:
     systematic = SystematicResearchActionExecutor(_config(tmp_path))
-    executor = ResearchAgentActionExecutor(
-        ResearchAgentActionConfig(systematic=systematic, verified_trade_signal_refs=frozenset())
-    )
+    executor = ResearchAgentActionExecutor(ResearchAgentActionConfig(systematic=systematic))
 
-    result = executor.execute(_cycle(), _decision())
+    result = executor.execute(_context())
 
     assert result.status is ResearchAgentResultStatus.COMPLETED
     assert result.reason == "reviewer_hold"

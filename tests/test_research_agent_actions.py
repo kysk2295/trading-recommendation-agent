@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import shutil
 import sys
 from pathlib import Path
@@ -14,6 +15,7 @@ from trading_agent.dashboard_agent_family import AgentFamilyId
 from trading_agent.research_agent_actions import (
     InvalidResearchAgentActionError,
     ResearchAgentActionConfig,
+    ResearchAgentActionContext,
     ResearchAgentActionExecutor,
 )
 from trading_agent.research_agent_cycle_models import (
@@ -25,6 +27,9 @@ from trading_agent.research_agent_cycle_models import (
     ResearchAgentCycleV1,
     ResearchAgentDecisionKind,
     ResearchAgentDecisionV1,
+    ResearchAgentEvidenceV1,
+    ResearchAgentResultStatus,
+    ResearchAgentTriggerKind,
     ResearchAgentWakeKind,
 )
 from trading_agent.research_agent_systematic import (
@@ -54,6 +59,7 @@ def _cycle(family: AgentFamilyId) -> ResearchAgentCycleV1:
 
 def _decision(family: AgentFamilyId, kind: ResearchAgentDecisionKind) -> ResearchAgentDecisionV1:
     no_action = kind is ResearchAgentDecisionKind.NO_ACTION
+    subject_refs = () if no_action else (f"{family}.subject.001",)
     return ResearchAgentDecisionV1(
         decision_id=DecisionId("d" * 64),
         cycle_id=CycleId("a" * 64),
@@ -65,6 +71,7 @@ def _decision(family: AgentFamilyId, kind: ResearchAgentDecisionKind) -> Researc
         reason="no_eligible_action" if no_action else None,
         continuation="Wait for new source evidence before another decision." if no_action else None,
         open_work_ref=None,
+        subject_refs=subject_refs,
         evidence_refs=("e" * 64,),
         decided_at=NOW,
         next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
@@ -72,6 +79,37 @@ def _decision(family: AgentFamilyId, kind: ResearchAgentDecisionKind) -> Researc
         model_id="fixture-model-v1",
         prompt_sha256="f" * 64,
         response_sha256="1" * 64,
+    )
+
+
+def _evidence(family: AgentFamilyId) -> ResearchAgentEvidenceV1:
+    payload = '{"status":"ready"}'
+    digest = hashlib.sha256(payload.encode()).hexdigest()
+    return ResearchAgentEvidenceV1(
+        evidence_id=EvidenceId("b" * 64),
+        agent_family_id=family,
+        trigger_kind=ResearchAgentTriggerKind.NEW_DATA,
+        source_key=f"{family}.subject.001",
+        evidence_refs=(digest,),
+        observed_at=NOW,
+        available_at=NOW,
+        payload_sha256=digest,
+        market_id="us_equities",
+        bounded_payload_json=payload,
+        subject_refs=(f"{family}.subject.001",),
+    )
+
+
+def _context(
+    family: AgentFamilyId,
+    kind: ResearchAgentDecisionKind,
+) -> ResearchAgentActionContext:
+    return ResearchAgentActionContext(
+        cycle=_cycle(family),
+        evidence=(_evidence(family),),
+        open_work=(),
+        decision=_decision(family, kind),
+        observed_at=NOW,
     )
 
 
@@ -104,38 +142,28 @@ def _config(tmp_path: Path) -> ResearchAgentActionConfig:
             max_runtime_seconds=30.0,
         ),
     )
-    return ResearchAgentActionConfig(systematic=systematic, verified_trade_signal_refs=frozenset())
+    return ResearchAgentActionConfig(systematic=systematic)
 
 
 def test_generated_strategy_action_is_systematic_only(tmp_path: Path) -> None:
     executor = ResearchAgentActionExecutor(_config(tmp_path))
 
     with pytest.raises(InvalidResearchAgentActionError, match="heavy_experiment_systematic_only"):
-        executor.execute(
-            _cycle("day_trading"),
-            _decision("day_trading", ResearchAgentDecisionKind.REQUEST_HEAVY_EXPERIMENT),
-        )
+        executor.execute(_context("day_trading", ResearchAgentDecisionKind.REQUEST_HEAVY_EXPERIMENT))
 
 
-def test_non_systematic_action_builds_zero_authority_result_without_subprocess(tmp_path: Path) -> None:
+def test_non_systematic_prose_action_is_rejected(tmp_path: Path) -> None:
     executor = ResearchAgentActionExecutor(_config(tmp_path))
 
-    result = executor.execute(
-        _cycle("market_context"),
-        _decision("market_context", ResearchAgentDecisionKind.PUBLISH_CONTEXT),
-    )
-
-    assert result.order_authority is False
-    assert result.lifecycle_authority is False
-    assert result.allocation_authority is False
-    assert not (tmp_path / "runs").exists()
+    with pytest.raises(InvalidResearchAgentActionError, match="prose_only_result"):
+        executor.execute(_context("market_context", ResearchAgentDecisionKind.PUBLISH_CONTEXT))
 
 
-def test_recommendation_requires_an_existing_verified_trade_signal_reference(tmp_path: Path) -> None:
+def test_no_action_remains_a_valid_terminal_without_artifact(tmp_path: Path) -> None:
     executor = ResearchAgentActionExecutor(_config(tmp_path))
 
-    with pytest.raises(InvalidResearchAgentActionError, match="verified_trade_signal_required"):
-        executor.execute(
-            _cycle("day_trading"),
-            _decision("day_trading", ResearchAgentDecisionKind.PUBLISH_RECOMMENDATION),
-        )
+    result = executor.execute(_context("market_context", ResearchAgentDecisionKind.NO_ACTION))
+
+    assert result.status is ResearchAgentResultStatus.NO_ACTION
+    assert result.reason == "no_eligible_action"
+    assert result.artifact_refs == ()
