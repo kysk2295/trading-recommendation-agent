@@ -13,10 +13,12 @@ const { values } = parseArgs({
   options: {
     "base-url": { type: "string", default: "http://127.0.0.1:3000" },
     output: { type: "string" },
+    "source-sha": { type: "string" },
   },
   strict: true,
 });
 const output = required(values.output, "--output");
+const sourceSha = required(values["source-sha"], "--source-sha");
 const baseUrl = new URL(values["base-url"]).toString().replace(/\/$/, "");
 const ingestToken = required(process.env["DASHBOARD_INGEST_TOKEN"], "DASHBOARD_INGEST_TOKEN");
 const screenshotDirectory = join(dirname(output), "screenshots");
@@ -36,6 +38,7 @@ const findings: Array<{
   rowCount: number;
   axeViolations: number;
   lowerScreenshot: string;
+  lowerScrollTop: number;
   traceScreenshot: string;
 }> = [];
 
@@ -70,9 +73,22 @@ try {
     }
     const screenshot = join(screenshotDirectory, `research-board-${width}.png`);
     await page.screenshot({ path: screenshot, fullPage: true });
-    await board.getByText("시장 맥락 · MARKET CONTEXT").scrollIntoViewIfNeeded();
+    const workspaceMain = page.locator("#workspace-main");
+    const lowerScrollTop = await workspaceMain.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
+    });
+    if (lowerScrollTop <= 0) {
+      throw new ResearchBoardQaError(`research_board_lower_state_not_reached:${width}`);
+    }
+    const lowerScrollAtEnd = await workspaceMain.evaluate(
+      (element) => Math.abs(element.scrollTop - (element.scrollHeight - element.clientHeight)) <= 1,
+    );
+    if (!lowerScrollAtEnd) {
+      throw new ResearchBoardQaError(`research_board_lower_state_incomplete:${width}`);
+    }
     const lowerScreenshot = join(screenshotDirectory, `research-board-lower-${width}.png`);
-    await page.screenshot({ path: lowerScreenshot, fullPage: true });
+    await page.screenshot({ path: lowerScreenshot });
     findings.push({
       width,
       screenshot,
@@ -80,6 +96,7 @@ try {
       rowCount,
       axeViolations: 0,
       lowerScreenshot,
+      lowerScrollTop,
       traceScreenshot,
     });
   }
@@ -88,7 +105,17 @@ try {
   }
   await writeFile(
     output,
-    `${JSON.stringify({ observable: "RESEARCH_BOARD_QA_OK", findings, consoleErrors }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        observable: "RESEARCH_BOARD_QA_OK",
+        sourceSha,
+        capturedAt: new Date().toISOString(),
+        findings,
+        consoleErrors,
+      },
+      null,
+      2,
+    )}\n`,
     { mode: 0o600 },
   );
   console.log("RESEARCH_BOARD_QA_OK widths=375,768,1280 axe=0 console=0");
