@@ -157,7 +157,7 @@ def _production_actions() -> ResearchAgentActionExecutor:
     return ResearchAgentActionExecutor(ResearchAgentActionConfig(systematic=UnreachableSystematicAction()))
 
 
-def test_runtime_passes_evidence_subjects_and_observation_time_to_action(tmp_path: Path) -> None:
+def test_runtime_passes_action_context_with_evidence_subjects_and_observation_time(tmp_path: Path) -> None:
     contexts: list[ResearchAgentActionContext] = []
     runtime = _runtime(
         tmp_path / "cycles.sqlite3",
@@ -348,7 +348,7 @@ def test_closed_session_primary_schedule_persists_no_action_before_model_call(tm
     assert calls == []
 
 
-def test_research_blocked_evidence_keeps_the_normal_decision_path(tmp_path: Path) -> None:
+def test_research_blocked_evidence_rejects_prose_only_completion(tmp_path: Path) -> None:
     # Given: a Research-family source admitted explicit blocked evidence.
     calls: list[AgentFamilyId] = []
     evidence = _evidence("swing_trading", 1).model_copy(update={"source_key": "swing.blocked.shadow_evidence_empty"})
