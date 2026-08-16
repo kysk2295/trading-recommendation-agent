@@ -14,15 +14,16 @@ from tests.research_agent_systematic_input_fixtures import (
 )
 from tests.test_research_agent_service_cli import _config
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
-from trading_agent.research_agent_actions import ResearchAgentActionConfig, ResearchAgentActionExecutor
+from trading_agent.research_agent_actions import ResearchAgentActionContext
 from trading_agent.research_agent_cycle_models import (
     CycleId,
     DecisionId,
-    ResearchAgentCycleV1,
     ResearchAgentDecisionKind,
     ResearchAgentDecisionV1,
+    ResearchAgentResultStatus,
     ResearchAgentResultV1,
     ResearchAgentWakeKind,
+    research_agent_result_id,
 )
 from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
 from trading_agent.research_agent_decision import ResearchAgentDecisionRequest
@@ -59,6 +60,7 @@ class HypothesisDecisionClient:
             reason=None,
             continuation=None,
             open_work_ref=None,
+            subject_refs=request.evidence[0].subject_refs,
             evidence_refs=tuple(sorted({ref for item in request.evidence for ref in item.evidence_refs})),
             decided_at=request.requested_at,
             next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
@@ -70,14 +72,24 @@ class HypothesisDecisionClient:
 
 
 @dataclass(frozen=True, slots=True)
-class UnreachableSystematicAction:
-    def execute(
-        self,
-        cycle: ResearchAgentCycleV1,
-        decision: ResearchAgentDecisionV1,
-    ) -> ResearchAgentResultV1:
-        del cycle, decision
-        raise AssertionError
+class ArtifactActionClient:
+    def execute(self, context: ResearchAgentActionContext) -> ResearchAgentResultV1:
+        return ResearchAgentResultV1(
+            result_id=research_agent_result_id(context.cycle.cycle_id),
+            cycle_id=context.cycle.cycle_id,
+            agent_family_id=context.cycle.agent_family_id,
+            market_id=context.cycle.market_id,
+            status=ResearchAgentResultStatus.COMPLETED,
+            question=context.decision.question,
+            summary="A deterministic service fixture artifact completed the bounded action.",
+            reason=None,
+            continuation=None,
+            evidence_refs=context.decision.evidence_refs,
+            artifact_refs=(context.evidence[0].payload_sha256,),
+            occurred_at=context.observed_at,
+            next_wake_kind=context.decision.next_wake_kind,
+            next_wake_at=context.decision.next_wake_at,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,12 +121,7 @@ def test_idle_service_tick_reports_zero_model_and_broker_mutations(
             store=ResearchAgentCycleStore(config.cycle_database),
             collector=ConfiguredResearchAgentEvidenceCollector(config.source_paths),
             decisions=HypothesisDecisionClient(calls),
-            actions=ResearchAgentActionExecutor(
-                ResearchAgentActionConfig(
-                    systematic=UnreachableSystematicAction(),
-                    verified_trade_signal_refs=frozenset(),
-                )
-            ),
+            actions=ArtifactActionClient(),
         )
     )
     seed_ticks = tuple(seed.tick(NOW) for _ in range(6))

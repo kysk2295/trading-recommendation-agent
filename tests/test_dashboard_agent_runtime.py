@@ -73,7 +73,7 @@ def test_dashboard_readiness_comes_from_real_actor_cycles(tmp_path: Path) -> Non
         reason=None,
         continuation=None,
         evidence_refs=evidence.evidence_refs,
-        artifact_refs=(),
+        artifact_refs=(hashlib.sha256(b"dashboard-runtime-artifact").hexdigest(),),
         occurred_at=NOW,
         next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
         next_wake_at=None,

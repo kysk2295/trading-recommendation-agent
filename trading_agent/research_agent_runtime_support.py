@@ -97,6 +97,7 @@ def retry_evidence(item: ResearchAgentOpenWorkV1, now: dt.datetime) -> ResearchA
         available_at=now,
         market_id="none",
         canonical_payload=payload,
+        subject_refs=(item.work_id,),
     ).evidence()
 
 

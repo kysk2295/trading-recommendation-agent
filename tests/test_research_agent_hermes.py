@@ -32,7 +32,7 @@ def _result(family: AgentFamilyId) -> ResearchAgentResultV1:
         reason=None,
         continuation=None,
         evidence_refs=(hashlib.sha256(f"{family}:evidence".encode()).hexdigest(),),
-        artifact_refs=(),
+        artifact_refs=(hashlib.sha256(f"{family}:artifact".encode()).hexdigest(),),
         occurred_at=NOW,
         next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
         next_wake_at=None,

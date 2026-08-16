@@ -11,7 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
 from trading_agent.research_agent_actions import (
     InvalidResearchAgentActionError,
-    ResearchAgentActionExecutor,
+    ResearchAgentActionClient,
+    ResearchAgentActionContext,
 )
 from trading_agent.research_agent_configured_collector import ConfiguredResearchAgentEvidenceCollector
 from trading_agent.research_agent_cycle_models import (
@@ -59,7 +60,7 @@ class ResearchAgentRuntimeServices:
     store: ResearchAgentCycleStore
     collector: ResearchAgentEvidenceCollector
     decisions: ResearchAgentDecisionClient
-    actions: ResearchAgentActionExecutor
+    actions: ResearchAgentActionClient
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,8 +247,15 @@ class ResearchAgentRuntime:
             outcome = RuntimeCycleOutcome(cycle, stored.evidence, result, prior_failures, 1, len(recovered))
             self._persist(outcome)
             return _tick_result(outcome)
+        context = ResearchAgentActionContext(
+            cycle=cycle,
+            evidence=request.evidence,
+            open_work=request.open_work,
+            decision=decision,
+            observed_at=now,
+        )
         try:
-            result = self._actions.execute(cycle, decision)
+            result = self._actions.execute(context)
         except (InvalidResearchAgentActionError, InvalidSystematicResearchActionError) as error:
             result = runtime_failure_result(
                 RuntimeFailureContext(cycle, stored.evidence, error.reason, now, prior_failures)

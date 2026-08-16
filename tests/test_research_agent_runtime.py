@@ -9,7 +9,12 @@ from pathlib import Path
 import pytest
 
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
-from trading_agent.research_agent_actions import ResearchAgentActionConfig, ResearchAgentActionExecutor
+from trading_agent.research_agent_actions import (
+    ResearchAgentActionClient,
+    ResearchAgentActionConfig,
+    ResearchAgentActionContext,
+    ResearchAgentActionExecutor,
+)
 from trading_agent.research_agent_cycle_models import (
     DecisionId,
     EvidenceId,
@@ -17,9 +22,11 @@ from trading_agent.research_agent_cycle_models import (
     ResearchAgentDecisionKind,
     ResearchAgentDecisionV1,
     ResearchAgentEvidenceV1,
+    ResearchAgentResultStatus,
     ResearchAgentResultV1,
     ResearchAgentTriggerKind,
     ResearchAgentWakeKind,
+    research_agent_result_id,
 )
 from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
 from trading_agent.research_agent_decision import ResearchAgentDecisionRequest
@@ -39,17 +46,22 @@ NOW = dt.datetime(2026, 8, 2, 12, 0, tzinfo=dt.UTC)
 
 
 def _evidence(family: AgentFamilyId, sequence: int) -> ResearchAgentEvidenceV1:
-    digest = hashlib.sha256(f"{family}:{sequence}".encode()).hexdigest()
+    payload = f'{{"sequence":{sequence}}}'
+    digest = hashlib.sha256(payload.encode()).hexdigest()
+    identity = hashlib.sha256(f"{family}:{sequence}".encode()).hexdigest()
+    source_key = f"runtime.{family}.{sequence}"
     return ResearchAgentEvidenceV1(
-        evidence_id=EvidenceId(digest),
+        evidence_id=EvidenceId(identity),
         agent_family_id=family,
         trigger_kind=ResearchAgentTriggerKind.NEW_DATA,
-        source_key=f"runtime.{family}.{sequence}",
+        source_key=source_key,
         evidence_refs=(digest,),
         observed_at=NOW,
         available_at=NOW,
         payload_sha256=digest,
         market_id="none",
+        bounded_payload_json=payload,
+        subject_refs=(source_key,),
     )
 
 
@@ -82,6 +94,7 @@ class RecordingDecisionClient:
             reason=None,
             continuation=None,
             open_work_ref=None,
+            subject_refs=request.evidence[0].subject_refs,
             evidence_refs=tuple(sorted({ref for item in request.evidence for ref in item.evidence_refs})),
             decided_at=request.requested_at,
             next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
@@ -103,19 +116,64 @@ class UnreachableSystematicAction:
         raise AssertionError
 
 
+@dataclass(frozen=True, slots=True)
+class RecordingArtifactActionClient:
+    contexts: list[ResearchAgentActionContext]
+
+    def execute(self, context: ResearchAgentActionContext) -> ResearchAgentResultV1:
+        self.contexts.append(context)
+        return ResearchAgentResultV1(
+            result_id=research_agent_result_id(context.cycle.cycle_id),
+            cycle_id=context.cycle.cycle_id,
+            agent_family_id=context.cycle.agent_family_id,
+            market_id=context.cycle.market_id,
+            status=ResearchAgentResultStatus.COMPLETED,
+            question=context.decision.question,
+            summary="A deterministic fixture artifact was recorded for runtime contract testing.",
+            reason=None,
+            continuation=None,
+            evidence_refs=context.decision.evidence_refs,
+            artifact_refs=(context.evidence[0].payload_sha256,),
+            occurred_at=context.observed_at,
+            next_wake_kind=context.decision.next_wake_kind,
+            next_wake_at=context.decision.next_wake_at,
+        )
+
+
 def _runtime(
     path: Path,
     collector: StaticCollector,
     calls: list[AgentFamilyId],
+    actions: ResearchAgentActionClient | None = None,
 ) -> ResearchAgentRuntime:
     store = ResearchAgentCycleStore(path)
-    actions = ResearchAgentActionExecutor(
-        ResearchAgentActionConfig(
-            systematic=UnreachableSystematicAction(),
-            verified_trade_signal_refs=frozenset(),
-        )
+    action_client = actions or RecordingArtifactActionClient([])
+    return ResearchAgentRuntime(
+        ResearchAgentRuntimeServices(store, collector, RecordingDecisionClient(calls), action_client)
     )
-    return ResearchAgentRuntime(ResearchAgentRuntimeServices(store, collector, RecordingDecisionClient(calls), actions))
+
+
+def _production_actions() -> ResearchAgentActionExecutor:
+    return ResearchAgentActionExecutor(ResearchAgentActionConfig(systematic=UnreachableSystematicAction()))
+
+
+def test_runtime_passes_evidence_subjects_and_observation_time_to_action(tmp_path: Path) -> None:
+    contexts: list[ResearchAgentActionContext] = []
+    runtime = _runtime(
+        tmp_path / "cycles.sqlite3",
+        EMPTY_COLLECTOR,
+        [],
+        RecordingArtifactActionClient(contexts),
+    )
+    runtime.ingest((_evidence("swing_trading", 1),))
+
+    tick = runtime.tick(NOW + dt.timedelta(minutes=2))
+    runtime.close()
+
+    assert tick.status == "completed"
+    assert contexts[0].evidence[0].bounded_payload_json == '{"sequence":1}'
+    assert contexts[0].decision.subject_refs == contexts[0].evidence[0].subject_refs
+    assert contexts[0].observed_at == NOW + dt.timedelta(minutes=2)
 
 
 def test_idle_ticks_do_not_call_the_model(tmp_path: Path) -> None:
@@ -294,7 +352,7 @@ def test_research_blocked_evidence_keeps_the_normal_decision_path(tmp_path: Path
     # Given: a Research-family source admitted explicit blocked evidence.
     calls: list[AgentFamilyId] = []
     evidence = _evidence("swing_trading", 1).model_copy(update={"source_key": "swing.blocked.shadow_evidence_empty"})
-    runtime = _runtime(tmp_path / "cycles.sqlite3", EMPTY_COLLECTOR, calls)
+    runtime = _runtime(tmp_path / "cycles.sqlite3", EMPTY_COLLECTOR, calls, _production_actions())
     runtime.ingest((evidence,))
 
     # When: the runtime evaluates that evidence.
@@ -302,10 +360,10 @@ def test_research_blocked_evidence_keeps_the_normal_decision_path(tmp_path: Path
     stored = runtime.store.results()
     runtime.close()
 
-    # Then: the established model/action path remains serviceable.
-    assert tick.status == "completed"
+    assert tick.status == "failed"
     assert tick.model_calls == 1
-    assert len(stored[0].artifact_refs) == 2
+    assert stored[0].reason == "prose_only_result"
+    assert stored[0].artifact_refs == ()
     assert calls == ["swing_trading"]
 
 

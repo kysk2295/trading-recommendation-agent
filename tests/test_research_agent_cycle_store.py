@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import json
 import os
 import sqlite3
 from pathlib import Path
@@ -109,6 +110,31 @@ def test_evidence_identity_is_idempotent_but_conflicts_fail_closed(tmp_path: Pat
 
         with pytest.raises(InvalidResearchAgentCycleStoreError, match="evidence_identity_conflict"):
             store.append_evidence(conflict)
+
+
+def test_store_reads_legacy_hash_only_evidence(tmp_path: Path) -> None:
+    path = tmp_path / "cycles.sqlite3"
+    with ResearchAgentCycleStore(path):
+        pass
+    evidence = _evidence("market_context", 1)
+    payload = evidence.model_dump(mode="json")
+    for key in ("bounded_payload_json", "payload_truncated", "subject_refs"):
+        del payload[key]
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "INSERT INTO evidence(evidence_id,agent_family_id,available_at,payload_json) VALUES(?,?,?,?)",
+            (
+                evidence.evidence_id,
+                evidence.agent_family_id,
+                evidence.available_at.isoformat(),
+                json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+            ),
+        )
+    with ResearchAgentCycleStore(path) as store:
+        restored = store.runnable_evidence("market_context", NOW)[0].evidence
+
+    assert restored.bounded_payload_json is None
+    assert restored.subject_refs == ()
 
 
 def test_store_is_private_rejects_symlink_and_holds_one_writer_lease(tmp_path: Path) -> None:

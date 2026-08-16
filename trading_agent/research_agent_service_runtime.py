@@ -280,9 +280,7 @@ def service_status(
 def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRuntime:
     _prepare_private_runtime_paths(config)
     systematic = SystematicResearchActionExecutor(config.systematic)
-    actions = ResearchAgentActionExecutor(
-        ResearchAgentActionConfig(systematic=systematic, verified_trade_signal_refs=frozenset())
-    )
+    actions = ResearchAgentActionExecutor(ResearchAgentActionConfig(systematic=systematic))
     services = ResearchAgentRuntimeServices(
         store=ResearchAgentCycleStore(config.cycle_database),
         collector=ConfiguredResearchAgentEvidenceCollector(config.source_paths),

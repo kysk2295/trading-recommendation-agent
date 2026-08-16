@@ -82,7 +82,7 @@ def seed_cycles(path: Path, families: tuple[AgentFamilyId, ...], evidence_at: dt
                     reason=None,
                     continuation=None,
                     evidence_refs=(digest,),
-                    artifact_refs=(),
+                    artifact_refs=(hashlib.sha256(f"{family}:{index}:artifact".encode()).hexdigest(),),
                     occurred_at=evidence_at + dt.timedelta(seconds=1),
                     next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
                     next_wake_at=None,
