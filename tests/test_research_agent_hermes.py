@@ -89,7 +89,8 @@ def test_known_result_ids_are_not_rerendered(tmp_path: Path) -> None:
     assert HermesDeliveryReader(store.path).events() == ()
 
 
-def test_shipped_no_action_result_projects_after_store_validation(tmp_path: Path) -> None:
+def test_non_completed_results_remain_audited_without_delivery_projection(tmp_path: Path) -> None:
+    # Given persisted no-action and failed outcomes that remain valid audit records.
     current = _result("market_context").model_copy(
         update={
             "artifact_refs": (),
@@ -102,17 +103,22 @@ def test_shipped_no_action_result_projects_after_store_validation(tmp_path: Path
     payload["artifact_refs"] = ["b" * 64]
     del payload["decision_kind"]
     shipped = result_from_payload(json.dumps(payload))
+    failed = _result("derivatives_research").model_copy(
+        update={
+            "artifact_refs": (),
+            "reason": "options_collection_failed",
+            "status": ResearchAgentResultStatus.FAILED,
+        }
+    )
     store = HermesDeliveryStore(tmp_path / "delivery.sqlite3")
 
+    # When the audit outcomes are considered for Hermes delivery.
     with store.writer() as writer:
-        projected = project_research_agent_results((shipped,), writer)
+        projected = project_research_agent_results((shipped, failed), writer)
 
-    event = HermesDeliveryReader(store.path).events()[0]
-    assert projected.inserted == 1
-    assert event.status == "no_action"
-    assert event.payload_sha256 == hashlib.sha256(
-        shipped.model_dump_json(exclude_unset=True).encode()
-    ).hexdigest()
+    # Then neither outcome becomes an outbound notification.
+    assert projected.examined == projected.inserted == projected.replayed == 0
+    assert HermesDeliveryReader(store.path).events() == ()
 
 
 def test_primary_results_render_resolved_artifact_rows(tmp_path: Path) -> None:

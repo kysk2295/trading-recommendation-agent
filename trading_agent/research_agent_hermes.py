@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Final
+from typing import Final, assert_never
 
 from trading_agent.dashboard_outbound_redaction import redact_outbound_text, require_safe_outbound_text
 from trading_agent.hermes_delivery_models import HermesDeliveryKind
@@ -11,7 +11,11 @@ from trading_agent.hermes_delivery_projection import (
     project_outcomes,
 )
 from trading_agent.hermes_delivery_store import HermesDeliveryWriter
-from trading_agent.research_agent_cycle_models import ResearchAgentEvidenceV1, ResearchAgentResultV1
+from trading_agent.research_agent_cycle_models import (
+    ResearchAgentEvidenceV1,
+    ResearchAgentResultStatus,
+    ResearchAgentResultV1,
+)
 
 _NO_PROJECTED_RESULT_IDS: Final[frozenset[str]] = frozenset()
 
@@ -23,12 +27,22 @@ def project_research_agent_results(
     evidence: tuple[ResearchAgentEvidenceV1, ...] = (),
     projected_result_ids: frozenset[str] = _NO_PROJECTED_RESULT_IDS,
 ) -> HermesProjectionResult:
-    records = tuple(
-        _projection_record(result, evidence)
-        for result in results
-        if result.result_id not in projected_result_ids
-    )
-    return project_outcomes(records, writer)
+    records: list[HermesProjectionRecord] = []
+    for result in results:
+        if result.result_id in projected_result_ids:
+            continue
+        match result.status:
+            case ResearchAgentResultStatus.COMPLETED:
+                records.append(_projection_record(result, evidence))
+            case (
+                ResearchAgentResultStatus.NO_ACTION
+                | ResearchAgentResultStatus.FAILED
+                | ResearchAgentResultStatus.BLOCKED
+            ):
+                continue
+            case unreachable:
+                assert_never(unreachable)
+    return project_outcomes(tuple(records), writer)
 
 
 def render_research_agent_result(

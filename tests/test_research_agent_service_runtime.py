@@ -129,7 +129,9 @@ def test_idle_service_tick_reports_zero_model_and_broker_mutations(
     assert sum(tick.status == "completed" for tick in seed_ticks) == 3
     qa_time = NOW + dt.timedelta(minutes=2, seconds=30)
     assert seed.tick(qa_time).status == "idle"
-    seeded_results = len(seed.store.results())
+    completed_results = sum(
+        result.status is ResearchAgentResultStatus.COMPLETED for result in seed.store.results()
+    )
     seed.close()
     config_path = (tmp_path / "private" / "runtime.json").absolute()
     assert write_research_agent_service_config(config_path, config)
@@ -143,7 +145,7 @@ def test_idle_service_tick_reports_zero_model_and_broker_mutations(
     assert '"status":"idle"' in captured
     assert '"model_calls":0' in captured
     assert '"broker_mutation":0' in captured
-    assert f'"projected_results":{seeded_results}' in captured
+    assert f'"projected_results":{completed_results}' in captured
 
 
 def test_cycle_cli_runs_one_canonical_family_pass_and_replay_is_idle(
