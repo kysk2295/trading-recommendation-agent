@@ -135,7 +135,7 @@ def _request_pair(
             expiration_date=plan.expiration_date,
             contract_type=contract_type,
             limit=100,
-            max_pages=2,
+            max_pages=3,
         ),
         OptionChainRequest(
             collection_id=f"indicative-chain-{identity}",

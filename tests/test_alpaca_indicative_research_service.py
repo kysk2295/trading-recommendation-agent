@@ -23,10 +23,14 @@ from trading_agent.alpaca_option_chain_models import (
     OptionChainRequest,
     OptionContractType,
 )
+from trading_agent.alpaca_option_contract_collection import collect_alpaca_option_contracts
 from trading_agent.alpaca_option_contract_models import (
+    OptionCatalogFailure,
+    OptionCatalogStatus,
     OptionContractCatalogRequest,
     OptionContractRawResponse,
 )
+from trading_agent.alpaca_option_contract_store import AlpacaOptionContractStore
 
 PROJECT = Path(__file__).parents[1]
 FIXTURES = PROJECT / "tests" / "fixtures"
@@ -67,6 +71,41 @@ class _FixtureCatalogFetcher:
                 .replace(b'"type":"call"', b'"type":"put"')
                 .replace(b"200 Call", b"200 Put")
             )
+        return OptionContractRawResponse(
+            request.request_id,
+            page_index,
+            page_token,
+            dt.datetime(2026, 7, 23, 14, 35, tzinfo=dt.UTC),
+            200,
+            "application/json",
+            payload,
+        )
+
+
+class _ThreePageCatalogFetcher:
+    def fetch_page(
+        self,
+        request: OptionContractCatalogRequest,
+        page_index: int,
+        page_token: str | None,
+    ) -> OptionContractRawResponse:
+        replacements = (
+            (b"6e58f870-fe73-4583-81e4-b9a37892c36f", b"00200000", b"200 Call", b'"200"'),
+            (b"6e58f870-fe73-4583-81e4-b9a37892c370", b"00201000", b"201 Call", b'"201"'),
+            (b"6e58f870-fe73-4583-81e4-b9a37892c371", b"00202000", b"202 Call", b'"202"'),
+        )
+        identifier, strike_code, name, strike = replacements[page_index]
+        payload = (FIXTURES / "alpaca_option_contract" / "page-001.json").read_bytes()
+        payload = (
+            payload.replace(b"6e58f870-fe73-4583-81e4-b9a37892c36f", identifier)
+            .replace(b"00200000", strike_code)
+            .replace(b"200 Call", name)
+            .replace(b'"strike_price":"200"', b'"strike_price":' + strike)
+        )
+        next_token = (b'"page_token":"page-2"', b'"page_token":"page-3"', b'"page_token":null')[
+            page_index
+        ]
+        payload = payload.replace(b'"page_token":null', next_token)
         return OptionContractRawResponse(
             request.request_id,
             page_index,
@@ -124,8 +163,37 @@ def test_fixture_collection_persists_both_sides_once_and_replays_without_fetcher
         OptionContractType.CALL,
         OptionContractType.PUT,
     )
+    assert all(pair[0].max_pages == 3 for pair in request_pairs)
+    assert all(pair[1].max_pages == 2 for pair in request_pairs)
     assert stat.S_IMODE((outputs / "derivatives" / "option-chain.sqlite3").stat().st_mode) == 0o600
     assert stat.S_IMODE((outputs / "derivatives" / "option-contracts.sqlite3").stat().st_mode) == 0o600
+
+
+def test_three_page_budget_recovers_without_overwriting_failed_request(tmp_path: Path) -> None:
+    # Given the same catalog identity with an exhausted two-page request and a new three-page request.
+    plan = IndicativeResearchPlan(
+        session_date=dt.date(2026, 7, 23),
+        expiration_date=dt.date(2026, 7, 24),
+        underlying_symbol="AAPL",
+    )
+    request = indicative_research_requests(plan)[0][0]
+    exhausted_request = request.model_copy(update={"max_pages": 2})
+    store = AlpacaOptionContractStore(tmp_path / "option-contracts.sqlite3")
+    store.preflight_write()
+
+    # When both bounded requests consume provider pages from the same append-only store.
+    exhausted = collect_alpaca_option_contracts(_ThreePageCatalogFetcher(), store, exhausted_request)
+    recovered = collect_alpaca_option_contracts(_ThreePageCatalogFetcher(), store, request)
+
+    # Then the old failure remains and the larger request completes under a distinct identity.
+    assert exhausted_request.request_id != request.request_id
+    assert exhausted.run.status is OptionCatalogStatus.FAILED
+    assert exhausted.run.failure_code is OptionCatalogFailure.PAGE_LIMIT
+    assert len(exhausted.run.receipt_ids) == len(exhausted.run.contracts) == 2
+    assert recovered.run.status is OptionCatalogStatus.SUCCESS
+    assert recovered.run.failure_code is None
+    assert len(recovered.run.receipt_ids) == len(recovered.run.contracts) == 3
+    assert store.run(exhausted_request.request_id) == exhausted.run
 
 
 def test_provision_is_secret_free_and_tick_waits_without_credentials(tmp_path: Path) -> None:
