@@ -66,7 +66,11 @@ def build_methodology_observation(input_: MethodologyObservationInput) -> Method
         raise MethodologyPolicyError(f"{input_.agent_id.value}_source_mutable:{mutable.authority}")
     freshness = dict(policy.freshness_by_authority)
     stale = next(
-        (item for item in input_.source_receipts if input_.observed_at - item.as_of > freshness[item.authority]),
+        (
+            item
+            for item in input_.source_receipts
+            if not item.wiring_only and input_.observed_at - item.as_of > freshness[item.authority]
+        ),
         None,
     )
     if stale is not None:

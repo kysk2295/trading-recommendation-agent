@@ -176,3 +176,15 @@ def test_source_hypothesis_sink_preregisters_and_queues_future_maturity(tmp_path
     assert work.maturity_at == artifact.hypothesis.target_matures_at
     assert work.experiment is None
     assert len(ExperimentLedgerReader(ledger.path).strategy_research_preregistrations()) == 1
+
+
+def test_source_hypothesis_replay_is_stable_across_runtime_retry_time(tmp_path: Path) -> None:
+    with _source_store(tmp_path) as store:
+        opportunity = _append_sources(store)
+        creator = _creator(store)
+
+        first = creator.create_routed(opportunity.evidence_id, NOW)
+        replay = creator.create_routed(opportunity.evidence_id, NOW + dt.timedelta(seconds=10))
+
+    assert replay.observation == first.observation
+    assert replay.hypothesis == first.hypothesis

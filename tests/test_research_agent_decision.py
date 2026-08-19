@@ -276,6 +276,7 @@ def test_claude_cli_client_returns_schema_validated_decision(
         b"#!/bin/sh\n"
         b"[ -n \"$USER\" ] && [ -n \"$TMPDIR\" ] && [ -z \"$ANTHROPIC_API_KEY\" ] || exit 41\n"
         b"[ \"$1\" = \"-p\" ] && [ \"$7\" = \"--model\" ] && [ \"$8\" = \"haiku\" ] || exit 42\n"
+        b"[ \"$9\" = \"--max-budget-usd\" ] && [ \"${10}\" = \"0.05\" ] || exit 44\n"
         b"[ \"${13}\" = \"--output-format\" ] && [ \"${14}\" = \"json\" ] || exit 43\n"
         b"printf '%s' '" + wrapper + b"'\n"
     )

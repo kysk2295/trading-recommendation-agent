@@ -80,7 +80,6 @@ class StrategyResearchHypothesisFactory:
             owner,
             candidate,
             context,
-            request.observed_at,
         )
         try:
             methodology_observation = build_methodology_observation(
@@ -104,7 +103,7 @@ class StrategyResearchHypothesisFactory:
         observation = EvidenceObservation(
             observation_id=observation_id,
             owner_agent_id=owner,
-            observed_at=request.observed_at,
+            observed_at=predictor_observed_at,
             as_of=min(item.as_of for item in source_refs),
             universe_definition=(
                 "point-in-time eligible KR equities in the immutable opportunity snapshot"
@@ -143,7 +142,6 @@ def _legacy_momentum_receipts(
     owner: ResearchAgentId,
     candidate: SourceBoundCandidate,
     context: SourceBoundMarketContext,
-    observed_at: dt.datetime,
 ) -> tuple[SourceAuthorityReceipt, ...]:
     if owner is not ResearchAgentId.INTRADAY_MOMENTUM:
         raise StrategyResearchEvidenceRejected(f"{owner.value}_source_receipt_missing")
@@ -167,8 +165,9 @@ def _legacy_momentum_receipts(
         SourceAuthorityReceipt(
             "current_market_session",
             context.source_ref.source_id,
-            observed_at,
-            observed_at,
+            context.source_ref.as_of,
+            context.source_ref.available_at,
+            True,
             True,
             True,
         ),

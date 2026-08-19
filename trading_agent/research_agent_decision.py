@@ -34,7 +34,7 @@ _MAX_RESPONSE_BYTES: Final = 64 * 1024
 _MAX_PROMPT_EVIDENCE_BYTES: Final = 48 * 1024
 _MODEL_ID: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{2,127}$")
 _PROVIDER_ID: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,127}$")
-_CLAUDE_MAX_BUDGET_USD: Final = "0.03"
+_CLAUDE_MAX_BUDGET_USD: Final = "0.05"
 _FAMILY_DEFINITIONS: Final = {definition.family_id: definition for definition in AGENT_FAMILY_REGISTRY}
 _FAMILY_DECISIONS: Final[dict[AgentFamilyId, tuple[ResearchAgentDecisionKind, ...]]] = {
     "opportunity_manager": (
