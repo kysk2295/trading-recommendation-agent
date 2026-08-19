@@ -96,7 +96,8 @@ class ResearchAgentActionExecutor:
                     raise InvalidResearchAgentActionError(reason="action_not_configured")
                 return self._config.market_context.execute(context)
             case (
-                ResearchAgentDecisionKind.PUBLISH_RECOMMENDATION
+                ResearchAgentDecisionKind.PROPOSE_HYPOTHESIS
+                | ResearchAgentDecisionKind.PUBLISH_RECOMMENDATION
                 | ResearchAgentDecisionKind.REVIEW_OPEN_STATE
             ) if cycle.agent_family_id == "day_trading":
                 if self._config.day is None:

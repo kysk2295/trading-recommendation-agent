@@ -43,6 +43,7 @@ _FAMILY_DECISIONS: Final[dict[AgentFamilyId, tuple[ResearchAgentDecisionKind, ..
     ),
     "day_trading": (
         ResearchAgentDecisionKind.NO_ACTION,
+        ResearchAgentDecisionKind.PROPOSE_HYPOTHESIS,
         ResearchAgentDecisionKind.PUBLISH_RECOMMENDATION,
         ResearchAgentDecisionKind.REVIEW_OPEN_STATE,
     ),
@@ -304,12 +305,16 @@ class HermesCliResearchAgentDecisionClient:
 def render_research_agent_prompt(request: ResearchAgentDecisionRequest) -> str:
     definition = _FAMILY_DEFINITIONS[request.agent_family_id]
     allowed_decisions = ",".join(kind.value for kind in _FAMILY_DECISIONS[request.agent_family_id])
-    family_instruction = (
-        " A non-blocked opportunity already passed source, completed-bar, spread, and session admission; "
-        "use propose_hypothesis to create a falsifiable research protocol, not a trade recommendation."
-        if request.agent_family_id == "opportunity_manager"
-        else ""
-    )
+    family_instruction = {
+        "opportunity_manager": (
+            " A non-blocked opportunity already passed source, completed-bar, spread, and session admission; "
+            "use propose_hypothesis to create a falsifiable research protocol, not a trade recommendation."
+        ),
+        "day_trading": (
+            " Use bounded point-in-time Day evidence to request one falsifiable hypothesis proposal; "
+            "never specify provider, broker, order, sizing, risk, or trading authority."
+        ),
+    }.get(request.agent_family_id, "")
     evidence: list[dict[str, object]] = []
     payload_bytes = 0
     for item in request.evidence:

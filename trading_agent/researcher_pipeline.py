@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import assert_never, override
@@ -82,14 +83,24 @@ class ResearcherPipeline:
     stores: ResearcherPipelineStores
     artifacts: ResearcherPipelineArtifacts
 
+    def propose_candidate(
+        self,
+        context: ResearcherContext,
+        supplemental_critic: Callable[[ProposedHypothesis], CritiqueReport] | None = None,
+    ) -> tuple[ProposedHypothesis, CritiqueReport]:
+        proposal = self.services.generator.propose(context)
+        base = self.services.critic.critique(proposal, self.stores.ledger)
+        supplemental = CritiqueReport(()) if supplemental_critic is None else supplemental_critic(proposal)
+        critique = CritiqueReport(base.objections + supplemental.objections)
+        _ = self.stores.receipts.record_critique(proposal, critique)
+        return proposal, critique
+
     def run(self, context: ResearcherContext, *, max_attempts: int) -> ResearcherPipelineResult:
         if max_attempts < 1 or max_attempts > 3:
             raise ResearcherPipelineError
         critiques: list[CritiqueReport] = []
         for _ in range(max_attempts):
-            proposal = self.services.generator.propose(context)
-            critique = self.services.critic.critique(proposal, self.stores.ledger)
-            _ = self.stores.receipts.record_critique(proposal, critique)
+            proposal, critique = self.propose_candidate(context)
             critiques.append(critique)
             if not critique.is_blocked:
                 strategy_artifact = self.stores.strategies.publish(proposal)

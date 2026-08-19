@@ -9,15 +9,29 @@ from typing import Literal, assert_never
 import anyio
 from pydantic import BaseModel, ConfigDict, Field
 
+from trading_agent.critic_agent import DeterministicHypothesisCritic
 from trading_agent.dashboard_agent_cycle_runtime import read_cycle_runtime_observations
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
+from trading_agent.day_discovery_loop import (
+    DayDiscoveryActionExecutor,
+    DayDiscoveryLoop,
+    DayDiscoveryLoopConfig,
+)
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
+from trading_agent.generated_strategy_artifact import GeneratedStrategyArtifactStore
+from trading_agent.generated_strategy_execution import GeneratedStrategyLimits
+from trading_agent.generated_strategy_runtime import resolve_generated_strategy_runtime
+from trading_agent.generated_strategy_sandbox import GeneratedStrategySandbox
 from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.hermes_delivery_reader import HermesDeliveryReader
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.private_directory_identity import open_private_parent, require_private_directory
 from trading_agent.private_stable_report import write_private_stable_report
-from trading_agent.research_agent_actions import ResearchAgentActionConfig, ResearchAgentActionExecutor
+from trading_agent.research_agent_actions import (
+    ResearchAgentActionConfig,
+    ResearchAgentActionContext,
+    ResearchAgentActionExecutor,
+)
 from trading_agent.research_agent_cycle_models import (
     ResearchAgentCycleState,
     ResearchAgentCycleV1,
@@ -64,7 +78,22 @@ from trading_agent.research_agent_systematic_input_models import (
 from trading_agent.research_agent_systematic_input_store import (
     load_systematic_input_activation,
 )
-from trading_agent.researcher_pipeline import build_source_hypothesis_factory
+from trading_agent.research_identity_models import MarketId
+from trading_agent.researcher_llm import (
+    FixtureLlmProposalClient,
+    HermesCliProposalClient,
+    StructuredHypothesisGenerator,
+    load_researcher_context_input,
+)
+from trading_agent.researcher_pipeline import (
+    ResearcherPipeline,
+    ResearcherPipelineArtifacts,
+    ResearcherPipelineServices,
+    ResearcherPipelineStores,
+    build_researcher_context,
+    build_source_hypothesis_factory,
+)
+from trading_agent.researcher_receipt_store import ResearcherReceiptStore
 from trading_agent.strategy_research_work_sink import PrivateStrategyResearchWorkSink
 
 
@@ -78,6 +107,42 @@ class ResearchAgentFamilyRuntimeReport(BaseModel):
     result_status: ResearchAgentResultStatus | None
     next_wake_kind: ResearchAgentWakeKind | None
     next_wake_at: dt.datetime | None
+
+
+class DayDiscoveryMarketRuntimeReport(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    market_id: MarketId
+    cursor: str | None
+    terminal_failure: str | None
+
+
+def day_discovery_market_runtime(
+    ledger: ExperimentLedgerStore,
+) -> tuple[DayDiscoveryMarketRuntimeReport, ...]:
+    reader = ledger.reader()
+    reports: list[DayDiscoveryMarketRuntimeReport] = []
+    for market in MarketId:
+        versions = reader.day_hypothesis_versions(market_id=market)
+        latest = max(versions, key=lambda item: item.version.created_at, default=None)
+        attempts = (
+            ()
+            if latest is None
+            else reader.day_attempts_for_review(market, latest.version.hypothesis_version_id)
+        )
+        terminal = max(
+            attempts,
+            key=lambda item: item.attempt.finished_at or item.attempt.started_at,
+            default=None,
+        )
+        reports.append(
+            DayDiscoveryMarketRuntimeReport(
+                market_id=market,
+                cursor=None if latest is None else latest.version.hypothesis_version_id,
+                terminal_failure=None if terminal is None else terminal.attempt.error_class,
+            )
+        )
+    return tuple(reports)
 
 
 class ResearchAgentServiceReport(BaseModel):
@@ -306,7 +371,10 @@ def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRu
         ),
     )
     context = MarketContextResearchActionExecutor(store.results)
-    day = DayResearchActionExecutor(config.source_paths.day_session_root)
+    day = DayResearchActionExecutor(
+        config.source_paths.day_session_root,
+        discovery=_ConfiguredDayDiscoveryAction(config),
+    )
     swing = SwingResearchActionExecutor(config.source_paths.swing_shadow_database)
     derivatives = DerivativesResearchActionExecutor(store.results)
     actions = ResearchAgentActionExecutor(
@@ -329,6 +397,55 @@ def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRu
         actions=actions,
     )
     return ResearchAgentRuntime(services)
+
+
+def _day_discovery_executor(
+    config: ResearchAgentServiceConfig, called_at: dt.datetime
+) -> DayDiscoveryActionExecutor:
+    systematic = config.systematic
+    receipts = ResearcherReceiptStore(systematic.receipt_root)
+    ledger = ExperimentLedgerStore(config.source_paths.experiment_ledger)
+    if systematic.response_fixture is not None:
+        proposal_client = FixtureLlmProposalClient(systematic.response_fixture.read_bytes())
+    elif systematic.hermes_executable is not None:
+        proposal_client = HermesCliProposalClient(
+            systematic.hermes_executable, systematic.model_id, systematic.provider_id
+        )
+    else:
+        raise InvalidResearchAgentServiceRuntimeError
+    runtime = resolve_generated_strategy_runtime(systematic.python_executable)
+    strategies = GeneratedStrategyArtifactStore(systematic.strategy_root, runtime)
+    pipeline = ResearcherPipeline(
+        ResearcherPipelineServices(
+            StructuredHypothesisGenerator(
+                proposal_client, receipts, lambda: called_at
+            ),
+            DeterministicHypothesisCritic(max_free_parameters=4),
+        ),
+        ResearcherPipelineStores(ledger, receipts, strategies),
+        ResearcherPipelineArtifacts(systematic.manifest_root, systematic.queue_root),
+    )
+    source = load_researcher_context_input(systematic.context)
+    return DayDiscoveryActionExecutor(
+        DayDiscoveryLoop(
+            DayDiscoveryLoopConfig(
+                pipeline,
+                GeneratedStrategySandbox(
+                    runtime, systematic.strategy_root / "day-sandbox", GeneratedStrategyLimits()
+                ),
+                3,
+            )
+        ),
+        build_researcher_context(source, ledger.reader()),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _ConfiguredDayDiscoveryAction:
+    config: ResearchAgentServiceConfig
+
+    def execute(self, context: ResearchAgentActionContext) -> ResearchAgentResultV1:
+        return _day_discovery_executor(self.config, context.observed_at).execute(context)
 
 
 def _decision_client(config: ResearchAgentServiceConfig) -> ResearchAgentDecisionClient:

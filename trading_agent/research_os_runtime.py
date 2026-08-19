@@ -15,8 +15,10 @@ from trading_agent.private_stable_report import write_private_stable_report
 from trading_agent.research_agent_runtime_lease import research_agent_runtime_lease
 from trading_agent.research_agent_service_config import ResearchAgentServiceConfig
 from trading_agent.research_agent_service_runtime import (
+    DayDiscoveryMarketRuntimeReport,
     InvalidResearchAgentServiceRuntimeError,
     ResearchAgentServiceReport,
+    day_discovery_market_runtime,
     run_service_tick,
 )
 from trading_agent.strategy_research_close_report import project_strategy_research_close_report
@@ -35,6 +37,7 @@ class ResearchOsRuntimeReport(BaseModel):
     operation: Literal["tick", "run"]
     role_agents: ResearchAgentServiceReport
     strategy_research: StrategyResearchRuntimeStatus
+    day_discovery_markets: tuple[DayDiscoveryMarketRuntimeReport, ...] = ()
     daily_reports_projected: int = Field(default=0, ge=0)
     daily_reports_replayed: int = Field(default=0, ge=0)
     observed_at: dt.datetime
@@ -70,6 +73,7 @@ def run_research_os_tick(
         operation=operation,
         role_agents=run_service_tick(config, now),
         strategy_research=research,
+        day_discovery_markets=day_discovery_market_runtime(ledger),
         daily_reports_projected=daily.inserted,
         daily_reports_replayed=daily.replayed,
         observed_at=now,

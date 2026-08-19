@@ -68,8 +68,9 @@ class LlmHypothesisDraft(BaseModel):
     counterfactual_baseline: str = Field(min_length=1, max_length=4_096)
     strategy_source: str = Field(min_length=1, max_length=64 * 1024)
     free_parameters: tuple[str, ...]
+    methodology_tags: tuple[str, ...] = ()
 
-    @field_validator("cited_source_ids", "free_parameters", mode="after")
+    @field_validator("cited_source_ids", "free_parameters", "methodology_tags", mode="after")
     @classmethod
     def canonicalize_sets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(sorted(set(value)))
@@ -211,6 +212,7 @@ class StructuredHypothesisGenerator:
                 strategy_draft=CandidateStrategyDraft(
                     source_code=draft.strategy_source,
                     free_parameters=draft.free_parameters,
+                    methodology_tags=draft.methodology_tags,
                 ),
             )
         except (KeyError, ResearcherLlmError, TypeError, ValidationError, ValueError) as error:

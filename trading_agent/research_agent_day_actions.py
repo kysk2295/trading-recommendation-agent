@@ -10,7 +10,11 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from trading_agent.research_agent_actions import InvalidResearchAgentActionError, ResearchAgentActionContext
+from trading_agent.research_agent_actions import (
+    InvalidResearchAgentActionError,
+    ResearchAgentActionClient,
+    ResearchAgentActionContext,
+)
 from trading_agent.research_agent_cycle_models import (
     ResearchAgentDecisionKind,
     ResearchAgentResultStatus,
@@ -65,11 +69,16 @@ class DayEvidenceArtifact(BaseModel):
 @dataclass(frozen=True, slots=True)
 class DayResearchActionExecutor:
     day_session_root: Path
+    discovery: ResearchAgentActionClient | None = None
 
     def execute(self, context: ResearchAgentActionContext) -> ResearchAgentResultV1:
         if context.cycle.agent_family_id != "day_trading":
             raise InvalidResearchAgentActionError(reason="action_family_identity_mismatch")
         decision = context.decision.primary_decision
+        if decision is ResearchAgentDecisionKind.PROPOSE_HYPOTHESIS:
+            if self.discovery is None:
+                raise InvalidResearchAgentActionError(reason="action_not_configured")
+            return self.discovery.execute(context)
         if decision not in {
             ResearchAgentDecisionKind.PUBLISH_RECOMMENDATION,
             ResearchAgentDecisionKind.REVIEW_OPEN_STATE,

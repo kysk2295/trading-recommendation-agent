@@ -39,6 +39,7 @@ class LlmCallReceipt:
 class CandidateStrategyDraft:
     source_code: str
     free_parameters: tuple[str, ...]
+    methodology_tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import sqlite3
 from pathlib import Path
 from typing import Protocol, assert_never, final
@@ -8,6 +9,11 @@ from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
+from trading_agent.day_discovery_loop import (
+    DayDiscoveryEvidenceView,
+    DayDiscoveryTriggerKind,
+    sanitize_day_discovery_feedback,
+)
 from trading_agent.hermes_delivery_projection import (
     InvalidHermesProjectionSourceError,
     read_opportunity_snapshots,
@@ -174,6 +180,11 @@ class DaySourceAdapter:
         sessions = _latest_session_directories(paths.day_session_root)
         if not sessions:
             return _blocked_day(session_failure or "source_pair_unavailable", now)
+        discovery = _latest_session_artifact(
+            paths.day_session_root, "day-discovery-evidence.v1.json"
+        )
+        if discovery is not None:
+            return (_day_discovery_evidence(discovery, now),)
         session = next(
             (
                 candidate
@@ -239,6 +250,41 @@ def _latest_session_directories(root: Path) -> tuple[Path, ...]:
 def _latest_session_artifact(root: Path, name: str) -> Path | None:
     artifacts = tuple(session / name for session in _latest_session_directories(root) if (session / name).exists())
     return None if not artifacts else artifacts[-1]
+
+
+def _day_discovery_evidence(path: Path, now: dt.datetime) -> ResearchAgentEvidenceV1:
+    try:
+        require_private_source_file(path)
+        raw = path.read_text(encoding="utf-8")
+        view = DayDiscoveryEvidenceView.model_validate_json(raw)
+        if not _session_is_current(path.parent, now, view.market_id):
+            raise InvalidResearchAgentSourceError(reason="day_discovery_source_not_current")
+        payload = canonical_model_json(view)
+        if raw != payload:
+            raise InvalidResearchAgentSourceError(reason="day_discovery_source_noncanonical")
+        payload_sha256 = hashlib.sha256(payload.encode()).hexdigest()
+        trigger = {
+            DayDiscoveryTriggerKind.COMPLETED_BAR: ResearchAgentTriggerKind.NEW_DATA,
+            DayDiscoveryTriggerKind.POINT_IN_TIME_EVIDENCE: ResearchAgentTriggerKind.NEW_DATA,
+            DayDiscoveryTriggerKind.TERMINAL_EVENT: ResearchAgentTriggerKind.EXPERIMENT_RESULT,
+            DayDiscoveryTriggerKind.REVIEW_CLOSE: ResearchAgentTriggerKind.REVIEWER_FEEDBACK,
+            DayDiscoveryTriggerKind.EXPLORATION_DUE: ResearchAgentTriggerKind.SCHEDULED_WAKE,
+        }[view.trigger_kind]
+        source_key = f"day.discovery.{view.market_id.value}.{payload_sha256[:24]}"
+        return ResearchAgentEvidenceMaterial(
+            family="day_trading",
+            trigger=trigger,
+            source_key=source_key,
+            observed_at=view.observed_at,
+            available_at=max(view.observed_at, now),
+            market_id=view.market_id.value,
+            canonical_payload=payload,
+            subject_refs=(source_key,),
+        ).evidence()
+    except InvalidResearchAgentSourceError:
+        raise
+    except (OSError, UnicodeError, ValidationError, ValueError):
+        raise InvalidResearchAgentSourceError(reason="day_discovery_source_invalid") from None
 
 
 def _session_is_current(session: Path, now: dt.datetime, market_id: MarketId) -> bool:
@@ -312,9 +358,14 @@ def _blocked(
     return (capability_evidence(spec, now),)
 
 
+def bounded_day_discovery_feedback(payload: dict[str, object]) -> str:
+    return canonical_model_json(sanitize_day_discovery_feedback(payload))
+
+
 __all__ = (
     "DaySourceAdapter",
     "MarketContextSourceAdapter",
     "OpportunitySourceAdapter",
     "PrimarySourcePaths",
+    "bounded_day_discovery_feedback",
 )
