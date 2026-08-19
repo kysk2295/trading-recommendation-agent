@@ -12,6 +12,7 @@ from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.hermes_delivery_projection import HermesProjectionRecord, HermesProjectionResult, project_outcomes
 from trading_agent.hermes_delivery_store import HermesDeliveryWriter
 from trading_agent.strategy_research_catalog import STRATEGY_RESEARCH_CATALOG, StrategyResearchIdentity
+from trading_agent.strategy_research_forward_observations import ForwardResearchObservation
 from trading_agent.strategy_research_ledger import AgentResearchStateEvent
 from trading_agent.strategy_research_methodologies import strategy_research_methodology
 from trading_agent.strategy_research_models import PreregistrationManifest
@@ -36,19 +37,27 @@ class CloseReportSnapshot:
     reader: ExperimentLedgerReader
     manifests: tuple[PreregistrationManifest, ...]
     session_date: dt.date
+    forward_observations: tuple[ForwardResearchObservation, ...] = ()
 
 
 def project_strategy_research_close_report(
     reader: ExperimentLedgerReader,
     writer: HermesDeliveryWriter,
     now: dt.datetime,
+    *,
+    forward_observations: tuple[ForwardResearchObservation, ...] = (),
 ) -> HermesProjectionResult:
     session = _latest_completed_session(now)
     if session is None:
         return HermesProjectionResult(examined=0, inserted=0, replayed=0)
     session_date, occurred_at = session
     source_event_id = f"{_SOURCE_PREFIX}:{session_date.isoformat()}"
-    snapshot = CloseReportSnapshot(reader, reader.strategy_research_preregistrations(), session_date)
+    snapshot = CloseReportSnapshot(
+        reader,
+        reader.strategy_research_preregistrations(),
+        session_date,
+        forward_observations,
+    )
     record = _report_record(snapshot, source_event_id, occurred_at)
     return project_outcomes((record,), writer)
 
@@ -138,11 +147,16 @@ def _agent_line(
     waiting_reason = _waiting_reason(active, state, result)
     next_test = _next_test(identity.agent_id, result)
     shadow = _shadow_summary(history)
+    forward_samples = sum(
+        item.agent_id is identity.agent_id and item.cluster_key == snapshot.session_date.isoformat()
+        for item in snapshot.forward_observations
+    )
     return (
         f"owner={identity.agent_id.value}; identity={identity.identity}; methodology={identity.methodology}; "
         f"evidence={','.join(evidence) if evidence else 'none'}; evidence_mode={evidence_mode}; "
         f"hypothesis={hypothesis_id}; summary={identity.output_contract}; stage={stage}; "
         f"attempts={len(attempts)}[{_attempt_counts(attempts)}]; terminal={terminal}; shadow={shadow}; "
+        f"forward_samples={forward_samples}; "
         f"waiting_reason={waiting_reason}; next_maturity_at={maturity}; next_test={next_test}."
     )
 

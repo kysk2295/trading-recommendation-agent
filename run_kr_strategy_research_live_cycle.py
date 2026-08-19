@@ -27,9 +27,17 @@ from trading_agent.kr_session_runtime_gate import (
 from trading_agent.kr_strategy_research_source import build_kr_strategy_research_sources
 from trading_agent.private_immutable_file import publish_private_immutable_text
 from trading_agent.signal_contract_models import OpportunitySnapshot
+from trading_agent.strategy_research_forward_observations import (
+    persist_forward_observations,
+    project_matured_intraday_observations,
+)
 
 KST = ZoneInfo("Asia/Seoul")
 Clock = Callable[[], dt.datetime]
+
+
+class KrStrategyResearchLiveCycleError(ValueError):
+    pass
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -131,6 +139,10 @@ def main(
     outbox = session / "opportunities.v1.jsonl"
     _prepare_outbox(outbox)
     _ = append_opportunity_snapshot(outbox, enriched)
+    forward_inserted = persist_forward_observations(
+        session / "strategy-research-forward-observations.json",
+        project_matured_intraday_observations(_opportunities(outbox), evaluated_at),
+    )
     context_root = args.market_context_root.expanduser().absolute()
     context_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(context_root, 0o700)
@@ -138,7 +150,10 @@ def main(
         context_root / f"{context.observed_at.strftime('%Y%m%dT%H%M%S%fZ')}-{context.context_id}.market-context.json",
         context.model_dump_json() + "\n",
     )
-    print(f"status=ready cycle={cycle_id} opportunity={enriched.opportunity_id} symbol={symbol} mutation=0")
+    print(
+        f"status=ready cycle={cycle_id} opportunity={enriched.opportunity_id} symbol={symbol} "
+        f"forward_observations={forward_inserted} mutation=0"
+    )
     return 0
 
 
@@ -168,10 +183,10 @@ def _ensure_current_calendar(
             clock=clock,
         )
         if result != 0:
-            raise ValueError("current KR calendar collection failed")
+            raise KrStrategyResearchLiveCycleError("current KR calendar collection failed")
         current = _current_calendar(path, session_date)
     if current is None:
-        raise ValueError("current KR calendar missing")
+        raise KrStrategyResearchLiveCycleError("current KR calendar missing")
     return current
 
 

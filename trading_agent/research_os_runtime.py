@@ -20,6 +20,7 @@ from trading_agent.research_agent_service_runtime import (
     run_service_tick,
 )
 from trading_agent.strategy_research_close_report import project_strategy_research_close_report
+from trading_agent.strategy_research_forward_observations import load_forward_observations
 from trading_agent.strategy_research_runtime import StrategyResearchRuntime, StrategyResearchRuntimeStatus
 from trading_agent.strategy_research_runtime_source import (
     PrivateStrategyResearchWorkSource,
@@ -59,7 +60,12 @@ def run_research_os_tick(
         ScienceKernelCycleRunner(ledger),
     ).tick(now)
     with HermesDeliveryStore(config.hermes_database).writer() as writer:
-        daily = project_strategy_research_close_report(ledger, writer, now)
+        daily = project_strategy_research_close_report(
+            ledger,
+            writer,
+            now,
+            forward_observations=load_forward_observations(config.source_paths.day_session_root),
+        )
     report = ResearchOsRuntimeReport(
         operation=operation,
         role_agents=run_service_tick(config, now),

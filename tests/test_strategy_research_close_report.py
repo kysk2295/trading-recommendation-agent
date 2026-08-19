@@ -14,6 +14,7 @@ from trading_agent.hermes_delivery_errors import HermesDeliveryConflictError
 from trading_agent.hermes_delivery_reader import HermesDeliveryReader
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.strategy_research_close_report import project_strategy_research_close_report
+from trading_agent.strategy_research_forward_observations import ForwardResearchObservation
 from trading_agent.strategy_research_models import PreregistrationManifest
 from trading_agent.strategy_research_shadow import FutureShadowPolicy, append_future_shadow_observation
 from trading_agent.strategy_research_types import EvidenceKind, ResearchAgentId
@@ -135,6 +136,44 @@ def test_close_report_marks_fixture_state_wiring_only_without_profit_claim(tmp_p
     assert "evidence_mode=wiring_only" in event.rendered_text
     assert "profitability claim: false" in event.rendered_text
     assert "trading authority: false" in event.rendered_text
+
+
+def test_close_report_exposes_real_forward_sample_progress_without_claiming_profit(tmp_path: Path) -> None:
+    ledger = _initialized_ledger(tmp_path / "experiment.sqlite3")
+    deliveries = HermesDeliveryStore(tmp_path / "hermes.sqlite3")
+    entered_at = dt.datetime(2026, 8, 19, 10, 0, tzinfo=NEW_YORK)
+    sample = ForwardResearchObservation(
+        observation_id="forward-sample-1",
+        market_id="us_equities",
+        source_opportunity_id="entry-1",
+        exit_opportunity_id="exit-1",
+        symbol="SPY",
+        entered_at=entered_at,
+        target_matured_at=entered_at + dt.timedelta(minutes=30),
+        observed_at=entered_at + dt.timedelta(minutes=31),
+        entry_price="500",
+        exit_price="501",
+        entry_spread_bps="1",
+        exit_spread_bps="1",
+        gross_return="0.002",
+        net_return="0.0019",
+        cluster_key="2026-08-19",
+        evidence_refs=("bar/alpaca-sip:entry", "bar/alpaca-sip:exit"),
+    )
+
+    with deliveries.writer() as writer:
+        result = project_strategy_research_close_report(
+            ledger,
+            writer,
+            dt.datetime(2026, 8, 19, 16, 15, tzinfo=NEW_YORK),
+            forward_observations=(sample,),
+        )
+
+    event = HermesDeliveryReader(deliveries.path).events()[0]
+    assert result.inserted == 1
+    assert "owner=intraday_momentum" in event.rendered_text
+    assert "forward_samples=1" in event.rendered_text
+    assert "profitability claim: false" in event.rendered_text
 
 
 def test_close_report_same_session_state_drift_conflicts_without_overwrite(tmp_path: Path) -> None:
