@@ -17,9 +17,10 @@ from trading_agent.day_research_ledger import (
     InvalidDayResearchLedgerSourceError,
     StoredDayHypothesisFamily,
     StoredDayHypothesisVersion,
+    _register_day_research_attempt_binding_after_audit,
+    audit_day_research_attempt_bindings,
     register_day_hypothesis_family,
     register_day_hypothesis_version,
-    register_day_research_attempt_binding,
 )
 from trading_agent.day_research_ledger_reader import (
     DayResearchAttemptForReview,
@@ -724,11 +725,12 @@ class ExperimentLedgerStore(ExperimentLedgerReader):
 
 @final
 class ExperimentLedgerWriter:
-    __slots__ = ("_active", "_connection")
+    __slots__ = ("_active", "_connection", "_day_research_bindings_audited")
 
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._connection = connection
         self._active = True
+        self._day_research_bindings_audited = False
 
     def register_hypothesis(self, registration: HypothesisRegistration) -> bool:
         self._require_active()
@@ -935,7 +937,10 @@ class ExperimentLedgerWriter:
     def register_day_research_attempt_binding(self, binding: DayResearchAttemptBinding) -> bool:
         self._require_active()
         try:
-            return register_day_research_attempt_binding(self._connection, binding)
+            if not self._day_research_bindings_audited:
+                audit_day_research_attempt_bindings(self._connection)
+                self._day_research_bindings_audited = True
+            return _register_day_research_attempt_binding_after_audit(self._connection, binding)
         except DayResearchLedgerConflictError:
             raise ExperimentLedgerConflictError from None
         except InvalidDayResearchLedgerSourceError:

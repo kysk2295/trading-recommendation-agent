@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import assert_never
 
@@ -136,10 +137,17 @@ def register_day_research_attempt_binding(
     connection: sqlite3.Connection,
     binding: DayResearchAttemptBinding,
 ) -> bool:
+    audit_day_research_attempt_bindings(connection)
+    return _register_day_research_attempt_binding_after_audit(connection, binding)
+
+
+def _register_day_research_attempt_binding_after_audit(
+    connection: sqlite3.Connection,
+    binding: DayResearchAttemptBinding,
+) -> bool:
     binding_id = _safe_binding_identity(binding)
     existing = _binding_by_id(connection, binding_id)
     if existing is not None:
-        _all_stored_bindings(connection)
         checked = _validated_binding_or_conflict(binding)
         _require_binding_parent_coherence(connection, checked)
         if existing.binding == checked:
@@ -148,7 +156,6 @@ def register_day_research_attempt_binding(
     checked = _validated_binding(binding)
     existing_attempt = _binding_by_attempt_id(connection, checked.attempt_id)
     if existing_attempt is not None:
-        _all_stored_bindings(connection)
         _require_binding_parent_coherence(connection, existing_attempt.binding)
         raise DayResearchLedgerConflictError
     version, _ = _require_binding_parent_coherence(connection, checked)
@@ -171,6 +178,10 @@ def register_day_research_attempt_binding(
     except sqlite3.IntegrityError as error:
         raise DayResearchLedgerConflictError from error
     return True
+
+
+def audit_day_research_attempt_bindings(connection: sqlite3.Connection) -> None:
+    _all_stored_bindings(connection)
 
 
 def _validated_family(family: HypothesisFamily) -> HypothesisFamily:
@@ -577,8 +588,7 @@ def _stored_day_research_version_graph(connection: sqlite3.Connection) -> Stored
     by_family = {stored.family.family_id: stored for stored in families}
     if len(by_family) != len(families):
         raise InvalidDayResearchLedgerSourceError("stored_day_family_identity_duplicate")
-    for stored in families:
-        _require_stored_family_parent(stored, by_family)
+    _require_stored_family_graph(by_family)
     version_rows: list[tuple[str, str, str, str | None, str, str, str, str, str]] = connection.execute(
         "SELECT version_key,hypothesis_version_id,family_id,parent_version_id,market_id,created_at, "
         "registration_completed_bar_at,first_shadow_eligible_at,payload_json FROM day_hypothesis_versions"
@@ -587,8 +597,7 @@ def _stored_day_research_version_graph(connection: sqlite3.Connection) -> Stored
     by_version = {stored.version.hypothesis_version_id: stored for stored in versions}
     if len(by_version) != len(versions):
         raise InvalidDayResearchLedgerSourceError("stored_day_version_identity_duplicate")
-    for stored in versions:
-        _require_stored_version_lineage(stored, by_family, by_version)
+    _require_stored_version_graph(by_family, by_version)
     return StoredDayResearchVersionGraph(by_family, by_version)
 
 
@@ -640,35 +649,55 @@ def _require_parent_version(parent: HypothesisVersion, child: HypothesisVersion)
         raise InvalidDayResearchLedgerSourceError("day_research_version_lineage_invalid")
 
 
-def _require_stored_family_parent(
-    stored: StoredDayHypothesisFamily,
-    families: dict[str, StoredDayHypothesisFamily],
-) -> None:
-    seen = {stored.family.family_id}
-    child = stored.family
-    while child.parent_family_id is not None:
-        parent = families.get(child.parent_family_id)
-        if parent is None or parent.family.family_id in seen or parent.family.created_at >= child.created_at:
+def _require_stored_family_graph(families: Mapping[str, StoredDayHypothesisFamily]) -> None:
+    parent_ids: dict[str, str | None] = {}
+    for family_id, stored in families.items():
+        family = stored.family
+        parent = families.get(family.parent_family_id) if family.parent_family_id is not None else None
+        if (
+            family.parent_family_id is not None
+            and (parent is None or parent.family.created_at >= family.created_at)
+        ):
             raise InvalidDayResearchLedgerSourceError("stored_day_family_lineage_invalid")
-        seen.add(parent.family.family_id)
-        child = parent.family
+        parent_ids[family_id] = family.parent_family_id
+    _require_acyclic_parent_graph(parent_ids, "stored_day_family_lineage_invalid")
 
 
-def _require_stored_version_lineage(
-    stored: StoredDayHypothesisVersion,
-    families: dict[str, StoredDayHypothesisFamily],
-    versions: dict[str, StoredDayHypothesisVersion],
+def _require_stored_version_graph(
+    families: Mapping[str, StoredDayHypothesisFamily],
+    versions: Mapping[str, StoredDayHypothesisVersion],
 ) -> None:
-    version = stored.version
-    family = families.get(version.family_id)
-    if family is None or family.family.created_at > version.created_at:
-        raise InvalidDayResearchLedgerSourceError("stored_day_version_family_invalid")
-    seen = {version.hypothesis_version_id}
-    child = version
-    while child.parent_version_id is not None:
-        parent = versions.get(child.parent_version_id)
-        if parent is None or parent.version.hypothesis_version_id in seen:
-            raise InvalidDayResearchLedgerSourceError("stored_day_version_lineage_invalid")
-        _require_parent_version(parent.version, child)
-        seen.add(parent.version.hypothesis_version_id)
-        child = parent.version
+    parent_ids: dict[str, str | None] = {}
+    for version_id, stored in versions.items():
+        version = stored.version
+        family = families.get(version.family_id)
+        if family is None or family.family.created_at > version.created_at:
+            raise InvalidDayResearchLedgerSourceError("stored_day_version_family_invalid")
+        parent = versions.get(version.parent_version_id) if version.parent_version_id is not None else None
+        if version.parent_version_id is not None:
+            if parent is None:
+                raise InvalidDayResearchLedgerSourceError("stored_day_version_lineage_invalid")
+            _require_parent_version(parent.version, version)
+        parent_ids[version_id] = version.parent_version_id
+    _require_acyclic_parent_graph(parent_ids, "stored_day_version_lineage_invalid")
+
+
+def _require_acyclic_parent_graph(
+    parent_ids: Mapping[str, str | None],
+    reason: str,
+) -> None:
+    completed: set[str] = set()
+    for start_id in parent_ids:
+        if start_id in completed:
+            continue
+        path: set[str] = set()
+        current_id = start_id
+        while current_id not in completed:
+            if current_id in path:
+                raise InvalidDayResearchLedgerSourceError(reason)
+            path.add(current_id)
+            parent_id = parent_ids.get(current_id)
+            if parent_id is None:
+                break
+            current_id = parent_id
+        completed.update(path)

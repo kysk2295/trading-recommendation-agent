@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import datetime as dt
+import inspect
 import json
 import sqlite3
+from collections.abc import Iterator, MutableMapping
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
 import trading_agent.day_research_ledger as day_research_ledger
-import trading_agent.day_research_ledger_reader as day_research_ledger_reader
 from tests.strategy_research_contract_fixtures import NOW, SHA_A, SHA_B, hypothesis
 from trading_agent.day_hypothesis_models import (
     CostModelDeclaration,
@@ -20,7 +21,11 @@ from trading_agent.day_hypothesis_models import (
     TargetHorizon,
 )
 from trading_agent.day_research_attempt_binding import DayResearchAttemptBinding
-from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
+from trading_agent.experiment_ledger_keys import (
+    DayHypothesisFamilyKey,
+    DayHypothesisVersionKey,
+    canonical_experiment_ledger_json,
+)
 from trading_agent.experiment_ledger_store import (
     ExperimentLedgerConflictError,
     ExperimentLedgerStore,
@@ -30,6 +35,56 @@ from trading_agent.research_identity_models import MarketId
 from trading_agent.strategy_research_models import PreregistrationManifest
 from trading_agent.strategy_research_results import ResearchAttempt
 from trading_agent.strategy_research_types import AttemptStatus, ExpectedDirection
+
+
+class _CountingFamilyMap(MutableMapping[str, day_research_ledger.StoredDayHypothesisFamily]):
+    entries: dict[str, day_research_ledger.StoredDayHypothesisFamily]
+    lookup_count: int
+
+    def __init__(self) -> None:
+        self.entries = {}
+        self.lookup_count = 0
+
+    def __getitem__(self, key: str) -> day_research_ledger.StoredDayHypothesisFamily:
+        self.lookup_count += 1
+        return self.entries[key]
+
+    def __setitem__(self, key: str, value: day_research_ledger.StoredDayHypothesisFamily) -> None:
+        self.entries[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.entries[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.entries)
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+
+class _CountingVersionMap(MutableMapping[str, day_research_ledger.StoredDayHypothesisVersion]):
+    entries: dict[str, day_research_ledger.StoredDayHypothesisVersion]
+    lookup_count: int
+
+    def __init__(self) -> None:
+        self.entries = {}
+        self.lookup_count = 0
+
+    def __getitem__(self, key: str) -> day_research_ledger.StoredDayHypothesisVersion:
+        self.lookup_count += 1
+        return self.entries[key]
+
+    def __setitem__(self, key: str, value: day_research_ledger.StoredDayHypothesisVersion) -> None:
+        self.entries[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.entries[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.entries)
+
+    def __len__(self) -> int:
+        return len(self.entries)
 
 
 def _family() -> HypothesisFamily:
@@ -244,36 +299,22 @@ def test_replay_and_review_reject_duplicate_canonical_parent_rows(tmp_path: Path
         _ = writer.register_day_research_attempt_binding(binding)
 
 
-def test_new_binding_batch_skips_global_audit_but_review_and_replay_audit_once(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_binding_batch_audits_once_per_writer_and_replay_audits_again(tmp_path: Path) -> None:
     # Given
     store = ExperimentLedgerStore(tmp_path / "ledger.sqlite3")
     version = _version(_family(), max_attempts=100)
     attempts = tuple(_attempt(index, AttemptStatus.SUCCEEDED) for index in range(50))
     bindings = tuple(_binding(attempt, version) for attempt in attempts)
-    original = day_research_ledger._all_stored_bindings
-    original_graph = day_research_ledger._stored_day_research_version_graph
     audit_count = 0
-    graph_count = 0
 
-    def counted(connection: sqlite3.Connection):
+    def count_full_binding_audit(statement: str) -> None:
         nonlocal audit_count
-        audit_count += 1
-        return original(connection)
-
-    def counted_graph(connection: sqlite3.Connection):
-        nonlocal graph_count
-        graph_count += 1
-        return original_graph(connection)
-
-    monkeypatch.setattr(day_research_ledger, "_all_stored_bindings", counted)
-    monkeypatch.setattr(day_research_ledger, "_stored_day_research_version_graph", counted_graph)
-    monkeypatch.setattr(day_research_ledger_reader, "_all_stored_bindings", counted)
+        if "FROM day_research_attempt_bindings ORDER BY rowid" in " ".join(statement.split()):
+            audit_count += 1
 
     # When
     with store.writer() as writer:
+        writer._connection.set_trace_callback(count_full_binding_audit)
         assert writer.register_strategy_research(_manifest())
         assert writer.register_day_hypothesis_family(_family())
         assert writer.register_day_hypothesis_version(version)
@@ -282,13 +323,13 @@ def test_new_binding_batch_skips_global_audit_but_review_and_replay_audit_once(
             assert writer.register_day_research_attempt_binding(binding)
     records = store.reader().day_attempts_for_review(version.market_id, version.hypothesis_version_id)
     with store.writer() as writer:
+        writer._connection.set_trace_callback(count_full_binding_audit)
         replay = writer.register_day_research_attempt_binding(bindings[0])
 
     # Then
     assert len(records) == 50
     assert replay is False
     assert audit_count == 2
-    assert graph_count == 2
 
 
 def test_binding_is_exactly_once_and_attempt_cannot_rebind(tmp_path: Path) -> None:
@@ -437,6 +478,126 @@ def test_forged_id_naive_time_and_tampered_rows_fail_closed(tmp_path: Path, tamp
     assert store.is_initialized() is True
     with pytest.raises(InvalidExperimentLedgerSourceError):
         _ = store.reader().day_attempts_for_review(version.market_id, version.hypothesis_version_id)
+
+
+def test_fresh_binding_rejects_unrelated_persisted_binding_corruption(tmp_path: Path) -> None:
+    # Given
+    database = tmp_path / "ledger.sqlite3"
+    store = ExperimentLedgerStore(database)
+    version = _version(_family())
+    existing_attempt = _attempt(0, AttemptStatus.SUCCEEDED)
+    fresh_attempt = _attempt(1, AttemptStatus.SUCCEEDED)
+    _prepared(store, (existing_attempt, fresh_attempt), version)
+    with store.writer() as writer:
+        assert writer.register_day_research_attempt_binding(_binding(existing_attempt, version))
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TRIGGER day_research_attempt_bindings_no_update")
+        connection.execute("UPDATE day_research_attempt_bindings SET payload_json='{}'")
+        connection.execute(
+            "CREATE TRIGGER day_research_attempt_bindings_no_update BEFORE UPDATE ON "
+            "day_research_attempt_bindings BEGIN SELECT RAISE(ABORT, 'append-only'); END"
+        )
+        connection.commit()
+
+    # When / Then
+    with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
+        _ = writer.register_day_research_attempt_binding(_binding(fresh_attempt, version))
+
+
+def test_stored_lineage_graph_validation_reads_parent_edges_linearly_at_ten_thousand_nodes() -> None:
+    # Given
+    count = 10_000
+    family_seed = _family()
+    family_payload = family_seed.model_dump()
+    families = _CountingFamilyMap()
+    parent_family_id: str | None = None
+    for index in range(count):
+        family_id = f"{index:064x}"
+        family = HypothesisFamily.model_construct(
+            None,
+            **(
+                family_payload
+                | {
+                    "family_id": family_id,
+                    "parent_family_id": parent_family_id,
+                    "created_at": NOW + dt.timedelta(seconds=index),
+                }
+            ),
+        )
+        families[family_id] = day_research_ledger.StoredDayHypothesisFamily(
+            DayHypothesisFamilyKey("synthetic-family"), family
+        )
+        parent_family_id = family_id
+    version_seed = _version(family_seed)
+    version_payload = version_seed.model_dump()
+    versions = _CountingVersionMap()
+    parent_version_id: str | None = None
+    version_origin = NOW + dt.timedelta(seconds=count + 1)
+    for index in range(count):
+        version_id = f"{count + index:064x}"
+        created_at = version_origin + dt.timedelta(minutes=index * 3)
+        version = HypothesisVersion.model_construct(
+            None,
+            **(
+                version_payload
+                | {
+                    "hypothesis_version_id": version_id,
+                    "family_id": parent_family_id,
+                    "parent_version_id": parent_version_id,
+                    "sampling_timestamp": created_at,
+                    "created_at": created_at,
+                    "registration_completed_bar_at": created_at + dt.timedelta(minutes=1),
+                    "first_shadow_eligible_at": created_at + dt.timedelta(minutes=2),
+                }
+            ),
+        )
+        versions[version_id] = day_research_ledger.StoredDayHypothesisVersion(
+            DayHypothesisVersionKey("synthetic-version"), version
+        )
+        parent_version_id = version_id
+
+    # When
+    day_research_ledger._require_stored_family_graph(families)
+    day_research_ledger._require_stored_version_graph(families, versions)
+
+    # Then
+    assert families.lookup_count <= count * 3
+    assert versions.lookup_count <= count * 2
+
+
+def test_module_binding_registration_does_not_expose_audit_bypass() -> None:
+    # Given
+    parameters = inspect.signature(day_research_ledger.register_day_research_attempt_binding).parameters
+
+    # When / Then
+    assert "stored_bindings_audited" not in parameters
+
+
+def test_linear_graph_validators_reject_missing_parents_and_cycles() -> None:
+    # Given
+    family = _family()
+    version = _version(family)
+    stored_families = {
+        family.family_id: day_research_ledger.StoredDayHypothesisFamily(DayHypothesisFamilyKey("family"), family)
+    }
+    missing_parent_version = HypothesisVersion.model_construct(
+        None,
+        **(version.model_dump() | {"parent_version_id": "f" * 64}),
+    )
+    stored_versions = {
+        missing_parent_version.hypothesis_version_id: day_research_ledger.StoredDayHypothesisVersion(
+            DayHypothesisVersionKey("version"), missing_parent_version
+        )
+    }
+
+    # When / Then
+    with pytest.raises(day_research_ledger.InvalidDayResearchLedgerSourceError):
+        day_research_ledger._require_stored_version_graph(stored_families, stored_versions)
+    with pytest.raises(day_research_ledger.InvalidDayResearchLedgerSourceError):
+        day_research_ledger._require_acyclic_parent_graph(
+            {"family-a": "family-b", "family-b": "family-a"},
+            "stored_day_family_lineage_invalid",
+        )
 
 
 @pytest.mark.parametrize("debit", (0, -1))

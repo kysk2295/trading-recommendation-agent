@@ -9,8 +9,8 @@ from trading_agent.day_research_ledger import (
     StoredDayHypothesisFamily,
     StoredDayHypothesisVersion,
     _all_stored_bindings,
-    _require_stored_family_parent,
-    _require_stored_version_lineage,
+    _require_stored_family_graph,
+    _require_stored_version_graph,
     _stored_attempt,
     _stored_family,
     _stored_version,
@@ -38,8 +38,7 @@ def day_hypothesis_families(
     by_id = {stored.family.family_id: stored for stored in families}
     if len(by_id) != len(families):
         raise InvalidDayResearchLedgerSourceError("stored_day_family_identity_duplicate")
-    for stored in families:
-        _require_stored_family_parent(stored, by_id)
+    _require_stored_family_graph(by_id)
     return families
 
 
@@ -68,8 +67,7 @@ def day_hypothesis_versions(
     by_id = {stored.version.hypothesis_version_id: stored for stored in versions}
     if len(by_id) != len(versions):
         raise InvalidDayResearchLedgerSourceError("stored_day_version_identity_duplicate")
-    for stored in versions:
-        _require_stored_version_lineage(stored, families, by_id)
+    _require_stored_version_graph(families, by_id)
     return tuple(
         stored
         for stored in versions
