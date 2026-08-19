@@ -40,6 +40,7 @@ from trading_agent.signal_contract_models import EvidenceRef
 _ONE_MINUTE: Final = dt.timedelta(minutes=1)
 _MAX_RECEIPT_SKEW: Final = dt.timedelta(seconds=2)
 _MAX_QUOTE_DELAY: Final = dt.timedelta(seconds=5)
+_MAX_QUOTE_FUTURE_SKEW: Final = dt.timedelta(seconds=5)
 _SESSION_OPEN: Final = dt.time(9)
 
 
@@ -89,7 +90,7 @@ def project_kis_kr_market_snapshot(
         raise KisKrMarketEvidenceError
     quote_at = parse_quote_time(request.quote_receipt, quote.aspr_acpt_hour)
     quote_delay = request.quote_receipt.received_at - quote_at
-    if quote_delay < dt.timedelta(0) or quote_delay > _MAX_QUOTE_DELAY:
+    if quote_delay < -_MAX_QUOTE_FUTURE_SKEW or quote_delay > _MAX_QUOTE_DELAY:
         raise KisKrMarketEvidenceError
     session_state, trading_mode = _market_mode(quote.new_mkop_cls_code)
     evidence = tuple(

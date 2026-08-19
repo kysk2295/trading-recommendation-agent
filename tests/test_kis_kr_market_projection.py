@@ -102,6 +102,37 @@ def test_snapshot_uses_newer_quote_price_when_market_moves_between_gets() -> Non
     assert market.last_price == Decimal("103")
 
 
+def test_snapshot_accepts_bounded_provider_quote_clock_skew() -> None:
+    market = project_kis_kr_market_snapshot(
+        KisKrSnapshotProjectionInput(
+            price_receipt=_receipt(KisKrMarketReceiptKind.PRICE_STATUS, _price_body(), seconds=2),
+            quote_receipt=_receipt(
+                KisKrMarketReceiptKind.ORDER_BOOK,
+                _quote_body(accepted_hour="090405"),
+                seconds=3,
+            ),
+            evaluated_at=SESSION + dt.timedelta(minutes=4, seconds=4),
+        )
+    )
+
+    assert market.observed_at == SESSION + dt.timedelta(minutes=4, seconds=3)
+
+
+def test_snapshot_rejects_quote_beyond_provider_clock_skew_bound() -> None:
+    with pytest.raises(ValueError, match="KIS KR market evidence is invalid"):
+        _ = project_kis_kr_market_snapshot(
+            KisKrSnapshotProjectionInput(
+                price_receipt=_receipt(KisKrMarketReceiptKind.PRICE_STATUS, _price_body(), seconds=2),
+                quote_receipt=_receipt(
+                    KisKrMarketReceiptKind.ORDER_BOOK,
+                    _quote_body(accepted_hour="090409"),
+                    seconds=3,
+                ),
+                evaluated_at=SESSION + dt.timedelta(minutes=4, seconds=4),
+            )
+        )
+
+
 def test_unrecognized_vi_code_is_preserved_as_unknown_and_blocked() -> None:
     market = project_kis_kr_market_snapshot(
         KisKrSnapshotProjectionInput(
@@ -231,11 +262,16 @@ def _price_body(*, vi_code: str = "N") -> bytes:
     )
 
 
-def _quote_body(*, symbol: str = "005930", vi_code: str = "N") -> bytes:
+def _quote_body(
+    *,
+    symbol: str = "005930",
+    vi_code: str = "N",
+    accepted_hour: str = "090403",
+) -> bytes:
     return _json_body(
         {
             "output1": {
-                "aspr_acpt_hour": "090403",
+                "aspr_acpt_hour": accepted_hour,
                 "askp1": "103",
                 "bidp1": "102.9",
                 "new_mkop_cls_code": "20",
