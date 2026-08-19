@@ -76,6 +76,7 @@ from trading_agent.research_identity_models import (
 )
 from trading_agent.strategy_authority_models import StrategyAuthorityBinding
 from trading_agent.strategy_factory import StrategyMode
+from trading_agent.strategy_research_ledger_schema import CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9
 
 ORB_CONTRACT = strategy_contract(StrategyMode.ORB)
 ORB_SCOPE = current_intraday_experiment_scope("H-MOM-ORB-001")
@@ -483,8 +484,50 @@ def test_writer_migrates_v3_without_rewriting_existing_rows(tmp_path: Path) -> N
     assert version == (EXPERIMENT_LEDGER_SCHEMA_VERSION,)
 
 
-def test_current_experiment_ledger_schema_is_v9() -> None:
-    assert EXPERIMENT_LEDGER_SCHEMA_VERSION == 9
+@pytest.mark.parametrize(
+    ("legacy_version", "legacy_ddl"),
+    (
+        (
+            4,
+            CREATE_EXPERIMENT_LEDGER_SCHEMA_V1
+            + CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2
+            + CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3
+            + CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4,
+        ),
+        (
+            5,
+            CREATE_EXPERIMENT_LEDGER_SCHEMA_V1
+            + CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2
+            + CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3
+            + CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4
+            + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5,
+        ),
+    ),
+)
+def test_writer_migrates_v4_and_v5_to_current_schema(
+    tmp_path: Path,
+    legacy_version: int,
+    legacy_ddl: str,
+) -> None:
+    database = tmp_path / "experiment.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(legacy_ddl)
+        _ = connection.execute(f"PRAGMA user_version = {legacy_version}")
+        connection.commit()
+
+    with ExperimentLedgerStore(database).writer():
+        pass
+
+    with sqlite3.connect(database) as connection:
+        version = connection.execute("PRAGMA user_version").fetchone()
+        day_table = connection.execute("SELECT name FROM sqlite_master WHERE name='day_hypothesis_versions'").fetchone()
+
+    assert version == (EXPERIMENT_LEDGER_SCHEMA_VERSION,)
+    assert day_table == ("day_hypothesis_versions",)
+
+
+def test_current_experiment_ledger_schema_is_v10() -> None:
+    assert EXPERIMENT_LEDGER_SCHEMA_VERSION == 10
 
 
 def test_writer_migrates_v6_by_adding_discovery_sources_without_rewriting_rows(
@@ -601,6 +644,36 @@ def test_writer_migrates_v8_by_adding_strategy_research_ledger_without_rewriting
 
     assert version == (EXPERIMENT_LEDGER_SCHEMA_VERSION,)
     assert table == ("strategy_research_attempts",)
+
+
+def test_writer_migrates_v9_by_adding_day_research_ledger(tmp_path: Path) -> None:
+    database = tmp_path / "experiment.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            CREATE_EXPERIMENT_LEDGER_SCHEMA_V1
+            + CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2
+            + CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3
+            + CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4
+            + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5
+            + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6
+            + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7
+            + CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8
+            + CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9
+        )
+        _ = connection.execute("PRAGMA user_version = 9")
+        connection.commit()
+
+    with ExperimentLedgerStore(database).writer():
+        pass
+
+    with sqlite3.connect(database) as connection:
+        version = connection.execute("PRAGMA user_version").fetchone()
+        table = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='day_hypothesis_families'"
+        ).fetchone()
+
+    assert version == (EXPERIMENT_LEDGER_SCHEMA_VERSION,)
+    assert table == ("day_hypothesis_families",)
 
 
 def test_writer_rolls_back_v1_migration_when_v2_ddl_fails(
