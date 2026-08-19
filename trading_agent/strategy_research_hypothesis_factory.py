@@ -122,7 +122,7 @@ class StrategyResearchHypothesisFactory:
         artifact_refs = tuple(
             sorted(
                 (
-                    *(item.source_id for item in source_refs),
+                    *(_artifact_reference(item.source_id) for item in source_refs),
                     observation.observation_id,
                     hypothesis.hypothesis_id,
                 )
@@ -271,6 +271,12 @@ def _route_owner(strategy_id: str) -> ResearchAgentId:
 
 def _sha(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _artifact_reference(value: str) -> str:
+    if 1 <= len(value) <= 160 and all(character.isalnum() or character in "._:-" for character in value):
+        return value
+    return f"source:{_sha(value)}"
 
 
 __all__ = ("SourceHypothesisArtifact", "StrategyResearchHypothesisFactory")

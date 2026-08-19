@@ -123,6 +123,8 @@ def opportunity_evidence(
     opportunity_id: str,
     symbol: str,
     overrides: OpportunityOverrides | None = None,
+    *,
+    namespace: str = "ranking",
 ):
     source = overrides or OpportunityOverrides(
         NOW - dt.timedelta(minutes=1),
@@ -148,7 +150,7 @@ def opportunity_evidence(
         ),
         evidence_refs=(
             OpportunityEvidenceRef(
-                namespace="ranking",
+                namespace=namespace,
                 record_id=f"nas:1:{symbol.lower()}",
                 observed_at=source.observed_at,
             ),

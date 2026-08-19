@@ -21,6 +21,9 @@ from tests.strategy_research_source_hypothesis_fixtures import (
     creator as _creator,
 )
 from tests.strategy_research_source_hypothesis_fixtures import (
+    market_context_evidence as _market_context_evidence,
+)
+from tests.strategy_research_source_hypothesis_fixtures import (
     opportunity_evidence as _opportunity_evidence,
 )
 from tests.strategy_research_source_hypothesis_fixtures import (
@@ -81,6 +84,24 @@ def test_production_action_returns_new_source_observation_and_hypothesis_refs(tm
         assert "ranking:nas:1:acme" in result.artifact_refs
         assert any(item.startswith("observation-intraday_momentum-") for item in result.artifact_refs)
         assert any(item.startswith("hypothesis-intraday_momentum-") for item in result.artifact_refs)
+
+
+def test_production_action_hashes_provider_source_ids_that_are_not_safe_result_refs(tmp_path: Path) -> None:
+    with _source_store(tmp_path) as store:
+        opportunity = _opportunity_evidence(
+            "us-opportunity-20260819t145900-provider",
+            "ACME",
+            namespace="bar/kis-kr-rest",
+        )
+        assert store.append_evidence(opportunity)
+        assert store.append_evidence(_market_context_evidence())
+
+        result = OpportunityResearchActionExecutor(hypothesis_creator=_creator(store)).execute(
+            _action_context(opportunity)
+        )
+
+    assert any(item.startswith("source:") for item in result.artifact_refs)
+    assert all("/" not in item for item in result.artifact_refs)
 
 
 @pytest.mark.parametrize("failure", ["stale", "missing_context", "prior_session"])
