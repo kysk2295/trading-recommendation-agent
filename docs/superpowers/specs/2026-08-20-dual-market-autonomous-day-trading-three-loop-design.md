@@ -1,7 +1,7 @@
 # 한국·미국 자율 데이트레이딩 3중 루프 설계
 
 **작성일:** 2026-08-20
-**상태:** 개념 설계 승인, written-spec 사용자 검토 대기
+**상태:** 사용자 승인 완료, 세부 구현 계획 확정
 **제품 표면:** 사용자에게는 하나의 `Day Trading Agent`로 보인다.
 **내부 경계:** `Discovery Lab → Market Forward Shadow → Promotion/Execution` 세 권한으로 분리한다.
 **거래 권한:** 이 저장소는 Alpaca Paper 주문만 변경 가능하다. KIS·LS와 그 밖의 provider는 read-only다.
