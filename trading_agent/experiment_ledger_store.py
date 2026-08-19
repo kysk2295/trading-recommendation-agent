@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import final, override
 
 from trading_agent.day_hypothesis_models import HypothesisFamily, HypothesisVersion
+from trading_agent.day_research_attempt_binding import DayResearchAttemptBinding
 from trading_agent.day_research_ledger import (
     DayResearchLedgerConflictError,
     InvalidDayResearchLedgerSourceError,
@@ -18,12 +19,15 @@ from trading_agent.day_research_ledger import (
     StoredDayHypothesisVersion,
     register_day_hypothesis_family,
     register_day_hypothesis_version,
+    register_day_research_attempt_binding,
 )
 from trading_agent.day_research_ledger_reader import (
+    DayResearchAttemptForReview,
     day_hypothesis_families,
     day_hypothesis_family,
     day_hypothesis_version,
     day_hypothesis_versions,
+    read_day_attempts_for_review,
 )
 from trading_agent.day_research_ledger_schema import (
     CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10,
@@ -613,6 +617,19 @@ class ExperimentLedgerReader:
             except InvalidDayResearchLedgerSourceError:
                 raise InvalidExperimentLedgerSourceError from None
 
+    def day_attempts_for_review(
+        self,
+        market_id: MarketId,
+        hypothesis_version_id: str,
+    ) -> tuple[DayResearchAttemptForReview, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            try:
+                return read_day_attempts_for_review(connection, market_id, hypothesis_version_id)
+            except InvalidDayResearchLedgerSourceError:
+                raise InvalidExperimentLedgerSourceError from None
+
     def strategy_research_preregistrations(self) -> tuple[PreregistrationManifest, ...]:
         if not self.path.is_file():
             return ()
@@ -910,6 +927,15 @@ class ExperimentLedgerWriter:
         self._require_active()
         try:
             return register_day_hypothesis_version(self._connection, version)
+        except DayResearchLedgerConflictError:
+            raise ExperimentLedgerConflictError from None
+        except InvalidDayResearchLedgerSourceError:
+            raise InvalidExperimentLedgerSourceError from None
+
+    def register_day_research_attempt_binding(self, binding: DayResearchAttemptBinding) -> bool:
+        self._require_active()
+        try:
+            return register_day_research_attempt_binding(self._connection, binding)
         except DayResearchLedgerConflictError:
             raise ExperimentLedgerConflictError from None
         except InvalidDayResearchLedgerSourceError:

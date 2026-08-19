@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from typing import assert_never
 
 from trading_agent.day_hypothesis_models import HypothesisFamily, HypothesisVersion
+from trading_agent.day_research_attempt_binding import (
+    DayResearchAttemptBinding,
+    preregistered_attempted_artifact_ref,
+)
 from trading_agent.experiment_ledger_keys import (
     DayHypothesisFamilyKey,
     DayHypothesisVersionKey,
@@ -12,6 +17,9 @@ from trading_agent.experiment_ledger_keys import (
     day_hypothesis_version_key,
 )
 from trading_agent.research_identity_models import MarketId
+from trading_agent.strategy_research_models import PreregistrationManifest
+from trading_agent.strategy_research_results import ResearchAttempt
+from trading_agent.strategy_research_types import AttemptStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +48,11 @@ class StoredDayHypothesisFamily:
 class StoredDayHypothesisVersion:
     version_key: DayHypothesisVersionKey
     version: HypothesisVersion
+
+
+@dataclass(frozen=True, slots=True)
+class StoredDayResearchAttemptBinding:
+    binding: DayResearchAttemptBinding
 
 
 def require_same_market(parent_market: MarketId, child_market: MarketId) -> None:
@@ -113,6 +126,45 @@ def register_day_hypothesis_version(
     return True
 
 
+def register_day_research_attempt_binding(
+    connection: sqlite3.Connection,
+    binding: DayResearchAttemptBinding,
+) -> bool:
+    binding_id = _safe_binding_identity(binding)
+    existing = _binding_by_id(connection, binding_id)
+    if existing is not None:
+        checked = _validated_binding_or_conflict(binding)
+        _require_binding_parent_coherence(connection, checked)
+        if existing.binding == checked:
+            return False
+        raise DayResearchLedgerConflictError
+    checked = _validated_binding(binding)
+    existing_attempt = _binding_by_attempt_id(connection, checked.attempt_id)
+    if existing_attempt is not None:
+        _require_binding_parent_coherence(connection, existing_attempt.binding)
+        raise DayResearchLedgerConflictError
+    version, _ = _require_binding_parent_coherence(connection, checked)
+    _require_available_search_budget(connection, checked, version)
+    try:
+        _ = connection.execute(
+            "INSERT INTO day_research_attempt_bindings VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                checked.binding_id,
+                checked.attempt_id,
+                checked.hypothesis_version_id,
+                checked.market_id.value,
+                checked.artifact_ref,
+                checked.multiple_testing_family,
+                checked.search_budget_debit,
+                checked.bound_at.isoformat(),
+                canonical_experiment_ledger_json(checked),
+            ),
+        )
+    except sqlite3.IntegrityError as error:
+        raise DayResearchLedgerConflictError from error
+    return True
+
+
 def _validated_family(family: HypothesisFamily) -> HypothesisFamily:
     try:
         return HypothesisFamily.model_validate(family.model_dump(mode="python"))
@@ -161,6 +213,30 @@ def _validated_version_or_conflict(version: HypothesisVersion) -> HypothesisVers
         raise DayResearchLedgerConflictError from None
 
 
+def _validated_binding(binding: DayResearchAttemptBinding) -> DayResearchAttemptBinding:
+    try:
+        return DayResearchAttemptBinding.model_validate(binding.model_dump(mode="python"))
+    except ValueError:
+        raise InvalidDayResearchLedgerSourceError("invalid_day_research_attempt_binding") from None
+
+
+def _safe_binding_identity(binding: DayResearchAttemptBinding) -> str:
+    match binding.__dict__.get("binding_id"):
+        case str() as binding_id if len(binding_id) == 64 and all(
+            character in "0123456789abcdef" for character in binding_id
+        ):
+            return binding_id
+        case _:
+            raise InvalidDayResearchLedgerSourceError("invalid_day_research_attempt_binding")
+
+
+def _validated_binding_or_conflict(binding: DayResearchAttemptBinding) -> DayResearchAttemptBinding:
+    try:
+        return _validated_binding(binding)
+    except InvalidDayResearchLedgerSourceError:
+        raise DayResearchLedgerConflictError from None
+
+
 def _family_by_id(
     connection: sqlite3.Connection,
     family_id: str,
@@ -184,6 +260,32 @@ def _version_by_id(
         (version_id,),
     ).fetchone()
     return None if row is None else _stored_version(row)
+
+
+def _binding_by_id(
+    connection: sqlite3.Connection,
+    binding_id: str,
+) -> StoredDayResearchAttemptBinding | None:
+    row: tuple[str, str, str, str, str, str, int, str, str] | None = connection.execute(
+        "SELECT binding_id,attempt_id,hypothesis_version_id,market_id,artifact_ref, "
+        "multiple_testing_family,search_budget_debit,bound_at,payload_json "
+        "FROM day_research_attempt_bindings WHERE binding_id=?",
+        (binding_id,),
+    ).fetchone()
+    return None if row is None else _stored_binding(row)
+
+
+def _binding_by_attempt_id(
+    connection: sqlite3.Connection,
+    attempt_id: str,
+) -> StoredDayResearchAttemptBinding | None:
+    row: tuple[str, str, str, str, str, str, int, str, str] | None = connection.execute(
+        "SELECT binding_id,attempt_id,hypothesis_version_id,market_id,artifact_ref, "
+        "multiple_testing_family,search_budget_debit,bound_at,payload_json "
+        "FROM day_research_attempt_bindings WHERE attempt_id=?",
+        (attempt_id,),
+    ).fetchone()
+    return None if row is None else _stored_binding(row)
 
 
 def _stored_family(row: tuple[str, str, str | None, str, str]) -> StoredDayHypothesisFamily:
@@ -228,6 +330,192 @@ def _stored_version(
     ):
         raise InvalidDayResearchLedgerSourceError("stored_day_version_index_invalid")
     return StoredDayHypothesisVersion(typed_key, version)
+
+
+def _stored_binding(
+    row: tuple[str, str, str, str, str, str, int, str, str],
+) -> StoredDayResearchAttemptBinding:
+    binding_id, attempt_id, version_id, market_id, artifact_ref, family, debit, bound_at, payload = row
+    try:
+        binding = DayResearchAttemptBinding.model_validate_json(payload)
+    except ValueError:
+        raise InvalidDayResearchLedgerSourceError("stored_day_attempt_binding_payload_invalid") from None
+    if payload != canonical_experiment_ledger_json(binding):
+        raise InvalidDayResearchLedgerSourceError("stored_day_attempt_binding_payload_invalid")
+    if (
+        binding_id != binding.binding_id
+        or attempt_id != binding.attempt_id
+        or version_id != binding.hypothesis_version_id
+        or market_id != binding.market_id.value
+        or artifact_ref != binding.artifact_ref
+        or family != binding.multiple_testing_family
+        or debit != binding.search_budget_debit
+        or bound_at != binding.bound_at.isoformat()
+    ):
+        raise InvalidDayResearchLedgerSourceError("stored_day_attempt_binding_index_invalid")
+    return StoredDayResearchAttemptBinding(binding)
+
+
+def _stored_attempt(connection: sqlite3.Connection, attempt_id: str) -> ResearchAttempt | None:
+    row: tuple[str, str, str, int, str, str] | None = connection.execute(
+        "SELECT attempt_key,attempt_id,hypothesis_id,branch_index,status,payload_json "
+        "FROM strategy_research_attempts WHERE attempt_id=?",
+        (attempt_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    key, stored_id, hypothesis_id, branch_index, status, payload = row
+    try:
+        attempt = ResearchAttempt.model_validate_json(payload)
+    except ValueError:
+        raise InvalidDayResearchLedgerSourceError("stored_research_attempt_payload_invalid") from None
+    if (
+        key != attempt.content_sha256
+        or stored_id != attempt.attempt_id
+        or hypothesis_id != attempt.hypothesis_id
+        or branch_index != attempt.branch_index
+        or status != attempt.status.value
+        or payload != attempt.model_dump_json()
+    ):
+        raise InvalidDayResearchLedgerSourceError("stored_research_attempt_index_invalid")
+    _require_attempt_preregistration(connection, attempt)
+    return attempt
+
+
+def _require_attempt_preregistration(connection: sqlite3.Connection, attempt: ResearchAttempt) -> None:
+    row: tuple[str, str, str, str, str, str, str] | None = connection.execute(
+        "SELECT registration_key,hypothesis_id,parent_hypothesis_id,search_family_id, "
+        "agent_id,protocol_version,payload_json FROM strategy_research_preregistrations WHERE hypothesis_id=?",
+        (attempt.hypothesis_id,),
+    ).fetchone()
+    if row is None:
+        raise InvalidDayResearchLedgerSourceError("stored_research_attempt_preregistration_missing")
+    key, hypothesis_id, parent_id, family, agent, protocol, payload = row
+    try:
+        manifest = PreregistrationManifest.model_validate_json(payload)
+    except ValueError:
+        raise InvalidDayResearchLedgerSourceError("stored_preregistration_payload_invalid") from None
+    hypothesis = manifest.hypothesis
+    if (
+        key != manifest.content_sha256
+        or hypothesis_id != hypothesis.hypothesis_id
+        or parent_id != hypothesis.parent_hypothesis_id
+        or family != hypothesis.search_family_id
+        or agent != hypothesis.agent_id.value
+        or protocol != hypothesis.protocol_version
+        or payload != manifest.model_dump_json()
+        or attempt.code_sha256 != hypothesis.code_sha256
+        or attempt.data_manifest_sha256 != hypothesis.data_manifest_sha256
+    ):
+        raise InvalidDayResearchLedgerSourceError("stored_research_attempt_preregistration_invalid")
+
+
+def _require_binding_parent_coherence(
+    connection: sqlite3.Connection,
+    binding: DayResearchAttemptBinding,
+) -> tuple[HypothesisVersion, ResearchAttempt]:
+    _require_valid_stored_day_version_graph(connection)
+    stored_version = _version_by_id(connection, binding.hypothesis_version_id)
+    attempt = _stored_attempt(connection, binding.attempt_id)
+    if stored_version is None or attempt is None:
+        raise InvalidDayResearchLedgerSourceError("day_research_attempt_binding_parent_missing")
+    version = stored_version.version
+    require_same_market(version.market_id, binding.market_id)
+    if (
+        binding.multiple_testing_family != version.multiple_testing_family
+        or attempt.code_sha256 != version.code_sha256
+        or attempt.data_manifest_sha256 != version.data_manifest_sha256
+        or attempt.finished_at is None
+        or binding.bound_at < attempt.finished_at
+        or binding.bound_at < version.created_at
+        or binding.bound_at < version.registration_completed_bar_at
+    ):
+        raise InvalidDayResearchLedgerSourceError("day_research_attempt_binding_protocol_invalid")
+    match attempt.status:
+        case AttemptStatus.SUCCEEDED:
+            if binding.artifact_ref not in attempt.artifact_refs:
+                raise InvalidDayResearchLedgerSourceError("day_research_attempt_binding_artifact_invalid")
+        case (
+            AttemptStatus.FAILED
+            | AttemptStatus.ABORTED
+            | AttemptStatus.TIMED_OUT
+            | AttemptStatus.CANCELLED
+            | AttemptStatus.CENSORED
+        ):
+            if binding.artifact_ref != preregistered_attempted_artifact_ref(attempt.code_sha256):
+                raise InvalidDayResearchLedgerSourceError("day_research_attempt_binding_artifact_invalid")
+        case AttemptStatus.STARTED:
+            raise InvalidDayResearchLedgerSourceError("day_research_attempt_binding_not_terminal")
+        case unreachable:
+            assert_never(unreachable)
+    return version, attempt
+
+
+def _all_stored_bindings(connection: sqlite3.Connection) -> tuple[StoredDayResearchAttemptBinding, ...]:
+    rows: list[tuple[str, str, str, str, str, str, int, str, str]] = connection.execute(
+        "SELECT binding_id,attempt_id,hypothesis_version_id,market_id,artifact_ref, "
+        "multiple_testing_family,search_budget_debit,bound_at,payload_json "
+        "FROM day_research_attempt_bindings ORDER BY rowid"
+    ).fetchall()
+    bindings = tuple(_stored_binding(row) for row in rows)
+    if len({item.binding.binding_id for item in bindings}) != len(bindings):
+        raise InvalidDayResearchLedgerSourceError("stored_day_attempt_binding_identity_duplicate")
+    for stored in bindings:
+        _require_binding_parent_coherence(connection, stored.binding)
+    _require_stored_binding_budgets(connection, bindings)
+    return bindings
+
+
+def _require_available_search_budget(
+    connection: sqlite3.Connection,
+    binding: DayResearchAttemptBinding,
+    version: HypothesisVersion,
+) -> None:
+    cumulative_debit = binding.search_budget_debit + sum(
+        stored.binding.search_budget_debit
+        for stored in _all_stored_bindings(connection)
+        if stored.binding.hypothesis_version_id == version.hypothesis_version_id
+    )
+    if cumulative_debit > version.search_budget.max_attempts:
+        raise InvalidDayResearchLedgerSourceError("day_research_attempt_binding_budget_exhausted")
+
+
+def _require_stored_binding_budgets(
+    connection: sqlite3.Connection,
+    bindings: tuple[StoredDayResearchAttemptBinding, ...],
+) -> None:
+    debit_by_version: dict[str, int] = {}
+    for stored in bindings:
+        binding = stored.binding
+        debit_by_version[binding.hypothesis_version_id] = (
+            debit_by_version.get(binding.hypothesis_version_id, 0) + binding.search_budget_debit
+        )
+    for version_id, debit in debit_by_version.items():
+        stored_version = _version_by_id(connection, version_id)
+        if stored_version is None or debit > stored_version.version.search_budget.max_attempts:
+            raise InvalidDayResearchLedgerSourceError("stored_day_attempt_binding_budget_invalid")
+
+
+def _require_valid_stored_day_version_graph(connection: sqlite3.Connection) -> None:
+    family_rows: list[tuple[str, str, str | None, str, str]] = connection.execute(
+        "SELECT family_key,family_id,parent_family_id,created_at,payload_json FROM day_hypothesis_families"
+    ).fetchall()
+    families = tuple(_stored_family(row) for row in family_rows)
+    by_family = {stored.family.family_id: stored for stored in families}
+    if len(by_family) != len(families):
+        raise InvalidDayResearchLedgerSourceError("stored_day_family_identity_duplicate")
+    for stored in families:
+        _require_stored_family_parent(stored, by_family)
+    version_rows: list[tuple[str, str, str, str | None, str, str, str, str, str]] = connection.execute(
+        "SELECT version_key,hypothesis_version_id,family_id,parent_version_id,market_id,created_at, "
+        "registration_completed_bar_at,first_shadow_eligible_at,payload_json FROM day_hypothesis_versions"
+    ).fetchall()
+    versions = tuple(_stored_version(row) for row in version_rows)
+    by_version = {stored.version.hypothesis_version_id: stored for stored in versions}
+    if len(by_version) != len(versions):
+        raise InvalidDayResearchLedgerSourceError("stored_day_version_identity_duplicate")
+    for stored in versions:
+        _require_stored_version_lineage(stored, by_family, by_version)
 
 
 def _require_family_parent(connection: sqlite3.Connection, family: HypothesisFamily) -> None:

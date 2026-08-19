@@ -1,17 +1,29 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 
+from trading_agent.day_research_attempt_binding import DayResearchAttemptBinding
 from trading_agent.day_research_ledger import (
     InvalidDayResearchLedgerSourceError,
     StoredDayHypothesisFamily,
     StoredDayHypothesisVersion,
+    _all_stored_bindings,
     _require_stored_family_parent,
     _require_stored_version_lineage,
+    _stored_attempt,
     _stored_family,
     _stored_version,
+    require_same_market,
 )
 from trading_agent.research_identity_models import MarketId
+from trading_agent.strategy_research_results import ResearchAttempt
+
+
+@dataclass(frozen=True, slots=True)
+class DayResearchAttemptForReview:
+    binding: DayResearchAttemptBinding
+    attempt: ResearchAttempt
 
 
 def day_hypothesis_families(
@@ -77,3 +89,42 @@ def day_hypothesis_version(
         ),
         None,
     )
+
+
+def read_day_attempts_for_review(
+    connection: sqlite3.Connection,
+    market_id: MarketId,
+    hypothesis_version_id: str,
+) -> tuple[DayResearchAttemptForReview, ...]:
+    versions = day_hypothesis_versions(connection)
+    version = next(
+        (stored.version for stored in versions if stored.version.hypothesis_version_id == hypothesis_version_id),
+        None,
+    )
+    if version is None:
+        raise InvalidDayResearchLedgerSourceError("day_research_attempt_binding_version_missing")
+    require_same_market(version.market_id, market_id)
+    bindings = tuple(
+        stored.binding
+        for stored in _all_stored_bindings(connection)
+        if stored.binding.hypothesis_version_id == hypothesis_version_id
+    )
+    records = tuple(
+        DayResearchAttemptForReview(binding=binding, attempt=_required_stored_attempt(connection, binding.attempt_id))
+        for binding in bindings
+    )
+    if any(record.binding.market_id is not market_id for record in records):
+        raise InvalidDayResearchLedgerSourceError("stored_day_attempt_binding_market_invalid")
+    return tuple(
+        sorted(
+            records,
+            key=lambda record: (record.binding.bound_at, record.attempt.branch_index, record.attempt.attempt_id),
+        )
+    )
+
+
+def _required_stored_attempt(connection: sqlite3.Connection, attempt_id: str) -> ResearchAttempt:
+    attempt = _stored_attempt(connection, attempt_id)
+    if attempt is None:
+        raise InvalidDayResearchLedgerSourceError("stored_day_attempt_binding_attempt_missing")
+    return attempt
