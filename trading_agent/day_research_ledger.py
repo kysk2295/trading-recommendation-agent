@@ -137,28 +137,29 @@ def register_day_research_attempt_binding(
     connection: sqlite3.Connection,
     binding: DayResearchAttemptBinding,
 ) -> bool:
-    audit_day_research_attempt_bindings(connection)
-    return _register_day_research_attempt_binding_after_audit(connection, binding)
+    graph = audit_day_research_attempt_bindings(connection)
+    return _register_day_research_attempt_binding_after_audit(connection, binding, graph)
 
 
 def _register_day_research_attempt_binding_after_audit(
     connection: sqlite3.Connection,
     binding: DayResearchAttemptBinding,
+    graph: StoredDayResearchVersionGraph,
 ) -> bool:
     binding_id = _safe_binding_identity(binding)
     existing = _binding_by_id(connection, binding_id)
     if existing is not None:
         checked = _validated_binding_or_conflict(binding)
-        _require_binding_parent_coherence(connection, checked)
+        _require_binding_parent_coherence(connection, checked, graph)
         if existing.binding == checked:
             return False
         raise DayResearchLedgerConflictError
     checked = _validated_binding(binding)
     existing_attempt = _binding_by_attempt_id(connection, checked.attempt_id)
     if existing_attempt is not None:
-        _require_binding_parent_coherence(connection, existing_attempt.binding)
+        _require_binding_parent_coherence(connection, existing_attempt.binding, graph)
         raise DayResearchLedgerConflictError
-    version, _ = _require_binding_parent_coherence(connection, checked)
+    version, _ = _require_binding_parent_coherence(connection, checked, graph)
     _require_available_search_budget(connection, checked, version)
     try:
         _ = connection.execute(
@@ -180,8 +181,8 @@ def _register_day_research_attempt_binding_after_audit(
     return True
 
 
-def audit_day_research_attempt_bindings(connection: sqlite3.Connection) -> None:
-    _all_stored_bindings(connection)
+def audit_day_research_attempt_bindings(connection: sqlite3.Connection) -> StoredDayResearchVersionGraph:
+    return _stored_binding_audit(connection).graph
 
 
 def _validated_family(family: HypothesisFamily) -> HypothesisFamily:
@@ -533,6 +534,16 @@ def _require_binding_parent_coherence(
 
 
 def _all_stored_bindings(connection: sqlite3.Connection) -> tuple[StoredDayResearchAttemptBinding, ...]:
+    return _stored_binding_audit(connection).bindings
+
+
+@dataclass(frozen=True, slots=True)
+class StoredDayResearchBindingAudit:
+    bindings: tuple[StoredDayResearchAttemptBinding, ...]
+    graph: StoredDayResearchVersionGraph
+
+
+def _stored_binding_audit(connection: sqlite3.Connection) -> StoredDayResearchBindingAudit:
     rows: list[tuple[str, str, str, str, str, str, int, str, str]] = connection.execute(
         "SELECT binding_id,attempt_id,hypothesis_version_id,market_id,artifact_ref, "
         "multiple_testing_family,search_budget_debit,bound_at,payload_json "
@@ -547,7 +558,7 @@ def _all_stored_bindings(connection: sqlite3.Connection) -> tuple[StoredDayResea
     for stored in bindings:
         _require_binding_parent_coherence(connection, stored.binding, graph)
     _require_stored_binding_budgets(bindings, graph)
-    return bindings
+    return StoredDayResearchBindingAudit(bindings, graph)
 
 
 def _require_available_search_budget(

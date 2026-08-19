@@ -159,6 +159,21 @@ def _version(
     )
 
 
+def _child_version(parent: HypothesisVersion) -> HypothesisVersion:
+    created_at = parent.first_shadow_eligible_at
+    payload = parent.model_dump() | {
+        "hypothesis_version_id": "",
+        "parent_version_id": parent.hypothesis_version_id,
+        "sampling_timestamp": created_at,
+        "created_at": created_at,
+        "registration_completed_bar_at": created_at + dt.timedelta(minutes=1),
+        "first_shadow_eligible_at": created_at + dt.timedelta(minutes=2),
+    }
+    return HypothesisVersion.model_validate(
+        payload | {"hypothesis_version_id": HypothesisVersion.canonical_id_for(payload)}
+    )
+
+
 def _attempt(index: int, status: AttemptStatus) -> ResearchAttempt:
     finished_at = NOW + dt.timedelta(minutes=4 + index)
     return ResearchAttempt(
@@ -329,6 +344,81 @@ def test_binding_batch_audits_once_per_writer_and_replay_audits_again(tmp_path: 
     # Then
     assert len(records) == 50
     assert replay is False
+    assert audit_count == 2
+
+
+def test_deep_lineage_binding_batch_reuses_the_audited_version_graph(tmp_path: Path) -> None:
+    # Given
+    store = ExperimentLedgerStore(tmp_path / "ledger.sqlite3")
+    family = _family()
+    versions = [_version(family, max_attempts=100)]
+    for _ in range(100):
+        versions.append(_child_version(versions[-1]))
+    target_version = versions[-1]
+    attempts = tuple(_attempt(index, AttemptStatus.SUCCEEDED) for index in range(50))
+    version_lookup_count = 0
+
+    def count_target_version_lookups(statement: str) -> None:
+        nonlocal version_lookup_count
+        if "FROM day_hypothesis_versions WHERE hypothesis_version_id=" in " ".join(statement.split()):
+            version_lookup_count += 1
+
+    # When
+    with store.writer() as writer:
+        assert writer.register_strategy_research(_manifest())
+        assert writer.register_day_hypothesis_family(family)
+        for version in versions:
+            assert writer.register_day_hypothesis_version(version)
+        for attempt in attempts:
+            assert writer.append_strategy_research_attempt(attempt)
+        writer._connection.set_trace_callback(count_target_version_lookups)
+        for index, attempt in enumerate(attempts):
+            assert writer.register_day_research_attempt_binding(
+                _binding(
+                    attempt,
+                    target_version,
+                    bound_at=target_version.first_shadow_eligible_at + dt.timedelta(minutes=index + 1),
+                )
+            )
+
+    # Then
+    assert version_lookup_count == 0
+
+
+def test_lineage_registration_after_audit_invalidates_the_writer_graph(tmp_path: Path) -> None:
+    # Given
+    store = ExperimentLedgerStore(tmp_path / "ledger.sqlite3")
+    family = _family()
+    initial_version = _version(family)
+    child_version = _child_version(initial_version)
+    first_attempt = _attempt(0, AttemptStatus.SUCCEEDED)
+    second_attempt = _attempt(1, AttemptStatus.SUCCEEDED)
+    audit_count = 0
+
+    def count_full_binding_audits(statement: str) -> None:
+        nonlocal audit_count
+        if "FROM day_research_attempt_bindings ORDER BY rowid" in " ".join(statement.split()):
+            audit_count += 1
+
+    # When
+    with store.writer() as writer:
+        writer._connection.set_trace_callback(count_full_binding_audits)
+        assert writer.register_strategy_research(_manifest())
+        assert writer.register_day_hypothesis_family(family)
+        assert writer.register_day_hypothesis_version(initial_version)
+        assert writer.append_strategy_research_attempt(first_attempt)
+        assert writer.append_strategy_research_attempt(second_attempt)
+        assert writer.register_day_research_attempt_binding(_binding(first_attempt, initial_version))
+        assert writer.register_day_hypothesis_version(child_version)
+        assert writer.register_day_research_attempt_binding(
+            _binding(
+                second_attempt,
+                child_version,
+                bound_at=child_version.first_shadow_eligible_at + dt.timedelta(minutes=1),
+            )
+        )
+
+    # Then
     assert audit_count == 2
 
 
