@@ -9,7 +9,12 @@ import pytest
 from pydantic import ValidationError
 
 from trading_agent.day_hypothesis_models import CostModelDeclaration
-from trading_agent.day_strategy_capsule import build_strategy_capsule
+from trading_agent.day_strategy_capsule import (
+    VerifiedStrategyCapsule,
+    build_strategy_capsule,
+    generated_evaluator_bundle_sha256,
+    generated_protocol_bundle_sha256,
+)
 from trading_agent.day_strategy_capsule_models import (
     CapsuleArtifactKind,
     CapsuleAuthorityCeiling,
@@ -43,7 +48,7 @@ def _builtin_capsule(
     *,
     market_id: MarketId = MarketId.US_EQUITIES,
     authority_ceiling: CapsuleAuthorityCeiling = CapsuleAuthorityCeiling.RESEARCH_ONLY,
-) -> StrategyCapsule:
+) -> VerifiedStrategyCapsule:
     return build_strategy_capsule(
         hypothesis_version_id=SHA_A,
         attempt_binding_id=SHA_B,
@@ -80,10 +85,12 @@ def test_builtin_capsule_has_content_addressed_declarative_identity() -> None:
     second = _builtin_capsule()
 
     # Then: identity is exact and the capsule carries declarations only.
-    assert first == second
-    assert first.capsule_id == StrategyCapsule.canonical_id_for(first.model_dump(mode="python"))
-    assert first.trading_authority is False
-    assert first.profitability_claim is False
+    assert first.capsule == second.capsule
+    assert first.capsule.capsule_id == StrategyCapsule.canonical_id_for(
+        first.capsule.model_dump(mode="python")
+    )
+    assert first.capsule.trading_authority is False
+    assert first.capsule.profitability_claim is False
     assert "provider" not in StrategyCapsule.model_fields
     assert "broker" not in StrategyCapsule.model_fields
     assert "order" not in StrategyCapsule.model_fields
@@ -100,7 +107,7 @@ def test_kr_capsule_cannot_be_paper_capable() -> None:
 
 def test_capsule_rejects_stale_identity_and_extra_authority_fields() -> None:
     # Given: a valid immutable capsule.
-    capsule = _builtin_capsule()
+    capsule = _builtin_capsule().capsule
 
     # When/Then: validated copy and parse boundaries reject tampering and extra fields.
     with pytest.raises(ValidationError, match="capsule_id_mismatch"):
@@ -111,13 +118,13 @@ def test_capsule_rejects_stale_identity_and_extra_authority_fields() -> None:
 
 def test_capsule_publication_timestamp_is_normalized_to_utc() -> None:
     # Given/When: an equivalent non-UTC instant crosses the builder boundary.
-    capsule = _builtin_capsule().model_copy(
+    capsule = _builtin_capsule().capsule.model_copy(
         update={"published_at": PUBLISHED_AT.astimezone(dt.timezone(dt.timedelta(hours=9)))}
     )
 
     # Then: the authoritative declaration is UTC and retains the same identity.
     assert capsule.published_at.tzinfo is dt.UTC
-    assert capsule == _builtin_capsule()
+    assert capsule == _builtin_capsule().capsule
 
 
 def test_generated_capsule_requires_real_deterministic_two_run_preflight(tmp_path: Path) -> None:
@@ -130,7 +137,7 @@ def test_generated_capsule_requires_real_deterministic_two_run_preflight(tmp_pat
     bar = _bar()
 
     # When: the builder verifies the stored artifact and replays the completed bar twice.
-    capsule = _build_generated_capsule(
+    verified = _build_generated_capsule(
         published.artifact.artifact_id,
         published.artifact.payload.source_sha256,
         store,
@@ -140,6 +147,7 @@ def test_generated_capsule_requires_real_deterministic_two_run_preflight(tmp_pat
     )
 
     # Then: the successful receipt binds the exact runtime, limits, inputs, and equal run digests.
+    capsule = verified.capsule
     receipt = capsule.preflight_receipt
     assert receipt is not None
     assert receipt.successful is True
@@ -217,6 +225,28 @@ def test_generated_capsule_rejects_nondeterministic_two_run_output(tmp_path: Pat
         )
 
 
+def test_generated_capsule_rejects_caller_supplied_placeholder_host_hashes(tmp_path: Path) -> None:
+    # Given: a real artifact and sandbox paired with caller-invented protocol/evaluator hashes.
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    store = GeneratedStrategyArtifactStore(tmp_path / "artifacts", runtime)
+    published = store.publish(_proposal(_no_signal_source()))
+    limits = CapsuleResourceLimits()
+    sandbox = GeneratedStrategySandbox(runtime, tmp_path / "tasks", limits.to_generated_limits())
+
+    # When/Then: real sandbox success cannot bless hashes that do not identify host code.
+    with pytest.raises(InvalidStrategyCapsuleError, match="generated_capsule_host_bundle_mismatch"):
+        _ = _build_generated_capsule(
+            published.artifact.artifact_id,
+            published.artifact.payload.source_sha256,
+            store,
+            sandbox,
+            limits,
+            (_bar(),),
+            protocol_sha256=SHA_B,
+            evaluator_sha256=SHA_A,
+        )
+
+
 def test_nested_preflight_receipt_is_revalidated_after_model_construct(tmp_path: Path) -> None:
     # Given: a valid generated capsule and a forged nested receipt bypassing normal construction.
     runtime = resolve_generated_strategy_runtime(Path(sys.executable))
@@ -232,7 +262,7 @@ def test_nested_preflight_receipt_is_revalidated_after_model_construct(tmp_path:
         limits,
         (_bar(),),
     )
-    receipt = capsule.preflight_receipt
+    receipt = capsule.capsule.preflight_receipt
     assert receipt is not None
     forged = CapsulePreflightReceipt.model_construct(
         receipt_id="f" * 64,
@@ -255,7 +285,7 @@ def test_nested_preflight_receipt_is_revalidated_after_model_construct(tmp_path:
     # When/Then: the outer trust boundary revalidates and rejects the nested forged receipt.
     with pytest.raises(ValidationError):
         _ = StrategyCapsule.model_validate(
-            capsule.model_dump(mode="python") | {"preflight_receipt": forged}
+            capsule.capsule.model_dump(mode="python") | {"preflight_receipt": forged}
         )
 
 
@@ -266,7 +296,10 @@ def _build_generated_capsule(
     sandbox: GeneratedStrategySandbox,
     limits: CapsuleResourceLimits,
     bars: tuple[BarInput, ...],
-) -> StrategyCapsule:
+    *,
+    protocol_sha256: str | None = None,
+    evaluator_sha256: str | None = None,
+) -> VerifiedStrategyCapsule:
     return build_strategy_capsule(
         hypothesis_version_id=SHA_A,
         attempt_binding_id=SHA_B,
@@ -288,8 +321,12 @@ def _build_generated_capsule(
         resource_limits=limits,
         risk_policy_ref="risk-policy://day-research/v1",
         protocol_version=1,
-        protocol_sha256=SHA_B,
-        evaluator_sha256=SHA_A,
+        protocol_sha256=(
+            generated_protocol_bundle_sha256() if protocol_sha256 is None else protocol_sha256
+        ),
+        evaluator_sha256=(
+            generated_evaluator_bundle_sha256() if evaluator_sha256 is None else evaluator_sha256
+        ),
         published_at=PUBLISHED_AT,
         authority_ceiling=CapsuleAuthorityCeiling.RESEARCH_ONLY,
         generated_artifact_store=store,

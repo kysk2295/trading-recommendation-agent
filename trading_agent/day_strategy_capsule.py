@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+from dataclasses import dataclass
+from pathlib import Path
 
 from trading_agent.day_hypothesis_models import CostModelDeclaration
 from trading_agent.day_strategy_capsule_models import (
@@ -21,6 +23,72 @@ from trading_agent.generated_strategy_protocol import observe_request
 from trading_agent.generated_strategy_sandbox import GeneratedStrategySandbox
 from trading_agent.models import BarInput
 from trading_agent.research_identity_models import MarketId
+
+_ISSUER = object()
+
+
+@dataclass(frozen=True, slots=True)
+class _IssuedProof:
+    issuer: object
+    capsule_object_identity: int
+    capsule_payload_sha256: str
+
+
+class VerifiedStrategyCapsule:
+    """Host-issued publication capability bound to one exact capsule object and payload."""
+
+    __slots__ = ("_capsule", "_proof")
+
+    def __init__(self, capsule: StrategyCapsule, proof: _IssuedProof) -> None:
+        if not _proof_matches_capsule(proof, capsule):
+            raise InvalidStrategyCapsuleError("strategy_capsule_verification_not_issued")
+        object.__setattr__(self, "_capsule", capsule)
+        object.__setattr__(self, "_proof", proof)
+
+    def __setattr__(self, name: str, value: StrategyCapsule | _IssuedProof) -> None:
+        del name, value
+        raise AttributeError("verified strategy capsule is frozen")
+
+    @property
+    def capsule(self) -> StrategyCapsule:
+        return self._capsule
+
+
+def verified_strategy_capsule_payload(verified: VerifiedStrategyCapsule) -> StrategyCapsule:
+    try:
+        proof = verified._proof
+        capsule = verified._capsule
+    except AttributeError:
+        raise InvalidStrategyCapsuleError("strategy_capsule_verification_not_issued") from None
+    if type(verified) is not VerifiedStrategyCapsule or not _proof_matches_capsule(proof, capsule):
+        raise InvalidStrategyCapsuleError("strategy_capsule_verification_not_issued")
+    try:
+        return StrategyCapsule.model_validate(capsule.model_dump(mode="python"))
+    except ValueError:
+        raise InvalidStrategyCapsuleError("strategy_capsule_verification_not_issued") from None
+
+
+def generated_protocol_bundle_sha256() -> str:
+    return _source_bundle_sha256(
+        (
+            Path(__file__).with_name("generated_strategy_protocol.py"),
+            Path(__file__).with_name("generated_strategy_runner.py"),
+            Path(__file__).with_name("generated_strategy_session.py"),
+        )
+    )
+
+
+def generated_evaluator_bundle_sha256() -> str:
+    return _source_bundle_sha256(
+        (
+            Path(__file__),
+            Path(__file__).with_name("day_strategy_capsule_models.py"),
+            Path(__file__).with_name("generated_strategy_artifact.py"),
+            Path(__file__).with_name("generated_strategy_execution.py"),
+            Path(__file__).with_name("generated_strategy_runtime.py"),
+            Path(__file__).with_name("generated_strategy_sandbox.py"),
+        )
+    )
 
 
 def build_strategy_capsule(
@@ -50,7 +118,12 @@ def build_strategy_capsule(
     generated_artifact_store: GeneratedStrategyArtifactStore | None = None,
     generated_sandbox: GeneratedStrategySandbox | None = None,
     replay_bars: tuple[BarInput, ...] = (),
-) -> StrategyCapsule:
+) -> VerifiedStrategyCapsule:
+    if artifact_kind is CapsuleArtifactKind.GENERATED_PYTHON and (
+        protocol_sha256 != generated_protocol_bundle_sha256()
+        or evaluator_sha256 != generated_evaluator_bundle_sha256()
+    ):
+        raise InvalidStrategyCapsuleError("generated_capsule_host_bundle_mismatch")
     preflight_receipt = _preflight_generated_artifact(
         artifact_kind=artifact_kind,
         artifact_sha256=artifact_sha256,
@@ -92,7 +165,10 @@ def build_strategy_capsule(
         "trading_authority": False,
         "profitability_claim": False,
     }
-    return StrategyCapsule.model_validate(payload | {"capsule_id": StrategyCapsule.canonical_id_for(payload)})
+    capsule = StrategyCapsule.model_validate(
+        payload | {"capsule_id": StrategyCapsule.canonical_id_for(payload)}
+    )
+    return VerifiedStrategyCapsule(capsule, _issued_proof(capsule))
 
 
 def _preflight_generated_artifact(
@@ -161,9 +237,7 @@ def _preflight_generated_artifact(
 
 
 def _replay_digest(
-    sandbox: GeneratedStrategySandbox,
-    published: PublishedGeneratedStrategy,
-    bars: tuple[BarInput, ...],
+    sandbox: GeneratedStrategySandbox, published: PublishedGeneratedStrategy, bars: tuple[BarInput, ...]
 ) -> str:
     with sandbox.open_session(published) as session:
         for bar in bars:
@@ -179,4 +253,31 @@ def _replay_input_digest(bars: tuple[BarInput, ...]) -> str:
     return hashlib.sha256("".join(frames).encode()).hexdigest()
 
 
-__all__ = ("build_strategy_capsule",)
+def _source_bundle_sha256(paths: tuple[Path, ...]) -> str:
+    digest = hashlib.sha256()
+    for path in paths:
+        source = path.read_bytes()
+        digest.update(path.name.encode())
+        digest.update(len(source).to_bytes(8, "big"))
+        digest.update(source)
+    return digest.hexdigest()
+
+
+def _issued_proof(capsule: StrategyCapsule) -> _IssuedProof:
+    return _IssuedProof(
+        issuer=_ISSUER,
+        capsule_object_identity=id(capsule),
+        capsule_payload_sha256=_capsule_payload_sha256(capsule),
+    )
+
+
+def _proof_matches_capsule(proof: _IssuedProof, capsule: StrategyCapsule) -> bool:
+    return (
+        proof.issuer is _ISSUER
+        and proof.capsule_object_identity == id(capsule)
+        and proof.capsule_payload_sha256 == _capsule_payload_sha256(capsule)
+    )
+
+
+def _capsule_payload_sha256(capsule: StrategyCapsule) -> str:
+    return hashlib.sha256(canonical_experiment_ledger_json(capsule).encode()).hexdigest()

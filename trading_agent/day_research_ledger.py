@@ -147,7 +147,7 @@ def register_day_research_attempt_binding(
     return _register_day_research_attempt_binding_after_audit(connection, binding, graph)
 
 
-def register_day_strategy_capsule(
+def _register_day_strategy_capsule(
     connection: sqlite3.Connection,
     capsule: StrategyCapsule,
 ) -> bool:
