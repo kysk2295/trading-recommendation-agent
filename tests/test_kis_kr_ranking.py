@@ -441,6 +441,25 @@ def test_parse_accepts_official_six_character_alphanumeric_short_code() -> None:
     assert page.items[0].symbol == "0012A0"
 
 
+def test_parse_excludes_observed_seven_character_etn_code_without_dropping_equities() -> None:
+    document = json.loads(_volume_body())
+    valid = document["output"][0]
+    document["output"].append(
+        {
+            **valid,
+            "data_rank": "2",
+            "hts_kor_isnm": "Observed ETN product",
+            "mksc_shrn_iscd": "Q530107",
+        }
+    )
+
+    page = parse_kis_kr_ranking_page(
+        _raw(KisKrRankingKind.VOLUME, json.dumps(document, ensure_ascii=False).encode())
+    )
+
+    assert tuple(item.symbol for item in page.items) == ("005930",)
+
+
 def test_parse_zero_row_success() -> None:
     page = parse_kis_kr_ranking_page(
         _raw(

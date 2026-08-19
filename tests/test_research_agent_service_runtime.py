@@ -14,6 +14,7 @@ from tests.research_agent_systematic_input_fixtures import (
 )
 from tests.test_research_agent_service_cli import _config
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
+from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.research_agent_actions import ResearchAgentActionContext
 from trading_agent.research_agent_cycle_models import (
     CycleId,
@@ -115,6 +116,8 @@ def test_idle_service_tick_reports_zero_model_and_broker_mutations(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     config = _config(tmp_path)
+    with ExperimentLedgerStore(config.source_paths.experiment_ledger).writer():
+        pass
     calls: list[AgentFamilyId] = []
     seed = ResearchAgentRuntime(
         ResearchAgentRuntimeServices(
@@ -141,11 +144,11 @@ def test_idle_service_tick_reports_zero_model_and_broker_mutations(
 
     assert code == 0
     assert len(calls) == seeded_calls
-    captured = capsys.readouterr().out
-    assert '"status":"idle"' in captured
-    assert '"model_calls":0' in captured
-    assert '"broker_mutation":0' in captured
-    assert f'"projected_results":{completed_results}' in captured
+    report = json.loads(capsys.readouterr().out)
+    assert report["role_agents"]["status"] == "idle"
+    assert report["role_agents"]["model_calls"] == report["role_agents"]["broker_mutation"] == 0
+    assert report["role_agents"]["projected_results"] == completed_results
+    assert [slot["state"] for slot in report["strategy_research"]["slots"]] == ["waiting_evidence"] * 6
 
 
 def test_cycle_cli_runs_one_canonical_family_pass_and_replay_is_idle(

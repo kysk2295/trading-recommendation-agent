@@ -35,6 +35,7 @@ class ResearchAgentSourcePaths(BaseModel):
     swing_review_database: Path
     experiment_ledger: Path
     lane_review_database: Path
+    kr_calendar_store: Path | None = None
 
     @model_validator(mode="after")
     def require_safe_boundaries(self) -> Self:
@@ -46,6 +47,7 @@ class ResearchAgentSourcePaths(BaseModel):
             self.swing_review_database,
             self.experiment_ledger,
             self.lane_review_database,
+            *((self.kr_calendar_store,) if self.kr_calendar_store is not None else ()),
         ):
             require_source_boundary(path)
         return self

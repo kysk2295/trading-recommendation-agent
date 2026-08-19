@@ -28,7 +28,7 @@ _현재 구현된 read-only Derivatives workspace. source authority, freshness�
 | --- | --- | --- |
 | Data plane | Alpaca·KIS·LS·OpenDART·SEC·macro adapter, raw-first receipt, capability gate | 구현 |
 | US Day | scanner, ORB·VWAP·HOD·Gap-and-Go, recommendation state machine | 구현, 실제 Paper mutation 미실행 |
-| KR Theme Day | 공시·뉴스·랭킹 cycle, theme leader Opportunity, shadow lifecycle | fixture E2E, 연속 실제 세션 미완료 |
+| KR Theme Day | 공시·뉴스·랭킹 cycle, theme leader Opportunity, shadow lifecycle | 실제 KRX 장중 source cycle 검증, 연속 세션 관찰 중 |
 | Swing·Systematic | new-high/RVOL, ETF regime rotation, historical·shadow trial | 구현, forward sample 수집 중 |
 | Autonomous Researcher | LLM 가설·Python 생성, macOS sandbox, walk-forward, Reviewer feedback | 실제 로컬 cycle QA 완료 |
 | Research governance | hypothesis·version·trial preregistration, lifecycle, independent review | 구현 |
@@ -48,32 +48,38 @@ flowchart LR
         RAW["Raw Receipt Stores"]
         EVT["Canonical Events"]
         CAP["Capability / Freshness Gate"]
-        SRC --> RAW --> EVT --> CAP
+        SRC --> RAW
+        RAW --> EVT
+        EVT --> CAP
     end
 
-    subgraph Research["Research Control Plane"]
-        RT["6-Family Runtime"]
-        AG["Market Agents"]
-        AR["Researcher + Critic"]
-        SB["Generated Python Sandbox"]
-        EXP["Experiment Ledger"]
-        REV["Independent Reviewer"]
-        RT --> AG
-        RT --> AR --> SB --> EXP --> REV --> RT
+    subgraph Research["Independent Strategy Research"]
+        EVID["Opportunity + Market Context\nread-only evidence services"]
+        RT["6 independent strategy agents\nprivate cursor / open work / recovery"]
+        KERNEL["Shared deterministic\nScience Kernel"]
+        V9["V9 all-attempt ledger\nsealed one-time holdout"]
+        FEEDBACK["Owner-safe feedback\nfuture-only shadow"]
+        EVID --> RT
+        RT --> KERNEL
+        KERNEL --> V9
+        V9 --> FEEDBACK
+        FEEDBACK --> RT
     end
 
     subgraph Signal["Signal Plane"]
         OPP["OpportunitySnapshot"]
         SIG["TradeSignalEnvelope"]
         CARD["Recommendation Card"]
-        OPP --> SIG --> CARD
+        OPP --> SIG
+        SIG --> CARD
     end
 
     subgraph Execution["Execution Plane"]
         RISK["Endpoint Guard + Risk Kernel"]
         PAPER["Alpaca Paper Only"]
         REC["Order · Fill · Position Reconciliation"]
-        RISK --> PAPER --> REC
+        RISK --> PAPER
+        PAPER --> REC
     end
 
     subgraph Product["Product Projection"]
@@ -82,14 +88,12 @@ flowchart LR
         AUDIT["Immutable Outcome History"]
     end
 
-    CAP --> RT
-    CAP --> OPP
-    AG --> SIG
-    CARD --> EXP
+    CAP --> EVID
+    EVID --> OPP
     CARD --> RISK
-    CARD --> H
-    REV --> AUDIT
     REC --> AUDIT
+    V9 --> AUDIT
+    AUDIT --> H
     AUDIT --> D
 ```
 
@@ -112,19 +116,59 @@ flowchart LR
 
 ## 자율 리서처
 
-### 6-family persistent runtime
+### 여섯 독립 전략 연구 에이전트
 
-하나의 macOS LaunchAgent 안에서 여섯 actor가 독립 cursor, open work, wake policy, cooldown을
-가진다. 30초 tick은 새 evidence나 due wake만 확인하며 변화가 없으면 LLM을 호출하지 않는다.
+하나의 macOS LaunchAgent는 30초마다 tick하지만, 아래 여섯 연구 agent는 서로 독립적인 evidence
+cursor, open work, lease/recovery 상태와 cadence를 갖는다. 한 agent의 source 누락·실패·대기 상태가
+다른 agent의 cursor 또는 실행을 막지 않는다. tick 하나는 안전상 최대 하나의 heavy Science Kernel
+cycle만 시작한다.
 
-| Actor | Wake 조건 | 결과 |
+| Agent ID | 방법론과 source-bound 산출물 | 독립 cadence |
 | --- | --- | --- |
-| Opportunity Manager | 뉴스·공시·랭킹·이상현상 | 후보, 근거, hypothesis 또는 no-action |
-| Market Context | 장전·장중 경계·장마감, regime 변화 | breadth·liquidity·regime context |
-| Day Trading | 현재 setup·open recommendation review | entry·stop·targets 또는 no-action |
-| Swing Trading | 장마감·catalyst·multi-session review | conditional research·invalidation |
-| Systematic Quant | 새 research source·trial·Reviewer feedback | generated Python experiment |
-| Derivatives Research | 새 IV·skew·term·futures context | 연구 결과 또는 blocked-by-data |
+| `intraday_momentum` | 최신 완료 bar 추세 지속, fresh spread를 포함한 same-session protocol | eligible 5분 bar + 5분 |
+| `intraday_mean_reversion` | 완료 bar residual/spread 이탈의 제한된 회귀 protocol | mature displacement + 5분 |
+| `catalyst_event` | immutable 공시·뉴스 catalyst event-window protocol | 새 receipt + 15분, 세션 외 대기 |
+| `swing_trend_regime` | ex-ante regime 조건의 multi-session trend protocol | NYSE close/regime + 30분 |
+| `cross_sectional_quant` | point-in-time universe의 sector·turnover neutral rank protocol | mature session snapshot + 45분 |
+| `derivatives_volatility` | option/futures surface와 hedge convention의 volatility protocol | 완료된 derivatives session boundary |
+
+`OpportunityEvidenceService`와 `MarketContextEvidenceService`는 source hash, `as_of`,
+`available_at`, coverage/staleness를 갖는 읽기 전용 evidence ref를 제공한다. agent는 그 ref로만
+새 hypothesis를 만들며, 고정 feature나 전역 threshold를 production hypothesis로 사용하지 않는다.
+각 hypothesis의 predictor, target, cost, baseline, search budget, split 및 sufficiency rule은
+사전등록 hash에 포함된다. 방법론별 resampling은 session/event/date/underlying-maturity cluster를
+따르며, 단순 최소 표본 수나 naive normal CI만으로 terminal 판정을 하지 않는다.
+
+```text
+shared Opportunity / Market Context evidence
+→ one owner’s private source-bound work, cursor, and recovery state
+→ immutable hypothesis and preregistered protocol
+→ shared deterministic Science Kernel
+→ V9 ledger: every attempt, one sealed-holdout reveal, terminal result
+→ sanitized owner feedback → strictly future shadow when eligible
+→ persisted six-owner NYSE close report
+```
+
+KRX 장중에는 별도 read-only source LaunchAgent가 120초마다 공식 KIS session calendar를 먼저
+확인한다. 열린 세션에서만 OpenDART·LS NWS·KIS 랭킹·거래량을 같은 cycle로 묶고, 선택된 종목의
+최신 완료 1분봉과 현재 호가·spread를 추가한 뒤 `OpportunitySnapshot`과 `MarketContextSnapshot`을
+production runtime에 전달한다. 장 종료·휴장·stale calendar·누락 호가는 provider 수집 또는 가설
+생성 전에 닫히며, 계좌·잔고·포지션·주문 endpoint 권한은 없다.
+
+V9 experiment ledger는 성공·실패·중단 attempt를 모두 append하고, holdout은 lineage별 한 번만
+공개한다. 정확한 holdout 값은 owner feedback으로 되돌아가지 않는다. `SUPPORTED`조차 미래 시점
+shadow로만 이어지며, 이 경로는 order·allocation·profitability authority를 만들지 않는다.
+
+production runtime은 legacy StrategyLab bundle을 읽지 않는다. `run_research_agent_runtime.py run`은
+private source-bound work queue와 V9 ledger를 사용하고, post-close에는 persisted state로 six-owner
+`DAILY_SUMMARY`를 Hermes ledger에 멱등 projection한다. 상태 JSON은
+`output_root/research-os-runtime-status.json`에 쓰며, source가 없으면 각 slot은 구체적인
+`waiting_evidence`/`recovery_pending` reason과 next maturity를 보존한다.
+
+`run_strategy_lab_cycle.py`와
+`examples/research/strategy-lab-evidence-fixture-v1.json`은 이전 synchronized StrategyLab의
+**legacy diagnostic wiring**만 검증한다. 이 fixture는 production runtime으로 연결되지 않으며,
+실험 결과·trace·`complete` 상태 어느 것도 수익성, promotion, allocation 또는 주문 근거가 아니다.
 
 ### Generated Python experiment
 
@@ -290,12 +334,31 @@ find "$DEMO_ROOT/replay" -maxdepth 2 -type f -print
 이 실행은 `paper_recommendations.sqlite3`, 한국어 report와 alert projection을 만들며 network와
 broker mutation을 사용하지 않는다.
 
-대표 CLI:
+### Strategy research CLI
+
+모든 명령은 local/private SQLite와 file input만 사용하며 provider·broker network call이나 order mutation을
+수행하지 않는다. `<...>`는 operator가 준비한 private path/value다. aware ISO-8601은 예를 들어
+`2026-08-19T15:00:00+00:00` 형식이다.
+
+| 목적 | 정확한 명령 | 성공 출력과 종료 코드 | 안전한 실패 |
+| --- | --- | --- | --- |
+| 실제 source-bound hypothesis 생성 | `uv run python run_strategy_research_source_hypothesis.py --cycle-database <cycle.sqlite3> --evidence-id <64-lowercase-hex> --observed-at <aware-ISO-8601>` | JSON `status=created`, `owner`, `source_id`, observation/hypothesis SHA와 refs; `0` | malformed/stale/missing evidence는 stderr JSON `status=invalid`, `2` |
+| fixture-only Kernel vertical | `uv run python run_strategy_research_cycle.py --cycle-database <cycle.sqlite3> --ledger-database <ledger.sqlite3> --evidence-id <64-lowercase-hex> --observed-at <aware-ISO-8601> --fixture-wiring-only` | JSON `status=terminal`, owner/source/hypothesis/protocol/attempt/holdout/terminal/feedback IDs, `wiring_only=true`; `0` | missing/invalid input은 stderr JSON `status=invalid`, `2` |
+| credential-free six-agent matrix | `uv run python run_six_strategy_research_matrix.py --observed-at 2026-08-19T15:00:00+00:00` | deterministic JSON with six `six_agents` rows, independent cursor/state/maturity; `0` | naive timestamp는 stderr JSON `status=invalid`, `2` |
+| one persisted NYSE close projection | `uv run python run_strategy_research_close_report.py --experiment-ledger <ledger.sqlite3> --hermes-ledger <hermes.sqlite3> --now <aware-ISO-8601>` | JSON `status=projected` or `before_cutoff`, examined/inserted/replayed; `0` | naive/malformed input is stderr JSON `status=invalid`, `2` |
+| production OS tick | `uv run python run_research_agent_runtime.py tick --config <private-runtime.json>` | persisted `role_agents` and six `strategy_research.slots`, `broker_mutation=0`, `trading_mutation=0`; `0` when healthy | invalid private config/input is `2`; V9 experiment-ledger writer contention is JSON `status=busy`, `reason=experiment_ledger_writer_busy`, `3`, with no partial attempt |
+| production persistent OS | `uv run python run_research_agent_runtime.py run --config <private-runtime.json>` | blocks as the LaunchAgent process and runs the same independent tick every 30 seconds | start only with a verified private config; no legacy bundle is consumed |
+| persistent KRX source | `uv run python run_kr_strategy_research_service.py tick --config <private-kr-source.json>` | current KRX session에서 same-cycle evidence와 completed-bar/spread snapshot을 저장; LaunchAgent interval `120`; `mutation=0` | 장 종료·휴장에는 provider 호출 전 `session_closed`; incomplete coverage는 hypothesis를 만들지 않음 |
+| legacy diagnostic only | `uv run python run_strategy_lab_cycle.py --evidence-bundle examples/research/strategy-lab-evidence-fixture-v1.json --experiment-ledger <legacy.sqlite3> --iterations 1 --as-of 2026-08-17T01:00:00+00:00` | JSON `status=complete`, `lab_count=6`, `order_authority=false`, `trading_mutation=0`; `0` | invalid evidence/trace gives JSON `status=blocked`, `1`; never use as performance evidence |
+
+`--help` is available on every command above. The source-hypothesis command is the direct production creation
+surface; the fixture Kernel and matrix commands prove wiring only and must not be used to infer profitability.
+
+Other representative CLI surfaces:
 
 ```bash
 uv run python run_trading_agent_replay.py --help
 uv run python run_autonomous_research_cycle.py --help
-uv run python run_research_agent_runtime.py --help
 uv run python run_alpaca_paper_preflight.py --help
 ```
 
@@ -315,8 +378,9 @@ bun run check
 
 ### Autonomous Researcher 운영 안정화
 
-6-family runtime과 sandbox loop는 구현됐다. 현재 source inspection·supply, Systematic input
-activation, monitoring, backup·restore, soak evidence와 장기 OOS·shadow 표본을 보강하고 있다.
+six-role service와 독립 strategy-research runtime, sandbox loop, KRX 장중 read-only source 공급은
+구현됐다. 현재 Systematic input activation, monitoring, backup·restore, soak evidence와 장기
+OOS·shadow 표본을 보강하고 있다.
 
 ### Integrated Options Research Workbench
 

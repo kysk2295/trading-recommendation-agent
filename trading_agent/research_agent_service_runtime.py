@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from trading_agent.dashboard_agent_cycle_runtime import read_cycle_runtime_observations
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
-from trading_agent.experiment_ledger_store import ExperimentLedgerReader
+from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.hermes_delivery_reader import HermesDeliveryReader
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
@@ -36,7 +36,6 @@ from trading_agent.research_agent_decision import (
 from trading_agent.research_agent_derivatives_actions import DerivativesResearchActionExecutor
 from trading_agent.research_agent_hermes import project_research_agent_results
 from trading_agent.research_agent_primary_actions import (
-    ExperimentLedgerOpportunityHypothesisResolver,
     MarketContextResearchActionExecutor,
     OpportunityResearchActionExecutor,
 )
@@ -65,6 +64,8 @@ from trading_agent.research_agent_systematic_input_models import (
 from trading_agent.research_agent_systematic_input_store import (
     load_systematic_input_activation,
 )
+from trading_agent.researcher_pipeline import build_source_hypothesis_factory
+from trading_agent.strategy_research_work_sink import PrivateStrategyResearchWorkSink
 
 
 class ResearchAgentFamilyRuntimeReport(BaseModel):
@@ -295,9 +296,14 @@ def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRu
     store = ResearchAgentCycleStore(config.cycle_database)
     systematic = SystematicResearchActionExecutor(config.systematic, prior_results=store.results)
     opportunity = OpportunityResearchActionExecutor(
-        ExperimentLedgerOpportunityHypothesisResolver(
-            ExperimentLedgerReader(config.source_paths.experiment_ledger)
-        )
+        hypothesis_creator=build_source_hypothesis_factory(
+            store.all_evidence,
+            config.source_paths.kr_calendar_store,
+        ),
+        hypothesis_sink=PrivateStrategyResearchWorkSink(
+            ExperimentLedgerStore(config.source_paths.experiment_ledger),
+            config.source_paths.outputs_root / "strategy-research" / "work",
+        ),
     )
     context = MarketContextResearchActionExecutor(store.results)
     day = DayResearchActionExecutor(config.source_paths.day_session_root)

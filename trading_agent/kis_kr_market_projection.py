@@ -80,11 +80,10 @@ def project_kis_kr_market_snapshot(
     quote = quote_envelope.output1
     status = quote_envelope.output2
     if (
-        price.stck_shrn_iscd != request.price_receipt.symbol
-        or status.stck_shrn_iscd != request.quote_receipt.symbol
-        or price.stck_shrn_iscd != status.stck_shrn_iscd
-        or price.stck_prpr != status.stck_prpr
-        or price.stck_sdpr != status.stck_sdpr
+            price.stck_shrn_iscd != request.price_receipt.symbol
+            or status.stck_shrn_iscd != request.quote_receipt.symbol
+            or price.stck_shrn_iscd != status.stck_shrn_iscd
+            or price.stck_sdpr != status.stck_sdpr
         or price.vi_cls_code != status.vi_cls_code
     ):
         raise KisKrMarketEvidenceError
@@ -107,7 +106,7 @@ def project_kis_kr_market_snapshot(
             symbol=price.stck_shrn_iscd,
             observed_at=max(item.received_at for item in receipts),
             previous_close=decimal_value(price.stck_sdpr),
-            last_price=decimal_value(price.stck_prpr),
+            last_price=decimal_value(status.stck_prpr),
             bid_price=optional_price(quote.bidp1),
             ask_price=optional_price(quote.askp1),
             lower_limit_price=decimal_value(price.stck_llam),

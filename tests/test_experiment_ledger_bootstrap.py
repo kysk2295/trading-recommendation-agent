@@ -138,6 +138,30 @@ def test_bootstrap_v2_authority_backfill_binds_at_current_request_time(
     with sqlite3.connect(experiment_ledger.path) as connection:
         connection.executescript(
             """
+            DROP TRIGGER strategy_research_holdout_reveals_no_delete;
+            DROP TRIGGER strategy_research_holdout_reveals_no_update;
+            DROP TRIGGER strategy_research_agent_state_events_no_delete;
+            DROP TRIGGER strategy_research_agent_state_events_no_update;
+            DROP TRIGGER strategy_research_attempts_no_delete;
+            DROP TRIGGER strategy_research_attempts_no_update;
+            DROP TRIGGER strategy_research_holdout_seals_no_delete;
+            DROP TRIGGER strategy_research_holdout_seals_no_update;
+            DROP TRIGGER strategy_research_preregistrations_no_delete;
+            DROP TRIGGER strategy_research_preregistrations_no_update;
+            DROP INDEX strategy_research_agent_state_by_agent;
+            DROP INDEX strategy_research_attempts_by_hypothesis;
+            DROP TABLE strategy_research_holdout_reveals;
+            DROP TABLE strategy_research_agent_state_events;
+            DROP TABLE strategy_research_attempts;
+            DROP TABLE strategy_research_holdout_seals;
+            DROP TABLE strategy_research_preregistrations;
+            DROP TRIGGER strategy_lab_trace_nodes_no_delete;
+            DROP TRIGGER strategy_lab_trace_nodes_no_update;
+            DROP TRIGGER strategy_lab_protocols_no_delete;
+            DROP TRIGGER strategy_lab_protocols_no_update;
+            DROP INDEX strategy_lab_trace_nodes_by_lab;
+            DROP TABLE strategy_lab_trace_nodes;
+            DROP TABLE strategy_lab_protocols;
             DROP TRIGGER research_discovery_sources_no_delete;
             DROP TRIGGER research_discovery_sources_no_update;
             DROP TABLE research_discovery_sources;
@@ -243,6 +267,30 @@ def test_bootstrap_migrates_v1_ledger_before_appending_code_rollover(
     with sqlite3.connect(experiment_ledger.path) as connection:
         connection.executescript(
             """
+            DROP TRIGGER strategy_research_holdout_reveals_no_delete;
+            DROP TRIGGER strategy_research_holdout_reveals_no_update;
+            DROP TRIGGER strategy_research_agent_state_events_no_delete;
+            DROP TRIGGER strategy_research_agent_state_events_no_update;
+            DROP TRIGGER strategy_research_attempts_no_delete;
+            DROP TRIGGER strategy_research_attempts_no_update;
+            DROP TRIGGER strategy_research_holdout_seals_no_delete;
+            DROP TRIGGER strategy_research_holdout_seals_no_update;
+            DROP TRIGGER strategy_research_preregistrations_no_delete;
+            DROP TRIGGER strategy_research_preregistrations_no_update;
+            DROP INDEX strategy_research_agent_state_by_agent;
+            DROP INDEX strategy_research_attempts_by_hypothesis;
+            DROP TABLE strategy_research_holdout_reveals;
+            DROP TABLE strategy_research_agent_state_events;
+            DROP TABLE strategy_research_attempts;
+            DROP TABLE strategy_research_holdout_seals;
+            DROP TABLE strategy_research_preregistrations;
+            DROP TRIGGER strategy_lab_trace_nodes_no_delete;
+            DROP TRIGGER strategy_lab_trace_nodes_no_update;
+            DROP TRIGGER strategy_lab_protocols_no_delete;
+            DROP TRIGGER strategy_lab_protocols_no_update;
+            DROP INDEX strategy_lab_trace_nodes_by_lab;
+            DROP TABLE strategy_lab_trace_nodes;
+            DROP TABLE strategy_lab_protocols;
             DROP TRIGGER research_discovery_sources_no_delete;
             DROP TRIGGER research_discovery_sources_no_update;
             DROP TABLE research_discovery_sources;

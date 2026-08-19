@@ -118,6 +118,38 @@ def test_complete_cycle_without_candidate_delivers_no_opportunity_once(
     )
 
 
+def test_projection_after_cycle_completion_uses_opportunity_time_for_delivery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _paths(tmp_path)
+    _register(paths["ledger"], tmp_path)
+    policy = _write_policy(tmp_path)
+    original = run_kr_same_cycle_opportunity.run_kr_theme_projection.main
+
+    def delayed_projection(**values: str) -> None:
+        original(**values)
+        outbox = Path(values["output_dir"]) / "opportunities.v1.jsonl"
+        opportunity = OpportunitySnapshot.model_validate_json(outbox.read_text(encoding="utf-8"))
+        delayed = opportunity.model_copy(
+            update={
+                "observed_at": opportunity.observed_at + dt.timedelta(milliseconds=1),
+                "valid_until": opportunity.valid_until + dt.timedelta(milliseconds=1),
+            }
+        )
+        outbox.write_text(delayed.model_dump_json() + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(run_kr_same_cycle_opportunity.run_kr_theme_projection, "main", delayed_projection)
+
+    result = run_kr_same_cycle_opportunity.main(
+        _argv(paths, policy),
+        clock=lambda: dt.datetime(2026, 7, 16, 10, 2, 30, tzinfo=KST),
+    )
+
+    assert result == 0
+    assert HermesDeliveryStore(paths["delivery"]).events()[0].kind is HermesDeliveryKind.WATCH
+
+
 def test_historical_production_request_blocks_before_collector(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

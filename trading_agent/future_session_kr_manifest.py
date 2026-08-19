@@ -43,7 +43,7 @@ class KrFutureSessionPreparationManifest(BaseModel):
     frozen_runtime: Path
     runtime_interpreter: Path
     experiment_ledger: Path
-    experiment_ledger_schema_version: Literal[7] = 7
+    experiment_ledger_schema_version: Literal[9] = 9
     experiment_ledger_identity_sha256: str
     kr_rollover_bundle_sha256: str
     kr_policy_sha256: str

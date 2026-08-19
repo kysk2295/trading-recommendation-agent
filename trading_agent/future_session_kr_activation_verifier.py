@@ -8,7 +8,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from trading_agent.future_session_kr_ledger_identity import (
-    experiment_ledger_v7_identity,
+    experiment_ledger_v9_identity,
 )
 from trading_agent.future_session_kr_manifest import (
     KrFutureSessionPreparationManifest,
@@ -62,7 +62,7 @@ def verify_kr_future_session_activation(
     )
     if (
         not manifest.runtime_interpreter.is_file()
-        or experiment_ledger_v7_identity(manifest.experiment_ledger) != manifest.experiment_ledger_identity_sha256
+        or experiment_ledger_v9_identity(manifest.experiment_ledger) != manifest.experiment_ledger_identity_sha256
     ):
         raise FutureSessionActivationError("kr_runtime_authority_invalid")
     entry = manifest.entry
@@ -108,13 +108,13 @@ def verify_kr_future_session_activation(
 
 def verify_kr_supervisor_preflight(manifest_path: Path) -> None:
     manifest = _verify_kr_supervisor_runtime_preflight(manifest_path)
-    if experiment_ledger_v7_identity(manifest.experiment_ledger) != manifest.experiment_ledger_identity_sha256:
+    if experiment_ledger_v9_identity(manifest.experiment_ledger) != manifest.experiment_ledger_identity_sha256:
         raise FutureSessionActivationError("bound_authority_changed")
 
 
 def verify_kr_supervisor_restart_preflight(manifest_path: Path) -> None:
     manifest = _verify_kr_supervisor_runtime_preflight(manifest_path)
-    _ = experiment_ledger_v7_identity(manifest.experiment_ledger)
+    _ = experiment_ledger_v9_identity(manifest.experiment_ledger)
 
 
 def _verify_kr_supervisor_runtime_preflight(

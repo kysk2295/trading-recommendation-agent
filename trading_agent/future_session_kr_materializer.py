@@ -14,7 +14,7 @@ from trading_agent.future_session_execution_incident_artifact import (
     read_execution_incident_publisher_at_commit,
 )
 from trading_agent.future_session_kr_ledger_identity import (
-    experiment_ledger_v7_identity,
+    experiment_ledger_v9_identity,
 )
 from trading_agent.future_session_kr_manifest import (
     KrFutureSessionPreparationManifest,
@@ -127,7 +127,7 @@ def materialize_kr_future_session(
         epochs = tuple(int(job.run_at.timestamp()) for job in plan.jobs)
         if len(epochs) != 6:
             raise FutureSessionMaterializationError("invalid_kr_phase_count")
-        ledger_identity = experiment_ledger_v7_identity(request.experiment_ledger)
+        ledger_identity = experiment_ledger_v9_identity(request.experiment_ledger)
         entry = _prepare_supervisor(
             request=request,
             plan=plan,

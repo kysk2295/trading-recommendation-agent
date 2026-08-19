@@ -18,6 +18,7 @@ from trading_agent.experiment_ledger_schema import (
     CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5,
     CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2,
     CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3,
+    EXPERIMENT_LEDGER_SCHEMA_VERSION,
 )
 from trading_agent.experiment_ledger_store import (
     ExperimentLedgerStore,
@@ -154,4 +155,4 @@ def test_writer_migrates_v5_multi_market_rows_without_rewrite(tmp_path: Path) ->
 
     assert ExperimentLedgerStore(database).multi_market_strategy_versions()[0].registration == version
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (7,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (EXPERIMENT_LEDGER_SCHEMA_VERSION,)

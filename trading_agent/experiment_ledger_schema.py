@@ -7,14 +7,17 @@ from trading_agent.multi_market_experiment_schema import (
     CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4,
     CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5,
 )
+from trading_agent.strategy_research_ledger_schema import CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9
 
-EXPERIMENT_LEDGER_SCHEMA_VERSION: Final = 7
+EXPERIMENT_LEDGER_SCHEMA_VERSION: Final = 9
 EXPERIMENT_LEDGER_SCHEMA_VERSION_V1: Final = 1
 EXPERIMENT_LEDGER_SCHEMA_VERSION_V2: Final = 2
 EXPERIMENT_LEDGER_SCHEMA_VERSION_V3: Final = 3
 EXPERIMENT_LEDGER_SCHEMA_VERSION_V4: Final = 4
 EXPERIMENT_LEDGER_SCHEMA_VERSION_V5: Final = 5
 EXPERIMENT_LEDGER_SCHEMA_VERSION_V6: Final = 6
+EXPERIMENT_LEDGER_SCHEMA_VERSION_V7: Final = 7
+EXPERIMENT_LEDGER_SCHEMA_VERSION_V8: Final = 8
 
 CREATE_EXPERIMENT_LEDGER_SCHEMA_V1: Final = """
 CREATE TABLE hypotheses (
@@ -189,6 +192,50 @@ CREATE TRIGGER research_discovery_sources_no_delete
 BEFORE DELETE ON research_discovery_sources BEGIN SELECT RAISE(ABORT, 'append-only'); END;
 """
 
+CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8: Final = """
+CREATE TABLE strategy_lab_protocols (
+  protocol_id TEXT PRIMARY KEY
+    CHECK(length(protocol_id) = 64 AND protocol_id NOT GLOB '*[^0-9a-f]*'),
+  lab_id TEXT NOT NULL
+    CHECK(lab_id IN (
+      'intraday_momentum', 'intraday_mean_reversion', 'catalyst_event',
+      'swing_trend_regime', 'cross_sectional_quant', 'derivatives_volatility'
+    )),
+  hypothesis_id TEXT NOT NULL UNIQUE
+    CHECK(length(hypothesis_id) = 64 AND hypothesis_id NOT GLOB '*[^0-9a-f]*'),
+  dataset_id TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  UNIQUE(lab_id, dataset_id)
+);
+CREATE TABLE strategy_lab_trace_nodes (
+  node_id TEXT PRIMARY KEY
+    CHECK(length(node_id) = 64 AND node_id NOT GLOB '*[^0-9a-f]*'),
+  lab_id TEXT NOT NULL
+    CHECK(lab_id IN (
+      'intraday_momentum', 'intraday_mean_reversion', 'catalyst_event',
+      'swing_trend_regime', 'cross_sectional_quant', 'derivatives_volatility'
+    )),
+  iteration INTEGER NOT NULL CHECK(iteration >= 1),
+  parent_node_id TEXT,
+  protocol_id TEXT NOT NULL UNIQUE,
+  outcome TEXT NOT NULL CHECK(outcome IN ('supported', 'refuted', 'inconclusive')),
+  payload_json TEXT NOT NULL,
+  UNIQUE(lab_id, iteration),
+  FOREIGN KEY(parent_node_id) REFERENCES strategy_lab_trace_nodes(node_id),
+  FOREIGN KEY(protocol_id) REFERENCES strategy_lab_protocols(protocol_id)
+);
+CREATE INDEX strategy_lab_trace_nodes_by_lab
+ON strategy_lab_trace_nodes(lab_id, iteration);
+CREATE TRIGGER strategy_lab_protocols_no_update
+BEFORE UPDATE ON strategy_lab_protocols BEGIN SELECT RAISE(ABORT, 'append-only'); END;
+CREATE TRIGGER strategy_lab_protocols_no_delete
+BEFORE DELETE ON strategy_lab_protocols BEGIN SELECT RAISE(ABORT, 'append-only'); END;
+CREATE TRIGGER strategy_lab_trace_nodes_no_update
+BEFORE UPDATE ON strategy_lab_trace_nodes BEGIN SELECT RAISE(ABORT, 'append-only'); END;
+CREATE TRIGGER strategy_lab_trace_nodes_no_delete
+BEFORE DELETE ON strategy_lab_trace_nodes BEGIN SELECT RAISE(ABORT, 'append-only'); END;
+"""
+
 CREATE_EXPERIMENT_LEDGER_SCHEMA: Final = (
     CREATE_EXPERIMENT_LEDGER_SCHEMA_V1
     + CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2
@@ -197,4 +244,6 @@ CREATE_EXPERIMENT_LEDGER_SCHEMA: Final = (
     + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5
     + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6
     + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7
+    + CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8
+    + CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9
 )

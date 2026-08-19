@@ -22,6 +22,7 @@ MAX_ATTEMPTS: Final = 2
 _CONTENT_TYPE = re.compile(r"^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$")
 _SAFE_REQUEST_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _SYMBOL = re.compile(r"^[0-9A-Z]{6}$")
+_INELIGIBLE_ETN_SYMBOL = re.compile(r"^Q[0-9]{6}$")
 _REQUEST_TR_CONT: Final = frozenset({"", "N"})
 _RESPONSE_TR_CONT: Final = frozenset({"", "M", "F"})
 _RAW_RESPONSE_TR_CONT: Final = _RESPONSE_TR_CONT | {"INVALID"}
@@ -396,6 +397,8 @@ def parse_kis_kr_ranking_page(
             item = _project_item(raw_response.kind, row)
         except (ValidationError, ValueError, InvalidOperation):
             raise KisKrRankingResponseError("invalid_response") from None
+        if item is None:
+            continue
         if item.symbol in seen_symbols:
             raise KisKrRankingResponseError("duplicate_symbol")
         if item.rank in seen_ranks:
@@ -418,7 +421,7 @@ def canonical_kis_kr_ranking_item(item: KisKrRankingItem) -> bytes:
 def _project_item(
     kind: KisKrRankingKind,
     row: dict[str, object],
-) -> KisKrRankingItem:
+) -> KisKrRankingItem | None:
     if kind is KisKrRankingKind.FLUCTUATION:
         parsed = _FluctuationRow.model_validate(row)
         return KisKrRankingItem(
@@ -436,6 +439,8 @@ def _project_item(
             accumulated_trading_value_krw=None,
         )
     parsed_volume = _VolumeRow.model_validate(row)
+    if _INELIGIBLE_ETN_SYMBOL.fullmatch(parsed_volume.mksc_shrn_iscd) is not None:
+        return None
     return KisKrRankingItem(
         market="KRX",
         ranking_kind=kind,

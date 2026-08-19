@@ -146,7 +146,12 @@ def main(
             KrSameCycleDeliveryRequest(
                 collection_cycle_id=args.collection_cycle_id,
                 strategy_version=policy.producer_strategy_version,
-                occurred_at=_exact_cycle_completed_at(store, args.collection_cycle_id),
+                occurred_at=max(
+                    (
+                        _exact_cycle_completed_at(store, args.collection_cycle_id),
+                        *(item.observed_at for item in opportunities),
+                    )
+                ),
                 opportunities=opportunities,
             ),
         )

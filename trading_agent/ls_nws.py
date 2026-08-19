@@ -282,7 +282,7 @@ def _valid_time(value: str) -> bool:
 
 def _valid_code(value: str) -> bool:
     return value == "" or (
-        len(value) <= 32
+        len(value) <= 256
         and value.isascii()
         and all(33 <= ord(character) <= 126 for character in value)
     )

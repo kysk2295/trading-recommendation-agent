@@ -43,8 +43,10 @@ from trading_agent.experiment_ledger_schema import (
     CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6,
     CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4,
     CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5,
+    CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7,
     CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2,
     CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3,
+    CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8,
     EXPERIMENT_LEDGER_SCHEMA_VERSION,
 )
 from trading_agent.experiment_ledger_store import (
@@ -416,7 +418,7 @@ def test_writer_migrates_v1_without_rewriting_existing_rows(tmp_path: Path) -> N
         version = connection.execute("PRAGMA user_version").fetchone()
 
     assert migrated_row == original_row
-    assert version == (7,)
+    assert version == (EXPERIMENT_LEDGER_SCHEMA_VERSION,)
 
 
 def test_writer_migrates_v2_without_rewriting_existing_rows(tmp_path: Path) -> None:
@@ -445,7 +447,7 @@ def test_writer_migrates_v2_without_rewriting_existing_rows(tmp_path: Path) -> N
         version = connection.execute("PRAGMA user_version").fetchone()
 
     assert migrated_row == original_row
-    assert version == (7,)
+    assert version == (EXPERIMENT_LEDGER_SCHEMA_VERSION,)
 
 
 def test_writer_migrates_v3_without_rewriting_existing_rows(tmp_path: Path) -> None:
@@ -478,11 +480,11 @@ def test_writer_migrates_v3_without_rewriting_existing_rows(tmp_path: Path) -> N
         version = connection.execute("PRAGMA user_version").fetchone()
 
     assert migrated_row == original_row
-    assert version == (7,)
+    assert version == (EXPERIMENT_LEDGER_SCHEMA_VERSION,)
 
 
-def test_current_experiment_ledger_schema_is_v7() -> None:
-    assert EXPERIMENT_LEDGER_SCHEMA_VERSION == 7
+def test_current_experiment_ledger_schema_is_v9() -> None:
+    assert EXPERIMENT_LEDGER_SCHEMA_VERSION == 9
 
 
 def test_writer_migrates_v6_by_adding_discovery_sources_without_rewriting_rows(
@@ -521,8 +523,84 @@ def test_writer_migrates_v6_by_adding_discovery_sources_without_rewriting_rows(
         ).fetchone()
 
     assert migrated_row == original_row
-    assert version == (7,)
+    assert version == (EXPERIMENT_LEDGER_SCHEMA_VERSION,)
     assert discovery_table == ("research_discovery_sources",)
+
+
+def test_writer_migrates_v7_by_adding_strategy_lab_trace_without_rewriting_rows(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "experiment.sqlite3"
+    source = _research_source()
+    original_row = (
+        str(research_source_key(source)),
+        source.source_id,
+        source.source_kind.value,
+        source.source_url,
+        canonical_experiment_ledger_json(source),
+    )
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            CREATE_EXPERIMENT_LEDGER_SCHEMA_V1
+            + CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2
+            + CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3
+            + CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4
+            + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5
+            + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6
+            + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7
+        )
+        _ = connection.execute("PRAGMA user_version = 7")
+        _ = connection.execute("INSERT INTO research_sources VALUES (?, ?, ?, ?, ?)", original_row)
+        connection.commit()
+
+    with ExperimentLedgerStore(database).writer():
+        pass
+
+    with sqlite3.connect(database) as connection:
+        migrated_row = connection.execute("SELECT * FROM research_sources").fetchone()
+        version = connection.execute("PRAGMA user_version").fetchone()
+        protocol_table = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='strategy_lab_protocols'"
+        ).fetchone()
+        trace_table = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='strategy_lab_trace_nodes'"
+        ).fetchone()
+
+    assert migrated_row == original_row
+    assert version == (EXPERIMENT_LEDGER_SCHEMA_VERSION,)
+    assert protocol_table == ("strategy_lab_protocols",)
+    assert trace_table == ("strategy_lab_trace_nodes",)
+
+
+def test_writer_migrates_v8_by_adding_strategy_research_ledger_without_rewriting_rows(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "experiment.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            CREATE_EXPERIMENT_LEDGER_SCHEMA_V1
+            + CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2
+            + CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3
+            + CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4
+            + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5
+            + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6
+            + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7
+            + CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8
+        )
+        _ = connection.execute("PRAGMA user_version = 8")
+        connection.commit()
+
+    with ExperimentLedgerStore(database).writer():
+        pass
+
+    with sqlite3.connect(database) as connection:
+        version = connection.execute("PRAGMA user_version").fetchone()
+        table = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='strategy_research_attempts'"
+        ).fetchone()
+
+    assert version == (EXPERIMENT_LEDGER_SCHEMA_VERSION,)
+    assert table == ("strategy_research_attempts",)
 
 
 def test_writer_rolls_back_v1_migration_when_v2_ddl_fails(

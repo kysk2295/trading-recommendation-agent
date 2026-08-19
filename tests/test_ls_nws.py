@@ -161,6 +161,18 @@ def test_parser_accepts_observed_extended_nws_shape_and_preserves_fields() -> No
     assert payload["codeaccu"] == ""
 
 
+def test_parser_accepts_observed_multi_symbol_code_payload() -> None:
+    document = _document()
+    body = document["body"]
+    assert isinstance(body, dict)
+    observed_codes = "000000005380000000005385000000005387000000005389"
+    body["code"] = observed_codes
+
+    parsed = parse_ls_nws_frame(_frame(document), collection_date=COLLECTION_DATE)
+
+    assert json.loads(parsed.canonical_payload)["code"] == observed_codes
+
+
 def test_parser_accepts_observed_uppercase_alphanumeric_realkey() -> None:
     document = _document()
     body = document["body"]

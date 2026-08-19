@@ -35,7 +35,7 @@ _SYSTEMATIC_PATH_OPTIONS = (
 
 
 def parse_service_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Six-family persistent research agent runtime")
+    parser = argparse.ArgumentParser(description="Persistent runtime with six independent strategy research agents")
     commands = parser.add_subparsers(dest="command", required=True)
     provision = commands.add_parser("provision", help="private config와 단일 LaunchAgent 생성")
     _add_provision_arguments(provision)
@@ -65,6 +65,9 @@ def config_from_provision_args(args: argparse.Namespace) -> ResearchAgentService
         swing_review_database=_absolute(args.source_swing_review_database),
         experiment_ledger=_absolute(args.source_experiment_ledger),
         lane_review_database=_absolute(args.source_lane_review_database),
+        kr_calendar_store=(
+            None if args.source_kr_calendar_store is None else _absolute(args.source_kr_calendar_store)
+        ),
     )
     fixture = None if args.systematic_response_fixture is None else _absolute(args.systematic_response_fixture)
     systematic = SystematicResearchActionConfig(
@@ -121,6 +124,7 @@ def _add_provision_arguments(parser: argparse.ArgumentParser) -> None:
     ):
         parser.add_argument(f"--{option}", type=Path, required=True)
     parser.add_argument("--systematic-response-fixture", type=Path)
+    parser.add_argument("--source-kr-calendar-store", type=Path)
     parser.add_argument("--model-id", required=True)
     parser.add_argument("--provider-id", required=True)
     parser.add_argument("--max-runtime-seconds", type=float, default=600.0)

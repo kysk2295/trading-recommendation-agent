@@ -24,6 +24,14 @@ from trading_agent.source_driven_hypothesis_queue import (
     project_source_driven_hypothesis_queue,
     publish_source_driven_hypothesis_queue,
 )
+from trading_agent.strategy_research_evidence_service import (
+    CycleStoreMarketContextEvidenceService,
+    CycleStoreOpportunityEvidenceService,
+    EvidenceQuery,
+    KisKrMarketSessionGate,
+    UsOnlyMarketSessionGate,
+)
+from trading_agent.strategy_research_hypothesis_factory import StrategyResearchHypothesisFactory
 
 
 class ResearcherPipelineError(RuntimeError):
@@ -107,6 +115,21 @@ class ResearcherPipeline:
                     queue_path,
                 )
         return DroppedResearchProposal(tuple(critiques))
+
+
+def build_source_hypothesis_factory(
+    query: EvidenceQuery,
+    kr_calendar_store: Path | None = None,
+) -> StrategyResearchHypothesisFactory:
+    sessions = (
+        UsOnlyMarketSessionGate()
+        if kr_calendar_store is None
+        else KisKrMarketSessionGate(kr_calendar_store)
+    )
+    return StrategyResearchHypothesisFactory(
+        CycleStoreOpportunityEvidenceService(query, sessions),
+        CycleStoreMarketContextEvidenceService(query, sessions),
+    )
 
 
 def build_researcher_context(
@@ -198,4 +221,5 @@ __all__ = (
     "ResearcherPipelineServices",
     "ResearcherPipelineStores",
     "build_researcher_context",
+    "build_source_hypothesis_factory",
 )

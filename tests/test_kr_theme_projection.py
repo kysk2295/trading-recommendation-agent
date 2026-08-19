@@ -343,19 +343,24 @@ def test_projection_keeps_irrelevant_classification_as_coverage_without_theme() 
     assert result == ()
 
 
-def test_projection_rejects_missing_or_duplicate_volume_metrics() -> None:
+def test_projection_keeps_only_classified_symbols_with_current_volume_evidence() -> None:
     news = _news("001", NEWS_AT)
     missing_volume = _volume((("005930", "100", "2"),))
     missing_catalysts = (news, missing_volume)
     classification = _classification(news, symbols=("005930", "012345"))
 
-    with pytest.raises(InvalidKrThemeProjectionError):
-        _ = _project(
-            _cycle(missing_catalysts),
-            missing_catalysts,
-            _observations(missing_catalysts),
-            (classification,),
-        )
+    projected = _project(
+        _cycle(missing_catalysts),
+        missing_catalysts,
+        _observations(missing_catalysts),
+        (classification,),
+    )
+
+    assert tuple(item.symbol for item in projected[0].state.related_symbols) == ("005930",)
+
+
+def test_projection_rejects_duplicate_volume_metrics() -> None:
+    news = _news("001", NEWS_AT)
 
     duplicate_a = _volume((("005930", "100", "2"),))
     duplicate_b = _volume(

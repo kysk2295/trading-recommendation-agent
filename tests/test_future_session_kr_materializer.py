@@ -110,7 +110,7 @@ def test_prepare_kr_materializes_exactly_one_restartable_supervisor(
     assert manifest["plan_sha256"] == plan.plan_sha256
     assert manifest["scheduler_main_sha"] == request.scheduler_main_sha
     assert manifest["runtime_commit_sha"] == request.frozen_runtime.commit_sha
-    assert manifest["experiment_ledger_schema_version"] == 7
+    assert manifest["experiment_ledger_schema_version"] == 9
     assert manifest["kr_rollover_bundle_sha256"] == plan.kr_rollover_bundle_sha256
     assert manifest["kr_policy_sha256"] == plan.kr_policy_sha256
     assert manifest["internal_phase_epochs"] == [int(job.run_at.timestamp()) for job in plan.jobs]

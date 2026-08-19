@@ -54,14 +54,14 @@ from trading_agent.research_agent_service_legacy_current import (
 from trading_agent.research_agent_service_runtime import (
     InvalidResearchAgentServiceRuntimeError,
     run_service_cycle,
-    run_service_forever,
-    run_service_tick,
     service_status,
 )
 from trading_agent.research_agent_systematic import InvalidSystematicResearchActionError
 from trading_agent.research_agent_systematic_input_store import (
     InvalidSystematicInputActivationError,
 )
+from trading_agent.research_os_runtime import run_research_os_forever, run_research_os_tick
+from trading_agent.strategy_research_runtime_models import StrategyResearchRuntimeBusyError
 
 Clock = Callable[[], dt.datetime]
 CommandRunner = Callable[[tuple[str, ...]], int]
@@ -96,15 +96,15 @@ def main(
             print(_verification_json(verification.config_sha256, verification.plist_sha256))
             return 0
         if args.command == "tick":
-            report = run_service_tick(load_research_agent_service_config(args.config), clock())
+            report = run_research_os_tick(load_research_agent_service_config(args.config), clock())
             print(report.model_dump_json())
-            return 0 if report.status != "failed" else 1
+            return 0 if report.role_agents.status != "failed" else 1
         if args.command == "cycle":
             report = run_service_cycle(load_research_agent_service_config(args.config), clock())
             print(report.model_dump_json())
             return 1 if report.status == "partial" else 0
         if args.command == "run":
-            anyio.run(run_service_forever, load_research_agent_service_config(args.config))
+            anyio.run(run_research_os_forever, load_research_agent_service_config(args.config))
             return 0
         if args.command == "status":
             _ = verify_research_agent_launch_agent(args.config, args.plist)
@@ -121,6 +121,9 @@ def main(
                 _default_health_evaluator if health_evaluator is None else health_evaluator,
             )
         return 2
+    except StrategyResearchRuntimeBusyError as error:
+        print(error)
+        return 3
     except (
         CurrentMainAuthorityError,
         InvalidHermesDeliveryStoreError,

@@ -426,14 +426,19 @@ def _project_theme(
     validity: dt.timedelta,
     producer_strategy_version: str,
 ) -> KrThemeOpportunityProjection:
-    related: dict[str, KrRelatedSymbol] = {}
+    classified_related: dict[str, KrRelatedSymbol] = {}
     for classification in classifications:
         for item in classification.related_symbols:
-            existing = related.get(item.symbol)
+            existing = classified_related.get(item.symbol)
             if existing is not None and existing != item:
                 raise InvalidKrThemeProjectionError
-            related[item.symbol] = item
-    if not related or any(symbol not in metrics for symbol in related):
+            classified_related[item.symbol] = item
+    related = {
+        symbol: item
+        for symbol, item in classified_related.items()
+        if symbol in metrics
+    }
+    if not related:
         raise InvalidKrThemeProjectionError
 
     projected_symbols = tuple(

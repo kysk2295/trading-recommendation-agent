@@ -10,11 +10,15 @@ from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from pathlib import Path
 from typing import Final
+from zoneinfo import ZoneInfo
 
 from trading_agent.market_context_models import MarketContextSnapshot
 from trading_agent.research_agent_source_common import canonical_payload_json
+from trading_agent.research_identity_models import MarketId
 from trading_agent.signal_contract_models import FeatureValue, OpportunitySnapshot
 from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
+
+KST = ZoneInfo("Asia/Seoul")
 
 _PRIMARY_MAX_FEED_DELAY: Final[dt.timedelta] = dt.timedelta(minutes=3)
 _MARKET_RISK_HEADER: Final[tuple[str, ...]] = (
@@ -86,6 +90,7 @@ def opportunity_admission(
 ) -> PrimaryAdmissionFailure | None:
     dated = _dated_failure(
         now,
+        snapshot.strategy_lane.market_id,
         (
             snapshot.observed_at,
             *(reference.observed_at for reference in snapshot.evidence_refs),
@@ -107,6 +112,7 @@ def market_context_admission(
 ) -> PrimaryAdmissionFailure | None:
     dated = _dated_failure(
         now,
+        snapshot.market_id,
         (snapshot.observed_at, *(coverage.observed_at for coverage in snapshot.coverage)),
     )
     if dated is not None:
@@ -125,7 +131,7 @@ def day_source_admission(
     if isinstance(prepared, PrimaryAdmissionFailure):
         return prepared
     admission, timestamps = prepared
-    dated = _dated_failure(now, timestamps)
+    dated = _dated_failure(now, MarketId.US_EQUITIES, timestamps)
     if dated is not None:
         return dated
     if any(timestamp > now or now - timestamp > _PRIMARY_MAX_FEED_DELAY for timestamp in timestamps):
@@ -191,10 +197,12 @@ def _prepare_day_source(
 
 def _dated_failure(
     now: dt.datetime,
+    market_id: MarketId,
     timestamps: tuple[dt.datetime, ...],
 ) -> PrimaryAdmissionFailure | None:
-    current_date = now.astimezone(NEW_YORK).date()
-    if any(timestamp.astimezone(NEW_YORK).date() != current_date for timestamp in timestamps):
+    zone = KST if market_id.value == "kr_equities" else NEW_YORK
+    current_date = now.astimezone(zone).date()
+    if any(timestamp.astimezone(zone).date() != current_date for timestamp in timestamps):
         return PrimaryAdmissionFailure.PRIOR_DATE
     return None
 

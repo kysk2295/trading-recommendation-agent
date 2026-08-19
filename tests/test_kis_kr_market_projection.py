@@ -83,6 +83,25 @@ def test_kis_raw_receipts_project_completed_bars_and_current_shadow_signal() -> 
     assert decision.signal.entry_price == Decimal("103")
 
 
+def test_snapshot_uses_newer_quote_price_when_market_moves_between_gets() -> None:
+    price = json.loads(_price_body())
+    price["output"]["stck_prpr"] = "103.1"
+
+    market = project_kis_kr_market_snapshot(
+        KisKrSnapshotProjectionInput(
+            price_receipt=_receipt(
+                KisKrMarketReceiptKind.PRICE_STATUS,
+                json.dumps(price, separators=(",", ":")).encode(),
+                seconds=2,
+            ),
+            quote_receipt=_receipt(KisKrMarketReceiptKind.ORDER_BOOK, _quote_body(), seconds=3),
+            evaluated_at=SESSION + dt.timedelta(minutes=4, seconds=4),
+        )
+    )
+
+    assert market.last_price == Decimal("103")
+
+
 def test_unrecognized_vi_code_is_preserved_as_unknown_and_blocked() -> None:
     market = project_kis_kr_market_snapshot(
         KisKrSnapshotProjectionInput(

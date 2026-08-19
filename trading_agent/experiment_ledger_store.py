@@ -51,6 +51,7 @@ from trading_agent.experiment_ledger_schema import (
     CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7,
     CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2,
     CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3,
+    CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8,
     EXPERIMENT_LEDGER_SCHEMA_VERSION,
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V1,
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V2,
@@ -58,6 +59,8 @@ from trading_agent.experiment_ledger_schema import (
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V4,
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V5,
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V6,
+    EXPERIMENT_LEDGER_SCHEMA_VERSION_V7,
+    EXPERIMENT_LEDGER_SCHEMA_VERSION_V8,
 )
 from trading_agent.lifecycle_authority_policy import (
     InvalidLifecycleAuthorityError,
@@ -96,6 +99,42 @@ from trading_agent.multi_market_trial_store import (
     register_multi_market_trial,
 )
 from trading_agent.strategy_authority_models import StrategyAuthorityBinding
+from trading_agent.strategy_lab_ledger import (
+    StrategyLabLedgerError,
+    append_strategy_lab_trace_node,
+    read_strategy_lab_protocols,
+    read_strategy_lab_trace,
+    register_strategy_lab_protocol,
+)
+from trading_agent.strategy_lab_models import (
+    StrategyLabId,
+    StrategyLabProtocol,
+    StrategyLabTraceNode,
+)
+from trading_agent.strategy_research_ledger import (
+    AgentResearchStateEvent,
+    HoldoutReveal,
+    append_agent_state,
+    append_attempt,
+    register_preregistration,
+    reveal_holdout,
+)
+from trading_agent.strategy_research_ledger_reader import (
+    SanitizedHoldoutReveal,
+    read_agent_state,
+    read_agent_state_event,
+    read_attempts,
+    read_feedback,
+    read_preregistrations,
+    read_sanitized_reveals,
+)
+from trading_agent.strategy_research_ledger_schema import (
+    CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9,
+    STRATEGY_RESEARCH_SCHEMA_OBJECTS,
+)
+from trading_agent.strategy_research_models import PreregistrationManifest
+from trading_agent.strategy_research_results import ResearchAttempt, TerminalResearchResult
+from trading_agent.strategy_research_types import ResearchAgentId
 
 _V1_SCHEMA_OBJECTS = frozenset(
     {
@@ -181,6 +220,20 @@ _V7_SCHEMA_OBJECTS = _V6_SCHEMA_OBJECTS | frozenset(
         "research_discovery_sources_no_delete",
     }
 )
+
+_V8_SCHEMA_OBJECTS = _V7_SCHEMA_OBJECTS | frozenset(
+    {
+        "strategy_lab_protocols",
+        "strategy_lab_trace_nodes",
+        "strategy_lab_trace_nodes_by_lab",
+        "strategy_lab_protocols_no_update",
+        "strategy_lab_protocols_no_delete",
+        "strategy_lab_trace_nodes_no_update",
+        "strategy_lab_trace_nodes_no_delete",
+    }
+)
+
+_V9_SCHEMA_OBJECTS = _V8_SCHEMA_OBJECTS | STRATEGY_RESEARCH_SCHEMA_OBJECTS
 
 _DISCOVERY_SOURCE_KINDS = frozenset(
     {
@@ -474,6 +527,72 @@ class ExperimentLedgerReader:
         )
         return None if not effective else effective[-1]
 
+    def strategy_lab_protocols(
+        self,
+        lab_id: StrategyLabId | None = None,
+    ) -> tuple[StrategyLabProtocol, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            try:
+                return read_strategy_lab_protocols(connection, lab_id)
+            except StrategyLabLedgerError:
+                raise InvalidExperimentLedgerSourceError from None
+
+    def strategy_lab_trace(
+        self,
+        lab_id: StrategyLabId,
+    ) -> tuple[StrategyLabTraceNode, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            try:
+                return read_strategy_lab_trace(connection, lab_id)
+            except StrategyLabLedgerError:
+                raise InvalidExperimentLedgerSourceError from None
+
+    def strategy_research_preregistrations(self) -> tuple[PreregistrationManifest, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            return read_preregistrations(connection)
+
+    def strategy_research_attempts(self, hypothesis_id: str) -> tuple[ResearchAttempt, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            return read_attempts(connection, hypothesis_id)
+
+    def strategy_research_feedback(self, agent_id: ResearchAgentId) -> tuple[TerminalResearchResult, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            return read_feedback(connection, agent_id)
+
+    def strategy_research_agent_state(
+        self,
+        agent_id: ResearchAgentId,
+    ) -> tuple[AgentResearchStateEvent, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            return read_agent_state(connection, agent_id)
+
+    def strategy_research_agent_state_event(self, event_id: str) -> AgentResearchStateEvent | None:
+        if not self.path.is_file():
+            return None
+        with self._reader_connection() as connection:
+            return read_agent_state_event(connection, event_id)
+
+    def strategy_research_sanitized_reveals(
+        self,
+        agent_id: ResearchAgentId,
+    ) -> tuple[SanitizedHoldoutReveal, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            return read_sanitized_reveals(connection, agent_id)
+
     @contextmanager
     def _reader_connection(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
@@ -682,6 +801,36 @@ class ExperimentLedgerWriter:
             raise ExperimentLedgerConflictError from None
         except InvalidMultiMarketLifecycleSourceError:
             raise InvalidExperimentLedgerSourceError from None
+
+    def register_strategy_lab_protocol(self, protocol: StrategyLabProtocol) -> bool:
+        self._require_active()
+        try:
+            return register_strategy_lab_protocol(self._connection, protocol)
+        except StrategyLabLedgerError:
+            raise InvalidExperimentLedgerSourceError from None
+
+    def append_strategy_lab_trace_node(self, node: StrategyLabTraceNode) -> bool:
+        self._require_active()
+        try:
+            return append_strategy_lab_trace_node(self._connection, node)
+        except StrategyLabLedgerError:
+            raise InvalidExperimentLedgerSourceError from None
+
+    def register_strategy_research(self, manifest: PreregistrationManifest) -> bool:
+        self._require_active()
+        return register_preregistration(self._connection, manifest)
+
+    def append_strategy_research_attempt(self, attempt: ResearchAttempt) -> bool:
+        self._require_active()
+        return append_attempt(self._connection, attempt)
+
+    def append_strategy_research_agent_state(self, event: AgentResearchStateEvent) -> bool:
+        self._require_active()
+        return append_agent_state(self._connection, event)
+
+    def reveal_strategy_research_holdout(self, reveal: HoldoutReveal) -> bool:
+        self._require_active()
+        return reveal_holdout(self._connection, reveal)
 
     def register_strategy_authority_binding(self, binding: StrategyAuthorityBinding) -> bool:
         self._require_active()
@@ -932,8 +1081,7 @@ def _research_source_by_id(
     matches: list[StoredResearchSource] = []
     for table in ("research_sources", "research_discovery_sources"):
         row: tuple[str, str, str, str, str] | None = connection.execute(
-            f"SELECT source_key, source_id, source_kind, source_url, payload_json "
-            f"FROM {table} WHERE source_id = ?",
+            f"SELECT source_key, source_id, source_kind, source_url, payload_json FROM {table} WHERE source_id = ?",
             (source_id,),
         ).fetchone()
         if row is not None:
@@ -950,8 +1098,7 @@ def _research_source_by_key(
     matches: list[StoredResearchSource] = []
     for table in ("research_sources", "research_discovery_sources"):
         row: tuple[str, str, str, str, str] | None = connection.execute(
-            f"SELECT source_key, source_id, source_kind, source_url, payload_json "
-            f"FROM {table} WHERE source_key = ?",
+            f"SELECT source_key, source_id, source_kind, source_url, payload_json FROM {table} WHERE source_key = ?",
             (source_key,),
         ).fetchone()
         if row is not None:
@@ -1474,7 +1621,9 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
             + CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4
             + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5
             + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6
-            + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7,
+            + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7
+            + CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8
+            + CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1486,7 +1635,9 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
             + CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4
             + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5
             + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6
-            + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7,
+            + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7
+            + CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8
+            + CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1497,7 +1648,9 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
             ddl=CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4
             + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5
             + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6
-            + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7,
+            + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7
+            + CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8
+            + CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1507,7 +1660,9 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
             connection,
             ddl=CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5
             + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6
-            + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7,
+            + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7
+            + CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8
+            + CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1515,7 +1670,10 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
         _require_v5_schema(connection)
         _apply_schema_transaction(
             connection,
-            ddl=CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6 + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7,
+            ddl=CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6
+            + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7
+            + CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8
+            + CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1523,7 +1681,25 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
         _require_v6_schema(connection)
         _apply_schema_transaction(
             connection,
-            ddl=CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7,
+            ddl=CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7
+            + CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8
+            + CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9,
+            version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
+        )
+        return
+    if current == EXPERIMENT_LEDGER_SCHEMA_VERSION_V7:
+        _require_v7_schema(connection)
+        _apply_schema_transaction(
+            connection,
+            ddl=CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8 + CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9,
+            version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
+        )
+        return
+    if current == EXPERIMENT_LEDGER_SCHEMA_VERSION_V8:
+        _require_v8_schema(connection)
+        _apply_schema_transaction(
+            connection,
+            ddl=CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1545,7 +1721,7 @@ def _require_current_schema(connection: sqlite3.Connection) -> None:
     actual_objects = frozenset(
         row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
     )
-    if actual_objects != _V7_SCHEMA_OBJECTS:
+    if actual_objects != _V9_SCHEMA_OBJECTS:
         raise InvalidExperimentLedgerSourceError
 
 
@@ -1612,4 +1788,26 @@ def _require_v6_schema(connection: sqlite3.Connection) -> None:
         row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
     )
     if actual_objects != _V6_SCHEMA_OBJECTS:
+        raise UnsupportedExperimentLedgerSchemaError
+
+
+def _require_v7_schema(connection: sqlite3.Connection) -> None:
+    version: tuple[int] | None = connection.execute("PRAGMA user_version").fetchone()
+    if version != (EXPERIMENT_LEDGER_SCHEMA_VERSION_V7,):
+        raise UnsupportedExperimentLedgerSchemaError
+    actual_objects = frozenset(
+        row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
+    )
+    if actual_objects != _V7_SCHEMA_OBJECTS:
+        raise UnsupportedExperimentLedgerSchemaError
+
+
+def _require_v8_schema(connection: sqlite3.Connection) -> None:
+    version: tuple[int] | None = connection.execute("PRAGMA user_version").fetchone()
+    if version != (EXPERIMENT_LEDGER_SCHEMA_VERSION_V8,):
+        raise UnsupportedExperimentLedgerSchemaError
+    actual_objects = frozenset(
+        row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
+    )
+    if actual_objects != _V8_SCHEMA_OBJECTS:
         raise UnsupportedExperimentLedgerSchemaError

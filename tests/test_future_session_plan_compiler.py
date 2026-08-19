@@ -513,7 +513,7 @@ def test_kr_configured_non_running_interpreter_waits_for_runtime_environment(
     )
 
 
-def test_kr_configured_current_interpreter_keeps_v7_plan_ready(
+def test_kr_configured_current_interpreter_keeps_v9_plan_ready(
     tmp_path: Path,
 ) -> None:
     # Given
@@ -546,8 +546,8 @@ def test_kr_plan_waits_when_frozen_runtime_cannot_read_experiment_ledger(
     schema = runtime / "trading_agent" / "experiment_ledger_schema.py"
     schema.write_text(
         schema.read_text(encoding="utf-8").replace(
-            "EXPERIMENT_LEDGER_SCHEMA_VERSION: Final = 7",
-            "EXPERIMENT_LEDGER_SCHEMA_VERSION: Final = 6",
+            "EXPERIMENT_LEDGER_SCHEMA_VERSION: Final = 9",
+            "EXPERIMENT_LEDGER_SCHEMA_VERSION: Final = 8",
         ),
         encoding="utf-8",
     )

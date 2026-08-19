@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from trading_agent.research_agent_actions import (
     ResearchAgentActionContext,
 )
 from trading_agent.research_agent_cycle_models import (
+    EvidenceId,
     ResearchAgentDecisionKind,
     ResearchAgentResultStatus,
     ResearchAgentResultV1,
@@ -24,10 +26,24 @@ from trading_agent.research_agent_cycle_models import (
 )
 from trading_agent.research_agent_source_common import opportunity_candidate_subject_ref
 from trading_agent.signal_contract_models import OpportunityCandidate, OpportunitySnapshot
+from trading_agent.strategy_research_evidence_service import StrategyResearchEvidenceRejected
+from trading_agent.strategy_research_hypothesis_factory import SourceHypothesisArtifact
 
 
 class OpportunityHypothesisResolver(Protocol):
     def matching_card_key(self, snapshot: OpportunitySnapshot) -> str | None: ...
+
+
+class OpportunityHypothesisCreator(Protocol):
+    def create_routed(
+        self,
+        evidence_id: EvidenceId,
+        observed_at: dt.datetime,
+    ) -> SourceHypothesisArtifact: ...
+
+
+class OpportunityHypothesisSink(Protocol):
+    def persist(self, artifact: SourceHypothesisArtifact) -> bool: ...
 
 
 class ArchivedMarketContextEvidenceV1(BaseModel):
@@ -80,7 +96,9 @@ class ExperimentLedgerOpportunityHypothesisResolver:
 
 @dataclass(frozen=True, slots=True)
 class OpportunityResearchActionExecutor:
-    hypothesis_resolver: OpportunityHypothesisResolver
+    hypothesis_resolver: OpportunityHypothesisResolver | None = None
+    hypothesis_creator: OpportunityHypothesisCreator | None = None
+    hypothesis_sink: OpportunityHypothesisSink | None = None
 
     def execute(self, context: ResearchAgentActionContext) -> ResearchAgentResultV1:
         _require_action_identity(context, "opportunity_manager")
@@ -96,10 +114,21 @@ class OpportunityResearchActionExecutor:
             raise InvalidResearchAgentActionError(reason="authority_artifact_unresolved")
         artifacts = [evidence.payload_sha256]
         if decision.primary_decision is ResearchAgentDecisionKind.PROPOSE_HYPOTHESIS:
-            card_key = self.hypothesis_resolver.matching_card_key(snapshot)
-            if card_key is None:
+            if self.hypothesis_creator is not None:
+                try:
+                    created = self.hypothesis_creator.create_routed(evidence.evidence_id, context.observed_at)
+                except StrategyResearchEvidenceRejected as error:
+                    raise InvalidResearchAgentActionError(reason=f"strategy_research.{error.reason}") from None
+                if self.hypothesis_sink is not None:
+                    _ = self.hypothesis_sink.persist(created)
+                artifacts.extend(created.artifact_refs)
+            elif self.hypothesis_resolver is not None:
+                card_key = self.hypothesis_resolver.matching_card_key(snapshot)
+                if card_key is None:
+                    raise InvalidResearchAgentActionError(reason="required_evidence_unavailable")
+                artifacts.append(card_key)
+            else:
                 raise InvalidResearchAgentActionError(reason="required_evidence_unavailable")
-            artifacts.append(card_key)
         rows = "; ".join(_candidate_row(candidate, snapshot) for candidate in candidates)
         return _completed_result(context, rows, tuple(sorted(artifacts)))
 
@@ -250,6 +279,7 @@ __all__ = (
     "ArchivedMarketContextEvidenceV1",
     "ExperimentLedgerOpportunityHypothesisResolver",
     "MarketContextResearchActionExecutor",
+    "OpportunityHypothesisCreator",
     "OpportunityHypothesisResolver",
     "OpportunityResearchActionExecutor",
 )

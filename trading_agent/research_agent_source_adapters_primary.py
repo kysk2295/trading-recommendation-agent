@@ -4,6 +4,7 @@ import datetime as dt
 import sqlite3
 from pathlib import Path
 from typing import Protocol, assert_never, final
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
@@ -38,12 +39,20 @@ from trading_agent.research_agent_source_common import (
     require_private_source_file,
     require_source_boundary,
 )
+from trading_agent.research_identity_models import MarketId
+from trading_agent.strategy_research_evidence_service import (
+    KisKrMarketSessionGate,
+    StrategyResearchEvidenceRejected,
+)
 from trading_agent.us_equity_calendar import NEW_YORK
+
+KST = ZoneInfo("Asia/Seoul")
 
 
 class PrimarySourcePaths(Protocol):
     market_context_root: Path
     day_session_root: Path
+    kr_calendar_store: Path | None
 
 
 @final
@@ -55,10 +64,9 @@ class OpportunitySourceAdapter:
         paths: PrimarySourcePaths,
         now: dt.datetime,
     ) -> tuple[ResearchAgentEvidenceV1, ...]:
-        session_failure = primary_session_failure(now)
         outbox = _latest_session_artifact(paths.day_session_root, "opportunities.v1.jsonl")
         if outbox is None:
-            return _blocked_opportunity(session_failure or "snapshot_unavailable", now)
+            return _blocked_opportunity(primary_session_failure(now) or "snapshot_unavailable", now)
         try:
             require_source_boundary(outbox)
             snapshots = read_opportunity_snapshots(outbox)
@@ -67,8 +75,10 @@ class OpportunitySourceAdapter:
         if not snapshots:
             return _blocked_opportunity("snapshot_unavailable", now)
         snapshot = max(snapshots, key=lambda item: item.observed_at)
+        market_id = snapshot.strategy_lane.market_id
+        session_failure = _market_session_failure(paths, market_id, now)
         failure = opportunity_admission(snapshot, now)
-        if session_failure is None and _session_is_current(outbox.parent, now) and failure is None:
+        if session_failure is None and _session_is_current(outbox.parent, now, market_id) and failure is None:
             source_key = f"opportunity.{snapshot.opportunity_id}"
             return (
                 ResearchAgentEvidenceMaterial(
@@ -107,18 +117,21 @@ class MarketContextSourceAdapter:
         paths: PrimarySourcePaths,
         now: dt.datetime,
     ) -> tuple[ResearchAgentEvidenceV1, ...]:
-        session_failure = primary_session_failure(now)
         if not paths.market_context_root.exists():
             archived = archived_market_context_from_latest_day(paths.day_session_root, now)
-            return (archived,) if archived is not None else _blocked_market_context(
-                session_failure or "snapshot_unavailable", now
+            return (
+                (archived,)
+                if archived is not None
+                else _blocked_market_context(primary_session_failure(now) or "snapshot_unavailable", now)
             )
         require_source_boundary(paths.market_context_root)
         artifacts = tuple(sorted(paths.market_context_root.glob("*.market-context.json"))[-8:])
         if not artifacts:
             archived = archived_market_context_from_latest_day(paths.day_session_root, now)
-            return (archived,) if archived is not None else _blocked_market_context(
-                session_failure or "snapshot_unavailable", now
+            return (
+                (archived,)
+                if archived is not None
+                else _blocked_market_context(primary_session_failure(now) or "snapshot_unavailable", now)
             )
         try:
             snapshots: list[MarketContextSnapshot] = []
@@ -128,6 +141,7 @@ class MarketContextSourceAdapter:
         except (InvalidResearchAgentSourceError, OSError, UnicodeError, ValidationError, ValueError):
             raise InvalidResearchAgentSourceError(reason="market_context_source_invalid") from None
         snapshot = max(snapshots, key=lambda item: item.observed_at)
+        session_failure = _market_session_failure(paths, snapshot.market_id, now)
         failure = market_context_admission(snapshot, now)
         if session_failure is None and failure is None:
             return (
@@ -186,7 +200,11 @@ class DaySourceAdapter:
                     return (archived_day_evidence(archived, session.name),)
                 return _blocked_day(failure, now)
             case DaySourceAdmission() as admitted:
-                if session_failure is not None or not _session_is_current(session, now):
+                if session_failure is not None or not _session_is_current(
+                    session,
+                    now,
+                    MarketId.US_EQUITIES,
+                ):
                     if archived is not None:
                         return (archived_day_evidence(archived, session.name),)
                     return _blocked_day(session_failure or PrimaryAdmissionFailure.PRIOR_DATE, now)
@@ -223,9 +241,26 @@ def _latest_session_artifact(root: Path, name: str) -> Path | None:
     return None if not artifacts else artifacts[-1]
 
 
-def _session_is_current(session: Path, now: dt.datetime) -> bool:
-    current_name = now.astimezone(NEW_YORK).strftime("%Y%m%d")
+def _session_is_current(session: Path, now: dt.datetime, market_id: MarketId) -> bool:
+    zone = KST if market_id is MarketId.KR_EQUITIES else NEW_YORK
+    current_name = now.astimezone(zone).strftime("%Y%m%d")
     return session.name == current_name
+
+
+def _market_session_failure(
+    paths: PrimarySourcePaths,
+    market_id: MarketId,
+    now: dt.datetime,
+) -> PrimaryAdmissionFailure | None:
+    if market_id is MarketId.US_EQUITIES:
+        return primary_session_failure(now)
+    if market_id is not MarketId.KR_EQUITIES or paths.kr_calendar_store is None:
+        return PrimaryAdmissionFailure.SESSION_CLOSED
+    try:
+        KisKrMarketSessionGate(paths.kr_calendar_store).require_open("kr_equities", now)
+    except StrategyResearchEvidenceRejected:
+        return PrimaryAdmissionFailure.SESSION_CLOSED
+    return None
 
 
 def _blocked_opportunity(
