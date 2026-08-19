@@ -18,6 +18,7 @@ from trading_agent.day_hypothesis_models import (
     TargetHorizon,
 )
 from trading_agent.day_research_attempt_binding import DayResearchAttemptBinding
+from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.experiment_ledger_store import (
     ExperimentLedgerConflictError,
     ExperimentLedgerStore,
@@ -50,6 +51,8 @@ def _version(
     code_sha256: str = SHA_A,
     data_manifest_sha256: str = SHA_B,
     max_attempts: int = 6,
+    multiple_testing_family: str | None = None,
+    predictor: str = "verified_catalyst_surprise",
 ) -> HypothesisVersion:
     created_at = NOW + dt.timedelta(minutes=1)
     payload = {
@@ -63,7 +66,7 @@ def _version(
         "methodology_tags": ("cross_sectional",),
         "primary_evaluation_owner": "day_research",
         "evaluation_cadence": "each_completed_bar",
-        "predictor": "verified_catalyst_surprise",
+        "predictor": predictor,
         "sampling_timestamp": created_at,
         "target": "next_completed_bar_return",
         "target_horizon": TargetHorizon(duration=dt.timedelta(minutes=5)),
@@ -80,7 +83,9 @@ def _version(
         "search_budget": SearchBudget(
             max_parameter_combinations=max_attempts, max_attempts=max_attempts, max_cpu_seconds=60
         ),
-        "multiple_testing_family": hypothesis().multiple_testing_family,
+        "multiple_testing_family": hypothesis().multiple_testing_family
+        if multiple_testing_family is None
+        else multiple_testing_family,
         "model_sha256": SHA_A,
         "prompt_sha256": SHA_A,
         "code_sha256": code_sha256,
@@ -326,3 +331,242 @@ def test_binding_rejects_nonpositive_budget_debit(debit: int) -> None:
     # When / Then
     with pytest.raises(ValueError):
         _ = _binding(attempt, version, search_budget_debit=debit)
+
+
+@pytest.mark.parametrize("field", ("attempt_id", "multiple_testing_family"))
+def test_binding_rejects_empty_identity_fields(field: str) -> None:
+    # Given
+    attempt, version = _attempt(0, AttemptStatus.SUCCEEDED), _version(_family())
+
+    # When / Then
+    with pytest.raises(ValueError):
+        _ = _binding(attempt, version, **{field: ""})
+
+
+@pytest.mark.parametrize("artifact_ref", ("https://example.invalid/artifact", "artifact://unsafe/" + SHA_A))
+def test_binding_rejects_unsafe_artifact_reference(artifact_ref: str) -> None:
+    # Given
+    attempt, version = _attempt(0, AttemptStatus.SUCCEEDED), _version(_family())
+
+    # When / Then
+    with pytest.raises(ValueError):
+        _ = _binding(attempt, version, artifact_ref=artifact_ref)
+
+
+@pytest.mark.parametrize("extra", ("trading_authority", "profitability_claim"))
+def test_binding_rejects_authority_or_profitability_fields(extra: str) -> None:
+    # Given
+    binding = _binding(_attempt(0, AttemptStatus.SUCCEEDED), _version(_family()))
+
+    # When / Then
+    with pytest.raises(ValueError):
+        _ = DayResearchAttemptBinding.model_validate(binding.model_dump() | {extra: False})
+
+
+@pytest.mark.parametrize("milestone", ("finished", "registration"))
+def test_binding_rejects_terminal_and_registration_timestamp_equality(tmp_path: Path, milestone: str) -> None:
+    # Given
+    family = _family()
+    version = _version(family)
+    attempt = _attempt(0, AttemptStatus.SUCCEEDED)
+    if milestone == "registration":
+        attempt = attempt.model_copy(
+            update={
+                "started_at": NOW,
+                "finished_at": version.registration_completed_bar_at - dt.timedelta(seconds=1),
+            }
+        )
+    store = ExperimentLedgerStore(tmp_path / "ledger.sqlite3")
+    _prepared(store, (attempt,), version)
+    bound_at = attempt.finished_at if milestone == "finished" else version.registration_completed_bar_at
+
+    # When / Then
+    with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
+        _ = writer.register_day_research_attempt_binding(_binding(attempt, version, bound_at=bound_at))
+
+
+@pytest.mark.parametrize("tamper", ("missing", "index", "payload", "commitment"))
+def test_binding_rejects_tampered_holdout_seal(tmp_path: Path, tamper: str) -> None:
+    # Given
+    database = tmp_path / "ledger.sqlite3"
+    store = ExperimentLedgerStore(database)
+    version, attempt = _version(_family()), _attempt(0, AttemptStatus.SUCCEEDED)
+    _prepared(store, (attempt,), version)
+    with sqlite3.connect(database) as connection:
+        action = "delete" if tamper == "missing" else "update"
+        connection.execute(f"DROP TRIGGER strategy_research_holdout_seals_no_{action}")
+        if tamper == "missing":
+            connection.execute("DELETE FROM strategy_research_holdout_seals")
+        else:
+            column, value = {
+                "index": ("seal_id", "other-seal"),
+                "payload": ("payload_json", "{}"),
+                "commitment": ("commitment_sha256", SHA_A),
+            }[tamper]
+            connection.execute(f"UPDATE strategy_research_holdout_seals SET {column}=?", (value,))
+        connection.execute(
+            f"CREATE TRIGGER strategy_research_holdout_seals_no_{action} BEFORE {action.upper()} "
+            "ON strategy_research_holdout_seals BEGIN SELECT RAISE(ABORT, 'append-only'); END"
+        )
+        connection.commit()
+
+    # When / Then
+    assert store.is_initialized() is True
+    with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
+        _ = writer.register_day_research_attempt_binding(_binding(attempt, version))
+
+
+def test_replay_and_review_reject_duplicate_attempt_rows_and_over_budget_rows(tmp_path: Path) -> None:
+    # Given
+    database = tmp_path / "ledger.sqlite3"
+    store = ExperimentLedgerStore(database)
+    version, attempt = _version(_family()), _attempt(0, AttemptStatus.SUCCEEDED)
+    _prepared(store, (attempt,), version)
+    binding = _binding(attempt, version)
+    duplicate = _binding(
+        attempt,
+        version,
+        bound_at=binding.bound_at + dt.timedelta(seconds=1),
+        search_budget_debit=2,
+    )
+    with store.writer() as writer:
+        assert writer.register_day_research_attempt_binding(binding)
+    with sqlite3.connect(database) as connection:
+        row = connection.execute("SELECT * FROM day_research_attempt_bindings").fetchone()
+        connection.execute("DROP TABLE day_research_attempt_bindings")
+        connection.execute(
+            "CREATE TABLE day_research_attempt_bindings (binding_id TEXT PRIMARY KEY,attempt_id TEXT NOT NULL, "
+            "hypothesis_version_id TEXT NOT NULL,market_id TEXT NOT NULL,artifact_ref TEXT NOT NULL, "
+            "multiple_testing_family TEXT NOT NULL,search_budget_debit INTEGER NOT NULL,bound_at TEXT NOT NULL, "
+            "payload_json TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE INDEX day_attempt_bindings_by_version_market "
+            "ON day_research_attempt_bindings(hypothesis_version_id,market_id,bound_at)"
+        )
+        connection.execute("CREATE TRIGGER day_research_attempt_bindings_no_update BEFORE UPDATE ON "
+            "day_research_attempt_bindings BEGIN SELECT RAISE(ABORT, 'append-only'); END")
+        connection.execute("CREATE TRIGGER day_research_attempt_bindings_no_delete BEFORE DELETE ON "
+            "day_research_attempt_bindings BEGIN SELECT RAISE(ABORT, 'append-only'); END")
+        connection.execute("INSERT INTO day_research_attempt_bindings VALUES (?,?,?,?,?,?,?,?,?)", row)
+        connection.execute(
+            "INSERT INTO day_research_attempt_bindings VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                duplicate.binding_id,
+                duplicate.attempt_id,
+                duplicate.hypothesis_version_id,
+                duplicate.market_id.value,
+                duplicate.artifact_ref,
+                duplicate.multiple_testing_family,
+                duplicate.search_budget_debit,
+                duplicate.bound_at.isoformat(),
+                canonical_experiment_ledger_json(duplicate),
+            ),
+        )
+        connection.commit()
+
+    # When / Then
+    assert store.is_initialized() is True
+    with pytest.raises(InvalidExperimentLedgerSourceError):
+        _ = store.reader().day_attempts_for_review(version.market_id, version.hypothesis_version_id)
+    with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
+        _ = writer.register_day_research_attempt_binding(binding)
+
+
+def test_replay_and_review_reject_canonical_over_budget_row(tmp_path: Path) -> None:
+    # Given
+    database = tmp_path / "ledger.sqlite3"
+    store = ExperimentLedgerStore(database)
+    family = _family()
+    version = _version(family, max_attempts=1)
+    first, second = _attempt(0, AttemptStatus.SUCCEEDED), _attempt(1, AttemptStatus.SUCCEEDED)
+    _prepared(store, (first, second), version)
+    binding, overflow = _binding(first, version), _binding(second, version)
+    with store.writer() as writer:
+        assert writer.register_day_research_attempt_binding(binding)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO day_research_attempt_bindings VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                overflow.binding_id,
+                overflow.attempt_id,
+                overflow.hypothesis_version_id,
+                overflow.market_id.value,
+                overflow.artifact_ref,
+                overflow.multiple_testing_family,
+                overflow.search_budget_debit,
+                overflow.bound_at.isoformat(),
+                canonical_experiment_ledger_json(overflow),
+            ),
+        )
+        connection.commit()
+
+    # When / Then
+    with pytest.raises(InvalidExperimentLedgerSourceError):
+        _ = store.reader().day_attempts_for_review(version.market_id, version.hypothesis_version_id)
+    with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
+        _ = writer.register_day_research_attempt_binding(binding)
+
+
+def test_manifest_family_and_kind_neutral_safe_artifact_preserve_attempt_bytes(tmp_path: Path) -> None:
+    # Given
+    database = tmp_path / "ledger.sqlite3"
+    store = ExperimentLedgerStore(database)
+    family = _family()
+    incompatible = _version(family, multiple_testing_family="other-family")
+    attempt = _attempt(0, AttemptStatus.SUCCEEDED).model_copy(
+        update={"artifact_refs": (f"artifact://safe/{SHA_B}",)}
+    )
+    _prepared(store, (attempt,), incompatible)
+    with sqlite3.connect(database) as connection:
+        before: tuple[str] = connection.execute("SELECT payload_json FROM strategy_research_attempts").fetchone()
+
+    # When / Then
+    with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
+        _ = writer.register_day_research_attempt_binding(_binding(attempt, incompatible, artifact_ref=f"artifact://safe/{SHA_B}"))
+    compatible = _version(family)
+    with store.writer() as writer:
+        assert writer.register_day_hypothesis_version(compatible)
+        assert writer.register_day_research_attempt_binding(_binding(attempt, compatible, artifact_ref=f"artifact://safe/{SHA_B}"))
+    with sqlite3.connect(database) as connection:
+        after: tuple[str] = connection.execute("SELECT payload_json FROM strategy_research_attempts").fetchone()
+    assert after == before
+
+
+def test_reader_filters_deterministically_and_never_creates_or_mutates(tmp_path: Path) -> None:
+    # Given
+    missing = ExperimentLedgerStore(tmp_path / "missing.sqlite3")
+    family = _family()
+    first_version = _version(family)
+    second_version = _version(family, predictor="other_predictor")
+    first = _attempt(0, AttemptStatus.SUCCEEDED)
+    second = _attempt(1, AttemptStatus.FAILED)
+    third = _attempt(2, AttemptStatus.ABORTED)
+    store = ExperimentLedgerStore(tmp_path / "ledger.sqlite3")
+    _prepared(store, (first, second, third), first_version)
+    with store.writer() as writer:
+        assert writer.register_day_hypothesis_version(second_version)
+        assert writer.register_day_research_attempt_binding(_binding(second, second_version))
+        assert writer.register_day_research_attempt_binding(_binding(third, first_version))
+        assert writer.register_day_research_attempt_binding(_binding(first, first_version))
+
+    # When
+    first_records = store.reader().day_attempts_for_review(
+        first_version.market_id,
+        first_version.hypothesis_version_id,
+    )
+    second_records = store.reader().day_attempts_for_review(
+        second_version.market_id,
+        second_version.hypothesis_version_id,
+    )
+
+    # Then
+    assert missing.reader().day_attempts_for_review(MarketId.US_EQUITIES, first_version.hypothesis_version_id) == ()
+    assert not missing.path.exists()
+    assert tuple(record.attempt.attempt_id for record in first_records) == (first.attempt_id, third.attempt_id)
+    assert tuple(record.attempt.attempt_id for record in second_records) == (second.attempt_id,)
+    with (
+        store.reader()._reader_connection() as connection,
+        pytest.raises(sqlite3.OperationalError, match="readonly"),
+    ):
+        connection.execute("INSERT INTO day_research_attempt_bindings DEFAULT VALUES")

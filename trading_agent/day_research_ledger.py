@@ -17,7 +17,7 @@ from trading_agent.experiment_ledger_keys import (
     day_hypothesis_version_key,
 )
 from trading_agent.research_identity_models import MarketId
-from trading_agent.strategy_research_models import PreregistrationManifest
+from trading_agent.strategy_research_models import PreregistrationManifest, SealedHoldoutRef
 from trading_agent.strategy_research_results import ResearchAttempt
 from trading_agent.strategy_research_types import AttemptStatus
 
@@ -131,6 +131,7 @@ def register_day_research_attempt_binding(
     binding: DayResearchAttemptBinding,
 ) -> bool:
     binding_id = _safe_binding_identity(binding)
+    _all_stored_bindings(connection)
     existing = _binding_by_id(connection, binding_id)
     if existing is not None:
         checked = _validated_binding_or_conflict(binding)
@@ -378,11 +379,13 @@ def _stored_attempt(connection: sqlite3.Connection, attempt_id: str) -> Research
         or payload != attempt.model_dump_json()
     ):
         raise InvalidDayResearchLedgerSourceError("stored_research_attempt_index_invalid")
-    _require_attempt_preregistration(connection, attempt)
     return attempt
 
 
-def _require_attempt_preregistration(connection: sqlite3.Connection, attempt: ResearchAttempt) -> None:
+def _require_attempt_preregistration(
+    connection: sqlite3.Connection,
+    attempt: ResearchAttempt,
+) -> PreregistrationManifest:
     row: tuple[str, str, str, str, str, str, str] | None = connection.execute(
         "SELECT registration_key,hypothesis_id,parent_hypothesis_id,search_family_id, "
         "agent_id,protocol_version,payload_json FROM strategy_research_preregistrations WHERE hypothesis_id=?",
@@ -408,6 +411,35 @@ def _require_attempt_preregistration(connection: sqlite3.Connection, attempt: Re
         or attempt.data_manifest_sha256 != hypothesis.data_manifest_sha256
     ):
         raise InvalidDayResearchLedgerSourceError("stored_research_attempt_preregistration_invalid")
+    _require_attempt_holdout_seal(connection, manifest)
+    return manifest
+
+
+def _require_attempt_holdout_seal(
+    connection: sqlite3.Connection,
+    manifest: PreregistrationManifest,
+) -> None:
+    expected = manifest.hypothesis.holdout_period_sealed_ref
+    row: tuple[str, str, str, str] | None = connection.execute(
+        "SELECT seal_id,hypothesis_id,commitment_sha256,payload_json FROM strategy_research_holdout_seals "
+        "WHERE hypothesis_id=?",
+        (manifest.hypothesis.hypothesis_id,),
+    ).fetchone()
+    if row is None:
+        raise InvalidDayResearchLedgerSourceError("stored_research_attempt_holdout_seal_missing")
+    seal_id, hypothesis_id, commitment, payload = row
+    try:
+        seal = SealedHoldoutRef.model_validate_json(payload)
+    except ValueError:
+        raise InvalidDayResearchLedgerSourceError("stored_research_attempt_holdout_seal_payload_invalid") from None
+    if (
+        seal_id != expected.seal_id
+        or hypothesis_id != manifest.hypothesis.hypothesis_id
+        or commitment != expected.commitment_sha256
+        or seal != expected
+        or payload != expected.model_dump_json()
+    ):
+        raise InvalidDayResearchLedgerSourceError("stored_research_attempt_holdout_seal_invalid")
 
 
 def _require_binding_parent_coherence(
@@ -420,15 +452,17 @@ def _require_binding_parent_coherence(
     if stored_version is None or attempt is None:
         raise InvalidDayResearchLedgerSourceError("day_research_attempt_binding_parent_missing")
     version = stored_version.version
+    manifest = _require_attempt_preregistration(connection, attempt)
     require_same_market(version.market_id, binding.market_id)
     if (
         binding.multiple_testing_family != version.multiple_testing_family
+        or version.multiple_testing_family != manifest.hypothesis.multiple_testing_family
         or attempt.code_sha256 != version.code_sha256
         or attempt.data_manifest_sha256 != version.data_manifest_sha256
         or attempt.finished_at is None
-        or binding.bound_at < attempt.finished_at
-        or binding.bound_at < version.created_at
-        or binding.bound_at < version.registration_completed_bar_at
+        or binding.bound_at <= attempt.finished_at
+        or binding.bound_at <= version.created_at
+        or binding.bound_at <= version.registration_completed_bar_at
     ):
         raise InvalidDayResearchLedgerSourceError("day_research_attempt_binding_protocol_invalid")
     match attempt.status:
@@ -460,6 +494,8 @@ def _all_stored_bindings(connection: sqlite3.Connection) -> tuple[StoredDayResea
     bindings = tuple(_stored_binding(row) for row in rows)
     if len({item.binding.binding_id for item in bindings}) != len(bindings):
         raise InvalidDayResearchLedgerSourceError("stored_day_attempt_binding_identity_duplicate")
+    if len({item.binding.attempt_id for item in bindings}) != len(bindings):
+        raise InvalidDayResearchLedgerSourceError("stored_day_attempt_binding_attempt_duplicate")
     for stored in bindings:
         _require_binding_parent_coherence(connection, stored.binding)
     _require_stored_binding_budgets(connection, bindings)
