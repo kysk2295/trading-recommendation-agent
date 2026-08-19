@@ -192,6 +192,8 @@ def _stored_family(row: tuple[str, str, str | None, str, str]) -> StoredDayHypot
         family = HypothesisFamily.model_validate_json(payload)
     except ValueError:
         raise InvalidDayResearchLedgerSourceError("stored_day_family_payload_invalid") from None
+    if payload != canonical_experiment_ledger_json(family):
+        raise InvalidDayResearchLedgerSourceError("stored_day_family_payload_invalid")
     typed_key = DayHypothesisFamilyKey(key)
     if (
         typed_key != day_hypothesis_family_key(family)
@@ -211,6 +213,8 @@ def _stored_version(
         version = HypothesisVersion.model_validate_json(payload)
     except ValueError:
         raise InvalidDayResearchLedgerSourceError("stored_day_version_payload_invalid") from None
+    if payload != canonical_experiment_ledger_json(version):
+        raise InvalidDayResearchLedgerSourceError("stored_day_version_payload_invalid")
     typed_key = DayHypothesisVersionKey(key)
     if (
         typed_key != day_hypothesis_version_key(version)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import sqlite3
 from decimal import Decimal
 from pathlib import Path
@@ -460,16 +461,47 @@ def test_reads_fail_closed_on_day_tampering(tmp_path: Path, target: str) -> None
                 else "{}"
             )
             connection.execute(f"UPDATE day_hypothesis_families SET {column}=?", (value,))
+            _restore_update_trigger(connection, "day_hypothesis_families")
         else:
             connection.execute("DROP TRIGGER day_hypothesis_versions_no_update")
             column = "version_key" if target == "version_key" else "market_id"
             value = "0" * 64 if target == "version_key" else MarketId.KR_EQUITIES.value
             connection.execute(f"UPDATE day_hypothesis_versions SET {column}=?", (value,))
+            _restore_update_trigger(connection, "day_hypothesis_versions")
         connection.commit()
 
+    assert store.is_initialized() is True
     reader = store.reader()
     with pytest.raises(InvalidExperimentLedgerSourceError):
         _ = reader.day_hypothesis_families() if target.startswith("family") else reader.day_hypothesis_versions()
+
+
+@pytest.mark.parametrize("record_kind", ("family", "version"))
+def test_reads_reject_valid_noncanonical_payload_json(tmp_path: Path, record_kind: str) -> None:
+    database = tmp_path / "ledger.sqlite3"
+    store = ExperimentLedgerStore(database)
+    family = _family()
+    version = _version(family)
+    with store.writer() as writer:
+        assert writer.register_day_hypothesis_family(family) is True
+        assert writer.register_day_hypothesis_version(version) is True
+
+    table = "day_hypothesis_families" if record_kind == "family" else "day_hypothesis_versions"
+    with sqlite3.connect(database) as connection:
+        payload: tuple[str] = connection.execute(f"SELECT payload_json FROM {table}").fetchone()
+        noncanonical = json.dumps(json.loads(payload[0]), indent=2, sort_keys=False)
+        connection.execute(f"DROP TRIGGER {table}_no_update")
+        connection.execute(f"UPDATE {table} SET payload_json=?", (noncanonical,))
+        _restore_update_trigger(connection, table)
+        connection.commit()
+
+    assert store.is_initialized() is True
+    with pytest.raises(InvalidExperimentLedgerSourceError):
+        _ = (
+            store.day_hypothesis_families()
+            if record_kind == "family"
+            else store.day_hypothesis_versions()
+        )
 
 
 def test_store_reader_connection_is_query_only(tmp_path: Path) -> None:
@@ -504,3 +536,10 @@ def _placeholder(column: str) -> str | int | None:
     if column.startswith("parent_") or column == "previous_event_id":
         return None
     return "a" * 64
+
+
+def _restore_update_trigger(connection: sqlite3.Connection, table: str) -> None:
+    connection.execute(
+        f"""CREATE TRIGGER {table}_no_update BEFORE UPDATE ON {table}
+        BEGIN SELECT RAISE(ABORT, 'append-only'); END"""
+    )
