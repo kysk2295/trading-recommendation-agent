@@ -18,10 +18,12 @@ from trading_agent.day_research_ledger import (
     StoredDayHypothesisFamily,
     StoredDayHypothesisVersion,
     StoredDayResearchVersionGraph,
+    StoredDayStrategyCapsule,
     _register_day_research_attempt_binding_after_audit,
     audit_day_research_attempt_bindings,
     register_day_hypothesis_family,
     register_day_hypothesis_version,
+    register_day_strategy_capsule,
 )
 from trading_agent.day_research_ledger_reader import (
     DayResearchAttemptForReview,
@@ -29,12 +31,15 @@ from trading_agent.day_research_ledger_reader import (
     day_hypothesis_family,
     day_hypothesis_version,
     day_hypothesis_versions,
+    day_strategy_capsule,
+    day_strategy_capsules,
     read_day_attempts_for_review,
 )
 from trading_agent.day_research_ledger_schema import (
     CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10,
     DAY_RESEARCH_SCHEMA_OBJECTS,
 )
+from trading_agent.day_strategy_capsule_models import StrategyCapsule
 from trading_agent.experiment_ledger_keys import (
     ExperimentTrialEventKey,
     ExperimentTrialRegistrationKey,
@@ -632,6 +637,28 @@ class ExperimentLedgerReader:
             except InvalidDayResearchLedgerSourceError:
                 raise InvalidExperimentLedgerSourceError from None
 
+    def day_strategy_capsules(
+        self,
+        market_id: MarketId | None = None,
+        hypothesis_version_id: str | None = None,
+    ) -> tuple[StoredDayStrategyCapsule, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            try:
+                return day_strategy_capsules(connection, market_id, hypothesis_version_id)
+            except InvalidDayResearchLedgerSourceError:
+                raise InvalidExperimentLedgerSourceError from None
+
+    def day_strategy_capsule(self, capsule_id: str) -> StoredDayStrategyCapsule | None:
+        if not self.path.is_file():
+            return None
+        with self._reader_connection() as connection:
+            try:
+                return day_strategy_capsule(connection, capsule_id)
+            except InvalidDayResearchLedgerSourceError:
+                raise InvalidExperimentLedgerSourceError from None
+
     def strategy_research_preregistrations(self) -> tuple[PreregistrationManifest, ...]:
         if not self.path.is_file():
             return ()
@@ -949,6 +976,15 @@ class ExperimentLedgerWriter:
                 graph = audit_day_research_attempt_bindings(self._connection)
                 self._day_research_binding_graph = graph
             return _register_day_research_attempt_binding_after_audit(self._connection, binding, graph)
+        except DayResearchLedgerConflictError:
+            raise ExperimentLedgerConflictError from None
+        except InvalidDayResearchLedgerSourceError:
+            raise InvalidExperimentLedgerSourceError from None
+
+    def register_day_strategy_capsule(self, capsule: StrategyCapsule) -> bool:
+        self._require_active()
+        try:
+            return register_day_strategy_capsule(self._connection, capsule)
         except DayResearchLedgerConflictError:
             raise ExperimentLedgerConflictError from None
         except InvalidDayResearchLedgerSourceError:

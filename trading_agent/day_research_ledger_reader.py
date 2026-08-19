@@ -8,10 +8,14 @@ from trading_agent.day_research_ledger import (
     InvalidDayResearchLedgerSourceError,
     StoredDayHypothesisFamily,
     StoredDayHypothesisVersion,
+    StoredDayStrategyCapsule,
     _all_stored_bindings,
+    _require_capsule_parent_coherence,
     _require_stored_family_graph,
     _require_stored_version_graph,
     _stored_attempt,
+    _stored_binding_audit,
+    _stored_capsule,
     _stored_family,
     _stored_version,
     _version_by_id,
@@ -86,6 +90,45 @@ def day_hypothesis_version(
             for stored in day_hypothesis_versions(connection)
             if stored.version.hypothesis_version_id == version_id
         ),
+        None,
+    )
+
+
+def day_strategy_capsules(
+    connection: sqlite3.Connection,
+    market_id: MarketId | None = None,
+    hypothesis_version_id: str | None = None,
+) -> tuple[StoredDayStrategyCapsule, ...]:
+    rows: list[tuple[str, str, str, str, str]] = connection.execute(
+        "SELECT capsule_id,hypothesis_version_id,market_id,created_at,payload_json "
+        "FROM day_strategy_capsules ORDER BY rowid"
+    ).fetchall()
+    capsules = tuple(_stored_capsule(row) for row in rows)
+    if len({item.capsule.capsule_id for item in capsules}) != len(capsules):
+        raise InvalidDayResearchLedgerSourceError("stored_day_capsule_identity_duplicate")
+    binding_audit = _stored_binding_audit(connection)
+    bindings_by_id = {item.binding.binding_id: item for item in binding_audit.bindings}
+    for stored in capsules:
+        _require_capsule_parent_coherence(
+            connection,
+            stored.capsule,
+            bindings_by_id,
+            binding_audit.graph,
+        )
+    return tuple(
+        stored
+        for stored in capsules
+        if (market_id is None or stored.capsule.market_id is market_id)
+        and (hypothesis_version_id is None or stored.capsule.hypothesis_version_id == hypothesis_version_id)
+    )
+
+
+def day_strategy_capsule(
+    connection: sqlite3.Connection,
+    capsule_id: str,
+) -> StoredDayStrategyCapsule | None:
+    return next(
+        (stored for stored in day_strategy_capsules(connection) if stored.capsule.capsule_id == capsule_id),
         None,
     )
 

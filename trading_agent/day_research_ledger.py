@@ -10,6 +10,7 @@ from trading_agent.day_research_attempt_binding import (
     DayResearchAttemptBinding,
     preregistered_attempted_artifact_ref,
 )
+from trading_agent.day_strategy_capsule_models import StrategyCapsule
 from trading_agent.experiment_ledger_keys import (
     DayHypothesisFamilyKey,
     DayHypothesisVersionKey,
@@ -54,6 +55,11 @@ class StoredDayHypothesisVersion:
 @dataclass(frozen=True, slots=True)
 class StoredDayResearchAttemptBinding:
     binding: DayResearchAttemptBinding
+
+
+@dataclass(frozen=True, slots=True)
+class StoredDayStrategyCapsule:
+    capsule: StrategyCapsule
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +145,38 @@ def register_day_research_attempt_binding(
 ) -> bool:
     graph = audit_day_research_attempt_bindings(connection)
     return _register_day_research_attempt_binding_after_audit(connection, binding, graph)
+
+
+def register_day_strategy_capsule(
+    connection: sqlite3.Connection,
+    capsule: StrategyCapsule,
+) -> bool:
+    capsule_id = _safe_capsule_identity(capsule)
+    audit = _stored_binding_audit(connection)
+    stored_bindings = {item.binding.binding_id: item for item in audit.bindings}
+    existing = _capsule_by_id(connection, capsule_id)
+    if existing is not None:
+        checked = _validated_capsule_or_conflict(capsule)
+        _require_capsule_parent_coherence(connection, checked, stored_bindings, audit.graph)
+        if existing.capsule == checked:
+            return False
+        raise DayResearchLedgerConflictError
+    checked = _validated_capsule(capsule)
+    _require_capsule_parent_coherence(connection, checked, stored_bindings, audit.graph)
+    try:
+        _ = connection.execute(
+            "INSERT INTO day_strategy_capsules VALUES (?,?,?,?,?)",
+            (
+                checked.capsule_id,
+                checked.hypothesis_version_id,
+                checked.market_id.value,
+                checked.published_at.isoformat(),
+                canonical_experiment_ledger_json(checked),
+            ),
+        )
+    except sqlite3.IntegrityError as error:
+        raise DayResearchLedgerConflictError from error
+    return True
 
 
 def _register_day_research_attempt_binding_after_audit(
@@ -257,6 +295,30 @@ def _validated_binding_or_conflict(binding: DayResearchAttemptBinding) -> DayRes
         raise DayResearchLedgerConflictError from None
 
 
+def _validated_capsule(capsule: StrategyCapsule) -> StrategyCapsule:
+    try:
+        return StrategyCapsule.model_validate(capsule.model_dump(mode="python"))
+    except ValueError:
+        raise InvalidDayResearchLedgerSourceError("invalid_day_strategy_capsule") from None
+
+
+def _safe_capsule_identity(capsule: StrategyCapsule) -> str:
+    match capsule.__dict__.get("capsule_id"):
+        case str() as capsule_id if len(capsule_id) == 64 and all(
+            character in "0123456789abcdef" for character in capsule_id
+        ):
+            return capsule_id
+        case _:
+            raise InvalidDayResearchLedgerSourceError("invalid_day_strategy_capsule")
+
+
+def _validated_capsule_or_conflict(capsule: StrategyCapsule) -> StrategyCapsule:
+    try:
+        return _validated_capsule(capsule)
+    except InvalidDayResearchLedgerSourceError:
+        raise DayResearchLedgerConflictError from None
+
+
 def _family_by_id(
     connection: sqlite3.Connection,
     family_id: str,
@@ -322,6 +384,22 @@ def _binding_by_attempt_id(
     if len(rows) != 1:
         raise InvalidDayResearchLedgerSourceError("stored_day_attempt_binding_attempt_duplicate")
     return _stored_binding(rows[0])
+
+
+def _capsule_by_id(
+    connection: sqlite3.Connection,
+    capsule_id: str,
+) -> StoredDayStrategyCapsule | None:
+    rows: list[tuple[str, str, str, str, str]] = connection.execute(
+        "SELECT capsule_id,hypothesis_version_id,market_id,created_at,payload_json "
+        "FROM day_strategy_capsules WHERE capsule_id=?",
+        (capsule_id,),
+    ).fetchall()
+    if not rows:
+        return None
+    if len(rows) != 1:
+        raise InvalidDayResearchLedgerSourceError("stored_day_capsule_identity_duplicate")
+    return _stored_capsule(rows[0])
 
 
 def _stored_family(row: tuple[str, str, str | None, str, str]) -> StoredDayHypothesisFamily:
@@ -390,6 +468,24 @@ def _stored_binding(
     ):
         raise InvalidDayResearchLedgerSourceError("stored_day_attempt_binding_index_invalid")
     return StoredDayResearchAttemptBinding(binding)
+
+
+def _stored_capsule(row: tuple[str, str, str, str, str]) -> StoredDayStrategyCapsule:
+    capsule_id, version_id, market_id, created_at, payload = row
+    try:
+        capsule = StrategyCapsule.model_validate_json(payload)
+    except ValueError:
+        raise InvalidDayResearchLedgerSourceError("stored_day_capsule_payload_invalid") from None
+    if payload != canonical_experiment_ledger_json(capsule):
+        raise InvalidDayResearchLedgerSourceError("stored_day_capsule_payload_invalid")
+    if (
+        capsule_id != capsule.capsule_id
+        or version_id != capsule.hypothesis_version_id
+        or market_id != capsule.market_id.value
+        or created_at != capsule.published_at.isoformat()
+    ):
+        raise InvalidDayResearchLedgerSourceError("stored_day_capsule_index_invalid")
+    return StoredDayStrategyCapsule(capsule)
 
 
 def _stored_attempt(connection: sqlite3.Connection, attempt_id: str) -> ResearchAttempt | None:
@@ -531,6 +627,45 @@ def _require_binding_parent_coherence(
         case unreachable:
             assert_never(unreachable)
     return version, attempt
+
+
+def _require_capsule_parent_coherence(
+    connection: sqlite3.Connection,
+    capsule: StrategyCapsule,
+    stored_bindings: Mapping[str, StoredDayResearchAttemptBinding] | None = None,
+    graph: StoredDayResearchVersionGraph | None = None,
+) -> None:
+    version = (
+        _version_by_id(connection, capsule.hypothesis_version_id)
+        if graph is None
+        else graph.versions.get(capsule.hypothesis_version_id)
+    )
+    bindings = (
+        {item.binding.binding_id: item for item in _all_stored_bindings(connection)}
+        if stored_bindings is None
+        else stored_bindings
+    )
+    stored_binding = bindings.get(capsule.attempt_binding_id)
+    binding = None if stored_binding is None else stored_binding.binding
+    if version is None or binding is None:
+        raise InvalidDayResearchLedgerSourceError("day_strategy_capsule_parent_missing")
+    _, attempt = _require_binding_parent_coherence(connection, binding, graph)
+    require_same_market(version.version.market_id, capsule.market_id)
+    if (
+        attempt.status is not AttemptStatus.SUCCEEDED
+        or binding.hypothesis_version_id != capsule.hypothesis_version_id
+        or binding.market_id is not capsule.market_id
+        or binding.artifact_ref != capsule.artifact_ref
+        or version.version.code_sha256 != capsule.artifact_sha256
+        or version.version.evaluation_cadence != capsule.evaluation_cadence
+        or version.version.entry_rule != capsule.entry_rule
+        or version.version.exit_rule != capsule.exit_rule
+        or version.version.stop_rule != capsule.stop_rule
+        or version.version.cost_model != capsule.cost_model
+        or version.version.protocol_sha256 != capsule.protocol_sha256
+        or capsule.published_at <= binding.bound_at
+    ):
+        raise InvalidDayResearchLedgerSourceError("day_strategy_capsule_protocol_invalid")
 
 
 def _all_stored_bindings(connection: sqlite3.Connection) -> tuple[StoredDayResearchAttemptBinding, ...]:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -142,6 +143,88 @@ def test_real_sandbox_stops_generated_code_over_rss_limit(tmp_path: Path) -> Non
     with (
         sandbox.open_session(published) as strategy,
         pytest.raises(GeneratedStrategyExecutionError, match="rss_limit_exceeded"),
+    ):
+        _ = strategy.observe(_bar(31), None)
+
+
+def test_real_sandbox_denies_generated_child_process_escape(tmp_path: Path) -> None:
+    # Given: generated code that attempts to spawn an allowlisted host executable.
+    published = _publish(
+        tmp_path,
+        "def create_strategy(context):\n"
+        "    class Strategy:\n"
+        "        def observe(self, bar, candidate):\n"
+        "            import subprocess\n"
+        "            try:\n"
+        "                subprocess.run(['/bin/echo', 'escaped'], check=True)\n"
+        "            except OSError:\n"
+        "                return {'symbol': bar['symbol'], 'timestamp': bar['timestamp'], "
+        "'entry': bar['close'], 'stop': bar['low'], 'rationale': 'process-denied'}\n"
+        "            return {'symbol': bar['symbol'], 'timestamp': bar['timestamp'], "
+        "'entry': bar['close'], 'stop': bar['low'], 'rationale': 'process-escaped'}\n"
+        "    return Strategy()\n",
+    )
+
+    # When: the attempt runs inside the real sandbox profile.
+    with _sandbox(tmp_path, published).open_session(published) as strategy:
+        signal = strategy.observe(_bar(31), None)
+
+    # Then: process creation is denied while the sandboxed runner remains usable.
+    assert signal is not None
+    assert signal.rationale == "process-denied"
+
+
+def test_real_sandbox_cpu_limit_precedes_long_wall_limit(tmp_path: Path) -> None:
+    # Given: CPU-bound generated code with a one-second CPU cap and long wall deadline.
+    published = _publish(
+        tmp_path,
+        "def create_strategy(context):\n"
+        "    class Strategy:\n"
+        "        def observe(self, bar, candidate):\n"
+        "            while True:\n"
+        "                pass\n"
+        "    return Strategy()\n",
+    )
+    sandbox = _sandbox(
+        tmp_path,
+        published,
+        GeneratedStrategyLimits(wall_seconds=8.0, cpu_seconds=1, rss_bytes=512 * 1024 * 1024),
+    )
+
+    # When: one observation exhausts CPU.
+    started = time.monotonic()
+    with (
+        sandbox.open_session(published) as strategy,
+        pytest.raises(GeneratedStrategyExecutionError, match="runner_exited"),
+    ):
+        _ = strategy.observe(_bar(31), None)
+
+    # Then: the kernel CPU cap terminates it well before the wall deadline.
+    assert time.monotonic() - started < 4.0
+
+
+def test_real_sandbox_rejects_oversized_generated_output(tmp_path: Path) -> None:
+    # Given: generated code that writes beyond the sandbox output-file cap.
+    published = _publish(
+        tmp_path,
+        "def create_strategy(context):\n"
+        "    class Strategy:\n"
+        "        def observe(self, bar, candidate):\n"
+        "            print('x' * (128 * 1024), flush=True)\n"
+        "            return None\n"
+        "    return Strategy()\n",
+    )
+
+    sandbox = _sandbox(
+        tmp_path,
+        published,
+        GeneratedStrategyLimits(output_bytes=64 * 1024),
+    )
+
+    # When/Then: the host rejects output before it can become a candidate frame.
+    with (
+        sandbox.open_session(published) as strategy,
+        pytest.raises(GeneratedStrategyExecutionError, match="generated_strategy_protocol_failed"),
     ):
         _ = strategy.observe(_bar(31), None)
 
