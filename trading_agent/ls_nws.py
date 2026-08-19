@@ -19,6 +19,7 @@ from pydantic import (
 
 MAX_LS_NWS_FRAME_BYTES: Final = 262_144
 _KST: Final = ZoneInfo("Asia/Seoul")
+_MAX_PROVIDER_CLOCK_SKEW: Final = dt.timedelta(seconds=5)
 _REALKEY = re.compile(r"^[0-9A-Z]{24}$")
 _UNSIGNED_DECIMAL = re.compile(r"^[0-9]{1,10}$")
 _DATE = re.compile(r"^[0-9]{8}$")
@@ -218,7 +219,9 @@ def parse_ls_nws_frame(
         "%Y%m%d%H%M%S",
     ).replace(tzinfo=_KST)
     if published_at > frame.received_at:
-        raise LsNwsParseError("future_publication")
+        if published_at - frame.received_at > _MAX_PROVIDER_CLOCK_SKEW:
+            raise LsNwsParseError("future_publication")
+        published_at = frame.received_at
     canonical_document = {
         "tr_cd": packet.header.tr_cd,
         "tr_key": packet.header.tr_key,

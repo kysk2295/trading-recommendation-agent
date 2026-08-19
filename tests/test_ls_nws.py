@@ -345,11 +345,22 @@ def test_parser_rejects_packet_for_different_collection_date() -> None:
     assert captured.value.failure_code == "collection_date_mismatch"
 
 
-def test_parser_rejects_publication_after_receipt() -> None:
+def test_parser_clamps_observed_bounded_provider_clock_skew_to_receipt() -> None:
     document = _document()
     body = document["body"]
     assert isinstance(body, dict)
     body["time"] = "090102"
+
+    parsed = parse_ls_nws_frame(_frame(document), collection_date=COLLECTION_DATE)
+
+    assert parsed.published_at == RECEIVED_AT
+
+
+def test_parser_rejects_publication_beyond_provider_clock_skew_bound() -> None:
+    document = _document()
+    body = document["body"]
+    assert isinstance(body, dict)
+    body["time"] = "090107"
 
     with pytest.raises(LsNwsParseError) as captured:
         _ = parse_ls_nws_frame(_frame(document), collection_date=COLLECTION_DATE)
