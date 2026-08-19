@@ -207,6 +207,55 @@ def test_nested_constructed_contracts_and_search_budget_copies_are_revalidated()
             _ = version.model_copy(update=update)
 
 
+def test_semantically_equivalent_offsets_and_decimals_share_ids_and_ledger_keys() -> None:
+    # Given: equivalent family and version payloads expressed with different offsets and Decimal scales.
+    family_payload = family_fixture().model_dump(mode="python")
+    offset = dt.timezone(dt.timedelta(hours=9))
+    offset_family_payload = family_payload | {"created_at": family_payload["created_at"].astimezone(offset)}
+    family_id = HypothesisFamily.canonical_id_for(family_payload)
+    offset_family_id = HypothesisFamily.canonical_id_for(offset_family_payload)
+
+    # When: each semantic payload is validated using its canonical identity.
+    family = HypothesisFamily.model_validate(family_payload | {"family_id": family_id})
+    offset_family = HypothesisFamily.model_validate(offset_family_payload | {"family_id": offset_family_id})
+    version_payload = _zero_decimal_version_payload(version_fixture(family))
+    version_id = HypothesisVersion.canonical_id_for(version_payload)
+    version = HypothesisVersion.model_validate(version_payload | {"hypothesis_version_id": version_id})
+    offset_version_payload = _offset_decimal_equivalent_version_payload(version, offset)
+    offset_version_id = HypothesisVersion.canonical_id_for(offset_version_payload)
+    offset_version = HypothesisVersion.model_validate(
+        offset_version_payload | {"hypothesis_version_id": offset_version_id}
+    )
+
+    # Then: canonical identity, stored values, and ledger keys agree by semantic value.
+    assert family_id == offset_family_id == family.family_id == offset_family.family_id
+    assert version_id == offset_version_id == version.hypothesis_version_id == offset_version.hypothesis_version_id
+    assert family.created_at == offset_family.created_at == CREATED_AT
+    assert all(value.tzinfo is dt.UTC for value in _version_datetimes(offset_version))
+    assert offset_version.threshold.as_tuple() == Decimal(0).as_tuple()
+    assert offset_version.cost_model.commission_bps.as_tuple() == Decimal(0).as_tuple()
+    assert offset_version.cost_model.slippage_bps.as_tuple() == Decimal(2).as_tuple()
+    assert offset_version.free_parameters[0].values[0].as_tuple() == Decimal(0).as_tuple()
+    assert day_hypothesis_family_key(family) == day_hypothesis_family_key(offset_family)
+    assert day_hypothesis_version_key(version) == day_hypothesis_version_key(offset_version)
+
+
+def test_decimal_normalization_preserves_integer_magnitude() -> None:
+    # Given: two otherwise-equal versions with distinct whole-number thresholds.
+    version = version_fixture(family_fixture())
+    thousand_payload = version.model_dump(mode="python") | {"threshold": Decimal("1000")}
+    one_payload = version.model_dump(mode="python") | {"threshold": Decimal("1")}
+
+    # When: their canonical version identities are derived.
+    thousand_id = HypothesisVersion.canonical_id_for(thousand_payload)
+    one_id = HypothesisVersion.canonical_id_for(one_payload)
+
+    # Then: canonical Decimal formatting never collapses numerical magnitude.
+    assert thousand_id != one_id
+    thousand = HypothesisVersion.model_validate(thousand_payload | {"hypothesis_version_id": thousand_id})
+    assert thousand.threshold.as_tuple() == Decimal("1000").as_tuple()
+
+
 def family_fixture() -> HypothesisFamily:
     payload = {
         "family_id": "",
@@ -272,3 +321,54 @@ def version_fixture(
     }
     version_id = HypothesisVersion.canonical_id_for(payload)
     return HypothesisVersion.model_validate(payload | {"hypothesis_version_id": version_id})
+
+
+def _offset_decimal_equivalent_version_payload(
+    version: HypothesisVersion,
+    offset: dt.tzinfo,
+) -> dict[str, object]:
+    payload = version.model_dump(mode="python")
+    version_times: dict[str, dt.datetime] = {
+        "universe_snapshot_at": version.universe_snapshot_at.astimezone(offset),
+        "sampling_timestamp": version.sampling_timestamp.astimezone(offset),
+        "created_at": version.created_at.astimezone(offset),
+        "registration_completed_bar_at": version.registration_completed_bar_at.astimezone(offset),
+        "first_shadow_eligible_at": version.first_shadow_eligible_at.astimezone(offset),
+    }
+    cost_model = version.cost_model.model_dump(mode="python") | {
+        "commission_bps": Decimal("-0.00"),
+        "slippage_bps": Decimal("2.000"),
+    }
+    return payload | version_times | {
+        "threshold": Decimal("-0.000"),
+        "cost_model": cost_model,
+        "free_parameters": (
+            {"name": "relative_volume", "values": (Decimal("-0.00"), Decimal("2.000"))},
+        ),
+    }
+
+
+def _zero_decimal_version_payload(version: HypothesisVersion) -> dict[str, object]:
+    payload = version.model_dump(mode="python")
+    cost_model = version.cost_model.model_dump(mode="python") | {
+        "commission_bps": Decimal(0),
+        "slippage_bps": Decimal(2),
+    }
+    return payload | {
+        "threshold": Decimal(0),
+        "cost_model": cost_model,
+        "free_parameters": ({"name": "relative_volume", "values": (Decimal(0), Decimal(2))},),
+    }
+
+
+def _version_datetimes(version: HypothesisVersion) -> tuple[dt.datetime, ...]:
+    return tuple(getattr(version, field) for field in _VERSION_DATETIME_FIELDS)
+
+
+_VERSION_DATETIME_FIELDS = (
+    "universe_snapshot_at",
+    "sampling_timestamp",
+    "created_at",
+    "registration_completed_bar_at",
+    "first_shadow_eligible_at",
+)

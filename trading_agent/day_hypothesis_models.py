@@ -7,16 +7,17 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
+from enum import StrEnum
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from pydantic_core import to_jsonable_python
 
 from trading_agent.research_identity_models import MarketId
 from trading_agent.strategy_research_types import ExpectedDirection, aware
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
+# allow: SIZE_OK — validation and canonical identity must remain one atomic contract.
 
 @dataclass(frozen=True, slots=True)
 class InvalidDayHypothesisModelError(ValueError):
@@ -37,7 +38,6 @@ class DayHypothesisModel(BaseModel):
 
 
 class MethodologyDeclaration(DayHypothesisModel):
-
     methodology_tags: tuple[str, ...]
     primary_evaluation_owner: str
     evaluation_cadence: str
@@ -54,10 +54,14 @@ class MethodologyDeclaration(DayHypothesisModel):
 
 
 class CostModelDeclaration(DayHypothesisModel):
-
     model_id: str
     commission_bps: Decimal
     slippage_bps: Decimal
+
+    @field_validator("commission_bps", "slippage_bps")
+    @classmethod
+    def normalize_decimal(cls, value: Decimal) -> Decimal:
+        return _normalize_decimal(value)
 
     @model_validator(mode="after")
     def validate_cost_model(self) -> Self:
@@ -71,9 +75,13 @@ class CostModelDeclaration(DayHypothesisModel):
 
 
 class FreeParameter(DayHypothesisModel):
-
     name: str
     values: tuple[Decimal, ...] = Field(min_length=1, max_length=32)
+
+    @field_validator("values")
+    @classmethod
+    def normalize_values(cls, values: tuple[Decimal, ...]) -> tuple[Decimal, ...]:
+        return tuple(_normalize_decimal(value) for value in values)
 
     @model_validator(mode="after")
     def validate_parameter(self) -> Self:
@@ -93,7 +101,6 @@ class TargetHorizon(DayHypothesisModel):
 
 
 class HypothesisFamily(DayHypothesisModel):
-
     family_id: str
     parent_family_id: str | None
     canonical_question: str
@@ -103,6 +110,11 @@ class HypothesisFamily(DayHypothesisModel):
     created_by: str
     created_at: dt.datetime
     source_lineage: tuple[str, ...] = Field(min_length=1)
+
+    @field_validator("created_at")
+    @classmethod
+    def normalize_created_at(cls, value: dt.datetime) -> dt.datetime:
+        return _normalize_datetime(value)
 
     @classmethod
     def canonical_id_for(cls, payload: Mapping[str, object]) -> str:
@@ -128,7 +140,6 @@ class HypothesisFamily(DayHypothesisModel):
 
 
 class HypothesisVersion(DayHypothesisModel):
-
     hypothesis_version_id: str
     family_id: str
     parent_version_id: str | None
@@ -163,6 +174,22 @@ class HypothesisVersion(DayHypothesisModel):
     first_shadow_eligible_at: dt.datetime
     trading_authority: Literal[False] = False
     profitability_claim: Literal[False] = False
+
+    @field_validator(
+        "universe_snapshot_at",
+        "sampling_timestamp",
+        "created_at",
+        "registration_completed_bar_at",
+        "first_shadow_eligible_at",
+    )
+    @classmethod
+    def normalize_datetimes(cls, value: dt.datetime) -> dt.datetime:
+        return _normalize_datetime(value)
+
+    @field_validator("threshold")
+    @classmethod
+    def normalize_threshold(cls, value: Decimal) -> Decimal:
+        return _normalize_decimal(value)
 
     @classmethod
     def canonical_id_for(cls, payload: Mapping[str, object]) -> str:
@@ -247,9 +274,48 @@ class HypothesisVersion(DayHypothesisModel):
 
 
 def _canonical_identity(payload: Mapping[str, object], identity_field: str) -> str:
-    encoded_payload = to_jsonable_python({key: value for key, value in payload.items() if key != identity_field})
-    canonical_json = json.dumps(encoded_payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    canonical_payload = _semantic_value({key: value for key, value in payload.items() if key != identity_field})
+    canonical_json = json.dumps(canonical_payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
     return hashlib.sha256(canonical_json.encode()).hexdigest()
+
+
+def _semantic_value(value: object) -> object:
+    match value:
+        case BaseModel() as model:
+            return _semantic_value(model.model_dump(mode="python"))
+        case Mapping() as mapping:
+            return {str(key): _semantic_value(item) for key, item in mapping.items()}
+        case list() | tuple() as values:
+            return [_semantic_value(item) for item in values]
+        case dt.datetime() as timestamp:
+            return _normalize_datetime(timestamp).isoformat(timespec="microseconds").replace("+00:00", "Z")
+        case dt.date() as date:
+            return date.isoformat()
+        case dt.timedelta() as duration:
+            return (duration.days, duration.seconds, duration.microseconds)
+        case Decimal() as decimal:
+            return format(_normalize_decimal(decimal), "f")
+        case StrEnum() as member:
+            return member.value
+        case None | bool() | int() | float() | str():
+            return value
+        case unsupported:
+            raise TypeError(f"unsupported canonical value: {type(unsupported).__name__}")
+
+
+def _normalize_datetime(value: dt.datetime) -> dt.datetime:
+    return value.astimezone(dt.UTC) if aware(value) else value
+
+
+def _normalize_decimal(value: Decimal) -> Decimal:
+    if not value.is_finite() or value.is_zero():
+        return Decimal(0) if value.is_zero() else value
+    text = format(value, "f")
+    if "." not in text:
+        return Decimal(text)
+    integer, fraction = text.split(".", maxsplit=1)
+    trimmed_fraction = fraction.rstrip("0")
+    return Decimal(integer if not trimmed_fraction else f"{integer}.{trimmed_fraction}")
 
 
 def _canonical_text(value: str) -> bool:
@@ -270,16 +336,3 @@ def _sorted_unique_decimals(values: tuple[Decimal, ...]) -> bool:
 
 def _sorted_unique_text(values: tuple[str, ...]) -> bool:
     return bool(values) and all(_canonical_text(value) for value in values) and values == tuple(sorted(set(values)))
-
-
-__all__ = (
-    "CostModelDeclaration",
-    "DayHypothesisModel",
-    "FreeParameter",
-    "HypothesisFamily",
-    "HypothesisVersion",
-    "InvalidDayHypothesisModelError",
-    "MethodologyDeclaration",
-    "SearchBudget",
-    "TargetHorizon",
-)
