@@ -62,7 +62,7 @@ class ActorWakeEvaluation:
 
 
 ACTOR_WAKE_POLICIES: Final[tuple[ActorWakePolicy, ...]] = (
-    ActorWakePolicy("opportunity_manager", dt.timedelta(minutes=2), None, 30),
+    ActorWakePolicy("opportunity_manager", dt.timedelta(seconds=30), None, 30),
     ActorWakePolicy("market_context", dt.timedelta(0), dt.timedelta(minutes=30), 40),
     ActorWakePolicy("day_trading", dt.timedelta(0), None, 10),
     ActorWakePolicy("swing_trading", dt.timedelta(0), None, 40),

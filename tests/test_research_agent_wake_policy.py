@@ -51,12 +51,12 @@ def test_no_new_evidence_means_no_runnable_actor() -> None:
     assert runnable_actors((), (), now=NOW) == ()
 
 
-def test_opportunity_debounces_while_systematic_feedback_runs_immediately() -> None:
+def test_opportunity_debounces_for_one_tick_while_systematic_feedback_runs_immediately() -> None:
     opportunity = _stored_evidence("opportunity_manager")
     feedback = _stored_evidence("systematic_quant", trigger=ResearchAgentTriggerKind.REVIEWER_FEEDBACK)
 
-    selected = runnable_actors((opportunity, feedback), (), now=NOW + dt.timedelta(seconds=30))
-    later = runnable_actors((opportunity, feedback), (), now=NOW + dt.timedelta(minutes=2))
+    selected = runnable_actors((opportunity, feedback), (), now=NOW + dt.timedelta(seconds=29))
+    later = runnable_actors((opportunity, feedback), (), now=NOW + dt.timedelta(seconds=30))
 
     assert tuple(item.agent_family_id for item in selected) == ("systematic_quant",)
     assert tuple(item.agent_family_id for item in later) == ("systematic_quant", "opportunity_manager")
