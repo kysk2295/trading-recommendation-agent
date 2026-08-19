@@ -14,6 +14,7 @@ from trading_agent.daily_research_contract import (
     SHADOW_PORTFOLIO_POLICY,
     strategy_contract,
 )
+from trading_agent.day_research_ledger_schema import CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10
 from trading_agent.experiment_ledger_keys import (
     canonical_experiment_ledger_json,
     experiment_trial_event_key,
@@ -526,8 +527,63 @@ def test_writer_migrates_v4_and_v5_to_current_schema(
     assert day_table == ("day_hypothesis_versions",)
 
 
-def test_current_experiment_ledger_schema_is_v10() -> None:
-    assert EXPERIMENT_LEDGER_SCHEMA_VERSION == 10
+def test_current_experiment_ledger_schema_is_v11() -> None:
+    assert EXPERIMENT_LEDGER_SCHEMA_VERSION == 11
+
+
+def test_writer_migrates_v10_to_append_only_day_discovery_state(tmp_path: Path) -> None:
+    database = tmp_path / "experiment.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            CREATE_EXPERIMENT_LEDGER_SCHEMA_V1
+            + CREATE_RESEARCH_SOURCE_LINEAGE_SCHEMA_V2
+            + CREATE_STRATEGY_AUTHORITY_BINDING_SCHEMA_V3
+            + CREATE_MULTI_MARKET_RESEARCH_SCHEMA_V4
+            + CREATE_MULTI_MARKET_TRIAL_SCHEMA_V5
+            + CREATE_MULTI_MARKET_LIFECYCLE_SCHEMA_V6
+            + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7
+            + CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8
+            + CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9
+            + CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10
+        )
+        connection.execute("PRAGMA user_version = 10")
+        connection.commit()
+
+    with ExperimentLedgerStore(database).writer():
+        pass
+
+    with sqlite3.connect(database) as connection:
+        version = connection.execute("PRAGMA user_version").fetchone()
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        triggers = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='trigger'"
+            ).fetchall()
+        }
+
+    assert version == (11,)
+    assert {
+        "day_discovery_budget_accounts",
+        "day_discovery_cycles",
+        "day_discovery_budget_debits",
+        "day_discovery_events",
+    } <= tables
+    assert {
+        "day_discovery_budget_accounts_no_update",
+        "day_discovery_budget_accounts_no_delete",
+        "day_discovery_cycles_no_update",
+        "day_discovery_cycles_no_delete",
+        "day_discovery_budget_debits_no_update",
+        "day_discovery_budget_debits_no_delete",
+        "day_discovery_events_no_update",
+        "day_discovery_events_no_delete",
+    } <= triggers
 
 
 def test_writer_migrates_v6_by_adding_discovery_sources_without_rewriting_rows(

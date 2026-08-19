@@ -10,6 +10,28 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import final, override
 
+from trading_agent.day_discovery_ledger import (
+    DayDiscoveryCycleState,
+    DayDiscoveryLedgerConflictError,
+    InvalidDayDiscoveryLedgerSourceError,
+    append_day_discovery_event,
+    open_day_discovery_cycle,
+    prepare_day_discovery_branch,
+    read_day_discovery_cycle_state,
+    record_day_discovery_call_response,
+    reserve_day_discovery_call,
+)
+from trading_agent.day_discovery_ledger_models import (
+    DayDiscoveryBudgetAccount,
+    DayDiscoveryBudgetDebit,
+    DayDiscoveryCycle,
+    DayDiscoveryEvent,
+    DayDiscoveryEventKind,
+)
+from trading_agent.day_discovery_ledger_schema import (
+    CREATE_DAY_DISCOVERY_LEDGER_SCHEMA_V11,
+    DAY_DISCOVERY_SCHEMA_OBJECTS,
+)
 from trading_agent.day_hypothesis_models import HypothesisFamily, HypothesisVersion
 from trading_agent.day_research_attempt_binding import DayResearchAttemptBinding
 from trading_agent.day_research_ledger import (
@@ -92,6 +114,7 @@ from trading_agent.experiment_ledger_schema import (
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V7,
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V8,
     EXPERIMENT_LEDGER_SCHEMA_VERSION_V9,
+    EXPERIMENT_LEDGER_SCHEMA_VERSION_V10,
 )
 from trading_agent.lifecycle_authority_policy import (
     InvalidLifecycleAuthorityError,
@@ -267,6 +290,7 @@ _V8_SCHEMA_OBJECTS = _V7_SCHEMA_OBJECTS | frozenset(
 
 _V9_SCHEMA_OBJECTS = _V8_SCHEMA_OBJECTS | STRATEGY_RESEARCH_SCHEMA_OBJECTS
 _V10_SCHEMA_OBJECTS = _V9_SCHEMA_OBJECTS | DAY_RESEARCH_SCHEMA_OBJECTS
+_V11_SCHEMA_OBJECTS = _V10_SCHEMA_OBJECTS | DAY_DISCOVERY_SCHEMA_OBJECTS
 
 _DISCOVERY_SOURCE_KINDS = frozenset(
     {
@@ -591,6 +615,15 @@ class ExperimentLedgerReader:
             try:
                 return day_hypothesis_families(connection)
             except InvalidDayResearchLedgerSourceError:
+                raise InvalidExperimentLedgerSourceError from None
+
+    def day_discovery_cycle_state(self, cycle_id: str) -> DayDiscoveryCycleState:
+        if not self.path.is_file():
+            raise InvalidExperimentLedgerSourceError
+        with self._reader_connection() as connection:
+            try:
+                return read_day_discovery_cycle_state(connection, cycle_id)
+            except InvalidDayDiscoveryLedgerSourceError:
                 raise InvalidExperimentLedgerSourceError from None
 
     def day_hypothesis_family(self, family_id: str) -> StoredDayHypothesisFamily | None:
@@ -954,6 +987,93 @@ class ExperimentLedgerWriter:
         except DayResearchLedgerConflictError:
             raise ExperimentLedgerConflictError from None
         except InvalidDayResearchLedgerSourceError:
+            raise InvalidExperimentLedgerSourceError from None
+
+    def open_day_discovery_cycle(
+        self,
+        account: DayDiscoveryBudgetAccount,
+        cycle: DayDiscoveryCycle,
+    ) -> DayDiscoveryEvent:
+        self._require_active()
+        try:
+            return open_day_discovery_cycle(self._connection, account, cycle)
+        except DayDiscoveryLedgerConflictError:
+            raise ExperimentLedgerConflictError from None
+        except InvalidDayDiscoveryLedgerSourceError:
+            raise InvalidExperimentLedgerSourceError from None
+
+    def reserve_day_discovery_call(
+        self,
+        debit: DayDiscoveryBudgetDebit,
+        event: DayDiscoveryEvent,
+    ) -> bool:
+        self._require_active()
+        try:
+            return reserve_day_discovery_call(self._connection, debit, event)
+        except DayDiscoveryLedgerConflictError:
+            raise ExperimentLedgerConflictError from None
+        except InvalidDayDiscoveryLedgerSourceError:
+            raise InvalidExperimentLedgerSourceError from None
+
+    def record_day_discovery_call_response(self, event: DayDiscoveryEvent) -> bool:
+        self._require_active()
+        try:
+            return record_day_discovery_call_response(self._connection, event)
+        except DayDiscoveryLedgerConflictError:
+            raise ExperimentLedgerConflictError from None
+        except InvalidDayDiscoveryLedgerSourceError:
+            raise InvalidExperimentLedgerSourceError from None
+
+    def prepare_day_discovery_branch(
+        self,
+        debit: DayDiscoveryBudgetDebit | None,
+        event: DayDiscoveryEvent,
+    ) -> bool:
+        self._require_active()
+        try:
+            return prepare_day_discovery_branch(self._connection, debit, event)
+        except DayDiscoveryLedgerConflictError:
+            raise ExperimentLedgerConflictError from None
+        except InvalidDayDiscoveryLedgerSourceError:
+            raise InvalidExperimentLedgerSourceError from None
+
+    def start_day_discovery_effect(self, event: DayDiscoveryEvent) -> bool:
+        if event.event_kind not in {
+            DayDiscoveryEventKind.RESOLUTION_INTENT,
+            DayDiscoveryEventKind.PREFLIGHT_INTENT,
+        }:
+            raise InvalidExperimentLedgerSourceError
+        return self._append_day_discovery_event(event, event.event_kind)
+
+    def finalize_day_discovery_effect(self, event: DayDiscoveryEvent) -> bool:
+        if event.event_kind not in {
+            DayDiscoveryEventKind.ARTIFACT_VERIFIED,
+            DayDiscoveryEventKind.ARTIFACT_FAILED,
+            DayDiscoveryEventKind.ARTIFACT_OUTCOME_UNKNOWN,
+            DayDiscoveryEventKind.PREFLIGHT_VERIFIED,
+            DayDiscoveryEventKind.PREFLIGHT_FAILED,
+            DayDiscoveryEventKind.PREFLIGHT_OUTCOME_UNKNOWN,
+        }:
+            raise InvalidExperimentLedgerSourceError
+        return self._append_day_discovery_event(event, event.event_kind)
+
+    def finalize_day_discovery_branch(self, event: DayDiscoveryEvent) -> bool:
+        return self._append_day_discovery_event(event, DayDiscoveryEventKind.BRANCH_FINALIZED)
+
+    def finalize_day_discovery_cycle(self, event: DayDiscoveryEvent) -> bool:
+        return self._append_day_discovery_event(event, DayDiscoveryEventKind.CYCLE_FINALIZED)
+
+    def _append_day_discovery_event(
+        self,
+        event: DayDiscoveryEvent,
+        expected_kind: DayDiscoveryEventKind,
+    ) -> bool:
+        self._require_active()
+        try:
+            return append_day_discovery_event(self._connection, event, expected_kind)
+        except DayDiscoveryLedgerConflictError:
+            raise ExperimentLedgerConflictError from None
+        except InvalidDayDiscoveryLedgerSourceError:
             raise InvalidExperimentLedgerSourceError from None
 
     def register_day_hypothesis_version(self, version: HypothesisVersion) -> bool:
@@ -1782,7 +1902,8 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
             + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7
             + CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8
             + CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9
-            + CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10,
+            + CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10
+            + CREATE_DAY_DISCOVERY_LEDGER_SCHEMA_V11,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1797,7 +1918,8 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
             + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7
             + CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8
             + CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9
-            + CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10,
+            + CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10
+            + CREATE_DAY_DISCOVERY_LEDGER_SCHEMA_V11,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1811,7 +1933,8 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
             + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7
             + CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8
             + CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9
-            + CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10,
+            + CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10
+            + CREATE_DAY_DISCOVERY_LEDGER_SCHEMA_V11,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1824,7 +1947,8 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
             + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7
             + CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8
             + CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9
-            + CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10,
+            + CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10
+            + CREATE_DAY_DISCOVERY_LEDGER_SCHEMA_V11,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1836,7 +1960,8 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
             + CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7
             + CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8
             + CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9
-            + CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10,
+            + CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10
+            + CREATE_DAY_DISCOVERY_LEDGER_SCHEMA_V11,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1847,7 +1972,8 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
             ddl=CREATE_RESEARCH_DISCOVERY_SOURCE_SCHEMA_V7
             + CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8
             + CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9
-            + CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10,
+            + CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10
+            + CREATE_DAY_DISCOVERY_LEDGER_SCHEMA_V11,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1857,7 +1983,8 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
             connection,
             ddl=CREATE_STRATEGY_LAB_TRACE_SCHEMA_V8
             + CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9
-            + CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10,
+            + CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10
+            + CREATE_DAY_DISCOVERY_LEDGER_SCHEMA_V11,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1865,7 +1992,9 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
         _require_v8_schema(connection)
         _apply_schema_transaction(
             connection,
-            ddl=CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9 + CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10,
+            ddl=CREATE_STRATEGY_RESEARCH_LEDGER_SCHEMA_V9
+            + CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10
+            + CREATE_DAY_DISCOVERY_LEDGER_SCHEMA_V11,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1873,7 +2002,16 @@ def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
         _require_v9_schema(connection)
         _apply_schema_transaction(
             connection,
-            ddl=CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10,
+            ddl=CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10
+            + CREATE_DAY_DISCOVERY_LEDGER_SCHEMA_V11,
+            version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
+        )
+        return
+    if current == EXPERIMENT_LEDGER_SCHEMA_VERSION_V10:
+        _require_v10_schema(connection)
+        _apply_schema_transaction(
+            connection,
+            ddl=CREATE_DAY_DISCOVERY_LEDGER_SCHEMA_V11,
             version=EXPERIMENT_LEDGER_SCHEMA_VERSION,
         )
         return
@@ -1895,7 +2033,7 @@ def _require_current_schema(connection: sqlite3.Connection) -> None:
     actual_objects = frozenset(
         row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
     )
-    if actual_objects != _V10_SCHEMA_OBJECTS:
+    if actual_objects != _V11_SCHEMA_OBJECTS:
         raise InvalidExperimentLedgerSourceError
 
 
@@ -1995,4 +2133,18 @@ def _require_v9_schema(connection: sqlite3.Connection) -> None:
         row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
     )
     if actual_objects != _V9_SCHEMA_OBJECTS:
+        raise UnsupportedExperimentLedgerSchemaError
+
+
+def _require_v10_schema(connection: sqlite3.Connection) -> None:
+    version: tuple[int] | None = connection.execute("PRAGMA user_version").fetchone()
+    if version != (EXPERIMENT_LEDGER_SCHEMA_VERSION_V10,):
+        raise UnsupportedExperimentLedgerSchemaError
+    actual_objects = frozenset(
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    )
+    if actual_objects != _V10_SCHEMA_OBJECTS:
         raise UnsupportedExperimentLedgerSchemaError

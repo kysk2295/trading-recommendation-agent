@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime as dt
+import hashlib
 import json
 
 import pytest
@@ -8,6 +10,7 @@ from trading_agent import researcher_llm
 from trading_agent.lane_identity_models import LaneId
 from trading_agent.researcher_agent import FailureDigest, ResearcherContext
 from trading_agent.researcher_llm import LlmHypothesisDraft
+from trading_agent.researcher_receipt_store import ResearcherReceiptStore
 
 
 def test_llm_draft_canonicalizes_set_like_sequences() -> None:
@@ -120,3 +123,28 @@ def test_day_prompt_contains_bounded_trigger_specific_view_and_feedback(trigger:
         term not in encoded
         for term in ("exact_holdout", "symbol_contribution", "account_id", "provider", "api_key")
     )
+
+
+def test_day_llm_plan_invokes_raw_completion_before_parse(tmp_path) -> None:
+    context = ResearcherContext(
+        lane_id=LaneId.INTRADAY_MOMENTUM,
+        sources=(),
+        failure_digest=FailureDigest((), (), ()),
+        regime_context="regular_session_high_liquidity",
+        existing_hypothesis_texts=(),
+        bounded_day_discovery_json="{}",
+    )
+    generator = researcher_llm.StructuredHypothesisGenerator(
+        client=researcher_llm.FixtureLlmProposalClient(b"not-json"),
+        receipts=ResearcherReceiptStore(tmp_path / "receipts"),
+        clock=lambda: dt.datetime(2026, 8, 20, 14, tzinfo=dt.UTC),
+    )
+
+    plan = generator.plan(context)
+    completion = generator.invoke_raw(plan)
+
+    assert completion.response == b"not-json"
+    assert plan.creator_sha256 == hashlib.sha256(plan.creator.encode()).hexdigest()
+    assert completion.response_sha256 == "0c21a879c732a67910d80988df4919d794f6a070aab610ef865032a28046b021"
+    with pytest.raises(researcher_llm.ResearcherLlmError):
+        generator.parse_raw(plan, completion, context)

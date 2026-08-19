@@ -162,6 +162,7 @@ class DayDiscoveryEvidenceView(BaseModel):
     evidence_schema: tuple[str, ...] = Field(min_length=1)
     data_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     replay_bars: tuple[BarInput, ...] = Field(min_length=1)
+    budget_epoch_ref: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
     search_budget: int = Field(default=3, ge=1, le=10_000)
     budget_debits_used: int = Field(default=0, ge=0, le=10_000)
     cursor: str = "origin"

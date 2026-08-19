@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -101,6 +102,29 @@ class LlmProposalClient(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class ResearcherLlmPlan:
+    prompt: str
+    prompt_sha256: str
+    prompt_bytes_sha256: str
+    model_id: str
+    seed: int | None
+    temperature: float
+    protocol_sha256: str
+    creator: str
+    creator_sha256: str
+    planned_at: dt.datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ResearcherRawCompletion:
+    response: bytes
+    response_sha256: str
+    response_length: int
+    invocation_started_at: dt.datetime
+    received_at: dt.datetime
+
+
+@dataclass(frozen=True, slots=True)
 class FixtureLlmProposalClient:
     response: bytes
     model_id: str = "fixture-researcher-v1"
@@ -167,21 +191,84 @@ class StructuredHypothesisGenerator:
     clock: Callable[[], dt.datetime]
 
     def propose(self, context: ResearcherContext) -> ProposedHypothesis:
+        plan = self.plan(context)
+        completion = self.invoke_raw(plan)
+        return self.parse_raw(plan, completion, context)
+
+    def plan(self, context: ResearcherContext) -> ResearcherLlmPlan:
         prompt = _prompt(context)
-        response = self.client.complete(prompt)
-        called_at = self.clock()
-        receipt = self.receipts.record_call(
-            model_id=self.client.model_id,
+        prompt_bytes = prompt.encode()
+        creator = "structured_hypothesis_generator_v1"
+        return ResearcherLlmPlan(
             prompt=prompt,
-            response=response,
+            prompt_sha256=hashlib.sha256(prompt_bytes).hexdigest(),
+            prompt_bytes_sha256=hashlib.sha256(prompt_bytes).hexdigest(),
+            model_id=self.client.model_id,
             seed=self.client.seed,
             temperature=self.client.temperature,
-            called_at=called_at,
+            protocol_sha256=hashlib.sha256(
+                json.dumps(
+                    LlmHypothesisDraft.model_json_schema(),
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode()
+            ).hexdigest(),
+            creator=creator,
+            creator_sha256=hashlib.sha256(creator.encode()).hexdigest(),
+            planned_at=self.clock(),
+        )
+
+    def invoke_raw(self, plan: ResearcherLlmPlan) -> ResearcherRawCompletion:
+        invocation_started_at = self.clock()
+        response = self.client.complete(plan.prompt)
+        received_at = self.clock()
+        return ResearcherRawCompletion(
+            response=response,
+            response_sha256=hashlib.sha256(response).hexdigest(),
+            response_length=len(response),
+            invocation_started_at=invocation_started_at,
+            received_at=received_at,
+        )
+
+    def parse_raw(
+        self,
+        plan: ResearcherLlmPlan,
+        completion: ResearcherRawCompletion,
+        context: ResearcherContext,
+    ) -> ProposedHypothesis:
+        receipt = self.receipts.record_call(
+            model_id=plan.model_id,
+            prompt=plan.prompt,
+            response=completion.response,
+            seed=plan.seed,
+            temperature=plan.temperature,
+            called_at=completion.invocation_started_at,
         )
         try:
-            draft = LlmHypothesisDraft.model_validate_json(response)
+            if (
+                plan.prompt_sha256 != hashlib.sha256(plan.prompt.encode()).hexdigest()
+                or plan.prompt_bytes_sha256 != hashlib.sha256(plan.prompt.encode()).hexdigest()
+                or plan.creator_sha256 != hashlib.sha256(plan.creator.encode()).hexdigest()
+                or plan.protocol_sha256
+                != hashlib.sha256(
+                    json.dumps(
+                        LlmHypothesisDraft.model_json_schema(),
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ).encode()
+                ).hexdigest()
+                or completion.response_sha256 != hashlib.sha256(completion.response).hexdigest()
+                or completion.response_length != len(completion.response)
+                or plan.planned_at > completion.invocation_started_at
+                or completion.invocation_started_at > completion.received_at
+            ):
+                raise ResearcherLlmError
+            draft = LlmHypothesisDraft.model_validate_json(completion.response)
             sources_by_id = {source.source_id: source for source in context.sources}
             cited_sources = tuple(sources_by_id[source_id] for source_id in draft.cited_source_ids)
+            called_at = completion.invocation_started_at
             if called_at.tzinfo is None or called_at.utcoffset() is None or any(
                 source.ledger_recorded_at > called_at for source in cited_sources
             ):
@@ -358,6 +445,8 @@ __all__ = (
     "LlmProposalClient",
     "ResearcherContextInput",
     "ResearcherLlmError",
+    "ResearcherLlmPlan",
+    "ResearcherRawCompletion",
     "StructuredHypothesisGenerator",
     "load_private_canonical_llm_response",
     "load_private_canonical_researcher_context",

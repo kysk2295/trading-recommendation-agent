@@ -78,6 +78,10 @@ def test_all_five_discovery_triggers_are_admitted(trigger: DayDiscoveryTriggerKi
     assert _view(trigger).trigger_kind is trigger
 
 
+def test_discovery_view_requires_stable_budget_epoch_reference() -> None:
+    assert _view().budget_epoch_ref == "us-equities-2026-08-20"
+
+
 def test_naive_times_are_rejected_at_evidence_and_admission_boundaries() -> None:
     payload = _view().model_dump(mode="python")
     payload["observed_at"] = payload["observed_at"].replace(tzinfo=None)
