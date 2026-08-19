@@ -12,13 +12,13 @@ from trading_agent.day_hypothesis_models import (
     HypothesisFamily,
     HypothesisVersion,
     SearchBudget,
+    TargetHorizon,
 )
 from trading_agent.experiment_ledger_keys import (
     day_hypothesis_family_key,
     day_hypothesis_version_key,
 )
 from trading_agent.research_identity_models import MarketId
-from trading_agent.strategy_research_models import TargetHorizon
 from trading_agent.strategy_research_types import ExpectedDirection
 
 CREATED_AT = dt.datetime(2026, 8, 20, 13, 30, tzinfo=dt.UTC)
@@ -62,31 +62,29 @@ def test_version_identity_changes_for_market_and_research_mutations() -> None:
     version = version_fixture(family_fixture())
 
     # When: each identity-bearing scientific declaration changes independently.
-    variants = (
-        version.model_copy(update={"predictor": "gap_pct > 0.03"}),
-        version.model_copy(update={"target": "next_10m_return"}),
-        version.model_copy(update={"threshold": Decimal("2.50")}),
-        version.model_copy(
-            update={"free_parameters": (FreeParameter(name="relative_volume", values=(Decimal("1.75"),)),)}
-        ),
-        version.model_copy(
-            update={
-                "cost_model": CostModelDeclaration(
-                    model_id="us_equities_cost_v2",
-                    commission_bps=Decimal("1.0"),
-                    slippage_bps=Decimal("3.0"),
-                )
-            }
-        ),
-        version.model_copy(update={"code_sha256": "b" * 64}),
-        version.model_copy(update={"protocol_sha256": "c" * 64}),
-        version.model_copy(update={"data_manifest_sha256": "d" * 64}),
+    updates = (
+        {"predictor": "gap_pct > 0.03"},
+        {"target": "next_10m_return"},
+        {"threshold": Decimal("2.50")},
+        {"free_parameters": (FreeParameter(name="relative_volume", values=(Decimal("1.75"),)),)},
+        {
+            "cost_model": CostModelDeclaration(
+                model_id="us_equities_cost_v2",
+                commission_bps=Decimal("1.0"),
+                slippage_bps=Decimal("3.0"),
+            )
+        },
+        {"code_sha256": "b" * 64},
+        {"protocol_sha256": "c" * 64},
+        {"data_manifest_sha256": "d" * 64},
     )
 
-    # Then: a copied object with a stale ID is rejected at the validation boundary.
-    for variant in variants:
-        with pytest.raises(ValidationError, match="hypothesis_version_id_mismatch"):
-            _ = HypothesisVersion.model_validate(variant.model_dump(mode="python"))
+    # Then: every scientific mutation requires a distinct canonical identity.
+    for update in updates:
+        payload = version.model_dump(mode="python") | update
+        version_id = HypothesisVersion.canonical_id_for(payload)
+        changed = HypothesisVersion.model_validate(payload | {"hypothesis_version_id": version_id})
+        assert changed.hypothesis_version_id != version.hypothesis_version_id
 
 
 def test_version_requires_sorted_unique_references_tags_and_finite_decimals() -> None:
@@ -131,6 +129,82 @@ def test_day_hypothesis_ledger_keys_use_canonical_models() -> None:
     assert version_key == day_hypothesis_version_key(version)
     assert family_key != family.family_id
     assert version_key != version.hypothesis_version_id
+
+
+def test_model_copy_rejects_extra_authority_and_stale_identity_mutations() -> None:
+    # Given: validated family and market-version identities.
+    family = family_fixture()
+    version = version_fixture(family)
+    authority_payload = version.model_dump(mode="python") | {"trading_authority": True}
+    recomputed_authority_id = HypothesisVersion.canonical_id_for(authority_payload)
+
+    # When / Then: direct copy cannot add family scope, claim authority, or retain a stale identity.
+    with pytest.raises(ValidationError):
+        _ = family.model_copy(update={"market_id": MarketId.US_EQUITIES})
+    with pytest.raises(ValidationError, match="hypothesis_version_cannot_grant_authority"):
+        _ = version.model_copy(
+            update={"trading_authority": True, "hypothesis_version_id": recomputed_authority_id}
+        )
+    with pytest.raises(ValidationError, match="hypothesis_version_cannot_claim_profitability"):
+        _ = version.model_copy(update={"profitability_claim": True})
+    for update in (
+        {"predictor": "gap_pct > 0.03"},
+        {"target": "next_10m_return"},
+        {"threshold": Decimal("2.50")},
+        {"free_parameters": (FreeParameter(name="relative_volume", values=(Decimal("1.75"),)),)},
+        {
+            "cost_model": CostModelDeclaration(
+                model_id="us_equities_cost_v2",
+                commission_bps=Decimal("1.0"),
+                slippage_bps=Decimal("3.0"),
+            )
+        },
+        {"code_sha256": "b" * 64},
+        {"protocol_sha256": "c" * 64},
+        {"data_manifest_sha256": "d" * 64},
+        {"market_id": MarketId.KR_EQUITIES},
+    ):
+        with pytest.raises(ValidationError, match="hypothesis_version_id_mismatch"):
+            _ = version.model_copy(update=update)
+
+
+def test_model_validate_and_key_helpers_reject_forged_instances() -> None:
+    # Given: forged Pydantic instances created without validators.
+    forged_family = HypothesisFamily.model_construct(family_id="0" * 64)
+    forged_version = HypothesisVersion.model_construct(trading_authority=True)
+
+    # When / Then: direct validation and ledger key helpers revalidate rather than trust the instance.
+    with pytest.raises(ValidationError, match="hypothesis_version_cannot_grant_authority"):
+        _ = HypothesisVersion.model_validate(forged_version)
+    with pytest.raises(ValidationError):
+        _ = day_hypothesis_family_key(forged_family)
+    with pytest.raises(ValidationError, match="hypothesis_version_cannot_grant_authority"):
+        _ = day_hypothesis_version_key(forged_version)
+
+
+def test_nested_constructed_contracts_and_search_budget_copies_are_revalidated() -> None:
+    # Given: a valid version and invalid nested instances constructed without validation.
+    version = version_fixture(family_fixture())
+    invalid_cost = CostModelDeclaration.model_construct(
+        model_id="cost-v1", commission_bps=Decimal("NaN"), slippage_bps=Decimal("1")
+    )
+    invalid_parameter = FreeParameter.model_construct(name="relative_volume", values=(Decimal("NaN"),))
+    invalid_budget = SearchBudget.model_construct(max_parameter_combinations=2, max_attempts=0, max_cpu_seconds=60)
+    invalid_horizon = TargetHorizon.model_construct(duration=dt.timedelta(0))
+
+    # When / Then: copy and top-level registration reject every nested invalid contract.
+    with pytest.raises(ValidationError):
+        _ = SearchBudget(max_parameter_combinations=2, max_attempts=2, max_cpu_seconds=60).model_copy(
+            update={"max_attempts": 0}
+        )
+    for update in (
+        {"cost_model": invalid_cost},
+        {"free_parameters": (invalid_parameter,)},
+        {"search_budget": invalid_budget},
+        {"target_horizon": invalid_horizon},
+    ):
+        with pytest.raises(ValidationError):
+            _ = version.model_copy(update=update)
 
 
 def family_fixture() -> HypothesisFamily:

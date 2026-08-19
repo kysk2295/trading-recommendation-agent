@@ -69,11 +69,11 @@ def strategy_authority_binding_key(
 
 
 def day_hypothesis_family_key(family: HypothesisFamily) -> DayHypothesisFamilyKey:
-    return DayHypothesisFamilyKey(_model_sha256(family))
+    return DayHypothesisFamilyKey(_model_sha256(HypothesisFamily.model_validate(family)))
 
 
 def day_hypothesis_version_key(version: HypothesisVersion) -> DayHypothesisVersionKey:
-    return DayHypothesisVersionKey(_model_sha256(version))
+    return DayHypothesisVersionKey(_model_sha256(HypothesisVersion.model_validate(version)))
 
 
 def canonical_experiment_ledger_json(model: BaseModel) -> str:

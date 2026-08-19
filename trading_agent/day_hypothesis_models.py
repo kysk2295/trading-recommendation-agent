@@ -13,7 +13,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from pydantic_core import to_jsonable_python
 
 from trading_agent.research_identity_models import MarketId
-from trading_agent.strategy_research_models import SearchBudget, TargetHorizon
 from trading_agent.strategy_research_types import ExpectedDirection, aware
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -27,8 +26,17 @@ class InvalidDayHypothesisModelError(ValueError):
         return self.reason
 
 
-class MethodologyDeclaration(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+class DayHypothesisModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always", strict=True)
+
+    def model_copy(self, *, update: Mapping[str, object] | None = None, deep: bool = False) -> Self:
+        payload = self.model_dump(mode="python")
+        if update is not None:
+            payload.update(update)
+        return self.__class__.model_validate(payload)
+
+
+class MethodologyDeclaration(DayHypothesisModel):
 
     methodology_tags: tuple[str, ...]
     primary_evaluation_owner: str
@@ -45,8 +53,7 @@ class MethodologyDeclaration(BaseModel):
         return self
 
 
-class CostModelDeclaration(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+class CostModelDeclaration(DayHypothesisModel):
 
     model_id: str
     commission_bps: Decimal
@@ -63,8 +70,7 @@ class CostModelDeclaration(BaseModel):
         return self
 
 
-class FreeParameter(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+class FreeParameter(DayHypothesisModel):
 
     name: str
     values: tuple[Decimal, ...] = Field(min_length=1, max_length=32)
@@ -76,8 +82,17 @@ class FreeParameter(BaseModel):
         return self
 
 
-class HypothesisFamily(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+class SearchBudget(DayHypothesisModel):
+    max_parameter_combinations: int = Field(ge=1, le=10_000)
+    max_attempts: int = Field(ge=1, le=10_000)
+    max_cpu_seconds: int = Field(ge=1, le=86_400)
+
+
+class TargetHorizon(DayHypothesisModel):
+    duration: dt.timedelta = Field(gt=dt.timedelta(0), le=dt.timedelta(days=3_650))
+
+
+class HypothesisFamily(DayHypothesisModel):
 
     family_id: str
     parent_family_id: str | None
@@ -112,8 +127,7 @@ class HypothesisFamily(BaseModel):
         return self
 
 
-class HypothesisVersion(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+class HypothesisVersion(DayHypothesisModel):
 
     hypothesis_version_id: str
     family_id: str
@@ -260,10 +274,12 @@ def _sorted_unique_text(values: tuple[str, ...]) -> bool:
 
 __all__ = (
     "CostModelDeclaration",
+    "DayHypothesisModel",
     "FreeParameter",
     "HypothesisFamily",
     "HypothesisVersion",
     "InvalidDayHypothesisModelError",
     "MethodologyDeclaration",
     "SearchBudget",
+    "TargetHorizon",
 )
