@@ -38,10 +38,14 @@ TERMINAL_REASONS = frozenset(
         "contract_invalid",
         "forward_probe_not_future_only",
         "methodology_missing",
+        "model_call_outcome_unknown",
         "model_call_interrupted",
+        "model_response_malformed",
         "nondeterministic",
         "point_in_time_leakage",
         "proposal_time_invalid",
+        "artifact_outcome_unknown",
+        "preflight_outcome_unknown",
         "sandbox_failed",
         "semantic_duplicate",
         "unconstructible",
@@ -155,28 +159,26 @@ class DayDiscoveryPreparedBranch(BaseModel):
         ledger_recorded_at = dt.datetime.fromisoformat(
             str(registration["ledger_recorded_at"])
         )
-        typed_registration = HypothesisRegistration.model_construct(
-            schema_version=1,
-            hypothesis_id=str(registration["hypothesis_id"]),
-            experiment_scope=experiment_scope,
-            experiment_scope_key=str(registration["experiment_scope_key"]),
-            primary_lane=primary_lane,
-            hypothesis=str(registration["hypothesis"]),
-            falsification_rule=str(registration["falsification_rule"]),
-            source_registered_at=source_registered_at,
-            ledger_recorded_at=ledger_recorded_at,
+        typed_registration = HypothesisRegistration.model_validate(
+            {
+                **registration,
+                "experiment_scope": experiment_scope,
+                "primary_lane": primary_lane,
+                "source_registered_at": source_registered_at,
+                "ledger_recorded_at": ledger_recorded_at,
+            }
         )
         keys = payload.get("research_source_keys")
         if not isinstance(keys, list):
             raise InvalidDayDiscoveryJournalError("prepared_branch_proposal_invalid")
         research_source_keys = tuple(str(value) for value in keys)
         return ProposedHypothesis(
-            card=ResearchHypothesisCard.model_construct(
-                schema_version=1,
-                hypothesis=typed_registration,
-                research_source_keys=research_source_keys,
-                economic_mechanism=str(payload["economic_mechanism"]),
-                counterfactual_baseline=str(payload["counterfactual_baseline"]),
+            card=ResearchHypothesisCard.model_validate(
+                {
+                    **payload,
+                    "hypothesis": typed_registration,
+                    "research_source_keys": research_source_keys,
+                }
             ),
             cited_sources=self.cited_sources,
             llm_receipt=self.llm_receipt.receipt(),

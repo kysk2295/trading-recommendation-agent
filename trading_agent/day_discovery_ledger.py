@@ -94,22 +94,50 @@ def open_day_discovery_cycle(
         or checked_cycle.market_id is not checked_account.market_id
     ):
         raise InvalidDayDiscoveryLedgerSourceError("cycle_account_mismatch")
-    _insert_or_replay(
-        connection,
-        "day_discovery_budget_accounts",
-        "account_id",
-        checked_account.account_id,
-        "INSERT INTO day_discovery_budget_accounts VALUES (?,?,?,?,?,?)",
-        (
+    account_row: tuple[str] | None = connection.execute(
+        "SELECT payload_json FROM day_discovery_budget_accounts WHERE account_id=?",
+        (checked_account.account_id,),
+    ).fetchone()
+    if account_row is None:
+        _insert_or_replay(
+            connection,
+            "day_discovery_budget_accounts",
+            "account_id",
             checked_account.account_id,
-            checked_account.market_id.value,
-            checked_account.budget_epoch_ref,
-            checked_account.debit_limit,
-            checked_account.created_at.isoformat(),
+            "INSERT INTO day_discovery_budget_accounts VALUES (?,?,?,?,?,?)",
+            (
+                checked_account.account_id,
+                checked_account.market_id.value,
+                checked_account.budget_epoch_ref,
+                checked_account.debit_limit,
+                checked_account.created_at.isoformat(),
+                canonical_experiment_ledger_json(checked_account),
+            ),
             canonical_experiment_ledger_json(checked_account),
-        ),
-        canonical_experiment_ledger_json(checked_account),
-    )
+        )
+    else:
+        stored_account = _parse(
+            account_row[0],
+            DayDiscoveryBudgetAccount,
+            "budget_account_invalid",
+        )
+        if (
+            stored_account.account_id != checked_account.account_id
+            or stored_account.market_id is not checked_account.market_id
+            or stored_account.budget_epoch_ref != checked_account.budget_epoch_ref
+            or stored_account.debit_limit != checked_account.debit_limit
+        ):
+            raise DayDiscoveryLedgerConflictError("budget_account_replay_conflict")
+    cursor_row: tuple[str, str] | None = connection.execute(
+        "SELECT cycle_id,evidence_sha256 FROM day_discovery_cycles "
+        "WHERE account_id=? AND cursor_sha256=?",
+        (checked_cycle.account_id, checked_cycle.cursor_sha256),
+    ).fetchone()
+    if cursor_row is not None and cursor_row != (
+        checked_cycle.cycle_id,
+        checked_cycle.evidence_sha256,
+    ):
+        raise DayDiscoveryLedgerConflictError("cycle_cursor_evidence_conflict")
     _insert_or_replay(
         connection,
         "day_discovery_cycles",
@@ -278,12 +306,24 @@ def prepare_day_discovery_branch(
     if checked.event_kind is not DayDiscoveryEventKind.BRANCH_PREPARED:
         raise InvalidDayDiscoveryLedgerSourceError("prepared_event_invalid")
     _require_next_event(connection, checked)
+    try:
+        prepared_payload = json.loads(checked.payload_json)
+        cartesian_demand = prepared_payload["cartesian_demand"]
+    except (KeyError, TypeError, ValueError):
+        raise InvalidDayDiscoveryLedgerSourceError("prepared_payload_invalid") from None
+    if not isinstance(cartesian_demand, int) or isinstance(cartesian_demand, bool) or cartesian_demand < 1:
+        raise InvalidDayDiscoveryLedgerSourceError("prepared_cartesian_demand_invalid")
+    expected_top_up = cartesian_demand - 1
+    if (debit is None) != (expected_top_up == 0):
+        raise InvalidDayDiscoveryLedgerSourceError("prepared_debit_invalid")
     if debit is not None:
         checked_debit = _validated(debit, DayDiscoveryBudgetDebit, "debit_invalid")
         if (
             checked_debit.debit_kind is not DayDiscoveryDebitKind.CARTESIAN_TOP_UP
             or checked_debit.cycle_id != checked.cycle_id
             or checked_debit.branch_index != checked.branch_index
+            or checked_debit.amount != expected_top_up
+            or checked_debit.debited_at != checked.event_at
         ):
             raise InvalidDayDiscoveryLedgerSourceError("prepared_debit_invalid")
         account = _account(connection, checked_debit.account_id)
@@ -491,6 +531,7 @@ def _audited_events(
     if not events:
         raise InvalidDayDiscoveryLedgerSourceError("event_chain_missing")
     _audit_call_events(events, all_debits=debits)
+    _audit_prepared_events(events, all_debits=debits)
     return events
 
 
@@ -545,6 +586,49 @@ def _audit_call_events(
                 or debit.debited_at != reservation.reserved_at
             ):
                 raise InvalidDayDiscoveryLedgerSourceError("call_reservation_debit_mismatch")
+
+
+def _audit_prepared_events(
+    events: tuple[DayDiscoveryEvent, ...],
+    *,
+    all_debits: tuple[DayDiscoveryBudgetDebit, ...],
+) -> None:
+    top_ups = {
+        debit.branch_index: debit
+        for debit in all_debits
+        if debit.debit_kind is DayDiscoveryDebitKind.CARTESIAN_TOP_UP
+    }
+    expected_top_up_branches: set[int] = set()
+    for event in events:
+        if event.event_kind is not DayDiscoveryEventKind.BRANCH_PREPARED:
+            continue
+        try:
+            payload = json.loads(event.payload_json)
+            demand = payload["cartesian_demand"]
+        except (KeyError, TypeError, ValueError):
+            raise InvalidDayDiscoveryLedgerSourceError("prepared_payload_invalid") from None
+        branch_index = event.branch_index
+        if (
+            branch_index is None
+            or not isinstance(demand, int)
+            or isinstance(demand, bool)
+            or demand < 1
+        ):
+            raise InvalidDayDiscoveryLedgerSourceError("prepared_cartesian_demand_invalid")
+        top_up = top_ups.get(branch_index)
+        if demand == 1:
+            if top_up is not None:
+                raise InvalidDayDiscoveryLedgerSourceError("prepared_debit_invalid")
+        elif (
+            top_up is None
+            or top_up.amount != demand - 1
+            or top_up.debited_at != event.event_at
+        ):
+            raise InvalidDayDiscoveryLedgerSourceError("prepared_debit_invalid")
+        if demand > 1:
+            expected_top_up_branches.add(branch_index)
+    if set(top_ups) != expected_top_up_branches:
+        raise InvalidDayDiscoveryLedgerSourceError("prepared_debit_invalid")
 
 
 def _require_next_event(connection: sqlite3.Connection, event: DayDiscoveryEvent) -> None:

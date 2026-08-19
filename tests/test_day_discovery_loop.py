@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 import trading_agent.day_discovery_loop as discovery_module
+import trading_agent.day_discovery_state_machine as discovery_state_module
 from tests.day_strategy_capsule_support import no_signal_source, nondeterministic_source, proposal
 from trading_agent import researcher_llm
 from trading_agent.critic_agent import DeterministicHypothesisCritic
@@ -34,6 +35,7 @@ from trading_agent.research_agent_source_adapters_primary import DaySourceAdapte
 from trading_agent.research_agent_source_common import canonical_model_json
 from trading_agent.research_identity_models import MarketId
 from trading_agent.researcher_agent import FailureDigest, FixedHypothesisGenerator, ResearcherContext
+from trading_agent.researcher_llm import FixtureLlmProposalClient, StructuredHypothesisGenerator
 from trading_agent.researcher_pipeline import (
     ResearcherPipeline,
     ResearcherPipelineArtifacts,
@@ -128,6 +130,90 @@ def test_safe_novel_non_enum_python_publishes_one_future_only_primary(tmp_path: 
     assert reviewed.attempt.finished_at < reviewed.binding.bound_at
     assert reviewed.binding.bound_at < capsule.published_at
     assert capsule.published_at < result.first_eligible_completed_bar_at
+
+
+def test_completed_cycle_is_authoritatively_finalized_in_v11_ledger(tmp_path: Path) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    pipeline = _pipeline(
+        tmp_path,
+        FixedHypothesisGenerator(_proposal(no_signal_source())),
+        runtime,
+    )
+
+    result = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            pipeline=pipeline,
+            sandbox=GeneratedStrategySandbox(
+                runtime,
+                tmp_path / "sandbox",
+                _view().resource_limits,
+            ),
+            max_drafts=1,
+        )
+    ).run(_view())
+
+    state = pipeline.stores.ledger.reader().day_discovery_cycle_state(result.cycle_id)
+    assert state.events[-1].event_kind.value == "cycle_finalized"
+    assert state.remaining_budget == result.remaining_budget
+
+
+def test_empty_structured_response_is_recorded_before_terminal_parse_failure(tmp_path: Path) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    generator = StructuredHypothesisGenerator(
+        FixtureLlmProposalClient(b""),
+        ResearcherReceiptStore(tmp_path / "receipts"),
+        lambda: _view().observed_at,
+    )
+    pipeline = _pipeline(tmp_path, generator, runtime)
+
+    result = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            pipeline,
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
+            1,
+        )
+    ).run(_view())
+
+    state = pipeline.stores.ledger.reader().day_discovery_cycle_state(result.cycle_id)
+    assert result.terminal_reason == "model_response_malformed"
+    assert state.events[2].event_kind.value == "call_response_recorded"
+    assert state.debits[0].amount == 1
+
+
+def test_budget_epoch_is_shared_across_distinct_cursor_cycles(tmp_path: Path) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    first_pipeline = _pipeline(
+        tmp_path,
+        FixedHypothesisGenerator(_proposal(no_signal_source())),
+        runtime,
+    )
+    first = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            first_pipeline,
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
+            1,
+        )
+    ).run(_view())
+    later_view = _view().model_copy(
+        update={
+            "cursor": "us:fixture:later",
+            "observed_at": _view().observed_at + dt.timedelta(seconds=1),
+        }
+    )
+    second = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(
+                tmp_path,
+                FixedHypothesisGenerator(_proposal(no_signal_source())),
+                runtime,
+            ),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", later_view.resource_limits),
+            1,
+        )
+    ).run(later_view)
+
+    assert first.remaining_budget == 2
+    assert second.remaining_budget == 1
 
 
 @pytest.mark.parametrize(
@@ -367,7 +453,7 @@ def test_terminal_drafts_exhaust_cartesian_budget_without_extra_generation(
     )
 
 
-def test_exhausted_prior_budget_does_not_call_model_or_create_hidden_attempt(tmp_path: Path) -> None:
+def test_untrusted_view_debit_counter_does_not_override_authoritative_ledger(tmp_path: Path) -> None:
     runtime = resolve_generated_strategy_runtime(Path(sys.executable))
     view = _view().model_copy(update={"budget_debits_used": 3})
     generator = _SequenceGenerator([_proposal(no_signal_source())])
@@ -378,10 +464,10 @@ def test_exhausted_prior_budget_does_not_call_model_or_create_hidden_attempt(tmp
             3,
         )
     ).run(view)
-    assert result.terminal_reason == "budget_exhausted"
-    assert result.drafts_attempted == 0
-    assert generator.calls == 0
-    assert not (tmp_path / "ledger.sqlite3").exists()
+    assert result.accepted is True
+    assert result.remaining_budget == 2
+    assert generator.calls == 1
+    assert (tmp_path / "ledger.sqlite3").is_file()
 
 
 def test_exact_cycle_replay_is_idempotent_and_creates_no_extra_rows(tmp_path: Path) -> None:
@@ -450,18 +536,18 @@ def test_restart_resumes_prepared_branch_after_final_receipt_crash_without_secon
             1,
         )
     )
-    real_publish = discovery_module.publish_private_immutable_text
+    real_publish = discovery_state_module.publish_private_immutable_text
 
     def crash_before_final(path: Path, payload: str) -> bool:
         if path.name.endswith(".json") and ".prepared." not in path.name:
             raise discovery_module.InvalidPrivateImmutableFileError
         return real_publish(path, payload)
 
-    monkeypatch.setattr(discovery_module, "publish_private_immutable_text", crash_before_final)
+    monkeypatch.setattr(discovery_state_module, "publish_private_immutable_text", crash_before_final)
     with pytest.raises(DayDiscoveryError, match="cycle_receipt_publication_failed"):
         first_loop.run(_view())
     assert first_generator.calls == 1
-    monkeypatch.setattr(discovery_module, "publish_private_immutable_text", real_publish)
+    monkeypatch.setattr(discovery_state_module, "publish_private_immutable_text", real_publish)
 
     restarted_generator = _SequenceGenerator([])
     recovered = DayDiscoveryLoop(
@@ -481,13 +567,13 @@ def test_restart_resumes_prepared_branch_after_final_receipt_crash_without_secon
     assert len(reader.day_strategy_capsules(_view().market_id)) == 1
 
 
-def test_partial_side_effect_restart_resumes_prepared_branch_without_double_debit(
+def test_restart_after_artifact_intent_terminalizes_unknown_without_double_debit(
     tmp_path: Path,
 ) -> None:
     runtime = resolve_generated_strategy_runtime(Path(sys.executable))
 
     def crash_after_version(phase: str) -> None:
-        if phase == "version_registered":
+        if phase == "resolution_intent":
             raise RuntimeError("simulated_crash")
 
     first_generator = _SequenceGenerator([_proposal(no_signal_source())])
@@ -513,18 +599,17 @@ def test_partial_side_effect_restart_resumes_prepared_branch_without_double_debi
     version = reader.day_hypothesis_versions(market_id=_view().market_id)[0].version
     reviewed = reader.day_attempts_for_review(_view().market_id, version.hypothesis_version_id)
 
-    assert result.accepted is True
+    assert result.accepted is False
+    assert result.terminal_reason == "artifact_outcome_unknown"
     assert first_generator.calls == 1
     assert restarted_generator.calls == 0
     assert len(reviewed) == 1
     assert reviewed[0].binding.search_budget_debit == 1
 
 
-@pytest.mark.parametrize("tamper_kind", ("noncanonical", "mode", "symlink", "identity"))
-def test_restart_rejects_tampered_or_nonprivate_prepared_branch_before_second_model_call(
+def test_restart_regenerates_only_final_projection_without_branch_journals(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    tamper_kind: str,
 ) -> None:
     runtime = resolve_generated_strategy_runtime(Path(sys.executable))
     first_generator = _SequenceGenerator([_proposal(no_signal_source())])
@@ -535,44 +620,28 @@ def test_restart_rejects_tampered_or_nonprivate_prepared_branch_before_second_mo
             1,
         )
     )
-    real_publish = discovery_module.publish_private_immutable_text
+    real_publish = discovery_state_module.publish_private_immutable_text
 
     def crash_before_final(path: Path, payload: str) -> bool:
         if path.name.endswith(".json") and ".prepared." not in path.name:
             raise discovery_module.InvalidPrivateImmutableFileError
         return real_publish(path, payload)
 
-    monkeypatch.setattr(discovery_module, "publish_private_immutable_text", crash_before_final)
+    monkeypatch.setattr(discovery_state_module, "publish_private_immutable_text", crash_before_final)
     with pytest.raises(DayDiscoveryError, match="cycle_receipt_publication_failed"):
         loop.run(_view())
-    monkeypatch.setattr(discovery_module, "publish_private_immutable_text", real_publish)
-    prepared_path = next((tmp_path / "manifests" / "day-discovery-cycle-receipts").glob("*.prepared.0.json"))
-    if tamper_kind == "mode":
-        prepared_path.chmod(0o644)
-    elif tamper_kind == "symlink":
-        target = prepared_path.with_name("prepared-target.json")
-        prepared_path.rename(target)
-        prepared_path.symlink_to(target)
-    else:
-        raw = prepared_path.read_text(encoding="utf-8")
-        if tamper_kind == "identity":
-            payload = json.loads(raw)
-            payload["evidence_sha256"] = "f" * 64
-            raw = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
-        else:
-            raw = f" {raw}"
-        prepared_path.write_text(raw, encoding="utf-8")
-        prepared_path.chmod(0o600)
-
+    monkeypatch.setattr(discovery_state_module, "publish_private_immutable_text", real_publish)
+    root = tmp_path / "manifests" / "day-discovery-cycle-receipts"
+    assert tuple(root.glob("*.prepared.*.json")) == ()
     restarted_generator = _SequenceGenerator([])
-    with pytest.raises(DayDiscoveryError, match="prepared_branch"):
-        DayDiscoveryLoop(
-            DayDiscoveryLoopConfig(
-                _pipeline(tmp_path, restarted_generator, runtime),
-                GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
-                1,
-            )
-        ).run(_view())
+    recovered = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, restarted_generator, runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
+            1,
+        )
+    ).run(_view())
+    assert recovered.accepted is True
     assert first_generator.calls == 1
     assert restarted_generator.calls == 0
 
@@ -668,10 +737,10 @@ def test_parameter_demand_above_remaining_budget_is_one_terminal_debit(tmp_path:
 
 
 @pytest.mark.parametrize(
-    ("search_budget", "accepted", "terminal_reason", "expected_debit"),
+    ("search_budget", "accepted", "terminal_reason", "expected_combinations", "expected_debit"),
     (
-        (8, True, None, 8),
-        (7, False, "budget_exhausted", 7),
+        (8, True, None, 8, 8),
+        (7, False, "budget_exhausted", 7, 1),
     ),
 )
 def test_cartesian_parameter_combinations_control_admission_and_debit(
@@ -679,6 +748,7 @@ def test_cartesian_parameter_combinations_control_admission_and_debit(
     search_budget: int,
     accepted: bool,
     terminal_reason: str | None,
+    expected_combinations: int,
     expected_debit: int,
 ) -> None:
     runtime = resolve_generated_strategy_runtime(Path(sys.executable))
@@ -706,10 +776,10 @@ def test_cartesian_parameter_combinations_control_admission_and_debit(
 
     assert result.accepted is accepted
     assert result.terminal_reason == terminal_reason
-    assert result.remaining_budget == 0
+    assert result.remaining_budget == search_budget - expected_debit
     assert tuple(len(parameter.values) for parameter in version.free_parameters) == (2, 2, 2)
-    assert version.search_budget.max_parameter_combinations == expected_debit
-    assert preregistration.hypothesis.search_budget.max_parameter_combinations == expected_debit
+    assert version.search_budget.max_parameter_combinations == expected_combinations
+    assert preregistration.hypothesis.search_budget.max_parameter_combinations == expected_combinations
     assert reviewed[0].binding.search_budget_debit == expected_debit
 
 
@@ -850,7 +920,7 @@ def test_missing_preregistered_falsification_is_a_visible_critic_rejection(
         )
     ).run(view)
 
-    assert result.terminal_reason == "critic_rejected"
+    assert result.terminal_reason == "model_response_malformed"
     assert result.drafts_attempted == 1
     assert result.remaining_budget == view.search_budget - 1
 

@@ -104,9 +104,9 @@ class DayDiscoveryCallResponsePayload(BaseModel):
 
     schema_version: Literal[1] = 1
     reservation_id: str = Field(pattern=r"^[0-9a-f]{64}$")
-    response_base64: str = Field(min_length=4, max_length=350 * 1024)
+    response_base64: str = Field(max_length=350 * 1024)
     response_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    response_length: int = Field(ge=1, le=256 * 1024)
+    response_length: int = Field(ge=0, le=256 * 1024)
     invocation_started_at: AwareDatetime
     received_at: AwareDatetime
 

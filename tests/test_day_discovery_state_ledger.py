@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import hashlib
+import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -114,8 +116,9 @@ def _event(
     cycle: DayDiscoveryCycle,
     previous: DayDiscoveryEvent,
     kind: DayDiscoveryEventKind,
+    details: dict[str, int] | None = None,
 ) -> DayDiscoveryEvent:
-    payload = {
+    event_payload = {
         "event_id": "",
         "cycle_id": cycle.cycle_id,
         "sequence": previous.sequence + 1,
@@ -123,10 +126,10 @@ def _event(
         "branch_index": 0,
         "event_kind": kind,
         "event_at": previous.event_at + dt.timedelta(microseconds=1),
-        "payload_json": "{}",
+        "payload_json": json.dumps(details or {}, separators=(",", ":"), sort_keys=True),
     }
     return DayDiscoveryEvent.model_validate(
-        payload | {"event_id": DayDiscoveryEvent.canonical_id_for(payload)}
+        event_payload | {"event_id": DayDiscoveryEvent.canonical_id_for(event_payload)}
     )
 
 
@@ -238,12 +241,59 @@ def test_prepared_branch_tops_up_only_cartesian_demand_minus_initial_debit(tmp_p
             top_up_payload
             | {"debit_id": DayDiscoveryBudgetDebit.canonical_id_for(top_up_payload)}
         )
-        prepared = _event(cycle, response, DayDiscoveryEventKind.BRANCH_PREPARED)
+        prepared = _event(
+            cycle,
+            response,
+            DayDiscoveryEventKind.BRANCH_PREPARED,
+            {"cartesian_demand": 2},
+        )
         assert writer.prepare_day_discovery_branch(top_up, prepared)
 
     state = store.reader().day_discovery_cycle_state(cycle.cycle_id)
     assert tuple(debit.amount for debit in state.debits) == (1, 1)
     assert state.remaining_budget == 0
+
+
+@pytest.mark.parametrize("mutation", ("amount", "time"))
+def test_prepared_branch_rejects_top_up_not_bound_to_planned_demand_and_event_time(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    store = ExperimentLedgerStore(tmp_path / "ledger.sqlite3")
+    account = _account(limit=4)
+    cycle = _cycle(account, "b" * 64)
+    with store.writer() as writer:
+        opened = writer.open_day_discovery_cycle(account, cycle)
+        reserved = _reservation_event(cycle, opened)
+        writer.reserve_day_discovery_call(_debit(account, cycle), reserved)
+        response = _response_event(cycle, reserved)
+        writer.record_day_discovery_call_response(response)
+        prepared = _event(
+            cycle,
+            response,
+            DayDiscoveryEventKind.BRANCH_PREPARED,
+            {"cartesian_demand": 3},
+        )
+        debit_payload = {
+            "debit_id": "",
+            "account_id": account.account_id,
+            "cycle_id": cycle.cycle_id,
+            "branch_index": 0,
+            "debit_kind": DayDiscoveryDebitKind.CARTESIAN_TOP_UP,
+            "amount": 1 if mutation == "amount" else 2,
+            "debited_at": (
+                prepared.event_at + dt.timedelta(microseconds=1)
+                if mutation == "time"
+                else prepared.event_at
+            ),
+        }
+        top_up = DayDiscoveryBudgetDebit.model_validate(
+            debit_payload
+            | {"debit_id": DayDiscoveryBudgetDebit.canonical_id_for(debit_payload)}
+        )
+
+        with pytest.raises(InvalidExperimentLedgerSourceError):
+            writer.prepare_day_discovery_branch(top_up, prepared)
 
 
 def test_reader_rejects_rehashed_illegal_event_transition(tmp_path) -> None:
@@ -325,7 +375,12 @@ def test_effect_and_finalization_apis_append_one_legal_terminal_chain(tmp_path) 
         writer.reserve_day_discovery_call(_debit(account, cycle), reserved)
         response = _response_event(cycle, reserved)
         writer.record_day_discovery_call_response(response)
-        prepared = _event(cycle, response, DayDiscoveryEventKind.BRANCH_PREPARED)
+        prepared = _event(
+            cycle,
+            response,
+            DayDiscoveryEventKind.BRANCH_PREPARED,
+            {"cartesian_demand": 1},
+        )
         writer.prepare_day_discovery_branch(None, prepared)
         resolution_intent = _event(
             cycle,

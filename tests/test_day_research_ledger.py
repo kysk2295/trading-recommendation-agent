@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import trading_agent.experiment_ledger_store as ledger_store_module
+from trading_agent.day_discovery_ledger_schema import DAY_DISCOVERY_SCHEMA_OBJECTS
 from trading_agent.day_hypothesis_models import (
     CostModelDeclaration,
     FreeParameter,
@@ -146,7 +147,8 @@ def test_fresh_schema_has_exact_day_objects(tmp_path: Path) -> None:
         "day_exploration_policies_by_market_session",
     }
     triggers = {f"{table}_no_{operation}" for table in tables for operation in ("update", "delete")}
-    assert objects == DAY_RESEARCH_SCHEMA_OBJECTS == tables | indexes | triggers
+    assert tables | indexes | triggers == DAY_RESEARCH_SCHEMA_OBJECTS
+    assert objects == DAY_RESEARCH_SCHEMA_OBJECTS | DAY_DISCOVERY_SCHEMA_OBJECTS
     assert ledger_store_module._V10_SCHEMA_OBJECTS == (
         ledger_store_module._V9_SCHEMA_OBJECTS | DAY_RESEARCH_SCHEMA_OBJECTS
     )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import json
+import sqlite3
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -10,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import trading_agent.day_discovery_loop as discovery_module
+import trading_agent.day_discovery_state_machine as discovery_state_module
 from tests.day_strategy_capsule_support import no_signal_source
 from tests.test_day_discovery_loop import _pipeline, _proposal, _SequenceGenerator, _view
 from trading_agent.day_discovery_loop import (
@@ -17,7 +19,10 @@ from trading_agent.day_discovery_loop import (
     DayDiscoveryLoop,
     DayDiscoveryLoopConfig,
 )
-from trading_agent.experiment_ledger_store import ExperimentLedgerStore
+from trading_agent.experiment_ledger_store import (
+    ExperimentLedgerStore,
+    InvalidExperimentLedgerSourceError,
+)
 from trading_agent.generated_strategy_artifact import (
     GeneratedStrategyArtifactError,
     GeneratedStrategyArtifactStore,
@@ -41,32 +46,29 @@ def _loop(tmp_path: Path, generator: _SequenceGenerator) -> DayDiscoveryLoop:
 
 def test_orphaned_pre_call_reservation_terminalizes_without_second_model_call(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     first_generator = _SequenceGenerator([_proposal(no_signal_source())])
-    first = _loop(tmp_path, first_generator)
-    real_publish = discovery_module.publish_prepared_branch
+    configured = _loop(tmp_path, first_generator)
 
-    def fail_prepared_publication(*args: object) -> None:
-        del args
-        raise discovery_module.InvalidDayDiscoveryJournalError(
-            "prepared_branch_publication_failed"
-        )
+    def crash_after_reservation(phase: str) -> None:
+        if phase == "call_reserved":
+            raise RuntimeError("simulated_crash")
 
-    monkeypatch.setattr(discovery_module, "publish_prepared_branch", fail_prepared_publication)
-    with pytest.raises(DayDiscoveryError, match="prepared_branch_publication_failed"):
+    first = DayDiscoveryLoop(
+        replace(configured.config, fault_injector=crash_after_reservation)
+    )
+    with pytest.raises(RuntimeError, match="simulated_crash"):
         first.run(_view())
-    monkeypatch.setattr(discovery_module, "publish_prepared_branch", real_publish)
 
     restarted_generator = _SequenceGenerator([])
     result = _loop(tmp_path, restarted_generator).run(_view())
 
-    assert result.terminal_reason == "model_call_interrupted"
+    assert result.terminal_reason == "model_call_outcome_unknown"
     assert result.drafts_attempted == 1
     assert result.remaining_budget == _view().search_budget - 1
-    assert first_generator.calls == 1
+    assert first_generator.calls == 0
     assert restarted_generator.calls == 0
-    assert not (tmp_path / "ledger.sqlite3").exists()
+    assert (tmp_path / "ledger.sqlite3").is_file()
     assert _loop(tmp_path, _SequenceGenerator([])).run(_view()) == result
 
 
@@ -77,7 +79,7 @@ def test_recorded_artifact_failure_replays_exact_terminal_after_final_receipt_cr
     first_generator = _SequenceGenerator([_proposal(no_signal_source())])
     first = _loop(tmp_path, first_generator)
     real_artifact_publish = GeneratedStrategyArtifactStore.publish
-    real_receipt_publish = discovery_module.publish_private_immutable_text
+    real_receipt_publish = discovery_state_module.publish_private_immutable_text
 
     def fail_artifact(self: GeneratedStrategyArtifactStore, proposal: object) -> object:
         del self, proposal
@@ -92,11 +94,11 @@ def test_recorded_artifact_failure_replays_exact_terminal_after_final_receipt_cr
         return real_receipt_publish(path, payload)
 
     monkeypatch.setattr(GeneratedStrategyArtifactStore, "publish", fail_artifact)
-    monkeypatch.setattr(discovery_module, "publish_private_immutable_text", fail_final_receipt)
+    monkeypatch.setattr(discovery_state_module, "publish_private_immutable_text", fail_final_receipt)
     with pytest.raises(DayDiscoveryError, match="cycle_receipt_publication_failed"):
         first.run(_view())
     monkeypatch.setattr(GeneratedStrategyArtifactStore, "publish", real_artifact_publish)
-    monkeypatch.setattr(discovery_module, "publish_private_immutable_text", real_receipt_publish)
+    monkeypatch.setattr(discovery_state_module, "publish_private_immutable_text", real_receipt_publish)
 
     restarted_generator = _SequenceGenerator([])
     result = _loop(tmp_path, restarted_generator).run(_view())
@@ -122,7 +124,7 @@ def test_canonical_prepared_forgery_fails_closed(
 ) -> None:
     generator = _SequenceGenerator([_proposal(no_signal_source())])
     loop = _loop(tmp_path, generator)
-    real_receipt_publish = discovery_module.publish_private_immutable_text
+    real_receipt_publish = discovery_state_module.publish_private_immutable_text
 
     def fail_final_receipt(path: Path, payload: str) -> bool:
         if path.name.endswith(".json") and all(
@@ -132,36 +134,53 @@ def test_canonical_prepared_forgery_fails_closed(
             raise discovery_module.InvalidPrivateImmutableFileError
         return real_receipt_publish(path, payload)
 
-    monkeypatch.setattr(discovery_module, "publish_private_immutable_text", fail_final_receipt)
+    monkeypatch.setattr(discovery_state_module, "publish_private_immutable_text", fail_final_receipt)
     with pytest.raises(DayDiscoveryError, match="cycle_receipt_publication_failed"):
         loop.run(_view())
-    monkeypatch.setattr(discovery_module, "publish_private_immutable_text", real_receipt_publish)
-    prepared_path = next(
-        (tmp_path / "manifests" / "day-discovery-cycle-receipts").glob(
-            "*.prepared.0.json"
+    monkeypatch.setattr(discovery_state_module, "publish_private_immutable_text", real_receipt_publish)
+    database = tmp_path / "ledger.sqlite3"
+    with sqlite3.connect(database) as connection:
+        cycle_id = connection.execute(
+            "SELECT cycle_id FROM day_discovery_cycles"
+        ).fetchone()[0]
+        row = connection.execute(
+            "SELECT event_id,payload_json FROM day_discovery_events "
+            "WHERE event_kind='branch_prepared'"
+        ).fetchone()
+        assert row is not None
+        outer = json.loads(row[1])
+        payload = json.loads(outer["payload_json"])
+        prepared = payload["prepared"]
+        if tamper == "attempt_id":
+            prepared["attempt_id"] = "f" * 64
+        elif tamper == "debit":
+            prepared["search_budget_debit"] = 2
+        elif tamper == "attempt_started_at":
+            prepared["attempt_started_at"] = (
+                dt.datetime.fromisoformat(prepared["attempt_started_at"])
+                + dt.timedelta(seconds=1)
+            ).isoformat()
+        else:
+            prepared["terminal_reason"] = "forged_reason"
+            prepared["proposal_card"] = None
+        outer["payload_json"] = json.dumps(
+            payload,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
         )
-    )
-    payload = json.loads(prepared_path.read_text(encoding="utf-8"))
-    if tamper == "attempt_id":
-        payload["attempt_id"] = "f" * 64
-    elif tamper == "debit":
-        payload["search_budget_debit"] = 2
-    elif tamper == "attempt_started_at":
-        payload["attempt_started_at"] = (
-            dt.datetime.fromisoformat(payload["attempt_started_at"])
-            + dt.timedelta(seconds=1)
-        ).isoformat()
-    else:
-        payload["terminal_reason"] = "forged_reason"
-        payload["proposal_card"] = None
-    prepared_path.write_text(
-        json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
-        encoding="utf-8",
-    )
-    prepared_path.chmod(0o600)
+        connection.execute("DROP TRIGGER day_discovery_events_no_update")
+        connection.execute(
+            "UPDATE day_discovery_events SET payload_json=? WHERE event_id=?",
+            (
+                json.dumps(outer, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+                row[0],
+            ),
+        )
+        connection.commit()
 
-    with pytest.raises(DayDiscoveryError, match="prepared_branch"):
-        _loop(tmp_path, _SequenceGenerator([])).run(_view())
+    with pytest.raises(InvalidExperimentLedgerSourceError):
+        ExperimentLedgerStore(database).reader().day_discovery_cycle_state(cycle_id)
 
 
 @pytest.mark.parametrize(
@@ -342,10 +361,10 @@ def test_noncanonical_ai_text_is_terminally_audited(
     assert result.accepted is False
     assert result.drafts_attempted == 1
     assert result.remaining_budget < _view().search_budget
-    assert len(versions) == 1
-    assert len(
-        reader.day_attempts_for_review(
-            _view().market_id,
-            versions[0].version.hypothesis_version_id,
-        )
-    ) == 1
+    assert result.terminal_reason is not None
+    if field in {"methodology", "parameter"}:
+        assert len(versions) == 1
+    else:
+        assert versions == ()
+    state = reader.day_discovery_cycle_state(result.cycle_id)
+    assert state.events[-2].event_kind.value == "branch_finalized"
