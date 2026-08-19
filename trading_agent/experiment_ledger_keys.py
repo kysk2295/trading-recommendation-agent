@@ -6,6 +6,7 @@ from typing import NewType
 
 from pydantic import BaseModel
 
+from trading_agent.day_hypothesis_models import HypothesisFamily, HypothesisVersion
 from trading_agent.experiment_ledger_models import (
     ExperimentTrialEvent,
     ExperimentTrialRegistration,
@@ -25,6 +26,8 @@ StrategyLifecycleEventKey = NewType("StrategyLifecycleEventKey", str)
 ResearchSourceKey = NewType("ResearchSourceKey", str)
 ResearchHypothesisCardKey = NewType("ResearchHypothesisCardKey", str)
 StrategyAuthorityBindingKey = NewType("StrategyAuthorityBindingKey", str)
+DayHypothesisFamilyKey = NewType("DayHypothesisFamilyKey", str)
+DayHypothesisVersionKey = NewType("DayHypothesisVersionKey", str)
 
 
 def hypothesis_registration_key(registration: HypothesisRegistration) -> HypothesisRegistrationKey:
@@ -63,6 +66,14 @@ def strategy_authority_binding_key(
     binding: StrategyAuthorityBinding,
 ) -> StrategyAuthorityBindingKey:
     return StrategyAuthorityBindingKey(_model_sha256(binding))
+
+
+def day_hypothesis_family_key(family: HypothesisFamily) -> DayHypothesisFamilyKey:
+    return DayHypothesisFamilyKey(_model_sha256(family))
+
+
+def day_hypothesis_version_key(version: HypothesisVersion) -> DayHypothesisVersionKey:
+    return DayHypothesisVersionKey(_model_sha256(version))
 
 
 def canonical_experiment_ledger_json(model: BaseModel) -> str:
