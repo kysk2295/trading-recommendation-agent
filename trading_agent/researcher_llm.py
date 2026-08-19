@@ -13,6 +13,7 @@ from typing import Final, Literal, Protocol, Self, override
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from trading_agent.day_sensitive_content import contains_sensitive_text
 from trading_agent.experiment_ledger_keys import research_source_key
 from trading_agent.experiment_ledger_models import (
     HypothesisRegistration,
@@ -344,7 +345,10 @@ def _prompt(context: ResearcherContext) -> str:
         if not isinstance(bounded, dict) or len(context.bounded_day_discovery_json.encode()) > 48 * 1024:
             raise ResearcherLlmError
         payload["day_discovery"] = bounded
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    prompt = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    if context.bounded_day_discovery_json is not None and contains_sensitive_text((prompt,)):
+        raise ResearcherLlmError
+    return prompt
 
 
 __all__ = (

@@ -29,6 +29,7 @@ class DayResearchAttemptBinding(BaseModel):
     hypothesis_version_id: str
     artifact_ref: str
     multiple_testing_family: str
+    multiple_testing_budget: int = Field(ge=1, le=10_000)
     search_budget_debit: int = Field(ge=1)
     bound_at: dt.datetime
 
@@ -75,6 +76,7 @@ class DayResearchAttemptBinding(BaseModel):
             or not _canonical_text(self.attempt_id)
             or _SAFE_ARTIFACT_REF.fullmatch(self.artifact_ref) is None
             or not _canonical_text(self.multiple_testing_family)
+            or self.search_budget_debit > self.multiple_testing_budget
             or not aware(self.bound_at)
             or self.binding_id != self.canonical_id_for(self.model_dump(mode="python"))
         ):

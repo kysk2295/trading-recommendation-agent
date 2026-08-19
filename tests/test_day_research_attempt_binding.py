@@ -29,6 +29,7 @@ from trading_agent.experiment_ledger_keys import (
 from trading_agent.experiment_ledger_store import (
     ExperimentLedgerConflictError,
     ExperimentLedgerStore,
+    ExperimentLedgerWriterLeaseUnavailableError,
     InvalidExperimentLedgerSourceError,
 )
 from trading_agent.research_identity_models import MarketId
@@ -110,13 +111,14 @@ def _version(
     max_attempts: int = 6,
     multiple_testing_family: str | None = None,
     predictor: str = "verified_catalyst_surprise",
+    market_id: MarketId = MarketId.US_EQUITIES,
 ) -> HypothesisVersion:
     created_at = NOW + dt.timedelta(minutes=1)
     payload = {
         "hypothesis_version_id": "",
         "family_id": family.family_id,
         "parent_version_id": None,
-        "market_id": MarketId.US_EQUITIES,
+        "market_id": market_id,
         "universe_snapshot_id": "us-equities-liquid-20260819",
         "universe_snapshot_at": NOW,
         "source_refs": ("source:catalyst",),
@@ -204,6 +206,7 @@ def _binding(
         "hypothesis_version_id": version.hypothesis_version_id,
         "artifact_ref": f"artifact://safe/{SHA_A}",
         "multiple_testing_family": version.multiple_testing_family,
+        "multiple_testing_budget": version.search_budget.max_attempts,
         "search_budget_debit": 1,
         "bound_at": (attempt.finished_at or version.first_shadow_eligible_at) + dt.timedelta(minutes=1),
     }
@@ -236,6 +239,96 @@ def test_registers_and_reads_every_terminal_attempt_status(tmp_path: Path) -> No
 
     # Then
     assert tuple(record.attempt.status for record in records) == tuple(AttemptStatus)[1:]
+
+
+def test_search_budget_is_aggregated_by_market_and_multiple_testing_family(
+    tmp_path: Path,
+) -> None:
+    store = ExperimentLedgerStore(tmp_path / "ledger.sqlite3")
+    family = _family()
+    first = _version(family, max_attempts=2, predictor="first_predictor")
+    second = _version(family, max_attempts=2, predictor="second_predictor")
+    first_attempt = _attempt(0, AttemptStatus.FAILED)
+    second_attempt = _attempt(1, AttemptStatus.FAILED)
+
+    with store.writer() as writer:
+        assert writer.register_strategy_research(_manifest())
+        assert writer.register_day_hypothesis_family(family)
+        assert writer.register_day_hypothesis_version(first)
+        assert writer.register_day_hypothesis_version(second)
+        assert writer.append_strategy_research_attempt(first_attempt)
+        assert writer.append_strategy_research_attempt(second_attempt)
+        assert writer.register_day_research_attempt_binding(
+            _binding(
+                first_attempt,
+                first,
+                search_budget_debit=2,
+                multiple_testing_budget=2,
+            )
+        )
+        with pytest.raises(InvalidExperimentLedgerSourceError):
+            writer.register_day_research_attempt_binding(
+                _binding(
+                    second_attempt,
+                    second,
+                    search_budget_debit=2,
+                    multiple_testing_budget=2,
+                )
+            )
+
+
+def test_multiple_testing_budget_is_independent_across_markets(tmp_path: Path) -> None:
+    store = ExperimentLedgerStore(tmp_path / "ledger.sqlite3")
+    family = _family()
+    us_version = _version(family, max_attempts=2, predictor="us_predictor")
+    kr_version = _version(
+        family,
+        max_attempts=2,
+        predictor="kr_predictor",
+        market_id=MarketId.KR_EQUITIES,
+    )
+    us_attempt = _attempt(0, AttemptStatus.FAILED)
+    kr_attempt = _attempt(1, AttemptStatus.FAILED)
+
+    with store.writer() as writer:
+        assert writer.register_strategy_research(_manifest())
+        assert writer.register_day_hypothesis_family(family)
+        assert writer.register_day_hypothesis_version(us_version)
+        assert writer.register_day_hypothesis_version(kr_version)
+        assert writer.append_strategy_research_attempt(us_attempt)
+        assert writer.append_strategy_research_attempt(kr_attempt)
+        assert writer.register_day_research_attempt_binding(
+            _binding(
+                us_attempt,
+                us_version,
+                search_budget_debit=2,
+                multiple_testing_budget=2,
+            )
+        )
+        assert writer.register_day_research_attempt_binding(
+            _binding(
+                kr_attempt,
+                kr_version,
+                search_budget_debit=2,
+                multiple_testing_budget=2,
+            )
+        )
+
+
+def test_family_budget_serializes_concurrent_writers_before_budget_check(tmp_path: Path) -> None:
+    store = ExperimentLedgerStore(tmp_path / "ledger.sqlite3")
+    family = _family()
+    first_version = _version(family, max_attempts=1, predictor="first_predictor")
+    second_version = _version(family, max_attempts=1, predictor="second_predictor")
+    first, second = _attempt(0, AttemptStatus.FAILED), _attempt(1, AttemptStatus.FAILED)
+    _prepared(store, (first, second), first_version)
+    with store.writer() as writer:
+        assert writer.register_day_hypothesis_version(second_version)
+        with pytest.raises(ExperimentLedgerWriterLeaseUnavailableError), store.writer():
+            pass
+        assert writer.register_day_research_attempt_binding(_binding(first, first_version))
+    with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
+        _ = writer.register_day_research_attempt_binding(_binding(second, second_version))
 
 
 def _prepared(store: ExperimentLedgerStore, attempts: tuple[ResearchAttempt, ...], version: HypothesisVersion) -> None:

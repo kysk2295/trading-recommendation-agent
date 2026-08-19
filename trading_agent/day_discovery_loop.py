@@ -6,7 +6,6 @@ import fcntl
 import hashlib
 import json
 import os
-import re
 import stat
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -15,7 +14,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Literal, Self, override
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from trading_agent.critic_agent import CritiqueReport, Objection, ObjectionKind, Severity
 from trading_agent.day_discovery_hypothesis_factory import (
@@ -24,26 +23,36 @@ from trading_agent.day_discovery_hypothesis_factory import (
     day_open_methodology_tags,
 )
 from trading_agent.day_discovery_journal import (
+    TERMINAL_REASONS,
+    DayDiscoveryBranchReservation,
+    DayDiscoveryBranchResolution,
     DayDiscoveryPreparedBranch,
     InvalidDayDiscoveryJournalError,
     PreparedLlmReceipt,
     PreparedStrategyDraft,
     prepared_branch_path,
     publish_prepared_branch,
+    publish_reservation,
+    publish_resolution,
     read_prepared_branch,
+    read_reservation,
+    read_resolution,
+    reservation_path,
+    resolution_path,
 )
 from trading_agent.day_hypothesis_models import HypothesisFamily, HypothesisVersion
 from trading_agent.day_research_attempt_binding import (
     DayResearchAttemptBinding,
     preregistered_attempted_artifact_ref,
 )
+from trading_agent.day_sensitive_content import contains_sensitive_text
 from trading_agent.day_strategy_capsule import (
     DayStrategyCapsuleRequest,
     GeneratedCapsuleVerification,
+    _publish_prebuilt_day_strategy_capsule,
     build_strategy_capsule,
     generated_evaluator_bundle_sha256,
     generated_protocol_bundle_sha256,
-    publish_day_strategy_capsule,
 )
 from trading_agent.day_strategy_capsule_models import (
     CapsuleArtifactKind,
@@ -51,7 +60,11 @@ from trading_agent.day_strategy_capsule_models import (
     CapsuleResourceLimits,
     InvalidStrategyCapsuleError,
 )
-from trading_agent.experiment_ledger_store import ExperimentLedgerStore
+from trading_agent.experiment_ledger_store import (
+    ExperimentLedgerConflictError,
+    ExperimentLedgerStore,
+    InvalidExperimentLedgerSourceError,
+)
 from trading_agent.generated_strategy_artifact import (
     GeneratedStrategyArtifactError,
     GeneratedStrategyArtifactStore,
@@ -296,11 +309,27 @@ class DayDiscoveryCycleResult(BaseModel):
     admission_id: str | None
     accepted: bool
     terminal_reason: str | None
-    drafts_attempted: int
-    remaining_budget: int
+    drafts_attempted: int = Field(ge=0, le=3)
+    remaining_budget: int = Field(ge=0)
     first_eligible_completed_bar_at: dt.datetime
     trading_authority: Literal[False] = False
     profitability_claim: Literal[False] = False
+
+    @model_validator(mode="after")
+    def validate_result(self) -> Self:
+        identifiers = (self.family_id, self.hypothesis_version_id, self.capsule_id, self.admission_id)
+        if len(self.attempt_ids) != self.drafts_attempted or len(set(self.attempt_ids)) != len(self.attempt_ids):
+            raise DayDiscoveryError("cycle_result_attempts_invalid")
+        if self.accepted:
+            if any(value is None for value in identifiers) or self.terminal_reason is not None:
+                raise DayDiscoveryError("cycle_result_acceptance_invalid")
+        elif (
+            self.capsule_id is not None
+            or self.admission_id is not None
+            or self.terminal_reason not in TERMINAL_REASONS
+        ):
+            raise DayDiscoveryError("cycle_result_terminal_invalid")
+        return self
 
 
 class DayDiscoveryCycleReceipt(BaseModel):
@@ -423,9 +452,14 @@ class DayDiscoveryLoop:
                 branch,
                 remaining,
             )
+            if prepared is None:
+                attempt_ids.append(_sha(f"{cycle_id}:{branch}:model_call_interrupted"))
+                remaining -= 1
+                terminal_reason = "model_call_interrupted"
+                break
             latest_family, latest_version = prepared.family, prepared.version
             attempt_ids.append(prepared.attempt_id)
-            capsule_id, admission_id, reason = self._execute_prepared_branch(prepared, view)
+            capsule_id, admission_id, reason = self._execute_prepared_branch(prepared, view, receipt_root)
             remaining -= prepared.search_budget_debit
             if capsule_id is not None and admission_id is not None:
                 return DayDiscoveryCycleResult(
@@ -465,39 +499,60 @@ class DayDiscoveryLoop:
         receipt_root: Path,
         branch: int,
         remaining: int,
-    ) -> DayDiscoveryPreparedBranch:
+    ) -> DayDiscoveryPreparedBranch | None:
         path = prepared_branch_path(receipt_root, cycle_id, branch)
         try:
             stored = read_prepared_branch(path, cycle_id, evidence_sha256, branch)
+            reservation = read_reservation(reservation_path(receipt_root, cycle_id, branch))
         except InvalidDayDiscoveryJournalError as error:
             raise DayDiscoveryError(error.reason) from None
         if stored is not None:
+            if reservation is None:
+                raise DayDiscoveryError("prepared_branch_reservation_missing")
+            _validate_reservation(reservation, view, cycle_id, evidence_sha256, branch, remaining)
+            _validate_prepared(stored, view, cycle_id, evidence_sha256, branch, remaining)
             return stored
+        if reservation is not None:
+            _validate_reservation(reservation, view, cycle_id, evidence_sha256, branch, remaining)
+            return None
+        reservation = DayDiscoveryBranchReservation(
+            cycle_id=cycle_id,
+            evidence_sha256=evidence_sha256,
+            branch_index=branch,
+            market_id=view.market_id.value,
+            search_budget=view.search_budget,
+            remaining_budget_before=remaining,
+            reserved_at=_cycle_time(self.config.clock, view.observed_at),
+        )
+        try:
+            publish_reservation(reservation_path(receipt_root, cycle_id, branch), reservation)
+        except InvalidDayDiscoveryJournalError as error:
+            raise DayDiscoveryError(error.reason) from None
         proposal, critique = self.config.pipeline.propose_candidate(
             context,
             lambda candidate: _day_critique(candidate, view, remaining),
         )
         reason = _critique_terminal_reason(critique)
         attempt_started_at = proposal.llm_receipt.called_at.astimezone(dt.UTC)
-        actual_registration_at = max(attempt_started_at, view.completed_bar_at)
+        actual_registration_at = max(attempt_started_at, view.completed_bar_at, view.observed_at)
         if attempt_started_at < view.observed_at:
             reason = "proposal_time_invalid"
         if actual_registration_at >= view.first_eligible_completed_bar_at:
             reason = "forward_probe_not_future_only"
-        contract_registered_at = min(
-            actual_registration_at,
-            view.first_eligible_completed_bar_at - dt.timedelta(microseconds=1),
+        contract_first_eligible_at = max(
+            view.first_eligible_completed_bar_at,
+            actual_registration_at + dt.timedelta(microseconds=1),
         )
-        attempt_finished_at = _cycle_time(self.config.clock, attempt_started_at)
+        attempt_finished_at = _cycle_time(self.config.clock, actual_registration_at)
         bound_at = _cycle_time(self.config.clock, attempt_finished_at)
         published_at = _cycle_time(self.config.clock, bound_at)
         family, version, preregistration = build_day_hypothesis_contracts(
             proposal,
             DayHypothesisBuildInput(
                 market_id=view.market_id,
-                observed_at=contract_registered_at,
+                observed_at=actual_registration_at,
                 completed_bar_at=view.completed_bar_at,
-                first_eligible_completed_bar_at=view.first_eligible_completed_bar_at,
+                first_eligible_completed_bar_at=contract_first_eligible_at,
                 universe_snapshot_id=view.universe_snapshot_id,
                 universe_snapshot_at=view.universe_snapshot_at,
                 source_refs=view.source_refs,
@@ -512,7 +567,10 @@ class DayDiscoveryLoop:
             cycle_id=cycle_id,
             evidence_sha256=evidence_sha256,
             branch_index=branch,
-            proposal_card=None if reason is not None else proposal.card,
+            market_id=view.market_id.value,
+            search_budget=view.search_budget,
+            remaining_budget_before=remaining,
+            proposal_card=proposal.card.model_dump(mode="json"),
             cited_sources=proposal.cited_sources,
             llm_receipt=PreparedLlmReceipt(**asdict(proposal.llm_receipt)),
             strategy_draft=PreparedStrategyDraft(**asdict(proposal.strategy_draft)),
@@ -531,30 +589,43 @@ class DayDiscoveryLoop:
             publish_prepared_branch(path, prepared)
         except InvalidDayDiscoveryJournalError as error:
             raise DayDiscoveryError(error.reason) from None
+        _validate_prepared(prepared, view, cycle_id, evidence_sha256, branch, remaining)
         return prepared
 
     def _execute_prepared_branch(
         self,
         prepared: DayDiscoveryPreparedBranch,
         view: DayDiscoveryEvidenceView,
+        receipt_root: Path,
     ) -> tuple[str | None, str | None, str | None]:
-        reason = prepared.terminal_reason
-        published = None
-        if reason is None:
+        path = resolution_path(receipt_root, prepared.cycle_id, prepared.branch_index)
+        try:
+            resolution = read_resolution(path)
+        except InvalidDayDiscoveryJournalError as error:
+            raise DayDiscoveryError(error.reason) from None
+        if resolution is not None and (
+            resolution.cycle_id != prepared.cycle_id
+            or resolution.evidence_sha256 != prepared.evidence_sha256
+            or resolution.branch_index != prepared.branch_index
+            or resolution.attempt_id != prepared.attempt_id
+        ):
+            raise DayDiscoveryError("resolution_identity_conflict")
+        if resolution is None:
+            resolution = self._resolve_prepared_branch(prepared, view)
             try:
-                published = self.config.pipeline.stores.strategies.publish(prepared.proposal())
-            except (GeneratedStrategyArtifactError, InvalidDayDiscoveryJournalError):
-                reason = "artifact_publication_failed"
-        binding_ref = preregistered_attempted_artifact_ref(prepared.version.code_sha256)
-        if reason is None and published is not None:
-            binding_ref = preregistered_attempted_artifact_ref(published.artifact.payload.source_sha256)
+                publish_resolution(path, resolution)
+            except InvalidDayDiscoveryJournalError as error:
+                raise DayDiscoveryError(error.reason) from None
+        binding_ref = resolution.artifact_ref or preregistered_attempted_artifact_ref(
+            prepared.version.code_sha256
+        )
         with self.config.pipeline.stores.ledger.writer() as writer:
             _ = writer.register_strategy_research(prepared.preregistration)
             _ = writer.register_day_hypothesis_family(prepared.family)
             _ = writer.register_day_hypothesis_version(prepared.version)
         if self.config.fault_injector is not None:
             self.config.fault_injector("version_registered")
-        if reason is not None or published is None:
+        if resolution.outcome == "terminal":
             _record_terminal(
                 self.config.pipeline.stores.ledger,
                 prepared.attempt_id,
@@ -562,63 +633,14 @@ class DayDiscoveryLoop:
                 prepared.version,
                 binding_ref,
                 view,
-                reason or "failed",
+                resolution.terminal_reason or "critic_rejected",
                 prepared.attempt_started_at,
                 prepared.attempt_finished_at,
                 prepared.bound_at,
                 prepared.search_budget_debit,
+                view.search_budget,
             )
-            return None, None, reason
-        prospective_binding = _binding_for(
-            prepared.attempt_id,
-            prepared.version,
-            binding_ref,
-            prepared.bound_at,
-            prepared.search_budget_debit,
-        )
-        request = _capsule_request(
-            prepared.version,
-            prospective_binding,
-            published.artifact.artifact_id,
-            view,
-            self.config.pipeline.stores.strategies,
-            self.config.sandbox,
-            prepared.published_at,
-        )
-        if view.first_eligible_completed_bar_at <= prepared.published_at:
-            reason = "forward_probe_not_future_only"
-            _record_terminal(
-                self.config.pipeline.stores.ledger,
-                prepared.attempt_id,
-                prepared.branch_index,
-                prepared.version,
-                binding_ref,
-                view,
-                reason,
-                prepared.attempt_started_at,
-                prepared.attempt_finished_at,
-                prepared.bound_at,
-                prepared.search_budget_debit,
-            )
-            return None, None, reason
-        try:
-            _ = build_strategy_capsule(request)
-        except (GeneratedStrategyExecutionError, InvalidStrategyCapsuleError) as error:
-            reason = _preflight_reason(error)
-            _record_terminal(
-                self.config.pipeline.stores.ledger,
-                prepared.attempt_id,
-                prepared.branch_index,
-                prepared.version,
-                binding_ref,
-                view,
-                reason,
-                prepared.attempt_started_at,
-                prepared.attempt_finished_at,
-                prepared.bound_at,
-                prepared.search_budget_debit,
-            )
-            return None, None, reason
+            return None, None, resolution.terminal_reason
         successful_attempt = ResearchAttempt(
             attempt_id=prepared.attempt_id,
             hypothesis_id=prepared.preregistration.hypothesis.hypothesis_id,
@@ -639,11 +661,15 @@ class DayDiscoveryLoop:
             binding_ref,
             prepared.bound_at,
             prepared.search_budget_debit,
+            view.search_budget,
         )
         with self.config.pipeline.stores.ledger.writer() as writer:
             _ = writer.append_strategy_research_attempt(successful_attempt)
             _ = writer.register_day_research_attempt_binding(binding)
-        capsule, _ = publish_day_strategy_capsule(self.config.pipeline.stores.ledger, request)
+        capsule = resolution.capsule
+        if capsule is None:
+            raise DayDiscoveryError("resolution_capsule_missing")
+        _ = _publish_prebuilt_day_strategy_capsule(self.config.pipeline.stores.ledger, capsule)
         admission_payload = {
             "admission_id": "",
             "capsule_id": capsule.capsule_id,
@@ -660,6 +686,61 @@ class DayDiscoveryLoop:
             first_eligible_completed_bar_at=view.first_eligible_completed_bar_at,
         )
         return capsule.capsule_id, admission.admission_id, None
+
+    def _resolve_prepared_branch(
+        self,
+        prepared: DayDiscoveryPreparedBranch,
+        view: DayDiscoveryEvidenceView,
+    ) -> DayDiscoveryBranchResolution:
+        reason = prepared.terminal_reason
+        published = None
+        if reason is None:
+            try:
+                published = self.config.pipeline.stores.strategies.publish(prepared.proposal())
+            except GeneratedStrategyArtifactError:
+                reason = "artifact_publication_failed"
+        artifact_ref = preregistered_attempted_artifact_ref(prepared.version.code_sha256)
+        artifact_id = None
+        capsule = None
+        if published is not None:
+            artifact_id = published.artifact.artifact_id
+            artifact_ref = preregistered_attempted_artifact_ref(published.artifact.payload.source_sha256)
+        if reason is None and artifact_id is not None:
+            binding = _binding_for(
+                prepared.attempt_id,
+                prepared.version,
+                artifact_ref,
+                prepared.bound_at,
+                prepared.search_budget_debit,
+                view.search_budget,
+            )
+            request = _capsule_request(
+                prepared.version,
+                binding,
+                artifact_id,
+                view,
+                self.config.pipeline.stores.strategies,
+                self.config.sandbox,
+                prepared.published_at,
+            )
+            if prepared.version.first_shadow_eligible_at <= prepared.published_at:
+                reason = "forward_probe_not_future_only"
+            else:
+                try:
+                    capsule = build_strategy_capsule(request)
+                except (GeneratedStrategyExecutionError, InvalidStrategyCapsuleError) as error:
+                    reason = _preflight_reason(error)
+        return DayDiscoveryBranchResolution(
+            cycle_id=prepared.cycle_id,
+            evidence_sha256=prepared.evidence_sha256,
+            branch_index=prepared.branch_index,
+            attempt_id=prepared.attempt_id,
+            outcome="success" if reason is None else "terminal",
+            terminal_reason=reason,
+            artifact_id=artifact_id,
+            artifact_ref=artifact_ref,
+            capsule=capsule,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -684,8 +765,21 @@ class DayDiscoveryActionExecutor:
         view = DayDiscoveryEvidenceView.model_validate_json(payload)
         if view.market_id.value != context.cycle.market_id:
             raise DayDiscoveryError("discovery_market_identity_mismatch")
-        with heavy_empirical_lease(self.loop.config.pipeline.stores.ledger.path):
-            result = self.loop.run(view, self.researcher_context)
+        try:
+            with heavy_empirical_lease(self.loop.config.pipeline.stores.ledger.path):
+                result = self.loop.run(view, self.researcher_context)
+        except DayDiscoveryError:
+            raise
+        except (
+            ExperimentLedgerConflictError,
+            GeneratedStrategyArtifactError,
+            InvalidDayDiscoveryJournalError,
+            InvalidExperimentLedgerSourceError,
+            InvalidStrategyCapsuleError,
+            StrategyResearchEvidenceRejected,
+            ValidationError,
+        ):
+            raise DayDiscoveryError("day_discovery_persistence_failed") from None
         artifacts = tuple(
             value
             for value in (result.family_id, result.hypothesis_version_id, result.capsule_id, result.admission_id)
@@ -723,9 +817,21 @@ class DayDiscoveryActionExecutor:
 def _critic_reason(proposal: ProposedHypothesis, view: DayDiscoveryEvidenceView, remaining: int) -> str | None:
     if remaining < 1:
         return "budget_exhausted"
+    if any(
+        not _canonical_ai_text(value)
+        for value in (
+            proposal.card.hypothesis.hypothesis,
+            proposal.card.economic_mechanism,
+            proposal.card.counterfactual_baseline,
+        )
+    ) or (
+        bool(proposal.card.hypothesis.falsification_rule)
+        and not _canonical_ai_text(proposal.card.hypothesis.falsification_rule)
+    ):
+        return "contract_invalid"
     if (
         any(
-            not value.strip() or len(value) > 80 or not value.isprintable()
+            not _canonical_ai_text(value) or len(value) > 80
             for value in proposal.strategy_draft.free_parameters
         )
         or len(set(proposal.strategy_draft.free_parameters)) > 12
@@ -755,6 +861,77 @@ def _critic_reason(proposal: ProposedHypothesis, view: DayDiscoveryEvidenceView,
     return None
 
 
+def _canonical_ai_text(value: str) -> bool:
+    return bool(value) and value == value.strip() and value.isprintable()
+
+
+def _validate_reservation(
+    reservation: DayDiscoveryBranchReservation,
+    view: DayDiscoveryEvidenceView,
+    cycle_id: str,
+    evidence_sha256: str,
+    branch: int,
+    remaining: int,
+) -> None:
+    if (
+        reservation.cycle_id != cycle_id
+        or reservation.evidence_sha256 != evidence_sha256
+        or reservation.branch_index != branch
+        or reservation.market_id != view.market_id.value
+        or reservation.search_budget != view.search_budget
+        or reservation.remaining_budget_before != remaining
+    ):
+        raise DayDiscoveryError("reservation_identity_conflict")
+
+
+def _validate_prepared(
+    prepared: DayDiscoveryPreparedBranch,
+    view: DayDiscoveryEvidenceView,
+    cycle_id: str,
+    evidence_sha256: str,
+    branch: int,
+    remaining: int,
+) -> None:
+    proposal = prepared.proposal()
+    expected_registration = max(prepared.attempt_started_at, view.completed_bar_at, view.observed_at)
+    expected_eligibility = max(
+        view.first_eligible_completed_bar_at,
+        expected_registration + dt.timedelta(microseconds=1),
+    )
+    expected = build_day_hypothesis_contracts(
+        proposal,
+        DayHypothesisBuildInput(
+            market_id=view.market_id,
+            observed_at=expected_registration,
+            completed_bar_at=view.completed_bar_at,
+            first_eligible_completed_bar_at=expected_eligibility,
+            universe_snapshot_id=view.universe_snapshot_id,
+            universe_snapshot_at=view.universe_snapshot_at,
+            source_refs=view.source_refs,
+            data_manifest_sha256=view.data_manifest_sha256,
+            search_budget=remaining,
+        ),
+        terminal=prepared.terminal_reason is not None,
+    )
+    expected_reason = _critic_reason(proposal, view, remaining)
+    if prepared.attempt_started_at < view.observed_at:
+        expected_reason = "proposal_time_invalid"
+    if expected_registration >= view.first_eligible_completed_bar_at:
+        expected_reason = "forward_probe_not_future_only"
+    if (
+        prepared.cycle_id != cycle_id
+        or prepared.evidence_sha256 != evidence_sha256
+        or prepared.branch_index != branch
+        or prepared.market_id != view.market_id.value
+        or prepared.search_budget != view.search_budget
+        or prepared.remaining_budget_before != remaining
+        or prepared.search_budget_debit != _search_budget_debit(proposal, remaining)
+        or prepared.terminal_reason != expected_reason
+        or (prepared.family, prepared.version, prepared.preregistration) != expected
+    ):
+        raise DayDiscoveryError("prepared_branch_contract_invalid")
+
+
 def _day_critique(proposal: ProposedHypothesis, view: DayDiscoveryEvidenceView, remaining: int) -> CritiqueReport:
     reason = _critic_reason(proposal, view, remaining)
     return CritiqueReport(
@@ -766,19 +943,8 @@ def _critique_terminal_reason(critique: CritiqueReport) -> str | None:
     blocking = tuple(item for item in critique.objections if item.severity is Severity.BLOCKING)
     if not blocking:
         return None
-    known = {
-        "artifact_publication_failed",
-        "budget_exhausted",
-        "compile_failed",
-        "critic_rejected",
-        "contract_invalid",
-        "forward_probe_not_future_only",
-        "methodology_missing",
-        "point_in_time_leakage",
-        "semantic_duplicate",
-        "unconstructible",
-    }
-    return blocking[0].evidence if blocking[0].evidence in known else "critic_rejected"
+    reasons = tuple(item.evidence for item in blocking if item.evidence in TERMINAL_REASONS)
+    return next((reason for reason in reasons if reason != "critic_rejected"), "critic_rejected")
 
 
 def _record_terminal(
@@ -793,6 +959,7 @@ def _record_terminal(
     finished_at: dt.datetime,
     bound_at: dt.datetime,
     search_budget_debit: int,
+    multiple_testing_budget: int,
 ) -> None:
     attempt = ResearchAttempt(
         attempt_id=attempt_id,
@@ -814,6 +981,7 @@ def _record_terminal(
         artifact_ref,
         bound_at,
         search_budget_debit,
+        multiple_testing_budget,
     )
     with ledger.writer() as writer:
         _ = writer.append_strategy_research_attempt(attempt)
@@ -826,6 +994,7 @@ def _binding(
     artifact_ref: str,
     bound_at: dt.datetime,
     search_budget_debit: int,
+    multiple_testing_budget: int,
 ) -> DayResearchAttemptBinding:
     return _binding_for(
         attempt.attempt_id,
@@ -833,6 +1002,7 @@ def _binding(
         artifact_ref,
         bound_at,
         search_budget_debit,
+        multiple_testing_budget,
     )
 
 
@@ -842,6 +1012,7 @@ def _binding_for(
     artifact_ref: str,
     bound_at: dt.datetime,
     search_budget_debit: int,
+    multiple_testing_budget: int,
 ) -> DayResearchAttemptBinding:
     payload = {
         "binding_id": "",
@@ -850,6 +1021,7 @@ def _binding_for(
         "hypothesis_version_id": version.hypothesis_version_id,
         "artifact_ref": artifact_ref,
         "multiple_testing_family": version.multiple_testing_family,
+        "multiple_testing_budget": multiple_testing_budget,
         "search_budget_debit": search_budget_debit,
         "bound_at": bound_at,
     }
@@ -861,9 +1033,8 @@ def _binding_for(
 def _parameter_combination_demand(proposal: ProposedHypothesis) -> int:
     parameters = proposal.strategy_draft.free_parameters
     if (
-        not parameters
-        or len(set(parameters)) > 12
-        or any(not value.strip() or len(value) > 80 or not value.isprintable() for value in parameters)
+        len(set(parameters)) > 12
+        or any(not _canonical_ai_text(value) or len(value) > 80 for value in parameters)
     ):
         return 2
     return 2 ** len(set(parameters))
@@ -947,7 +1118,7 @@ def _read_cycle_receipt(
     try:
         raw = read_private_text(path)
         receipt = DayDiscoveryCycleReceipt.model_validate_json(raw)
-    except (InvalidPrivateImmutableFileError, ValueError):
+    except (DayDiscoveryError, InvalidPrivateImmutableFileError, ValueError):
         raise DayDiscoveryError("cycle_receipt_invalid") from None
     canonical = json.dumps(
         receipt.model_dump(mode="json"),
@@ -1041,13 +1212,7 @@ def _require_safe_day_context(context: ResearcherContext) -> None:
         separators=(",", ":"),
         sort_keys=True,
     )
-    if (
-        re.search(
-            r"(?i)(account(?:[_-]?(?:id|number|no))?|api[_-]?key|authorization|bearer|credential|password|provider(?:[_-]?id)?|secret|token)",
-            payload,
-        )
-        is not None
-    ):
+    if contains_sensitive_text((payload,)):
         raise DayDiscoveryError("day_prompt_sensitive_context")
 
 

@@ -75,8 +75,16 @@ def build_day_hypothesis_contracts(
     family_payload = {
         "family_id": "",
         "parent_family_id": None,
-        "canonical_question": proposal.card.hypothesis.hypothesis,
-        "economic_mechanism": proposal.card.economic_mechanism,
+        "canonical_question": _terminal_text(
+            proposal.card.hypothesis.hypothesis,
+            "invalid_ai_hypothesis_declaration",
+            terminal=terminal,
+        ),
+        "economic_mechanism": _terminal_text(
+            proposal.card.economic_mechanism,
+            "invalid_ai_mechanism_declaration",
+            terminal=terminal,
+        ),
         "alternative_explanations": ("confounding_market_regime",),
         "counterfactual_baseline": _terminal_text(
             proposal.card.counterfactual_baseline,
@@ -235,7 +243,11 @@ def _immutable_hypothesis(
         exit_rule=version.exit_rule,
         stop_rule=version.stop_rule,
         invalidation_rule=version.invalidation_rule,
-        economic_mechanism=proposal.card.economic_mechanism,
+        economic_mechanism=_terminal_text(
+            proposal.card.economic_mechanism,
+            "invalid_ai_mechanism_declaration",
+            terminal=True,
+        ),
         alternative_explanations=("confounding_market_regime",),
         counterfactual_baseline=counterfactual_baseline,
         baseline_id="host_baseline_v1",
@@ -293,7 +305,7 @@ def _version_methodology_tags(
 
 
 def _terminal_text(value: str, sentinel: str, *, terminal: bool) -> str:
-    if value.strip():
+    if value and value == value.strip() and value.isprintable():
         return value
     if terminal:
         return sentinel
@@ -301,7 +313,7 @@ def _terminal_text(value: str, sentinel: str, *, terminal: bool) -> str:
 
 
 def _parameter_names(proposal: ProposedHypothesis, *, terminal: bool) -> tuple[str, ...]:
-    values = proposal.strategy_draft.free_parameters or ("fixed_configuration",)
+    values = proposal.strategy_draft.free_parameters
     canonical = tuple(sorted(set(values)))
     if len(canonical) <= 12 and all(_safe_declaration(value) for value in canonical):
         return canonical

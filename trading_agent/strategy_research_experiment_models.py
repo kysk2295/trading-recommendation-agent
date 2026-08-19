@@ -25,7 +25,7 @@ class ParameterValue(CanonicalModel):
 
 
 class AttemptSpec(CanonicalModel):
-    parameter_values: tuple[ParameterValue, ...] = Field(min_length=1)
+    parameter_values: tuple[ParameterValue, ...]
     status: AttemptStatus
     train_values: tuple[float, ...]
     validation_values: tuple[float, ...]

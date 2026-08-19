@@ -129,6 +129,45 @@ def test_validation_mutation_changes_selected_pre_holdout_branch(tmp_path: Path)
     assert tied.selected_attempt_id == tied.attempt_ids[0]
 
 
+def test_fixed_configuration_empty_parameter_product_selects_one_branch(
+    tmp_path: Path,
+) -> None:
+    payload = SealedHoldoutPayload(
+        reviewer_id="independent-reviewer-v1",
+        branches=(
+            HoldoutBranch(
+                parameter_values=(),
+                values=(0.03,) * 24,
+                cluster_keys=tuple(f"event-{index // 2}" for index in range(24)),
+            ),
+        ),
+    )
+    draft = _draft(payload).model_copy(
+        update={
+            "free_parameters": (),
+            "search_budget": hypothesis().search_budget.model_copy(
+                update={"max_parameter_combinations": 1, "max_attempts": 1}
+            ),
+            "max_attempts": 1,
+        }
+    )
+    experiment = _experiment(
+        AttemptSpec(
+            parameter_values=(),
+            status=AttemptStatus.SUCCEEDED,
+            train_values=(0.01,) * 4,
+            validation_values=(0.02,) * 4,
+            error_class=None,
+            elapsed_cpu_seconds=1,
+        )
+    )
+
+    result = _run(tmp_path, _RunCase(draft, experiment, payload))
+
+    assert len(result.attempt_ids) == 1
+    assert result.selected_attempt_id == result.attempt_ids[0]
+
+
 def test_failed_timeout_cancel_and_censor_persist_but_are_never_selected(tmp_path: Path) -> None:
     # Given: one eligible branch and every unsuccessful terminal status.
     statuses = (

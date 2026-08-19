@@ -161,7 +161,7 @@ class HypothesisVersion(DayHypothesisModel):
     invalidation_rule: str
     threshold: Decimal
     cost_model: CostModelDeclaration
-    free_parameters: tuple[FreeParameter, ...] = Field(min_length=1, max_length=12)
+    free_parameters: tuple[FreeParameter, ...] = Field(max_length=12)
     search_budget: SearchBudget
     multiple_testing_family: str
     model_sha256: str

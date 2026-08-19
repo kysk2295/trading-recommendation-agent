@@ -197,8 +197,8 @@ def _register_day_research_attempt_binding_after_audit(
     if existing_attempt is not None:
         _require_binding_parent_coherence(connection, existing_attempt.binding, graph)
         raise DayResearchLedgerConflictError
-    version, _ = _require_binding_parent_coherence(connection, checked, graph)
-    _require_available_search_budget(connection, checked, version)
+    _require_binding_parent_coherence(connection, checked, graph)
+    _require_available_search_budget(connection, checked)
     try:
         _ = connection.execute(
             "INSERT INTO day_research_attempt_bindings VALUES (?,?,?,?,?,?,?,?,?)",
@@ -692,38 +692,56 @@ def _stored_binding_audit(connection: sqlite3.Connection) -> StoredDayResearchBi
     graph = _stored_day_research_version_graph(connection)
     for stored in bindings:
         _require_binding_parent_coherence(connection, stored.binding, graph)
-    _require_stored_binding_budgets(bindings, graph)
+    _require_stored_binding_budgets(bindings)
     return StoredDayResearchBindingAudit(bindings, graph)
 
 
 def _require_available_search_budget(
     connection: sqlite3.Connection,
     binding: DayResearchAttemptBinding,
-    version: HypothesisVersion,
 ) -> None:
-    row: tuple[int | None] = connection.execute(
-        "SELECT SUM(search_budget_debit) FROM day_research_attempt_bindings WHERE hypothesis_version_id=?",
-        (version.hypothesis_version_id,),
-    ).fetchone()
-    cumulative_debit = binding.search_budget_debit + (0 if row[0] is None else row[0])
-    if cumulative_debit > version.search_budget.max_attempts:
+    rows: list[tuple[str]] = connection.execute(
+        "SELECT payload_json FROM day_research_attempt_bindings "
+        "WHERE market_id=? AND multiple_testing_family=?",
+        (binding.market_id.value, binding.multiple_testing_family),
+    ).fetchall()
+    existing = tuple(_binding_from_payload(row[0]) for row in rows)
+    budgets = {item.multiple_testing_budget for item in existing} | {
+        binding.multiple_testing_budget
+    }
+    cumulative_debit = binding.search_budget_debit + sum(
+        item.search_budget_debit for item in existing
+    )
+    if len(budgets) != 1 or cumulative_debit > binding.multiple_testing_budget:
         raise InvalidDayResearchLedgerSourceError("day_research_attempt_binding_budget_exhausted")
 
 
 def _require_stored_binding_budgets(
     bindings: tuple[StoredDayResearchAttemptBinding, ...],
-    graph: StoredDayResearchVersionGraph,
 ) -> None:
-    debit_by_version: dict[str, int] = {}
+    debit_by_family: dict[tuple[MarketId, str], int] = {}
+    budget_by_family: dict[tuple[MarketId, str], int] = {}
     for stored in bindings:
         binding = stored.binding
-        debit_by_version[binding.hypothesis_version_id] = (
-            debit_by_version.get(binding.hypothesis_version_id, 0) + binding.search_budget_debit
-        )
-    for version_id, debit in debit_by_version.items():
-        stored_version = graph.versions.get(version_id)
-        if stored_version is None or debit > stored_version.version.search_budget.max_attempts:
+        key = (binding.market_id, binding.multiple_testing_family)
+        existing_budget = budget_by_family.setdefault(key, binding.multiple_testing_budget)
+        if existing_budget != binding.multiple_testing_budget:
+            raise InvalidDayResearchLedgerSourceError(
+                "stored_day_attempt_binding_budget_invalid"
+            )
+        debit_by_family[key] = debit_by_family.get(key, 0) + binding.search_budget_debit
+    for key, debit in debit_by_family.items():
+        if debit > budget_by_family[key]:
             raise InvalidDayResearchLedgerSourceError("stored_day_attempt_binding_budget_invalid")
+
+
+def _binding_from_payload(payload: str) -> DayResearchAttemptBinding:
+    try:
+        return DayResearchAttemptBinding.model_validate_json(payload)
+    except ValueError:
+        raise InvalidDayResearchLedgerSourceError(
+            "stored_day_attempt_binding_payload_invalid"
+        ) from None
 
 
 def _stored_day_research_version_graph(connection: sqlite3.Connection) -> StoredDayResearchVersionGraph:

@@ -144,6 +144,14 @@ def publish_day_strategy_capsule(
     return capsule, created
 
 
+def _publish_prebuilt_day_strategy_capsule(
+    store: ExperimentLedgerStore,
+    capsule: StrategyCapsule,
+) -> bool:
+    with store.writer() as writer:
+        return writer._register_day_strategy_capsule(capsule)
+
+
 def _preflight_generated_artifact(request: DayStrategyCapsuleRequest) -> CapsulePreflightReceipt | None:
     match request.artifact_kind:
         case CapsuleArtifactKind.BUILTIN:

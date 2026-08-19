@@ -168,7 +168,7 @@ def test_terminal_failures_are_visible_attempts_and_debit_budget(tmp_path: Path,
     assert result.accepted is False
     assert result.terminal_reason == reason
     assert result.drafts_attempted == 1
-    assert result.remaining_budget == view.search_budget - 2
+    assert result.remaining_budget == view.search_budget - 1
     reader = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader()
     version = reader.day_hypothesis_versions(market_id=view.market_id)[0].version
     assert len(reader.day_attempts_for_review(view.market_id, version.hypothesis_version_id)) == 1
@@ -350,16 +350,16 @@ def test_terminal_drafts_exhaust_cartesian_budget_without_extra_generation(
             3,
         )
     ).run(view)
-    assert result.drafts_attempted == 2
+    assert result.drafts_attempted == 3
     assert result.remaining_budget == 0
-    assert generator.calls == 2
+    assert generator.calls == 3
     reader = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader()
     versions = reader.day_hypothesis_versions(market_id=view.market_id)
     assert (
         sum(
             len(reader.day_attempts_for_review(view.market_id, item.version.hypothesis_version_id)) for item in versions
         )
-        == 2
+        == 3
     )
 
 
@@ -513,7 +513,7 @@ def test_partial_side_effect_restart_resumes_prepared_branch_without_double_debi
     assert first_generator.calls == 1
     assert restarted_generator.calls == 0
     assert len(reviewed) == 1
-    assert reviewed[0].binding.search_budget_debit == 2
+    assert reviewed[0].binding.search_budget_debit == 1
 
 
 @pytest.mark.parametrize("tamper_kind", ("noncanonical", "mode", "symlink", "identity"))
@@ -821,7 +821,7 @@ def test_structurally_returned_invalid_methodology_tag_is_terminally_audited_onc
 
     assert result.terminal_reason == "methodology_missing"
     assert result.drafts_attempted == 1
-    assert result.remaining_budget == view.search_budget - 2
+    assert result.remaining_budget == view.search_budget - 1
     reader = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader()
     version = reader.day_hypothesis_versions(market_id=view.market_id)[0].version
     assert len(reader.day_attempts_for_review(view.market_id, version.hypothesis_version_id)) == 1
@@ -848,7 +848,7 @@ def test_missing_preregistered_falsification_is_a_visible_critic_rejection(
 
     assert result.terminal_reason == "critic_rejected"
     assert result.drafts_attempted == 1
-    assert result.remaining_budget == view.search_budget - 2
+    assert result.remaining_budget == view.search_budget - 1
 
 
 @pytest.mark.parametrize(

@@ -28,7 +28,7 @@ from trading_agent.strategy_research_types import (
 
 
 class HoldoutBranch(CanonicalModel):
-    parameter_values: tuple[ParameterValue, ...] = Field(min_length=1)
+    parameter_values: tuple[ParameterValue, ...]
     values: tuple[float, ...] = Field(min_length=1)
     cluster_keys: tuple[str, ...] = Field(min_length=1)
 

@@ -184,7 +184,7 @@ class ImmutableHypothesis(CanonicalModel):
     primary_metric: str = Field(min_length=1)
     secondary_metrics: tuple[str, ...]
     falsification_rule: str = Field(min_length=1)
-    free_parameters: tuple[FreeParameter, ...] = Field(min_length=1, max_length=12)
+    free_parameters: tuple[FreeParameter, ...] = Field(max_length=12)
     search_budget: SearchBudget
     minimum_observations: int = Field(ge=20)
     power_or_ci_gate: str = Field(min_length=1)
