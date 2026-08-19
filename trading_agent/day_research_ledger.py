@@ -51,7 +51,8 @@ def register_day_hypothesis_family(
     connection: sqlite3.Connection,
     family: HypothesisFamily,
 ) -> bool:
-    existing = _family_by_id(connection, family.family_id)
+    family_id = _safe_family_identity(family)
+    existing = _family_by_id(connection, family_id)
     if existing is not None:
         checked = _validated_family_or_conflict(family)
         key = day_hypothesis_family_key(checked)
@@ -81,7 +82,8 @@ def register_day_hypothesis_version(
     connection: sqlite3.Connection,
     version: HypothesisVersion,
 ) -> bool:
-    existing = _version_by_id(connection, version.hypothesis_version_id)
+    version_id = _safe_version_identity(version)
+    existing = _version_by_id(connection, version_id)
     if existing is not None:
         checked = _validated_version_or_conflict(version)
         key = day_hypothesis_version_key(checked)
@@ -111,45 +113,21 @@ def register_day_hypothesis_version(
     return True
 
 
-def read_day_hypothesis_families(
-    connection: sqlite3.Connection,
-) -> tuple[StoredDayHypothesisFamily, ...]:
-    rows: list[tuple[str, str, str | None, str, str]] = connection.execute(
-        """SELECT family_key,family_id,parent_family_id,created_at,payload_json
-        FROM day_hypothesis_families ORDER BY rowid"""
-    ).fetchall()
-    families = tuple(_stored_family(row) for row in rows)
-    by_id = {stored.family.family_id: stored for stored in families}
-    if len(by_id) != len(families):
-        raise InvalidDayResearchLedgerSourceError("stored_day_family_identity_duplicate")
-    for stored in families:
-        _require_stored_family_parent(stored, by_id)
-    return families
-
-
-def read_day_hypothesis_versions(
-    connection: sqlite3.Connection,
-) -> tuple[StoredDayHypothesisVersion, ...]:
-    rows: list[tuple[str, str, str, str | None, str, str, str, str, str]] = connection.execute(
-        """SELECT version_key,hypothesis_version_id,family_id,parent_version_id,
-        market_id,created_at,registration_completed_bar_at,first_shadow_eligible_at,payload_json
-        FROM day_hypothesis_versions ORDER BY rowid"""
-    ).fetchall()
-    versions = tuple(_stored_version(row) for row in rows)
-    families = {stored.family.family_id: stored for stored in read_day_hypothesis_families(connection)}
-    by_id = {stored.version.hypothesis_version_id: stored for stored in versions}
-    if len(by_id) != len(versions):
-        raise InvalidDayResearchLedgerSourceError("stored_day_version_identity_duplicate")
-    for stored in versions:
-        _require_stored_version_lineage(stored, families, by_id)
-    return versions
-
-
 def _validated_family(family: HypothesisFamily) -> HypothesisFamily:
     try:
         return HypothesisFamily.model_validate(family.model_dump(mode="python"))
     except ValueError:
         raise InvalidDayResearchLedgerSourceError("invalid_day_hypothesis_family") from None
+
+
+def _safe_family_identity(family: HypothesisFamily) -> str:
+    match family.__dict__.get("family_id"):
+        case str() as family_id if len(family_id) == 64 and all(
+            character in "0123456789abcdef" for character in family_id
+        ):
+            return family_id
+        case _:
+            raise InvalidDayResearchLedgerSourceError("invalid_day_hypothesis_family")
 
 
 def _validated_family_or_conflict(family: HypothesisFamily) -> HypothesisFamily:
@@ -164,6 +142,16 @@ def _validated_version(version: HypothesisVersion) -> HypothesisVersion:
         return HypothesisVersion.model_validate(version.model_dump(mode="python"))
     except ValueError:
         raise InvalidDayResearchLedgerSourceError("invalid_day_hypothesis_version") from None
+
+
+def _safe_version_identity(version: HypothesisVersion) -> str:
+    match version.__dict__.get("hypothesis_version_id"):
+        case str() as version_id if len(version_id) == 64 and all(
+            character in "0123456789abcdef" for character in version_id
+        ):
+            return version_id
+        case _:
+            raise InvalidDayResearchLedgerSourceError("invalid_day_hypothesis_version")
 
 
 def _validated_version_or_conflict(version: HypothesisVersion) -> HypothesisVersion:
@@ -260,7 +248,14 @@ def _require_version_lineage(connection: sqlite3.Connection, version: Hypothesis
 
 def _require_parent_version(parent: HypothesisVersion, child: HypothesisVersion) -> None:
     require_same_market(parent.market_id, child.market_id)
-    if parent.family_id != child.family_id or parent.created_at >= child.created_at:
+    if parent.family_id != child.family_id or not (
+        parent.created_at
+        < parent.registration_completed_bar_at
+        < parent.first_shadow_eligible_at
+        <= child.created_at
+        < child.registration_completed_bar_at
+        < child.first_shadow_eligible_at
+    ):
         raise InvalidDayResearchLedgerSourceError("day_research_version_lineage_invalid")
 
 

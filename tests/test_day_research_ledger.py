@@ -21,6 +21,10 @@ from trading_agent.day_research_ledger import (
     require_same_market,
 )
 from trading_agent.day_research_ledger_schema import DAY_RESEARCH_SCHEMA_OBJECTS
+from trading_agent.experiment_ledger_keys import (
+    canonical_experiment_ledger_json,
+    day_hypothesis_version_key,
+)
 from trading_agent.experiment_ledger_store import (
     ExperimentLedgerConflictError,
     ExperimentLedgerStore,
@@ -306,6 +310,87 @@ def test_version_parent_lineage_is_rejected_before_insert(tmp_path: Path, failur
         _ = writer.register_day_hypothesis_version(candidate)
 
     assert len(store.day_hypothesis_versions()) == (0 if failure == "missing" else 1)
+
+
+def test_version_parent_must_be_fully_eligible_before_child_creation(tmp_path: Path) -> None:
+    store = ExperimentLedgerStore(tmp_path / "ledger.sqlite3")
+    family = _family()
+    parent = _version(family)
+    child = _version(
+        family,
+        parent=parent,
+        created_at=parent.created_at + dt.timedelta(minutes=1),
+        predictor="premature_child",
+    )
+    with store.writer() as writer:
+        assert writer.register_day_hypothesis_family(family) is True
+        assert writer.register_day_hypothesis_version(parent) is True
+
+    with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
+        _ = writer.register_day_hypothesis_version(child)
+
+    assert tuple(stored.version for stored in store.day_hypothesis_versions()) == (parent,)
+
+
+def test_reader_rejects_persisted_parent_milestone_overlap(tmp_path: Path) -> None:
+    database = tmp_path / "ledger.sqlite3"
+    store = ExperimentLedgerStore(database)
+    family = _family()
+    parent = _version(family)
+    child = _version(
+        family,
+        parent=parent,
+        created_at=parent.created_at + dt.timedelta(minutes=1),
+        predictor="persisted_premature_child",
+    )
+    with store.writer() as writer:
+        assert writer.register_day_hypothesis_family(family) is True
+        assert writer.register_day_hypothesis_version(parent) is True
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO day_hypothesis_versions VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                day_hypothesis_version_key(child),
+                child.hypothesis_version_id,
+                child.family_id,
+                child.parent_version_id,
+                child.market_id.value,
+                child.created_at.isoformat(),
+                child.registration_completed_bar_at.isoformat(),
+                child.first_shadow_eligible_at.isoformat(),
+                canonical_experiment_ledger_json(child),
+            ),
+        )
+        connection.commit()
+
+    with pytest.raises(InvalidExperimentLedgerSourceError):
+        _ = store.day_hypothesis_versions()
+
+
+@pytest.mark.parametrize("kind", ("family", "version"))
+@pytest.mark.parametrize("identity_case", ("missing", "wrong_type"))
+def test_forged_boundary_identity_is_rejected_before_sql(
+    tmp_path: Path,
+    kind: str,
+    identity_case: str,
+) -> None:
+    store = ExperimentLedgerStore(tmp_path / "ledger.sqlite3")
+    forged: HypothesisFamily | HypothesisVersion
+    if kind == "family":
+        forged = HypothesisFamily.model_construct()
+        if identity_case == "wrong_type":
+            object.__setattr__(forged, "family_id", 7)
+        with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
+            _ = writer.register_day_hypothesis_family(forged)
+    else:
+        forged = HypothesisVersion.model_construct()
+        if identity_case == "wrong_type":
+            object.__setattr__(forged, "hypothesis_version_id", 7)
+        with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
+            _ = writer.register_day_hypothesis_version(forged)
+
+    assert store.day_hypothesis_families() == ()
+    assert store.day_hypothesis_versions() == ()
 
 
 @pytest.mark.parametrize(
