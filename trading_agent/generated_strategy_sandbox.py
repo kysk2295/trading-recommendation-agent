@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -43,7 +44,7 @@ class GeneratedStrategySandbox:
     def _render_profile(self, source: Path, session_root: Path) -> str:
         runtime_root = self.runtime.python_executable.parent.parent
         readable_roots = (Path("/System"), Path("/Library"), Path("/usr/lib"), Path("/usr/share"), runtime_root)
-        source = source.resolve(strict=True)
+        source = source.resolve(strict=False)
         runner = _RUNNER.resolve(strict=True)
         task = session_root.resolve(strict=False)
         return "\n".join(
@@ -78,6 +79,7 @@ class GeneratedStrategySandbox:
         self,
         snapshot: GeneratedStrategySourceSnapshot,
     ) -> GeneratedStrategySession:
+        session_root: Path | None = None
         try:
             if hashlib.sha256(snapshot.source_bytes).hexdigest() != snapshot.source_sha256:
                 raise GeneratedStrategyExecutionError("session_source_invalid")
@@ -89,11 +91,11 @@ class GeneratedStrategySandbox:
             for child in (session_root / "home", session_root / "tmp"):
                 child.mkdir(mode=0o700)
             source = session_root / "strategy.py"
-            materialize_generated_strategy_source(source, snapshot)
             profile = self._render_profile(source, session_root)
+            source_descriptor = materialize_generated_strategy_source(source, snapshot)
             return GeneratedStrategySession.start(
                 snapshot.artifact_id,
-                source,
+                source_descriptor,
                 snapshot.source_sha256,
                 self.runtime,
                 self.limits,
@@ -102,6 +104,13 @@ class GeneratedStrategySandbox:
                 _RUNNER.resolve(strict=True),
             )
         except GeneratedStrategyExecutionError:
+            _remove_session_root(session_root)
             raise
         except (OSError, subprocess.SubprocessError, TypeError, ValueError):
+            _remove_session_root(session_root)
             raise GeneratedStrategyExecutionError("sandbox_preflight_failed") from None
+
+
+def _remove_session_root(session_root: Path | None) -> None:
+    if session_root is not None and session_root.exists():
+        shutil.rmtree(session_root)

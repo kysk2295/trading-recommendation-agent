@@ -4,9 +4,11 @@ import hashlib
 import os
 import resource
 import selectors
+import shutil
 import signal
 import subprocess
 import time
+from contextlib import suppress
 from functools import partial
 from pathlib import Path
 from types import TracebackType
@@ -29,7 +31,7 @@ from trading_agent.generated_strategy_protocol import (
     signal_from_response,
 )
 from trading_agent.generated_strategy_runtime import GeneratedStrategyRuntimeIdentity
-from trading_agent.generated_strategy_source import require_generated_strategy_session_source
+from trading_agent.generated_strategy_source import require_generated_strategy_source_descriptor
 from trading_agent.models import BarInput, MomentumCandidate, StrategySignal
 
 
@@ -39,6 +41,7 @@ class GeneratedStrategySession:
         "_limits",
         "_process",
         "_sequence",
+        "_session_root",
         "_signal_hashes",
         "_stderr",
         "name",
@@ -51,6 +54,7 @@ class GeneratedStrategySession:
     _sequence: int
     _signal_hashes: list[str]
     _buffer: bytearray
+    _session_root: Path
 
     def __init__(
         self,
@@ -58,11 +62,13 @@ class GeneratedStrategySession:
         process: subprocess.Popen[bytes],
         stderr_handle: BinaryIO,
         limits: GeneratedStrategyLimits,
+        session_root: Path,
     ) -> None:
         self.name = name
         self._process = process
         self._stderr = stderr_handle
         self._limits = limits
+        self._session_root = session_root
         self._sequence = 0
         self._signal_hashes = []
         self._buffer = bytearray()
@@ -71,7 +77,7 @@ class GeneratedStrategySession:
     def start(
         cls,
         artifact_id: str,
-        source_path: Path,
+        source_descriptor: int,
         source_sha256: str,
         runtime: GeneratedStrategyRuntimeIdentity,
         limits: GeneratedStrategyLimits,
@@ -79,28 +85,31 @@ class GeneratedStrategySession:
         profile: str,
         runner: Path,
     ) -> Self:
-        stderr_handle = (session_root / "stderr.log").open("wb")
-        (session_root / "stderr.log").chmod(0o600)
-        command = (
-            str(runtime.sandbox_executable),
-            "-p",
-            profile,
-            str(runtime.python_executable),
-            "-I",
-            str(runner),
-            str(source_path.resolve(strict=True)),
-        )
-        environment = {
-            "HOME": str(session_root / "home"),
-            "LANG": "C.UTF-8",
-            "LC_ALL": "C.UTF-8",
-            "PATH": "",
-            "PYTHONDONTWRITEBYTECODE": "1",
-            "PYTHONHASHSEED": "0",
-            "TMPDIR": str(session_root / "tmp"),
-        }
+        stderr_handle: BinaryIO | None = None
+        process: subprocess.Popen[bytes] | None = None
         try:
-            require_generated_strategy_session_source(source_path, source_sha256)
+            stderr_handle = (session_root / "stderr.log").open("wb")
+            (session_root / "stderr.log").chmod(0o600)
+            command = (
+                str(runtime.sandbox_executable),
+                "-p",
+                profile,
+                str(runtime.python_executable),
+                "-I",
+                str(runner),
+                str(source_descriptor),
+                source_sha256,
+            )
+            environment = {
+                "HOME": str(session_root / "home"),
+                "LANG": "C.UTF-8",
+                "LC_ALL": "C.UTF-8",
+                "PATH": "",
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONHASHSEED": "0",
+                "TMPDIR": str(session_root / "tmp"),
+            }
+            require_generated_strategy_source_descriptor(source_descriptor, source_sha256)
             process = subprocess.Popen(
                 command,
                 cwd=session_root,
@@ -110,11 +119,22 @@ class GeneratedStrategySession:
                 stderr=stderr_handle,
                 start_new_session=True,
                 preexec_fn=partial(_apply_limits, limits),
+                pass_fds=(source_descriptor,),
             )
-        except (OSError, subprocess.SubprocessError, ValueError):
-            stderr_handle.close()
-            raise
-        session = cls(f"generated-python:{artifact_id}", process, stderr_handle, limits)
+        finally:
+            with suppress(OSError):
+                os.close(source_descriptor)
+            if process is None and stderr_handle is not None:
+                stderr_handle.close()
+        if process is None or stderr_handle is None:
+            raise GeneratedStrategyExecutionError("session_start_failed")
+        session = cls(
+            f"generated-python:{artifact_id}",
+            process,
+            stderr_handle,
+            limits,
+            session_root,
+        )
         try:
             ready = session._read_frame()
             if not isinstance(ready, RunnerReady):
@@ -165,15 +185,19 @@ class GeneratedStrategySession:
         return hashlib.sha256("".join(self._signal_hashes).encode()).hexdigest()
 
     def close(self) -> None:
-        pipe = self._process.stdin
-        if pipe is not None and not pipe.closed:
-            pipe.close()
         try:
-            self._process.wait(timeout=0.2)
-        except subprocess.TimeoutExpired:
-            _terminate_group(self._process)
-        if not self._stderr.closed:
-            self._stderr.close()
+            pipe = self._process.stdin
+            if pipe is not None and not pipe.closed:
+                pipe.close()
+            try:
+                self._process.wait(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                _terminate_group(self._process)
+        finally:
+            if not self._stderr.closed:
+                self._stderr.close()
+            if self._session_root.exists():
+                shutil.rmtree(self._session_root)
 
     def _read_frame(self) -> RunnerFrame:
         stdout = self._process.stdout

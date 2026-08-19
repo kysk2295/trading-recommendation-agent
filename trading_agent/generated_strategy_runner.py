@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-import importlib.util
+import hashlib
 import json
+import os
+import stat
 import sys
 from contextlib import redirect_stdout
-from pathlib import Path
 from types import ModuleType
 from typing import Final, Protocol, runtime_checkable
 
 MAX_FRAME_BYTES: Final = 64 * 1024
+MAX_SOURCE_BYTES: Final = 64 * 1024 * 1024
 type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
 
 
@@ -22,11 +24,12 @@ class _Strategy(Protocol):
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
+    if len(sys.argv) != 3:
         _write_failure(0, "runner_arguments_invalid")
         return 1
     try:
-        module = _load_module(Path(sys.argv[1]))
+        source = _read_source(sys.argv[1], sys.argv[2])
+        module = _load_module(source)
         factory = module.__dict__["create_strategy"]
         if not callable(factory):
             raise TypeError
@@ -35,7 +38,10 @@ def main() -> int:
         if not isinstance(strategy, _Strategy):
             raise TypeError
         observer = strategy.observe
-    except (ImportError, OSError, TypeError, ValueError):
+    except (OSError, TypeError, ValueError):
+        _write_failure(0, "generated_strategy_source_invalid")
+        return 1
+    except (ImportError, SyntaxError):
         _write_failure(0, "generated_strategy_import_failed")
         return 1
     _write({"kind": "ready", "sequence": 0})
@@ -61,13 +67,58 @@ def main() -> int:
     return 0
 
 
-def _load_module(source: Path) -> ModuleType:
-    spec = importlib.util.spec_from_file_location("generated_strategy", source)
-    if spec is None or spec.loader is None:
-        raise ImportError
-    module = importlib.util.module_from_spec(spec)
+def _read_source(descriptor_text: str, expected_sha256: str) -> bytes:
+    descriptor = int(descriptor_text)
+    if descriptor < 3:
+        raise ValueError
+    try:
+        if len(expected_sha256) != 64:
+            raise ValueError
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.getuid()
+            or stat.S_IMODE(before.st_mode) != 0o600
+            or before.st_size < 1
+            or before.st_size > MAX_SOURCE_BYTES
+        ):
+            raise ValueError
+        _ = os.lseek(descriptor, 0, os.SEEK_SET)
+        content = bytearray()
+        while chunk := os.read(
+            descriptor,
+            min(64 * 1024, MAX_SOURCE_BYTES + 1 - len(content)),
+        ):
+            content.extend(chunk)
+            if len(content) > MAX_SOURCE_BYTES:
+                raise ValueError
+        after = os.fstat(descriptor)
+        source = bytes(content)
+        if _source_identity(before) != _source_identity(after) or hashlib.sha256(source).hexdigest() != expected_sha256:
+            raise ValueError
+        return source
+    finally:
+        os.close(descriptor)
+
+
+def _source_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_uid,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _load_module(source: bytes) -> ModuleType:
+    module = ModuleType("generated_strategy")
+    code = compile(source, "<generated-strategy>", "exec")
     with redirect_stdout(sys.stderr):
-        spec.loader.exec_module(module)
+        exec(code, module.__dict__)
     return module
 
 
