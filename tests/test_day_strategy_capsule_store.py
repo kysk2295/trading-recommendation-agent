@@ -1,13 +1,24 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import sqlite3
 import sys
 from pathlib import Path
 
 import pytest
 
+from tests.day_strategy_capsule_support import (
+    bar as _bar,
+)
+from tests.day_strategy_capsule_support import (
+    builtin_capsule as _builtin_capsule,
+)
+from tests.day_strategy_capsule_support import (
+    no_signal_source as _no_signal_source,
+)
+from tests.day_strategy_capsule_support import (
+    proposal as _proposal,
+)
 from tests.strategy_research_contract_fixtures import hypothesis
 from tests.test_day_research_attempt_binding import (
     SHA_A,
@@ -17,14 +28,14 @@ from tests.test_day_research_attempt_binding import (
     _manifest,
     _version,
 )
-from tests.test_day_strategy_capsule import _bar, _builtin_capsule, _no_signal_source, _proposal
 from trading_agent.day_strategy_capsule import (
-    VerifiedStrategyCapsule,
-    build_strategy_capsule,
+    DayStrategyCapsuleRequest,
+    GeneratedCapsuleVerification,
     generated_evaluator_bundle_sha256,
     generated_protocol_bundle_sha256,
+    publish_day_strategy_capsule,
 )
-from trading_agent.day_strategy_capsule_models import CapsuleArtifactKind, CapsulePreflightReceipt, StrategyCapsule
+from trading_agent.day_strategy_capsule_models import CapsuleArtifactKind
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.experiment_ledger_store import (
     ExperimentLedgerStore,
@@ -41,14 +52,14 @@ def _prepared_store(
     path: Path,
     status: AttemptStatus = AttemptStatus.SUCCEEDED,
     capsule_cadence: str | None = None,
-) -> tuple[ExperimentLedgerStore, VerifiedStrategyCapsule]:
+) -> tuple[ExperimentLedgerStore, DayStrategyCapsuleRequest]:
     store = ExperimentLedgerStore(path)
     family = _family()
     version = _version(family)
     attempt = _attempt(0, status)
     binding = _binding(attempt, version)
-    base = _builtin_capsule().capsule
-    verified = build_strategy_capsule(
+    base = _builtin_capsule()
+    request = DayStrategyCapsuleRequest(
         hypothesis_version_id=version.hypothesis_version_id,
         attempt_binding_id=binding.binding_id,
         market_id=version.market_id,
@@ -56,9 +67,7 @@ def _prepared_store(
         artifact_ref=binding.artifact_ref,
         artifact_sha256=SHA_A,
         generated_artifact_id=None,
-        evaluation_cadence=(
-            version.evaluation_cadence if capsule_cadence is None else capsule_cadence
-        ),
+        evaluation_cadence=(version.evaluation_cadence if capsule_cadence is None else capsule_cadence),
         evidence_schema=base.evidence_schema,
         entry_rule=version.entry_rule,
         exit_rule=version.exit_rule,
@@ -80,20 +89,21 @@ def _prepared_store(
         assert writer.register_day_hypothesis_version(version)
         assert writer.append_strategy_research_attempt(attempt)
         assert writer.register_day_research_attempt_binding(binding)
-    return store, verified
+    return store, request
 
 
 def test_verified_capsule_publication_is_idempotent_and_queryable(tmp_path: Path) -> None:
     # Given: a successful same-market attempt binding and exact artifact declaration.
-    store, verified = _prepared_store(tmp_path / "ledger.sqlite3")
-    capsule = verified.capsule
+    store, request = _prepared_store(tmp_path / "ledger.sqlite3")
 
     # When: the capsule is published and replayed.
-    with store.writer() as writer:
-        assert writer.register_day_strategy_capsule(verified) is True
-        assert writer.register_day_strategy_capsule(verified) is False
+    capsule, created = publish_day_strategy_capsule(store, request)
+    replayed, replay_created = publish_day_strategy_capsule(store, request)
 
     # Then: deterministic readers expose one validated immutable capsule.
+    assert created is True
+    assert replay_created is False
+    assert replayed == capsule
     stored = store.reader().day_strategy_capsule(capsule.capsule_id)
     assert stored is not None and stored.capsule == capsule
     assert tuple(item.capsule for item in store.day_strategy_capsules(capsule.market_id)) == (capsule,)
@@ -112,8 +122,7 @@ def test_real_generated_builder_capability_publishes_and_replays(tmp_path: Path)
         "protocol_sha256": generated_protocol_bundle_sha256(),
     }
     version = version_base.model_validate(
-        version_payload
-        | {"hypothesis_version_id": version_base.canonical_id_for(version_payload)}
+        version_payload | {"hypothesis_version_id": version_base.canonical_id_for(version_payload)}
     )
     registered_hypothesis = hypothesis().model_copy(update={"code_sha256": source_sha256})
     manifest = PreregistrationManifest.from_hypothesis(
@@ -139,9 +148,9 @@ def test_real_generated_builder_capability_publishes_and_replays(tmp_path: Path)
         assert writer.register_day_hypothesis_version(version)
         assert writer.append_strategy_research_attempt(attempt)
         assert writer.register_day_research_attempt_binding(binding)
-    limits = _builtin_capsule().capsule.resource_limits
+    limits = _builtin_capsule().resource_limits
     sandbox = GeneratedStrategySandbox(runtime, tmp_path / "tasks", limits.to_generated_limits())
-    verified = build_strategy_capsule(
+    request = DayStrategyCapsuleRequest(
         hypothesis_version_id=version.hypothesis_version_id,
         attempt_binding_id=binding.binding_id,
         market_id=version.market_id,
@@ -163,98 +172,43 @@ def test_real_generated_builder_capability_publishes_and_replays(tmp_path: Path)
         protocol_sha256=generated_protocol_bundle_sha256(),
         evaluator_sha256=generated_evaluator_bundle_sha256(),
         published_at=binding.bound_at + dt.timedelta(minutes=1),
-        authority_ceiling=_builtin_capsule().capsule.authority_ceiling,
-        generated_artifact_store=artifact_store,
-        generated_sandbox=sandbox,
-        replay_bars=(_bar(),),
+        authority_ceiling=_builtin_capsule().authority_ceiling,
+        generated_verification=GeneratedCapsuleVerification(
+            artifact_store,
+            sandbox,
+            (_bar(),),
+        ),
     )
 
-    # When: the builder-issued capability is published twice.
-    with store.writer() as writer:
-        created = writer.register_day_strategy_capsule(verified)
-        replay_created = writer.register_day_strategy_capsule(verified)
+    # When: the host build-and-persist boundary publishes twice.
+    capsule, created = publish_day_strategy_capsule(store, request)
+    replayed, replay_created = publish_day_strategy_capsule(store, request)
 
     # Then: publication is exact and idempotent.
-    stored = store.day_strategy_capsule(verified.capsule.capsule_id)
+    stored = store.day_strategy_capsule(capsule.capsule_id)
     assert created is True
     assert replay_created is False
-    assert version.protocol_sha256 == verified.capsule.protocol_sha256
-    assert verified.capsule.protocol_sha256 == generated_protocol_bundle_sha256()
-    assert stored is not None and stored.capsule == verified.capsule
+    assert replayed == capsule
+    assert version.protocol_sha256 == capsule.protocol_sha256
+    assert capsule.protocol_sha256 == generated_protocol_bundle_sha256()
+    assert capsule.artifact_sha256 == source_sha256
+    assert stored is not None and stored.capsule == capsule
 
 
 def test_capsule_requires_successful_exact_attempt_binding(tmp_path: Path) -> None:
     # Given: a terminal but failed attempt binding.
-    store, verified = _prepared_store(tmp_path / "ledger.sqlite3", AttemptStatus.FAILED)
+    store, request = _prepared_store(tmp_path / "ledger.sqlite3", AttemptStatus.FAILED)
 
     # When/Then: publication fails closed and leaves no capsule row.
-    with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
-        _ = writer.register_day_strategy_capsule(verified)
+    with pytest.raises(InvalidExperimentLedgerSourceError):
+        _ = publish_day_strategy_capsule(store, request)
     assert store.day_strategy_capsules() == ()
-
-
-def test_canonical_forged_generated_receipt_cannot_publish(tmp_path: Path) -> None:
-    # Given: a fully canonical generated receipt and capsule synthesized without the host builder.
-    store, verified = _prepared_store(tmp_path / "ledger.sqlite3")
-    builtin = verified.capsule
-    run_hash = "d" * 64
-    receipt_payload = {
-        "receipt_id": "",
-        "generated_artifact_id": "c" * 64,
-        "runtime_fingerprint": "e" * 64,
-        "sandbox_profile_version": "generated_strategy_sandbox_v1",
-        "protocol_version": 1,
-        "protocol_sha256": builtin.protocol_sha256,
-        "evaluator_sha256": builtin.evaluator_sha256,
-        "resource_limits": builtin.resource_limits,
-        "replay_input_sha256": "f" * 64,
-        "first_run_sha256": run_hash,
-        "second_run_sha256": run_hash,
-        "deterministic_replay_sha256": hashlib.sha256(f"{run_hash}:{run_hash}".encode()).hexdigest(),
-        "successful": True,
-        "completed_at": builtin.published_at,
-        "trading_authority": False,
-    }
-    receipt = CapsulePreflightReceipt.model_validate(
-        receipt_payload | {"receipt_id": CapsulePreflightReceipt.canonical_id_for(receipt_payload)}
-    )
-    capsule_payload = builtin.model_dump(mode="python") | {
-        "capsule_id": "",
-        "artifact_kind": CapsuleArtifactKind.GENERATED_PYTHON,
-        "generated_artifact_id": receipt.generated_artifact_id,
-        "preflight_receipt": receipt,
-    }
-    forged = StrategyCapsule.model_validate(
-        capsule_payload | {"capsule_id": StrategyCapsule.canonical_id_for(capsule_payload)}
-    )
-    object.__setattr__(verified, "_capsule", forged)
-
-    # When/Then: a canonical data artifact cannot issue the host publication capability.
-    with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
-        _ = writer.register_day_strategy_capsule(verified)
-    assert store.day_strategy_capsules() == ()
-
-
-def test_issued_capability_rejects_stale_payload_substitution(tmp_path: Path) -> None:
-    # Given: one stored capsule and a stale-ID mutation.
-    store, verified = _prepared_store(tmp_path / "ledger.sqlite3")
-    with store.writer() as writer:
-        assert writer.register_day_strategy_capsule(verified)
-    conflicting = verified.capsule.model_copy()
-    object.__setattr__(conflicting, "target_rule", "changed_target_rule")
-    object.__setattr__(verified, "_capsule", conflicting)
-
-    # When/Then: identity reuse with changed content maps to the ledger conflict error.
-    with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
-        _ = writer.register_day_strategy_capsule(verified)
 
 
 def test_reader_rejects_tampered_index_and_noncanonical_payload(tmp_path: Path) -> None:
     # Given: a stored capsule whose append-only trigger is deliberately removed for corruption simulation.
-    store, verified = _prepared_store(tmp_path / "ledger.sqlite3")
-    capsule = verified.capsule
-    with store.writer() as writer:
-        assert writer.register_day_strategy_capsule(verified)
+    store, request = _prepared_store(tmp_path / "ledger.sqlite3")
+    capsule, _ = publish_day_strategy_capsule(store, request)
     with sqlite3.connect(store.path) as connection:
         connection.execute("DROP TRIGGER day_strategy_capsules_no_update")
         connection.execute(
@@ -279,8 +233,8 @@ def test_capsule_rejects_version_declaration_mismatch(tmp_path: Path) -> None:
     )
 
     # When/Then: parent declaration coherence fails before insertion.
-    with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
-        _ = writer.register_day_strategy_capsule(mismatched)
+    with pytest.raises(InvalidExperimentLedgerSourceError):
+        _ = publish_day_strategy_capsule(store, mismatched)
     assert store.day_strategy_capsules() == ()
 
 
@@ -292,8 +246,11 @@ def test_missing_store_is_empty_and_reader_connection_is_query_only(tmp_path: Pa
     assert store.day_strategy_capsules() == ()
     assert store.day_strategy_capsule("a" * 64) is None
     initialized, _ = _prepared_store(tmp_path / "initialized.sqlite3")
-    with initialized.reader()._reader_connection() as connection, pytest.raises(
-        sqlite3.OperationalError,
-        match="readonly",
+    with (
+        initialized.reader()._reader_connection() as connection,
+        pytest.raises(
+            sqlite3.OperationalError,
+            match="readonly",
+        ),
     ):
         connection.execute("INSERT INTO day_strategy_capsules VALUES ('x','x','us_equities','x','x')")

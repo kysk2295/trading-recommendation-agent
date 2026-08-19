@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import stat
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -20,6 +18,11 @@ from trading_agent.generated_strategy_runtime import (
     require_generated_strategy_runtime,
 )
 from trading_agent.generated_strategy_session import GeneratedStrategySession
+from trading_agent.generated_strategy_source import (
+    GeneratedStrategySourceSnapshot,
+    capture_generated_strategy_source,
+    materialize_generated_strategy_source,
+)
 
 _RUNNER: Final = Path(__file__).with_name("generated_strategy_runner.py")
 
@@ -35,9 +38,12 @@ class GeneratedStrategySandbox:
         published: PublishedGeneratedStrategy,
         session_root: Path,
     ) -> str:
+        return self._render_profile(published.source_path, session_root)
+
+    def _render_profile(self, source: Path, session_root: Path) -> str:
         runtime_root = self.runtime.python_executable.parent.parent
         readable_roots = (Path("/System"), Path("/Library"), Path("/usr/lib"), Path("/usr/share"), runtime_root)
-        source = published.source_path.resolve(strict=True)
+        source = source.resolve(strict=True)
         runner = _RUNNER.resolve(strict=True)
         task = session_root.resolve(strict=False)
         return "\n".join(
@@ -60,8 +66,21 @@ class GeneratedStrategySandbox:
         )
 
     def open_session(self, published: PublishedGeneratedStrategy) -> GeneratedStrategySession:
+        return self.open_source_session(self.capture_source(published))
+
+    def capture_source(
+        self,
+        published: PublishedGeneratedStrategy,
+    ) -> GeneratedStrategySourceSnapshot:
+        return capture_generated_strategy_source(published, self.runtime)
+
+    def open_source_session(
+        self,
+        snapshot: GeneratedStrategySourceSnapshot,
+    ) -> GeneratedStrategySession:
         try:
-            _require_published(published, self.runtime)
+            if hashlib.sha256(snapshot.source_bytes).hexdigest() != snapshot.source_sha256:
+                raise GeneratedStrategyExecutionError("session_source_invalid")
             _ = require_generated_strategy_runtime(self.runtime)
             root = self.task_root.resolve(strict=False)
             root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -69,9 +88,13 @@ class GeneratedStrategySandbox:
             session_root = Path(tempfile.mkdtemp(prefix="generated-strategy-", dir=root))
             for child in (session_root / "home", session_root / "tmp"):
                 child.mkdir(mode=0o700)
-            profile = self.render_profile(published, session_root)
+            source = session_root / "strategy.py"
+            materialize_generated_strategy_source(source, snapshot)
+            profile = self._render_profile(source, session_root)
             return GeneratedStrategySession.start(
-                published,
+                snapshot.artifact_id,
+                source,
+                snapshot.source_sha256,
                 self.runtime,
                 self.limits,
                 session_root,
@@ -82,18 +105,3 @@ class GeneratedStrategySandbox:
             raise
         except (OSError, subprocess.SubprocessError, TypeError, ValueError):
             raise GeneratedStrategyExecutionError("sandbox_preflight_failed") from None
-def _require_published(
-    published: PublishedGeneratedStrategy,
-    runtime: GeneratedStrategyRuntimeIdentity,
-) -> None:
-    source = published.source_path
-    metadata = source.lstat()
-    if (
-        source.is_symlink()
-        or not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o600
-        or published.artifact.payload.runtime != runtime
-        or hashlib.sha256(source.read_bytes()).hexdigest() != published.artifact.payload.source_sha256
-    ):
-        raise GeneratedStrategyExecutionError("generated_artifact_invalid")

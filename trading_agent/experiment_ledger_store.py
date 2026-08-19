@@ -39,11 +39,7 @@ from trading_agent.day_research_ledger_schema import (
     CREATE_DAY_RESEARCH_LEDGER_SCHEMA_V10,
     DAY_RESEARCH_SCHEMA_OBJECTS,
 )
-from trading_agent.day_strategy_capsule import (
-    VerifiedStrategyCapsule,
-    verified_strategy_capsule_payload,
-)
-from trading_agent.day_strategy_capsule_models import InvalidStrategyCapsuleError
+from trading_agent.day_strategy_capsule_models import StrategyCapsule
 from trading_agent.experiment_ledger_keys import (
     ExperimentTrialEventKey,
     ExperimentTrialRegistrationKey,
@@ -985,13 +981,10 @@ class ExperimentLedgerWriter:
         except InvalidDayResearchLedgerSourceError:
             raise InvalidExperimentLedgerSourceError from None
 
-    def register_day_strategy_capsule(self, verified: VerifiedStrategyCapsule) -> bool:
+    def _register_day_strategy_capsule(self, capsule: StrategyCapsule) -> bool:
         self._require_active()
         try:
-            capsule = verified_strategy_capsule_payload(verified)
             return _register_day_strategy_capsule(self._connection, capsule)
-        except InvalidStrategyCapsuleError:
-            raise InvalidExperimentLedgerSourceError from None
         except DayResearchLedgerConflictError:
             raise ExperimentLedgerConflictError from None
         except InvalidDayResearchLedgerSourceError:

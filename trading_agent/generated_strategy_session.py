@@ -12,7 +12,6 @@ from pathlib import Path
 from types import TracebackType
 from typing import BinaryIO, Self
 
-from trading_agent.generated_strategy_artifact import PublishedGeneratedStrategy
 from trading_agent.generated_strategy_execution import (
     GeneratedStrategyExecutionError,
     GeneratedStrategyLimits,
@@ -30,6 +29,7 @@ from trading_agent.generated_strategy_protocol import (
     signal_from_response,
 )
 from trading_agent.generated_strategy_runtime import GeneratedStrategyRuntimeIdentity
+from trading_agent.generated_strategy_source import require_generated_strategy_session_source
 from trading_agent.models import BarInput, MomentumCandidate, StrategySignal
 
 
@@ -70,7 +70,9 @@ class GeneratedStrategySession:
     @classmethod
     def start(
         cls,
-        published: PublishedGeneratedStrategy,
+        artifact_id: str,
+        source_path: Path,
+        source_sha256: str,
         runtime: GeneratedStrategyRuntimeIdentity,
         limits: GeneratedStrategyLimits,
         session_root: Path,
@@ -86,7 +88,7 @@ class GeneratedStrategySession:
             str(runtime.python_executable),
             "-I",
             str(runner),
-            str(published.source_path.resolve(strict=True)),
+            str(source_path.resolve(strict=True)),
         )
         environment = {
             "HOME": str(session_root / "home"),
@@ -98,6 +100,7 @@ class GeneratedStrategySession:
             "TMPDIR": str(session_root / "tmp"),
         }
         try:
+            require_generated_strategy_session_source(source_path, source_sha256)
             process = subprocess.Popen(
                 command,
                 cwd=session_root,
@@ -111,7 +114,7 @@ class GeneratedStrategySession:
         except (OSError, subprocess.SubprocessError, ValueError):
             stderr_handle.close()
             raise
-        session = cls(f"generated-python:{published.artifact.artifact_id}", process, stderr_handle, limits)
+        session = cls(f"generated-python:{artifact_id}", process, stderr_handle, limits)
         try:
             ready = session._read_frame()
             if not isinstance(ready, RunnerReady):
