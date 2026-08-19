@@ -11,6 +11,7 @@ from typing import Final, TextIO, final
 
 from trading_agent.research_agent_cycle_schema import (
     RESEARCH_AGENT_CYCLE_SCHEMA,
+    RESEARCH_AGENT_CYCLE_SCHEMA_V2,
     RESEARCH_AGENT_CYCLE_SCHEMA_VERSION,
 )
 
@@ -126,6 +127,27 @@ class ResearchAgentCycleDatabaseLease:
                     _ = connection.execute(statement)
                 _ = connection.execute(f"PRAGMA user_version={RESEARCH_AGENT_CYCLE_SCHEMA_VERSION}")
                 connection.commit()
+            elif version == (1,):
+                connection.execute("BEGIN IMMEDIATE")
+                for statement in RESEARCH_AGENT_CYCLE_SCHEMA_V2:
+                    _ = connection.execute(statement)
+                legacy_day_cursor = connection.execute(
+                    "SELECT evidence_sequence FROM cursors WHERE agent_family_id='day_trading'"
+                ).fetchone()
+                if legacy_day_cursor is not None:
+                    _ = connection.execute(
+                        "INSERT INTO day_cursors(agent_family_id,market_id,evidence_sequence) "
+                        "SELECT 'day_trading',json_extract(payload_json,'$.market_id'),MAX(sequence) "
+                        "FROM evidence WHERE agent_family_id='day_trading' AND sequence<=? "
+                        "AND json_type(payload_json,'$.market_id')='text' "
+                        "AND json_extract(payload_json,'$.market_id') IN "
+                        "('us_equities','kr_equities','cross_market','none') "
+                        "GROUP BY json_extract(payload_json,'$.market_id')",
+                        (int(legacy_day_cursor[0]),),
+                    )
+                _ = connection.execute(f"PRAGMA user_version={RESEARCH_AGENT_CYCLE_SCHEMA_VERSION}")
+                connection.commit()
+                _require_schema(connection)
             else:
                 _require_schema(connection)
         finally:

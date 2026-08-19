@@ -206,7 +206,7 @@ class ResearchAgentRuntime:
         actor = selected[0]
         stored = self._resolve_evidence(EvidenceResolution(actor.agent_family_id, actor.evidence, actor.open_work, now))
         cycle = self.store.start_cycle(stored, now)
-        prior_failures = _prior_failures(states, cycle.agent_family_id)
+        prior_failures = _prior_failures(states, cycle.agent_family_id, cycle.market_id)
         no_action = primary_admission_no_action(cycle, stored.evidence, now)
         if no_action is not None:
             outcome = RuntimeCycleOutcome(cycle, stored.evidence, no_action, prior_failures, 0, len(recovered))
@@ -232,7 +232,9 @@ class ResearchAgentRuntime:
             open_work=tuple(
                 item
                 for item in work
-                if item.agent_family_id == cycle.agent_family_id and item.state is ResearchAgentOpenWorkState.OPEN
+                if item.agent_family_id == cycle.agent_family_id
+                and item.state is ResearchAgentOpenWorkState.OPEN
+                and _work_matches_cycle(item, cycle)
             ),
             requested_at=now,
             max_runtime_seconds=120.0,
@@ -316,8 +318,15 @@ async def run_research_agent_forever(
         await anyio.sleep(tick_seconds)
 
 
-def _prior_failures(states: tuple[ActorWakeState, ...], family: AgentFamilyId) -> int:
-    return next(state.consecutive_failures for state in states if state.agent_family_id == family)
+def _prior_failures(states: tuple[ActorWakeState, ...], family: AgentFamilyId, market_id: str) -> int:
+    return next(
+        (
+            state.consecutive_failures
+            for state in states
+            if state.agent_family_id == family and (family != "day_trading" or state.market_id == market_id)
+        ),
+        0,
+    )
 
 
 def _tick_result(outcome: RuntimeCycleOutcome) -> ResearchAgentTickResult:
@@ -328,6 +337,14 @@ def _tick_result(outcome: RuntimeCycleOutcome) -> ResearchAgentTickResult:
         model_calls=outcome.model_calls,
         recovered_cycles=outcome.recovered_cycles,
     )
+
+
+def _work_matches_cycle(item: ResearchAgentOpenWorkV1, cycle: ResearchAgentCycleV1) -> bool:
+    if cycle.agent_family_id != "day_trading":
+        return True
+    if item.work_id == "actor-state.day_trading":
+        return cycle.market_id == "us_equities"
+    return item.work_id == f"actor-state.day_trading.{cycle.market_id}"
 
 
 __all__ = (

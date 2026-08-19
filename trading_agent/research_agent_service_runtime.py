@@ -126,9 +126,7 @@ def day_discovery_market_runtime(
         versions = reader.day_hypothesis_versions(market_id=market)
         latest = max(versions, key=lambda item: item.version.created_at, default=None)
         attempts = (
-            ()
-            if latest is None
-            else reader.day_attempts_for_review(market, latest.version.hypothesis_version_id)
+            () if latest is None else reader.day_attempts_for_review(market, latest.version.hypothesis_version_id)
         )
         terminal = max(
             attempts,
@@ -399,9 +397,7 @@ def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRu
     return ResearchAgentRuntime(services)
 
 
-def _day_discovery_executor(
-    config: ResearchAgentServiceConfig, called_at: dt.datetime
-) -> DayDiscoveryActionExecutor:
+def _day_discovery_executor(config: ResearchAgentServiceConfig, called_at: dt.datetime) -> DayDiscoveryActionExecutor:
     systematic = config.systematic
     receipts = ResearcherReceiptStore(systematic.receipt_root)
     ledger = ExperimentLedgerStore(config.source_paths.experiment_ledger)
@@ -417,9 +413,7 @@ def _day_discovery_executor(
     strategies = GeneratedStrategyArtifactStore(systematic.strategy_root, runtime)
     pipeline = ResearcherPipeline(
         ResearcherPipelineServices(
-            StructuredHypothesisGenerator(
-                proposal_client, receipts, lambda: called_at
-            ),
+            StructuredHypothesisGenerator(proposal_client, receipts, lambda: called_at),
             DeterministicHypothesisCritic(max_free_parameters=4),
         ),
         ResearcherPipelineStores(ledger, receipts, strategies),
@@ -430,10 +424,9 @@ def _day_discovery_executor(
         DayDiscoveryLoop(
             DayDiscoveryLoopConfig(
                 pipeline,
-                GeneratedStrategySandbox(
-                    runtime, systematic.strategy_root / "day-sandbox", GeneratedStrategyLimits()
-                ),
+                GeneratedStrategySandbox(runtime, systematic.strategy_root / "day-sandbox", GeneratedStrategyLimits()),
                 3,
+                clock=lambda: called_at,
             )
         ),
         build_researcher_context(source, ledger.reader()),
@@ -580,18 +573,19 @@ def _runtime_report_from_database(
             result_from_payload(row[0])
             for row in connection.execute("SELECT payload_json FROM results ORDER BY rowid").fetchall()
         )
-        cursors: dict[AgentFamilyId, int] = {
-            family: int(row[0])
-            if (
-                row := connection.execute(
+        cursors: dict[AgentFamilyId, int] = {}
+        for family in PRIMARY_AGENT_FAMILIES:
+            if family == "day_trading":
+                row = connection.execute(
+                    "SELECT MAX(evidence_sequence) FROM day_cursors WHERE agent_family_id=?",
+                    (family,),
+                ).fetchone()
+            else:
+                row = connection.execute(
                     "SELECT evidence_sequence FROM cursors WHERE agent_family_id=?",
                     (family,),
                 ).fetchone()
-            )
-            is not None
-            else 0
-            for family in PRIMARY_AGENT_FAMILIES
-        }
+            cursors[family] = 0 if row is None or row[0] is None else int(row[0])
     return _runtime_report(cycles, results, cursors)
 
 

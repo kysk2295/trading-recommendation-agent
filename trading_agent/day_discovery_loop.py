@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import ast
 import datetime as dt
+import fcntl
 import hashlib
 import json
-from dataclasses import asdict, dataclass
+import os
+import stat
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
+from pathlib import Path
 from typing import Literal, Self, override
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -47,6 +53,11 @@ from trading_agent.generated_strategy_execution import (
 from trading_agent.generated_strategy_sandbox import GeneratedStrategySandbox
 from trading_agent.heavy_empirical_lease import heavy_empirical_lease
 from trading_agent.models import BarInput
+from trading_agent.private_immutable_file import (
+    InvalidPrivateImmutableFileError,
+    publish_private_immutable_text,
+    read_private_text,
+)
 from trading_agent.research_agent_actions import ResearchAgentActionContext
 from trading_agent.research_agent_cycle_models import (
     ResearchAgentResultStatus,
@@ -83,6 +94,37 @@ class DayDiscoveryTriggerKind(StrEnum):
     EXPLORATION_DUE = "exploration_due"
 
 
+class DayDiscoveryFeedback(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    family_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    hypothesis_version_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    outcome_class: Literal["supported", "refuted", "inconclusive"] | None = None
+    bounded_metrics: dict[str, int | float | str] = Field(default_factory=dict)
+    integrity_reason: str | None = None
+    data_reason: str | None = None
+    runtime_reason: str | None = None
+    novelty: Literal["novel", "duplicate", "known"] | None = None
+    remaining_budget: int = Field(default=0, ge=0)
+    next_review_date: dt.date | None = None
+    policy_priority: int | None = Field(default=None, ge=0, le=100)
+
+    @field_validator("integrity_reason", "data_reason", "runtime_reason")
+    @classmethod
+    def safe_reason(cls, value: str | None) -> str | None:
+        return _safe_reason_token(value)
+
+    @field_validator("bounded_metrics")
+    @classmethod
+    def bounded_preregistered_metrics(cls, value: dict[str, int | float | str]) -> dict[str, int | float | str]:
+        allowed = {"blocked_count", "coverage_fraction", "signal_count"}
+        if set(value) - allowed or any(
+            isinstance(item, (str, bool)) or not -1_000_000 <= item <= 1_000_000 for item in value.values()
+        ):
+            raise DayDiscoveryError("feedback_metric_not_allowlisted")
+        return value
+
+
 class DayDiscoveryEvidenceView(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -102,6 +144,7 @@ class DayDiscoveryEvidenceView(BaseModel):
     cursor: str = "origin"
     previous_failure: str | None = None
     existing_semantic_hashes: tuple[str, ...] = ()
+    feedback: DayDiscoveryFeedback | None = None
     resource_limits: GeneratedStrategyLimits = GeneratedStrategyLimits()
 
     @field_validator("observed_at", "completed_bar_at", "first_eligible_completed_bar_at", "universe_snapshot_at")
@@ -114,6 +157,11 @@ class DayDiscoveryEvidenceView(BaseModel):
     def canonical_sets(cls, values: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(sorted(set(values)))
 
+    @field_validator("previous_failure")
+    @classmethod
+    def safe_previous_failure(cls, value: str | None) -> str | None:
+        return _safe_reason_token(value)
+
     @model_validator(mode="after")
     def validate_view(self) -> Self:
         if (
@@ -125,45 +173,6 @@ class DayDiscoveryEvidenceView(BaseModel):
         ):
             raise DayDiscoveryError("evidence_time_invalid")
         return self
-
-
-class DayDiscoveryFeedback(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    family_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    hypothesis_version_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    outcome_class: Literal["supported", "refuted", "inconclusive"] | None = None
-    bounded_metrics: dict[str, int | float | str] = Field(default_factory=dict)
-    integrity_reason: str | None = None
-    data_reason: str | None = None
-    runtime_reason: str | None = None
-    novelty: Literal["novel", "duplicate", "known"] | None = None
-    remaining_budget: int = Field(default=0, ge=0)
-    next_review_date: dt.date | None = None
-    policy_priority: int | None = Field(default=None, ge=0, le=100)
-
-    @field_validator("integrity_reason", "data_reason", "runtime_reason")
-    @classmethod
-    def safe_reason(cls, value: str | None) -> str | None:
-        if value is not None and (
-            not 1 <= len(value) <= 80
-            or any(not (character.islower() or character.isdigit() or character == "_") for character in value)
-        ):
-            raise DayDiscoveryError("feedback_reason_invalid")
-        return value
-
-    @field_validator("bounded_metrics")
-    @classmethod
-    def bounded_preregistered_metrics(
-        cls, value: dict[str, int | float | str]
-    ) -> dict[str, int | float | str]:
-        allowed = {"blocked_count", "coverage_fraction", "signal_count"}
-        if set(value) - allowed or any(
-            isinstance(item, (str, bool)) or not -1_000_000 <= item <= 1_000_000
-            for item in value.values()
-        ):
-            raise DayDiscoveryError("feedback_metric_not_allowlisted")
-        return value
 
 
 def sanitize_day_discovery_feedback(payload: dict[str, object]) -> DayDiscoveryFeedback:
@@ -188,11 +197,11 @@ class ForwardProbeAdmissionRequest(BaseModel):
         for key, value in normalized.items():
             match value:
                 case dt.datetime() as timestamp:
-                    canonical[key] = _require_aware_utc(
-                        timestamp, "forward_probe_time_naive"
-                    ).isoformat(
-                        timespec="microseconds"
-                    ).replace("+00:00", "Z")
+                    canonical[key] = (
+                        _require_aware_utc(timestamp, "forward_probe_time_naive")
+                        .isoformat(timespec="microseconds")
+                        .replace("+00:00", "Z")
+                    )
                 case MarketId() as market:
                     canonical[key] = market.value
                 case None | bool() | int() | float() | str():
@@ -218,7 +227,7 @@ class ForwardProbeAdmissionRequest(BaseModel):
 class DayDiscoveryCycleResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    cycle_id: str
+    cycle_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     attempt_ids: tuple[str, ...]
     family_id: str | None
     hypothesis_version_id: str | None
@@ -233,11 +242,27 @@ class DayDiscoveryCycleResult(BaseModel):
     profitability_claim: Literal[False] = False
 
 
+class DayDiscoveryCycleReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    cycle_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    result: DayDiscoveryCycleResult
+
+    @model_validator(mode="after")
+    def matching_cycle_identity(self) -> Self:
+        if self.cycle_id != self.result.cycle_id:
+            raise DayDiscoveryError("cycle_receipt_result_identity_conflict")
+        return self
+
+
 @dataclass(frozen=True, slots=True)
 class DayDiscoveryLoopConfig:
     pipeline: ResearcherPipeline
     sandbox: GeneratedStrategySandbox
     max_drafts: int = 3
+    cycle_receipt_root: Path | None = None
+    clock: Callable[[], dt.datetime] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,23 +272,72 @@ class DayDiscoveryLoop:
     def run(self, view: DayDiscoveryEvidenceView, context: ResearcherContext | None = None) -> DayDiscoveryCycleResult:
         if not 1 <= self.config.max_drafts <= 3:
             raise DayDiscoveryError("max_drafts_out_of_range")
-        context = context or _researcher_context()
-        cycle_id = _sha(_canonical({
-            "market_id": view.market_id.value,
-            "trigger": view.trigger_kind.value,
-            "observed_at": view.observed_at.isoformat(),
-            "cursor": view.cursor,
-        }))
+        cycle_id = _sha(
+            _canonical(
+                {
+                    "market_id": view.market_id.value,
+                    "trigger": view.trigger_kind.value,
+                    "observed_at": view.observed_at.isoformat(),
+                    "cursor": view.cursor,
+                }
+            )
+        )
+        evidence_sha256 = _sha(_canonical_view(view))
+        receipt_root = self.config.cycle_receipt_root or (
+            self.config.pipeline.artifacts.manifest_root / "day-discovery-cycle-receipts"
+        )
+        receipt_path = receipt_root / f"{cycle_id}.json"
+        with _cycle_receipt_lease(receipt_root, cycle_id):
+            replay = _read_cycle_receipt(receipt_path, cycle_id, evidence_sha256)
+            if replay is not None:
+                return replay
+            result = self._run_new_cycle(view, context or _researcher_context(), cycle_id)
+            receipt = DayDiscoveryCycleReceipt(
+                cycle_id=cycle_id,
+                evidence_sha256=evidence_sha256,
+                result=result,
+            )
+            try:
+                _ = publish_private_immutable_text(
+                    receipt_path,
+                    json.dumps(
+                        receipt.model_dump(mode="json"),
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                )
+            except InvalidPrivateImmutableFileError:
+                raise DayDiscoveryError("cycle_receipt_publication_failed") from None
+            return result
+
+    def _run_new_cycle(
+        self,
+        view: DayDiscoveryEvidenceView,
+        context: ResearcherContext,
+        cycle_id: str,
+    ) -> DayDiscoveryCycleResult:
         attempt_ids: list[str] = []
         latest_family: HypothesisFamily | None = None
         latest_version: HypothesisVersion | None = None
         terminal_reason: str | None = None
         remaining = view.search_budget - view.budget_debits_used
+        context = replace(
+            context,
+            bounded_day_discovery_json=_bounded_prompt_view(view, remaining),
+        )
         if remaining == 0:
             return DayDiscoveryCycleResult(
-                cycle_id=cycle_id, attempt_ids=(), family_id=None, hypothesis_version_id=None,
-                capsule_id=None, admission_id=None, accepted=False,
-                terminal_reason="budget_exhausted", drafts_attempted=0, remaining_budget=0,
+                cycle_id=cycle_id,
+                attempt_ids=(),
+                family_id=None,
+                hypothesis_version_id=None,
+                capsule_id=None,
+                admission_id=None,
+                accepted=False,
+                terminal_reason="budget_exhausted",
+                drafts_attempted=0,
+                remaining_budget=0,
                 first_eligible_completed_bar_at=view.first_eligible_completed_bar_at,
             )
         for branch in range(self.config.max_drafts):
@@ -275,11 +349,18 @@ class DayDiscoveryLoop:
                 lambda candidate, budget=current_remaining: _day_critique(candidate, view, budget),
             )
             terminal_reason = _critique_terminal_reason(critique)
+            attempt_started_at = proposal.llm_receipt.called_at.astimezone(dt.UTC)
+            contract_registered_at = max(attempt_started_at, view.completed_bar_at)
+            attempt_finished_at = _cycle_time(self.config.clock, contract_registered_at)
+            bound_at = _cycle_time(self.config.clock, attempt_finished_at)
+            published_at = _cycle_time(self.config.clock, bound_at)
+            if attempt_started_at < view.observed_at:
+                terminal_reason = "proposal_time_invalid"
             family, version, preregistration = build_day_hypothesis_contracts(
                 proposal,
                 DayHypothesisBuildInput(
                     market_id=view.market_id,
-                    observed_at=view.observed_at,
+                    observed_at=contract_registered_at,
                     completed_bar_at=view.completed_bar_at,
                     first_eligible_completed_bar_at=view.first_eligible_completed_bar_at,
                     universe_snapshot_id=view.universe_snapshot_id,
@@ -310,30 +391,73 @@ class DayDiscoveryLoop:
             if reason is not None or published is None:
                 _record_terminal(
                     self.config.pipeline.stores.ledger,
-                    attempt_id, branch, version, binding_ref, view, reason or "failed",
+                    attempt_id,
+                    branch,
+                    version,
+                    binding_ref,
+                    view,
+                    reason or "failed",
+                    attempt_started_at,
+                    attempt_finished_at,
+                    bound_at,
                 )
                 remaining -= 1
                 terminal_reason = reason
                 continue
             binding_payload = {
-                "binding_id": "", "attempt_id": attempt_id, "market_id": version.market_id,
+                "binding_id": "",
+                "attempt_id": attempt_id,
+                "market_id": version.market_id,
                 "hypothesis_version_id": version.hypothesis_version_id,
-                "artifact_ref": binding_ref, "multiple_testing_family": version.multiple_testing_family,
-                "search_budget_debit": 1, "bound_at": view.observed_at + dt.timedelta(seconds=2),
+                "artifact_ref": binding_ref,
+                "multiple_testing_family": version.multiple_testing_family,
+                "search_budget_debit": 1,
+                "bound_at": bound_at,
             }
             prospective_binding = DayResearchAttemptBinding.model_validate(
                 binding_payload | {"binding_id": DayResearchAttemptBinding.canonical_id_for(binding_payload)}
             )
             request = _capsule_request(
-                version, prospective_binding, published.artifact.artifact_id, view,
-                self.config.pipeline.stores.strategies, self.config.sandbox,
+                version,
+                prospective_binding,
+                published.artifact.artifact_id,
+                view,
+                self.config.pipeline.stores.strategies,
+                self.config.sandbox,
+                published_at,
             )
+            if view.first_eligible_completed_bar_at <= published_at:
+                reason = "forward_probe_not_future_only"
+                _record_terminal(
+                    self.config.pipeline.stores.ledger,
+                    attempt_id,
+                    branch,
+                    version,
+                    binding_ref,
+                    view,
+                    reason,
+                    attempt_started_at,
+                    attempt_finished_at,
+                    bound_at,
+                )
+                remaining -= 1
+                terminal_reason = reason
+                continue
             try:
                 _ = build_strategy_capsule(request)
             except (GeneratedStrategyExecutionError, InvalidStrategyCapsuleError) as error:
                 reason = _preflight_reason(error)
                 _record_terminal(
-                    self.config.pipeline.stores.ledger, attempt_id, branch, version, binding_ref, view, reason
+                    self.config.pipeline.stores.ledger,
+                    attempt_id,
+                    branch,
+                    version,
+                    binding_ref,
+                    view,
+                    reason,
+                    attempt_started_at,
+                    attempt_finished_at,
+                    bound_at,
                 )
                 remaining -= 1
                 terminal_reason = reason
@@ -345,16 +469,14 @@ class DayDiscoveryLoop:
                 input_hashes=(view.data_manifest_sha256,),
                 code_sha256=version.code_sha256,
                 data_manifest_sha256=view.data_manifest_sha256,
-                started_at=view.observed_at,
-                finished_at=view.observed_at + dt.timedelta(seconds=1),
+                started_at=attempt_started_at,
+                finished_at=attempt_finished_at,
                 status=AttemptStatus.SUCCEEDED,
                 artifact_refs=(binding_ref,),
                 error_class=None,
                 max_cpu_seconds=view.resource_limits.cpu_seconds,
             )
-            binding = _binding(
-                successful_attempt, version, binding_ref, view.observed_at + dt.timedelta(seconds=2)
-            )
+            binding = _binding(successful_attempt, version, binding_ref, bound_at)
             with self.config.pipeline.stores.ledger.writer() as writer:
                 _ = writer.append_strategy_research_attempt(successful_attempt)
                 _ = writer.register_day_research_attempt_binding(binding)
@@ -363,7 +485,7 @@ class DayDiscoveryLoop:
                 "admission_id": "",
                 "capsule_id": capsule.capsule_id,
                 "market_id": view.market_id,
-                "registration_completed_bar_at": view.completed_bar_at,
+                "registration_completed_bar_at": published_at,
                 "first_eligible_completed_bar_at": view.first_eligible_completed_bar_at,
                 "trading_authority": False,
             }
@@ -371,7 +493,7 @@ class DayDiscoveryLoop:
                 admission_id=ForwardProbeAdmissionRequest.canonical_id_for(admission_payload),
                 capsule_id=capsule.capsule_id,
                 market_id=view.market_id,
-                registration_completed_bar_at=view.completed_bar_at,
+                registration_completed_bar_at=published_at,
                 first_eligible_completed_bar_at=view.first_eligible_completed_bar_at,
             )
             return DayDiscoveryCycleResult(
@@ -411,7 +533,8 @@ class DayDiscoveryActionExecutor:
         if context.cycle.agent_family_id != "day_trading":
             raise DayDiscoveryError("action_family_identity_mismatch")
         selected = tuple(
-            item for item in context.evidence
+            item
+            for item in context.evidence
             if item.bounded_payload_json is not None
             and set(context.decision.subject_refs).intersection((str(item.evidence_id), *item.subject_refs))
         )
@@ -426,31 +549,34 @@ class DayDiscoveryActionExecutor:
         with heavy_empirical_lease(self.loop.config.pipeline.stores.ledger.path):
             result = self.loop.run(view, self.researcher_context)
         artifacts = tuple(
-            value for value in (
-                result.family_id, result.hypothesis_version_id, result.capsule_id, result.admission_id
-            ) if value is not None
+            value
+            for value in (result.family_id, result.hypothesis_version_id, result.capsule_id, result.admission_id)
+            if value is not None
         )
         no_artifact_terminal = not result.accepted and not artifacts
         return ResearchAgentResultV1(
             result_id=research_agent_result_id(context.cycle.cycle_id),
-            cycle_id=context.cycle.cycle_id, agent_family_id="day_trading",
+            cycle_id=context.cycle.cycle_id,
+            agent_family_id="day_trading",
             market_id=context.cycle.market_id,
             status=(
-                ResearchAgentResultStatus.NO_ACTION
-                if no_artifact_terminal else ResearchAgentResultStatus.COMPLETED
+                ResearchAgentResultStatus.NO_ACTION if no_artifact_terminal else ResearchAgentResultStatus.COMPLETED
             ),
             question=context.decision.question,
             summary=(
                 f"Day Discovery accepted one future-only capsule ({result.capsule_id})."
-                if result.accepted else
-                f"Day Discovery ended terminally after bounded criticism ({result.terminal_reason})."
+                if result.accepted
+                else f"Day Discovery ended terminally after bounded criticism ({result.terminal_reason})."
             ),
-            reason=result.terminal_reason, evidence_refs=context.decision.evidence_refs,
+            reason=result.terminal_reason,
+            evidence_refs=context.decision.evidence_refs,
             continuation=(
                 "Wait for a new market-local evidence trigger or refreshed exploration budget."
-                if no_artifact_terminal else None
+                if no_artifact_terminal
+                else None
             ),
-            artifact_refs=artifacts, occurred_at=context.observed_at,
+            artifact_refs=artifacts,
+            occurred_at=context.observed_at,
             next_wake_kind=context.decision.next_wake_kind,
             next_wake_at=context.decision.next_wake_at,
         )
@@ -461,6 +587,11 @@ def _critic_reason(proposal: ProposedHypothesis, view: DayDiscoveryEvidenceView,
         return "budget_exhausted"
     if len(proposal.strategy_draft.free_parameters) > remaining:
         return "budget_exhausted"
+    if any(
+        not value.strip() or len(value) > 80 or not value.isprintable()
+        for value in proposal.strategy_draft.free_parameters
+    ):
+        return "contract_invalid"
     if _proposal_semantic_hash(proposal) in view.existing_semantic_hashes:
         return "semantic_duplicate"
     try:
@@ -483,14 +614,10 @@ def _critic_reason(proposal: ProposedHypothesis, view: DayDiscoveryEvidenceView,
     return None
 
 
-def _day_critique(
-    proposal: ProposedHypothesis, view: DayDiscoveryEvidenceView, remaining: int
-) -> CritiqueReport:
+def _day_critique(proposal: ProposedHypothesis, view: DayDiscoveryEvidenceView, remaining: int) -> CritiqueReport:
     reason = _critic_reason(proposal, view, remaining)
     return CritiqueReport(
-        () if reason is None else (
-            Objection(ObjectionKind.SOURCE_FIDELITY, Severity.BLOCKING, reason),
-        )
+        () if reason is None else (Objection(ObjectionKind.SOURCE_FIDELITY, Severity.BLOCKING, reason),)
     )
 
 
@@ -499,24 +626,46 @@ def _critique_terminal_reason(critique: CritiqueReport) -> str | None:
     if not blocking:
         return None
     known = {
-        "artifact_publication_failed", "budget_exhausted", "compile_failed", "critic_rejected",
-        "methodology_missing", "point_in_time_leakage", "semantic_duplicate", "unconstructible",
+        "artifact_publication_failed",
+        "budget_exhausted",
+        "compile_failed",
+        "critic_rejected",
+        "contract_invalid",
+        "methodology_missing",
+        "point_in_time_leakage",
+        "semantic_duplicate",
+        "unconstructible",
     }
     return blocking[0].evidence if blocking[0].evidence in known else "critic_rejected"
 
 
 def _record_terminal(
-    ledger: ExperimentLedgerStore, attempt_id: str, branch: int, version: HypothesisVersion,
-    artifact_ref: str, view: DayDiscoveryEvidenceView, reason: str,
+    ledger: ExperimentLedgerStore,
+    attempt_id: str,
+    branch: int,
+    version: HypothesisVersion,
+    artifact_ref: str,
+    view: DayDiscoveryEvidenceView,
+    reason: str,
+    started_at: dt.datetime,
+    finished_at: dt.datetime,
+    bound_at: dt.datetime,
 ) -> None:
     attempt = ResearchAttempt(
-        attempt_id=attempt_id, hypothesis_id=version.hypothesis_version_id, branch_index=branch,
-        input_hashes=(view.data_manifest_sha256,), code_sha256=version.code_sha256,
-        data_manifest_sha256=view.data_manifest_sha256, started_at=view.observed_at,
-        finished_at=view.observed_at + dt.timedelta(seconds=1), status=AttemptStatus.FAILED, artifact_refs=(),
-        error_class=reason, max_cpu_seconds=view.resource_limits.cpu_seconds,
+        attempt_id=attempt_id,
+        hypothesis_id=version.hypothesis_version_id,
+        branch_index=branch,
+        input_hashes=(view.data_manifest_sha256,),
+        code_sha256=version.code_sha256,
+        data_manifest_sha256=view.data_manifest_sha256,
+        started_at=started_at,
+        finished_at=finished_at,
+        status=AttemptStatus.FAILED,
+        artifact_refs=(),
+        error_class=reason,
+        max_cpu_seconds=view.resource_limits.cpu_seconds,
     )
-    binding = _binding(attempt, version, artifact_ref, view.observed_at + dt.timedelta(seconds=2))
+    binding = _binding(attempt, version, artifact_ref, bound_at)
     with ledger.writer() as writer:
         _ = writer.append_strategy_research_attempt(attempt)
         _ = writer.register_day_research_attempt_binding(binding)
@@ -526,9 +675,13 @@ def _binding(
     attempt: ResearchAttempt, version: HypothesisVersion, artifact_ref: str, bound_at: dt.datetime
 ) -> DayResearchAttemptBinding:
     payload = {
-        "binding_id": "", "attempt_id": attempt.attempt_id, "market_id": version.market_id,
-        "hypothesis_version_id": version.hypothesis_version_id, "artifact_ref": artifact_ref,
-        "multiple_testing_family": version.multiple_testing_family, "search_budget_debit": 1,
+        "binding_id": "",
+        "attempt_id": attempt.attempt_id,
+        "market_id": version.market_id,
+        "hypothesis_version_id": version.hypothesis_version_id,
+        "artifact_ref": artifact_ref,
+        "multiple_testing_family": version.multiple_testing_family,
+        "search_budget_debit": 1,
         "bound_at": bound_at,
     }
     return DayResearchAttemptBinding.model_validate(
@@ -537,23 +690,37 @@ def _binding(
 
 
 def _capsule_request(
-    version: HypothesisVersion, binding: DayResearchAttemptBinding, artifact_id: str,
-    view: DayDiscoveryEvidenceView, artifact_store: GeneratedStrategyArtifactStore,
+    version: HypothesisVersion,
+    binding: DayResearchAttemptBinding,
+    artifact_id: str,
+    view: DayDiscoveryEvidenceView,
+    artifact_store: GeneratedStrategyArtifactStore,
     sandbox: GeneratedStrategySandbox,
+    published_at: dt.datetime,
 ) -> DayStrategyCapsuleRequest:
     limits = CapsuleResourceLimits(**asdict(view.resource_limits))
     return DayStrategyCapsuleRequest(
-        hypothesis_version_id=version.hypothesis_version_id, attempt_binding_id=binding.binding_id,
-        market_id=view.market_id, artifact_kind=CapsuleArtifactKind.GENERATED_PYTHON,
+        hypothesis_version_id=version.hypothesis_version_id,
+        attempt_binding_id=binding.binding_id,
+        market_id=view.market_id,
+        artifact_kind=CapsuleArtifactKind.GENERATED_PYTHON,
         artifact_ref=preregistered_attempted_artifact_ref(version.code_sha256),
-        artifact_sha256=version.code_sha256, generated_artifact_id=artifact_id,
-        evaluation_cadence=version.evaluation_cadence, evidence_schema=view.evidence_schema,
-        entry_rule=version.entry_rule, exit_rule=version.exit_rule, stop_rule=version.stop_rule,
-        target_rule="host_projects_preregistered_targets", cost_model=version.cost_model,
-        slippage_model_id="bounded_intraday_slippage_v1", resource_limits=limits,
-        risk_policy_ref="risk-policy://day-research/v1", protocol_version=1,
-        protocol_sha256=generated_protocol_bundle_sha256(), evaluator_sha256=generated_evaluator_bundle_sha256(),
-        published_at=view.observed_at + dt.timedelta(seconds=3),
+        artifact_sha256=version.code_sha256,
+        generated_artifact_id=artifact_id,
+        evaluation_cadence=version.evaluation_cadence,
+        evidence_schema=view.evidence_schema,
+        entry_rule=version.entry_rule,
+        exit_rule=version.exit_rule,
+        stop_rule=version.stop_rule,
+        target_rule="host_projects_preregistered_targets",
+        cost_model=version.cost_model,
+        slippage_model_id="bounded_intraday_slippage_v1",
+        resource_limits=limits,
+        risk_policy_ref="risk-policy://day-research/v1",
+        protocol_version=1,
+        protocol_sha256=generated_protocol_bundle_sha256(),
+        evaluator_sha256=generated_evaluator_bundle_sha256(),
+        published_at=published_at,
         authority_ceiling=CapsuleAuthorityCeiling.RESEARCH_ONLY,
         generated_verification=GeneratedCapsuleVerification(artifact_store, sandbox, view.replay_bars),
     )
@@ -577,10 +744,87 @@ def _canonical(payload: dict[str, str]) -> str:
     return json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
 
 
+def _canonical_view(view: DayDiscoveryEvidenceView) -> str:
+    return json.dumps(
+        view.model_dump(mode="json"),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _read_cycle_receipt(
+    path: Path,
+    cycle_id: str,
+    evidence_sha256: str,
+) -> DayDiscoveryCycleResult | None:
+    if not path.exists() and not path.is_symlink():
+        return None
+    try:
+        raw = read_private_text(path)
+        receipt = DayDiscoveryCycleReceipt.model_validate_json(raw)
+    except (InvalidPrivateImmutableFileError, ValueError):
+        raise DayDiscoveryError("cycle_receipt_invalid") from None
+    canonical = json.dumps(
+        receipt.model_dump(mode="json"),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    if raw != canonical:
+        raise DayDiscoveryError("cycle_receipt_noncanonical")
+    if receipt.cycle_id != cycle_id:
+        raise DayDiscoveryError("cycle_receipt_identity_conflict")
+    if receipt.evidence_sha256 != evidence_sha256:
+        raise DayDiscoveryError("cycle_evidence_identity_conflict")
+    return receipt.result
+
+
+@contextmanager
+def _cycle_receipt_lease(root: Path, cycle_id: str) -> Iterator[None]:
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    root.chmod(0o700)
+    lock_path = root / f".{cycle_id}.lock"
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_nlink != 1:
+            raise DayDiscoveryError("cycle_receipt_lock_invalid")
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    except OSError:
+        raise DayDiscoveryError("cycle_receipt_lock_invalid") from None
+    finally:
+        os.close(descriptor)
+
+
+def _bounded_prompt_view(view: DayDiscoveryEvidenceView, remaining: int) -> str:
+    payload = view.model_dump(mode="json")
+    payload["remaining_budget"] = remaining
+    return json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+
+
+def _safe_reason_token(value: str | None) -> str | None:
+    forbidden = ("account", "api_key", "credential", "provider", "secret", "token")
+    if value is not None and (
+        not 1 <= len(value) <= 80
+        or any(not (character.islower() or character.isdigit() or character == "_") for character in value)
+        or any(term in value for term in forbidden)
+    ):
+        raise DayDiscoveryError("feedback_reason_invalid")
+    return value
+
+
 def _require_aware_utc(value: dt.datetime, reason: str) -> dt.datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise DayDiscoveryError(reason)
     return value.astimezone(dt.UTC)
+
+
+def _cycle_time(clock: Callable[[], dt.datetime] | None, floor: dt.datetime) -> dt.datetime:
+    current = floor if clock is None else _require_aware_utc(clock(), "cycle_clock_naive")
+    return max(current, floor + dt.timedelta(microseconds=1))
 
 
 def _sha(value: str) -> str:

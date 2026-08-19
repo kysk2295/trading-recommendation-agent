@@ -287,6 +287,14 @@ def _prompt(context: ResearcherContext) -> str:
             for source in context.sources
         ),
     }
+    if context.bounded_day_discovery_json is not None:
+        try:
+            bounded = json.loads(context.bounded_day_discovery_json)
+        except (TypeError, ValueError):
+            raise ResearcherLlmError from None
+        if not isinstance(bounded, dict) or len(context.bounded_day_discovery_json.encode()) > 48 * 1024:
+            raise ResearcherLlmError
+        payload["day_discovery"] = bounded
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 

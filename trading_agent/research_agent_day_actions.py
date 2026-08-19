@@ -10,6 +10,7 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from trading_agent.day_discovery_loop import DayDiscoveryError
 from trading_agent.research_agent_actions import (
     InvalidResearchAgentActionError,
     ResearchAgentActionClient,
@@ -78,7 +79,12 @@ class DayResearchActionExecutor:
         if decision is ResearchAgentDecisionKind.PROPOSE_HYPOTHESIS:
             if self.discovery is None:
                 raise InvalidResearchAgentActionError(reason="action_not_configured")
-            return self.discovery.execute(context)
+            try:
+                return self.discovery.execute(context)
+            except DayDiscoveryError as error:
+                raise InvalidResearchAgentActionError(reason=error.reason) from None
+            except ValidationError:
+                raise InvalidResearchAgentActionError(reason="day_discovery_input_invalid") from None
         if decision not in {
             ResearchAgentDecisionKind.PUBLISH_RECOMMENDATION,
             ResearchAgentDecisionKind.REVIEW_OPEN_STATE,
@@ -168,7 +174,8 @@ def _signal_matches(recommendation: DayRecommendationArtifact, signal: TradeSign
         and signal.observed_at == recommendation.created_at
         and signal.entry_price == Decimal(str(recommendation.entry))
         and signal.stop_price == Decimal(str(recommendation.stop))
-        and targets == {
+        and targets
+        == {
             "1r": Decimal(str(recommendation.target_1r)),
             "2r": Decimal(str(recommendation.target_2r)),
         }

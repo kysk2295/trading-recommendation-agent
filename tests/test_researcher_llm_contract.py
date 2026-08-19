@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from trading_agent import researcher_llm
 from trading_agent.lane_identity_models import LaneId
 from trading_agent.researcher_agent import FailureDigest, ResearcherContext
@@ -70,3 +72,51 @@ def test_researcher_prompt_requires_executable_strategy_source_protocol() -> Non
         "rationale",
     ]
     assert contract["observe_return"]["no_signal"] is None
+
+
+@pytest.mark.parametrize(
+    "trigger",
+    (
+        "completed_bar",
+        "point_in_time_evidence",
+        "terminal_event",
+        "review_close",
+        "exploration_due",
+    ),
+)
+def test_day_prompt_contains_bounded_trigger_specific_view_and_feedback(trigger: str) -> None:
+    bounded = json.dumps(
+        {
+            "trigger_kind": trigger,
+            "completed_bar_at": "2026-08-20T14:00:00Z",
+            "source_refs": ["evidence:bounded"],
+            "remaining_budget": 2,
+            "previous_failure": "sandbox_failed" if trigger == "terminal_event" else None,
+            "feedback": {
+                "outcome_class": "inconclusive",
+                "bounded_metrics": {"signal_count": 2},
+                "remaining_budget": 2,
+            },
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    context = ResearcherContext(
+        lane_id=LaneId.INTRADAY_MOMENTUM,
+        sources=(),
+        failure_digest=FailureDigest((), (), ()),
+        regime_context="regular_session_high_liquidity",
+        existing_hypothesis_texts=(),
+        bounded_day_discovery_json=bounded,
+    )
+
+    prompt = researcher_llm._prompt(context)
+    payload = json.loads(prompt)
+    encoded = json.dumps(payload)
+
+    assert payload["day_discovery"]["trigger_kind"] == trigger
+    assert payload["day_discovery"]["remaining_budget"] == 2
+    assert all(
+        term not in encoded
+        for term in ("exact_holdout", "symbol_contribution", "account_id", "provider", "api_key")
+    )

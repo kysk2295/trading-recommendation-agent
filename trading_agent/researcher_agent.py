@@ -23,6 +23,7 @@ class ResearcherContext:
     failure_digest: FailureDigest
     regime_context: str
     existing_hypothesis_texts: tuple[str, ...]
+    bounded_day_discovery_json: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

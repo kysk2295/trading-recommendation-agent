@@ -49,7 +49,9 @@ from trading_agent.research_agent_operations_sqlite import (
 )
 
 StoreKind = Literal["cycle", "receipt", "runs"]
-_TABLES = frozenset({"evidence", "cycles", "cycle_events", "results", "cursors", "open_work"})
+_TABLES = frozenset(
+    {"evidence", "cycles", "cycle_events", "results", "cursors", "day_cursors", "open_work"}
+)
 _MAX_ENTRIES = 10_000
 
 

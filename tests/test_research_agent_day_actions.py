@@ -8,6 +8,7 @@ from typing import cast
 import pytest
 
 from trading_agent.contract_outbox import append_trade_signal_publication
+from trading_agent.day_discovery_loop import DayDiscoveryError
 from trading_agent.models import Recommendation, RecommendationState
 from trading_agent.recommendation_signal_projection import project_intraday_recommendation
 from trading_agent.research_agent_actions import InvalidResearchAgentActionError, ResearchAgentActionContext
@@ -20,6 +21,7 @@ from trading_agent.research_agent_cycle_models import (
     ResearchAgentDecisionKind,
     ResearchAgentDecisionV1,
     ResearchAgentResultStatus,
+    ResearchAgentResultV1,
     ResearchAgentTriggerKind,
     ResearchAgentWakeKind,
 )
@@ -84,6 +86,18 @@ def test_review_open_state_returns_latest_immutable_event_artifact(tmp_path: Pat
     assert context.evidence[0].payload_sha256 in result.artifact_refs
 
 
+def test_discovery_failure_is_translated_to_typed_action_failure(tmp_path: Path) -> None:
+    class FailingDiscovery:
+        def execute(self, context: ResearchAgentActionContext) -> ResearchAgentResultV1:
+            del context
+            raise DayDiscoveryError("cycle_receipt_invalid")
+
+    context = _context(_evidence(None), ResearchAgentDecisionKind.PROPOSE_HYPOTHESIS)
+
+    with pytest.raises(InvalidResearchAgentActionError, match="cycle_receipt_invalid"):
+        DayResearchActionExecutor(tmp_path, FailingDiscovery()).execute(context)
+
+
 def _recommendation(*, state: str = "setup") -> dict[str, object]:
     return {
         "created_at": (NOW - dt.timedelta(minutes=1)).isoformat(),
@@ -128,9 +142,7 @@ def _evidence(recommendation: dict[str, object] | None):
             {"last_close": 9.9, "processed_at": (NOW - dt.timedelta(minutes=1)).isoformat(), "symbol": "ACME"}
         ],
         "database_sha256": "a" * 64,
-        "event_count": 0
-        if recommendation is None
-        else len(cast(list[dict[str, object]], recommendation["events"])),
+        "event_count": 0 if recommendation is None else len(cast(list[dict[str, object]], recommendation["events"])),
         "latest_checkpoint_at": (NOW - dt.timedelta(minutes=1)).isoformat(),
         "latest_risk_at": (NOW - dt.timedelta(minutes=1)).isoformat(),
         "recommendation_count": 0 if recommendation is None else 1,

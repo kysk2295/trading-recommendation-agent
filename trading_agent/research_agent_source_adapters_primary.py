@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import json
 import sqlite3
 from pathlib import Path
-from typing import Protocol, assert_never, final
+from typing import Literal, Protocol, assert_never, final
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
@@ -180,59 +181,76 @@ class DaySourceAdapter:
         sessions = _latest_session_directories(paths.day_session_root)
         if not sessions:
             return _blocked_day(session_failure or "source_pair_unavailable", now)
-        discovery = _latest_session_artifact(
-            paths.day_session_root, "day-discovery-evidence.v1.json"
-        )
-        if discovery is not None:
-            return (_day_discovery_evidence(discovery, now),)
-        session = next(
-            (
-                candidate
-                for candidate in reversed(sessions)
-                if (candidate / "paper_recommendations.sqlite3").exists()
-                and (candidate / "market_risk_screen.csv").exists()
-            ),
-            sessions[-1],
-        )
-        database = session / "paper_recommendations.sqlite3"
-        risk_screen = session / "market_risk_screen.csv"
-        if not database.exists() or not risk_screen.exists():
-            return _blocked_day("source_pair_unavailable", now)
-        try:
-            require_private_source_file(database)
-            require_private_source_file(risk_screen)
-            admission = day_source_admission(database, risk_screen, now)
-            archived = archived_day_admission(database, risk_screen, now)
-        except (InvalidResearchAgentSourceError, OSError, sqlite3.Error, TypeError, ValueError):
-            raise InvalidResearchAgentSourceError(reason="day_source_invalid") from None
-        match admission:
-            case PrimaryAdmissionFailure() as failure:
+        discoveries_by_market: dict[str, ResearchAgentEvidenceV1] = {}
+        for artifact in _day_discovery_artifacts(paths.day_session_root, now):
+            try:
+                evidence = _day_discovery_evidence(artifact, now)
+            except InvalidResearchAgentSourceError as error:
+                market_id = _day_discovery_artifact_market(artifact)
+                evidence = _blocked_day(error.reason, now, market_id)[0]
+            if evidence is not None:
+                discoveries_by_market[evidence.market_id] = evidence
+        discoveries = tuple(discoveries_by_market[key] for key in sorted(discoveries_by_market))
+        recommendation = _day_recommendation_evidence(paths, sessions, session_failure, now)
+        if discoveries and recommendation[0].source_key.startswith("day.blocked."):
+            return discoveries
+        return (*discoveries, *recommendation)
+
+
+def _day_recommendation_evidence(
+    paths: PrimarySourcePaths,
+    sessions: tuple[Path, ...],
+    session_failure: PrimaryAdmissionFailure | None,
+    now: dt.datetime,
+) -> tuple[ResearchAgentEvidenceV1, ...]:
+    session = next(
+        (
+            candidate
+            for candidate in reversed(sessions)
+            if (candidate / "paper_recommendations.sqlite3").exists()
+            and (candidate / "market_risk_screen.csv").exists()
+        ),
+        sessions[-1],
+    )
+    database = session / "paper_recommendations.sqlite3"
+    risk_screen = session / "market_risk_screen.csv"
+    if not database.exists() or not risk_screen.exists():
+        return _blocked_day("source_pair_unavailable", now)
+    try:
+        require_private_source_file(database)
+        require_private_source_file(risk_screen)
+        admission = day_source_admission(database, risk_screen, now)
+        archived = archived_day_admission(database, risk_screen, now)
+    except (InvalidResearchAgentSourceError, OSError, sqlite3.Error, TypeError, ValueError):
+        raise InvalidResearchAgentSourceError(reason="day_source_invalid") from None
+    match admission:
+        case PrimaryAdmissionFailure() as failure:
+            if archived is not None:
+                return (archived_day_evidence(archived, session.name),)
+            return _blocked_day(failure, now)
+        case DaySourceAdmission() as admitted:
+            if session_failure is not None or not _session_is_current(
+                session,
+                now,
+                MarketId.US_EQUITIES,
+            ):
                 if archived is not None:
                     return (archived_day_evidence(archived, session.name),)
-                return _blocked_day(failure, now)
-            case DaySourceAdmission() as admitted:
-                if session_failure is not None or not _session_is_current(
-                    session,
-                    now,
-                    MarketId.US_EQUITIES,
-                ):
-                    if archived is not None:
-                        return (archived_day_evidence(archived, session.name),)
-                    return _blocked_day(session_failure or PrimaryAdmissionFailure.PRIOR_DATE, now)
-                evidence = ResearchAgentEvidenceMaterial(
-                    family="day_trading",
-                    trigger=ResearchAgentTriggerKind.NEW_DATA,
-                    source_key=f"day.session.{session.name}",
-                    observed_at=admitted.observed_at,
-                    available_at=admitted.observed_at,
-                    market_id="us_equities",
-                    canonical_payload=admitted.canonical_payload,
-                    subject_refs=(f"day.session.{session.name}", *admitted.subject_refs),
-                ).evidence()
-                references = tuple(sorted((evidence.payload_sha256, *admitted.provenance_sha256)))
-                return (evidence.model_copy(update={"evidence_refs": references}),)
-            case unreachable:
-                assert_never(unreachable)
+                return _blocked_day(session_failure or PrimaryAdmissionFailure.PRIOR_DATE, now)
+            evidence = ResearchAgentEvidenceMaterial(
+                family="day_trading",
+                trigger=ResearchAgentTriggerKind.NEW_DATA,
+                source_key=f"day.session.{session.name}",
+                observed_at=admitted.observed_at,
+                available_at=admitted.observed_at,
+                market_id="us_equities",
+                canonical_payload=admitted.canonical_payload,
+                subject_refs=(f"day.session.{session.name}", *admitted.subject_refs),
+            ).evidence()
+            references = tuple(sorted((evidence.payload_sha256, *admitted.provenance_sha256)))
+            return (evidence.model_copy(update={"evidence_refs": references}),)
+        case unreachable:
+            assert_never(unreachable)
 
 
 def _latest_session_directories(root: Path) -> tuple[Path, ...]:
@@ -252,16 +270,44 @@ def _latest_session_artifact(root: Path, name: str) -> Path | None:
     return None if not artifacts else artifacts[-1]
 
 
-def _day_discovery_evidence(path: Path, now: dt.datetime) -> ResearchAgentEvidenceV1:
+def _day_discovery_artifacts(root: Path, now: dt.datetime) -> tuple[Path, ...]:
+    names = (
+        "day-discovery-evidence.v1.json",
+        "day-discovery-evidence.kr_equities.v1.json",
+        "day-discovery-evidence.us_equities.v1.json",
+    )
+    current_sessions = {
+        now.astimezone(KST).strftime("%Y%m%d"),
+        now.astimezone(NEW_YORK).strftime("%Y%m%d"),
+    }
+    return tuple(
+        artifact
+        for session in _latest_session_directories(root)
+        if session.name in current_sessions
+        for name in names
+        if (artifact := session / name).exists()
+    )
+
+
+def _day_discovery_evidence(path: Path, now: dt.datetime) -> ResearchAgentEvidenceV1 | None:
     try:
         require_private_source_file(path)
         raw = path.read_text(encoding="utf-8")
         view = DayDiscoveryEvidenceView.model_validate_json(raw)
+        if raw != canonical_model_json(view):
+            raise InvalidResearchAgentSourceError(reason="day_discovery_source_noncanonical")
+        if view.observed_at > now:
+            return None
         if not _session_is_current(path.parent, now, view.market_id):
             raise InvalidResearchAgentSourceError(reason="day_discovery_source_not_current")
+        feedback_path = path.with_name(path.name.replace("evidence", "feedback"))
+        if feedback_path.exists():
+            require_private_source_file(feedback_path)
+            feedback = json.loads(feedback_path.read_text(encoding="utf-8"))
+            if not isinstance(feedback, dict):
+                raise InvalidResearchAgentSourceError(reason="day_discovery_feedback_invalid")
+            view = view.model_copy(update={"feedback": sanitize_day_discovery_feedback(feedback)})
         payload = canonical_model_json(view)
-        if raw != payload:
-            raise InvalidResearchAgentSourceError(reason="day_discovery_source_noncanonical")
         payload_sha256 = hashlib.sha256(payload.encode()).hexdigest()
         trigger = {
             DayDiscoveryTriggerKind.COMPLETED_BAR: ResearchAgentTriggerKind.NEW_DATA,
@@ -276,7 +322,7 @@ def _day_discovery_evidence(path: Path, now: dt.datetime) -> ResearchAgentEviden
             trigger=trigger,
             source_key=source_key,
             observed_at=view.observed_at,
-            available_at=max(view.observed_at, now),
+            available_at=view.observed_at,
             market_id=view.market_id.value,
             canonical_payload=payload,
             subject_refs=(source_key,),
@@ -340,15 +386,24 @@ def _blocked_market_context(
 def _blocked_day(
     reason: PrimaryAdmissionFailure | str,
     now: dt.datetime,
+    market_id: Literal["us_equities", "kr_equities"] = "us_equities",
 ) -> tuple[ResearchAgentEvidenceV1, ...]:
     return _blocked(
         CapabilityEvidenceSpec(
             family="day_trading",
             source_key=f"day.blocked.{reason}",
-            market_id="us_equities",
+            market_id=market_id,
         ),
         now,
     )
+
+
+def _day_discovery_artifact_market(
+    path: Path,
+) -> Literal["us_equities", "kr_equities"]:
+    if ".kr_equities." in path.name:
+        return "kr_equities"
+    return "us_equities"
 
 
 def _blocked(

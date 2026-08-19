@@ -99,6 +99,19 @@ class ResearchAgentCycleStore:
         family: AgentFamilyId,
         now: dt.datetime,
     ) -> tuple[StoredResearchAgentEvidence, ...]:
+        if family == "day_trading":
+            with self._database.reader() as connection:
+                rows = connection.execute(
+                    """SELECT sequence,evidence_id,agent_family_id,payload_json FROM evidence
+                    WHERE agent_family_id=? AND available_at<=? ORDER BY sequence""",
+                    (family, now.astimezone(dt.UTC).isoformat()),
+                ).fetchall()
+            stored = tuple(stored_evidence(row) for row in rows)
+            return tuple(
+                item
+                for item in stored
+                if item.sequence > self.day_cursor(item.evidence.market_id)
+            )
         with self._database.reader() as connection:
             rows = connection.execute(
                 """SELECT sequence,evidence_id,agent_family_id,payload_json FROM evidence
@@ -110,7 +123,11 @@ class ResearchAgentCycleStore:
         return tuple(stored_evidence(row) for row in rows)
 
     def start_cycle(self, stored: StoredResearchAgentEvidence, started_at: dt.datetime) -> ResearchAgentCycleV1:
-        cursor_before = self.cursor(stored.evidence.agent_family_id)
+        cursor_before = (
+            self.day_cursor(stored.evidence.market_id)
+            if stored.evidence.agent_family_id == "day_trading"
+            else self.cursor(stored.evidence.agent_family_id)
+        )
         if stored.sequence <= cursor_before:
             raise InvalidResearchAgentCycleStoreError(reason="evidence_already_consumed")
         cycle_id = research_agent_cycle_id(stored.evidence, cursor_before=cursor_before)
@@ -187,10 +204,27 @@ class ResearchAgentCycleStore:
         return tuple(recovered)
 
     def cursor(self, family: AgentFamilyId) -> int:
+        if family == "day_trading":
+            return max(
+                self.day_cursor("us_equities"),
+                self.day_cursor("kr_equities"),
+                self.day_cursor("cross_market"),
+                self.day_cursor("none"),
+            )
         with self._database.reader() as connection:
             row = connection.execute(
                 "SELECT evidence_sequence FROM cursors WHERE agent_family_id=?",
                 (family,),
+            ).fetchone()
+        return 0 if row is None else int(row[0])
+
+    def day_cursor(self, market_id: str) -> int:
+        if market_id not in {"us_equities", "kr_equities", "cross_market", "none"}:
+            raise InvalidResearchAgentCycleStoreError(reason="day_cursor_market_invalid")
+        with self._database.reader() as connection:
+            row = connection.execute(
+                "SELECT evidence_sequence FROM day_cursors WHERE agent_family_id=? AND market_id=?",
+                ("day_trading", market_id),
             ).fetchone()
         return 0 if row is None else int(row[0])
 
@@ -273,12 +307,20 @@ class ResearchAgentCycleStore:
             )
             update_cycle(connection, terminal)
             append_cycle_event(connection, terminal, result.occurred_at)
-            _ = connection.execute(
-                """INSERT INTO cursors(agent_family_id,evidence_sequence) VALUES(?,?)
-                ON CONFLICT(agent_family_id) DO UPDATE
-                SET evidence_sequence=MAX(evidence_sequence,excluded.evidence_sequence)""",
-                (cycle.agent_family_id, cycle.evidence_sequence),
-            )
+            if cycle.agent_family_id == "day_trading":
+                _ = connection.execute(
+                    """INSERT INTO day_cursors(agent_family_id,market_id,evidence_sequence)
+                    VALUES(?,?,?) ON CONFLICT(agent_family_id,market_id) DO UPDATE
+                    SET evidence_sequence=MAX(evidence_sequence,excluded.evidence_sequence)""",
+                    (cycle.agent_family_id, cycle.market_id, cycle.evidence_sequence),
+                )
+            else:
+                _ = connection.execute(
+                    """INSERT INTO cursors(agent_family_id,evidence_sequence) VALUES(?,?)
+                    ON CONFLICT(agent_family_id) DO UPDATE
+                    SET evidence_sequence=MAX(evidence_sequence,excluded.evidence_sequence)""",
+                    (cycle.agent_family_id, cycle.evidence_sequence),
+                )
             connection.commit()
 
 

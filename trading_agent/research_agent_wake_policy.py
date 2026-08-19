@@ -31,6 +31,7 @@ class ActorWakeState:
     cooldown_until: dt.datetime | None
     consecutive_failures: int
     last_failed_evidence_id: EvidenceId | None
+    market_id: str = "none"
 
 
 @unique
@@ -97,39 +98,43 @@ def runnable_actors(
     apply_debounce: bool = True,
 ) -> tuple[RunnableResearchActor, ...]:
     policies = {policy.family_id: policy for policy in ACTOR_WAKE_POLICIES}
-    state_by_family = {state.agent_family_id: state for state in states}
-    latest_evidence: dict[AgentFamilyId, StoredResearchAgentEvidence] = {}
+    state_by_actor = {_actor_key(state.agent_family_id, state.market_id): state for state in states}
+    latest_evidence: dict[tuple[AgentFamilyId, str], StoredResearchAgentEvidence] = {}
     for stored in evidence:
         policy = policies[stored.evidence.agent_family_id]
         if not apply_debounce or stored.evidence.available_at + policy.debounce <= now:
-            current = latest_evidence.get(stored.evidence.agent_family_id)
+            key = _actor_key(stored.evidence.agent_family_id, stored.evidence.market_id)
+            current = latest_evidence.get(key)
             if current is None or stored.sequence > current.sequence:
-                latest_evidence[stored.evidence.agent_family_id] = stored
-    due_work: dict[AgentFamilyId, ResearchAgentOpenWorkV1] = {}
+                latest_evidence[key] = stored
+    due_work: dict[tuple[AgentFamilyId, str], ResearchAgentOpenWorkV1] = {}
     for item in open_work:
-        if (
-            item.state is ResearchAgentOpenWorkState.OPEN
-            and item.next_wake_at is not None
-            and item.next_wake_at <= now
-        ):
-            current = due_work.get(item.agent_family_id)
+        if item.state is ResearchAgentOpenWorkState.OPEN and item.next_wake_at is not None and item.next_wake_at <= now:
+            key = _actor_key(item.agent_family_id, _work_market(item))
+            current = due_work.get(key)
             if current is None or current.next_wake_at is None or item.next_wake_at < current.next_wake_at:
-                due_work[item.agent_family_id] = item
+                due_work[key] = item
     candidates: list[RunnableResearchActor] = []
     for policy in ACTOR_WAKE_POLICIES:
-        state = state_by_family.get(policy.family_id)
-        item = due_work.get(policy.family_id)
-        stored = latest_evidence.get(policy.family_id)
-        if (
-            state is not None
-            and state.cooldown_until is not None
-            and state.cooldown_until > now
-            and (stored is None or stored.evidence.evidence_id == state.last_failed_evidence_id)
-        ):
-            continue
-        candidate = _candidate_for_actor(ActorWakeEvaluation(policy, state, stored, item, now))
-        if candidate is not None:
-            candidates.append(candidate)
+        keys = (
+            tuple(sorted(key for key in {*state_by_actor, *latest_evidence, *due_work} if key[0] == "day_trading"))
+            if policy.family_id == "day_trading"
+            else ((_actor_key(policy.family_id, "none")),)
+        )
+        for key in keys:
+            state = state_by_actor.get(key)
+            item = due_work.get(key)
+            stored = latest_evidence.get(key)
+            if (
+                state is not None
+                and state.cooldown_until is not None
+                and state.cooldown_until > now
+                and (stored is None or stored.evidence.evidence_id == state.last_failed_evidence_id)
+            ):
+                continue
+            candidate = _candidate_for_actor(ActorWakeEvaluation(policy, state, stored, item, now))
+            if candidate is not None:
+                candidates.append(candidate)
     policy_order = {policy.family_id: index for index, policy in enumerate(ACTOR_WAKE_POLICIES)}
     oldest = dt.datetime.min.replace(tzinfo=dt.UTC)
     return tuple(
@@ -137,7 +142,19 @@ def runnable_actors(
             candidates,
             key=lambda item: (
                 item.priority,
-                (state_by_family.get(item.agent_family_id) or _empty_state(item.agent_family_id)).last_terminal_at
+                (
+                    state_by_actor.get(
+                        _actor_key(
+                            item.agent_family_id,
+                            (
+                                item.evidence.evidence.market_id
+                                if item.evidence is not None
+                                else _work_market(item.open_work)
+                            ),
+                        )
+                    )
+                    or _empty_state(item.agent_family_id)
+                ).last_terminal_at
                 or oldest,
                 policy_order[item.agent_family_id],
             ),
@@ -247,6 +264,19 @@ def _scheduled_due(policy: ActorWakePolicy, state: ActorWakeState | None, now: d
 
 def _empty_state(family: AgentFamilyId) -> ActorWakeState:
     return ActorWakeState(family, None, None, 0, None)
+
+
+def _actor_key(family: AgentFamilyId, market_id: str) -> tuple[AgentFamilyId, str]:
+    return family, market_id if family == "day_trading" else "none"
+
+
+def _work_market(item: ResearchAgentOpenWorkV1 | None) -> str:
+    if item is None or item.agent_family_id != "day_trading":
+        return "none"
+    prefix = "actor-state.day_trading."
+    if item.work_id == "actor-state.day_trading":
+        return "us_equities"
+    return item.work_id.removeprefix(prefix) if item.work_id.startswith(prefix) else "none"
 
 
 __all__ = (

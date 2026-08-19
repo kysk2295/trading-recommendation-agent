@@ -44,7 +44,9 @@ from trading_agent.research_agent_sources import (
 NOW = dt.datetime(2026, 8, 2, 12, 0, tzinfo=dt.UTC)
 
 
-def _evidence(family: AgentFamilyId, sequence: int) -> ResearchAgentEvidenceV1:
+def _evidence(
+    family: AgentFamilyId, sequence: int, market_id: str = "none"
+) -> ResearchAgentEvidenceV1:
     payload = f'{{"sequence":{sequence}}}'
     digest = hashlib.sha256(payload.encode()).hexdigest()
     identity = hashlib.sha256(f"{family}:{sequence}".encode()).hexdigest()
@@ -58,7 +60,7 @@ def _evidence(family: AgentFamilyId, sequence: int) -> ResearchAgentEvidenceV1:
         observed_at=NOW,
         available_at=NOW,
         payload_sha256=digest,
-        market_id="none",
+        market_id=market_id,
         bounded_payload_json=payload,
         subject_refs=(source_key,),
     )
@@ -129,6 +131,31 @@ class RecordingArtifactActionClient:
             continuation=None,
             evidence_refs=context.decision.evidence_refs,
             artifact_refs=(context.evidence[0].payload_sha256,),
+            occurred_at=context.observed_at,
+            next_wake_kind=context.decision.next_wake_kind,
+            next_wake_at=context.decision.next_wake_at,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MarketIsolatedDayActionClient:
+    contexts: list[ResearchAgentActionContext]
+
+    def execute(self, context: ResearchAgentActionContext) -> ResearchAgentResultV1:
+        self.contexts.append(context)
+        failed = context.cycle.market_id == "us_equities"
+        return ResearchAgentResultV1(
+            result_id=research_agent_result_id(context.cycle.cycle_id),
+            cycle_id=context.cycle.cycle_id,
+            agent_family_id=context.cycle.agent_family_id,
+            market_id=context.cycle.market_id,
+            status=(ResearchAgentResultStatus.FAILED if failed else ResearchAgentResultStatus.COMPLETED),
+            question=context.decision.question,
+            summary="A market-local Day action completed without cross-market state leakage.",
+            reason="us_fixture_failure" if failed else None,
+            continuation="Retry only the failed US market evidence." if failed else None,
+            evidence_refs=context.decision.evidence_refs,
+            artifact_refs=() if failed else (context.evidence[0].payload_sha256,),
             occurred_at=context.observed_at,
             next_wake_kind=context.decision.next_wake_kind,
             next_wake_at=context.decision.next_wake_at,
@@ -284,6 +311,35 @@ def test_source_failure_is_isolated_and_never_calls_the_model(tmp_path: Path) ->
     assert result.model_calls == 0
     assert stored[0].reason == "market_context_source_invalid"
     assert calls == []
+
+
+def test_us_day_failure_backoff_and_open_work_do_not_block_or_leak_into_kr(
+    tmp_path: Path,
+) -> None:
+    contexts: list[ResearchAgentActionContext] = []
+    runtime = _runtime(
+        tmp_path / "cycles.sqlite3",
+        EMPTY_COLLECTOR,
+        [],
+        MarketIsolatedDayActionClient(contexts),
+    )
+    runtime.ingest((_evidence("day_trading", 1, "us_equities"),))
+    us = runtime.tick(NOW + dt.timedelta(minutes=1))
+    runtime.ingest((_evidence("day_trading", 2, "kr_equities"),))
+    kr = runtime.tick(NOW + dt.timedelta(minutes=2))
+    work = runtime.store.open_work("day_trading")
+    runtime.close()
+
+    assert (us.status, kr.status) == ("failed", "completed")
+    assert tuple(context.cycle.market_id for context in contexts) == (
+        "us_equities",
+        "kr_equities",
+    )
+    assert contexts[1].open_work == ()
+    assert {(item.work_id, item.state.value) for item in work} == {
+        ("actor-state.day_trading.us_equities", "open"),
+        ("actor-state.day_trading.kr_equities", "terminal"),
+    }
 
 
 @pytest.mark.parametrize(

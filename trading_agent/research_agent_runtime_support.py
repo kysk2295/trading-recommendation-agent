@@ -81,6 +81,7 @@ def scheduled_evidence(family: AgentFamilyId, now: dt.datetime, minutes: int) ->
 
 
 def retry_evidence(item: ResearchAgentOpenWorkV1, now: dt.datetime) -> ResearchAgentEvidenceV1:
+    market_id = _work_market(item)
     payload = canonical_payload_json(
         {
             "failure_count": item.failure_count,
@@ -95,7 +96,7 @@ def retry_evidence(item: ResearchAgentOpenWorkV1, now: dt.datetime) -> ResearchA
         source_key=f"retry.{item.agent_family_id}.{item.failure_count}",
         observed_at=now,
         available_at=now,
-        market_id="none",
+        market_id=market_id,
         canonical_payload=payload,
         subject_refs=(item.work_id,),
     ).evidence()
@@ -206,10 +207,21 @@ def actor_wake_states(
     cycles: tuple[ResearchAgentCycleV1, ...],
     open_work: tuple[ResearchAgentOpenWorkV1, ...],
 ) -> tuple[ActorWakeState, ...]:
-    cycle_by_family = {cycle.agent_family_id: cycle for cycle in cycles}
-    state_work = {item.agent_family_id: item for item in open_work if item.work_id.startswith("actor-state.")}
+    cycle_by_actor = {_actor_key(cycle.agent_family_id, cycle.market_id): cycle for cycle in cycles}
+    state_work = {
+        _actor_key(item.agent_family_id, _work_market(item)): item
+        for item in open_work
+        if item.work_id.startswith("actor-state.")
+    }
+    actors = tuple(
+        sorted(
+            {*cycle_by_actor, *state_work},
+            key=lambda item: (PRIMARY_AGENT_FAMILIES.index(item[0]), item[1]),
+        )
+    )
     return tuple(
-        _actor_state(family, cycle_by_family.get(family), state_work.get(family)) for family in PRIMARY_AGENT_FAMILIES
+        _actor_state(family, market, cycle_by_actor.get((family, market)), state_work.get((family, market)))
+        for family, market in actors
     )
 
 
@@ -230,7 +242,7 @@ def actor_state_work(context: ActorStateContext) -> ResearchAgentOpenWorkV1:
         else ResearchAgentOpenWorkState.TERMINAL
     )
     return ResearchAgentOpenWorkV1(
-        work_id=result.open_work_ref or f"actor-state.{cycle.agent_family_id}",
+        work_id=result.open_work_ref or _actor_state_work_id(cycle.agent_family_id, cycle.market_id),
         cycle_id=cycle.cycle_id,
         agent_family_id=cycle.agent_family_id,
         state=state,
@@ -254,6 +266,7 @@ def _scheduled_market(family: AgentFamilyId) -> MarketId:
 
 def _actor_state(
     family: AgentFamilyId,
+    market_id: str,
     cycle: ResearchAgentCycleV1 | None,
     work: ResearchAgentOpenWorkV1 | None,
 ) -> ActorWakeState:
@@ -270,7 +283,26 @@ def _actor_state(
         cooldown,
         failures,
         failed_evidence,
+        market_id,
     )
+
+
+def _actor_key(family: AgentFamilyId, market_id: str) -> tuple[AgentFamilyId, str]:
+    return family, market_id if family == "day_trading" else "none"
+
+
+def _actor_state_work_id(family: AgentFamilyId, market_id: str) -> str:
+    return f"actor-state.{family}.{market_id}" if family == "day_trading" else f"actor-state.{family}"
+
+
+def _work_market(item: ResearchAgentOpenWorkV1) -> MarketId:
+    prefix = "actor-state.day_trading."
+    if item.work_id == "actor-state.day_trading":
+        return "us_equities"
+    for market_id in ("us_equities", "kr_equities", "cross_market", "none"):
+        if item.work_id == f"{prefix}{market_id}":
+            return market_id
+    return "none"
 
 
 __all__ = (

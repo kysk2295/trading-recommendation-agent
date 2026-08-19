@@ -100,10 +100,18 @@ def require_same_cycle_identity(existing: ResearchAgentCycleV1, candidate: Resea
 
 def latest_cycles_from_rows(rows: list[tuple[str, str]]) -> tuple[ResearchAgentCycleV1, ...]:
     remaining = set(PRIMARY_AGENT_FAMILIES)
+    remaining_day_markets = {"us_equities", "kr_equities"}
     latest: list[ResearchAgentCycleV1] = []
     for family, payload in rows:
+        cycle = cycle_from_payload(payload)
+        if family == "day_trading":
+            if cycle.market_id in remaining_day_markets:
+                latest.append(cycle)
+                remaining_day_markets.remove(cycle.market_id)
+                if not remaining_day_markets:
+                    remaining.discard("day_trading")
+            continue
         if family in remaining:
-            cycle = cycle_from_payload(payload)
             latest.append(cycle)
             remaining.remove(cycle.agent_family_id)
     return tuple(latest)

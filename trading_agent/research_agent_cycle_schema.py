@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Final
 
-RESEARCH_AGENT_CYCLE_SCHEMA_VERSION: Final = 1
+RESEARCH_AGENT_CYCLE_SCHEMA_VERSION: Final = 2
 
-RESEARCH_AGENT_CYCLE_SCHEMA: Final[tuple[str, ...]] = (
+RESEARCH_AGENT_CYCLE_SCHEMA_V1: Final[tuple[str, ...]] = (
     """CREATE TABLE evidence (
         sequence INTEGER PRIMARY KEY AUTOINCREMENT,
         evidence_id TEXT UNIQUE NOT NULL,
@@ -60,4 +60,24 @@ RESEARCH_AGENT_CYCLE_SCHEMA: Final[tuple[str, ...]] = (
         BEGIN SELECT RAISE(ABORT, 'append-only'); END""",
 )
 
-__all__ = ("RESEARCH_AGENT_CYCLE_SCHEMA", "RESEARCH_AGENT_CYCLE_SCHEMA_VERSION")
+RESEARCH_AGENT_CYCLE_SCHEMA_V2: Final[tuple[str, ...]] = (
+    """CREATE TABLE day_cursors (
+        agent_family_id TEXT NOT NULL,
+        market_id TEXT NOT NULL,
+        evidence_sequence INTEGER NOT NULL,
+        PRIMARY KEY(agent_family_id,market_id)
+    )""",
+    "CREATE INDEX day_cursors_sequence ON day_cursors(agent_family_id,market_id,evidence_sequence)",
+)
+
+RESEARCH_AGENT_CYCLE_SCHEMA: Final[tuple[str, ...]] = (
+    *RESEARCH_AGENT_CYCLE_SCHEMA_V1,
+    *RESEARCH_AGENT_CYCLE_SCHEMA_V2,
+)
+
+__all__ = (
+    "RESEARCH_AGENT_CYCLE_SCHEMA",
+    "RESEARCH_AGENT_CYCLE_SCHEMA_V1",
+    "RESEARCH_AGENT_CYCLE_SCHEMA_V2",
+    "RESEARCH_AGENT_CYCLE_SCHEMA_VERSION",
+)

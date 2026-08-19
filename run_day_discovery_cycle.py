@@ -5,7 +5,7 @@ import datetime as dt
 import json
 import sqlite3
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
@@ -17,14 +17,16 @@ from trading_agent.generated_strategy_artifact import GeneratedStrategyArtifactS
 from trading_agent.generated_strategy_runtime import resolve_generated_strategy_runtime
 from trading_agent.generated_strategy_sandbox import GeneratedStrategySandbox
 from trading_agent.heavy_empirical_lease import heavy_empirical_lease
+from trading_agent.private_immutable_file import InvalidPrivateImmutableFileError, read_private_text
 from trading_agent.research_agent_service_config import load_research_agent_service_config
+from trading_agent.research_agent_source_common import canonical_model_json
 from trading_agent.research_identity_models import MarketId
 from trading_agent.researcher_llm import (
+    FixtureLlmProposalClient,
     HermesCliProposalClient,
     LlmProposalClient,
     ResearcherContextInput,
     StructuredHypothesisGenerator,
-    load_researcher_context_input,
 )
 from trading_agent.researcher_pipeline import (
     ResearcherPipeline,
@@ -70,13 +72,14 @@ def main(
     *,
     proposal_client: LlmProposalClient | None = None,
     context_input: ResearcherContextInput | None = None,
+    clock: Callable[[], dt.datetime] | None = None,
 ) -> int:
     try:
         args = parse_args(argv)
         if not 1 <= args.max_drafts <= 3:
             raise ValueError("max_drafts_out_of_range")
-        view = DayDiscoveryEvidenceView.model_validate_json(args.evidence_view.read_text(encoding="utf-8"))
-        calendar = CalendarSnapshot.model_validate_json(args.calendar_snapshot.read_text(encoding="utf-8"))
+        view = _private_canonical_model(args.evidence_view, DayDiscoveryEvidenceView)
+        calendar = _private_canonical_model(args.calendar_snapshot, CalendarSnapshot)
         market = MarketId(args.market)
         if (
             view.market_id is not market
@@ -85,22 +88,40 @@ def main(
         ):
             raise ValueError("market_calendar_mismatch")
         receipts = ResearcherReceiptStore(args.receipt_root.resolve(strict=False))
-        source = context_input or load_researcher_context_input(args.context)
+        stored_context = _private_canonical_model(args.context, ResearcherContextInput)
+        source = context_input or stored_context
         client = proposal_client
-        if client is None:
-            if args.config is None:
-                raise ValueError("research_os_config_required")
+        runtime_path = Path(sys.executable)
+        service = None
+        if args.config is not None:
             service = load_research_agent_service_config(args.config)
-            client = HermesCliProposalClient(
-                service.hermes_executable, service.model_id, service.provider_id
-            )
+        if client is None:
+            if service is None:
+                raise ValueError("research_os_config_required")
+            systematic = service.systematic
+            runtime_path = systematic.python_executable
+            if systematic.response_fixture is not None:
+                client = FixtureLlmProposalClient(
+                    read_private_text(systematic.response_fixture).encode()
+                )
+            elif systematic.hermes_executable is not None:
+                client = HermesCliProposalClient(
+                    systematic.hermes_executable,
+                    systematic.model_id,
+                    systematic.provider_id,
+                )
+            else:
+                raise ValueError("day_discovery_provider_required")
+        elif service is not None:
+            runtime_path = service.systematic.python_executable
         ledger = ExperimentLedgerStore(args.experiment_ledger.resolve(strict=False))
         context = build_researcher_context(source, ExperimentLedgerReader(ledger.path))
-        runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+        runtime = resolve_generated_strategy_runtime(runtime_path)
         artifacts = GeneratedStrategyArtifactStore(args.generated_artifact_root.resolve(strict=False), runtime)
+        cycle_clock = clock or (lambda: dt.datetime.now(dt.UTC))
         generator = StructuredHypothesisGenerator(
             client, receipts,
-            lambda: view.observed_at,
+            cycle_clock,
         )
         pipeline = ResearcherPipeline(
             ResearcherPipelineServices(generator, DeterministicHypothesisCritic(max_free_parameters=4)),
@@ -117,6 +138,7 @@ def main(
                     runtime, args.generated_artifact_root.resolve(strict=False) / "sandbox", view.resource_limits
                 ),
                 max_drafts=args.max_drafts,
+                clock=cycle_clock,
             )
         )
         with heavy_empirical_lease(ledger.path):
@@ -136,8 +158,27 @@ def main(
             )
         )
         return 0
-    except (KeyError, OSError, RuntimeError, sqlite3.Error, TypeError, ValidationError, ValueError):
+    except (
+        InvalidPrivateImmutableFileError,
+        KeyError,
+        OSError,
+        RuntimeError,
+        sqlite3.Error,
+        TypeError,
+        ValidationError,
+        ValueError,
+    ):
         return 1
+
+
+def _private_canonical_model[ModelT: BaseModel](
+    path: Path, model_type: type[ModelT]
+) -> ModelT:
+    payload = read_private_text(path.expanduser().absolute())
+    model = model_type.model_validate_json(payload)
+    if payload != canonical_model_json(model):
+        raise ValueError("private_input_noncanonical")
+    return model
 
 
 if __name__ == "__main__":

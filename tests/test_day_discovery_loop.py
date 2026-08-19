@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 
@@ -45,6 +46,7 @@ def _proposal(source: str):
     value = proposal(source)
     return replace(
         value,
+        llm_receipt=replace(value.llm_receipt, called_at=_view().observed_at),
         strategy_draft=replace(
             value.strategy_draft,
             methodology_tags=("novel_liquidity_echo", "online_state_machine"),
@@ -57,17 +59,13 @@ def _pipeline(tmp_path: Path, generator, runtime) -> ResearcherPipeline:
     receipts = ResearcherReceiptStore(tmp_path / "receipts")
     return ResearcherPipeline(
         ResearcherPipelineServices(generator, DeterministicHypothesisCritic(max_free_parameters=4)),
-        ResearcherPipelineStores(
-            ledger, receipts, GeneratedStrategyArtifactStore(tmp_path / "artifacts", runtime)
-        ),
+        ResearcherPipelineStores(ledger, receipts, GeneratedStrategyArtifactStore(tmp_path / "artifacts", runtime)),
         ResearcherPipelineArtifacts(tmp_path / "manifests", tmp_path / "queue"),
     )
 
 
 def _view(trigger: DayDiscoveryTriggerKind = DayDiscoveryTriggerKind.COMPLETED_BAR) -> DayDiscoveryEvidenceView:
-    payload = json.loads(
-        (PROJECT / "tests/fixtures/day-research/discovery-evidence.json").read_text(encoding="utf-8")
-    )
+    payload = json.loads((PROJECT / "tests/fixtures/day-research/discovery-evidence.json").read_text(encoding="utf-8"))
     payload["trigger_kind"] = trigger.value
     return DayDiscoveryEvidenceView.model_validate(payload)
 
@@ -99,9 +97,7 @@ def test_safe_novel_non_enum_python_publishes_one_future_only_primary(tmp_path: 
     runtime = resolve_generated_strategy_runtime(Path(sys.executable))
     result = DayDiscoveryLoop(
         DayDiscoveryLoopConfig(
-                pipeline=_pipeline(
-                    tmp_path, FixedHypothesisGenerator(_proposal(no_signal_source())), runtime
-                ),
+            pipeline=_pipeline(tmp_path, FixedHypothesisGenerator(_proposal(no_signal_source())), runtime),
             sandbox=GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
             max_drafts=3,
         )
@@ -115,8 +111,16 @@ def test_safe_novel_non_enum_python_publishes_one_future_only_primary(tmp_path: 
     reader = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader()
     version = reader.day_hypothesis_versions(market_id=MarketId.US_EQUITIES)[0].version
     assert "novel_liquidity_echo" in version.methodology_tags
-    assert len(reader.day_strategy_capsules(MarketId.US_EQUITIES)) == 1
-    assert len(reader.day_attempts_for_review(MarketId.US_EQUITIES, version.hypothesis_version_id)) == 1
+    capsule = reader.day_strategy_capsules(MarketId.US_EQUITIES)[0].capsule
+    reviewed = reader.day_attempts_for_review(MarketId.US_EQUITIES, version.hypothesis_version_id)[0]
+    assert _view().completed_bar_at <= version.created_at
+    assert version.created_at <= version.registration_completed_bar_at
+    assert version.registration_completed_bar_at < result.first_eligible_completed_bar_at
+    assert reviewed.attempt.started_at == _proposal(no_signal_source()).llm_receipt.called_at
+    assert reviewed.attempt.finished_at is not None
+    assert reviewed.attempt.finished_at < reviewed.binding.bound_at
+    assert reviewed.binding.bound_at < capsule.published_at
+    assert capsule.published_at < result.first_eligible_completed_bar_at
 
 
 @pytest.mark.parametrize(
@@ -145,18 +149,14 @@ def test_safe_novel_non_enum_python_publishes_one_future_only_primary(tmp_path: 
         ("nondeterministic", nondeterministic_source()),
     ),
 )
-def test_terminal_failures_are_visible_attempts_and_debit_budget(
-    tmp_path: Path, reason: str, source: str
-) -> None:
+def test_terminal_failures_are_visible_attempts_and_debit_budget(tmp_path: Path, reason: str, source: str) -> None:
     runtime = resolve_generated_strategy_runtime(Path(sys.executable))
     view = _view()
     if reason == "semantic_duplicate":
-        view = view.model_copy(
-            update={"existing_semantic_hashes": (_proposal_semantic_hash(_proposal(source)),)}
-        )
+        view = view.model_copy(update={"existing_semantic_hashes": (_proposal_semantic_hash(_proposal(source)),)})
     result = DayDiscoveryLoop(
         DayDiscoveryLoopConfig(
-                pipeline=_pipeline(tmp_path, FixedHypothesisGenerator(_proposal(source)), runtime),
+            pipeline=_pipeline(tmp_path, FixedHypothesisGenerator(_proposal(source)), runtime),
             sandbox=GeneratedStrategySandbox(runtime, tmp_path / "sandbox", view.resource_limits),
             max_drafts=1,
         )
@@ -191,9 +191,17 @@ def test_feedback_allowlist_excludes_sealed_symbol_account_provider_and_secret()
     )
     encoded = feedback.model_dump_json()
     assert set(feedback.model_dump()) == {
-        "family_id", "hypothesis_version_id", "outcome_class", "bounded_metrics",
-        "integrity_reason", "data_reason", "runtime_reason", "novelty",
-        "remaining_budget", "next_review_date", "policy_priority"
+        "family_id",
+        "hypothesis_version_id",
+        "outcome_class",
+        "bounded_metrics",
+        "integrity_reason",
+        "data_reason",
+        "runtime_reason",
+        "novelty",
+        "remaining_budget",
+        "next_review_date",
+        "policy_priority",
     }
     assert all(term not in encoded for term in ("AAPL", "secret-account", "broker", "0.931", "api_key"))
 
@@ -211,6 +219,17 @@ def test_market_cursors_and_failure_state_are_independent() -> None:
     assert us.cursor != kr.cursor
     assert us.previous_failure is None
     assert kr.previous_failure == "kr_feed_stale"
+
+
+@pytest.mark.parametrize(
+    "unsafe_reason",
+    ("provider_error", "account_missing", "secret_exposed", "UPPER_CASE", "bad reason"),
+)
+def test_previous_failure_rejects_unbounded_or_sensitive_text(unsafe_reason: str) -> None:
+    payload = _view().model_dump(mode="python")
+    payload["previous_failure"] = unsafe_reason
+    with pytest.raises((DayDiscoveryError, ValueError), match="feedback_reason_invalid"):
+        DayDiscoveryEvidenceView.model_validate(payload)
 
 
 class _SequenceGenerator:
@@ -233,7 +252,8 @@ def test_three_terminal_drafts_are_all_debited_and_no_more_are_generated(tmp_pat
     result = DayDiscoveryLoop(
         DayDiscoveryLoopConfig(
             _pipeline(tmp_path, generator, runtime),
-            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", view.resource_limits), 3,
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", view.resource_limits),
+            3,
         )
     ).run(view)
     assert result.drafts_attempted == 3
@@ -251,7 +271,8 @@ def test_exhausted_prior_budget_does_not_call_model_or_create_hidden_attempt(tmp
     result = DayDiscoveryLoop(
         DayDiscoveryLoopConfig(
             _pipeline(tmp_path, generator, runtime),
-            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", view.resource_limits), 3,
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", view.resource_limits),
+            3,
         )
     ).run(view)
     assert result.terminal_reason == "budget_exhausted"
@@ -262,9 +283,10 @@ def test_exhausted_prior_budget_does_not_call_model_or_create_hidden_attempt(tmp
 
 def test_exact_cycle_replay_is_idempotent_and_creates_no_extra_rows(tmp_path: Path) -> None:
     runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    generator = _SequenceGenerator([_proposal(no_signal_source())])
     loop = DayDiscoveryLoop(
         DayDiscoveryLoopConfig(
-            _pipeline(tmp_path, FixedHypothesisGenerator(_proposal(no_signal_source())), runtime),
+            _pipeline(tmp_path, generator, runtime),
             GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
             1,
         )
@@ -276,11 +298,75 @@ def test_exact_cycle_replay_is_idempotent_and_creates_no_extra_rows(tmp_path: Pa
     assert replay == first
     assert len(reader.day_attempts_for_review(MarketId.US_EQUITIES, version.hypothesis_version_id)) == 1
     assert len(reader.day_strategy_capsules(MarketId.US_EQUITIES)) == 1
+    assert generator.calls == 1
+
+    changed = _view().model_copy(update={"data_manifest_sha256": "e" * 64})
+    with pytest.raises(DayDiscoveryError, match="cycle_evidence_identity_conflict"):
+        loop.run(changed)
+
+
+def test_concurrent_cycle_and_restarted_loop_replay_one_immutable_result(
+    tmp_path: Path,
+) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    generator = _SequenceGenerator([_proposal(no_signal_source())])
+    loop = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, generator, runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
+            1,
+        )
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = tuple(pool.map(lambda _: loop.run(_view()), range(2)))
+    assert results[0] == results[1]
+    assert generator.calls == 1
+
+    restarted_generator = _SequenceGenerator([])
+    restarted = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, restarted_generator, runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
+            1,
+        )
+    )
+    assert restarted.run(_view()) == results[0]
+    assert restarted_generator.calls == 0
+
+
+@pytest.mark.parametrize("tamper_kind", ("outer_id", "result_id", "noncanonical"))
+def test_cycle_receipt_rejects_tampered_identity_and_noncanonical_bytes(tmp_path: Path, tamper_kind: str) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    generator = _SequenceGenerator([_proposal(no_signal_source())])
+    loop = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, generator, runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
+            1,
+        )
+    )
+    result = loop.run(_view())
+    receipt_path = tmp_path / "manifests" / "day-discovery-cycle-receipts" / f"{result.cycle_id}.json"
+    payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    if tamper_kind == "outer_id":
+        payload["cycle_id"] = "f" * 64
+    elif tamper_kind == "result_id":
+        payload["result"]["cycle_id"] = "e" * 64
+    encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    if tamper_kind == "noncanonical":
+        encoded = f" {encoded}"
+    receipt_path.write_text(encoded, encoding="utf-8")
+    receipt_path.chmod(0o600)
+
+    with pytest.raises(DayDiscoveryError, match="cycle_receipt"):
+        loop.run(_view())
+    assert generator.calls == 1
 
 
 def test_missing_ai_methodology_is_terminal_and_market_failures_stay_isolated(tmp_path: Path) -> None:
     runtime = resolve_generated_strategy_runtime(Path(sys.executable))
     raw = proposal(no_signal_source())
+    raw = replace(raw, llm_receipt=replace(raw.llm_receipt, called_at=_view().observed_at))
     pipeline = _pipeline(tmp_path, FixedHypothesisGenerator(raw), runtime)
     loop = DayDiscoveryLoop(
         DayDiscoveryLoopConfig(
@@ -338,14 +424,63 @@ def test_parameter_demand_above_remaining_budget_is_one_terminal_debit(tmp_path:
     assert generator.calls == 1
 
 
+@pytest.mark.parametrize("invalid_name", ("", "bad\nname"))
+def test_structurally_returned_invalid_parameter_is_audited_once(tmp_path: Path, invalid_name: str) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    candidate = _proposal(no_signal_source())
+    candidate = replace(
+        candidate,
+        strategy_draft=replace(candidate.strategy_draft, free_parameters=(invalid_name,)),
+    )
+    view = _view()
+    result = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, FixedHypothesisGenerator(candidate), runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", view.resource_limits),
+            1,
+        )
+    ).run(view)
+
+    assert result.terminal_reason == "contract_invalid"
+    assert result.drafts_attempted == 1
+    assert result.remaining_budget == view.search_budget - 1
+    reader = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader()
+    version = reader.day_hypothesis_versions(market_id=view.market_id)[0].version
+    assert len(reader.day_attempts_for_review(view.market_id, version.hypothesis_version_id)) == 1
+
+
+def test_structurally_returned_invalid_methodology_tag_is_terminally_audited_once(
+    tmp_path: Path,
+) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    candidate = _proposal(no_signal_source())
+    candidate = replace(
+        candidate,
+        strategy_draft=replace(candidate.strategy_draft, methodology_tags=("bad\ntag",)),
+    )
+    view = _view()
+    result = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, FixedHypothesisGenerator(candidate), runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", view.resource_limits),
+            1,
+        )
+    ).run(view)
+
+    assert result.terminal_reason == "methodology_missing"
+    assert result.drafts_attempted == 1
+    assert result.remaining_budget == view.search_budget - 1
+    reader = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader()
+    version = reader.day_hypothesis_versions(market_id=view.market_id)[0].version
+    assert len(reader.day_attempts_for_review(view.market_id, version.hypothesis_version_id)) == 1
+
+
 def test_missing_preregistered_falsification_is_a_visible_critic_rejection(
     tmp_path: Path,
 ) -> None:
     runtime = resolve_generated_strategy_runtime(Path(sys.executable))
     candidate = _proposal(no_signal_source())
-    invalid_hypothesis = candidate.card.hypothesis.model_copy(
-        update={"falsification_rule": ""}
-    )
+    invalid_hypothesis = candidate.card.hypothesis.model_copy(update={"falsification_rule": ""})
     candidate = replace(
         candidate,
         card=candidate.card.model_copy(update={"hypothesis": invalid_hypothesis}),

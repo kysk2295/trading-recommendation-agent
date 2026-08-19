@@ -60,7 +60,7 @@ class DayHypothesisBuildInput:
 def day_open_methodology_tags(proposal: ProposedHypothesis) -> tuple[str, ...]:
     tags = proposal.strategy_draft.methodology_tags
     if not tags or tags != tuple(sorted(set(tags))) or any(
-        not tag or tag != tag.strip() or len(tag) > 80 for tag in tags
+        not _safe_declaration(tag) for tag in tags
     ):
         raise StrategyResearchEvidenceRejected("day_methodology_tags_invalid")
     return tags
@@ -91,7 +91,7 @@ def build_day_hypothesis_contracts(
         family_payload | {"family_id": HypothesisFamily.canonical_id_for(family_payload)}
     )
     code_sha256 = hashlib.sha256(proposal.strategy_draft.source_code.encode()).hexdigest()
-    parameter_names = proposal.strategy_draft.free_parameters or ("fixed_configuration",)
+    parameter_names = _parameter_names(proposal, terminal=terminal)
     budget = min(source.search_budget, 10_000)
     version_payload = {
         "hypothesis_version_id": "",
@@ -137,7 +137,7 @@ def build_day_hypothesis_contracts(
         "data_manifest_sha256": source.data_manifest_sha256,
         "protocol_sha256": generated_protocol_bundle_sha256(),
         "created_at": source.observed_at,
-        "registration_completed_bar_at": source.completed_bar_at,
+        "registration_completed_bar_at": source.observed_at,
         "first_shadow_eligible_at": source.first_eligible_completed_bar_at,
         "trading_authority": False,
         "profitability_claim": False,
@@ -292,6 +292,19 @@ def _terminal_text(value: str, sentinel: str, *, terminal: bool) -> str:
     if terminal:
         return sentinel
     raise StrategyResearchEvidenceRejected("day_hypothesis_contract_invalid")
+
+
+def _parameter_names(proposal: ProposedHypothesis, *, terminal: bool) -> tuple[str, ...]:
+    values = proposal.strategy_draft.free_parameters or ("fixed_configuration",)
+    if all(_safe_declaration(value) for value in values):
+        return tuple(sorted(set(values)))
+    if terminal:
+        return ("invalid_ai_parameter_declaration",)
+    raise StrategyResearchEvidenceRejected("day_hypothesis_contract_invalid")
+
+
+def _safe_declaration(value: str) -> bool:
+    return bool(value) and value == value.strip() and len(value) <= 80 and value.isprintable()
 
 
 def _cost_model(market: MarketId) -> CostModelDeclaration:

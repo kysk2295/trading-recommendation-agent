@@ -14,24 +14,28 @@ from trading_agent.research_agent_cycle_models import (
     CycleId,
     EvidenceId,
     ResearchAgentEvidenceV1,
+    ResearchAgentOpenWorkState,
+    ResearchAgentOpenWorkV1,
     ResearchAgentResultStatus,
     ResearchAgentResultV1,
     ResearchAgentTriggerKind,
     ResearchAgentWakeKind,
     research_agent_result_id,
 )
+from trading_agent.research_agent_cycle_schema import RESEARCH_AGENT_CYCLE_SCHEMA_V1
 from trading_agent.research_agent_cycle_store import (
     InvalidResearchAgentCycleStoreError,
     ResearchAgentCycleStore,
     ResearchAgentCycleWriterLeaseUnavailableError,
 )
 from trading_agent.research_agent_cycle_store_codec import result_from_payload
+from trading_agent.research_agent_runtime_support import retry_evidence
 
 NOW = dt.datetime(2026, 8, 2, 12, 0, tzinfo=dt.UTC)
 
 
-def _evidence(family: AgentFamilyId, sequence: int) -> ResearchAgentEvidenceV1:
-    digest = hashlib.sha256(f"{family}:{sequence}".encode()).hexdigest()
+def _evidence(family: AgentFamilyId, sequence: int, market_id: str = "us_equities") -> ResearchAgentEvidenceV1:
+    digest = hashlib.sha256(f"{family}:{market_id}:{sequence}".encode()).hexdigest()
     return ResearchAgentEvidenceV1(
         evidence_id=EvidenceId(digest),
         agent_family_id=family,
@@ -41,16 +45,16 @@ def _evidence(family: AgentFamilyId, sequence: int) -> ResearchAgentEvidenceV1:
         observed_at=NOW,
         available_at=NOW,
         payload_sha256=digest,
-        market_id="us_equities",
+        market_id=market_id,
     )
 
 
-def _result(cycle_id: CycleId, family: AgentFamilyId) -> ResearchAgentResultV1:
+def _result(cycle_id: CycleId, family: AgentFamilyId, market_id: str = "us_equities") -> ResearchAgentResultV1:
     return ResearchAgentResultV1(
         result_id=research_agent_result_id(cycle_id),
         cycle_id=cycle_id,
         agent_family_id=family,
-        market_id="us_equities",
+        market_id=market_id,
         status=ResearchAgentResultStatus.COMPLETED,
         question="Does the current evidence justify another bounded action?",
         summary="The bounded research cycle completed without broker authority.",
@@ -213,3 +217,150 @@ def test_store_rejects_an_unknown_existing_schema(tmp_path: Path) -> None:
 
     with pytest.raises(InvalidResearchAgentCycleStoreError, match="schema_version_invalid"):
         ResearchAgentCycleStore(path)
+
+
+def test_day_cursors_are_market_partitioned_for_interleaved_evidence(tmp_path: Path) -> None:
+    path = tmp_path / "cycles.sqlite3"
+    us_first = _evidence("day_trading", 1, "us_equities")
+    kr = _evidence("day_trading", 2, "kr_equities")
+    us_second = _evidence("day_trading", 3, "us_equities")
+    with ResearchAgentCycleStore(path) as store:
+        for evidence in (us_first, kr, us_second):
+            assert store.append_evidence(evidence)
+        first = store.runnable_evidence("day_trading", NOW)[0]
+        first_cycle = store.start_cycle(first, NOW)
+        store.finish_cycle(first_cycle, _result(first_cycle.cycle_id, "day_trading"))
+
+        pending = store.runnable_evidence("day_trading", NOW)
+        assert tuple(item.evidence.market_id for item in pending) == (
+            "kr_equities",
+            "us_equities",
+        )
+        assert store.day_cursor("us_equities") == first.sequence
+        assert store.day_cursor("kr_equities") == 0
+
+
+def test_v1_cycle_database_migrates_without_losing_existing_evidence(tmp_path: Path) -> None:
+    path = tmp_path / "cycles.sqlite3"
+    evidence = _evidence("market_context", 1)
+    with sqlite3.connect(path) as connection:
+        for statement in RESEARCH_AGENT_CYCLE_SCHEMA_V1:
+            connection.execute(statement)
+        connection.execute("PRAGMA user_version=1")
+        connection.execute(
+            "INSERT INTO evidence(evidence_id,agent_family_id,available_at,payload_json) VALUES(?,?,?,?)",
+            (
+                evidence.evidence_id,
+                evidence.agent_family_id,
+                evidence.available_at.isoformat(),
+                json.dumps(
+                    evidence.model_dump(mode="json"),
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            ),
+        )
+    os.chmod(path, 0o600)
+
+    with ResearchAgentCycleStore(path) as store:
+        assert store.runnable_evidence("market_context", NOW)[0].evidence == evidence
+        assert store.day_cursor("us_equities") == 0
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (2,)
+
+
+def test_v1_day_cursor_migration_preserves_consumed_position_per_market(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "cycles.sqlite3"
+    consumed_us = _evidence("day_trading", 1, "us_equities")
+    consumed_kr = _evidence("day_trading", 2, "kr_equities")
+    pending_us = _evidence("day_trading", 3, "us_equities")
+    with sqlite3.connect(path) as connection:
+        for statement in RESEARCH_AGENT_CYCLE_SCHEMA_V1:
+            connection.execute(statement)
+        connection.execute("PRAGMA user_version=1")
+        for evidence in (consumed_us, consumed_kr, pending_us):
+            connection.execute(
+                "INSERT INTO evidence(evidence_id,agent_family_id,available_at,payload_json) VALUES(?,?,?,?)",
+                (
+                    evidence.evidence_id,
+                    evidence.agent_family_id,
+                    evidence.available_at.isoformat(),
+                    json.dumps(
+                        evidence.model_dump(mode="json"),
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                ),
+            )
+        connection.execute("INSERT INTO cursors(agent_family_id,evidence_sequence) VALUES('day_trading',2)")
+    os.chmod(path, 0o600)
+
+    with ResearchAgentCycleStore(path) as store:
+        assert store.day_cursor("us_equities") == 1
+        assert store.day_cursor("kr_equities") == 2
+        runnable = store.runnable_evidence("day_trading", NOW)
+        assert tuple(item.evidence.evidence_id for item in runnable) == (pending_us.evidence_id,)
+
+
+def test_v1_legacy_day_open_work_recovers_as_us_market_work(tmp_path: Path) -> None:
+    path = tmp_path / "cycles.sqlite3"
+    evidence = _evidence("day_trading", 1, "us_equities")
+    legacy_work = ResearchAgentOpenWorkV1(
+        work_id="actor-state.day_trading",
+        cycle_id="a" * 64,
+        agent_family_id="day_trading",
+        state=ResearchAgentOpenWorkState.OPEN,
+        evidence_refs=("b" * 64,),
+        next_wake_at=NOW + dt.timedelta(minutes=1),
+        updated_at=NOW,
+        source_evidence_id=evidence.evidence_id,
+        failure_count=1,
+    )
+    with sqlite3.connect(path) as connection:
+        for statement in RESEARCH_AGENT_CYCLE_SCHEMA_V1:
+            connection.execute(statement)
+        connection.execute("PRAGMA user_version=1")
+        connection.execute(
+            "INSERT INTO open_work(open_work_id,agent_family_id,state,payload_json) VALUES(?,?,?,?)",
+            (
+                legacy_work.work_id,
+                legacy_work.agent_family_id,
+                legacy_work.state,
+                json.dumps(
+                    legacy_work.model_dump(mode="json"),
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            ),
+        )
+    os.chmod(path, 0o600)
+
+    with ResearchAgentCycleStore(path) as store:
+        recovered = store.open_work("day_trading")[0]
+        assert retry_evidence(recovered, NOW + dt.timedelta(minutes=2)).market_id == "us_equities"
+
+
+def test_latest_day_cycles_keep_one_latest_cycle_per_market(tmp_path: Path) -> None:
+    with ResearchAgentCycleStore(tmp_path / "cycles.sqlite3") as store:
+        for evidence in (
+            _evidence("day_trading", 1, "us_equities"),
+            _evidence("day_trading", 2, "kr_equities"),
+            _evidence("day_trading", 3, "us_equities"),
+        ):
+            store.append_evidence(evidence)
+        for market_id in ("us_equities", "kr_equities", "us_equities"):
+            stored = next(
+                item for item in store.runnable_evidence("day_trading", NOW) if item.evidence.market_id == market_id
+            )
+            cycle = store.start_cycle(stored, NOW)
+            store.finish_cycle(cycle, _result(cycle.cycle_id, "day_trading", market_id))
+
+        latest = tuple(cycle for cycle in store.latest_cycles() if cycle.agent_family_id == "day_trading")
+
+    assert tuple(cycle.market_id for cycle in latest) == ("us_equities", "kr_equities")
+    assert latest[0].evidence_sequence > latest[1].evidence_sequence
