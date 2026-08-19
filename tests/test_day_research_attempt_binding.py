@@ -175,6 +175,73 @@ def _prepared(store: ExperimentLedgerStore, attempts: tuple[ResearchAttempt, ...
             assert writer.append_strategy_research_attempt(attempt)
 
 
+def _duplicate_canonical_parent_row(connection: sqlite3.Connection, table: str) -> None:
+    row = connection.execute(f"SELECT * FROM {table}").fetchone()
+    connection.execute(f"DROP TABLE {table}")
+    match table:
+        case "strategy_research_attempts":
+            connection.execute(
+                "CREATE TABLE strategy_research_attempts (attempt_key TEXT,attempt_id TEXT,hypothesis_id TEXT, "
+                "branch_index INTEGER,status TEXT,payload_json TEXT)"
+            )
+            connection.execute(
+                "CREATE INDEX strategy_research_attempts_by_hypothesis "
+                "ON strategy_research_attempts(hypothesis_id,branch_index)"
+            )
+        case "strategy_research_preregistrations":
+            connection.execute(
+                "CREATE TABLE strategy_research_preregistrations (registration_key TEXT,hypothesis_id TEXT, "
+                "parent_hypothesis_id TEXT,search_family_id TEXT,agent_id TEXT,protocol_version TEXT,payload_json TEXT)"
+            )
+            connection.execute(
+                "CREATE TRIGGER strategy_research_preregistrations_parent_lineage BEFORE INSERT ON "
+                "strategy_research_preregistrations WHEN NEW.parent_hypothesis_id IS NOT NULL AND NOT EXISTS "
+                "(SELECT 1 FROM strategy_research_preregistrations parent WHERE "
+                "parent.hypothesis_id=NEW.parent_hypothesis_id AND parent.search_family_id=NEW.search_family_id) "
+                "BEGIN SELECT RAISE(ABORT, 'lineage-parent-mismatch'); END"
+            )
+        case "strategy_research_holdout_seals":
+            connection.execute(
+                "CREATE TABLE strategy_research_holdout_seals "
+                "(seal_id TEXT,hypothesis_id TEXT,commitment_sha256 TEXT,payload_json TEXT)"
+            )
+        case _:
+            raise AssertionError(table)
+    for action in ("update", "delete"):
+        connection.execute(
+            f"CREATE TRIGGER {table}_no_{action} BEFORE {action.upper()} ON {table} "
+            "BEGIN SELECT RAISE(ABORT, 'append-only'); END"
+        )
+    values = ",".join("?" for _ in row)
+    connection.execute(f"INSERT INTO {table} VALUES ({values})", row)
+    connection.execute(f"INSERT INTO {table} SELECT * FROM {table}")
+
+
+@pytest.mark.parametrize(
+    "table",
+    ("strategy_research_attempts", "strategy_research_preregistrations", "strategy_research_holdout_seals"),
+)
+def test_replay_and_review_reject_duplicate_canonical_parent_rows(tmp_path: Path, table: str) -> None:
+    # Given
+    database = tmp_path / "ledger.sqlite3"
+    store = ExperimentLedgerStore(database)
+    version, attempt = _version(_family()), _attempt(0, AttemptStatus.SUCCEEDED)
+    _prepared(store, (attempt,), version)
+    binding = _binding(attempt, version)
+    with store.writer() as writer:
+        assert writer.register_day_research_attempt_binding(binding)
+    with sqlite3.connect(database) as connection:
+        _duplicate_canonical_parent_row(connection, table)
+        connection.commit()
+
+    # When / Then
+    assert store.is_initialized() is True
+    with pytest.raises(InvalidExperimentLedgerSourceError):
+        _ = store.reader().day_attempts_for_review(version.market_id, version.hypothesis_version_id)
+    with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
+        _ = writer.register_day_research_attempt_binding(binding)
+
+
 def test_binding_is_exactly_once_and_attempt_cannot_rebind(tmp_path: Path) -> None:
     # Given
     store = ExperimentLedgerStore(tmp_path / "ledger.sqlite3")

@@ -358,13 +358,16 @@ def _stored_binding(
 
 
 def _stored_attempt(connection: sqlite3.Connection, attempt_id: str) -> ResearchAttempt | None:
-    row: tuple[str, str, str, int, str, str] | None = connection.execute(
+    rows: list[tuple[str, str, str, int, str, str]] = connection.execute(
         "SELECT attempt_key,attempt_id,hypothesis_id,branch_index,status,payload_json "
         "FROM strategy_research_attempts WHERE attempt_id=?",
         (attempt_id,),
-    ).fetchone()
-    if row is None:
+    ).fetchall()
+    if not rows:
         return None
+    if len(rows) != 1:
+        raise InvalidDayResearchLedgerSourceError("stored_research_attempt_duplicate")
+    row = rows[0]
     key, stored_id, hypothesis_id, branch_index, status, payload = row
     try:
         attempt = ResearchAttempt.model_validate_json(payload)
@@ -386,13 +389,16 @@ def _require_attempt_preregistration(
     connection: sqlite3.Connection,
     attempt: ResearchAttempt,
 ) -> PreregistrationManifest:
-    row: tuple[str, str, str, str, str, str, str] | None = connection.execute(
+    rows: list[tuple[str, str, str, str, str, str, str]] = connection.execute(
         "SELECT registration_key,hypothesis_id,parent_hypothesis_id,search_family_id, "
         "agent_id,protocol_version,payload_json FROM strategy_research_preregistrations WHERE hypothesis_id=?",
         (attempt.hypothesis_id,),
-    ).fetchone()
-    if row is None:
+    ).fetchall()
+    if not rows:
         raise InvalidDayResearchLedgerSourceError("stored_research_attempt_preregistration_missing")
+    if len(rows) != 1:
+        raise InvalidDayResearchLedgerSourceError("stored_research_attempt_preregistration_duplicate")
+    row = rows[0]
     key, hypothesis_id, parent_id, family, agent, protocol, payload = row
     try:
         manifest = PreregistrationManifest.model_validate_json(payload)
@@ -420,13 +426,16 @@ def _require_attempt_holdout_seal(
     manifest: PreregistrationManifest,
 ) -> None:
     expected = manifest.hypothesis.holdout_period_sealed_ref
-    row: tuple[str, str, str, str] | None = connection.execute(
+    rows: list[tuple[str, str, str, str]] = connection.execute(
         "SELECT seal_id,hypothesis_id,commitment_sha256,payload_json FROM strategy_research_holdout_seals "
         "WHERE hypothesis_id=?",
         (manifest.hypothesis.hypothesis_id,),
-    ).fetchone()
-    if row is None:
+    ).fetchall()
+    if not rows:
         raise InvalidDayResearchLedgerSourceError("stored_research_attempt_holdout_seal_missing")
+    if len(rows) != 1:
+        raise InvalidDayResearchLedgerSourceError("stored_research_attempt_holdout_seal_duplicate")
+    row = rows[0]
     seal_id, hypothesis_id, commitment, payload = row
     try:
         seal = SealedHoldoutRef.model_validate_json(payload)
