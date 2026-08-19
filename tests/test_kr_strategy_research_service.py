@@ -11,7 +11,15 @@ import pytest
 
 import run_kr_strategy_research_live_cycle as live_cycle
 import run_kr_strategy_research_service as service
+from tests.test_kis_kr_market_projection import (
+    SESSION,
+    _minute_body,
+    _opportunity,
+    _price_body,
+    _quote_body,
+)
 from tests.test_kis_kr_session_calendar import _receipt
+from trading_agent.kis_kr_market_models import KisKrMarketReceipt, KisKrMarketReceiptKind
 from trading_agent.kis_kr_session_calendar import project_kis_kr_session_calendar
 from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStore
 from trading_agent.kr_strategy_research_service_config import (
@@ -19,6 +27,7 @@ from trading_agent.kr_strategy_research_service_config import (
     load_kr_strategy_research_service_config,
     verify_kr_strategy_research_launch_agent,
 )
+from trading_agent.kr_strategy_research_source import build_kr_strategy_research_sources
 
 ROOT = Path(__file__).resolve().parents[1]
 KST = dt.timezone(dt.timedelta(hours=9))
@@ -65,6 +74,20 @@ def test_closed_session_exits_before_any_market_provider(tmp_path: Path, monkeyp
     assert result == 0
     assert calls == []
     assert not (tmp_path / "cycles").exists()
+
+
+def test_market_context_survives_opportunity_debounce_without_exceeding_opportunity_ttl() -> None:
+    now = SESSION + dt.timedelta(minutes=4, seconds=4)
+    receipts = (
+        _market_receipt(KisKrMarketReceiptKind.MINUTE_BARS, _minute_body(), 2),
+        _market_receipt(KisKrMarketReceiptKind.PRICE_STATUS, _price_body(), 2),
+        _market_receipt(KisKrMarketReceiptKind.ORDER_BOOK, _quote_body(), 3),
+    )
+
+    enriched, context = build_kr_strategy_research_sources(_opportunity(), receipts, now)
+
+    assert context.valid_until == context.observed_at + dt.timedelta(minutes=3)
+    assert context.valid_until <= enriched.valid_until
 
 
 def test_service_help_and_bad_config_fail_without_market_calls(
@@ -134,4 +157,19 @@ def _cycle_args(tmp_path: Path, calendar: Path) -> tuple[str, ...]:
         str(tmp_path / "live"),
         "--market-context-root",
         str(tmp_path / "context"),
+    )
+
+
+def _market_receipt(
+    kind: KisKrMarketReceiptKind,
+    payload: bytes,
+    seconds: int,
+) -> KisKrMarketReceipt:
+    return KisKrMarketReceipt(
+        kind=kind,
+        symbol="005930",
+        received_at=SESSION + dt.timedelta(minutes=4, seconds=seconds),
+        status_code=200,
+        content_type="application/json",
+        raw_payload=payload,
     )

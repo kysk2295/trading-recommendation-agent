@@ -42,8 +42,8 @@ def build_kr_strategy_research_sources(
         quotes = tuple(item for item in eligible if item.kind is KisKrMarketReceiptKind.ORDER_BOOK)
         if not minutes or not prices or not quotes:
             raise KrStrategyResearchSourceError("market_receipt_missing")
-        completed_bar_close, completed_bar_end, completed_bar_observed, completed_bar_evidence = (
-            _latest_completed_bar(minutes, now)
+        completed_bar_close, completed_bar_end, completed_bar_observed, completed_bar_evidence = _latest_completed_bar(
+            minutes, now
         )
         market = project_kis_kr_market_snapshot(
             KisKrSnapshotProjectionInput(
@@ -104,13 +104,13 @@ def build_kr_strategy_research_sources(
         context = MarketContextSnapshot(
             context_id=(
                 "kr-context-"
-                + hashlib.sha256(
-                    f"{enriched.opportunity_id}:{market.observed_at.isoformat()}".encode()
-                ).hexdigest()[:24]
+                + hashlib.sha256(f"{enriched.opportunity_id}:{market.observed_at.isoformat()}".encode()).hexdigest()[
+                    :24
+                ]
             ),
             market_id=enriched.strategy_lane.market_id,
             observed_at=market.observed_at,
-            valid_until=min(enriched.valid_until, market.observed_at + dt.timedelta(minutes=2)),
+            valid_until=min(enriched.valid_until, market.observed_at + dt.timedelta(minutes=3)),
             regime_labels=(MarketRegimeLabel.UNKNOWN,),
             breadth_and_volatility_features=tuple(
                 sorted(
