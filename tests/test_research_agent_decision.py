@@ -204,6 +204,22 @@ def test_parser_rejects_decision_kind_not_executable_by_family() -> None:
         parse_research_agent_decision(json.dumps(payload).encode(), context)
 
 
+def test_opportunity_manager_rejects_investigation_only_terminal() -> None:
+    request = _request()
+    payload = json.loads(_response()) | {
+        "primary_decision": "investigate_candidate",
+        "requested_action": "investigate_candidate",
+    }
+    context = ResearchAgentDecisionParseContext(
+        request=request,
+        model_id="haiku",
+        prompt_sha256="d" * 64,
+    )
+
+    with pytest.raises(InvalidResearchAgentDecisionError, match="decision_kind_not_allowed"):
+        parse_research_agent_decision(json.dumps(payload).encode(), context)
+
+
 @pytest.mark.parametrize(
     "extra",
     (

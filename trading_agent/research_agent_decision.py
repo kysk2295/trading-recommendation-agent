@@ -39,7 +39,6 @@ _FAMILY_DEFINITIONS: Final = {definition.family_id: definition for definition in
 _FAMILY_DECISIONS: Final[dict[AgentFamilyId, tuple[ResearchAgentDecisionKind, ...]]] = {
     "opportunity_manager": (
         ResearchAgentDecisionKind.NO_ACTION,
-        ResearchAgentDecisionKind.INVESTIGATE_CANDIDATE,
         ResearchAgentDecisionKind.PROPOSE_HYPOTHESIS,
     ),
     "day_trading": (
@@ -305,6 +304,12 @@ class HermesCliResearchAgentDecisionClient:
 def render_research_agent_prompt(request: ResearchAgentDecisionRequest) -> str:
     definition = _FAMILY_DEFINITIONS[request.agent_family_id]
     allowed_decisions = ",".join(kind.value for kind in _FAMILY_DECISIONS[request.agent_family_id])
+    family_instruction = (
+        " A non-blocked opportunity already passed source, completed-bar, spread, and session admission; "
+        "use propose_hypothesis to create a falsifiable research protocol, not a trade recommendation."
+        if request.agent_family_id == "opportunity_manager"
+        else ""
+    )
     evidence: list[dict[str, object]] = []
     payload_bytes = 0
     for item in request.evidence:
@@ -343,7 +348,7 @@ def render_research_agent_prompt(request: ResearchAgentDecisionRequest) -> str:
         f"<agent-family>{definition.family_id}</agent-family>\n"
         f"<memory-namespace>{definition.memory_namespace}</memory-namespace>\n"
         f"<role>{definition.role}</role>\n"
-        f"Allowed primary_decisions for this family: {allowed_decisions}.\n"
+        f"Allowed primary_decisions for this family: {allowed_decisions}.{family_instruction}\n"
         "Make exactly one evidence-bound research decision. Return one raw JSON object and no prose. "
         "primary_decision=no_action requires requested_action=null and non-null reason and continuation; "
         "primary_decision=no_action requires subject_refs=[]; every other primary_decision requires "
