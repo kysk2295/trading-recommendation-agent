@@ -14,6 +14,7 @@ from trading_agent.day_research_ledger import (
     _stored_attempt,
     _stored_family,
     _stored_version,
+    _version_by_id,
     require_same_market,
 )
 from trading_agent.research_identity_models import MarketId
@@ -96,13 +97,10 @@ def read_day_attempts_for_review(
     market_id: MarketId,
     hypothesis_version_id: str,
 ) -> tuple[DayResearchAttemptForReview, ...]:
-    versions = day_hypothesis_versions(connection)
-    version = next(
-        (stored.version for stored in versions if stored.version.hypothesis_version_id == hypothesis_version_id),
-        None,
-    )
-    if version is None:
+    stored_version = _version_by_id(connection, hypothesis_version_id)
+    if stored_version is None:
         raise InvalidDayResearchLedgerSourceError("day_research_attempt_binding_version_missing")
+    version = stored_version.version
     require_same_market(version.market_id, market_id)
     bindings = tuple(
         stored.binding

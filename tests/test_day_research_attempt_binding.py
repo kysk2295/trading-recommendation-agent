@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+import trading_agent.day_research_ledger as day_research_ledger
+import trading_agent.day_research_ledger_reader as day_research_ledger_reader
 from tests.strategy_research_contract_fixtures import NOW, SHA_A, SHA_B, hypothesis
 from trading_agent.day_hypothesis_models import (
     CostModelDeclaration,
@@ -240,6 +242,53 @@ def test_replay_and_review_reject_duplicate_canonical_parent_rows(tmp_path: Path
         _ = store.reader().day_attempts_for_review(version.market_id, version.hypothesis_version_id)
     with pytest.raises(InvalidExperimentLedgerSourceError), store.writer() as writer:
         _ = writer.register_day_research_attempt_binding(binding)
+
+
+def test_new_binding_batch_skips_global_audit_but_review_and_replay_audit_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    store = ExperimentLedgerStore(tmp_path / "ledger.sqlite3")
+    version = _version(_family(), max_attempts=100)
+    attempts = tuple(_attempt(index, AttemptStatus.SUCCEEDED) for index in range(50))
+    bindings = tuple(_binding(attempt, version) for attempt in attempts)
+    original = day_research_ledger._all_stored_bindings
+    original_graph = day_research_ledger._stored_day_research_version_graph
+    audit_count = 0
+    graph_count = 0
+
+    def counted(connection: sqlite3.Connection):
+        nonlocal audit_count
+        audit_count += 1
+        return original(connection)
+
+    def counted_graph(connection: sqlite3.Connection):
+        nonlocal graph_count
+        graph_count += 1
+        return original_graph(connection)
+
+    monkeypatch.setattr(day_research_ledger, "_all_stored_bindings", counted)
+    monkeypatch.setattr(day_research_ledger, "_stored_day_research_version_graph", counted_graph)
+    monkeypatch.setattr(day_research_ledger_reader, "_all_stored_bindings", counted)
+
+    # When
+    with store.writer() as writer:
+        assert writer.register_strategy_research(_manifest())
+        assert writer.register_day_hypothesis_family(_family())
+        assert writer.register_day_hypothesis_version(version)
+        for attempt, binding in zip(attempts, bindings, strict=True):
+            assert writer.append_strategy_research_attempt(attempt)
+            assert writer.register_day_research_attempt_binding(binding)
+    records = store.reader().day_attempts_for_review(version.market_id, version.hypothesis_version_id)
+    with store.writer() as writer:
+        replay = writer.register_day_research_attempt_binding(bindings[0])
+
+    # Then
+    assert len(records) == 50
+    assert replay is False
+    assert audit_count == 2
+    assert graph_count == 2
 
 
 def test_binding_is_exactly_once_and_attempt_cannot_rebind(tmp_path: Path) -> None:

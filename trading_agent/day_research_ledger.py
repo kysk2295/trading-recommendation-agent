@@ -55,6 +55,12 @@ class StoredDayResearchAttemptBinding:
     binding: DayResearchAttemptBinding
 
 
+@dataclass(frozen=True, slots=True)
+class StoredDayResearchVersionGraph:
+    families: dict[str, StoredDayHypothesisFamily]
+    versions: dict[str, StoredDayHypothesisVersion]
+
+
 def require_same_market(parent_market: MarketId, child_market: MarketId) -> None:
     if parent_market is not child_market:
         raise InvalidDayResearchLedgerSourceError("day_research_cross_market_reference")
@@ -131,9 +137,9 @@ def register_day_research_attempt_binding(
     binding: DayResearchAttemptBinding,
 ) -> bool:
     binding_id = _safe_binding_identity(binding)
-    _all_stored_bindings(connection)
     existing = _binding_by_id(connection, binding_id)
     if existing is not None:
+        _all_stored_bindings(connection)
         checked = _validated_binding_or_conflict(binding)
         _require_binding_parent_coherence(connection, checked)
         if existing.binding == checked:
@@ -142,6 +148,7 @@ def register_day_research_attempt_binding(
     checked = _validated_binding(binding)
     existing_attempt = _binding_by_attempt_id(connection, checked.attempt_id)
     if existing_attempt is not None:
+        _all_stored_bindings(connection)
         _require_binding_parent_coherence(connection, existing_attempt.binding)
         raise DayResearchLedgerConflictError
     version, _ = _require_binding_parent_coherence(connection, checked)
@@ -242,51 +249,67 @@ def _family_by_id(
     connection: sqlite3.Connection,
     family_id: str,
 ) -> StoredDayHypothesisFamily | None:
-    row: tuple[str, str, str | None, str, str] | None = connection.execute(
+    rows: list[tuple[str, str, str | None, str, str]] = connection.execute(
         """SELECT family_key,family_id,parent_family_id,created_at,payload_json
         FROM day_hypothesis_families WHERE family_id=?""",
         (family_id,),
-    ).fetchone()
-    return None if row is None else _stored_family(row)
+    ).fetchall()
+    if not rows:
+        return None
+    if len(rows) != 1:
+        raise InvalidDayResearchLedgerSourceError("stored_day_family_identity_duplicate")
+    return _stored_family(rows[0])
 
 
 def _version_by_id(
     connection: sqlite3.Connection,
     version_id: str,
 ) -> StoredDayHypothesisVersion | None:
-    row: tuple[str, str, str, str | None, str, str, str, str, str] | None = connection.execute(
+    rows: list[tuple[str, str, str, str | None, str, str, str, str, str]] = connection.execute(
         """SELECT version_key,hypothesis_version_id,family_id,parent_version_id,
         market_id,created_at,registration_completed_bar_at,first_shadow_eligible_at,payload_json
         FROM day_hypothesis_versions WHERE hypothesis_version_id=?""",
         (version_id,),
-    ).fetchone()
-    return None if row is None else _stored_version(row)
+    ).fetchall()
+    if not rows:
+        return None
+    if len(rows) != 1:
+        raise InvalidDayResearchLedgerSourceError("stored_day_version_identity_duplicate")
+    return _stored_version(rows[0])
 
 
 def _binding_by_id(
     connection: sqlite3.Connection,
     binding_id: str,
 ) -> StoredDayResearchAttemptBinding | None:
-    row: tuple[str, str, str, str, str, str, int, str, str] | None = connection.execute(
+    rows: list[tuple[str, str, str, str, str, str, int, str, str]] = connection.execute(
         "SELECT binding_id,attempt_id,hypothesis_version_id,market_id,artifact_ref, "
         "multiple_testing_family,search_budget_debit,bound_at,payload_json "
         "FROM day_research_attempt_bindings WHERE binding_id=?",
         (binding_id,),
-    ).fetchone()
-    return None if row is None else _stored_binding(row)
+    ).fetchall()
+    if not rows:
+        return None
+    if len(rows) != 1:
+        raise InvalidDayResearchLedgerSourceError("stored_day_attempt_binding_identity_duplicate")
+    return _stored_binding(rows[0])
 
 
 def _binding_by_attempt_id(
     connection: sqlite3.Connection,
     attempt_id: str,
 ) -> StoredDayResearchAttemptBinding | None:
-    row: tuple[str, str, str, str, str, str, int, str, str] | None = connection.execute(
+    rows: list[tuple[str, str, str, str, str, str, int, str, str]] = connection.execute(
         "SELECT binding_id,attempt_id,hypothesis_version_id,market_id,artifact_ref, "
         "multiple_testing_family,search_budget_debit,bound_at,payload_json "
         "FROM day_research_attempt_bindings WHERE attempt_id=?",
         (attempt_id,),
-    ).fetchone()
-    return None if row is None else _stored_binding(row)
+    ).fetchall()
+    if not rows:
+        return None
+    if len(rows) != 1:
+        raise InvalidDayResearchLedgerSourceError("stored_day_attempt_binding_attempt_duplicate")
+    return _stored_binding(rows[0])
 
 
 def _stored_family(row: tuple[str, str, str | None, str, str]) -> StoredDayHypothesisFamily:
@@ -454,13 +477,17 @@ def _require_attempt_holdout_seal(
 def _require_binding_parent_coherence(
     connection: sqlite3.Connection,
     binding: DayResearchAttemptBinding,
+    graph: StoredDayResearchVersionGraph | None = None,
 ) -> tuple[HypothesisVersion, ResearchAttempt]:
-    _require_valid_stored_day_version_graph(connection)
-    stored_version = _version_by_id(connection, binding.hypothesis_version_id)
+    stored_version = _version_by_id(connection, binding.hypothesis_version_id) if graph is None else graph.versions.get(
+        binding.hypothesis_version_id
+    )
     attempt = _stored_attempt(connection, binding.attempt_id)
     if stored_version is None or attempt is None:
         raise InvalidDayResearchLedgerSourceError("day_research_attempt_binding_parent_missing")
     version = stored_version.version
+    if graph is None:
+        _require_target_version_lineage(connection, version)
     manifest = _require_attempt_preregistration(connection, attempt)
     require_same_market(version.market_id, binding.market_id)
     if (
@@ -505,9 +532,10 @@ def _all_stored_bindings(connection: sqlite3.Connection) -> tuple[StoredDayResea
         raise InvalidDayResearchLedgerSourceError("stored_day_attempt_binding_identity_duplicate")
     if len({item.binding.attempt_id for item in bindings}) != len(bindings):
         raise InvalidDayResearchLedgerSourceError("stored_day_attempt_binding_attempt_duplicate")
+    graph = _stored_day_research_version_graph(connection)
     for stored in bindings:
-        _require_binding_parent_coherence(connection, stored.binding)
-    _require_stored_binding_budgets(connection, bindings)
+        _require_binding_parent_coherence(connection, stored.binding, graph)
+    _require_stored_binding_budgets(bindings, graph)
     return bindings
 
 
@@ -516,18 +544,18 @@ def _require_available_search_budget(
     binding: DayResearchAttemptBinding,
     version: HypothesisVersion,
 ) -> None:
-    cumulative_debit = binding.search_budget_debit + sum(
-        stored.binding.search_budget_debit
-        for stored in _all_stored_bindings(connection)
-        if stored.binding.hypothesis_version_id == version.hypothesis_version_id
-    )
+    row: tuple[int | None] = connection.execute(
+        "SELECT SUM(search_budget_debit) FROM day_research_attempt_bindings WHERE hypothesis_version_id=?",
+        (version.hypothesis_version_id,),
+    ).fetchone()
+    cumulative_debit = binding.search_budget_debit + (0 if row[0] is None else row[0])
     if cumulative_debit > version.search_budget.max_attempts:
         raise InvalidDayResearchLedgerSourceError("day_research_attempt_binding_budget_exhausted")
 
 
 def _require_stored_binding_budgets(
-    connection: sqlite3.Connection,
     bindings: tuple[StoredDayResearchAttemptBinding, ...],
+    graph: StoredDayResearchVersionGraph,
 ) -> None:
     debit_by_version: dict[str, int] = {}
     for stored in bindings:
@@ -536,12 +564,12 @@ def _require_stored_binding_budgets(
             debit_by_version.get(binding.hypothesis_version_id, 0) + binding.search_budget_debit
         )
     for version_id, debit in debit_by_version.items():
-        stored_version = _version_by_id(connection, version_id)
+        stored_version = graph.versions.get(version_id)
         if stored_version is None or debit > stored_version.version.search_budget.max_attempts:
             raise InvalidDayResearchLedgerSourceError("stored_day_attempt_binding_budget_invalid")
 
 
-def _require_valid_stored_day_version_graph(connection: sqlite3.Connection) -> None:
+def _stored_day_research_version_graph(connection: sqlite3.Connection) -> StoredDayResearchVersionGraph:
     family_rows: list[tuple[str, str, str | None, str, str]] = connection.execute(
         "SELECT family_key,family_id,parent_family_id,created_at,payload_json FROM day_hypothesis_families"
     ).fetchall()
@@ -561,6 +589,22 @@ def _require_valid_stored_day_version_graph(connection: sqlite3.Connection) -> N
         raise InvalidDayResearchLedgerSourceError("stored_day_version_identity_duplicate")
     for stored in versions:
         _require_stored_version_lineage(stored, by_family, by_version)
+    return StoredDayResearchVersionGraph(by_family, by_version)
+
+
+def _require_target_version_lineage(connection: sqlite3.Connection, version: HypothesisVersion) -> None:
+    family = _family_by_id(connection, version.family_id)
+    if family is None or family.family.created_at > version.created_at:
+        raise InvalidDayResearchLedgerSourceError("stored_day_version_family_invalid")
+    seen = {version.hypothesis_version_id}
+    child = version
+    while child.parent_version_id is not None:
+        parent = _version_by_id(connection, child.parent_version_id)
+        if parent is None or parent.version.hypothesis_version_id in seen:
+            raise InvalidDayResearchLedgerSourceError("stored_day_version_lineage_invalid")
+        _require_parent_version(parent.version, child)
+        seen.add(parent.version.hypothesis_version_id)
+        child = parent.version
 
 
 def _require_family_parent(connection: sqlite3.Connection, family: HypothesisFamily) -> None:
