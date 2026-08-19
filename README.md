@@ -28,6 +28,7 @@ _현재 구현된 read-only Derivatives workspace. source authority, freshness�
 | --- | --- | --- |
 | Data plane | Alpaca·KIS·LS·OpenDART·SEC·macro adapter, raw-first receipt, capability gate | 구현 |
 | US Day | scanner, ORB·VWAP·HOD·Gap-and-Go, recommendation state machine | 구현, 실제 Paper mutation 미실행 |
+| US Strategy Source | 정규장 SIP 완료봉·최신 호가, momentum Opportunity·context, 30분 forward 관측 | 상시 LaunchAgent 구현, 연속 세션 표본 축적 중 |
 | KR Theme Day | 공시·뉴스·랭킹 cycle, theme leader Opportunity, shadow lifecycle | 실제 KRX 장중 source cycle 검증, 연속 세션 관찰 중 |
 | Swing·Systematic | new-high/RVOL, ETF regime rotation, historical·shadow trial | 구현, forward sample 수집 중 |
 | Autonomous Researcher | LLM 가설·Python 생성, macOS sandbox, walk-forward, Reviewer feedback | 실제 로컬 cycle QA 완료 |
@@ -154,6 +155,17 @@ KRX 장중에는 별도 read-only source LaunchAgent가 120초마다 공식 KIS 
 최신 완료 1분봉과 현재 호가·spread를 추가한 뒤 `OpportunitySnapshot`과 `MarketContextSnapshot`을
 production runtime에 전달한다. 장 종료·휴장·stale calendar·누락 호가는 provider 수집 또는 가설
 생성 전에 닫히며, 계좌·잔고·포지션·주문 endpoint 권한은 없다.
+
+미국장도 별도 read-only source LaunchAgent가 120초마다 뉴욕 정규장 여부를 provider 호출 전에
+확인한다. 열린 세션에서만 Alpaca SIP의 `DIA`·`IWM`·`QQQ`·`SPY` 완료 1분봉과 최신 호가를 GET으로
+읽고, spread가 검증된 `us_intraday_momentum` Opportunity와 US market context를 같은 production
+outbox에 기록한다. 장 종료·휴장에는 credential을 읽거나 network를 호출하지 않는다.
+
+한국·미국 momentum source는 새 snapshot마다 30분이 지난 동일 세션의 실제 후속 가격을 찾아
+spread 비용을 뺀 forward observation을 append한다. Hermes 장 마감 보고는 owner별
+`forward_samples`를 보여 준다. 이 표본은 실제 시장 관측이지만 그 자체로 수익성 주장이나
+`SUPPORTED` 판정이 아니다. 사전등록된 독립 cohort와 최소 40개 관측이 충족되기 전에는 Science
+Kernel terminal, promotion, allocation 또는 주문 권한으로 사용하지 않는다.
 
 V9 experiment ledger는 성공·실패·중단 attempt를 모두 append하고, holdout은 lineage별 한 번만
 공개한다. 정확한 holdout 값은 owner feedback으로 되돌아가지 않는다. `SUPPORTED`조차 미래 시점
@@ -349,6 +361,7 @@ broker mutation을 사용하지 않는다.
 | production OS tick | `uv run python run_research_agent_runtime.py tick --config <private-runtime.json>` | persisted `role_agents` and six `strategy_research.slots`, `broker_mutation=0`, `trading_mutation=0`; `0` when healthy | invalid private config/input is `2`; V9 experiment-ledger writer contention is JSON `status=busy`, `reason=experiment_ledger_writer_busy`, `3`, with no partial attempt |
 | production persistent OS | `uv run python run_research_agent_runtime.py run --config <private-runtime.json>` | blocks as the LaunchAgent process and runs the same independent tick every 30 seconds | start only with a verified private config; no legacy bundle is consumed |
 | persistent KRX source | `uv run python run_kr_strategy_research_service.py tick --config <private-kr-source.json>` | current KRX session에서 same-cycle evidence와 completed-bar/spread snapshot을 저장; LaunchAgent interval `120`; `mutation=0` | 장 종료·휴장에는 provider 호출 전 `session_closed`; incomplete coverage는 hypothesis를 만들지 않음 |
+| persistent US source | `uv run python run_us_strategy_research_service.py tick --config <private-us-source.json>` | current NYSE session에서 SIP completed-bar/latest-quote Opportunity와 30분 forward 표본을 저장; LaunchAgent interval `120`; `mutation=0` | 장 종료·휴장에는 credential·provider 호출 전 `session_closed`; stale/missing quote는 source를 차단 |
 | legacy diagnostic only | `uv run python run_strategy_lab_cycle.py --evidence-bundle examples/research/strategy-lab-evidence-fixture-v1.json --experiment-ledger <legacy.sqlite3> --iterations 1 --as-of 2026-08-17T01:00:00+00:00` | JSON `status=complete`, `lab_count=6`, `order_authority=false`, `trading_mutation=0`; `0` | invalid evidence/trace gives JSON `status=blocked`, `1`; never use as performance evidence |
 
 `--help` is available on every command above. The source-hypothesis command is the direct production creation
