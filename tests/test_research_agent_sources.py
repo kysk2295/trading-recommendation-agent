@@ -22,6 +22,7 @@ from trading_agent.research_agent_source_adapters_primary import (
     DaySourceAdapter,
     MarketContextSourceAdapter,
     OpportunitySourceAdapter,
+    bounded_day_discovery_feedback,
 )
 from trading_agent.research_agent_source_adapters_research import SwingSourceAdapter
 from trading_agent.research_agent_source_common import canonical_model_json
@@ -268,7 +269,7 @@ def test_day_discovery_collection_is_stable_and_preserves_recommendation_evidenc
         assert not store.append_evidence(second_discovery)
 
 
-def test_day_discovery_feedback_is_sanitized_and_wired_into_source_payload(
+def test_canonical_day_discovery_feedback_is_wired_into_source_payload(
     tmp_path: Path,
 ) -> None:
     paths = _source_paths(tmp_path)
@@ -291,19 +292,13 @@ def test_day_discovery_feedback_is_sanitized_and_wired_into_source_payload(
     evidence_path.chmod(0o600)
     feedback_path = session / "day-discovery-feedback.us_equities.v1.json"
     feedback_path.write_text(
-        json.dumps(
+        bounded_day_discovery_feedback(
             {
                 "outcome_class": "inconclusive",
                 "bounded_metrics": {"signal_count": 2},
                 "remaining_budget": 2,
                 "runtime_reason": "sandbox_failed",
-                "account_id": "forbidden",
-                "provider": "forbidden",
-                "exact_holdout": 0.91,
-                "symbol_contribution": {"AAPL": 1},
-            },
-            separators=(",", ":"),
-            sort_keys=True,
+            }
         ),
         encoding="utf-8",
     )
@@ -313,11 +308,8 @@ def test_day_discovery_feedback_is_sanitized_and_wired_into_source_payload(
         item for item in DaySourceAdapter().collect(paths, NOW) if item.source_key.startswith("day.discovery.")
     )
     payload = json.loads(evidence.bounded_payload_json or "{}")
-    encoded = json.dumps(payload)
-
     assert payload["feedback"]["remaining_budget"] == 2
     assert payload["feedback"]["runtime_reason"] == "sandbox_failed"
-    assert all(term not in encoded for term in ("forbidden", "AAPL", "exact_holdout"))
 
 
 def test_day_discovery_collects_one_current_artifact_for_each_market(
@@ -430,6 +422,40 @@ def test_feedback_sidecar_does_not_bypass_base_evidence_canonicality(
 
     assert not any(item.source_key.startswith("day.discovery.") for item in evidence)
     assert any(item.source_key.startswith("day.blocked.day_discovery_source_noncanonical") for item in evidence)
+
+
+def test_pretty_feedback_sidecar_is_blocked_instead_of_normalized(
+    tmp_path: Path,
+) -> None:
+    paths = _source_paths(tmp_path)
+    session = paths.day_session_root / "20260803"
+    session.mkdir(parents=True)
+    fixture = json.loads((Path(__file__).parent / "fixtures/day-research/discovery-evidence.json").read_text())
+    fixture.update(
+        {
+            "observed_at": NOW.isoformat(),
+            "completed_bar_at": (NOW - dt.timedelta(minutes=1)).isoformat(),
+            "first_eligible_completed_bar_at": (NOW + dt.timedelta(minutes=1)).isoformat(),
+            "universe_snapshot_at": (NOW - dt.timedelta(minutes=2)).isoformat(),
+            "replay_bars": [fixture["replay_bars"][0] | {"timestamp": (NOW - dt.timedelta(minutes=2)).isoformat()}],
+        }
+    )
+    view = DayDiscoveryEvidenceView.model_validate(fixture)
+    evidence_path = session / "day-discovery-evidence.us_equities.v1.json"
+    evidence_path.write_text(canonical_model_json(view), encoding="utf-8")
+    evidence_path.chmod(0o600)
+    feedback_path = session / "day-discovery-feedback.us_equities.v1.json"
+    canonical = bounded_day_discovery_feedback({"remaining_budget": 1})
+    feedback_path.write_text(json.dumps(json.loads(canonical), indent=2), encoding="utf-8")
+    feedback_path.chmod(0o600)
+
+    evidence = DaySourceAdapter().collect(paths, NOW)
+
+    assert not any(item.source_key.startswith("day.discovery.") for item in evidence)
+    assert any(
+        item.source_key.startswith("day.blocked.day_discovery_feedback_noncanonical")
+        for item in evidence
+    )
 
 
 def test_swing_rejects_mode_0644_shadow_ledger_before_projection(tmp_path: Path) -> None:

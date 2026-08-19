@@ -27,6 +27,8 @@ from trading_agent.researcher_llm import (
     LlmProposalClient,
     ResearcherContextInput,
     StructuredHypothesisGenerator,
+    load_private_canonical_llm_response,
+    load_private_canonical_researcher_context,
 )
 from trading_agent.researcher_pipeline import (
     ResearcherPipeline,
@@ -88,7 +90,7 @@ def main(
         ):
             raise ValueError("market_calendar_mismatch")
         receipts = ResearcherReceiptStore(args.receipt_root.resolve(strict=False))
-        stored_context = _private_canonical_model(args.context, ResearcherContextInput)
+        stored_context = load_private_canonical_researcher_context(args.context)
         source = context_input or stored_context
         client = proposal_client
         runtime_path = Path(sys.executable)
@@ -102,7 +104,7 @@ def main(
             runtime_path = systematic.python_executable
             if systematic.response_fixture is not None:
                 client = FixtureLlmProposalClient(
-                    read_private_text(systematic.response_fixture).encode()
+                    load_private_canonical_llm_response(systematic.response_fixture)
                 )
             elif systematic.hermes_executable is not None:
                 client = HermesCliProposalClient(

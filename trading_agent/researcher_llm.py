@@ -22,6 +22,10 @@ from trading_agent.experiment_ledger_models import (
 from trading_agent.experiment_scope_models import ExperimentScope, ExperimentScopeKind
 from trading_agent.lane_contract_keys import experiment_scope_key
 from trading_agent.lane_identity_models import LaneId
+from trading_agent.private_immutable_file import (
+    InvalidPrivateImmutableFileError,
+    read_private_text,
+)
 from trading_agent.researcher_agent import (
     CandidateStrategyDraft,
     ProposedHypothesis,
@@ -226,6 +230,51 @@ def load_researcher_context_input(path: Path) -> ResearcherContextInput:
         raise ResearcherLlmError from error
 
 
+def load_private_canonical_researcher_context(path: Path) -> ResearcherContextInput:
+    return _load_private_canonical_model(path, ResearcherContextInput)
+
+
+def load_private_canonical_llm_response(path: Path) -> bytes:
+    raw = _private_canonical_text(path, LlmHypothesisDraft)
+    return raw.encode()
+
+
+def _load_private_canonical_model[ModelT: BaseModel](
+    path: Path,
+    model_type: type[ModelT],
+) -> ModelT:
+    raw = _private_canonical_text(path, model_type)
+    return model_type.model_validate_json(raw)
+
+
+def _private_canonical_text[ModelT: BaseModel](
+    path: Path,
+    model_type: type[ModelT],
+) -> str:
+    try:
+        raw = read_private_text(path.expanduser().absolute())
+        model = model_type.model_validate_json(raw)
+        canonical = json.dumps(
+            model.model_dump(mode="json"),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        if raw != canonical:
+            raise ResearcherLlmError
+        return raw
+    except (
+        InvalidPrivateImmutableFileError,
+        OSError,
+        ResearcherLlmError,
+        TypeError,
+        UnicodeError,
+        ValidationError,
+        ValueError,
+    ) as error:
+        raise ResearcherLlmError from error
+
+
 def _prompt(context: ResearcherContext) -> str:
     payload = {
         "contract": {
@@ -306,5 +355,7 @@ __all__ = (
     "ResearcherContextInput",
     "ResearcherLlmError",
     "StructuredHypothesisGenerator",
+    "load_private_canonical_llm_response",
+    "load_private_canonical_researcher_context",
     "load_researcher_context_input",
 )

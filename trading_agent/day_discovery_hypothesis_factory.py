@@ -92,7 +92,7 @@ def build_day_hypothesis_contracts(
     )
     code_sha256 = hashlib.sha256(proposal.strategy_draft.source_code.encode()).hexdigest()
     parameter_names = _parameter_names(proposal, terminal=terminal)
-    budget = min(source.search_budget, 10_000)
+    budget = min(source.search_budget, 2 ** len(parameter_names), 10_000)
     version_payload = {
         "hypothesis_version_id": "",
         "family_id": family.family_id,
@@ -192,6 +192,19 @@ def _immutable_hypothesis(
         source_refs=(evidence,),
     )
     start = source.observed_at - dt.timedelta(days=30)
+    free_parameters = tuple(
+        FreeParameter(
+            name=parameter.name,
+            candidate_values=tuple(float(value) for value in parameter.values),
+            lower_bound=float(parameter.values[0]),
+            upper_bound=float(parameter.values[-1]),
+        )
+        for parameter in version.free_parameters
+    )
+    parameter_combinations = 1
+    for parameter in free_parameters:
+        parameter_combinations *= len(parameter.candidate_values)
+    bounded_combinations = min(parameter_combinations, source.search_budget)
     return ImmutableHypothesis(
         hypothesis_id=version.hypothesis_version_id,
         parent_hypothesis_id=None,
@@ -231,23 +244,16 @@ def _immutable_hypothesis(
         primary_metric="future_signal_count",
         secondary_metrics=("blocked_count",),
         falsification_rule=version.invalidation_rule,
-        free_parameters=(
-            FreeParameter(
-                name="fixed_configuration",
-                candidate_values=(0.0, 1.0),
-                lower_bound=0.0,
-                upper_bound=1.0,
-            ),
-        ),
+        free_parameters=free_parameters,
         search_budget=SearchBudget(
-            max_parameter_combinations=2,
-            max_attempts=min(2, source.search_budget),
+            max_parameter_combinations=bounded_combinations,
+            max_attempts=bounded_combinations,
             max_cpu_seconds=60,
         ),
         minimum_observations=20,
         power_or_ci_gate="preregistered_exact_interval",
         multiple_testing_family=version.multiple_testing_family,
-        max_attempts=min(2, source.search_budget),
+        max_attempts=bounded_combinations,
         train_period=ResearchPeriod(
             start=start,
             end=source.observed_at - dt.timedelta(days=20),
@@ -296,8 +302,9 @@ def _terminal_text(value: str, sentinel: str, *, terminal: bool) -> str:
 
 def _parameter_names(proposal: ProposedHypothesis, *, terminal: bool) -> tuple[str, ...]:
     values = proposal.strategy_draft.free_parameters or ("fixed_configuration",)
-    if all(_safe_declaration(value) for value in values):
-        return tuple(sorted(set(values)))
+    canonical = tuple(sorted(set(values)))
+    if len(canonical) <= 12 and all(_safe_declaration(value) for value in canonical):
+        return canonical
     if terminal:
         return ("invalid_ai_parameter_declaration",)
     raise StrategyResearchEvidenceRejected("day_hypothesis_contract_invalid")

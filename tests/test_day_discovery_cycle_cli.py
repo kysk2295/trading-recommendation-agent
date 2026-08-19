@@ -123,6 +123,24 @@ def test_cli_rejects_public_or_symlinked_private_inputs(tmp_path: Path) -> None:
     ) != 0
 
 
+def test_cli_rejects_noncanonical_private_evidence(tmp_path: Path) -> None:
+    response = json.loads(
+        (PROJECT / "examples/research/researcher-response-fixture-v1.json").read_text()
+    )
+    response["methodology_tags"] = ["novel_liquidity_echo", "online_state_machine"]
+    client = FixtureLlmProposalClient(json.dumps(response).encode())
+    context = load_researcher_context_input(PROJECT / "examples/research/researcher-context-v1.json")
+    args = _args(tmp_path / "noncanonical")
+    evidence = Path(args[args.index("--evidence-view") + 1])
+    payload = json.loads(evidence.read_text(encoding="utf-8"))
+    evidence.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    evidence.chmod(0o600)
+
+    assert cli.main(
+        args, proposal_client=client, context_input=context, clock=lambda: CLI_NOW
+    ) != 0
+
+
 def _args(tmp_path: Path) -> list[str]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     tmp_path.chmod(0o700)

@@ -9,7 +9,9 @@ from pathlib import Path
 
 import pytest
 
+import trading_agent.day_discovery_loop as discovery_module
 from tests.day_strategy_capsule_support import no_signal_source, nondeterministic_source, proposal
+from trading_agent import researcher_llm
 from trading_agent.critic_agent import DeterministicHypothesisCritic
 from trading_agent.day_discovery_loop import (
     DayDiscoveryError,
@@ -25,12 +27,13 @@ from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.generated_strategy_artifact import GeneratedStrategyArtifactStore
 from trading_agent.generated_strategy_runtime import resolve_generated_strategy_runtime
 from trading_agent.generated_strategy_sandbox import GeneratedStrategySandbox
+from trading_agent.lane_identity_models import LaneId
 from trading_agent.research_agent_cycle_models import ResearchAgentTriggerKind
 from trading_agent.research_agent_service_runtime import day_discovery_market_runtime
 from trading_agent.research_agent_source_adapters_primary import DaySourceAdapter
 from trading_agent.research_agent_source_common import canonical_model_json
 from trading_agent.research_identity_models import MarketId
-from trading_agent.researcher_agent import FixedHypothesisGenerator
+from trading_agent.researcher_agent import FailureDigest, FixedHypothesisGenerator, ResearcherContext
 from trading_agent.researcher_pipeline import (
     ResearcherPipeline,
     ResearcherPipelineArtifacts,
@@ -165,7 +168,7 @@ def test_terminal_failures_are_visible_attempts_and_debit_budget(tmp_path: Path,
     assert result.accepted is False
     assert result.terminal_reason == reason
     assert result.drafts_attempted == 1
-    assert result.remaining_budget == view.search_budget - 1
+    assert result.remaining_budget == view.search_budget - 2
     reader = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader()
     version = reader.day_hypothesis_versions(market_id=view.market_id)[0].version
     assert len(reader.day_attempts_for_review(view.market_id, version.hypothesis_version_id)) == 1
@@ -243,12 +246,103 @@ class _SequenceGenerator:
         return next(self.proposals)
 
 
-def test_three_terminal_drafts_are_all_debited_and_no_more_are_generated(tmp_path: Path) -> None:
+class _PromptCapturingGenerator:
+    def __init__(self, candidate):
+        self.candidate = candidate
+        self.prompts: list[str] = []
+
+    def propose(self, context: ResearcherContext):
+        self.prompts.append(researcher_llm._prompt(context))
+        return self.candidate
+
+
+def test_actual_day_prompt_projects_operational_identifiers_to_hashes_and_counts(
+    tmp_path: Path,
+) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    marker = "api_key_super_secret_account_provider_token"
+    view = _view().model_copy(
+        update={
+            "cursor": marker,
+            "universe_snapshot_id": marker,
+            "source_refs": (f"source:{marker}",),
+            "evidence_schema": (marker,),
+        }
+    )
+    generator = _PromptCapturingGenerator(_proposal(no_signal_source()))
+
+    DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, generator, runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", view.resource_limits),
+            1,
+        )
+    ).run(view)
+    prompt = json.loads(generator.prompts[0])
+    day = prompt["day_discovery"]
+    encoded = json.dumps(prompt, separators=(",", ":"), sort_keys=True)
+
+    assert marker not in encoded
+    assert day["source_ref_count"] == 1
+    assert day["evidence_schema_count"] == 1
+    assert len(day["cursor_sha256"]) == 64
+    assert day["replay_bars"][0]["close"] == _view().replay_bars[0].close
+
+
+@pytest.mark.parametrize(
+    "sensitive_context",
+    (
+        "account_number_1234",
+        "api_key_value",
+        "authorization_bearer_value",
+        "provider_id_value",
+        "secret_token_value",
+    ),
+)
+def test_sensitive_configured_context_is_rejected_before_prompt_or_model_call(
+    tmp_path: Path,
+    sensitive_context: str,
+) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    generator = _PromptCapturingGenerator(_proposal(no_signal_source()))
+    context = ResearcherContext(
+        lane_id=LaneId.INTRADAY_MOMENTUM,
+        sources=(),
+        failure_digest=FailureDigest((), (), ()),
+        regime_context=sensitive_context,
+        existing_hypothesis_texts=(),
+    )
+
+    with pytest.raises(DayDiscoveryError, match="day_prompt_sensitive_context"):
+        DayDiscoveryLoop(
+            DayDiscoveryLoopConfig(
+                _pipeline(tmp_path, generator, runtime),
+                GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
+                1,
+            )
+        ).run(_view(), context)
+    assert generator.prompts == []
+
+
+def test_terminal_drafts_exhaust_cartesian_budget_without_extra_generation(
+    tmp_path: Path,
+) -> None:
     runtime = resolve_generated_strategy_runtime(Path(sys.executable))
     view = _view().model_copy(
         update={"existing_semantic_hashes": (_proposal_semantic_hash(_proposal(no_signal_source())),)}
     )
-    generator = _SequenceGenerator([_proposal(no_signal_source())] * 4)
+    candidates = [
+        replace(
+            _proposal(no_signal_source()),
+            llm_receipt=replace(
+                _proposal(no_signal_source()).llm_receipt,
+                response_sha256=f"{index:064x}",
+                called_at=_view().observed_at + dt.timedelta(microseconds=index),
+            ),
+        )
+        for index in range(1, 5)
+    ]
+    generator = _SequenceGenerator(candidates)
     result = DayDiscoveryLoop(
         DayDiscoveryLoopConfig(
             _pipeline(tmp_path, generator, runtime),
@@ -256,12 +350,17 @@ def test_three_terminal_drafts_are_all_debited_and_no_more_are_generated(tmp_pat
             3,
         )
     ).run(view)
-    assert result.drafts_attempted == 3
+    assert result.drafts_attempted == 2
     assert result.remaining_budget == 0
-    assert generator.calls == 3
+    assert generator.calls == 2
     reader = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader()
-    version = reader.day_hypothesis_versions(market_id=view.market_id)[0].version
-    assert len(reader.day_attempts_for_review(view.market_id, version.hypothesis_version_id)) == 3
+    versions = reader.day_hypothesis_versions(market_id=view.market_id)
+    assert (
+        sum(
+            len(reader.day_attempts_for_review(view.market_id, item.version.hypothesis_version_id)) for item in versions
+        )
+        == 2
+    )
 
 
 def test_exhausted_prior_budget_does_not_call_model_or_create_hidden_attempt(tmp_path: Path) -> None:
@@ -331,6 +430,146 @@ def test_concurrent_cycle_and_restarted_loop_replay_one_immutable_result(
         )
     )
     assert restarted.run(_view()) == results[0]
+    assert restarted_generator.calls == 0
+
+
+def test_restart_resumes_prepared_branch_after_final_receipt_crash_without_second_model_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    first_generator = _SequenceGenerator([_proposal(no_signal_source())])
+    first_loop = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, first_generator, runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
+            1,
+        )
+    )
+    real_publish = discovery_module.publish_private_immutable_text
+
+    def crash_before_final(path: Path, payload: str) -> bool:
+        if path.name.endswith(".json") and ".prepared." not in path.name:
+            raise discovery_module.InvalidPrivateImmutableFileError
+        return real_publish(path, payload)
+
+    monkeypatch.setattr(discovery_module, "publish_private_immutable_text", crash_before_final)
+    with pytest.raises(DayDiscoveryError, match="cycle_receipt_publication_failed"):
+        first_loop.run(_view())
+    assert first_generator.calls == 1
+    monkeypatch.setattr(discovery_module, "publish_private_immutable_text", real_publish)
+
+    restarted_generator = _SequenceGenerator([])
+    recovered = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, restarted_generator, runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
+            1,
+        )
+    ).run(_view())
+    reader = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader()
+    version = reader.day_hypothesis_versions(market_id=_view().market_id)[0].version
+
+    assert recovered.accepted is True
+    assert restarted_generator.calls == 0
+    assert len(reader.day_hypothesis_versions(market_id=_view().market_id)) == 1
+    assert len(reader.day_attempts_for_review(_view().market_id, version.hypothesis_version_id)) == 1
+    assert len(reader.day_strategy_capsules(_view().market_id)) == 1
+
+
+def test_partial_side_effect_restart_resumes_prepared_branch_without_double_debit(
+    tmp_path: Path,
+) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+
+    def crash_after_version(phase: str) -> None:
+        if phase == "version_registered":
+            raise RuntimeError("simulated_crash")
+
+    first_generator = _SequenceGenerator([_proposal(no_signal_source())])
+    with pytest.raises(RuntimeError, match="simulated_crash"):
+        DayDiscoveryLoop(
+            DayDiscoveryLoopConfig(
+                _pipeline(tmp_path, first_generator, runtime),
+                GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
+                1,
+                fault_injector=crash_after_version,
+            )
+        ).run(_view())
+
+    restarted_generator = _SequenceGenerator([])
+    result = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, restarted_generator, runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
+            1,
+        )
+    ).run(_view())
+    reader = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader()
+    version = reader.day_hypothesis_versions(market_id=_view().market_id)[0].version
+    reviewed = reader.day_attempts_for_review(_view().market_id, version.hypothesis_version_id)
+
+    assert result.accepted is True
+    assert first_generator.calls == 1
+    assert restarted_generator.calls == 0
+    assert len(reviewed) == 1
+    assert reviewed[0].binding.search_budget_debit == 2
+
+
+@pytest.mark.parametrize("tamper_kind", ("noncanonical", "mode", "symlink", "identity"))
+def test_restart_rejects_tampered_or_nonprivate_prepared_branch_before_second_model_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper_kind: str,
+) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    first_generator = _SequenceGenerator([_proposal(no_signal_source())])
+    loop = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, first_generator, runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
+            1,
+        )
+    )
+    real_publish = discovery_module.publish_private_immutable_text
+
+    def crash_before_final(path: Path, payload: str) -> bool:
+        if path.name.endswith(".json") and ".prepared." not in path.name:
+            raise discovery_module.InvalidPrivateImmutableFileError
+        return real_publish(path, payload)
+
+    monkeypatch.setattr(discovery_module, "publish_private_immutable_text", crash_before_final)
+    with pytest.raises(DayDiscoveryError, match="cycle_receipt_publication_failed"):
+        loop.run(_view())
+    monkeypatch.setattr(discovery_module, "publish_private_immutable_text", real_publish)
+    prepared_path = next((tmp_path / "manifests" / "day-discovery-cycle-receipts").glob("*.prepared.0.json"))
+    if tamper_kind == "mode":
+        prepared_path.chmod(0o644)
+    elif tamper_kind == "symlink":
+        target = prepared_path.with_name("prepared-target.json")
+        prepared_path.rename(target)
+        prepared_path.symlink_to(target)
+    else:
+        raw = prepared_path.read_text(encoding="utf-8")
+        if tamper_kind == "identity":
+            payload = json.loads(raw)
+            payload["evidence_sha256"] = "f" * 64
+            raw = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        else:
+            raw = f" {raw}"
+        prepared_path.write_text(raw, encoding="utf-8")
+        prepared_path.chmod(0o600)
+
+    restarted_generator = _SequenceGenerator([])
+    with pytest.raises(DayDiscoveryError, match="prepared_branch"):
+        DayDiscoveryLoop(
+            DayDiscoveryLoopConfig(
+                _pipeline(tmp_path, restarted_generator, runtime),
+                GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
+                1,
+            )
+        ).run(_view())
+    assert first_generator.calls == 1
     assert restarted_generator.calls == 0
 
 
@@ -424,6 +663,119 @@ def test_parameter_demand_above_remaining_budget_is_one_terminal_debit(tmp_path:
     assert generator.calls == 1
 
 
+@pytest.mark.parametrize(
+    ("search_budget", "accepted", "terminal_reason", "expected_debit"),
+    (
+        (8, True, None, 8),
+        (7, False, "budget_exhausted", 7),
+    ),
+)
+def test_cartesian_parameter_combinations_control_admission_and_debit(
+    tmp_path: Path,
+    search_budget: int,
+    accepted: bool,
+    terminal_reason: str | None,
+    expected_debit: int,
+) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    candidate = _proposal(no_signal_source())
+    candidate = replace(
+        candidate,
+        strategy_draft=replace(candidate.strategy_draft, free_parameters=("a", "b", "c")),
+    )
+    view = _view().model_copy(update={"search_budget": search_budget})
+    result = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, FixedHypothesisGenerator(candidate), runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", view.resource_limits),
+            1,
+        )
+    ).run(view)
+    reader = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader()
+    version = reader.day_hypothesis_versions(market_id=view.market_id)[0].version
+    reviewed = reader.day_attempts_for_review(view.market_id, version.hypothesis_version_id)
+    preregistration = next(
+        item
+        for item in reader.strategy_research_preregistrations()
+        if item.hypothesis.hypothesis_id == version.hypothesis_version_id
+    )
+
+    assert result.accepted is accepted
+    assert result.terminal_reason == terminal_reason
+    assert result.remaining_budget == 0
+    assert tuple(len(parameter.values) for parameter in version.free_parameters) == (2, 2, 2)
+    assert version.search_budget.max_parameter_combinations == expected_debit
+    assert preregistration.hypothesis.search_budget.max_parameter_combinations == expected_debit
+    assert reviewed[0].binding.search_budget_debit == expected_debit
+
+
+def test_thirteen_free_parameter_names_are_terminally_audited_with_bounded_debit(
+    tmp_path: Path,
+) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    candidate = _proposal(no_signal_source())
+    candidate = replace(
+        candidate,
+        strategy_draft=replace(
+            candidate.strategy_draft,
+            free_parameters=tuple(f"parameter_{index}" for index in range(13)),
+        ),
+    )
+    view = _view()
+    result = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, FixedHypothesisGenerator(candidate), runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", view.resource_limits),
+            1,
+        )
+    ).run(view)
+    reader = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader()
+    version = reader.day_hypothesis_versions(market_id=view.market_id)[0].version
+    reviewed = reader.day_attempts_for_review(view.market_id, version.hypothesis_version_id)
+    preregistration = next(
+        item
+        for item in reader.strategy_research_preregistrations()
+        if item.hypothesis.hypothesis_id == version.hypothesis_version_id
+    )
+
+    assert result.accepted is False
+    assert result.drafts_attempted == 1
+    assert result.remaining_budget == view.search_budget - 2
+    assert len(reviewed) == 1
+    assert tuple(parameter.name for parameter in version.free_parameters) == ("invalid_ai_parameter_declaration",)
+    assert version.search_budget.max_parameter_combinations == 2
+    assert preregistration.hypothesis.search_budget.max_parameter_combinations == 2
+    assert reviewed[0].binding.search_budget_debit == 2
+
+
+def test_proposal_after_first_eligible_bar_is_terminally_audited(
+    tmp_path: Path,
+) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    candidate = _proposal(no_signal_source())
+    candidate = replace(
+        candidate,
+        llm_receipt=replace(
+            candidate.llm_receipt,
+            called_at=_view().first_eligible_completed_bar_at + dt.timedelta(minutes=1),
+        ),
+    )
+    view = _view()
+    result = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, FixedHypothesisGenerator(candidate), runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", view.resource_limits),
+            1,
+        )
+    ).run(view)
+    reader = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader()
+    version = reader.day_hypothesis_versions(market_id=view.market_id)[0].version
+
+    assert result.accepted is False
+    assert result.terminal_reason == "forward_probe_not_future_only"
+    assert len(reader.day_attempts_for_review(view.market_id, version.hypothesis_version_id)) == 1
+
+
 @pytest.mark.parametrize("invalid_name", ("", "bad\nname"))
 def test_structurally_returned_invalid_parameter_is_audited_once(tmp_path: Path, invalid_name: str) -> None:
     runtime = resolve_generated_strategy_runtime(Path(sys.executable))
@@ -443,7 +795,7 @@ def test_structurally_returned_invalid_parameter_is_audited_once(tmp_path: Path,
 
     assert result.terminal_reason == "contract_invalid"
     assert result.drafts_attempted == 1
-    assert result.remaining_budget == view.search_budget - 1
+    assert result.remaining_budget == view.search_budget - 2
     reader = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader()
     version = reader.day_hypothesis_versions(market_id=view.market_id)[0].version
     assert len(reader.day_attempts_for_review(view.market_id, version.hypothesis_version_id)) == 1
@@ -469,7 +821,7 @@ def test_structurally_returned_invalid_methodology_tag_is_terminally_audited_onc
 
     assert result.terminal_reason == "methodology_missing"
     assert result.drafts_attempted == 1
-    assert result.remaining_budget == view.search_budget - 1
+    assert result.remaining_budget == view.search_budget - 2
     reader = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader()
     version = reader.day_hypothesis_versions(market_id=view.market_id)[0].version
     assert len(reader.day_attempts_for_review(view.market_id, version.hypothesis_version_id)) == 1
@@ -496,7 +848,7 @@ def test_missing_preregistered_falsification_is_a_visible_critic_rejection(
 
     assert result.terminal_reason == "critic_rejected"
     assert result.drafts_attempted == 1
-    assert result.remaining_budget == view.search_budget - 1
+    assert result.remaining_budget == view.search_budget - 2
 
 
 @pytest.mark.parametrize(

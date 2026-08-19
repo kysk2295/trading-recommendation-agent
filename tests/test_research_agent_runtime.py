@@ -18,6 +18,7 @@ from trading_agent.research_agent_actions import (
 from trading_agent.research_agent_cycle_models import (
     DecisionId,
     EvidenceId,
+    MarketId,
     ResearchAgentDecisionKind,
     ResearchAgentDecisionV1,
     ResearchAgentEvidenceV1,
@@ -45,7 +46,7 @@ NOW = dt.datetime(2026, 8, 2, 12, 0, tzinfo=dt.UTC)
 
 
 def _evidence(
-    family: AgentFamilyId, sequence: int, market_id: str = "none"
+    family: AgentFamilyId, sequence: int, market_id: MarketId = "none"
 ) -> ResearchAgentEvidenceV1:
     payload = f'{{"sequence":{sequence}}}'
     digest = hashlib.sha256(payload.encode()).hexdigest()

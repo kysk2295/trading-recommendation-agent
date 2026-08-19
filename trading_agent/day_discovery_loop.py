@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import stat
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -21,6 +22,15 @@ from trading_agent.day_discovery_hypothesis_factory import (
     DayHypothesisBuildInput,
     build_day_hypothesis_contracts,
     day_open_methodology_tags,
+)
+from trading_agent.day_discovery_journal import (
+    DayDiscoveryPreparedBranch,
+    InvalidDayDiscoveryJournalError,
+    PreparedLlmReceipt,
+    PreparedStrategyDraft,
+    prepared_branch_path,
+    publish_prepared_branch,
+    read_prepared_branch,
 )
 from trading_agent.day_hypothesis_models import HypothesisFamily, HypothesisVersion
 from trading_agent.day_research_attempt_binding import (
@@ -175,6 +185,57 @@ class DayDiscoveryEvidenceView(BaseModel):
         return self
 
 
+class DayDiscoveryPromptBar(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    timestamp: dt.datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+    prior_close: float
+    average_daily_volume: int
+    spread_bps: float
+
+
+class DayDiscoveryPromptLimits(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    wall_seconds: float
+    cpu_seconds: int
+    rss_bytes: int
+    open_files: int
+    output_bytes: int
+
+
+class DayDiscoveryPromptView(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    market_id: MarketId
+    trigger_kind: DayDiscoveryTriggerKind
+    observed_at: dt.datetime
+    completed_bar_at: dt.datetime
+    first_eligible_completed_bar_at: dt.datetime
+    universe_snapshot_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    universe_snapshot_at: dt.datetime
+    source_refs_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_ref_count: int = Field(ge=1)
+    evidence_schema_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    evidence_schema_count: int = Field(ge=1)
+    data_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    replay_bars: tuple[DayDiscoveryPromptBar, ...] = Field(min_length=1)
+    search_budget: int = Field(ge=1)
+    budget_debits_used: int = Field(ge=0)
+    remaining_budget: int = Field(ge=0)
+    cursor_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    previous_failure: str | None
+    existing_semantic_hashes_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    existing_semantic_hash_count: int = Field(ge=0)
+    feedback: DayDiscoveryFeedback | None
+    resource_limits: DayDiscoveryPromptLimits
+
+
 def sanitize_day_discovery_feedback(payload: dict[str, object]) -> DayDiscoveryFeedback:
     allowed = DayDiscoveryFeedback.model_fields.keys()
     return DayDiscoveryFeedback.model_validate({key: value for key, value in payload.items() if key in allowed})
@@ -263,6 +324,7 @@ class DayDiscoveryLoopConfig:
     max_drafts: int = 3
     cycle_receipt_root: Path | None = None
     clock: Callable[[], dt.datetime] | None = None
+    fault_injector: Callable[[str], None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,7 +353,13 @@ class DayDiscoveryLoop:
             replay = _read_cycle_receipt(receipt_path, cycle_id, evidence_sha256)
             if replay is not None:
                 return replay
-            result = self._run_new_cycle(view, context or _researcher_context(), cycle_id)
+            result = self._run_new_cycle(
+                view,
+                context or _researcher_context(),
+                cycle_id,
+                evidence_sha256,
+                receipt_root,
+            )
             receipt = DayDiscoveryCycleReceipt(
                 cycle_id=cycle_id,
                 evidence_sha256=evidence_sha256,
@@ -316,12 +384,15 @@ class DayDiscoveryLoop:
         view: DayDiscoveryEvidenceView,
         context: ResearcherContext,
         cycle_id: str,
+        evidence_sha256: str,
+        receipt_root: Path,
     ) -> DayDiscoveryCycleResult:
         attempt_ids: list[str] = []
         latest_family: HypothesisFamily | None = None
         latest_version: HypothesisVersion | None = None
         terminal_reason: str | None = None
         remaining = view.search_budget - view.budget_debits_used
+        _require_safe_day_context(context)
         context = replace(
             context,
             bounded_day_discovery_json=_bounded_prompt_view(view, remaining),
@@ -343,172 +414,34 @@ class DayDiscoveryLoop:
         for branch in range(self.config.max_drafts):
             if remaining == 0:
                 break
-            current_remaining = remaining
-            proposal, critique = self.config.pipeline.propose_candidate(
-                context,
-                lambda candidate, budget=current_remaining: _day_critique(candidate, view, budget),
-            )
-            terminal_reason = _critique_terminal_reason(critique)
-            attempt_started_at = proposal.llm_receipt.called_at.astimezone(dt.UTC)
-            contract_registered_at = max(attempt_started_at, view.completed_bar_at)
-            attempt_finished_at = _cycle_time(self.config.clock, contract_registered_at)
-            bound_at = _cycle_time(self.config.clock, attempt_finished_at)
-            published_at = _cycle_time(self.config.clock, bound_at)
-            if attempt_started_at < view.observed_at:
-                terminal_reason = "proposal_time_invalid"
-            family, version, preregistration = build_day_hypothesis_contracts(
-                proposal,
-                DayHypothesisBuildInput(
-                    market_id=view.market_id,
-                    observed_at=contract_registered_at,
-                    completed_bar_at=view.completed_bar_at,
-                    first_eligible_completed_bar_at=view.first_eligible_completed_bar_at,
-                    universe_snapshot_id=view.universe_snapshot_id,
-                    universe_snapshot_at=view.universe_snapshot_at,
-                    source_refs=view.source_refs,
-                    data_manifest_sha256=view.data_manifest_sha256,
-                    search_budget=view.search_budget,
-                ),
-                terminal=terminal_reason is not None,
-            )
-            latest_family, latest_version = family, version
-            attempt_id = _sha(f"{cycle_id}:{branch}:{version.hypothesis_version_id}")
-            attempt_ids.append(attempt_id)
-            reason = terminal_reason
-            published = None
-            if reason is None:
-                try:
-                    published = self.config.pipeline.stores.strategies.publish(proposal)
-                except GeneratedStrategyArtifactError:
-                    reason = "artifact_publication_failed"
-            binding_ref = preregistered_attempted_artifact_ref(version.code_sha256)
-            if reason is None and published is not None:
-                binding_ref = preregistered_attempted_artifact_ref(published.artifact.payload.source_sha256)
-            with self.config.pipeline.stores.ledger.writer() as writer:
-                _ = writer.register_strategy_research(preregistration)
-                _ = writer.register_day_hypothesis_family(family)
-                _ = writer.register_day_hypothesis_version(version)
-            if reason is not None or published is None:
-                _record_terminal(
-                    self.config.pipeline.stores.ledger,
-                    attempt_id,
-                    branch,
-                    version,
-                    binding_ref,
-                    view,
-                    reason or "failed",
-                    attempt_started_at,
-                    attempt_finished_at,
-                    bound_at,
-                )
-                remaining -= 1
-                terminal_reason = reason
-                continue
-            binding_payload = {
-                "binding_id": "",
-                "attempt_id": attempt_id,
-                "market_id": version.market_id,
-                "hypothesis_version_id": version.hypothesis_version_id,
-                "artifact_ref": binding_ref,
-                "multiple_testing_family": version.multiple_testing_family,
-                "search_budget_debit": 1,
-                "bound_at": bound_at,
-            }
-            prospective_binding = DayResearchAttemptBinding.model_validate(
-                binding_payload | {"binding_id": DayResearchAttemptBinding.canonical_id_for(binding_payload)}
-            )
-            request = _capsule_request(
-                version,
-                prospective_binding,
-                published.artifact.artifact_id,
+            prepared = self._prepared_branch(
                 view,
-                self.config.pipeline.stores.strategies,
-                self.config.sandbox,
-                published_at,
+                context,
+                cycle_id,
+                evidence_sha256,
+                receipt_root,
+                branch,
+                remaining,
             )
-            if view.first_eligible_completed_bar_at <= published_at:
-                reason = "forward_probe_not_future_only"
-                _record_terminal(
-                    self.config.pipeline.stores.ledger,
-                    attempt_id,
-                    branch,
-                    version,
-                    binding_ref,
-                    view,
-                    reason,
-                    attempt_started_at,
-                    attempt_finished_at,
-                    bound_at,
+            latest_family, latest_version = prepared.family, prepared.version
+            attempt_ids.append(prepared.attempt_id)
+            capsule_id, admission_id, reason = self._execute_prepared_branch(prepared, view)
+            remaining -= prepared.search_budget_debit
+            if capsule_id is not None and admission_id is not None:
+                return DayDiscoveryCycleResult(
+                    cycle_id=cycle_id,
+                    attempt_ids=tuple(attempt_ids),
+                    family_id=prepared.family.family_id,
+                    hypothesis_version_id=prepared.version.hypothesis_version_id,
+                    capsule_id=capsule_id,
+                    admission_id=admission_id,
+                    accepted=True,
+                    terminal_reason=None,
+                    drafts_attempted=len(attempt_ids),
+                    remaining_budget=remaining,
+                    first_eligible_completed_bar_at=view.first_eligible_completed_bar_at,
                 )
-                remaining -= 1
-                terminal_reason = reason
-                continue
-            try:
-                _ = build_strategy_capsule(request)
-            except (GeneratedStrategyExecutionError, InvalidStrategyCapsuleError) as error:
-                reason = _preflight_reason(error)
-                _record_terminal(
-                    self.config.pipeline.stores.ledger,
-                    attempt_id,
-                    branch,
-                    version,
-                    binding_ref,
-                    view,
-                    reason,
-                    attempt_started_at,
-                    attempt_finished_at,
-                    bound_at,
-                )
-                remaining -= 1
-                terminal_reason = reason
-                continue
-            successful_attempt = ResearchAttempt(
-                attempt_id=attempt_id,
-                hypothesis_id=preregistration.hypothesis.hypothesis_id,
-                branch_index=branch,
-                input_hashes=(view.data_manifest_sha256,),
-                code_sha256=version.code_sha256,
-                data_manifest_sha256=view.data_manifest_sha256,
-                started_at=attempt_started_at,
-                finished_at=attempt_finished_at,
-                status=AttemptStatus.SUCCEEDED,
-                artifact_refs=(binding_ref,),
-                error_class=None,
-                max_cpu_seconds=view.resource_limits.cpu_seconds,
-            )
-            binding = _binding(successful_attempt, version, binding_ref, bound_at)
-            with self.config.pipeline.stores.ledger.writer() as writer:
-                _ = writer.append_strategy_research_attempt(successful_attempt)
-                _ = writer.register_day_research_attempt_binding(binding)
-            capsule, _ = publish_day_strategy_capsule(self.config.pipeline.stores.ledger, request)
-            admission_payload = {
-                "admission_id": "",
-                "capsule_id": capsule.capsule_id,
-                "market_id": view.market_id,
-                "registration_completed_bar_at": published_at,
-                "first_eligible_completed_bar_at": view.first_eligible_completed_bar_at,
-                "trading_authority": False,
-            }
-            admission = ForwardProbeAdmissionRequest(
-                admission_id=ForwardProbeAdmissionRequest.canonical_id_for(admission_payload),
-                capsule_id=capsule.capsule_id,
-                market_id=view.market_id,
-                registration_completed_bar_at=published_at,
-                first_eligible_completed_bar_at=view.first_eligible_completed_bar_at,
-            )
-            return DayDiscoveryCycleResult(
-                cycle_id=cycle_id,
-                attempt_ids=tuple(attempt_ids),
-                family_id=family.family_id,
-                hypothesis_version_id=version.hypothesis_version_id,
-                capsule_id=capsule.capsule_id,
-                admission_id=admission.admission_id,
-                accepted=True,
-                terminal_reason=None,
-                drafts_attempted=len(attempt_ids),
-                remaining_budget=remaining - 1,
-                first_eligible_completed_bar_at=admission.first_eligible_completed_bar_at,
-            )
+            terminal_reason = reason
         return DayDiscoveryCycleResult(
             cycle_id=cycle_id,
             attempt_ids=tuple(attempt_ids),
@@ -522,6 +455,211 @@ class DayDiscoveryLoop:
             remaining_budget=remaining,
             first_eligible_completed_bar_at=view.first_eligible_completed_bar_at,
         )
+
+    def _prepared_branch(
+        self,
+        view: DayDiscoveryEvidenceView,
+        context: ResearcherContext,
+        cycle_id: str,
+        evidence_sha256: str,
+        receipt_root: Path,
+        branch: int,
+        remaining: int,
+    ) -> DayDiscoveryPreparedBranch:
+        path = prepared_branch_path(receipt_root, cycle_id, branch)
+        try:
+            stored = read_prepared_branch(path, cycle_id, evidence_sha256, branch)
+        except InvalidDayDiscoveryJournalError as error:
+            raise DayDiscoveryError(error.reason) from None
+        if stored is not None:
+            return stored
+        proposal, critique = self.config.pipeline.propose_candidate(
+            context,
+            lambda candidate: _day_critique(candidate, view, remaining),
+        )
+        reason = _critique_terminal_reason(critique)
+        attempt_started_at = proposal.llm_receipt.called_at.astimezone(dt.UTC)
+        actual_registration_at = max(attempt_started_at, view.completed_bar_at)
+        if attempt_started_at < view.observed_at:
+            reason = "proposal_time_invalid"
+        if actual_registration_at >= view.first_eligible_completed_bar_at:
+            reason = "forward_probe_not_future_only"
+        contract_registered_at = min(
+            actual_registration_at,
+            view.first_eligible_completed_bar_at - dt.timedelta(microseconds=1),
+        )
+        attempt_finished_at = _cycle_time(self.config.clock, attempt_started_at)
+        bound_at = _cycle_time(self.config.clock, attempt_finished_at)
+        published_at = _cycle_time(self.config.clock, bound_at)
+        family, version, preregistration = build_day_hypothesis_contracts(
+            proposal,
+            DayHypothesisBuildInput(
+                market_id=view.market_id,
+                observed_at=contract_registered_at,
+                completed_bar_at=view.completed_bar_at,
+                first_eligible_completed_bar_at=view.first_eligible_completed_bar_at,
+                universe_snapshot_id=view.universe_snapshot_id,
+                universe_snapshot_at=view.universe_snapshot_at,
+                source_refs=view.source_refs,
+                data_manifest_sha256=view.data_manifest_sha256,
+                search_budget=remaining,
+            ),
+            terminal=reason is not None,
+        )
+        attempt_id = _sha(f"{cycle_id}:{branch}:{version.hypothesis_version_id}")
+        debit = _search_budget_debit(proposal, remaining)
+        prepared = DayDiscoveryPreparedBranch(
+            cycle_id=cycle_id,
+            evidence_sha256=evidence_sha256,
+            branch_index=branch,
+            proposal_card=None if reason is not None else proposal.card,
+            cited_sources=proposal.cited_sources,
+            llm_receipt=PreparedLlmReceipt(**asdict(proposal.llm_receipt)),
+            strategy_draft=PreparedStrategyDraft(**asdict(proposal.strategy_draft)),
+            terminal_reason=reason,
+            family=family,
+            version=version,
+            preregistration=preregistration,
+            attempt_id=attempt_id,
+            attempt_started_at=attempt_started_at,
+            attempt_finished_at=attempt_finished_at,
+            bound_at=bound_at,
+            published_at=published_at,
+            search_budget_debit=debit,
+        )
+        try:
+            publish_prepared_branch(path, prepared)
+        except InvalidDayDiscoveryJournalError as error:
+            raise DayDiscoveryError(error.reason) from None
+        return prepared
+
+    def _execute_prepared_branch(
+        self,
+        prepared: DayDiscoveryPreparedBranch,
+        view: DayDiscoveryEvidenceView,
+    ) -> tuple[str | None, str | None, str | None]:
+        reason = prepared.terminal_reason
+        published = None
+        if reason is None:
+            try:
+                published = self.config.pipeline.stores.strategies.publish(prepared.proposal())
+            except (GeneratedStrategyArtifactError, InvalidDayDiscoveryJournalError):
+                reason = "artifact_publication_failed"
+        binding_ref = preregistered_attempted_artifact_ref(prepared.version.code_sha256)
+        if reason is None and published is not None:
+            binding_ref = preregistered_attempted_artifact_ref(published.artifact.payload.source_sha256)
+        with self.config.pipeline.stores.ledger.writer() as writer:
+            _ = writer.register_strategy_research(prepared.preregistration)
+            _ = writer.register_day_hypothesis_family(prepared.family)
+            _ = writer.register_day_hypothesis_version(prepared.version)
+        if self.config.fault_injector is not None:
+            self.config.fault_injector("version_registered")
+        if reason is not None or published is None:
+            _record_terminal(
+                self.config.pipeline.stores.ledger,
+                prepared.attempt_id,
+                prepared.branch_index,
+                prepared.version,
+                binding_ref,
+                view,
+                reason or "failed",
+                prepared.attempt_started_at,
+                prepared.attempt_finished_at,
+                prepared.bound_at,
+                prepared.search_budget_debit,
+            )
+            return None, None, reason
+        prospective_binding = _binding_for(
+            prepared.attempt_id,
+            prepared.version,
+            binding_ref,
+            prepared.bound_at,
+            prepared.search_budget_debit,
+        )
+        request = _capsule_request(
+            prepared.version,
+            prospective_binding,
+            published.artifact.artifact_id,
+            view,
+            self.config.pipeline.stores.strategies,
+            self.config.sandbox,
+            prepared.published_at,
+        )
+        if view.first_eligible_completed_bar_at <= prepared.published_at:
+            reason = "forward_probe_not_future_only"
+            _record_terminal(
+                self.config.pipeline.stores.ledger,
+                prepared.attempt_id,
+                prepared.branch_index,
+                prepared.version,
+                binding_ref,
+                view,
+                reason,
+                prepared.attempt_started_at,
+                prepared.attempt_finished_at,
+                prepared.bound_at,
+                prepared.search_budget_debit,
+            )
+            return None, None, reason
+        try:
+            _ = build_strategy_capsule(request)
+        except (GeneratedStrategyExecutionError, InvalidStrategyCapsuleError) as error:
+            reason = _preflight_reason(error)
+            _record_terminal(
+                self.config.pipeline.stores.ledger,
+                prepared.attempt_id,
+                prepared.branch_index,
+                prepared.version,
+                binding_ref,
+                view,
+                reason,
+                prepared.attempt_started_at,
+                prepared.attempt_finished_at,
+                prepared.bound_at,
+                prepared.search_budget_debit,
+            )
+            return None, None, reason
+        successful_attempt = ResearchAttempt(
+            attempt_id=prepared.attempt_id,
+            hypothesis_id=prepared.preregistration.hypothesis.hypothesis_id,
+            branch_index=prepared.branch_index,
+            input_hashes=(view.data_manifest_sha256,),
+            code_sha256=prepared.version.code_sha256,
+            data_manifest_sha256=view.data_manifest_sha256,
+            started_at=prepared.attempt_started_at,
+            finished_at=prepared.attempt_finished_at,
+            status=AttemptStatus.SUCCEEDED,
+            artifact_refs=(binding_ref,),
+            error_class=None,
+            max_cpu_seconds=view.resource_limits.cpu_seconds,
+        )
+        binding = _binding(
+            successful_attempt,
+            prepared.version,
+            binding_ref,
+            prepared.bound_at,
+            prepared.search_budget_debit,
+        )
+        with self.config.pipeline.stores.ledger.writer() as writer:
+            _ = writer.append_strategy_research_attempt(successful_attempt)
+            _ = writer.register_day_research_attempt_binding(binding)
+        capsule, _ = publish_day_strategy_capsule(self.config.pipeline.stores.ledger, request)
+        admission_payload = {
+            "admission_id": "",
+            "capsule_id": capsule.capsule_id,
+            "market_id": view.market_id,
+            "registration_completed_bar_at": prepared.published_at,
+            "first_eligible_completed_bar_at": view.first_eligible_completed_bar_at,
+            "trading_authority": False,
+        }
+        admission = ForwardProbeAdmissionRequest(
+            admission_id=ForwardProbeAdmissionRequest.canonical_id_for(admission_payload),
+            capsule_id=capsule.capsule_id,
+            market_id=view.market_id,
+            registration_completed_bar_at=prepared.published_at,
+            first_eligible_completed_bar_at=view.first_eligible_completed_bar_at,
+        )
+        return capsule.capsule_id, admission.admission_id, None
 
 
 @dataclass(frozen=True, slots=True)
@@ -585,13 +723,16 @@ class DayDiscoveryActionExecutor:
 def _critic_reason(proposal: ProposedHypothesis, view: DayDiscoveryEvidenceView, remaining: int) -> str | None:
     if remaining < 1:
         return "budget_exhausted"
-    if len(proposal.strategy_draft.free_parameters) > remaining:
-        return "budget_exhausted"
-    if any(
-        not value.strip() or len(value) > 80 or not value.isprintable()
-        for value in proposal.strategy_draft.free_parameters
+    if (
+        any(
+            not value.strip() or len(value) > 80 or not value.isprintable()
+            for value in proposal.strategy_draft.free_parameters
+        )
+        or len(set(proposal.strategy_draft.free_parameters)) > 12
     ):
         return "contract_invalid"
+    if _parameter_combination_demand(proposal) > remaining:
+        return "budget_exhausted"
     if _proposal_semantic_hash(proposal) in view.existing_semantic_hashes:
         return "semantic_duplicate"
     try:
@@ -631,6 +772,7 @@ def _critique_terminal_reason(critique: CritiqueReport) -> str | None:
         "compile_failed",
         "critic_rejected",
         "contract_invalid",
+        "forward_probe_not_future_only",
         "methodology_missing",
         "point_in_time_leakage",
         "semantic_duplicate",
@@ -650,6 +792,7 @@ def _record_terminal(
     started_at: dt.datetime,
     finished_at: dt.datetime,
     bound_at: dt.datetime,
+    search_budget_debit: int,
 ) -> None:
     attempt = ResearchAttempt(
         attempt_id=attempt_id,
@@ -665,28 +808,69 @@ def _record_terminal(
         error_class=reason,
         max_cpu_seconds=view.resource_limits.cpu_seconds,
     )
-    binding = _binding(attempt, version, artifact_ref, bound_at)
+    binding = _binding(
+        attempt,
+        version,
+        artifact_ref,
+        bound_at,
+        search_budget_debit,
+    )
     with ledger.writer() as writer:
         _ = writer.append_strategy_research_attempt(attempt)
         _ = writer.register_day_research_attempt_binding(binding)
 
 
 def _binding(
-    attempt: ResearchAttempt, version: HypothesisVersion, artifact_ref: str, bound_at: dt.datetime
+    attempt: ResearchAttempt,
+    version: HypothesisVersion,
+    artifact_ref: str,
+    bound_at: dt.datetime,
+    search_budget_debit: int,
+) -> DayResearchAttemptBinding:
+    return _binding_for(
+        attempt.attempt_id,
+        version,
+        artifact_ref,
+        bound_at,
+        search_budget_debit,
+    )
+
+
+def _binding_for(
+    attempt_id: str,
+    version: HypothesisVersion,
+    artifact_ref: str,
+    bound_at: dt.datetime,
+    search_budget_debit: int,
 ) -> DayResearchAttemptBinding:
     payload = {
         "binding_id": "",
-        "attempt_id": attempt.attempt_id,
+        "attempt_id": attempt_id,
         "market_id": version.market_id,
         "hypothesis_version_id": version.hypothesis_version_id,
         "artifact_ref": artifact_ref,
         "multiple_testing_family": version.multiple_testing_family,
-        "search_budget_debit": 1,
+        "search_budget_debit": search_budget_debit,
         "bound_at": bound_at,
     }
     return DayResearchAttemptBinding.model_validate(
         payload | {"binding_id": DayResearchAttemptBinding.canonical_id_for(payload)}
     )
+
+
+def _parameter_combination_demand(proposal: ProposedHypothesis) -> int:
+    parameters = proposal.strategy_draft.free_parameters
+    if (
+        not parameters
+        or len(set(parameters)) > 12
+        or any(not value.strip() or len(value) > 80 or not value.isprintable() for value in parameters)
+    ):
+        return 2
+    return 2 ** len(set(parameters))
+
+
+def _search_budget_debit(proposal: ProposedHypothesis, remaining: int) -> int:
+    return min(_parameter_combination_demand(proposal), remaining)
 
 
 def _capsule_request(
@@ -800,9 +984,71 @@ def _cycle_receipt_lease(root: Path, cycle_id: str) -> Iterator[None]:
 
 
 def _bounded_prompt_view(view: DayDiscoveryEvidenceView, remaining: int) -> str:
-    payload = view.model_dump(mode="json")
-    payload["remaining_budget"] = remaining
-    return json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    prompt_view = DayDiscoveryPromptView(
+        market_id=view.market_id,
+        trigger_kind=view.trigger_kind,
+        observed_at=view.observed_at,
+        completed_bar_at=view.completed_bar_at,
+        first_eligible_completed_bar_at=view.first_eligible_completed_bar_at,
+        universe_snapshot_sha256=_sha(view.universe_snapshot_id),
+        universe_snapshot_at=view.universe_snapshot_at,
+        source_refs_sha256=_sha("\x1f".join(view.source_refs)),
+        source_ref_count=len(view.source_refs),
+        evidence_schema_sha256=_sha("\x1f".join(view.evidence_schema)),
+        evidence_schema_count=len(view.evidence_schema),
+        data_manifest_sha256=view.data_manifest_sha256,
+        replay_bars=tuple(
+            DayDiscoveryPromptBar(
+                timestamp=bar.timestamp,
+                open=bar.open,
+                high=bar.high,
+                low=bar.low,
+                close=bar.close,
+                volume=bar.volume,
+                prior_close=bar.prior_close,
+                average_daily_volume=bar.average_daily_volume,
+                spread_bps=bar.spread_bps,
+            )
+            for bar in view.replay_bars
+        ),
+        search_budget=view.search_budget,
+        budget_debits_used=view.budget_debits_used,
+        remaining_budget=remaining,
+        cursor_sha256=_sha(view.cursor),
+        previous_failure=view.previous_failure,
+        existing_semantic_hashes_sha256=_sha("\x1f".join(view.existing_semantic_hashes)),
+        existing_semantic_hash_count=len(view.existing_semantic_hashes),
+        feedback=view.feedback,
+        resource_limits=DayDiscoveryPromptLimits(**asdict(view.resource_limits)),
+    )
+    return json.dumps(
+        prompt_view.model_dump(mode="json"),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _require_safe_day_context(context: ResearcherContext) -> None:
+    payload = json.dumps(
+        {
+            "existing_hypothesis_texts": context.existing_hypothesis_texts,
+            "failure_digest": asdict(context.failure_digest),
+            "regime_context": context.regime_context,
+            "sources": tuple(source.model_dump(mode="json") for source in context.sources),
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    if (
+        re.search(
+            r"(?i)(account(?:[_-]?(?:id|number|no))?|api[_-]?key|authorization|bearer|credential|password|provider(?:[_-]?id)?|secret|token)",
+            payload,
+        )
+        is not None
+    ):
+        raise DayDiscoveryError("day_prompt_sensitive_context")
 
 
 def _safe_reason_token(value: str | None) -> str | None:

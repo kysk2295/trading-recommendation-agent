@@ -303,9 +303,14 @@ def _day_discovery_evidence(path: Path, now: dt.datetime) -> ResearchAgentEviden
         feedback_path = path.with_name(path.name.replace("evidence", "feedback"))
         if feedback_path.exists():
             require_private_source_file(feedback_path)
-            feedback = json.loads(feedback_path.read_text(encoding="utf-8"))
+            feedback_raw = feedback_path.read_text(encoding="utf-8")
+            feedback = json.loads(feedback_raw)
             if not isinstance(feedback, dict):
                 raise InvalidResearchAgentSourceError(reason="day_discovery_feedback_invalid")
+            if feedback_raw != bounded_day_discovery_feedback(feedback):
+                raise InvalidResearchAgentSourceError(
+                    reason="day_discovery_feedback_noncanonical"
+                )
             view = view.model_copy(update={"feedback": sanitize_day_discovery_feedback(feedback)})
         payload = canonical_model_json(view)
         payload_sha256 = hashlib.sha256(payload.encode()).hexdigest()

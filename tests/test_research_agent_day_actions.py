@@ -28,6 +28,7 @@ from trading_agent.research_agent_cycle_models import (
 from trading_agent.research_agent_day_actions import DayResearchActionExecutor
 from trading_agent.research_agent_source_common import ResearchAgentEvidenceMaterial, canonical_payload_json
 from trading_agent.research_identity_models import AgentFamily, MarketId, StrategyLaneRef
+from trading_agent.researcher_llm import ResearcherLlmError
 from trading_agent.signal_contract_models import EvidenceRef
 from trading_agent.trade_signal_publication import TradeSignalPublication
 
@@ -95,6 +96,18 @@ def test_discovery_failure_is_translated_to_typed_action_failure(tmp_path: Path)
     context = _context(_evidence(None), ResearchAgentDecisionKind.PROPOSE_HYPOTHESIS)
 
     with pytest.raises(InvalidResearchAgentActionError, match="cycle_receipt_invalid"):
+        DayResearchActionExecutor(tmp_path, FailingDiscovery()).execute(context)
+
+
+def test_discovery_model_failure_is_translated_to_typed_action_failure(tmp_path: Path) -> None:
+    class FailingDiscovery:
+        def execute(self, context: ResearchAgentActionContext) -> ResearchAgentResultV1:
+            del context
+            raise ResearcherLlmError("fixture_invalid")
+
+    context = _context(_evidence(None), ResearchAgentDecisionKind.PROPOSE_HYPOTHESIS)
+
+    with pytest.raises(InvalidResearchAgentActionError, match="day_discovery_model_invalid"):
         DayResearchActionExecutor(tmp_path, FailingDiscovery()).execute(context)
 
 

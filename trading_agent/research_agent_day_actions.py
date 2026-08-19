@@ -23,6 +23,7 @@ from trading_agent.research_agent_cycle_models import (
     research_agent_result_id,
 )
 from trading_agent.research_agent_source_common import require_private_source_file
+from trading_agent.researcher_llm import ResearcherLlmError
 from trading_agent.signal_contract_models import TradeSignalEnvelope
 from trading_agent.trade_signal_outbox_reader import TradeSignalOutboxReaderError, read_trade_signal_publications
 
@@ -83,6 +84,8 @@ class DayResearchActionExecutor:
                 return self.discovery.execute(context)
             except DayDiscoveryError as error:
                 raise InvalidResearchAgentActionError(reason=error.reason) from None
+            except ResearcherLlmError:
+                raise InvalidResearchAgentActionError(reason="day_discovery_model_invalid") from None
             except ValidationError:
                 raise InvalidResearchAgentActionError(reason="day_discovery_input_invalid") from None
         if decision not in {

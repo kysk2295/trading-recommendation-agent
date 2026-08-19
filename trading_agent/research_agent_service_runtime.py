@@ -83,7 +83,8 @@ from trading_agent.researcher_llm import (
     FixtureLlmProposalClient,
     HermesCliProposalClient,
     StructuredHypothesisGenerator,
-    load_researcher_context_input,
+    load_private_canonical_llm_response,
+    load_private_canonical_researcher_context,
 )
 from trading_agent.researcher_pipeline import (
     ResearcherPipeline,
@@ -402,13 +403,16 @@ def _day_discovery_executor(config: ResearchAgentServiceConfig, called_at: dt.da
     receipts = ResearcherReceiptStore(systematic.receipt_root)
     ledger = ExperimentLedgerStore(config.source_paths.experiment_ledger)
     if systematic.response_fixture is not None:
-        proposal_client = FixtureLlmProposalClient(systematic.response_fixture.read_bytes())
+        proposal_client = FixtureLlmProposalClient(
+            load_private_canonical_llm_response(systematic.response_fixture)
+        )
     elif systematic.hermes_executable is not None:
         proposal_client = HermesCliProposalClient(
             systematic.hermes_executable, systematic.model_id, systematic.provider_id
         )
     else:
         raise InvalidResearchAgentServiceRuntimeError
+    source = load_private_canonical_researcher_context(systematic.context)
     runtime = resolve_generated_strategy_runtime(systematic.python_executable)
     strategies = GeneratedStrategyArtifactStore(systematic.strategy_root, runtime)
     pipeline = ResearcherPipeline(
@@ -419,7 +423,6 @@ def _day_discovery_executor(config: ResearchAgentServiceConfig, called_at: dt.da
         ResearcherPipelineStores(ledger, receipts, strategies),
         ResearcherPipelineArtifacts(systematic.manifest_root, systematic.queue_root),
     )
-    source = load_researcher_context_input(systematic.context)
     return DayDiscoveryActionExecutor(
         DayDiscoveryLoop(
             DayDiscoveryLoopConfig(

@@ -13,6 +13,7 @@ from trading_agent.dashboard_agent_family import AgentFamilyId
 from trading_agent.research_agent_cycle_models import (
     CycleId,
     EvidenceId,
+    MarketId,
     ResearchAgentEvidenceV1,
     ResearchAgentOpenWorkState,
     ResearchAgentOpenWorkV1,
@@ -34,7 +35,11 @@ from trading_agent.research_agent_runtime_support import retry_evidence
 NOW = dt.datetime(2026, 8, 2, 12, 0, tzinfo=dt.UTC)
 
 
-def _evidence(family: AgentFamilyId, sequence: int, market_id: str = "us_equities") -> ResearchAgentEvidenceV1:
+def _evidence(
+    family: AgentFamilyId,
+    sequence: int,
+    market_id: MarketId = "us_equities",
+) -> ResearchAgentEvidenceV1:
     digest = hashlib.sha256(f"{family}:{market_id}:{sequence}".encode()).hexdigest()
     return ResearchAgentEvidenceV1(
         evidence_id=EvidenceId(digest),
@@ -49,7 +54,11 @@ def _evidence(family: AgentFamilyId, sequence: int, market_id: str = "us_equitie
     )
 
 
-def _result(cycle_id: CycleId, family: AgentFamilyId, market_id: str = "us_equities") -> ResearchAgentResultV1:
+def _result(
+    cycle_id: CycleId,
+    family: AgentFamilyId,
+    market_id: MarketId = "us_equities",
+) -> ResearchAgentResultV1:
     return ResearchAgentResultV1(
         result_id=research_agent_result_id(cycle_id),
         cycle_id=cycle_id,
@@ -311,7 +320,7 @@ def test_v1_legacy_day_open_work_recovers_as_us_market_work(tmp_path: Path) -> N
     evidence = _evidence("day_trading", 1, "us_equities")
     legacy_work = ResearchAgentOpenWorkV1(
         work_id="actor-state.day_trading",
-        cycle_id="a" * 64,
+        cycle_id=CycleId("a" * 64),
         agent_family_id="day_trading",
         state=ResearchAgentOpenWorkState.OPEN,
         evidence_refs=("b" * 64,),
