@@ -81,7 +81,7 @@ class DayAgentToolCall(BaseModel):
 class DayAgentThesisSubmission(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    kind: Literal["trade_thesis"] = "trade_thesis"
+    kind: Literal["thesis_submission"] = "thesis_submission"
     action: Literal[DayAgentAction.SUBMIT_TRADE_THESIS] = DayAgentAction.SUBMIT_TRADE_THESIS
     thesis: str = Field(min_length=8, max_length=4_000)
     evidence_refs: tuple[str, ...] = Field(min_length=1, max_length=64)
@@ -96,7 +96,7 @@ class DayAgentThesisSubmission(BaseModel):
 class DayAgentHypothesisSubmission(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    kind: Literal["research_hypothesis"] = "research_hypothesis"
+    kind: Literal["hypothesis_submission"] = "hypothesis_submission"
     action: Literal[DayAgentAction.SUBMIT_RESEARCH_HYPOTHESIS] = DayAgentAction.SUBMIT_RESEARCH_HYPOTHESIS
     hypothesis: str = Field(min_length=8, max_length=4_000)
     falsification_conditions: tuple[str, ...] = Field(min_length=1, max_length=32)

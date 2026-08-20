@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from tests.day_agent_support import day_task
+from tests.day_agent_support import day_step, day_task
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
 from trading_agent.day_agent_runtime import DayAgentTaskResult
-from trading_agent.day_agent_task_models import DayAgentTaskState
+from trading_agent.day_agent_task_models import DayAgentAction, DayAgentTaskState
 from trading_agent.research_agent_actions import (
     ResearchAgentActionClient,
     ResearchAgentActionConfig,
@@ -178,6 +178,28 @@ class RecordingPersistentDayRuntime:
             steps=(),
             observations=(),
             model_calls=2,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CompletedPersistentDayRuntime:
+    action: DayAgentAction
+
+    def tick(self, evidence: ResearchAgentEvidenceV1, now: dt.datetime) -> DayAgentTaskResult:
+        del evidence, now
+        open_task = day_task()
+        return DayAgentTaskResult(
+            task=day_task(state=DayAgentTaskState.COMPLETED),
+            steps=(
+                day_step(
+                    open_task,
+                    sequence=1,
+                    action=self.action,
+                    state=DayAgentTaskState.WAITING,
+                ),
+            ),
+            observations=(),
+            model_calls=1,
         )
 
 
@@ -386,6 +408,60 @@ def test_day_evidence_delegates_to_persistent_runtime_before_legacy_decision(tmp
     assert tick.model_calls == 2
     assert tuple(item.agent_family_id for item in delegated) == ("day_trading",)
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("action", "expected"),
+    (
+        (DayAgentAction.SUBMIT_TRADE_THESIS, ResearchAgentDecisionKind.PUBLISH_RECOMMENDATION),
+        (DayAgentAction.SUBMIT_RESEARCH_HYPOTHESIS, ResearchAgentDecisionKind.PROPOSE_HYPOTHESIS),
+    ),
+)
+def test_completed_day_projection_uses_terminal_submission_action(
+    tmp_path: Path,
+    action: DayAgentAction,
+    expected: ResearchAgentDecisionKind,
+) -> None:
+    store = ResearchAgentCycleStore(tmp_path / "cycles.sqlite3")
+    runtime = ResearchAgentRuntime(
+        ResearchAgentRuntimeServices(
+            store,
+            EMPTY_COLLECTOR,
+            RecordingDecisionClient([]),
+            RecordingArtifactActionClient([]),
+            day_runtime=CompletedPersistentDayRuntime(action),
+        )
+    )
+    runtime.ingest((_evidence("day_trading", 1, "us_equities"),))
+
+    tick = runtime.tick(NOW + dt.timedelta(minutes=2))
+    result = runtime.store.results()[0]
+    runtime.close()
+
+    assert tick.status == "completed"
+    assert result.decision_kind is expected
+
+
+def test_completed_day_projection_blocks_non_submission_terminal_shape(tmp_path: Path) -> None:
+    store = ResearchAgentCycleStore(tmp_path / "cycles.sqlite3")
+    runtime = ResearchAgentRuntime(
+        ResearchAgentRuntimeServices(
+            store,
+            EMPTY_COLLECTOR,
+            RecordingDecisionClient([]),
+            RecordingArtifactActionClient([]),
+            day_runtime=CompletedPersistentDayRuntime(DayAgentAction.DEFER),
+        )
+    )
+    runtime.ingest((_evidence("day_trading", 1, "us_equities"),))
+
+    tick = runtime.tick(NOW + dt.timedelta(minutes=2))
+    result = runtime.store.results()[0]
+    runtime.close()
+
+    assert tick.status == "blocked"
+    assert result.reason == "day_agent_completed_shape_invalid"
+    assert result.decision_kind is None
 
 
 @pytest.mark.parametrize(

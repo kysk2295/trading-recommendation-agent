@@ -64,9 +64,13 @@ class DayAgentToolRuntime:
         if binding is None or not set(call.arguments.root).issubset(binding.allowed_arguments):
             raise DayAgentToolRuntimeError(reason="day_agent_tool_authority_denied")
         try:
-            decoded = json.loads(binding.invoke(call.arguments))
+            raw_result = binding.invoke(call.arguments)
+        except Exception:
+            raise DayAgentToolRuntimeError(reason="day_agent_tool_call_failed") from None
+        try:
+            decoded = json.loads(raw_result)
             bounded_json = json.dumps(decoded, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
-        except (RuntimeError, TypeError, ValueError):
+        except (TypeError, ValueError):
             raise DayAgentToolRuntimeError(reason="day_agent_tool_result_invalid") from None
         if len(bounded_json.encode()) > _MAX_CONTENT_BYTES:
             raise DayAgentToolRuntimeError(reason="day_agent_tool_result_too_large")

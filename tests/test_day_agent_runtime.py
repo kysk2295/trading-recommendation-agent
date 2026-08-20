@@ -7,13 +7,21 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
+from pydantic import TypeAdapter, ValidationError
 
 from tests.day_agent_support import NOW, day_task
 from trading_agent.day_agent_reasoning import DayAgentReasoningClient
 from trading_agent.day_agent_runtime import DayAgentRuntime, run_day_agent_task
-from trading_agent.day_agent_task_models import DayAgentAction, DayAgentTaskState
+from trading_agent.day_agent_task_models import (
+    DayAgentAction,
+    DayAgentBudget,
+    DayAgentTaskRecordKind,
+    DayAgentTaskState,
+    DayAgentTaskStep,
+)
 from trading_agent.day_agent_task_store import DayAgentTaskStore
 from trading_agent.day_agent_tool_models import (
+    DayAgentHypothesisSubmission,
     DayAgentReasoningRequest,
     DayAgentReasoningResponse,
     DayAgentThesisSubmission,
@@ -40,6 +48,16 @@ def _thesis_call() -> DayAgentThesisSubmission:
         thesis="Current-session catalyst leadership supports a reviewable long thesis artifact.",
         evidence_refs=("evidence.catalyst", "evidence.leader", "evidence.situation"),
         reason="The bounded observations now support a falsifiable research conclusion.",
+    )
+
+
+def _hypothesis_call(*, experiment_code: str | None = None) -> DayAgentHypothesisSubmission:
+    return DayAgentHypothesisSubmission(
+        hypothesis="Current-session leader persistence is a falsifiable research hypothesis.",
+        falsification_conditions=("leader_loses_relative_strength",),
+        evidence_refs=("evidence.situation",),
+        experiment_code=experiment_code,
+        reason="The bounded evidence supports a research-only hypothesis artifact.",
     )
 
 
@@ -193,6 +211,34 @@ def test_restart_dispatches_persisted_decision_without_duplicate_model_call(tmp_
     assert len(DayAgentTaskStore(tmp_path / "day-agent.sqlite3").reader().steps(resumed.task.task_id)) == 2
 
 
+def test_restart_blocks_invalid_persisted_decision_schema_without_model_call(tmp_path: Path) -> None:
+    task = day_task()
+    path = tmp_path / "day-agent.sqlite3"
+    invalid = DayAgentTaskStep(
+        task_id=task.task_id,
+        sequence=1,
+        record_kind=DayAgentTaskRecordKind.DECISION,
+        payload_json="{}",
+        action=DayAgentAction.INSPECT_SITUATION,
+        reason="Persisted response schema is intentionally invalid for this adversarial fixture.",
+        evidence_refs=task.evidence_refs,
+        budget=task.budget,
+        state=DayAgentTaskState.WAITING,
+        occurred_at=NOW,
+        scheduled_wake_at=NOW + dt.timedelta(seconds=1),
+    )
+    with DayAgentTaskStore(path).writer() as writer:
+        assert writer.create_task(task)
+        assert writer.append_step(invalid)
+    client = ScriptedDayReasoner(())
+
+    result = run_day_agent_task(_runtime(tmp_path, client, max_steps=1), task)
+
+    assert result.state is DayAgentTaskState.BLOCKED
+    assert result.task.terminal_reason == "day_agent_persisted_decision_invalid"
+    assert client.requests == []
+
+
 @pytest.mark.parametrize(
     "forbidden",
     ("unknown", "provider", "credential", "account", "position", "order", "sizing", "mutation"),
@@ -254,3 +300,151 @@ def test_tool_observation_is_bounded_hashed_and_timezone_aware() -> None:
     assert observation.content_sha256 in observation.evidence_refs
     assert len(observation.bounded_json.encode()) <= 16_384
     assert inspect.isclass(type(observation))
+
+
+def test_submission_response_tags_are_exact_and_legacy_tags_are_rejected() -> None:
+    adapter = TypeAdapter(DayAgentReasoningResponse)
+
+    assert _thesis_call().kind == "thesis_submission"
+    assert _hypothesis_call().kind == "hypothesis_submission"
+    with pytest.raises(ValidationError):
+        adapter.validate_json(_thesis_call().model_dump_json().replace("thesis_submission", "trade_thesis"))
+    with pytest.raises(ValidationError):
+        adapter.validate_json(
+            _hypothesis_call().model_dump_json().replace("hypothesis_submission", "research_hypothesis")
+        )
+
+
+def test_model_elapsed_budget_boundary_never_persists_or_dispatches_tool_decision(tmp_path: Path) -> None:
+    client = ScriptedDayReasoner((_tool_call(DayAgentAction.INSPECT_SITUATION, symbol="NVDA"),))
+    dispatches: list[str] = []
+    tools = DayAgentToolRuntime(
+        bindings=(
+            DayAgentToolBinding(
+                action=DayAgentAction.INSPECT_SITUATION,
+                allowed_arguments=frozenset({"symbol"}),
+                invoke=lambda arguments: dispatches.append(arguments.root["symbol"]) or "{}",
+                evidence_refs=("evidence.situation",),
+            ),
+        ),
+        clock=lambda: NOW,
+    )
+    moments = iter((NOW, NOW + dt.timedelta(seconds=1), NOW + dt.timedelta(seconds=1)))
+    runtime = DayAgentRuntime(
+        store=DayAgentTaskStore(tmp_path / "day-agent.sqlite3"),
+        reasoner=client,
+        tools=tools,
+        max_steps=1,
+        clock=lambda: next(moments),
+    )
+    task = day_task().model_copy(
+        update={
+            "budget": DayAgentBudget(
+                remaining_model_calls=2,
+                remaining_tool_calls=2,
+                remaining_runtime_seconds=1,
+            )
+        }
+    )
+
+    result = run_day_agent_task(runtime, task)
+    persisted = DayAgentTaskStore(tmp_path / "day-agent.sqlite3").reader().steps(task.task_id)
+
+    assert result.state is DayAgentTaskState.BLOCKED
+    assert result.task.terminal_reason == "day_agent_runtime_budget_exhausted"
+    assert result.task.budget.remaining_runtime_seconds == 0
+    assert dispatches == []
+    assert all(step.action is DayAgentAction.DEFER for step in persisted)
+
+
+@pytest.mark.parametrize("failure", (OSError("private detail"), ValueError("private detail")))
+def test_external_model_exceptions_are_redacted_into_stable_blocked_records(
+    tmp_path: Path,
+    failure: Exception,
+) -> None:
+    @dataclass(frozen=True, slots=True)
+    class FailingReasoner:
+        role: Literal["reasoning", "coding"] = "reasoning"
+
+        def next_step(self, request: DayAgentReasoningRequest) -> DayAgentReasoningResponse:
+            del request
+            raise failure
+
+    result = run_day_agent_task(_runtime(tmp_path, FailingReasoner(), max_steps=1), day_task())
+
+    assert result.state is DayAgentTaskState.BLOCKED
+    assert result.task.terminal_reason == "day_agent_model_call_failed"
+    stored = DayAgentTaskStore(tmp_path / "day-agent.sqlite3").reader().steps(result.task.task_id)
+    assert "private detail" not in stored[0].reason
+
+
+def test_external_tool_exception_is_redacted_into_stable_blocked_record(tmp_path: Path) -> None:
+    client = ScriptedDayReasoner((_tool_call(DayAgentAction.INSPECT_SITUATION, symbol="NVDA"),))
+
+    def fail_tool(arguments: DayAgentToolArguments) -> str:
+        raise OSError(arguments.root["symbol"])
+
+    tools = DayAgentToolRuntime(
+        bindings=(
+            DayAgentToolBinding(
+                action=DayAgentAction.INSPECT_SITUATION,
+                allowed_arguments=frozenset({"symbol"}),
+                invoke=fail_tool,
+                evidence_refs=("evidence.situation",),
+            ),
+        ),
+        clock=lambda: NOW,
+    )
+    runtime = DayAgentRuntime(
+        store=DayAgentTaskStore(tmp_path / "day-agent.sqlite3"),
+        reasoner=client,
+        tools=tools,
+        max_steps=1,
+        clock=lambda: NOW,
+    )
+
+    result = run_day_agent_task(runtime, day_task())
+
+    assert result.state is DayAgentTaskState.BLOCKED
+    assert result.task.terminal_reason == "day_agent_tool_call_failed"
+    assert "NVDA" not in result.task.terminal_reason
+
+
+def test_unknown_role_is_rejected_before_model_processing(tmp_path: Path) -> None:
+    @dataclass(frozen=True, slots=True)
+    class ExtractionReasoner:
+        role: str = "extraction"
+        calls: list[DayAgentReasoningRequest] = field(default_factory=list)
+
+        def next_step(self, request: DayAgentReasoningRequest) -> DayAgentReasoningResponse:
+            self.calls.append(request)
+            return _hypothesis_call()
+
+    client = ExtractionReasoner()
+
+    result = run_day_agent_task(_runtime(tmp_path, client, max_steps=1), day_task())
+
+    assert result.state is DayAgentTaskState.BLOCKED
+    assert result.task.terminal_reason == "day_agent_role_invalid"
+    assert client.calls == []
+
+
+@pytest.mark.parametrize("role", ("reasoning", "coding"))
+def test_hypothesis_without_experiment_code_is_allowed_for_declared_roles(
+    tmp_path: Path,
+    role: Literal["reasoning", "coding"],
+) -> None:
+    client = ScriptedDayReasoner((_hypothesis_call(),), role=role)
+
+    result = run_day_agent_task(_runtime(tmp_path, client, max_steps=1), day_task())
+
+    assert result.state is DayAgentTaskState.COMPLETED
+
+
+def test_experiment_code_requires_coding_role(tmp_path: Path) -> None:
+    client = ScriptedDayReasoner((_hypothesis_call(experiment_code="print('bounded')"),), role="reasoning")
+
+    result = run_day_agent_task(_runtime(tmp_path, client, max_steps=1), day_task())
+
+    assert result.state is DayAgentTaskState.BLOCKED
+    assert result.task.terminal_reason == "day_agent_role_authority_denied"

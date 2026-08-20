@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
 from trading_agent.day_agent_runtime import DayAgentTaskResult
-from trading_agent.day_agent_task_models import DayAgentTaskState
+from trading_agent.day_agent_task_models import DayAgentAction, DayAgentTaskRecordKind, DayAgentTaskState
 from trading_agent.research_agent_actions import (
     InvalidResearchAgentActionError,
     ResearchAgentActionClient,
@@ -380,6 +380,25 @@ def _project_day_result(
     evidence_refs = tuple(sorted(task.evidence_refs))[:32]
     match task.state:
         case DayAgentTaskState.COMPLETED:
+            if not day_result.steps or day_result.steps[-1].record_kind is not DayAgentTaskRecordKind.DECISION:
+                return _invalid_completed_day_result(cycle, day_result, now)
+            match day_result.steps[-1].action:
+                case DayAgentAction.SUBMIT_TRADE_THESIS:
+                    decision_kind = ResearchAgentDecisionKind.PUBLISH_RECOMMENDATION
+                case DayAgentAction.SUBMIT_RESEARCH_HYPOTHESIS:
+                    decision_kind = ResearchAgentDecisionKind.PROPOSE_HYPOTHESIS
+                case (
+                    DayAgentAction.INSPECT_SITUATION
+                    | DayAgentAction.READ_CATALYSTS
+                    | DayAgentAction.COMPARE_LEADERS
+                    | DayAgentAction.SEARCH_PAST_CASES
+                    | DayAgentAction.RUN_LIGHT_EXPERIMENT
+                    | DayAgentAction.ASK_CRITIC
+                    | DayAgentAction.DEFER
+                ):
+                    return _invalid_completed_day_result(cycle, day_result, now)
+                case unreachable:
+                    assert_never(unreachable)
             return ResearchAgentResultV1(
                 result_id=research_agent_result_id(cycle.cycle_id),
                 cycle_id=cycle.cycle_id,
@@ -393,7 +412,7 @@ def _project_day_result(
                 occurred_at=now,
                 next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
                 next_wake_at=None,
-                decision_kind=ResearchAgentDecisionKind.PUBLISH_RECOMMENDATION,
+                decision_kind=decision_kind,
             )
         case DayAgentTaskState.BLOCKED:
             return ResearchAgentResultV1(
@@ -433,6 +452,29 @@ def _project_day_result(
             raise InvalidResearchAgentRuntimeError(reason="day_agent_boundary_not_terminal")
         case unreachable:
             assert_never(unreachable)
+
+
+def _invalid_completed_day_result(
+    cycle: ResearchAgentCycleV1,
+    day_result: DayAgentTaskResult,
+    now: dt.datetime,
+) -> ResearchAgentResultV1:
+    return ResearchAgentResultV1(
+        result_id=research_agent_result_id(cycle.cycle_id),
+        cycle_id=cycle.cycle_id,
+        agent_family_id=cycle.agent_family_id,
+        market_id=cycle.market_id,
+        status=ResearchAgentResultStatus.BLOCKED,
+        question=day_result.task.question[:500],
+        summary="The persistent Day task completed without a valid terminal submission record.",
+        reason="day_agent_completed_shape_invalid",
+        continuation="Preserve the research artifact and wait for a valid terminal submission record.",
+        evidence_refs=tuple(sorted(day_result.task.evidence_refs))[:32],
+        artifact_refs=(),
+        occurred_at=now,
+        next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
+        next_wake_at=None,
+    )
 
 
 __all__ = (

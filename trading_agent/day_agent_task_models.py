@@ -170,8 +170,13 @@ def day_agent_step_id(step: DayAgentTaskStep) -> str:
 
 
 def day_agent_step_payload(step: DayAgentTaskStep) -> str:
+    excluded = {"step_id"}
+    if step.record_kind is DayAgentTaskRecordKind.DECISION:
+        excluded.add("record_kind")
+    if step.payload_json == "{}":
+        excluded.add("payload_json")
     return json.dumps(
-        step.model_dump(mode="json", exclude={"step_id"}, exclude_none=True),
+        step.model_dump(mode="json", exclude=excluded, exclude_none=True),
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,

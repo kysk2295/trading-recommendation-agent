@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import multiprocessing
 import os
 import sqlite3
@@ -63,6 +64,40 @@ def test_step_persists_canonical_bounded_protocol_payload(tmp_path: Path) -> Non
 
     # Then
     assert DayAgentTaskStore(tmp_path / "day-agent.sqlite3").reader().steps(task.task_id) == (step,)
+
+
+def test_pre_extension_step_payload_reopens_with_original_identity() -> None:
+    payload = (
+        '{"action":"inspect_situation","budget":{"remaining_model_calls":4,'
+        '"remaining_runtime_seconds":60,"remaining_tool_calls":8},'
+        '"evidence_refs":["evidence.market.001"],"occurred_at":"2026-08-21T14:30:00Z",'
+        '"reason":"The bounded action preserves durable research lineage.","schema_version":1,'
+        '"sequence":1,"state":"open","task_id":"task-20260821-NVDA"}'
+    )
+    step_id = "74f6f3b00452d6e149f20d2bb799d66fab61435699835c1f68fbd3aa1530cf06"
+
+    step = task_store._step_from_row(
+        (step_id, "task-20260821-NVDA", 1, hashlib.sha256(payload.encode()).hexdigest(), payload)
+    )
+
+    assert step.step_id == step_id
+    assert task_store._step_row(step)[-1] == payload
+
+
+def test_observation_record_fields_remain_step_identity_bearing() -> None:
+    task = day_task()
+    decision = day_step(task, sequence=1, action=DayAgentAction.INSPECT_SITUATION)
+    observation = DayAgentTaskStep.model_validate(
+        decision.model_dump(mode="python", exclude={"step_id"})
+        | {
+            "record_kind": DayAgentTaskRecordKind.OBSERVATION,
+            "payload_json": '{"status":"current"}',
+        }
+    )
+
+    assert decision.step_id != observation.step_id
+    assert '"record_kind":"observation"' in task_store.day_agent_step_payload(observation)
+    assert '"payload_json":"{\\"status\\":\\"current\\"}"' in task_store.day_agent_step_payload(observation)
 
 
 def test_task_creation_is_idempotent_and_conflicting_payload_fails_closed(tmp_path: Path) -> None:

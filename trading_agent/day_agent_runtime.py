@@ -5,7 +5,7 @@ import json
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Final, assert_never
+from typing import Final, Literal, assert_never
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -83,9 +83,18 @@ def run_day_agent_task(runtime: DayAgentRuntime, task: DayAgentResearchTask) -> 
         if current.state in {DayAgentTaskState.COMPLETED, DayAgentTaskState.BLOCKED}:
             break
         stored_steps = runtime.store.reader().steps(task.task_id)
+        role = _client_role(runtime.reasoner)
+        if role is None:
+            _append_blocked(runtime, current, stored_steps, "day_agent_role_invalid")
+            break
         pending = _pending_decision(stored_steps)
         if pending is not None:
-            _apply_response(runtime, current, stored_steps, _parse_decision(pending.payload_json))
+            try:
+                persisted_response = _parse_decision(pending.payload_json)
+            except DayAgentRuntimeError as error:
+                _append_blocked(runtime, current, stored_steps, error.reason)
+                break
+            _apply_response(runtime, current, stored_steps, persisted_response, role)
             processed_steps += 1
             continue
         if current.budget.remaining_model_calls == 0:
@@ -103,11 +112,41 @@ def run_day_agent_task(runtime: DayAgentRuntime, task: DayAgentResearchTask) -> 
         )
         call_started_at = runtime.clock()
         try:
-            response = _RESPONSE_ADAPTER.validate_python(runtime.reasoner.next_step(request))
-        except (RuntimeError, TypeError, ValidationError):
-            _append_blocked(runtime, current, stored_steps, "day_agent_model_response_invalid")
+            raw_response = runtime.reasoner.next_step(request)
+        except Exception:
+            failed_at = runtime.clock()
+            model_calls += 1
+            _append_blocked(
+                runtime,
+                current,
+                stored_steps,
+                "day_agent_model_call_failed",
+                budget=_consume_model(current.budget, _elapsed_seconds(call_started_at, failed_at)),
+            )
             break
         decided_at = runtime.clock()
+        model_calls += 1
+        consumed_budget = _consume_model(current.budget, _elapsed_seconds(call_started_at, decided_at))
+        try:
+            response = _RESPONSE_ADAPTER.validate_python(raw_response)
+        except (TypeError, ValidationError):
+            _append_blocked(
+                runtime,
+                current,
+                stored_steps,
+                "day_agent_model_response_invalid",
+                budget=consumed_budget,
+            )
+            break
+        if consumed_budget.remaining_runtime_seconds == 0:
+            _append_blocked(
+                runtime,
+                current,
+                stored_steps,
+                "day_agent_runtime_budget_exhausted",
+                budget=consumed_budget,
+            )
+            break
         decision = DayAgentTaskStep(
             task_id=current.task_id,
             sequence=len(stored_steps) + 1,
@@ -116,15 +155,20 @@ def run_day_agent_task(runtime: DayAgentRuntime, task: DayAgentResearchTask) -> 
             action=response.action,
             reason=response.reason,
             evidence_refs=current.evidence_refs,
-            budget=_consume_model(current.budget, _elapsed_seconds(call_started_at, decided_at)),
+            budget=consumed_budget,
             state=DayAgentTaskState.WAITING,
             occurred_at=decided_at,
             scheduled_wake_at=decided_at + dt.timedelta(seconds=1),
         )
         with runtime.store.writer() as writer:
             _ = writer.append_step(decision)
-        model_calls += 1
-        _apply_response(runtime, _require_task(runtime.store, task.task_id), (*stored_steps, decision), response)
+        _apply_response(
+            runtime,
+            _require_task(runtime.store, task.task_id),
+            (*stored_steps, decision),
+            response,
+            role,
+        )
         processed_steps += 1
     return _result(runtime.store, task.task_id, model_calls)
 
@@ -134,9 +178,13 @@ def _apply_response(
     task: DayAgentResearchTask,
     steps: tuple[DayAgentTaskStep, ...],
     response: DayAgentReasoningResponse,
+    role: Literal["reasoning", "coding"],
 ) -> None:
     match response:
         case DayAgentToolCall():
+            if task.budget.remaining_runtime_seconds == 0:
+                _append_blocked(runtime, task, steps, "day_agent_runtime_budget_exhausted")
+                return
             if task.budget.remaining_tool_calls == 0:
                 _append_blocked(runtime, task, steps, "day_agent_tool_budget_exhausted")
                 return
@@ -144,7 +192,14 @@ def _apply_response(
             try:
                 observation = runtime.tools.dispatch(response)
             except DayAgentToolRuntimeError as error:
-                _append_blocked(runtime, task, steps, error.reason)
+                failed_at = runtime.clock()
+                _append_blocked(
+                    runtime,
+                    task,
+                    steps,
+                    error.reason,
+                    budget=_consume_tool(task.budget, _elapsed_seconds(call_started_at, failed_at)),
+                )
                 return
             observed_at = runtime.clock()
             evidence_refs = tuple(sorted({*task.evidence_refs, *observation.evidence_refs}))
@@ -162,7 +217,7 @@ def _apply_response(
                 scheduled_wake_at=observed_at + dt.timedelta(seconds=1),
             )
         case DayAgentThesisSubmission():
-            if runtime.reasoner.role != "reasoning":
+            if role != "reasoning":
                 _append_blocked(runtime, task, steps, "day_agent_role_authority_denied")
                 return
             outcome = _terminal_step(
@@ -177,7 +232,7 @@ def _apply_response(
                 current_hypothesis=response.thesis,
             )
         case DayAgentHypothesisSubmission():
-            if response.experiment_code is not None and runtime.reasoner.role != "coding":
+            if response.experiment_code is not None and role != "coding":
                 _append_blocked(runtime, task, steps, "day_agent_role_authority_denied")
                 return
             outcome = _terminal_step(
@@ -248,6 +303,8 @@ def _append_blocked(
     task: DayAgentResearchTask,
     steps: tuple[DayAgentTaskStep, ...],
     reason: str,
+    *,
+    budget: DayAgentBudget | None = None,
 ) -> None:
     blocked = DayAgentTaskStep(
         task_id=task.task_id,
@@ -257,7 +314,7 @@ def _append_blocked(
         action=DayAgentAction.DEFER,
         reason=reason,
         evidence_refs=task.evidence_refs,
-        budget=task.budget,
+        budget=task.budget if budget is None else budget,
         state=DayAgentTaskState.BLOCKED,
         occurred_at=runtime.clock(),
         terminal_reason=reason,
@@ -286,6 +343,16 @@ def _consume_tool(budget: DayAgentBudget, elapsed_seconds: int) -> DayAgentBudge
 
 def _elapsed_seconds(started_at: dt.datetime, finished_at: dt.datetime) -> int:
     return max(0, math.ceil((finished_at - started_at).total_seconds()))
+
+
+def _client_role(client: DayAgentReasoningClient) -> Literal["reasoning", "coding"] | None:
+    try:
+        role = client.role
+    except Exception:
+        return None
+    if role not in {"reasoning", "coding"}:
+        return None
+    return role
 
 
 def _pending_decision(steps: tuple[DayAgentTaskStep, ...]) -> DayAgentTaskStep | None:
