@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from tests.test_us_day_signal_admission import _eligible_request
+from tests.test_us_day_signal_admission import RecordingLiquidityPolicy, _eligible_request
 from tests.us_day_operating_fixtures import NaturalPaperSession, OneUseArmConsumer
 from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
 from trading_agent.execution_store import ExecutionStore
@@ -27,9 +27,10 @@ from trading_agent.us_day_thesis_store import UsDayThesisStore
 def test_champion_thesis_runs_complete_paper_lifecycle_and_replays_exactly(tmp_path: Path) -> None:
     # Given
     admission_request = _eligible_request()
+    liquidity_policy = RecordingLiquidityPolicy(37)
     admission = __import__(
         "trading_agent.us_day_signal_admission", fromlist=["admit_us_day_signal"]
-    ).admit_us_day_signal(admission_request)
+    ).admit_us_day_signal(admission_request, liquidity_policy)
     session = NaturalPaperSession(admission)
     execution_store = ExecutionStore(tmp_path / "execution.sqlite3")
     delivery_store = HermesDeliveryStore(tmp_path / "delivery.sqlite3")
@@ -52,6 +53,7 @@ def test_champion_thesis_runs_complete_paper_lifecycle_and_replays_exactly(tmp_p
         coordinator=coordinator,
         thesis_store=UsDayThesisStore(tmp_path / "theses"),
         paper_store=PaperStore(tmp_path / "paper.sqlite3"),
+        market_liquidity_policy=liquidity_policy,
     )
     request = UsDayAgentOperatingRequest(
         admission=admission_request,

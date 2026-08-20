@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import replace
+from dataclasses import fields, replace
 
 import pytest
 
@@ -11,30 +11,70 @@ from tests.test_us_day_thesis_runtime import _champion, _markets, _valid_respons
 from trading_agent.day_research_review import DayExecutionSessionContext, build_execution_eligibility
 from trading_agent.day_research_review_models import PromotionDecision
 from trading_agent.day_research_review_types import DayExecutionEligibilityStatus, DayPromotionStatus
+from trading_agent.lane_defaults import INTRADAY_PILOT_PAPER_RISK_CONFIG
 from trading_agent.lane_identity_models import LaneId
 from trading_agent.paper_execution_models import IntentId
-from trading_agent.paper_risk import DEFAULT_PAPER_RISK_CONFIG
 from trading_agent.signal_contract_models import SignalActionability
 from trading_agent.us_day_signal_admission import (
     InvalidUsDaySignalAdmissionError,
+    UsDayMarketLiquidityContext,
     UsDaySignalAdmissionRequest,
     admit_us_day_signal,
 )
 from trading_agent.us_day_thesis_runtime import reason_trade_thesis
 
 
+class RecordingLiquidityPolicy:
+    def __init__(self, quantity: int) -> None:
+        self.quantity = quantity
+        self.contexts: list[UsDayMarketLiquidityContext] = []
+
+    def allowed_quantity(self, context: UsDayMarketLiquidityContext) -> int:
+        self.contexts.append(context)
+        return self.quantity
+
+
 def test_champion_current_quote_signal_is_admitted_with_exact_identity() -> None:
     # Given
     request = _eligible_request()
+    policy = RecordingLiquidityPolicy(37)
 
     # When
-    admitted = admit_us_day_signal(request)
+    admitted = admit_us_day_signal(request, policy)
 
     # Then
     assert admitted.candidate_intent.intent_id == IntentId(request.thesis.thesis_id)
     assert admitted.latest_bar.symbol == request.signal.symbol
     assert admitted.estimated_spread_bps == float(request.current_market.quote.spread_bps)
-    assert admitted.config == DEFAULT_PAPER_RISK_CONFIG
+    assert admitted.liquidity_allowed_quantity == 37
+    assert admitted.config == INTRADAY_PILOT_PAPER_RISK_CONFIG
+    assert admitted.config.max_risk_dollars == 10.0
+    assert admitted.config.risk_fraction == 0.0003333333333333333
+    assert admitted.config.max_notional_dollars == 100.0
+    assert admitted.config.max_open_positions == 1
+    assert admitted.config.daily_loss_limit_dollars == 30.0
+    assert admitted.config.per_side_cost_bps == 20.0
+    assert tuple(policy.contexts) == (
+        UsDayMarketLiquidityContext(
+            market_id=request.signal.strategy_lane.market_id,
+            session_id=request.session_id,
+            situation_id=request.thesis.situation_id,
+            symbol=request.signal.symbol,
+            quote=request.current_market.quote,
+            current_bar_started_at=request.current_market.current_bar.timestamp,
+            evaluated_at=request.evaluated_at,
+        ),
+    )
+
+
+def test_admission_request_has_no_caller_controlled_liquidity_quantity() -> None:
+    assert "liquidity_allowed_quantity" not in {item.name for item in fields(UsDaySignalAdmissionRequest)}
+
+
+@pytest.mark.parametrize("quantity", (0, -1, True))
+def test_market_liquidity_policy_quantity_fails_closed_when_invalid(quantity: int) -> None:
+    with pytest.raises(InvalidUsDaySignalAdmissionError, match="market_liquidity_policy_invalid"):
+        admit_us_day_signal(_eligible_request(), RecordingLiquidityPolicy(quantity))
 
 
 @pytest.mark.parametrize(
@@ -80,7 +120,7 @@ def test_signal_admission_fails_closed_when_lineage_or_current_evidence_differs(
 
     # When / Then
     with pytest.raises(InvalidUsDaySignalAdmissionError):
-        admit_us_day_signal(changed)
+        admit_us_day_signal(changed, RecordingLiquidityPolicy(37))
 
 
 def _eligible_request() -> UsDaySignalAdmissionRequest:
@@ -111,7 +151,6 @@ def _eligible_request() -> UsDaySignalAdmissionRequest:
         current_market=market,
         promotion=promotion,
         execution_eligibility=eligibility,
-        liquidity_allowed_quantity=100,
         evaluated_at=EVALUATED_AT,
     )
 

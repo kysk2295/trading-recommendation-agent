@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
-from typing import override
+from typing import Protocol, override
 
 from trading_agent.day_research_review_models import ExecutionEligibility, PromotionDecision
 from trading_agent.day_research_review_types import DayExecutionEligibilityStatus, DayPromotionStatus
+from trading_agent.lane_defaults import INTRADAY_PILOT_PAPER_RISK_CONFIG
 from trading_agent.lane_identity_models import LaneId
 from trading_agent.paper_execution_models import IntentId, PaperOrderIntent, PaperOrderSide
 from trading_agent.paper_operating_session_models import PaperOrderAdmissionRequest
 from trading_agent.paper_order_gate_models import LatestCompletedBar
-from trading_agent.paper_risk import DEFAULT_PAPER_RISK_CONFIG
 from trading_agent.research_identity_models import AgentFamily, MarketId
-from trading_agent.signal_contract_models import SignalActionability, SignalSide, TradeSignalEnvelope
+from trading_agent.signal_contract_models import QuoteValidation, SignalActionability, SignalSide, TradeSignalEnvelope
 from trading_agent.us_day_situation_models import UsDaySituationMap
 from trading_agent.us_day_thesis_models import (
     DayTradeDecision,
@@ -34,6 +34,21 @@ class InvalidUsDaySignalAdmissionError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class UsDayMarketLiquidityContext:
+    market_id: MarketId
+    session_id: str
+    situation_id: str
+    symbol: str
+    quote: QuoteValidation
+    current_bar_started_at: dt.datetime
+    evaluated_at: dt.datetime
+
+
+class UsDayMarketLiquidityPolicy(Protocol):
+    def allowed_quantity(self, context: UsDayMarketLiquidityContext) -> int: ...
+
+
+@dataclass(frozen=True, slots=True)
 class UsDaySignalAdmissionRequest:
     session_id: str
     lane_id: LaneId
@@ -44,14 +59,29 @@ class UsDaySignalAdmissionRequest:
     current_market: UsDayCurrentMarket
     promotion: PromotionDecision
     execution_eligibility: ExecutionEligibility
-    liquidity_allowed_quantity: int
     evaluated_at: dt.datetime
 
 
-def admit_us_day_signal(request: UsDaySignalAdmissionRequest) -> PaperOrderAdmissionRequest:
+def admit_us_day_signal(
+    request: UsDaySignalAdmissionRequest,
+    liquidity_policy: UsDayMarketLiquidityPolicy,
+) -> PaperOrderAdmissionRequest:
     _require_current_champion_signal(request)
     signal = request.signal
     market = request.current_market
+    liquidity_allowed_quantity = liquidity_policy.allowed_quantity(
+        UsDayMarketLiquidityContext(
+            market_id=signal.strategy_lane.market_id,
+            session_id=request.session_id,
+            situation_id=request.thesis.situation_id,
+            symbol=signal.symbol,
+            quote=market.quote,
+            current_bar_started_at=market.current_bar.timestamp,
+            evaluated_at=request.evaluated_at,
+        )
+    )
+    if liquidity_allowed_quantity.__class__ is not int or liquidity_allowed_quantity <= 0:
+        raise InvalidUsDaySignalAdmissionError("market_liquidity_policy_invalid")
     match signal.side:
         case SignalSide.LONG:
             side = PaperOrderSide.BUY
@@ -71,9 +101,9 @@ def admit_us_day_signal(request: UsDaySignalAdmissionRequest) -> PaperOrderAdmis
             float(signal.targets[0].price),
             float(signal.targets[1].price),
         ),
-        liquidity_allowed_quantity=request.liquidity_allowed_quantity,
+        liquidity_allowed_quantity=liquidity_allowed_quantity,
         estimated_spread_bps=float(market.quote.spread_bps),
-        config=DEFAULT_PAPER_RISK_CONFIG,
+        config=INTRADAY_PILOT_PAPER_RISK_CONFIG,
     )
 
 
@@ -127,7 +157,6 @@ def _require_current_champion_signal(request: UsDaySignalAdmissionRequest) -> No
         or market.quote != signal.quote_validation
         or not market.quote.observed_at <= signal.observed_at <= now <= market.quote.valid_until
         or market.quote.spread_bps > market.quote.max_slippage_bps
-        or request.liquidity_allowed_quantity <= 0
         or not current_session
     ):
         raise InvalidUsDaySignalAdmissionError("signal_not_eligible_for_paper")
@@ -137,4 +166,10 @@ def _aware(value: dt.datetime) -> bool:
     return value.tzinfo is not None and value.utcoffset() is not None
 
 
-__all__ = ("InvalidUsDaySignalAdmissionError", "UsDaySignalAdmissionRequest", "admit_us_day_signal")
+__all__ = (
+    "InvalidUsDaySignalAdmissionError",
+    "UsDayMarketLiquidityContext",
+    "UsDayMarketLiquidityPolicy",
+    "UsDaySignalAdmissionRequest",
+    "admit_us_day_signal",
+)

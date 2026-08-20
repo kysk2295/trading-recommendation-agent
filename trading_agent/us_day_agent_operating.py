@@ -6,7 +6,11 @@ from typing import Protocol, override
 from trading_agent.models import Recommendation, RecommendationState
 from trading_agent.store import PaperStore
 from trading_agent.us_day_operating_models import UsDayOperatingRequest, UsDayOperatingResult, UsDayOperatingTransition
-from trading_agent.us_day_signal_admission import UsDaySignalAdmissionRequest, admit_us_day_signal
+from trading_agent.us_day_signal_admission import (
+    UsDayMarketLiquidityPolicy,
+    UsDaySignalAdmissionRequest,
+    admit_us_day_signal,
+)
 from trading_agent.us_day_thesis_models import ThesisChangeKind, UsDayThesisChange, UsDayTradeThesis
 from trading_agent.us_day_thesis_store import UsDayThesisStore
 
@@ -42,6 +46,7 @@ class UsDayAgentOperatingServices:
     coordinator: UsDayCoordinator
     thesis_store: UsDayThesisStore
     paper_store: PaperStore
+    market_liquidity_policy: UsDayMarketLiquidityPolicy
     _results: dict[str, UsDayOperatingResult] = field(default_factory=dict, init=False, repr=False)
 
 
@@ -51,7 +56,7 @@ def operate_us_day_agent(
 ) -> UsDayOperatingResult:
     source = request.admission
     thesis = source.thesis
-    order_admission = admit_us_day_signal(source)
+    order_admission = admit_us_day_signal(source, services.market_liquidity_policy)
     replay = services._results.get(thesis.thesis_id)
     if replay is not None:
         return replay
