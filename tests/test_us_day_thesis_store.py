@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import multiprocessing
 import os
 from pathlib import Path
+from typing import Protocol
 
 import pytest
 
@@ -90,6 +92,72 @@ def test_relative_store_root_is_stable_after_cwd_change(tmp_path: Path) -> None:
         assert store.thesis(thesis.thesis_id) == thesis
     finally:
         os.chdir(original)
+
+
+def test_store_rejects_symlink_root_or_path_component(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "linked"
+    link.symlink_to(real, target_is_directory=True)
+    with pytest.raises(InvalidUsDayThesisStoreError):
+        UsDayThesisStore(link)
+    with pytest.raises(InvalidUsDayThesisStoreError):
+        UsDayThesisStore(link / "child")
+
+
+def test_concurrent_siblings_fail_closed_at_write_time(tmp_path: Path) -> None:
+    store = UsDayThesisStore(tmp_path)
+    thesis = _terminal_thesis()
+    assert store.publish_thesis(thesis)
+    left = UsDayThesisChange.create(
+        thesis_id=thesis.thesis_id,
+        parent_event_id=thesis.thesis_id,
+        kind=ThesisChangeKind.HOLD,
+        occurred_at=thesis.observed_at + dt.timedelta(seconds=1),
+        note="left",
+    )
+    right = UsDayThesisChange.create(
+        thesis_id=thesis.thesis_id,
+        parent_event_id=thesis.thesis_id,
+        kind=ThesisChangeKind.CLOSE,
+        occurred_at=thesis.observed_at + dt.timedelta(seconds=1),
+        note="right",
+    )
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(2)
+    results = context.Queue()
+    processes = tuple(
+        context.Process(target=_publish_change_worker, args=(str(tmp_path), item.model_dump_json(), barrier, results))
+        for item in (left, right)
+    )
+    for process in processes:
+        process.start()
+    outcomes = sorted(results.get(timeout=10) for _ in processes)
+    for process in processes:
+        process.join(timeout=10)
+        assert process.exitcode == 0
+    assert outcomes == ["created", "rejected"]
+    assert len(store.changes(thesis.thesis_id)) == 1
+
+
+class _Barrier(Protocol):
+    def wait(self) -> int: ...
+
+
+class _Queue(Protocol):
+    def put(self, value: str) -> None: ...
+
+
+def _publish_change_worker(root: str, payload: str, barrier: _Barrier, results: _Queue) -> None:
+    store = UsDayThesisStore(Path(root))
+    change = UsDayThesisChange.model_validate_json(payload)
+    _ = barrier.wait()
+    try:
+        created = store.publish_change(change)
+    except InvalidUsDayThesisStoreError:
+        results.put("rejected")
+    else:
+        results.put("created" if created else "replayed")
 
 
 def _terminal_thesis() -> UsDayTradeThesis:

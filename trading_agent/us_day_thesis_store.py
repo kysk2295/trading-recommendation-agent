@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import fcntl
 import os
+import stat
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import override
 
 from pydantic import ValidationError
 
+from trading_agent.private_directory_identity import open_private_parent, require_private_directory
 from trading_agent.private_immutable_file import (
     InvalidPrivateImmutableFileError,
     publish_private_immutable_text,
@@ -22,12 +27,21 @@ class InvalidUsDayThesisStoreError(ValueError):
 
 class UsDayThesisStore:
     def __init__(self, root: Path) -> None:
-        self.root = Path(os.path.abspath(root.expanduser())).resolve(strict=False)
+        self.root = _absolute_without_symlinks(root)
 
     def publish_thesis(self, thesis: UsDayTradeThesis) -> bool:
         return self._publish(self.root / "theses" / f"{thesis.thesis_id}.json", thesis.model_dump_json())
 
     def publish_change(self, change: UsDayThesisChange) -> bool:
+        try:
+            with self._chain_lock(change.thesis_id):
+                return self._publish_change_locked(change)
+        except InvalidUsDayThesisStoreError:
+            raise
+        except (OSError, ValueError):
+            raise InvalidUsDayThesisStoreError from None
+
+    def _publish_change_locked(self, change: UsDayThesisChange) -> bool:
         thesis = self.thesis(change.thesis_id)
         prior = self.changes(change.thesis_id)
         existing = next((item for item in prior if item.event_id == change.event_id), None)
@@ -48,6 +62,30 @@ class UsDayThesisStore:
             self.root / "changes" / change.thesis_id / f"{change.event_id}.json",
             change.model_dump_json(),
         )
+
+    @contextmanager
+    def _chain_lock(self, thesis_id: str) -> Iterator[None]:
+        directory = self.root / "changes" / thesis_id
+        parent = open_private_parent(directory, create=True)
+        descriptor = -1
+        try:
+            require_private_directory(parent)
+            descriptor = os.open(
+                ".chain.lock",
+                os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=parent,
+            )
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_nlink != 1:
+                raise InvalidUsDayThesisStoreError
+            os.fchmod(descriptor, 0o600)
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            os.close(parent)
 
     def publish_terminal_card(self, thesis: UsDayTradeThesis, markdown: str) -> bool:
         if thesis.symbol is not None or not markdown.strip():
@@ -115,3 +153,20 @@ class UsDayThesisStore:
 
 
 __all__ = ("InvalidUsDayThesisStoreError", "UsDayThesisStore")
+
+
+def _absolute_without_symlinks(root: Path) -> Path:
+    absolute = Path(os.path.abspath(root.expanduser()))
+    current = Path(absolute.anchor)
+    try:
+        for component in absolute.parts[1:]:
+            current /= component
+            try:
+                metadata = os.lstat(current)
+            except FileNotFoundError:
+                continue
+            if stat.S_ISLNK(metadata.st_mode):
+                raise InvalidUsDayThesisStoreError
+        return absolute
+    except (OSError, ValueError):
+        raise InvalidUsDayThesisStoreError from None

@@ -221,6 +221,7 @@ def test_terminal_decision_rejects_missing_market_and_stale_observation() -> Non
     "update",
     (
         {"theme_name": "fabricated_theme"},
+        {"theme_name": "semiconductor_fabricated"},
         {"theme_id": "f" * 64},
         {"catalyst_event_id": "e" * 64},
         {"targets": ({"label": "target_1", "price": "300"}, {"label": "target_2", "price": "400"})},

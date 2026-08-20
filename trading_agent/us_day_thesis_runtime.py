@@ -163,14 +163,12 @@ def _validate_current_context(
     if theme is None:
         raise InvalidUsDayThesisError
     catalyst = next((item for item in theme.catalysts if item.event_id == thesis.catalyst_event_id), None)
-    labels = set(thesis.theme_name.split("_"))
-    meaningful_keywords = set(theme.keywords) - {"active", "demand", "market", "stock", "theme"}
     market_by_symbol = {item.symbol: item for item in markets}
     leader_by_symbol = {item.symbol: item for item in theme.leaders}
     all_leaders = {leader.symbol: leader for item in situation.themes for leader in item.leaders}
     if (
         catalyst is None
-        or not labels & meaningful_keywords
+        or thesis.theme_name != _theme_name_for(theme)
         or len(market_by_symbol) != len(markets)
         or set(market_by_symbol) != set(all_leaders)
     ):
@@ -193,6 +191,16 @@ def _validate_current_context(
     ):
         raise InvalidUsDayThesisError
     return theme, market_by_symbol
+
+
+def _theme_name_for(theme: ThemeMap) -> str:
+    generic = {"accelerates", "active", "demand", "market", "stock", "theme"}
+    domain_keywords = tuple(item for item in theme.keywords if item not in generic and item != "equipment")
+    if not domain_keywords:
+        raise InvalidUsDayThesisError
+    domain = max(domain_keywords, key=lambda item: (len(item), item))
+    category = "infrastructure" if "equipment" in theme.keywords else "theme"
+    return f"{domain}_{category}"
 
 
 def _validate_recommendation(

@@ -8,7 +8,7 @@ from tests.test_us_day_thesis_runtime import _champion, _markets, _rationale
 from trading_agent.models import Recommendation, RecommendationState
 from trading_agent.store import PaperStore
 from trading_agent.us_day_recommendation_card import persist_and_queue_thesis
-from trading_agent.us_day_thesis_models import situation_id_for
+from trading_agent.us_day_thesis_models import UsDayTradeThesis, situation_id_for
 from trading_agent.us_day_thesis_runtime import reason_trade_thesis
 from trading_agent.us_day_thesis_store import UsDayThesisStore
 
@@ -131,7 +131,8 @@ def _recommend_response() -> dict[str, object]:
     }
 
 
-def _recommendation(thesis: object) -> Recommendation:
+def _recommendation(thesis: UsDayTradeThesis) -> Recommendation:
+    assert thesis.symbol is not None and thesis.entry_price is not None and thesis.stop_price is not None
     return Recommendation(
         thesis.thesis_id,
         thesis.symbol,
