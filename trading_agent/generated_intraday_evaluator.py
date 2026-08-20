@@ -6,6 +6,7 @@ import resource
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
 
 from trading_agent.engine import RecommendationEngine
 from trading_agent.generated_strategy_artifact import PublishedGeneratedStrategy
@@ -21,6 +22,9 @@ from trading_agent.models import BarInput
 from trading_agent.risk import RiskConfig
 from trading_agent.scanner import MomentumScanner, ScannerConfig
 from trading_agent.store import PaperStore
+
+MAX_GENERATED_INTRADAY_RSS_GIB: Final = 10.0
+_FORBIDDEN_FULL_UNIVERSE_DIRECTORY: Final = "regend_us_stocks"
 
 
 class GeneratedIntradayEvaluationError(RuntimeError):
@@ -42,12 +46,14 @@ class GeneratedIntradayEvaluationRequest:
     per_side_cost_bps: int
     bootstrap_samples: int
     rss_limit_gib: float
+    source_path: Path | None = None
 
 
 def run_generated_intraday_walk_forward(
     request: GeneratedIntradayEvaluationRequest,
     work_dir: Path,
 ) -> GeneratedIntradayWalkForwardResult:
+    validate_generated_intraday_evaluation_scope(request.source_path, request.rss_limit_gib)
     sessions: dict[dt.date, list[BarInput]] = {}
     for bar in request.bars:
         sessions.setdefault(bar.timestamp.astimezone(NEW_YORK).date(), []).append(bar)
@@ -109,6 +115,16 @@ def run_generated_intraday_walk_forward(
         bootstrap_seed=INTRADAY_BOOTSTRAP_SEED,
         session_outcomes=outcomes,
     )
+
+
+def validate_generated_intraday_evaluation_scope(
+    source_path: Path | None,
+    rss_limit_gib: float,
+) -> None:
+    if not 0.0 < rss_limit_gib <= MAX_GENERATED_INTRADAY_RSS_GIB:
+        raise GeneratedIntradayEvaluationError("rss_limit_must_not_exceed_10_gib")
+    if source_path is not None and _FORBIDDEN_FULL_UNIVERSE_DIRECTORY in source_path.parts:
+        raise GeneratedIntradayEvaluationError("full_universe_input_forbidden")
 
 
 def _session_outcome(

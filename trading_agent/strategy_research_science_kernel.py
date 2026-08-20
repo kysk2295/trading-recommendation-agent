@@ -17,6 +17,7 @@ from trading_agent.strategy_research_holdout_reviewer import HoldoutReviewer, Ho
 from trading_agent.strategy_research_ledger import StrategyResearchLedgerError
 from trading_agent.strategy_research_methodologies import strategy_research_methodology
 from trading_agent.strategy_research_models import ImmutableHypothesis, PreregistrationManifest
+from trading_agent.strategy_research_policy import require_validated_online_error_control
 from trading_agent.strategy_research_types import HypothesisStatus
 
 _BOOTSTRAP_REPETITIONS: Final = 2_000
@@ -48,6 +49,19 @@ def resolve_same_bar_outcome(bar: CompletedBarRange, thresholds: StopTargetThres
     if bar.high >= thresholds.target:
         return BarOutcome.TARGET
     return BarOutcome.NEITHER
+
+
+def validate_market_time_series_online_claim(
+    *,
+    claimed: bool,
+    evaluator_version: str | None,
+    validation_artifact_ref: str | None,
+) -> None:
+    require_validated_online_error_control(
+        claimed=claimed,
+        evaluator_version=evaluator_version,
+        validation_artifact_ref=validation_artifact_ref,
+    )
 
 
 class ScienceKernel:
@@ -160,4 +174,5 @@ __all__ = (
     "ScienceKernel",
     "StopTargetThresholds",
     "resolve_same_bar_outcome",
+    "validate_market_time_series_online_claim",
 )

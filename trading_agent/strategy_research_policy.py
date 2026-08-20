@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, assert_never, override
 
 from trading_agent.strategy_research_methodologies import strategy_research_methodology
 from trading_agent.strategy_research_models import ImmutableHypothesis
 from trading_agent.strategy_research_results import TerminalResearchResult
 from trading_agent.strategy_research_types import ResearchAgentId, SafeTerminalReason, TerminalOutcome
+
+_SAFE_ARTIFACT_REF = re.compile(r"^artifact://safe/[0-9a-f]{64}$")
 
 if TYPE_CHECKING:
     from trading_agent.strategy_research_runtime_models import StrategyResearchWork
@@ -34,6 +37,25 @@ class FeedbackWorkPurpose(StrEnum):
     FUTURE_REPLICATION = "future_replication"
     NEW_LINEAGE_METHOD_CHANGE = "new_lineage_method_change"
     EVIDENCE_COMPLETION = "evidence_completion"
+
+
+def require_validated_online_error_control(
+    *,
+    claimed: bool,
+    evaluator_version: str | None,
+    validation_artifact_ref: str | None,
+) -> None:
+    supplied = evaluator_version is not None or validation_artifact_ref is not None
+    valid = (
+        evaluator_version is not None
+        and bool(evaluator_version.strip())
+        and validation_artifact_ref is not None
+        and _SAFE_ARTIFACT_REF.fullmatch(validation_artifact_ref) is not None
+    )
+    if claimed and not valid:
+        raise MethodologyPolicyError("e_value_evaluator_validation_required")
+    if not claimed and supplied:
+        raise MethodologyPolicyError("unused_e_value_evaluator_forbidden")
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +99,8 @@ class OwnerFeedbackRouter:
                 action = FeedbackAction.WAIT_NAMED_EVIDENCE
                 reasons = ",".join(reason.value for reason in result.reason_codes)
                 next_test = f"wait for maturity or evidence resolving:{reasons}"
+            case unreachable:
+                assert_never(unreachable)
         return OwnerFeedbackDecision(
             result_id=result.result_id,
             owner_agent_id=owner_agent_id,
@@ -130,6 +154,8 @@ def admit_feedback_work(
                 "feedback_evidence_maturity" if allowed else "feedback_waiting_named_evidence",
                 work.maturity_at if allowed else decision.evaluated_at,
             )
+        case unreachable:
+            assert_never(unreachable)
 
 
 __all__ = (
@@ -140,4 +166,5 @@ __all__ = (
     "OwnerFeedbackDecision",
     "OwnerFeedbackRouter",
     "admit_feedback_work",
+    "require_validated_online_error_control",
 )

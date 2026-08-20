@@ -5,6 +5,7 @@ import hashlib
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, assert_never
 
 from pydantic import ValidationError
 
@@ -46,6 +47,33 @@ class IntradayOverfitDiagnosticsRequest:
     reviews: tuple[IntradayReviewArtifact, ...]
     artifact_root: Path
     reviewed_at: dt.datetime
+
+
+def require_all_attempts_in_selection_diagnostics(
+    ledger_attempt_ids: tuple[str, ...],
+    diagnostic_attempt_ids: tuple[str, ...],
+) -> None:
+    ledger = tuple(sorted(set(ledger_attempt_ids)))
+    diagnostics = tuple(sorted(set(diagnostic_attempt_ids)))
+    if (
+        not ledger
+        or ledger != diagnostics
+        or len(ledger) != len(ledger_attempt_ids)
+        or len(diagnostics) != len(diagnostic_attempt_ids)
+    ):
+        raise InvalidIntradayOverfitDiagnosticsError
+
+
+def normalize_intraday_trace_schema_version(
+    evaluator_schema_version: Literal[1, 2, 3],
+) -> Literal[1, 2]:
+    match evaluator_schema_version:
+        case 1:
+            return 1
+        case 2 | 3:
+            return 2
+        case unreachable:
+            assert_never(unreachable)
 
 
 def diagnose_intraday_overfit(
@@ -141,7 +169,7 @@ def _diagnostics_payload(
             )
         candidates.append(
             IntradayOverfitCandidateTrace(
-                trace_schema_version=result.schema_version,
+                trace_schema_version=normalize_intraday_trace_schema_version(result.schema_version),
                 trial_id=candidate.trial_id,
                 strategy_version=candidate.strategy_version,
                 experiment_artifact_id=candidate.experiment_artifact_id,
@@ -182,4 +210,6 @@ __all__ = (
     "IntradayOverfitDiagnosticsRequest",
     "diagnose_intraday_overfit",
     "load_intraday_overfit_diagnostics_artifact",
+    "normalize_intraday_trace_schema_version",
+    "require_all_attempts_in_selection_diagnostics",
 )

@@ -13,11 +13,14 @@ import run_intraday_overfit_diagnostics as diagnostics_cli
 import run_intraday_research_loop as research_cli
 from trading_agent.intraday_overfit_diagnostics import (
     load_intraday_overfit_diagnostics_artifact,
+    normalize_intraday_trace_schema_version,
+    require_all_attempts_in_selection_diagnostics,
 )
 from trading_agent.intraday_overfit_diagnostics_models import (
     IntradayOverfitCandidateTrace,
     IntradayOverfitDiagnosticsStatus,
     IntradayOverfitStatistics,
+    InvalidIntradayOverfitDiagnosticsError,
     calculate_intraday_overfit_statistics,
 )
 from trading_agent.lane_bootstrap import bootstrap_lane_control_plane
@@ -177,6 +180,25 @@ def test_statistics_reject_tampered_dsr_and_pbo_values() -> None:
 
     with pytest.raises(ValueError, match="invalid intraday overfit statistics"):
         _ = IntradayOverfitStatistics.model_validate(tampered)
+
+
+def test_selection_diagnostics_must_name_every_attempted_variant() -> None:
+    require_all_attempts_in_selection_diagnostics(
+        ("attempt-1", "attempt-2", "attempt-3"),
+        ("attempt-1", "attempt-2", "attempt-3"),
+    )
+
+    with pytest.raises(InvalidIntradayOverfitDiagnosticsError):
+        require_all_attempts_in_selection_diagnostics(
+            ("attempt-1", "attempt-2", "attempt-3"),
+            ("attempt-1", "attempt-3"),
+        )
+
+
+def test_schema_v3_evaluator_result_uses_rich_selection_trace_schema() -> None:
+    assert normalize_intraday_trace_schema_version(1) == 1
+    assert normalize_intraday_trace_schema_version(2) == 2
+    assert normalize_intraday_trace_schema_version(3) == 2
 
 
 def test_diagnostics_cli_declares_standalone_dependencies() -> None:
