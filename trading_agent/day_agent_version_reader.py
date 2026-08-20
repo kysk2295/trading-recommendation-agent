@@ -12,8 +12,9 @@ from trading_agent.day_agent_version_models import (
     AgentDeploymentTransition,
     AgentPromotionRecommendation,
     AgentVersion,
+    DayAgentVersionStoreError,
 )
-from trading_agent.day_agent_version_store_support import require_safe_path
+from trading_agent.day_agent_version_store_support import require_persisted_version_store
 
 
 @final
@@ -86,12 +87,17 @@ class DayAgentVersionReader:
         return states
 
     def _rows(self, query: str, parameters: tuple[str, ...]) -> tuple[tuple[str], ...]:
-        if not self._path.exists():
+        try:
+            require_persisted_version_store(self._path)
+            with closing(sqlite3.connect(f"file:{self._path}?mode=ro", uri=True, timeout=0.0)) as connection:
+                _ = connection.execute("PRAGMA query_only=ON")
+                return tuple(connection.execute(query, parameters).fetchall())
+        except FileNotFoundError:
             return ()
-        require_safe_path(self._path, allow_missing=False)
-        with closing(sqlite3.connect(f"file:{self._path}?mode=ro", uri=True)) as connection:
-            _ = connection.execute("PRAGMA query_only=ON")
-            return tuple(connection.execute(query, parameters).fetchall())
+        except DayAgentVersionStoreError:
+            raise
+        except sqlite3.Error as error:
+            raise DayAgentVersionStoreError("version_store_read_failed") from error
 
 
 __all__ = ("DayAgentVersionReader",)
