@@ -6,7 +6,7 @@ import json
 import re
 from collections import deque
 from decimal import Decimal
-from typing import Final, Never, override
+from typing import Final, Literal, Never, override
 
 from pydantic import ValidationError
 
@@ -35,6 +35,7 @@ _MAX_CONTEXT_AGE: Final = dt.timedelta(minutes=5)
 _MAX_QUOTE_AGE: Final = dt.timedelta(seconds=5)
 _EMERGING_AGE: Final = dt.timedelta(minutes=30)
 _ACTIVE_AGE: Final = dt.timedelta(hours=2)
+_REGULAR_SESSION_MINUTES: Final = Decimal(390)
 _TOKEN = re.compile(r"[a-z0-9]+", flags=re.ASCII)
 _STOPWORDS: Final = frozenset(
     {"after", "amid", "and", "for", "from", "into", "market", "shares", "stock", "the", "with"}
@@ -95,7 +96,10 @@ def project_us_day_situation(
             evaluated_at=evaluated_at,
             themes=themes,
             evidence_refs=_refs(
-                tuple(ref for theme in themes for ref in theme.evidence_refs) + _context_refs(market_context)
+                (
+                    *(ref for theme in themes for ref in theme.evidence_refs),
+                    _context_ref(market_context),
+                )
             ),
         )
     except (TypeError, ValidationError, ValueError):
@@ -179,7 +183,8 @@ def _validate_inputs(
         {item.symbol for item in quotes} != symbols
         or len(quotes) != len(symbols)
         or any(
-            item.received_at > evaluated_at
+            item.evidence_ref != _quote_ref(item)
+            or item.received_at > evaluated_at
             or item.received_at < item.provider_observed_at
             or not _fresh(item.provider_observed_at, evaluated_at, _MAX_QUOTE_AGE)
             for item in quotes
@@ -195,6 +200,7 @@ def _validate_inputs(
         or any(
             item.candidate is None
             or item.candidate.symbol != item.bars[-1].symbol
+            or item.evidence_refs != (_completed_bar_ref(item),)
             or not current_xnys_tick_at(item, evaluated_at)
             for item in ticks
         )
@@ -230,25 +236,17 @@ def _project_theme(
         for item in sorted(articles, key=lambda value: (value.created_at, value.event_id))
     )
     scanner_by_symbol = {item.symbol: item for item in scanner.opportunity.candidates}
-    changes = {
-        symbol: _decimal(ticks[symbol].candidate.change_pct)  # type: ignore[union-attr]
-        for symbol in symbols
-    }
+    changes = {symbol: _change_pct(ticks[symbol]) for symbol in symbols}
     raw_leaders: list[tuple[Decimal, Decimal, Decimal, str, ObservableFlow, tuple[EvidenceRef, ...]]] = []
     for symbol in symbols:
         tick = ticks[symbol]
         candidate = tick.candidate
         if candidate is None:
             _fail()
-        refs = _refs(
-            (
-                *tick.evidence_refs,
-                quotes[symbol].evidence_ref,
-                *scanner.opportunity.evidence_refs,
-            )
-        )
-        relative_volume = _decimal(candidate.relative_volume)
-        dollar_volume = _decimal(candidate.cumulative_dollar_volume)
+        flow_refs = _refs((_completed_bar_ref(tick), _quote_ref(quotes[symbol])))
+        leader_refs = _refs((*flow_refs, _scanner_ref(scanner)))
+        relative_volume = _relative_volume(tick)
+        dollar_volume = _dollar_volume(tick)
         relative_strength = changes[symbol] - sum(changes.values(), Decimal(0)) / Decimal(len(changes))
         flow = ObservableFlow(
             observation_kind=FlowObservationKind.OBSERVED,
@@ -257,13 +255,13 @@ def _project_theme(
             spread_bps=quotes[symbol].spread_bps,
             bid_size=quotes[symbol].bid_size,
             ask_size=quotes[symbol].ask_size,
-            vwap_relation="unavailable",
-            breakout_absorption_proxy=None,
+            vwap_relation=_vwap_relation(tick),
+            breakout_absorption_proxy=_breakout_absorption_proxy(tick, quotes[symbol]),
             cross_symbol_relative_strength=relative_strength,
-            evidence_refs=refs,
+            evidence_refs=flow_refs,
         )
         score = relative_volume + changes[symbol] + scanner_by_symbol[symbol].score
-        raw_leaders.append((score, relative_volume, dollar_volume, symbol, flow, refs))
+        raw_leaders.append((score, relative_volume, dollar_volume, symbol, flow, leader_refs))
     ordered = sorted(raw_leaders, key=lambda item: (-item[0], -item[1], -item[2], item[3]))
     leaders = tuple(
         LeaderCandidate(
@@ -347,14 +345,36 @@ def _observation_refs(
     return result
 
 
-def _context_refs(context: MarketContextSnapshot) -> tuple[EvidenceRef, ...]:
-    return tuple(
-        EvidenceRef(
-            namespace="market/context/coverage",
-            record_id=f"{context.context_id}:{item.source_id}",
-            observed_at=item.observed_at,
-        )
-        for item in context.coverage
+def _quote_ref(quote: UsQuotePolicyEvidence) -> EvidenceRef:
+    return EvidenceRef(
+        namespace="quote/snapshot",
+        record_id=quote.quote_id,
+        observed_at=quote.provider_observed_at,
+    )
+
+
+def _completed_bar_ref(tick: UsForwardShadowTick) -> EvidenceRef:
+    latest = tick.bars[-1]
+    return EvidenceRef(
+        namespace="research/current_bar",
+        record_id=tick.completed_bar_id,
+        observed_at=latest.timestamp,
+    )
+
+
+def _scanner_ref(scanner: UsOpportunityScannerBundle) -> EvidenceRef:
+    return EvidenceRef(
+        namespace="scanner/opportunity",
+        record_id=scanner.opportunity.opportunity_id,
+        observed_at=scanner.opportunity.observed_at,
+    )
+
+
+def _context_ref(context: MarketContextSnapshot) -> EvidenceRef:
+    return EvidenceRef(
+        namespace="market/context",
+        record_id=context.context_id,
+        observed_at=context.observed_at,
     )
 
 
@@ -375,6 +395,53 @@ def _fresh(observed_at: dt.datetime, evaluated_at: dt.datetime, limit: dt.timede
 
 def _decimal(value: float) -> Decimal:
     return Decimal(str(value))
+
+
+def _change_pct(tick: UsForwardShadowTick) -> Decimal:
+    latest = tick.bars[-1]
+    close = _decimal(latest.close)
+    prior_close = _decimal(latest.prior_close)
+    return (close - prior_close) / prior_close * Decimal(100)
+
+
+def _dollar_volume(tick: UsForwardShadowTick) -> Decimal:
+    return sum((_decimal(item.close) * item.volume for item in tick.bars), Decimal(0))
+
+
+def _relative_volume(tick: UsForwardShadowTick) -> Decimal:
+    """Latest minute volume / (latest average daily volume / fixed 390-minute XNYS session)."""
+    latest = tick.bars[-1]
+    expected_minute_volume = Decimal(latest.average_daily_volume) / _REGULAR_SESSION_MINUTES
+    return Decimal(latest.volume) / expected_minute_volume
+
+
+def _vwap_relation(tick: UsForwardShadowTick) -> Literal["above", "below", "crossing", "unavailable"]:
+    total_volume = sum(item.volume for item in tick.bars)
+    if total_volume == 0:
+        return "unavailable"
+    vwap = _dollar_volume(tick) / Decimal(total_volume)
+    latest = tick.bars[-1]
+    current = _decimal(latest.close) - vwap
+    previous_close = tick.bars[-2].close if len(tick.bars) > 1 else latest.prior_close
+    previous = _decimal(previous_close) - vwap
+    if current == 0 or previous == 0 or (current < 0 < previous) or (previous < 0 < current):
+        return "crossing"
+    return "above" if current > 0 else "below"
+
+
+def _breakout_absorption_proxy(
+    tick: UsForwardShadowTick,
+    quote: UsQuotePolicyEvidence,
+) -> Decimal | None:
+    latest = tick.bars[-1]
+    bar_range = _decimal(latest.high) - _decimal(latest.low)
+    displayed_size = quote.bid_size + quote.ask_size
+    if bar_range == 0 or displayed_size == 0:
+        return None
+    directional_fraction = abs(_decimal(latest.close) - _decimal(latest.open)) / bar_range
+    remaining_fraction = max(Decimal(0), Decimal(1) - directional_fraction)
+    balanced_size_fraction = Decimal(min(quote.bid_size, quote.ask_size)) / Decimal(displayed_size)
+    return Decimal(latest.volume) * remaining_fraction * balanced_size_fraction
 
 
 def _fail() -> Never:

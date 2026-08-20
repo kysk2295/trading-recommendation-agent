@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -33,7 +34,13 @@ from trading_agent.signal_contract_models import (
     QuoteValidation,
     SourceCoverage,
 )
-from trading_agent.us_day_situation_models import FlowObservationKind, ObservableFlow, ThemeState
+from trading_agent.us_day_situation_models import (
+    EvidenceBoundClaim,
+    FlowObservationKind,
+    ObservableFlow,
+    ThemeState,
+    UsDaySituationMap,
+)
 from trading_agent.us_day_situation_projection import (
     UsDaySituationProjectionError,
     project_us_day_situation,
@@ -51,10 +58,33 @@ HEADLINE = "Semiconductor equipment demand accelerates"
 FOUNDATION = Path(__file__).resolve().parents[1] / "examples/data/us-orb-data-foundation-v1.json"
 
 
+@dataclass(frozen=True)
+class SituationInputs:
+    scanner: UsOpportunityScannerBundle
+    articles: tuple[AlpacaNewsArticle, ...]
+    news_evidence: AlpacaNewsOpportunityEvidenceBundle
+    market_context: MarketContextSnapshot
+    quotes: tuple[UsQuotePolicyEvidence, ...]
+    completed_bars: tuple[UsForwardShadowTick, ...]
+    evaluated_at: dt.datetime
+
+
+def _project(inputs: SituationInputs) -> UsDaySituationMap:
+    return project_us_day_situation(
+        scanner=inputs.scanner,
+        articles=inputs.articles,
+        news_evidence=inputs.news_evidence,
+        market_context=inputs.market_context,
+        quotes=inputs.quotes,
+        completed_bars=inputs.completed_bars,
+        evaluated_at=inputs.evaluated_at,
+    )
+
+
 def test_situation_map_links_theme_catalyst_flow_and_leader_evidence() -> None:
     inputs = _inputs()
 
-    situation = project_us_day_situation(**inputs)
+    situation = _project(inputs)
 
     theme = situation.themes[0]
     assert theme.state is ThemeState.EMERGING
@@ -63,72 +93,112 @@ def test_situation_map_links_theme_catalyst_flow_and_leader_evidence() -> None:
     assert theme.keywords == ("accelerates", "demand", "equipment", "semiconductor")
     assert theme.leaders[0].symbol == "NVDA"
     assert theme.leaders[0].flow.observation_kind is FlowObservationKind.OBSERVED
-    assert theme.leaders[0].flow.relative_volume == Decimal("3.2")
-    assert theme.leaders[0].flow.vwap_relation == "unavailable"
+    assert theme.leaders[0].flow.relative_volume == Decimal("3.90078")
+    assert theme.leaders[0].flow.dollar_volume == Decimal("6000600")
+    assert theme.leaders[0].flow.vwap_relation == "crossing"
+    assert theme.leaders[0].flow.breakout_absorption_proxy is not None
     assert all(claim.evidence_refs for claim in theme.claims)
 
 
 def test_projection_is_deterministic_under_article_and_tick_reordering() -> None:
     inputs = _inputs()
-    first = project_us_day_situation(**inputs)
-    reordered = dict(inputs)
-    reordered["articles"] = tuple(reversed(inputs["articles"]))
-    reordered["completed_bars"] = tuple(reversed(inputs["completed_bars"]))
+    first = _project(inputs)
+    reordered = replace(
+        inputs,
+        articles=tuple(reversed(inputs.articles)),
+        completed_bars=tuple(reversed(inputs.completed_bars)),
+    )
 
-    second = project_us_day_situation(**reordered)
+    second = _project(reordered)
 
     assert second == first
 
 
-@pytest.mark.parametrize(
-    ("field", "mutator"),
-    (
-        ("evaluated_at", lambda value: value + dt.timedelta(minutes=1)),
-        ("articles", lambda value: (value[0].model_copy(update={"created_at": EVALUATED_AT}),)),
-        ("quotes", lambda value: value[:-1]),
-        (
-            "market_context",
-            lambda value: value.model_copy(update={"valid_until": EVALUATED_AT - dt.timedelta(seconds=1)}),
-        ),
-    ),
-)
-def test_projection_fails_closed_for_stale_missing_or_future_inputs(field: str, mutator: object) -> None:
+def test_projection_fails_closed_for_stale_missing_or_future_inputs() -> None:
     inputs = _inputs()
-    inputs[field] = mutator(inputs[field])  # type: ignore[operator]
-
-    with pytest.raises(UsDaySituationProjectionError, match="US day situation projection is invalid"):
-        project_us_day_situation(**inputs)
+    invalid = (
+        replace(inputs, evaluated_at=inputs.evaluated_at + dt.timedelta(minutes=1)),
+        replace(inputs, articles=(inputs.articles[0].model_copy(update={"created_at": EVALUATED_AT}),)),
+        replace(inputs, quotes=inputs.quotes[:-1]),
+        replace(
+            inputs,
+            market_context=inputs.market_context.model_copy(
+                update={"valid_until": EVALUATED_AT - dt.timedelta(seconds=1)}
+            ),
+        ),
+    )
+    for value in invalid:
+        with pytest.raises(UsDaySituationProjectionError, match="US day situation projection is invalid"):
+            _project(value)
 
 
 def test_projection_rejects_news_receipt_or_candidate_identity_mismatch() -> None:
     inputs = _inputs()
-    article = inputs["articles"][0]
-    inputs["articles"] = (article.model_copy(update={"provider_article_id": 999}),)
+    article = inputs.articles[0]
+    invalid = replace(inputs, articles=(article.model_copy(update={"provider_article_id": 999}),))
 
     with pytest.raises(UsDaySituationProjectionError):
-        project_us_day_situation(**inputs)
+        _project(invalid)
+
+
+def test_caller_candidate_metrics_cannot_change_flow_or_leader_ranking() -> None:
+    inputs = _inputs()
+    baseline = _project(inputs)
+    changed_ticks = tuple(_tick_with_adversarial_candidate(item) for item in inputs.completed_bars)
+
+    adversarial = _project(replace(inputs, completed_bars=changed_ticks))
+
+    assert adversarial == baseline
+
+
+def test_projection_rejects_forged_quote_and_completed_bar_references() -> None:
+    inputs = _inputs()
+    quote = inputs.quotes[0]
+    forged_quote = quote.model_copy(
+        update={
+            "evidence_ref": _ref("caller/forged", quote.quote_id, quote.provider_observed_at),
+        }
+    )
+    with pytest.raises(UsDaySituationProjectionError):
+        _project(replace(inputs, quotes=(forged_quote, inputs.quotes[1])))
+
+    tick = inputs.completed_bars[0]
+    forged_tick = tick.model_copy(
+        update={
+            "evidence_refs": (_ref("caller/forged", tick.completed_bar_id, tick.bars[-1].timestamp),),
+        }
+    )
+    with pytest.raises(UsDaySituationProjectionError):
+        _project(replace(inputs, completed_bars=(forged_tick, inputs.completed_bars[1])))
 
 
 def test_inferred_flow_requires_rule_while_observed_flow_forbids_one() -> None:
-    payload = {
-        "observation_kind": FlowObservationKind.INFERRED,
-        "relative_volume": Decimal("1"),
-        "dollar_volume": Decimal("100"),
-        "spread_bps": Decimal("2"),
-        "bid_size": 10,
-        "ask_size": 12,
-        "vwap_relation": "unavailable",
-        "breakout_absorption_proxy": None,
-        "cross_symbol_relative_strength": Decimal("0"),
-        "evidence_refs": (_ref("flow/test", "observed", LATEST_BAR_AT),),
-    }
     with pytest.raises(ValidationError):
-        ObservableFlow(**payload)
+        _flow(FlowObservationKind.INFERRED)
     with pytest.raises(ValidationError):
-        ObservableFlow(**(payload | {"observation_kind": FlowObservationKind.OBSERVED, "inference_rule": "invented"}))
+        _flow(FlowObservationKind.OBSERVED, inference_rule="invented")
+    with pytest.raises(ValidationError):
+        _flow(FlowObservationKind.INFERRED, inference_rule="invented")
 
 
-def _inputs() -> dict[str, object]:
+def test_claim_rejects_observed_institutional_accumulation_language() -> None:
+    evidence = (_valid_quote_ref(),)
+    with pytest.raises(ValidationError):
+        EvidenceBoundClaim(
+            text="Institutional accumulation confirmed.",
+            observation_kind=FlowObservationKind.OBSERVED,
+            evidence_refs=evidence,
+        )
+    claim = EvidenceBoundClaim(
+        text="Inferred institutional accumulation proxy from observed bars and quote.",
+        observation_kind=FlowObservationKind.INFERRED,
+        inference_rule="bar_quote_absorption_proxy_v1",
+        evidence_refs=evidence,
+    )
+    assert claim.inference_rule == "bar_quote_absorption_proxy_v1"
+
+
+def _inputs() -> SituationInputs:
     article = AlpacaNewsArticle(
         provider_article_id=77,
         headline=HEADLINE,
@@ -138,15 +208,15 @@ def _inputs() -> dict[str, object]:
         updated_at=dt.datetime(2026, 8, 20, 13, 59, tzinfo=UTC),
         url="https://example.invalid/news/77",
     )
-    return {
-        "scanner": _scanner(),
-        "articles": (article,),
-        "news_evidence": _news_evidence(article),
-        "market_context": _context(),
-        "quotes": (_quote("AMD", "179.95", "180.05"), _quote("NVDA", "199.95", "200.05")),
-        "completed_bars": (_tick("AMD", 180.0, 2.1, 9_000_000.0), _tick("NVDA", 200.0, 3.2, 15_000_000.0)),
-        "evaluated_at": EVALUATED_AT,
-    }
+    return SituationInputs(
+        scanner=_scanner(),
+        articles=(article,),
+        news_evidence=_news_evidence(article),
+        market_context=_context(),
+        quotes=(_quote("AMD", "179.95", "180.05"), _quote("NVDA", "199.95", "200.05")),
+        completed_bars=(_tick("AMD", 180.0, 2.1, 9_000_000.0), _tick("NVDA", 200.0, 3.2, 15_000_000.0)),
+        evaluated_at=EVALUATED_AT,
+    )
 
 
 def _scanner() -> UsOpportunityScannerBundle:
@@ -345,6 +415,43 @@ def _tick(symbol: str, close: float, relative_volume: float, dollar_volume: floa
         evidence_refs=(_ref("research/current_bar", completed_bar_id(latest), latest.timestamp),),
         observed_at=observed,
     )
+
+
+def _tick_with_adversarial_candidate(tick: UsForwardShadowTick) -> UsForwardShadowTick:
+    payload = tick.model_dump(mode="python")
+    candidate = tick.candidate
+    assert candidate is not None
+    payload["candidate"] = candidate.model_dump(mode="python") | {
+        "change_pct": 9999,
+        "relative_volume": 1,
+        "cumulative_dollar_volume": 777,
+    }
+    return UsForwardShadowTick.model_validate(payload)
+
+
+def _flow(
+    observation_kind: FlowObservationKind,
+    *,
+    inference_rule: str | None = None,
+) -> ObservableFlow:
+    return ObservableFlow(
+        observation_kind=observation_kind,
+        relative_volume=Decimal("1"),
+        dollar_volume=Decimal("100"),
+        spread_bps=Decimal("2"),
+        bid_size=10,
+        ask_size=12,
+        vwap_relation="unavailable",
+        breakout_absorption_proxy=None,
+        cross_symbol_relative_strength=Decimal("0"),
+        inference_rule=inference_rule,
+        evidence_refs=(_valid_quote_ref(),),
+    )
+
+
+def _valid_quote_ref() -> EvidenceRef:
+    quote_id = f"us-quote:{hashlib.sha256(b'model-test').hexdigest()}"
+    return _ref("quote/snapshot", quote_id, LATEST_BAR_AT)
 
 
 def _ref(namespace: str, record_id: str, observed_at: dt.datetime) -> EvidenceRef:

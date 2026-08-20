@@ -12,6 +12,24 @@ from trading_agent.research_identity_models import MarketId
 from trading_agent.signal_contract_models import EvidenceRef
 
 _SYMBOL = re.compile(r"^[A-Z][A-Z0-9./-]{0,19}$")
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+_QUOTE_ID = re.compile(r"^us-quote:[0-9a-f]{64}$")
+_OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_ALLOWED_INFERENCE_RULES = frozenset(
+    {
+        "bar_quote_absorption_proxy_v1",
+        "cross_symbol_relative_strength_v1",
+    }
+)
+_UNOBSERVED_FLOW_PHRASES = (
+    "accumulation",
+    "distribution",
+    "institutional",
+    "smart money",
+    "buying pressure",
+    "selling pressure",
+    "whale",
+)
 
 
 class ThemeState(StrEnum):
@@ -35,7 +53,14 @@ class EvidenceBoundClaim(BaseModel):
 
     @model_validator(mode="after")
     def validate_claim(self) -> Self:
-        if not _inference_valid(self.observation_kind, self.inference_rule):
+        lowered = self.text.casefold()
+        makes_unobserved_flow_claim = any(item in lowered for item in _UNOBSERVED_FLOW_PHRASES)
+        labeled_inference = "inferred" in lowered or "proxy" in lowered
+        if (
+            not _inference_valid(self.observation_kind, self.inference_rule)
+            or (makes_unobserved_flow_claim and self.observation_kind is FlowObservationKind.OBSERVED)
+            or (makes_unobserved_flow_claim and not labeled_inference)
+        ):
             raise ValueError("invalid evidence-bound claim")
         _require_canonical_refs(self.evidence_refs)
         return self
@@ -172,14 +197,26 @@ class UsDaySituationMap(BaseModel):
 
 def _inference_valid(kind: FlowObservationKind, rule: str | None) -> bool:
     return (kind is FlowObservationKind.OBSERVED and rule is None) or (
-        kind is FlowObservationKind.INFERRED and rule is not None
+        kind is FlowObservationKind.INFERRED and rule in _ALLOWED_INFERENCE_RULES
     )
 
 
 def _require_canonical_refs(refs: tuple[EvidenceRef, ...]) -> None:
     identities = tuple(item.canonical_id for item in refs)
-    if identities != tuple(sorted(set(identities))):
+    if identities != tuple(sorted(set(identities))) or any(not _known_evidence_ref(item) for item in refs):
         raise ValueError("evidence references are not canonical")
+
+
+def _known_evidence_ref(ref: EvidenceRef) -> bool:
+    match ref.namespace:
+        case "alpaca/news/article" | "research/current_bar":
+            return _HEX64.fullmatch(ref.record_id) is not None
+        case "quote/snapshot":
+            return _QUOTE_ID.fullmatch(ref.record_id) is not None
+        case "scanner/opportunity" | "market/context":
+            return _OPAQUE_ID.fullmatch(ref.record_id) is not None
+        case _:
+            return False
 
 
 __all__ = (
