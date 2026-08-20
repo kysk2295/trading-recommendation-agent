@@ -9,6 +9,8 @@ import anyio
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
+from trading_agent.day_agent_runtime import DayAgentTaskResult
+from trading_agent.day_agent_task_models import DayAgentTaskState
 from trading_agent.research_agent_actions import (
     InvalidResearchAgentActionError,
     ResearchAgentActionClient,
@@ -18,11 +20,14 @@ from trading_agent.research_agent_configured_collector import ConfiguredResearch
 from trading_agent.research_agent_cycle_models import (
     CycleId,
     ResearchAgentCycleV1,
+    ResearchAgentDecisionKind,
     ResearchAgentEvidenceV1,
     ResearchAgentOpenWorkState,
     ResearchAgentOpenWorkV1,
     ResearchAgentResultStatus,
     ResearchAgentResultV1,
+    ResearchAgentWakeKind,
+    research_agent_result_id,
 )
 from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore, StoredResearchAgentEvidence
 from trading_agent.research_agent_decision import (
@@ -55,12 +60,17 @@ class ResearchAgentEvidenceCollector(Protocol):
     def collect(self, now: dt.datetime) -> ResearchAgentSourceCollectionBatch: ...
 
 
+class PersistentDayAgentRuntime(Protocol):
+    def tick(self, evidence: ResearchAgentEvidenceV1, now: dt.datetime) -> DayAgentTaskResult: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ResearchAgentRuntimeServices:
     store: ResearchAgentCycleStore
     collector: ResearchAgentEvidenceCollector
     decisions: ResearchAgentDecisionClient
     actions: ResearchAgentActionClient
+    day_runtime: PersistentDayAgentRuntime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +87,7 @@ class RuntimeCycleOutcome:
     evidence: ResearchAgentEvidenceV1
     result: ResearchAgentResultV1
     prior_failures: int
-    model_calls: Literal[0, 1]
+    model_calls: int
     recovered_cycles: int
 
 
@@ -97,7 +107,7 @@ class ResearchAgentTickResult(BaseModel):
     status: Literal["idle", "completed", "failed", "blocked", "no_action"]
     agent_family_id: AgentFamilyId | None
     cycle_id: CycleId | None = Field(pattern=r"^[a-f0-9]{64}$")
-    model_calls: Literal[0, 1]
+    model_calls: int = Field(ge=0, le=12)
     recovered_cycles: int = Field(ge=0)
 
     @model_validator(mode="after")
@@ -113,7 +123,7 @@ class ResearchAgentBoundedCycleResult(BaseModel):
 
     status: Literal["idle", "partial", "complete"]
     outcomes: tuple[ResearchAgentTickResult, ...] = Field(max_length=6)
-    model_calls: int = Field(ge=0, le=6)
+    model_calls: int = Field(ge=0, le=72)
     recovered_cycles: int = Field(ge=0)
 
     @model_validator(mode="after")
@@ -130,7 +140,7 @@ class ResearchAgentBoundedCycleResult(BaseModel):
 
 @final
 class ResearchAgentRuntime:
-    __slots__ = ("_actions", "_collector", "_decisions", "store")
+    __slots__ = ("_actions", "_collector", "_day_runtime", "_decisions", "store")
 
     store: ResearchAgentCycleStore
 
@@ -139,6 +149,7 @@ class ResearchAgentRuntime:
         self._collector = services.collector
         self._decisions = services.decisions
         self._actions = services.actions
+        self._day_runtime = services.day_runtime
 
     def close(self) -> None:
         self.store.close()
@@ -223,6 +234,19 @@ class ResearchAgentRuntime:
                 )
             )
             outcome = RuntimeCycleOutcome(cycle, stored.evidence, result, prior_failures, 0, len(recovered))
+            self._persist(outcome)
+            return _tick_result(outcome)
+        if cycle.agent_family_id == "day_trading" and self._day_runtime is not None:
+            day_result = self._day_runtime.tick(stored.evidence, now)
+            result = _project_day_result(cycle, day_result, now)
+            outcome = RuntimeCycleOutcome(
+                cycle,
+                stored.evidence,
+                result,
+                prior_failures,
+                day_result.model_calls,
+                len(recovered),
+            )
             self._persist(outcome)
             return _tick_result(outcome)
         request = ResearchAgentDecisionRequest(
@@ -347,9 +371,74 @@ def _work_matches_cycle(item: ResearchAgentOpenWorkV1, cycle: ResearchAgentCycle
     return item.work_id == f"actor-state.day_trading.{cycle.market_id}"
 
 
+def _project_day_result(
+    cycle: ResearchAgentCycleV1,
+    day_result: DayAgentTaskResult,
+    now: dt.datetime,
+) -> ResearchAgentResultV1:
+    task = day_result.task
+    evidence_refs = tuple(sorted(task.evidence_refs))[:32]
+    match task.state:
+        case DayAgentTaskState.COMPLETED:
+            return ResearchAgentResultV1(
+                result_id=research_agent_result_id(cycle.cycle_id),
+                cycle_id=cycle.cycle_id,
+                agent_family_id=cycle.agent_family_id,
+                market_id=cycle.market_id,
+                status=ResearchAgentResultStatus.COMPLETED,
+                question=task.question[:500],
+                summary=(task.current_hypothesis or task.objective)[:1_000],
+                evidence_refs=evidence_refs,
+                artifact_refs=(task.task_id,),
+                occurred_at=now,
+                next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
+                next_wake_at=None,
+                decision_kind=ResearchAgentDecisionKind.PUBLISH_RECOMMENDATION,
+            )
+        case DayAgentTaskState.BLOCKED:
+            return ResearchAgentResultV1(
+                result_id=research_agent_result_id(cycle.cycle_id),
+                cycle_id=cycle.cycle_id,
+                agent_family_id=cycle.agent_family_id,
+                market_id=cycle.market_id,
+                status=ResearchAgentResultStatus.BLOCKED,
+                question=task.question[:500],
+                summary="The persistent Day research task stopped at a deterministic safety boundary.",
+                reason=task.terminal_reason,
+                continuation="Resume only after the blocking condition is resolved with new evidence.",
+                evidence_refs=evidence_refs,
+                artifact_refs=(),
+                occurred_at=now,
+                next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
+                next_wake_at=None,
+            )
+        case DayAgentTaskState.WAITING:
+            return ResearchAgentResultV1(
+                result_id=research_agent_result_id(cycle.cycle_id),
+                cycle_id=cycle.cycle_id,
+                agent_family_id=cycle.agent_family_id,
+                market_id=cycle.market_id,
+                status=ResearchAgentResultStatus.NO_ACTION,
+                question=task.question[:500],
+                summary="The persistent Day research task reached its scheduled bounded-work boundary.",
+                reason="day_agent_waiting",
+                continuation=task.resume_condition or "Resume the persistent Day task at its scheduled wake.",
+                evidence_refs=evidence_refs,
+                artifact_refs=(),
+                occurred_at=now,
+                next_wake_kind=ResearchAgentWakeKind.SCHEDULED,
+                next_wake_at=task.scheduled_wake_at,
+            )
+        case DayAgentTaskState.OPEN:
+            raise InvalidResearchAgentRuntimeError(reason="day_agent_boundary_not_terminal")
+        case unreachable:
+            assert_never(unreachable)
+
+
 __all__ = (
     "ConfiguredResearchAgentEvidenceCollector",
     "InvalidResearchAgentRuntimeError",
+    "PersistentDayAgentRuntime",
     "ResearchAgentBoundedCycleResult",
     "ResearchAgentEvidenceCollector",
     "ResearchAgentRuntime",

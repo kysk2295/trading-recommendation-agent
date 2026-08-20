@@ -90,9 +90,12 @@ class ResearchAgentDecisionRequest(BaseModel):
     requested_at: AwareDatetime
     max_runtime_seconds: float = Field(gt=0, le=300)
     max_model_calls: Literal[1] = 1
+    day_agent_runtime_enabled: bool = False
 
     @model_validator(mode="after")
     def require_family_isolation(self) -> Self:
+        if self.agent_family_id == "day_trading" and self.day_agent_runtime_enabled:
+            raise InvalidResearchAgentDecisionError(reason="persistent_day_runtime_required")
         if any(item.agent_family_id != self.agent_family_id for item in (*self.evidence, *self.open_work)):
             raise InvalidResearchAgentDecisionError(reason="decision_family_isolation_required")
         return self

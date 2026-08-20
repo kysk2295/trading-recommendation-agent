@@ -8,7 +8,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.day_agent_support import day_task
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
+from trading_agent.day_agent_runtime import DayAgentTaskResult
+from trading_agent.day_agent_task_models import DayAgentTaskState
 from trading_agent.research_agent_actions import (
     ResearchAgentActionClient,
     ResearchAgentActionConfig,
@@ -160,6 +163,21 @@ class MarketIsolatedDayActionClient:
             occurred_at=context.observed_at,
             next_wake_kind=context.decision.next_wake_kind,
             next_wake_at=context.decision.next_wake_at,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RecordingPersistentDayRuntime:
+    evidence: list[ResearchAgentEvidenceV1]
+
+    def tick(self, evidence: ResearchAgentEvidenceV1, now: dt.datetime) -> DayAgentTaskResult:
+        del now
+        self.evidence.append(evidence)
+        return DayAgentTaskResult(
+            task=day_task(state=DayAgentTaskState.WAITING),
+            steps=(),
+            observations=(),
+            model_calls=2,
         )
 
 
@@ -341,6 +359,33 @@ def test_us_day_failure_backoff_and_open_work_do_not_block_or_leak_into_kr(
         ("actor-state.day_trading.us_equities", "open"),
         ("actor-state.day_trading.kr_equities", "terminal"),
     }
+
+
+def test_day_evidence_delegates_to_persistent_runtime_before_legacy_decision(tmp_path: Path) -> None:
+    # Given
+    calls: list[AgentFamilyId] = []
+    delegated: list[ResearchAgentEvidenceV1] = []
+    store = ResearchAgentCycleStore(tmp_path / "cycles.sqlite3")
+    runtime = ResearchAgentRuntime(
+        ResearchAgentRuntimeServices(
+            store,
+            EMPTY_COLLECTOR,
+            RecordingDecisionClient(calls),
+            RecordingArtifactActionClient([]),
+            day_runtime=RecordingPersistentDayRuntime(delegated),
+        )
+    )
+    runtime.ingest((_evidence("day_trading", 1, "us_equities"),))
+
+    # When
+    tick = runtime.tick(NOW + dt.timedelta(minutes=2))
+    runtime.close()
+
+    # Then
+    assert tick.status == "no_action"
+    assert tick.model_calls == 2
+    assert tuple(item.agent_family_id for item in delegated) == ("day_trading",)
+    assert calls == []
 
 
 @pytest.mark.parametrize(

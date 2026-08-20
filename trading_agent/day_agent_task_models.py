@@ -30,6 +30,12 @@ class DayAgentAction(StrEnum):
     DEFER = "defer"
 
 
+@unique
+class DayAgentTaskRecordKind(StrEnum):
+    DECISION = "decision"
+    OBSERVATION = "observation"
+
+
 class InvalidDayAgentTaskFieldError(ValueError):
     __slots__ = ("reason",)
 
@@ -99,6 +105,8 @@ class DayAgentTaskStep(BaseModel):
     step_id: str = Field(default="", pattern=r"^[a-f0-9]{64}$")
     task_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{7,159}$")
     sequence: int = Field(ge=1)
+    record_kind: DayAgentTaskRecordKind = DayAgentTaskRecordKind.DECISION
+    payload_json: str = "{}"
     action: DayAgentAction
     reason: str = Field(min_length=1, max_length=2_000)
     evidence_refs: tuple[str, ...] = Field(default=(), max_length=64)
@@ -119,6 +127,21 @@ class DayAgentTaskStep(BaseModel):
 
     @model_validator(mode="after")
     def require_invariants_and_identity(self) -> Self:
+        try:
+            decoded = json.loads(self.payload_json)
+            canonical = json.dumps(
+                decoded,
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        except (TypeError, ValueError):
+            raise InvalidDayAgentTaskFieldError(reason="step_payload_json_invalid") from None
+        if canonical != self.payload_json:
+            raise InvalidDayAgentTaskFieldError(reason="step_payload_json_not_canonical")
+        if len(self.payload_json.encode()) > 16_384:
+            raise InvalidDayAgentTaskFieldError(reason="step_payload_json_too_large")
         _require_sorted_unique(self.evidence_refs, reason="sorted_unique_evidence_refs_required")
         if self.falsification_conditions is not None:
             _require_sorted_unique(
@@ -196,6 +219,7 @@ __all__ = (
     "DayAgentAction",
     "DayAgentBudget",
     "DayAgentResearchTask",
+    "DayAgentTaskRecordKind",
     "DayAgentTaskState",
     "DayAgentTaskStep",
     "InvalidDayAgentTaskFieldError",

@@ -14,7 +14,13 @@ from pydantic import ValidationError
 
 import trading_agent.day_agent_task_store as task_store
 from tests.day_agent_support import NOW, day_step, day_task
-from trading_agent.day_agent_task_models import DayAgentAction, DayAgentBudget, DayAgentTaskState, DayAgentTaskStep
+from trading_agent.day_agent_task_models import (
+    DayAgentAction,
+    DayAgentBudget,
+    DayAgentTaskRecordKind,
+    DayAgentTaskState,
+    DayAgentTaskStep,
+)
 from trading_agent.day_agent_task_store import (
     DayAgentTaskConflictError,
     DayAgentTaskStore,
@@ -36,6 +42,27 @@ def test_research_task_survives_restart_without_duplicate_step(tmp_path: Path) -
 
     assert reopened.task(task.task_id) == task
     assert reopened.steps(task.task_id) == (step,)
+
+
+def test_step_persists_canonical_bounded_protocol_payload(tmp_path: Path) -> None:
+    # Given
+    task = day_task()
+    original = day_step(task, sequence=1, action=DayAgentAction.INSPECT_SITUATION)
+    step = DayAgentTaskStep.model_validate(
+        original.model_dump(mode="python", exclude={"step_id"})
+        | {
+            "record_kind": DayAgentTaskRecordKind.OBSERVATION,
+            "payload_json": '{"status":"current","symbol":"NVDA"}',
+        }
+    )
+
+    # When
+    with DayAgentTaskStore(tmp_path / "day-agent.sqlite3").writer() as writer:
+        assert writer.create_task(task)
+        assert writer.append_step(step)
+
+    # Then
+    assert DayAgentTaskStore(tmp_path / "day-agent.sqlite3").reader().steps(task.task_id) == (step,)
 
 
 def test_task_creation_is_idempotent_and_conflicting_payload_fails_closed(tmp_path: Path) -> None:

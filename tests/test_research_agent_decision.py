@@ -125,6 +125,26 @@ def test_decision_prompt_rejects_legacy_hash_only_evidence() -> None:
         render_research_agent_prompt(request)
 
 
+def test_legacy_day_request_is_rejected_when_persistent_runtime_is_enabled() -> None:
+    evidence = _evidence().model_copy(update={"agent_family_id": "day_trading"})
+
+    with pytest.raises(InvalidResearchAgentDecisionError, match="persistent_day_runtime_required"):
+        _ = _request().model_copy(
+            update={
+                "agent_family_id": "day_trading",
+                "evidence": (evidence,),
+                "day_agent_runtime_enabled": True,
+            }
+        ).model_validate(
+            _request().model_dump(mode="python")
+            | {
+                "agent_family_id": "day_trading",
+                "evidence": (evidence,),
+                "day_agent_runtime_enabled": True,
+            }
+        )
+
+
 def test_parser_produces_one_audited_decision() -> None:
     request = _request()
     prompt = render_research_agent_prompt(request)
