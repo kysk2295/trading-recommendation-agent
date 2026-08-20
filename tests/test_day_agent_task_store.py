@@ -343,7 +343,7 @@ def test_writer_rebind_rejects_swap_after_durable_replace(
     monkeypatch.setattr(task_store, "replace_sqlite_database", replace_then_swap)
 
     with (
-        pytest.raises(InvalidDayAgentTaskStoreError, match="database_write_failed"),
+        pytest.raises(InvalidDayAgentTaskStoreError, match="writer_generation_flush_failed"),
         DayAgentTaskStore(path).writer() as writer,
     ):
         assert writer.create_task(day_task(task_id="task-20260821-MSFT"))
@@ -380,7 +380,7 @@ def test_retry_is_idempotent_after_post_replace_uncertain_outcome(
     monkeypatch.setattr(task_store, "_require_generation_payload", reject_after_replace)
 
     with (
-        pytest.raises(InvalidDayAgentTaskStoreError, match="database_write_failed"),
+        pytest.raises(InvalidDayAgentTaskStoreError, match="writer_generation_flush_failed"),
         DayAgentTaskStore(path).writer() as writer,
     ):
         assert writer.create_task(task)
@@ -388,6 +388,97 @@ def test_retry_is_idempotent_after_post_replace_uncertain_outcome(
     monkeypatch.setattr(task_store, "_require_generation_payload", original_require)
     with DayAgentTaskStore(path).writer() as writer:
         assert writer.create_task(task) is False
+
+
+def test_same_writer_retries_task_after_pre_replace_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "day-agent.sqlite3"
+    task = day_task()
+    original_replace = task_store.replace_sqlite_database
+
+    def fail_before_replace(parent: int, name: str, payload: bytes) -> None:
+        raise OSError
+
+    with DayAgentTaskStore(path).writer() as writer:
+        monkeypatch.setattr(task_store, "replace_sqlite_database", fail_before_replace)
+        with pytest.raises(InvalidDayAgentTaskStoreError, match="writer_generation_flush_failed"):
+            assert writer.create_task(task)
+        monkeypatch.setattr(task_store, "replace_sqlite_database", original_replace)
+        assert writer.create_task(task) is True
+
+    assert DayAgentTaskStore(path).reader().task(task.task_id) == task
+
+
+def test_same_writer_retries_step_after_pre_replace_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "day-agent.sqlite3"
+    task = day_task()
+    with DayAgentTaskStore(path).writer() as writer:
+        assert writer.create_task(task)
+    original_replace = task_store.replace_sqlite_database
+
+    def fail_before_replace(parent: int, name: str, payload: bytes) -> None:
+        raise OSError
+
+    with DayAgentTaskStore(path).writer() as writer:
+        monkeypatch.setattr(task_store, "replace_sqlite_database", fail_before_replace)
+        step = day_step(task, sequence=1, action=DayAgentAction.INSPECT_SITUATION)
+        with pytest.raises(InvalidDayAgentTaskStoreError, match="writer_generation_flush_failed"):
+            assert writer.append_step(step)
+        monkeypatch.setattr(task_store, "replace_sqlite_database", original_replace)
+        assert writer.append_step(step) is True
+
+    assert DayAgentTaskStore(path).reader().steps(task.task_id) == (
+        day_step(task, sequence=1, action=DayAgentAction.INSPECT_SITUATION),
+    )
+
+
+def test_same_writer_retries_exact_task_after_post_replace_uncertain_outcome(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "day-agent.sqlite3"
+    task = day_task()
+    with DayAgentTaskStore(path).writer() as writer:
+        assert writer.create_task(day_task(task_id="task-20260821-AMD"))
+    original_require = task_store._require_generation_payload
+
+    def reject_after_replace(descriptor: int, payload: bytes) -> None:
+        original_require(descriptor, payload)
+        raise OSError
+
+    with DayAgentTaskStore(path).writer() as writer:
+        monkeypatch.setattr(task_store, "_require_generation_payload", reject_after_replace)
+        with pytest.raises(InvalidDayAgentTaskStoreError, match="writer_generation_flush_failed"):
+            assert writer.create_task(task)
+        monkeypatch.setattr(task_store, "_require_generation_payload", original_require)
+        assert writer.create_task(task) is False
+
+
+def test_writer_is_poisoned_when_generation_reconciliation_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "day-agent.sqlite3"
+    task = day_task()
+    original_replace = task_store.replace_sqlite_database
+    original_open = task_store._open_private_database
+
+    def fail_before_replace(parent: int, name: str, payload: bytes) -> None:
+        raise OSError
+
+    def fail_reconciliation_open(parent: int, name: str, *, create: bool, write: bool) -> int:
+        if not create and write:
+            raise InvalidDayAgentTaskStoreError(reason="database_path_invalid")
+        return original_open(parent, name, create=create, write=write)
+
+    with DayAgentTaskStore(path).writer() as writer:
+        monkeypatch.setattr(task_store, "replace_sqlite_database", fail_before_replace)
+        monkeypatch.setattr(task_store, "_open_private_database", fail_reconciliation_open)
+        with pytest.raises(InvalidDayAgentTaskStoreError, match="writer_generation_reconcile_failed"):
+            assert writer.create_task(task)
+        with pytest.raises(InvalidDayAgentTaskStoreError, match="writer_inactive"):
+            assert writer.create_task(task)
+
+    monkeypatch.setattr(task_store, "replace_sqlite_database", original_replace)
 
 
 def test_reader_projects_latest_step_state_budget_and_evidence_after_reopen(tmp_path: Path) -> None:

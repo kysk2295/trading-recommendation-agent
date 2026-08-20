@@ -120,6 +120,7 @@ class DayAgentTaskStore:
                         writer = DayAgentTaskWriter(
                             connection,
                             lambda: _flush_writer_generation(identity, connection),
+                            lambda: _reconcile_writer_generation(identity, connection),
                         )
                         try:
                             yield writer
@@ -175,15 +176,22 @@ class DayAgentTaskReader:
 
 @final
 class DayAgentTaskWriter:
-    __slots__ = ("_active", "_connection", "_flush")
+    __slots__ = ("_active", "_connection", "_flush", "_reconcile")
 
     _active: bool
     _connection: sqlite3.Connection
     _flush: Callable[[], None]
+    _reconcile: Callable[[], None]
 
-    def __init__(self, connection: sqlite3.Connection, flush: Callable[[], None]) -> None:
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        flush: Callable[[], None],
+        reconcile: Callable[[], None],
+    ) -> None:
         self._connection = connection
         self._flush = flush
+        self._reconcile = reconcile
         self._active = True
 
     def create_task(self, task: DayAgentResearchTask) -> bool:
@@ -201,7 +209,7 @@ class DayAgentTaskWriter:
                 raise DayAgentTaskConflictError(reason="task_replay_conflict")
             _ = self._connection.execute("INSERT INTO day_tasks VALUES (?,?,?)", row)
             self._connection.commit()
-            self._flush()
+            self._flush_mutation()
             return True
         except DayAgentTaskStoreError:
             self._connection.rollback()
@@ -235,7 +243,7 @@ class DayAgentTaskWriter:
             _require_appendable(task, steps, step)
             _ = self._connection.execute("INSERT INTO day_task_steps VALUES (?,?,?,?,?)", _step_row(step))
             self._connection.commit()
-            self._flush()
+            self._flush_mutation()
             return True
         except DayAgentTaskStoreError:
             self._connection.rollback()
@@ -253,6 +261,19 @@ class DayAgentTaskWriter:
     def _require_active(self) -> None:
         if not self._active:
             raise InvalidDayAgentTaskStoreError(reason="writer_inactive")
+
+    def _flush_mutation(self) -> None:
+        try:
+            self._flush()
+        except (OSError, sqlite3.Error, TypeError, ValueError) as error:
+            try:
+                self._reconcile()
+            except (OSError, sqlite3.Error, TypeError, ValueError) as reconciliation_error:
+                self._active = False
+                raise InvalidDayAgentTaskStoreError(
+                    reason="writer_generation_reconcile_failed"
+                ) from reconciliation_error
+            raise InvalidDayAgentTaskStoreError(reason="writer_generation_flush_failed") from error
 
 
 def _require_appendable(
@@ -414,6 +435,22 @@ def _flush_writer_generation(identity: _DatabaseIdentity, connection: sqlite3.Co
 def _require_generation_payload(descriptor: int, payload: bytes) -> None:
     if os.fstat(descriptor).st_size != len(payload) or os.pread(descriptor, len(payload), 0) != payload:
         raise OSError
+
+
+def _reconcile_writer_generation(identity: _DatabaseIdentity, connection: sqlite3.Connection) -> None:
+    replacement = _open_private_database(identity.parent, identity.name, create=False, write=True)
+    original = identity.descriptor
+    try:
+        identity.descriptor = replacement
+        _require_database_identity(identity)
+        _ = load_sqlite_database(connection, replacement)
+        _enable_foreign_keys(connection)
+        _require_schema(connection)
+    except BaseException:
+        identity.descriptor = original
+        os.close(replacement)
+        raise
+    os.close(original)
 
 
 def _connect_descriptor(descriptor: int) -> sqlite3.Connection:
