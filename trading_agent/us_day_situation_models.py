@@ -58,6 +58,11 @@ class EvidenceBoundClaim(BaseModel):
         labeled_inference = "inferred" in lowered or "proxy" in lowered
         if (
             not _inference_valid(self.observation_kind, self.inference_rule)
+            or not _inference_evidence_valid(
+                self.observation_kind,
+                self.inference_rule,
+                self.evidence_refs,
+            )
             or (makes_unobserved_flow_claim and self.observation_kind is FlowObservationKind.OBSERVED)
             or (makes_unobserved_flow_claim and not labeled_inference)
         ):
@@ -118,7 +123,11 @@ class ObservableFlow(BaseModel):
             and (self.breakout_absorption_proxy is None or self.breakout_absorption_proxy.is_finite())
             and (self.cross_symbol_relative_strength is None or self.cross_symbol_relative_strength.is_finite())
         )
-        if not finite or not _inference_valid(self.observation_kind, self.inference_rule):
+        if (
+            not finite
+            or not _inference_valid(self.observation_kind, self.inference_rule)
+            or not _flow_inference_compatible(self)
+        ):
             raise ValueError("invalid observable flow")
         _require_canonical_refs(self.evidence_refs)
         return self
@@ -199,6 +208,38 @@ def _inference_valid(kind: FlowObservationKind, rule: str | None) -> bool:
     return (kind is FlowObservationKind.OBSERVED and rule is None) or (
         kind is FlowObservationKind.INFERRED and rule in _ALLOWED_INFERENCE_RULES
     )
+
+
+def _flow_inference_compatible(flow: ObservableFlow) -> bool:
+    if flow.observation_kind is FlowObservationKind.OBSERVED:
+        return True
+    if not _inference_evidence_valid(flow.observation_kind, flow.inference_rule, flow.evidence_refs):
+        return False
+    match flow.inference_rule:
+        case "bar_quote_absorption_proxy_v1":
+            return flow.breakout_absorption_proxy is not None
+        case "cross_symbol_relative_strength_v1":
+            return flow.cross_symbol_relative_strength is not None
+        case _:
+            return False
+
+
+def _inference_evidence_valid(
+    kind: FlowObservationKind,
+    rule: str | None,
+    refs: tuple[EvidenceRef, ...],
+) -> bool:
+    if kind is FlowObservationKind.OBSERVED:
+        return True
+    bar_record_ids = {item.record_id for item in refs if item.namespace == "research/current_bar"}
+    quote_count = sum(item.namespace == "quote/snapshot" for item in refs)
+    match rule:
+        case "bar_quote_absorption_proxy_v1":
+            return bool(bar_record_ids) and quote_count >= 1
+        case "cross_symbol_relative_strength_v1":
+            return len(bar_record_ids) >= 2
+        case _:
+            return False
 
 
 def _require_canonical_refs(refs: tuple[EvidenceRef, ...]) -> None:

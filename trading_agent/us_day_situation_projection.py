@@ -237,13 +237,14 @@ def _project_theme(
     )
     scanner_by_symbol = {item.symbol: item for item in scanner.opportunity.candidates}
     changes = {symbol: _change_pct(ticks[symbol]) for symbol in symbols}
+    theme_bar_refs = tuple(_completed_bar_ref(ticks[item]) for item in symbols)
     raw_leaders: list[tuple[Decimal, Decimal, Decimal, str, ObservableFlow, tuple[EvidenceRef, ...]]] = []
     for symbol in symbols:
         tick = ticks[symbol]
         candidate = tick.candidate
         if candidate is None:
             _fail()
-        flow_refs = _refs((_completed_bar_ref(tick), _quote_ref(quotes[symbol])))
+        flow_refs = _refs((*theme_bar_refs, _quote_ref(quotes[symbol])))
         leader_refs = _refs((*flow_refs, _scanner_ref(scanner)))
         relative_volume = _relative_volume(tick)
         dollar_volume = _dollar_volume(tick)

@@ -97,6 +97,7 @@ def test_situation_map_links_theme_catalyst_flow_and_leader_evidence() -> None:
     assert theme.leaders[0].flow.dollar_volume == Decimal("6000600")
     assert theme.leaders[0].flow.vwap_relation == "crossing"
     assert theme.leaders[0].flow.breakout_absorption_proxy is not None
+    assert sum(item.namespace == "research/current_bar" for item in theme.leaders[0].flow.evidence_refs) == 2
     assert all(claim.evidence_refs for claim in theme.claims)
 
 
@@ -182,7 +183,7 @@ def test_inferred_flow_requires_rule_while_observed_flow_forbids_one() -> None:
 
 
 def test_claim_rejects_observed_institutional_accumulation_language() -> None:
-    evidence = (_valid_quote_ref(),)
+    evidence = _canonical_refs((_valid_bar_ref("a"), _valid_quote_ref()))
     with pytest.raises(ValidationError):
         EvidenceBoundClaim(
             text="Institutional accumulation confirmed.",
@@ -196,6 +197,90 @@ def test_claim_rejects_observed_institutional_accumulation_language() -> None:
         evidence_refs=evidence,
     )
     assert claim.inference_rule == "bar_quote_absorption_proxy_v1"
+
+
+def test_absorption_inference_rejects_missing_proxy_value() -> None:
+    evidence = _canonical_refs((_valid_bar_ref("a"), _valid_quote_ref()))
+    with pytest.raises(ValidationError):
+        _flow(
+            FlowObservationKind.INFERRED,
+            inference_rule="bar_quote_absorption_proxy_v1",
+            evidence_refs=evidence,
+        )
+
+
+def test_absorption_inference_requires_bar_and_quote_evidence() -> None:
+    with pytest.raises(ValidationError):
+        _flow(
+            FlowObservationKind.INFERRED,
+            inference_rule="bar_quote_absorption_proxy_v1",
+            breakout_absorption_proxy=Decimal("5"),
+            evidence_refs=(_valid_bar_ref("a"),),
+        )
+    with pytest.raises(ValidationError):
+        EvidenceBoundClaim(
+            text="Inferred institutional accumulation proxy.",
+            observation_kind=FlowObservationKind.INFERRED,
+            inference_rule="bar_quote_absorption_proxy_v1",
+            evidence_refs=(_valid_quote_ref(),),
+        )
+
+    evidence = _canonical_refs((_valid_bar_ref("a"), _valid_quote_ref()))
+    flow = _flow(
+        FlowObservationKind.INFERRED,
+        inference_rule="bar_quote_absorption_proxy_v1",
+        breakout_absorption_proxy=Decimal("5"),
+        evidence_refs=evidence,
+    )
+    claim = EvidenceBoundClaim(
+        text="Inferred institutional accumulation proxy.",
+        observation_kind=FlowObservationKind.INFERRED,
+        inference_rule="bar_quote_absorption_proxy_v1",
+        evidence_refs=evidence,
+    )
+    assert flow.breakout_absorption_proxy == Decimal("5")
+    assert claim.evidence_refs == evidence
+
+
+def test_cross_symbol_inference_requires_value_and_two_distinct_bar_records() -> None:
+    one_bar = (_valid_bar_ref("a"),)
+    with pytest.raises(ValidationError):
+        _flow(
+            FlowObservationKind.INFERRED,
+            inference_rule="cross_symbol_relative_strength_v1",
+            cross_symbol_relative_strength=Decimal("2"),
+            evidence_refs=one_bar,
+        )
+    two_bars = (_valid_bar_ref("a"), _valid_bar_ref("b"))
+    with pytest.raises(ValidationError):
+        _flow(
+            FlowObservationKind.INFERRED,
+            inference_rule="cross_symbol_relative_strength_v1",
+            cross_symbol_relative_strength=None,
+            evidence_refs=two_bars,
+        )
+    with pytest.raises(ValidationError):
+        EvidenceBoundClaim(
+            text="Inferred cross-symbol relative-strength proxy.",
+            observation_kind=FlowObservationKind.INFERRED,
+            inference_rule="cross_symbol_relative_strength_v1",
+            evidence_refs=one_bar,
+        )
+
+    flow = _flow(
+        FlowObservationKind.INFERRED,
+        inference_rule="cross_symbol_relative_strength_v1",
+        cross_symbol_relative_strength=Decimal("2"),
+        evidence_refs=two_bars,
+    )
+    claim = EvidenceBoundClaim(
+        text="Inferred cross-symbol relative-strength proxy.",
+        observation_kind=FlowObservationKind.INFERRED,
+        inference_rule="cross_symbol_relative_strength_v1",
+        evidence_refs=two_bars,
+    )
+    assert flow.cross_symbol_relative_strength == Decimal("2")
+    assert claim.evidence_refs == two_bars
 
 
 def _inputs() -> SituationInputs:
@@ -433,6 +518,9 @@ def _flow(
     observation_kind: FlowObservationKind,
     *,
     inference_rule: str | None = None,
+    breakout_absorption_proxy: Decimal | None = None,
+    cross_symbol_relative_strength: Decimal | None = Decimal("0"),
+    evidence_refs: tuple[EvidenceRef, ...] | None = None,
 ) -> ObservableFlow:
     return ObservableFlow(
         observation_kind=observation_kind,
@@ -442,16 +530,24 @@ def _flow(
         bid_size=10,
         ask_size=12,
         vwap_relation="unavailable",
-        breakout_absorption_proxy=None,
-        cross_symbol_relative_strength=Decimal("0"),
+        breakout_absorption_proxy=breakout_absorption_proxy,
+        cross_symbol_relative_strength=cross_symbol_relative_strength,
         inference_rule=inference_rule,
-        evidence_refs=(_valid_quote_ref(),),
+        evidence_refs=(_valid_quote_ref(),) if evidence_refs is None else evidence_refs,
     )
 
 
 def _valid_quote_ref() -> EvidenceRef:
     quote_id = f"us-quote:{hashlib.sha256(b'model-test').hexdigest()}"
     return _ref("quote/snapshot", quote_id, LATEST_BAR_AT)
+
+
+def _valid_bar_ref(character: str) -> EvidenceRef:
+    return _ref("research/current_bar", character * 64, LATEST_BAR_AT)
+
+
+def _canonical_refs(refs: tuple[EvidenceRef, ...]) -> tuple[EvidenceRef, ...]:
+    return tuple(sorted(refs, key=lambda item: item.canonical_id))
 
 
 def _ref(namespace: str, record_id: str, observed_at: dt.datetime) -> EvidenceRef:
