@@ -5,6 +5,7 @@ import hashlib
 import math
 import re
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -96,6 +97,43 @@ class ResearchReportSection(DayLearningReportModel):
         return self
 
 
+class DayDecisionStage(StrEnum):
+    MARKET_RECOGNITION = "market_recognition"
+    THEME_SELECTION = "theme_selection"
+    CATALYST_INTERPRETATION = "catalyst_interpretation"
+    LEADER_SELECTION = "leader_selection"
+    FLOW_INTERPRETATION = "flow_interpretation"
+    ENTRY = "entry"
+    EXIT = "exit"
+    EXECUTION_QUALITY = "execution_quality"
+
+
+class DayDecisionOutcome(StrEnum):
+    SUPPORTED = "supported"
+    REFUTED = "refuted"
+    INCONCLUSIVE = "inconclusive"
+
+
+class DayDecisionDiagnostic(DayLearningReportModel):
+    stage: DayDecisionStage
+    outcome: DayDecisionOutcome
+    score: float = Field(ge=0.0, le=1.0)
+    evidence_ids: tuple[str, ...] = Field(min_length=1)
+    reason_codes: tuple[str, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_diagnostic(self) -> Self:
+        if (
+            not math.isfinite(self.score)
+            or self.evidence_ids != tuple(sorted(set(self.evidence_ids)))
+            or any(not item.strip() for item in self.evidence_ids)
+            or self.reason_codes != tuple(sorted(set(self.reason_codes)))
+            or any(_REASON.fullmatch(reason) is None for reason in self.reason_codes)
+        ):
+            raise InvalidDayLearningReportError("day_decision_diagnostic_invalid")
+        return self
+
+
 class CumulativeLineageSection(DayLearningReportModel):
     market_id: MarketId
     report_count: int = Field(ge=1)
@@ -157,6 +195,8 @@ class MarketCloseReportPayload(DayLearningReportModel):
     research: ResearchReportSection
     lineage: CumulativeLineageSection
     next_session: NextSessionSection
+    agent_version_id: str | None = Field(default=None, pattern=_SHA256_PATTERN)
+    diagnostics: tuple[DayDecisionDiagnostic, ...] = ()
     finalized_at: dt.datetime
     trading_authority: Literal[False] = False
     order_authority: Literal[False] = False
@@ -165,6 +205,7 @@ class MarketCloseReportPayload(DayLearningReportModel):
     @model_validator(mode="after")
     def validate_report(self) -> Self:
         sections = (self.execution, self.research, self.lineage, self.next_session)
+        stages = tuple(item.stage for item in self.diagnostics)
         if (
             not aware(self.finalized_at)
             or self.finalized_at < self.watermark.finalized_through
@@ -172,6 +213,8 @@ class MarketCloseReportPayload(DayLearningReportModel):
             or self.watermark.session_date != self.session_date
             or any(section.market_id is not self.market_id for section in sections)
             or (self.revision == 1) is not (self.previous_report_id is None)
+            or bool(self.diagnostics) is not bool(self.agent_version_id)
+            or (self.diagnostics and stages != tuple(DayDecisionStage))
         ):
             raise InvalidDayLearningReportError("day_report_revision_or_market_invalid")
         return self
@@ -205,6 +248,9 @@ class DailyLearningReport(DayLearningReportModel):
 __all__ = (
     "CumulativeLineageSection",
     "DailyLearningReport",
+    "DayDecisionDiagnostic",
+    "DayDecisionOutcome",
+    "DayDecisionStage",
     "ExecutionReportSection",
     "InvalidDayLearningReportError",
     "MarketCloseReport",
