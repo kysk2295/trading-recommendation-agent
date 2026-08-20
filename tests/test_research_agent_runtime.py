@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import json
 import stat
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,7 @@ from tests.day_agent_support import day_step, day_task
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
 from trading_agent.day_agent_runtime import DayAgentTaskResult
 from trading_agent.day_agent_task_models import DayAgentAction, DayAgentTaskState
+from trading_agent.day_agent_tool_models import DayAgentHypothesisSubmission, DayAgentThesisSubmission
 from trading_agent.research_agent_actions import (
     ResearchAgentActionClient,
     ResearchAgentActionConfig,
@@ -184,19 +186,52 @@ class RecordingPersistentDayRuntime:
 @dataclass(frozen=True, slots=True)
 class CompletedPersistentDayRuntime:
     action: DayAgentAction
+    payload_json: str | None = None
+    terminal_reason: str | None = None
 
     def tick(self, evidence: ResearchAgentEvidenceV1, now: dt.datetime) -> DayAgentTaskResult:
         del evidence, now
         open_task = day_task()
+        match self.action:
+            case DayAgentAction.SUBMIT_TRADE_THESIS:
+                submission = DayAgentThesisSubmission(
+                    thesis="A valid completed trade thesis artifact.",
+                    evidence_refs=open_task.evidence_refs,
+                    reason="Current evidence supports the bounded thesis artifact.",
+                )
+                expected_reason = "day_agent_trade_thesis_submitted"
+            case DayAgentAction.SUBMIT_RESEARCH_HYPOTHESIS:
+                submission = DayAgentHypothesisSubmission(
+                    hypothesis="A valid completed research hypothesis artifact.",
+                    falsification_conditions=("leader_loses_relative_strength",),
+                    evidence_refs=open_task.evidence_refs,
+                    reason="Current evidence supports the bounded hypothesis artifact.",
+                )
+                expected_reason = "day_agent_research_hypothesis_submitted"
+            case _:
+                submission = None
+                expected_reason = "research_complete"
+        canonical = (
+            "{}"
+            if submission is None
+            else json.dumps(
+                submission.model_dump(mode="json"),
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
         return DayAgentTaskResult(
-            task=day_task(state=DayAgentTaskState.COMPLETED),
+            task=day_task(state=DayAgentTaskState.COMPLETED).model_copy(
+                update={"terminal_reason": self.terminal_reason or expected_reason}
+            ),
             steps=(
                 day_step(
                     open_task,
                     sequence=1,
                     action=self.action,
                     state=DayAgentTaskState.WAITING,
-                ),
+                ).model_copy(update={"payload_json": self.payload_json or canonical}),
             ),
             observations=(),
             model_calls=1,
@@ -451,6 +486,48 @@ def test_completed_day_projection_blocks_non_submission_terminal_shape(tmp_path:
             RecordingDecisionClient([]),
             RecordingArtifactActionClient([]),
             day_runtime=CompletedPersistentDayRuntime(DayAgentAction.DEFER),
+        )
+    )
+    runtime.ingest((_evidence("day_trading", 1, "us_equities"),))
+
+    tick = runtime.tick(NOW + dt.timedelta(minutes=2))
+    result = runtime.store.results()[0]
+    runtime.close()
+
+    assert tick.status == "blocked"
+    assert result.reason == "day_agent_completed_shape_invalid"
+    assert result.decision_kind is None
+
+
+@pytest.mark.parametrize(
+    "runtime_result",
+    (
+        CompletedPersistentDayRuntime(
+            DayAgentAction.SUBMIT_TRADE_THESIS,
+            payload_json="{}",
+        ),
+        CompletedPersistentDayRuntime(
+            DayAgentAction.SUBMIT_TRADE_THESIS,
+            terminal_reason="day_agent_research_hypothesis_submitted",
+        ),
+        CompletedPersistentDayRuntime(
+            DayAgentAction.SUBMIT_RESEARCH_HYPOTHESIS,
+            terminal_reason="day_agent_trade_thesis_submitted",
+        ),
+    ),
+)
+def test_completed_day_projection_rejects_invalid_submission_payload_triple(
+    tmp_path: Path,
+    runtime_result: CompletedPersistentDayRuntime,
+) -> None:
+    store = ResearchAgentCycleStore(tmp_path / "cycles.sqlite3")
+    runtime = ResearchAgentRuntime(
+        ResearchAgentRuntimeServices(
+            store,
+            EMPTY_COLLECTOR,
+            RecordingDecisionClient([]),
+            RecordingArtifactActionClient([]),
+            day_runtime=runtime_result,
         )
     )
     runtime.ingest((_evidence("day_trading", 1, "us_equities"),))

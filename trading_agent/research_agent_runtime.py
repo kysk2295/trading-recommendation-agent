@@ -6,11 +6,12 @@ from dataclasses import dataclass
 from typing import Literal, Protocol, Self, assert_never, final
 
 import anyio
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
 from trading_agent.day_agent_runtime import DayAgentTaskResult
 from trading_agent.day_agent_task_models import DayAgentAction, DayAgentTaskRecordKind, DayAgentTaskState
+from trading_agent.day_agent_tool_models import DayAgentHypothesisSubmission, DayAgentThesisSubmission
 from trading_agent.research_agent_actions import (
     InvalidResearchAgentActionError,
     ResearchAgentActionClient,
@@ -384,8 +385,20 @@ def _project_day_result(
                 return _invalid_completed_day_result(cycle, day_result, now)
             match day_result.steps[-1].action:
                 case DayAgentAction.SUBMIT_TRADE_THESIS:
+                    try:
+                        _ = DayAgentThesisSubmission.model_validate_json(day_result.steps[-1].payload_json)
+                    except ValidationError:
+                        return _invalid_completed_day_result(cycle, day_result, now)
+                    if task.terminal_reason != "day_agent_trade_thesis_submitted":
+                        return _invalid_completed_day_result(cycle, day_result, now)
                     decision_kind = ResearchAgentDecisionKind.PUBLISH_RECOMMENDATION
                 case DayAgentAction.SUBMIT_RESEARCH_HYPOTHESIS:
+                    try:
+                        _ = DayAgentHypothesisSubmission.model_validate_json(day_result.steps[-1].payload_json)
+                    except ValidationError:
+                        return _invalid_completed_day_result(cycle, day_result, now)
+                    if task.terminal_reason != "day_agent_research_hypothesis_submitted":
+                        return _invalid_completed_day_result(cycle, day_result, now)
                     decision_kind = ResearchAgentDecisionKind.PROPOSE_HYPOTHESIS
                 case (
                     DayAgentAction.INSPECT_SITUATION
