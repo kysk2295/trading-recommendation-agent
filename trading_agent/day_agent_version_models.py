@@ -60,6 +60,17 @@ class AgentModelRoleBinding(DayAgentVersionModel):
     model_id: str = Field(min_length=1, max_length=128)
 
 
+class AgentAuthorityBoundary(DayAgentVersionModel):
+    safety_policy: Literal["host_safety_kernel_v1"] = "host_safety_kernel_v1"
+    risk_policy: Literal["host_fixed_paper_risk_v1"] = "host_fixed_paper_risk_v1"
+    broker_policy: Literal["alpaca_paper_only_v1"] = "alpaca_paper_only_v1"
+    endpoint_policy: Literal["exact_paper_endpoint_guard_v1"] = "exact_paper_endpoint_guard_v1"
+    credential_policy: Literal["host_private_credentials_v1"] = "host_private_credentials_v1"
+    order_sizing_policy: Literal["host_liquidity_risk_kernel_v1"] = "host_liquidity_risk_kernel_v1"
+    promotion_policy: Literal["deterministic_multi_session_v1"] = "deterministic_multi_session_v1"
+    audit_policy: Literal["append_only_audit_v1"] = "append_only_audit_v1"
+
+
 class AgentVersionPayload(DayAgentVersionModel):
     model_role_bindings: tuple[AgentModelRoleBinding, ...] = Field(min_length=1)
     prompt_sha256: str = Field(pattern=_SHA256)
@@ -72,6 +83,7 @@ class AgentVersionPayload(DayAgentVersionModel):
     task_id: str = Field(pattern=_TASK_ID)
     created_at: AwareDatetime
     created_session_date: dt.date
+    authority_boundary: AgentAuthorityBoundary = AgentAuthorityBoundary()
     order_authority: Literal[False] = False
     trading_authority: Literal[False] = False
 
@@ -155,19 +167,31 @@ class AgentChangeProposal(DayAgentVersionModel):
     parent_version_id: str = Field(pattern=_SHA256)
     problem_stage: DayDecisionStage
     allowed_changes: tuple[AgentChangeKind, ...] = Field(min_length=1, max_length=1)
-    change_content: str = Field(min_length=16, max_length=8_000)
-    change_content_sha256: str = Field(pattern=_SHA256)
+    patch: AgentVersionPatch
+    patch_sha256: str = Field(pattern=_SHA256)
     evidence_ids: tuple[str, ...] = Field(min_length=1)
     created_at: AwareDatetime
     order_authority: Literal[False] = False
 
     @model_validator(mode="after")
     def validate_proposal(self) -> Self:
-        if (
-            hashlib.sha256(self.change_content.encode()).hexdigest() != self.change_content_sha256
-            or self.evidence_ids != tuple(sorted(set(self.evidence_ids)))
-        ):
+        if hashlib.sha256(
+            canonical_experiment_ledger_json(self.patch).encode()
+        ).hexdigest() != self.patch_sha256 or self.evidence_ids != tuple(sorted(set(self.evidence_ids))):
             raise DayAgentVersionStoreError("agent_change_proposal_invalid")
+        return self
+
+
+class AgentVersionPatch(DayAgentVersionModel):
+    prompt_content: str | None = Field(default=None, min_length=16, max_length=8_000)
+    tool_policy_content: str | None = Field(default=None, min_length=16, max_length=8_000)
+    playbook_content: str | None = Field(default=None, min_length=16, max_length=8_000)
+
+    @model_validator(mode="after")
+    def validate_single_field(self) -> Self:
+        values = (self.prompt_content, self.tool_policy_content, self.playbook_content)
+        if sum(item is not None for item in values) != 1:
+            raise DayAgentVersionStoreError("agent_version_patch_invalid")
         return self
 
 
@@ -178,6 +202,7 @@ class AgentPromotionRecommendation(DayAgentVersionModel):
     decision: AgentPromotionDecision
     evaluated_session_dates: tuple[dt.date, ...] = Field(min_length=1)
     paired_snapshot_ids: tuple[str, ...] = Field(min_length=1)
+    controller_evidence_ids: tuple[str, ...] = Field(min_length=1)
     champion_score: float
     challenger_score: float
     reason_codes: tuple[str, ...] = Field(min_length=1)
@@ -190,10 +215,20 @@ class AgentPromotionRecommendation(DayAgentVersionModel):
             not all(math.isfinite(item) for item in (self.champion_score, self.challenger_score))
             or self.evaluated_session_dates != tuple(sorted(set(self.evaluated_session_dates)))
             or len(self.paired_snapshot_ids) < len(self.evaluated_session_dates)
+            or self.controller_evidence_ids != tuple(sorted(set(self.controller_evidence_ids)))
             or self.reason_codes != tuple(sorted(set(self.reason_codes)))
         ):
             raise DayAgentVersionStoreError("agent_promotion_recommendation_invalid")
         return self
+
+
+class AgentDeploymentTransition(DayAgentVersionModel):
+    transition_id: str = Field(pattern=_SHA256)
+    recommendation_id: str = Field(pattern=_SHA256)
+    demoted_version_id: str = Field(pattern=_SHA256)
+    promoted_version_id: str = Field(pattern=_SHA256)
+    deployed_at: AwareDatetime
+    host_determined: Literal[True] = True
 
 
 def build_agent_version(
@@ -228,13 +263,16 @@ def build_agent_version(
 
 
 __all__ = (
+    "AgentAuthorityBoundary",
     "AgentChangeKind",
     "AgentChangeProposal",
     "AgentDeploymentState",
+    "AgentDeploymentTransition",
     "AgentModelRoleBinding",
     "AgentPromotionDecision",
     "AgentPromotionRecommendation",
     "AgentVersion",
+    "AgentVersionPatch",
     "AgentVersionPayload",
     "DayAgentVersionStoreError",
     "build_agent_version",

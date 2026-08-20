@@ -151,10 +151,7 @@ class CumulativeLineageSection(DayLearningReportModel):
         if (
             not all(math.isfinite(value) for value in values)
             or self.lineage_report_ids != tuple(dict.fromkeys(self.lineage_report_ids))
-            or any(
-                re.fullmatch(_SHA256_PATTERN, report_id) is None
-                for report_id in self.lineage_report_ids
-            )
+            or any(re.fullmatch(_SHA256_PATTERN, report_id) is None for report_id in self.lineage_report_ids)
             or self.report_count != len(self.lineage_report_ids) + 1
             or (self.market_id is MarketId.KR_EQUITIES and self.cumulative_actual_return is not None)
         ):

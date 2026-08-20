@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+from dataclasses import dataclass
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from trading_agent.dashboard_paper_finalized_terminal import FinalizedPaperAuthority
+from trading_agent.dashboard_us_day_paper import FinalizedPaperProjectionBundle
 from trading_agent.day_learning_report_models import (
     DailyLearningReport,
     DayDecisionDiagnostic,
@@ -16,38 +19,34 @@ from trading_agent.day_learning_report_models import (
     MarketFinalizationWatermark,
 )
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
+from trading_agent.lane_contract_keys import lane_daily_snapshot_key
 from trading_agent.research_identity_models import MarketId
+from trading_agent.us_day_situation_models import UsDaySituationMap
+from trading_agent.us_day_thesis_models import DayTradeDecision, UsDayTradeThesis, situation_id_for
+from trading_agent.us_equity_calendar import NEW_YORK
 
 
-class FinalizedDayDecisionEvidence(BaseModel):
+class DayStageAssessment(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", revalidate_instances="always")
 
-    agent_version_id: str = Field(pattern=r"^[0-9a-f]{64}$")
-    recommendation_event_ids: tuple[str, ...]
-    market_event_ids: tuple[str, ...] = Field(min_length=1)
-    paper_event_ids: tuple[str, ...]
-    finalized_at: AwareDatetime
-    stage_scores: tuple[tuple[DayDecisionStage, float], ...]
-    stage_reason_codes: tuple[tuple[DayDecisionStage, tuple[str, ...]], ...]
+    stage: DayDecisionStage
+    score: float = Field(ge=0.0, le=1.0)
+    reason_codes: tuple[str, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def validate_evidence(self) -> FinalizedDayDecisionEvidence:
-        evidence_groups = (
-            self.recommendation_event_ids,
-            self.market_event_ids,
-            self.paper_event_ids,
-        )
-        score_stages = tuple(item[0] for item in self.stage_scores)
-        reason_stages = tuple(item[0] for item in self.stage_reason_codes)
-        if (
-            any(group != tuple(sorted(set(group))) for group in evidence_groups)
-            or not self.recommendation_event_ids
-            or not self.paper_event_ids
-            or score_stages != tuple(DayDecisionStage)
-            or reason_stages != tuple(DayDecisionStage)
-        ):
+    def validate_assessment(self) -> DayStageAssessment:
+        if self.reason_codes != tuple(sorted(set(self.reason_codes))):
             raise InvalidDayLearningReportError("day_diagnostic_evidence_invalid")
         return self
+
+
+@dataclass(frozen=True, slots=True)
+class FinalizedDayDecisionEvidence:
+    thesis: UsDayTradeThesis
+    situation: UsDaySituationMap
+    paper: FinalizedPaperProjectionBundle
+    assessed_at: dt.datetime
+    assessments: tuple[DayStageAssessment, ...]
 
 
 def build_day_decision_diagnostics(
@@ -55,26 +54,98 @@ def build_day_decision_diagnostics(
     *,
     watermark: MarketFinalizationWatermark,
 ) -> tuple[DayDecisionDiagnostic, ...]:
-    checked = FinalizedDayDecisionEvidence.model_validate(evidence.model_dump(mode="python"))
-    if checked.finalized_at < watermark.finalized_through:
-        raise InvalidDayLearningReportError("day_diagnostic_before_finalization")
-    evidence_ids = tuple(
-        sorted(
-            set(
-                (*checked.recommendation_event_ids, *checked.market_event_ids, *checked.paper_event_ids)
-            )
-        )
-    )
-    reasons = dict(checked.stage_reason_codes)
+    evidence_ids = _canonical_diagnostic_evidence(evidence, watermark)
     return tuple(
         DayDecisionDiagnostic(
-            stage=stage,
-            outcome=_diagnostic_outcome(score),
-            score=score,
+            stage=item.stage,
+            outcome=_diagnostic_outcome(item.score),
+            score=item.score,
             evidence_ids=evidence_ids,
-            reason_codes=reasons[stage],
+            reason_codes=item.reason_codes,
         )
-        for stage, score in checked.stage_scores
+        for item in evidence.assessments
+    )
+
+
+def _canonical_diagnostic_evidence(
+    evidence: FinalizedDayDecisionEvidence,
+    watermark: MarketFinalizationWatermark,
+) -> tuple[str, ...]:
+    thesis = UsDayTradeThesis.model_validate(evidence.thesis.model_dump(mode="python"))
+    situation = UsDaySituationMap.model_validate(evidence.situation.model_dump(mode="python"))
+    paper = evidence.paper
+    stages = tuple(item.stage for item in evidence.assessments)
+    authority = paper.authority
+    if not isinstance(authority, FinalizedPaperAuthority):
+        raise InvalidDayLearningReportError("day_diagnostic_evidence_invalid")
+    receipt = authority.receipt
+    intent_matches = tuple(item for item in paper.ledger.intents if str(item.intent_id) == thesis.thesis_id)
+    intent = intent_matches[0] if len(intent_matches) == 1 else None
+    intent_created_at = None if intent is None else dt.datetime.fromisoformat(intent.created_at)
+    situation_evidence = tuple(item.canonical_id for item in situation.evidence_refs)
+    thesis_evidence = tuple(item.canonical_id for item in thesis.evidence_refs)
+    theme = next((item for item in situation.themes if item.theme_id == thesis.theme_id), None)
+    session_date = thesis.observed_at.astimezone(NEW_YORK).date()
+    paper_valid = (
+        paper.identity.generation == receipt.source_ledger_generation
+        and paper.identity.sha256 == receipt.source_ledger_sha256
+        and paper.snapshot.source_ledger_generation == paper.identity.generation
+        and paper.snapshot.source_ledger_sha256 == paper.identity.sha256
+        and paper.snapshot.finalized_at == receipt.observed_at
+        and paper.snapshot.session_date == receipt.session_date
+        and paper.snapshot.champion_strategy_versions == receipt.strategy_versions
+        and receipt.snapshot_key == str(lane_daily_snapshot_key(paper.snapshot))
+        and authority.safe_ref == hashlib.sha256(receipt.model_dump_json(exclude_none=False).encode()).hexdigest()
+        and paper.snapshot.data_quality_complete
+        and paper.snapshot.open_order_count == 0
+        and paper.snapshot.open_position_count == 0
+        and not paper.ledger.unresolved_intent_ids
+        and not paper.ledger.pending_trade_update_receipt_keys
+        and not paper.ledger.unrecovered_trade_update_quarantine_keys
+    )
+    recommendation_valid = (thesis.decision is not DayTradeDecision.RECOMMEND and intent is None) or (
+        thesis.decision is DayTradeDecision.RECOMMEND
+        and intent is not None
+        and intent_created_at is not None
+        and thesis.symbol == intent.symbol
+        and thesis.agent_version_id == intent.strategy_version
+        and thesis.entry_price == intent.entry_limit
+        and thesis.stop_price == intent.stop
+        and tuple(item.price for item in thesis.targets[:2]) == (intent.target_1r, intent.target_2r)
+        and thesis.observed_at <= intent_created_at <= paper.snapshot.finalized_at
+        and intent.intent_id in paper.ledger.filled_intent_ids
+    )
+    if (
+        evidence.assessed_at.tzinfo is None
+        or evidence.assessed_at.utcoffset() is None
+        or stages != tuple(DayDecisionStage)
+        or situation_id_for(situation) != thesis.situation_id
+        or thesis.agent_version_id not in receipt.strategy_versions
+        or theme is None
+        or thesis.catalyst_event_id not in {item.event_id for item in theme.catalysts}
+        or (thesis.symbol is not None and thesis.symbol not in theme.symbols)
+        or not set(thesis_evidence) <= set(situation_evidence)
+        or watermark.market_id is not MarketId.US_EQUITIES
+        or watermark.session_date != session_date
+        or receipt.session_date != session_date
+        or situation.evaluated_at > thesis.observed_at
+        or evidence.assessed_at < paper.snapshot.finalized_at
+        or evidence.assessed_at < watermark.finalized_through
+        or not paper_valid
+        or not recommendation_valid
+    ):
+        raise InvalidDayLearningReportError("day_diagnostic_evidence_invalid")
+    return tuple(
+        sorted(
+            {
+                thesis.thesis_id,
+                paper.identity.sha256,
+                authority.safe_ref,
+                receipt.snapshot_key,
+                *situation_evidence,
+                *watermark.source_event_ids,
+            }
+        )
     )
 
 
@@ -113,6 +184,7 @@ def build_daily_learning_report(
 
 
 __all__ = (
+    "DayStageAssessment",
     "FinalizedDayDecisionEvidence",
     "build_daily_learning_report",
     "build_day_decision_diagnostics",
