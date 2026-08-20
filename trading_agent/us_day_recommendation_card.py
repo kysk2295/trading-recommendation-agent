@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import fcntl
 import json
+import os
+import stat
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
 
 from trading_agent.models import Recommendation, RecommendationAlert, RecommendationState
 from trading_agent.store import PaperStore
@@ -79,6 +85,16 @@ def persist_and_queue_thesis(
         return created
     if thesis.decision in {DayTradeDecision.NO_TRADE, DayTradeDecision.INSUFFICIENT_EVIDENCE}:
         return thesis_store.publish_terminal_card(thesis, card) or created
+    with _paper_projection_lock(paper_store):
+        repaired = _persist_recommendation_projection(thesis, paper_store, card)
+    return created or repaired
+
+
+def _persist_recommendation_projection(
+    thesis: UsDayTradeThesis,
+    paper_store: PaperStore,
+    card: str,
+) -> bool:
     assert thesis.symbol is not None and thesis.entry_price is not None and thesis.stop_price is not None
     recommendation = Recommendation(
         recommendation_id=thesis.thesis_id,
@@ -173,7 +189,34 @@ def persist_and_queue_thesis(
         repaired = True
     elif matching_alerts != (alert,):
         raise InvalidUsDayThesisStoreError
-    return created or repaired
+    return repaired
+
+
+@contextmanager
+def _paper_projection_lock(paper_store: PaperStore) -> Iterator[None]:
+    database_path = Path(os.path.abspath(paper_store.path.expanduser()))
+    lock_path = Path(f"{database_path}.thesis-projection.lock")
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    if no_follow is None:
+        raise InvalidUsDayThesisStoreError
+    try:
+        descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | no_follow, 0o600)
+    except OSError:
+        raise InvalidUsDayThesisStoreError from None
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_nlink != 1:
+            raise InvalidUsDayThesisStoreError
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+    except OSError:
+        raise InvalidUsDayThesisStoreError from None
+    finally:
+        os.close(descriptor)
 
 
 __all__ = ("persist_and_queue_thesis", "render_change_kind_korean", "render_thesis_card_korean")

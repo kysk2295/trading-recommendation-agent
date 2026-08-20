@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 from pathlib import Path
+from typing import Protocol
 
 from tests.test_us_day_situation_projection import EVALUATED_AT, _inputs, _project
 from tests.test_us_day_thesis_runtime import _champion, _markets, _rationale
@@ -100,6 +102,63 @@ def test_watch_has_no_terminal_card_but_no_trade_does(tmp_path: Path) -> None:
     assert persist_and_queue_thesis(no_trade, paper, store)
     assert (store.root / "terminal_cards" / f"{no_trade.thesis_id}.md").is_file()
     assert paper.recommendations() == ()
+
+
+def test_concurrent_identical_projection_is_serialized_and_exactly_idempotent(tmp_path: Path) -> None:
+    situation = _project(_inputs())
+    thesis = reason_trade_thesis(_recommend_response(), _champion(), situation, _markets()).thesis
+    paper_path = tmp_path / "paper.sqlite3"
+    store_root = tmp_path / "private"
+    _ = PaperStore(paper_path)
+    _ = UsDayThesisStore(store_root)
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(2)
+    results = context.Queue()
+    processes = tuple(
+        context.Process(
+            target=_persist_worker,
+            args=(thesis.model_dump_json(), str(paper_path), str(store_root), barrier, results),
+        )
+        for _ in range(2)
+    )
+    for process in processes:
+        process.start()
+    outcomes = sorted(results.get(timeout=10) for _ in processes)
+    for process in processes:
+        process.join(timeout=10)
+        assert process.exitcode == 0
+    paper = PaperStore(paper_path)
+    assert outcomes == ["changed", "exact"]
+    assert len(paper.recommendations()) == 1
+    assert len(paper.events(thesis.thesis_id)) == 1
+    assert len(paper.alerts()) == 1
+
+
+class _Barrier(Protocol):
+    def wait(self) -> int: ...
+
+
+class _Queue(Protocol):
+    def put(self, value: str) -> None: ...
+
+
+def _persist_worker(
+    thesis_payload: str,
+    paper_path: str,
+    store_root: str,
+    barrier: _Barrier,
+    results: _Queue,
+) -> None:
+    thesis = UsDayTradeThesis.model_validate_json(thesis_payload)
+    paper = PaperStore(Path(paper_path))
+    store = UsDayThesisStore(Path(store_root))
+    _ = barrier.wait()
+    try:
+        changed = persist_and_queue_thesis(thesis, paper, store)
+    except Exception as error:
+        results.put(f"error:{type(error).__name__}")
+    else:
+        results.put("changed" if changed else "exact")
 
 
 def _recommend_response() -> dict[str, object]:
