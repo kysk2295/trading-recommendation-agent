@@ -9,6 +9,7 @@ from trading_agent.day_forward_trial_ledger import DayForwardTrialState
 from trading_agent.day_strategy_capsule_models import StrategyCapsule
 from trading_agent.generated_strategy_execution import GeneratedStrategyExecutionError
 from trading_agent.us_forward_shadow_artifacts import (
+    UsForwardShadowOutcomeArtifact,
     UsForwardShadowOutcomeLeg,
     build_us_forward_shadow_outcome_artifact,
     build_us_forward_shadow_signal_artifact,
@@ -18,6 +19,7 @@ from trading_agent.us_forward_shadow_models import (
     UsForwardShadowCapsuleResult,
     UsForwardShadowStatus,
     UsForwardShadowTick,
+    completed_bar_id,
 )
 from trading_agent.us_forward_shadow_services import (
     InvalidUsForwardShadowRuntimeError,
@@ -52,6 +54,18 @@ def advance_us_forward_shadow_capsule(
         with services.ledger.writer() as writer:
             _ = writer.register_day_forward_trial(trial)
         return _result(capsule, trial.trial_id, UsForwardShadowStatus.REGISTERED)
+    if not any(
+        event.event_kind in (DayForwardTrialEventKind.SIGNAL, DayForwardTrialEventKind.ENTRY)
+        for event in state.events
+    ):
+        state = _recover_signal_events(tick, capsule, state, services)
+    if (
+        any(event.event_kind is DayForwardTrialEventKind.ENTRY for event in state.events)
+        and not any(event.event_kind is DayForwardTrialEventKind.EXIT for event in state.events)
+    ):
+        recovered_outcome = services.shadow_artifacts.outcome_for_trial(state.trial.trial_id)
+        if recovered_outcome is not None:
+            return _recover_exit_event(tick, capsule, state, recovered_outcome, services)
     if state.terminal or any(event.completed_bar_id == tick.completed_bar_id for event in state.events):
         return _replayed_result(capsule, state)
     if completed_bar_at(tick) < state.trial.first_eligible_completed_bar_at:
@@ -129,7 +143,6 @@ def _observe_generated(
         state.trial,
         tick,
         DayForwardTrialEventKind.SIGNAL,
-        evaluation_at=evaluation_at,
         sequence=len(state.events) + 1,
         previous_event_id=state.events[-1].event_id if state.events else None,
     )
@@ -137,7 +150,6 @@ def _observe_generated(
         state.trial,
         tick,
         DayForwardTrialEventKind.ENTRY,
-        evaluation_at=evaluation_at,
         sequence=signal_event.sequence + 1,
         previous_event_id=signal_event.event_id,
     )
@@ -150,6 +162,98 @@ def _observe_generated(
         UsForwardShadowStatus.ENTERED,
         event_ids=(stored_signal.event_id, stored_entry.event_id),
     )
+
+
+def _recover_signal_events(
+    tick: UsForwardShadowTick,
+    capsule: StrategyCapsule,
+    state: DayForwardTrialState,
+    services: UsForwardShadowServices,
+) -> DayForwardTrialState:
+    artifact = services.shadow_artifacts.signal_for_trial(state.trial.trial_id)
+    if artifact is None:
+        return state
+    if artifact.capsule_id != capsule.capsule_id:
+        raise InvalidUsForwardShadowRuntimeError("signal_artifact_mismatch")
+    recovered_tick = _artifact_tick(tick, artifact.completed_bar_id)
+    signal_event = build_us_forward_shadow_event(
+        state.trial,
+        recovered_tick,
+        DayForwardTrialEventKind.SIGNAL,
+        sequence=1,
+        previous_event_id=None,
+    )
+    entry_event = build_us_forward_shadow_event(
+        state.trial,
+        recovered_tick,
+        DayForwardTrialEventKind.ENTRY,
+        sequence=2,
+        previous_event_id=signal_event.event_id,
+    )
+    with services.ledger.writer() as writer:
+        _ = writer.append_day_forward_trial_event(signal_event)
+        _ = writer.append_day_forward_trial_event(entry_event)
+    return _state_for_trial(state.trial.trial_id, services)
+
+
+def _recover_exit_event(
+    tick: UsForwardShadowTick,
+    capsule: StrategyCapsule,
+    state: DayForwardTrialState,
+    outcome: UsForwardShadowOutcomeArtifact,
+    services: UsForwardShadowServices,
+) -> UsForwardShadowCapsuleResult:
+    signal = services.shadow_artifacts.signal(state.trial.trial_id)
+    if outcome.signal_artifact_id != signal.artifact_id:
+        raise InvalidUsForwardShadowRuntimeError("outcome_artifact_mismatch")
+    recovered_tick = _artifact_tick(tick, outcome.exit_completed_bar_id)
+    event = build_us_forward_shadow_event(
+        state.trial,
+        recovered_tick,
+        DayForwardTrialEventKind.EXIT,
+        sequence=len(state.events) + 1,
+        previous_event_id=state.events[-1].event_id,
+        exit_reason=outcome.exit_reason,
+        outcome_ref=build_us_forward_shadow_outcome_ref(outcome),
+    )
+    with services.ledger.writer() as writer:
+        stored = writer.append_day_forward_trial_event(event)
+    return _result(
+        capsule,
+        state.trial.trial_id,
+        UsForwardShadowStatus.EXITED,
+        event_ids=(stored.event_id,),
+        outcome_id=outcome.outcome_id,
+    )
+
+
+def _artifact_tick(tick: UsForwardShadowTick, completed_bar_id: str) -> UsForwardShadowTick:
+    matching_indexes = tuple(
+        index for index, bar in enumerate(tick.bars) if completed_bar_id == completed_bar_id_for(bar)
+    )
+    if len(matching_indexes) != 1:
+        raise InvalidUsForwardShadowRuntimeError("artifact_bar_missing")
+    index = matching_indexes[0]
+    return tick.model_copy(
+        update={
+            "bars": tick.bars[: index + 1],
+            "completed_bar_id": completed_bar_id,
+            "completed_bar_sequence": tick.completed_bar_sequence - (len(tick.bars) - index - 1),
+        }
+    )
+
+
+def completed_bar_id_for(bar) -> str:
+    return completed_bar_id(bar)
+
+
+def _state_for_trial(trial_id: str, services: UsForwardShadowServices) -> DayForwardTrialState:
+    matches = tuple(
+        state for state in services.ledger.reader().day_forward_trials() if state.trial.trial_id == trial_id
+    )
+    if len(matches) != 1:
+        raise InvalidUsForwardShadowRuntimeError("trial_recovery_missing")
+    return matches[0]
 
 
 def _advance_entered(
@@ -251,14 +355,13 @@ def _exit_entered(
         legs=legs,
         round_trip_cost_bps=costs,
         exit_reason=exit_reason,
-        recorded_at=evaluation_at,
+        recorded_at=completed_bar_at(tick),
     )
     _ = services.shadow_artifacts.publish_outcome(outcome)
     event = build_us_forward_shadow_event(
         state.trial,
         tick,
         DayForwardTrialEventKind.EXIT,
-        evaluation_at=evaluation_at,
         sequence=len(state.events) + 1,
         previous_event_id=state.events[-1].event_id,
         exit_reason=exit_reason,
@@ -333,7 +436,6 @@ def _append_single(
         state.trial,
         tick,
         kind,
-        evaluation_at=evaluation_at,
         sequence=len(state.events) + 1,
         previous_event_id=state.events[-1].event_id if state.events else None,
         reason_codes=("completed_bar_gap",) if kind is DayForwardTrialEventKind.CENSORED else reason_codes,

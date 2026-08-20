@@ -64,7 +64,6 @@ def build_us_forward_shadow_event(
     tick: UsForwardShadowTick,
     kind: DayForwardTrialEventKind,
     *,
-    evaluation_at: dt.datetime,
     sequence: int,
     previous_event_id: str | None,
     exit_reason: DayForwardExitReason | None = None,
@@ -84,7 +83,7 @@ def build_us_forward_shadow_event(
         "completed_bar_id": tick.completed_bar_id,
         "completed_bar_sequence": tick.completed_bar_sequence,
         "completed_bar_at": completed_bar_at(tick),
-        "event_at": evaluation_at,
+        "event_at": completed_bar_at(tick),
         "exit_reason": exit_reason,
         "outcome_ref": outcome_ref,
         "reason_codes": tuple(sorted(set(reason_codes))),
@@ -120,7 +119,7 @@ def completed_bar_interval(tick: UsForwardShadowTick) -> dt.timedelta:
 
 
 def completed_bar_at(tick: UsForwardShadowTick) -> dt.datetime:
-    return tick.bars[-1].timestamp + completed_bar_interval(tick)
+    return tick.bars[-1].timestamp + dt.timedelta(minutes=1)
 
 
 def _model_sha256(value: BaseModel | tuple[str, ...]) -> str:

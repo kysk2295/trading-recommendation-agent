@@ -149,7 +149,7 @@ def shadow_tick(
     bars = tuple(_bar_frame(index, low=low if index == minute else None, high=high if index == minute else None)
                  for index in range(max(0, minute - 2), minute + 1))
     latest = bars[-1]
-    observed = latest.timestamp + dt.timedelta(minutes=1, seconds=30)
+    observed = latest.timestamp + dt.timedelta(minutes=1, seconds=5)
     stored_policy = services.ledger.reader().day_exploration_policies(MarketId.US_EQUITIES)[0]
     return UsForwardShadowTick(
         market_id=MarketId.US_EQUITIES,
@@ -174,8 +174,8 @@ def shadow_tick(
         quote=QuoteValidation(
             bid=Decimal(str(latest.close - 0.05)),
             ask=Decimal(str(latest.close + 0.05)),
-            observed_at=latest.timestamp + dt.timedelta(minutes=1, seconds=25),
-            valid_until=latest.timestamp + dt.timedelta(minutes=1, seconds=45),
+            observed_at=latest.timestamp + dt.timedelta(minutes=1),
+            valid_until=latest.timestamp + dt.timedelta(minutes=1, seconds=30),
             spread_bps=Decimal(str(0.1 / latest.close * 10_000)),
             max_slippage_bps=Decimal("20"),
         ),

@@ -22,6 +22,7 @@ from trading_agent.us_forward_shadow_services import (
     InvalidUsForwardShadowRuntimeError,
     UsForwardShadowServices,
 )
+from trading_agent.us_forward_shadow_trial import completed_bar_at
 
 
 def evaluate_generated_signal(
@@ -31,6 +32,7 @@ def evaluate_generated_signal(
     *,
     evaluation_at: dt.datetime,
 ) -> DayTradeSignalProjection | None:
+    observation_at = completed_bar_at(tick)
     generated_id = capsule.generated_artifact_id
     if generated_id is None:
         raise InvalidUsForwardShadowRuntimeError("capsule_artifact_missing")
@@ -60,10 +62,10 @@ def evaluate_generated_signal(
             completed_bar=DayCompletedBarLineage(
                 market_id=MarketId.US_EQUITIES,
                 bar=tick.bars[-1],
-                valid_until=evaluation_at + dt.timedelta(seconds=5),
+                valid_until=observation_at + dt.timedelta(seconds=30),
                 record_id=tick.completed_bar_id,
             ),
-            observed_at=evaluation_at,
+            observed_at=observation_at,
             quote_validation=tick.quote,
             target_policy=DayTargetProjectionPolicy(
                 rules=(

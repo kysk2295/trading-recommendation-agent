@@ -180,6 +180,10 @@ class UsForwardShadowArtifactStore:
     def signal(self, trial_id: str) -> UsForwardShadowSignalArtifact:
         return self._load(self._signal_path(_checked_id(trial_id)), UsForwardShadowSignalArtifact)
 
+    def signal_for_trial(self, trial_id: str) -> UsForwardShadowSignalArtifact | None:
+        path = self._signal_path(_checked_id(trial_id))
+        return None if not path.exists() else self._load(path, UsForwardShadowSignalArtifact)
+
     def publish_outcome(self, artifact: UsForwardShadowOutcomeArtifact) -> bool:
         try:
             checked = UsForwardShadowOutcomeArtifact.model_validate(artifact.model_dump(mode="python"))
@@ -189,6 +193,27 @@ class UsForwardShadowArtifactStore:
 
     def outcome(self, outcome_id: str) -> UsForwardShadowOutcomeArtifact:
         return self._load(self._outcome_path(_checked_id(outcome_id)), UsForwardShadowOutcomeArtifact)
+
+    def outcome_for_trial(self, trial_id: str) -> UsForwardShadowOutcomeArtifact | None:
+        checked_trial_id = _checked_id(trial_id)
+        outcomes = self.root / "outcomes"
+        if not outcomes.exists():
+            return None
+        try:
+            matches = tuple(
+                outcome
+                for path in sorted(outcomes.iterdir())
+                if path.suffix == ".json"
+                for outcome in (self._load(path, UsForwardShadowOutcomeArtifact),)
+                if outcome.trial_id == checked_trial_id
+            )
+            if len(matches) > 1:
+                raise InvalidUsForwardShadowArtifactError
+            return matches[0] if matches else None
+        except InvalidUsForwardShadowArtifactError:
+            raise
+        except OSError:
+            raise InvalidUsForwardShadowArtifactError from None
 
     def _publish(self, path: Path, artifact: UsForwardShadowArtifact) -> bool:
         try:
