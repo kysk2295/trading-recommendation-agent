@@ -2,20 +2,24 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-import os
-import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
-
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from typing import Literal, Protocol
 
 from trading_agent.dashboard_models_v2 import SourceStateV2, TraceEdgeV2, TraceNodeV2, WorkspaceItemV2
 from trading_agent.dashboard_outbound_redaction import redact_outbound_text
 from trading_agent.dashboard_projection_common import WorkspaceProjection
+from trading_agent.day_agent_task_models import DayAgentResearchTask
+from trading_agent.day_agent_task_store import DayAgentTaskReader, DayAgentTaskStore, DayAgentTaskStoreError
+from trading_agent.day_learning_report_models import MarketCloseReport
+from trading_agent.day_learning_report_store import InvalidDayLearningReportError, load_market_close_report
+from trading_agent.execution_ledger_reader import ReconciliationLedger, read_reconciliation_ledger
 from trading_agent.hermes_delivery_errors import InvalidHermesDeliveryStoreError
+from trading_agent.hermes_delivery_models import HermesDeliveryEvent, HermesDeliveryKind
 from trading_agent.hermes_delivery_reader import HermesDeliveryReader
-from trading_agent.us_day_thesis_models import DayTradeDecision, ThesisChangeKind, UsDayThesisChange, UsDayTradeThesis
+from trading_agent.paper_execution_models import IntentId
+from trading_agent.us_day_thesis_models import DayTradeDecision, UsDayThesisChange, UsDayTradeThesis
+from trading_agent.us_day_thesis_store import InvalidUsDayThesisStoreError, UsDayThesisStore
 
 _STALE_AFTER = dt.timedelta(minutes=15)
 
@@ -24,27 +28,51 @@ class DayLiveSourceError(ValueError):
     pass
 
 
-class _AgentVersion(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    version_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+@dataclass(frozen=True, slots=True)
+class DayAgentVersionView:
+    version_id: str
     deployment_state: Literal["champion", "shadow"]
-    observed_at: AwareDatetime
+    task_id: str
+    observed_at: dt.datetime
 
 
-class _CloseReview(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    thesis_id: str = Field(pattern=r"^[0-9a-f]{64}$")
-    observed_at: AwareDatetime
-    status: Literal["reviewed", "pending", "blocked"]
+class DayAgentVersionReader(Protocol):
+    def versions(self) -> tuple[DayAgentVersionView, ...]: ...
 
 
-class _MarketRegime(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+class DayCloseReportReader(Protocol):
+    def reports(self) -> tuple[MarketCloseReport, ...]: ...
 
-    label: str = Field(min_length=1, max_length=80)
-    observed_at: AwareDatetime
+
+@dataclass(frozen=True, slots=True)
+class _EmptyVersionReader:
+    def versions(self) -> tuple[DayAgentVersionView, ...]:
+        return ()
+
+
+@dataclass(frozen=True, slots=True)
+class _ImmutableCloseReportReader:
+    root: Path
+
+    def reports(self) -> tuple[MarketCloseReport, ...]:
+        if not self.root.exists():
+            return ()
+        try:
+            reports = tuple(load_market_close_report(path) for path in self.root.glob("market_close_report_*.json"))
+        except (InvalidDayLearningReportError, OSError):
+            raise DayLiveSourceError from None
+        return tuple(sorted(reports, key=lambda item: (item.payload.finalized_at, item.report_id), reverse=True))
+
+
+@dataclass(frozen=True, slots=True)
+class _Readers:
+    theses: tuple[UsDayTradeThesis, ...]
+    changes: dict[str, tuple[UsDayThesisChange, ...]]
+    task_reader: DayAgentTaskReader | None
+    version_reader: DayAgentVersionReader
+    close_reports: DayCloseReportReader
+    hermes_events: tuple[HermesDeliveryEvent, ...]
+    ledger: ReconciliationLedger | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,211 +83,175 @@ class DayLiveProjection:
     edges: tuple[TraceEdgeV2, ...]
 
 
-def project_us_day_live(outputs: Path, *, now: dt.datetime) -> DayLiveProjection:
-    root = outputs / "us_day"
-    if not root.exists():
-        return DayLiveProjection((), (), (), ())
+def project_us_day_live(
+    outputs: Path,
+    *,
+    now: dt.datetime,
+    version_reader: DayAgentVersionReader | None = None,
+    paper_finalized: bool = False,
+) -> DayLiveProjection:
     try:
-        _require_private_directory(root)
-        theses = _theses(root / "theses")
-        changes = {thesis.thesis_id: _changes(root / "theses", thesis) for thesis in theses}
-        versions = _optional_models(root / "agent_versions.json", _AgentVersion)
-        reviews = _optional_models(root / "close_reviews.json", _CloseReview)
-        regimes = _optional_models(root / "market_regime.json", _MarketRegime)
-        _read_hermes(outputs / "hermes" / "delivery.sqlite3")
-    except (DayLiveSourceError, InvalidHermesDeliveryStoreError, ValidationError):
+        readers = _canonical_readers(outputs, version_reader)
+        reports = readers.close_reports.reports()
+    except (
+        DayLiveSourceError,
+        DayAgentTaskStoreError,
+        InvalidHermesDeliveryStoreError,
+        InvalidUsDayThesisStoreError,
+        OSError,
+        ValueError,
+    ):
         return _blocked(now)
-    observed = tuple(thesis.observed_at for thesis in theses)
-    if observed and now - max(observed) > _STALE_AFTER:
+    if readers.theses and now - max(item.observed_at for item in readers.theses) > _STALE_AFTER:
         return _blocked(now, state="blocked", value="stale")
-    return _accepted(theses, changes, versions, reviews, regimes, now)
+    return _accepted(readers, reports, now, paper_finalized)
 
 
 def merge_us_day_live(
     base: WorkspaceProjection, day: DayLiveProjection, *, workspace: Literal["markets", "paper"]
 ) -> WorkspaceProjection:
     items = day.markets if workspace == "markets" else day.paper
-    available = max(0, 24 - len(base.workspace.items))
-    projected_items = items[:available]
+    kept = items[: max(0, 24 - len(base.workspace.items))]
     total = base.workspace.total_count + len(items)
-    projected = len(base.workspace.items) + len(projected_items)
+    projected = len(base.workspace.items) + len(kept)
     merged = SourceStateV2(
         **base.workspace.model_dump(exclude={"total_count", "projected_count", "truncated", "items"}),
         total_count=total,
         projected_count=projected,
         truncated=total > projected,
-        items=(*base.workspace.items, *projected_items),
+        items=(*base.workspace.items, *kept),
     )
-    if workspace == "markets":
-        return WorkspaceProjection(merged, (*base.nodes, *day.nodes), (*base.edges, *day.edges))
-    return WorkspaceProjection(merged, base.nodes, base.edges)
+    return (
+        WorkspaceProjection(merged, (*base.nodes, *day.nodes), (*base.edges, *day.edges))
+        if workspace == "markets"
+        else WorkspaceProjection(merged, base.nodes, base.edges)
+    )
+
+
+def _canonical_readers(outputs: Path, version_reader: DayAgentVersionReader | None) -> _Readers:
+    root = outputs / "us_day"
+    thesis_root = root / "theses"
+    theses = () if not thesis_root.exists() else UsDayThesisStore(thesis_root).theses()
+    changes = {item.thesis_id: UsDayThesisStore(thesis_root).changes(item.thesis_id) for item in theses}
+    task_path = root / "day_agent.sqlite3"
+    task_reader = DayAgentTaskStore(task_path).reader() if task_path.exists() else None
+    hermes_path = outputs / "hermes" / "delivery.sqlite3"
+    events = HermesDeliveryReader(hermes_path).events() if hermes_path.exists() else ()
+    ledger_path = outputs / "paper" / "execution.sqlite3"
+    ledger = read_reconciliation_ledger(ledger_path) if ledger_path.exists() else None
+    return _Readers(
+        theses,
+        changes,
+        task_reader,
+        _EmptyVersionReader() if version_reader is None else version_reader,
+        _ImmutableCloseReportReader(root / "close_reports"),
+        events,
+        ledger,
+    )
 
 
 def _accepted(
-    theses: tuple[UsDayTradeThesis, ...],
-    changes: dict[str, tuple[UsDayThesisChange, ...]],
-    versions: tuple[_AgentVersion, ...],
-    reviews: tuple[_CloseReview, ...],
-    regimes: tuple[_MarketRegime, ...],
+    readers: _Readers,
+    reports: tuple[MarketCloseReport, ...],
     now: dt.datetime,
+    paper_finalized: bool,
 ) -> DayLiveProjection:
     source = "trace.day.source"
-    terminal = "trace.day.decision"
-    ordered = tuple(
-        sorted(theses, key=lambda item: (item.decision is DayTradeDecision.RECOMMEND, item.observed_at), reverse=True)
+    ordered = tuple(sorted(readers.theses, key=lambda item: (item.observed_at, item.thesis_id), reverse=True))
+    versions = tuple(
+        sorted(readers.version_reader.versions(), key=lambda item: (item.observed_at, item.version_id), reverse=True)
+    )
+    market_items: list[WorkspaceItemV2] = []
+    champion = next((item for item in versions if item.deployment_state == "champion"), None)
+    if champion is not None:
+        market_items.append(_version_item("day.champion", "Current Champion", champion, source))
+        task = _task(readers.task_reader, champion.task_id)
+        if task is not None and task.current_hypothesis is not None:
+            market_items.append(
+                _item(
+                    "day.regime", "day_theme", "Current market regime", task.current_hypothesis, task.updated_at, source
+                )
+            )
+    shadows = tuple(item for item in versions if item.deployment_state == "shadow")
+    market_items.extend(
+        _version_item(f"day.shadow.{index}", "Shadow Challenger", item, source)
+        for index, item in enumerate(shadows, start=1)
     )
     actionable = tuple(item for item in ordered if item.decision is DayTradeDecision.RECOMMEND)
-    market_items: list[WorkspaceItemV2] = []
-    if regimes:
-        regime = max(regimes, key=lambda item: item.observed_at)
-        market_items.append(
-            _item("day.regime", "day_theme", "Current market regime", regime.label, regime.observed_at, source)
-        )
     if actionable:
-        leader = actionable[0]
+        lead = actionable[0]
         market_items.extend(
             (
                 _item(
                     "day.theme.1",
                     "day_theme",
                     "Current Day theme",
-                    f"{leader.theme_name} · leading",
-                    leader.observed_at,
+                    f"{lead.theme_name} · leading",
+                    lead.observed_at,
                     source,
                 ),
                 _item(
                     "day.leader.1",
                     "day_theme",
                     "Current Day leader",
-                    f"{leader.symbol} · leader",
-                    leader.observed_at,
+                    f"{lead.symbol} · leader",
+                    lead.observed_at,
                     source,
                 ),
             )
         )
-    champion = next(
-        (
-            item
-            for item in sorted(versions, key=lambda item: item.observed_at, reverse=True)
-            if item.deployment_state == "champion"
-        ),
-        None,
-    )
-    if champion is None and actionable:
-        market_items.append(
-            _item(
-                "day.champion",
-                "day_agent_version",
-                "Current Champion",
-                actionable[0].agent_version_id[:12],
-                actionable[0].observed_at,
-                source,
-            )
-        )
-    elif champion is not None:
-        market_items.append(
-            _item(
-                "day.champion",
-                "day_agent_version",
-                "Current Champion",
-                champion.version_id[:12],
-                champion.observed_at,
-                source,
-            )
-        )
-    market_items.extend(
-        _item(
-            f"day.shadow.{index}",
-            "day_agent_version",
-            "Shadow Challenger",
-            item.version_id[:12],
-            item.observed_at,
-            source,
-        )
-        for index, item in enumerate((item for item in versions if item.deployment_state == "shadow"), start=1)
-    )
     paper_items: list[WorkspaceItemV2] = []
     terminal_index = 0
-    for thesis in ordered:
+    for thesis in actionable + tuple(item for item in ordered if item.decision is not DayTradeDecision.RECOMMEND):
         if thesis.decision is not DayTradeDecision.RECOMMEND:
             terminal_index += 1
-        market_items.extend(_thesis_market_items(thesis, changes[thesis.thesis_id], terminal_index, source))
-        if thesis.decision is DayTradeDecision.RECOMMEND:
-            paper_items.append(_paper_item(thesis, changes[thesis.thesis_id], source))
-            if changes[thesis.thesis_id] and changes[thesis.thesis_id][-1].kind is ThesisChangeKind.CLOSE:
-                paper_items.append(
-                    _item(
-                        f"day.paper_exit.{thesis.symbol}",
-                        "paper",
-                        f"{thesis.symbol} Paper exit",
-                        "closed",
-                        changes[thesis.thesis_id][-1].occurred_at,
-                        source,
-                    )
-                )
-    for review in reviews:
-        thesis = next((item for item in theses if item.thesis_id == review.thesis_id), None)
-        if thesis is None or thesis.symbol is None:
-            raise DayLiveSourceError
+        market_items.extend(_thesis_items(thesis, readers.changes[thesis.thesis_id], terminal_index, source))
+        if thesis.decision is DayTradeDecision.RECOMMEND and readers.ledger is not None and paper_finalized:
+            paper_items.extend(_paper_items(thesis, readers.ledger, readers.hermes_events, source))
+    close_index = 0
+    for report in reports:
+        if report.payload.market_id.value != "us_equities":
+            continue
+        close_index += 1
         paper_items.append(
             _item(
-                f"day.close_review.{thesis.symbol}",
+                f"day.close_review.{close_index}",
                 "paper",
                 "Day close review",
-                review.status,
-                review.observed_at,
+                "finalized",
+                report.payload.finalized_at,
                 source,
             )
         )
     safe_ref = hashlib.sha256(":".join(item.thesis_id for item in ordered).encode()).hexdigest()
-    observed_at = max((item.observed_at for item in (*theses, *versions, *reviews, *regimes)), default=now)
+    observed_at = max((item.observed_at for item in (*ordered, *versions)), default=now)
     nodes = (
-        TraceNodeV2(
-            node_id=source,
-            kind="source_receipt",
-            label="Day immutable artifacts",
-            observed_at=observed_at,
-            safe_ref=safe_ref,
-            state="accepted",
-            source_namespace="day.live",
-        ),
-        TraceNodeV2(
-            node_id=terminal,
-            kind="reviewer_decision",
-            label="Day thesis decision",
-            observed_at=observed_at,
-            safe_ref=safe_ref,
-            state="accepted",
-            source_namespace="day.live",
-        ),
-        TraceNodeV2(
-            node_id="trace.day.paper",
-            kind="paper_receipt",
-            label="Day Paper lifecycle",
-            observed_at=observed_at,
-            safe_ref=safe_ref,
-            state="accepted",
-            source_namespace="day.live",
-        ),
+        _node(source, "source_receipt", "Day canonical readers", observed_at, safe_ref, "accepted"),
+        _node("trace.day.decision", "reviewer_decision", "Day thesis decision", observed_at, safe_ref, "accepted"),
+        _node("trace.day.paper", "paper_receipt", "Day Paper lifecycle", observed_at, safe_ref, "accepted"),
     )
-    return DayLiveProjection(
-        tuple(market_items),
-        tuple(paper_items),
-        nodes,
-        (
-            TraceEdgeV2(from_node_id=source, to_node_id=terminal, kind="reviewed_by"),
-            TraceEdgeV2(from_node_id=source, to_node_id="trace.day.paper", kind="executed_as"),
-        ),
+    edges = (
+        TraceEdgeV2(from_node_id=source, to_node_id="trace.day.decision", kind="reviewed_by"),
+        TraceEdgeV2(from_node_id=source, to_node_id="trace.day.paper", kind="executed_as"),
     )
+    return DayLiveProjection(tuple(market_items), tuple(paper_items), nodes, edges)
 
 
-def _thesis_market_items(
+def _task(reader: DayAgentTaskReader | None, task_id: str) -> DayAgentResearchTask | None:
+    return None if reader is None else reader.task(task_id)
+
+
+def _version_item(item_id: str, label: str, version: DayAgentVersionView, source: str) -> WorkspaceItemV2:
+    return _item(item_id, "day_agent_version", label, version.version_id[:12], version.observed_at, source)
+
+
+def _thesis_items(
     thesis: UsDayTradeThesis, changes: tuple[UsDayThesisChange, ...], index: int, source: str
 ) -> tuple[WorkspaceItemV2, ...]:
     if thesis.decision is DayTradeDecision.RECOMMEND:
         assert thesis.symbol is not None and thesis.entry_price is not None and thesis.stop_price is not None
         targets = "/".join(str(item.price) for item in thesis.targets)
-        result = [
+        items = [
             _item(
                 f"day.recommendation.{thesis.symbol}",
                 "day_recommendation",
@@ -270,49 +262,70 @@ def _thesis_market_items(
             )
         ]
         if changes:
-            result.append(
+            change = max(changes, key=lambda item: (item.occurred_at, item.event_id))
+            items.append(
                 _item(
                     f"day.thesis_change.{thesis.symbol}",
                     "day_recommendation",
                     f"{thesis.symbol} thesis change",
-                    changes[-1].kind.value,
-                    changes[-1].occurred_at,
+                    change.kind.value,
+                    change.occurred_at,
                     source,
                 )
             )
-        return tuple(result)
-    if thesis.decision is DayTradeDecision.NO_TRADE:
-        return (
-            _item(
-                f"day.no_trade.{index}",
-                "day_recommendation",
-                "Day terminal decision",
-                f"NO_TRADE · {thesis.reason_code}",
-                thesis.observed_at,
-                source,
-            ),
-        )
+        return tuple(items)
+    prefix = "day.no_trade" if thesis.decision is DayTradeDecision.NO_TRADE else "day.terminal"
+    value = (
+        f"NO_TRADE · {thesis.reason_code}"
+        if thesis.decision is DayTradeDecision.NO_TRADE
+        else f"{thesis.decision.value.upper()} · {thesis.reason_code}"
+    )
     return (
-        _item(
-            f"day.terminal.{index}",
-            "day_recommendation",
-            "Day terminal decision",
-            f"{thesis.decision.value.upper()} · {thesis.reason_code}",
-            thesis.observed_at,
-            source,
-        ),
+        _item(f"{prefix}.{index}", "day_recommendation", "Day terminal decision", value, thesis.observed_at, source),
     )
 
 
-def _paper_item(thesis: UsDayTradeThesis, changes: tuple[UsDayThesisChange, ...], source: str) -> WorkspaceItemV2:
+def _paper_items(
+    thesis: UsDayTradeThesis, ledger: ReconciliationLedger, events: tuple[HermesDeliveryEvent, ...], source: str
+) -> tuple[WorkspaceItemV2, ...]:
     assert thesis.symbol is not None
-    notes = {item.note for item in changes}
-    lifecycle = "filled" if "entry_acknowledged" in notes else "submitted"
-    lifecycle += " · protected" if "protective_oco_acknowledged" in notes else " · unprotected"
-    lifecycle += " · reconciled" if "reconciled" in notes else " · pending"
-    observed_at = changes[-1].occurred_at if changes else thesis.observed_at
-    return _item(
-        f"day.paper.{thesis.symbol}", "paper", f"{thesis.symbol} Paper lifecycle", lifecycle, observed_at, source
+    intent_id = IntentId(thesis.thesis_id)
+    state = next((item for item in ledger.order_states if item.intent_id == intent_id), None)
+    if state is None:
+        return ()
+    values = ["filled" if intent_id in ledger.filled_intent_ids else "submitted"]
+    protected = any(item.plan.parent_intent_id == intent_id for item in ledger.protective_oco_plans)
+    if protected:
+        values.append("protected")
+    if intent_id not in ledger.unresolved_intent_ids:
+        values.append("reconciled")
+    observed_at = thesis.observed_at
+    item = _item(
+        f"day.paper.{thesis.symbol}",
+        "paper",
+        f"{thesis.symbol} Paper lifecycle",
+        " · ".join(values),
+        observed_at,
+        source,
+    )
+    exits = tuple(
+        event
+        for event in events
+        if event.kind is HermesDeliveryKind.EXIT and f"intent:{thesis.thesis_id}" in event.evidence_refs
+    )
+    if not exits:
+        return (item,)
+    exit_event = max(exits, key=lambda event: (event.occurred_at, event.delivery_id))
+    return (
+        item,
+        _item(
+            f"day.paper_exit.{thesis.symbol}",
+            "paper",
+            f"{thesis.symbol} Paper exit",
+            "closed",
+            exit_event.occurred_at,
+            source,
+        ),
     )
 
 
@@ -320,7 +333,6 @@ def _blocked(
     now: dt.datetime, *, state: Literal["blocked", "corrupt"] = "corrupt", value: str = "source invalid"
 ) -> DayLiveProjection:
     source = "trace.day.source"
-    terminal = "trace.day.blocker"
     safe_ref = hashlib.sha256(value.encode()).hexdigest()
     item = WorkspaceItemV2(
         item_id="day.source",
@@ -332,30 +344,14 @@ def _blocked(
         trace_id=source,
     )
     nodes = (
-        TraceNodeV2(
-            node_id=source,
-            kind="source_receipt",
-            label="Day live source",
-            observed_at=now,
-            safe_ref=safe_ref,
-            state="unavailable",
-            source_namespace="day.live",
-        ),
-        TraceNodeV2(
-            node_id=terminal,
-            kind="blocker_terminal",
-            label="Day live source blocked",
-            observed_at=now,
-            safe_ref=safe_ref,
-            state="blocked",
-            source_namespace="day.live",
-        ),
+        _node(source, "source_receipt", "Day live source", now, safe_ref, "unavailable"),
+        _node("trace.day.blocker", "blocker_terminal", "Day live source blocked", now, safe_ref, "blocked"),
     )
     return DayLiveProjection(
         (item,),
         (item.model_copy(update={"item_id": "day.paper_source"}),),
         nodes,
-        (TraceEdgeV2(from_node_id=source, to_node_id=terminal, kind="blocked_by"),),
+        (TraceEdgeV2(from_node_id=source, to_node_id="trace.day.blocker", kind="blocked_by"),),
     )
 
 
@@ -378,89 +374,31 @@ def _item(
     )
 
 
-def _theses(root: Path) -> tuple[UsDayTradeThesis, ...]:
-    files = _private_json_files(root / "theses")
-    theses = tuple(UsDayTradeThesis.model_validate_json(_read_text(path)) for path in files)
-    if any(path.stem != thesis.thesis_id for path, thesis in zip(files, theses, strict=True)):
-        raise DayLiveSourceError
-    return theses
+def _node(
+    node_id: str,
+    kind: Literal["source_receipt", "reviewer_decision", "paper_receipt", "blocker_terminal"],
+    label: str,
+    observed_at: dt.datetime,
+    safe_ref: str,
+    state: Literal["accepted", "blocked", "unavailable"],
+) -> TraceNodeV2:
+    return TraceNodeV2(
+        node_id=node_id,
+        kind=kind,
+        label=label,
+        observed_at=observed_at,
+        safe_ref=safe_ref,
+        state=state,
+        source_namespace="day.live",
+    )
 
 
-def _changes(root: Path, thesis: UsDayTradeThesis) -> tuple[UsDayThesisChange, ...]:
-    directory = root / "changes" / thesis.thesis_id
-    if not directory.exists():
-        return ()
-    files = _private_json_files(directory)
-    changes = tuple(UsDayThesisChange.model_validate_json(_read_text(path)) for path in files)
-    if any(
-        change.thesis_id != thesis.thesis_id or path.stem != change.event_id
-        for path, change in zip(files, changes, strict=True)
-    ):
-        raise DayLiveSourceError
-    return tuple(sorted(changes, key=lambda item: item.occurred_at))
-
-
-def _optional_models[ModelT: BaseModel](path: Path, model: type[ModelT]) -> tuple[ModelT, ...]:
-    if not path.exists():
-        return ()
-    try:
-        return TypeAdapter(tuple[model, ...]).validate_json(_read_text(path))
-    except (DayLiveSourceError, ValidationError, ValueError):
-        raise DayLiveSourceError from None
-
-
-def _private_json_files(directory: Path) -> tuple[Path, ...]:
-    _require_private_directory(directory)
-    try:
-        return tuple(sorted(path for path in directory.iterdir() if path.suffix == ".json"))
-    except OSError:
-        raise DayLiveSourceError from None
-
-
-def _require_private_directory(directory: Path) -> None:
-    try:
-        metadata = os.lstat(directory)
-        if (
-            not stat.S_ISDIR(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
-            or stat.S_IMODE(metadata.st_mode) != 0o700
-        ):
-            raise DayLiveSourceError
-    except OSError:
-        raise DayLiveSourceError from None
-
-
-def _read_text(path: Path) -> str:
-    descriptor = -1
-    try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-        before = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(before.st_mode)
-            or before.st_uid != os.getuid()
-            or stat.S_IMODE(before.st_mode) != 0o600
-            or before.st_nlink != 1
-        ):
-            raise DayLiveSourceError
-        content = os.read(descriptor, 65_537)
-        after = os.fstat(descriptor)
-        if (
-            len(content) > 65_536
-            or before.st_size != len(content)
-            or (before.st_dev, before.st_ino, before.st_mtime_ns) != (after.st_dev, after.st_ino, after.st_mtime_ns)
-        ):
-            raise DayLiveSourceError
-        return content.decode("utf-8")
-    except (OSError, UnicodeError):
-        raise DayLiveSourceError from None
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-
-
-def _read_hermes(path: Path) -> None:
-    if path.exists():
-        _ = HermesDeliveryReader(path).events()
-
-
-__all__ = ("DayLiveProjection", "DayLiveSourceError", "merge_us_day_live", "project_us_day_live")
+__all__ = (
+    "DayAgentVersionReader",
+    "DayAgentVersionView",
+    "DayCloseReportReader",
+    "DayLiveProjection",
+    "DayLiveSourceError",
+    "merge_us_day_live",
+    "project_us_day_live",
+)

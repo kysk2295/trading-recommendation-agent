@@ -48,7 +48,7 @@ from trading_agent.dashboard_system_current_authority import (
     SystemAuthorityVerifierInput,
 )
 from trading_agent.dashboard_system_evidence import project_system_evidence
-from trading_agent.dashboard_us_day_live import merge_us_day_live, project_us_day_live
+from trading_agent.dashboard_us_day_live import DayAgentVersionReader, merge_us_day_live, project_us_day_live
 
 ROOT_BY_WORKSPACE: Final[dict[WorkspaceName, str]] = {
     "command_center": "system",
@@ -75,6 +75,7 @@ def collect_dashboard_snapshot_v2(
     now: dt.datetime | None = None,
     system_authority_verifier: SystemAuthorityVerifierInput = None,
     cycle_database: Path | None = None,
+    day_version_reader: DayAgentVersionReader | None = None,
 ) -> DashboardSnapshotV2:
     generated_at = dt.datetime.now(dt.UTC) if now is None else now
     if generated_at.tzinfo is None or generated_at.utcoffset() is None:
@@ -110,7 +111,12 @@ def collect_dashboard_snapshot_v2(
     projections["strategies"] = project_strategies(outputs, now=generated_at)
     projections["derivatives"] = project_derivatives(outputs, now=generated_at)
     projections["paper"] = _paper_projection(outputs, generated_at)
-    day_live = project_us_day_live(outputs, now=generated_at)
+    day_live = project_us_day_live(
+        outputs,
+        now=generated_at,
+        version_reader=day_version_reader,
+        paper_finalized=projections["paper"].workspace.state in {"populated", "stale"},
+    )
     projections["markets"] = merge_us_day_live(projections["markets"], day_live, workspace="markets")
     projections["paper"] = merge_us_day_live(projections["paper"], day_live, workspace="paper")
     projections["system"] = project_system_evidence(
