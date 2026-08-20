@@ -314,6 +314,7 @@ def _signal_artifact() -> UsForwardShadowSignalArtifact:
         trial_id=SHA_A,
         capsule_id=SHA_B,
         completed_bar_id="c" * 64,
+        completed_bar_sequence=2,
         signal=signal,
     )
 
@@ -323,6 +324,7 @@ def _outcome_artifact() -> UsForwardShadowOutcomeArtifact:
         trial_id=SHA_A,
         signal_artifact_id=_signal_artifact().artifact_id,
         exit_completed_bar_id="d" * 64,
+        exit_completed_bar_sequence=4,
         entry_price=Decimal("101"),
         legs=(
             UsForwardShadowOutcomeLeg(

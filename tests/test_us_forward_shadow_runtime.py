@@ -255,6 +255,74 @@ def test_restart_recovers_outcome_artifact_before_exit_ledger_event(
     assert len(tuple((tmp_path / "shadow" / "outcomes").glob("*.json"))) == 1
 
 
+def test_restart_recovers_signal_artifact_after_original_bar_rolls_out(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    services, _ = prepared_runtime(tmp_path, source=signal_source())
+    _ = run_us_forward_shadow_tick(shadow_tick(services, 1, 1), services)
+    publish_signal = services.shadow_artifacts.publish_signal
+
+    def publish_then_crash(artifact):
+        _ = publish_signal(artifact)
+        raise RuntimeError("injected_signal_publication_crash")
+
+    monkeypatch.setattr(services.shadow_artifacts, "publish_signal", publish_then_crash)
+    with pytest.raises(RuntimeError, match="injected_signal_publication_crash"):
+        _ = run_us_forward_shadow_tick(shadow_tick(services, 2, 2), services)
+    monkeypatch.setattr(services.shadow_artifacts, "publish_signal", publish_signal)
+
+    recovered = run_us_forward_shadow_tick(_single_bar_tick(services, 6, 6), services)
+    state = services.ledger.reader().day_forward_trials()[0]
+
+    assert recovered.results[0].status is UsForwardShadowStatus.CENSORED
+    assert tuple(event.event_kind for event in state.events) == (
+        DayForwardTrialEventKind.SIGNAL,
+        DayForwardTrialEventKind.ENTRY,
+        DayForwardTrialEventKind.CENSORED,
+    )
+    assert tuple(event.completed_bar_sequence for event in state.events) == (2, 2, 6)
+    assert len(tuple((tmp_path / "shadow" / "signals").glob("*.json"))) == 1
+
+
+def test_restart_recovers_outcome_artifact_after_original_bar_rolls_out(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    services, _ = prepared_runtime(tmp_path, source=signal_source())
+    _ = run_us_forward_shadow_tick(shadow_tick(services, 1, 1), services)
+    _ = run_us_forward_shadow_tick(shadow_tick(services, 2, 2), services)
+    _ = run_us_forward_shadow_tick(shadow_tick(services, 3, 3, high=102.2), services)
+    publish_outcome = services.shadow_artifacts.publish_outcome
+
+    def publish_then_crash(artifact):
+        _ = publish_outcome(artifact)
+        raise RuntimeError("injected_outcome_publication_crash")
+
+    monkeypatch.setattr(services.shadow_artifacts, "publish_outcome", publish_then_crash)
+    with pytest.raises(RuntimeError, match="injected_outcome_publication_crash"):
+        _ = run_us_forward_shadow_tick(shadow_tick(services, 4, 4, high=103.2), services)
+    monkeypatch.setattr(services.shadow_artifacts, "publish_outcome", publish_outcome)
+    published = services.shadow_artifacts.outcome_for_trial(
+        services.ledger.reader().day_forward_trials()[0].trial.trial_id
+    )
+
+    recovered = run_us_forward_shadow_tick(_single_bar_tick(services, 8, 8), services)
+    state = services.ledger.reader().day_forward_trials()[0]
+
+    assert recovered.results[0].status is UsForwardShadowStatus.EXITED
+    assert tuple(event.event_kind for event in state.events) == (
+        DayForwardTrialEventKind.SIGNAL,
+        DayForwardTrialEventKind.ENTRY,
+        DayForwardTrialEventKind.OBSERVED,
+        DayForwardTrialEventKind.EXIT,
+    )
+    assert tuple(event.completed_bar_sequence for event in state.events) == (2, 2, 3, 4)
+    assert published is not None
+    assert recovered.results[0].outcome_id == published.outcome_id
+    assert len(tuple((tmp_path / "shadow" / "outcomes").glob("*.json"))) == 1
+
+
 @pytest.mark.parametrize(
     "evaluation_at",
     (
@@ -302,3 +370,8 @@ def _host_timed_signal_run(
     signal = services.shadow_artifacts.signal(state.trial.trial_id)
     assert outcome_id is not None
     return state, signal, services.shadow_artifacts.outcome(outcome_id), host_times
+
+
+def _single_bar_tick(services, minute: int, sequence: int):
+    tick = shadow_tick(services, minute, sequence)
+    return tick.model_validate(tick.model_dump(mode="python") | {"bars": (tick.bars[-1],)})

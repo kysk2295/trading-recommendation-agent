@@ -33,6 +33,7 @@ class UsForwardShadowSignalArtifact(UsForwardShadowArtifact):
     trial_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     capsule_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     completed_bar_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    completed_bar_sequence: int = Field(ge=1)
     signal: TradeSignalEnvelope
 
     @model_validator(mode="after")
@@ -69,6 +70,7 @@ class UsForwardShadowOutcomeArtifact(UsForwardShadowArtifact):
     trial_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     signal_artifact_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     exit_completed_bar_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    exit_completed_bar_sequence: int = Field(ge=1)
     entry_price: Decimal
     exit_price: Decimal
     legs: tuple[UsForwardShadowOutcomeLeg, UsForwardShadowOutcomeLeg]
@@ -112,6 +114,7 @@ def build_us_forward_shadow_signal_artifact(
     trial_id: str,
     capsule_id: str,
     completed_bar_id: str,
+    completed_bar_sequence: int,
     signal: TradeSignalEnvelope,
 ) -> UsForwardShadowSignalArtifact:
     payload = {
@@ -120,6 +123,7 @@ def build_us_forward_shadow_signal_artifact(
         "trial_id": trial_id,
         "capsule_id": capsule_id,
         "completed_bar_id": completed_bar_id,
+        "completed_bar_sequence": completed_bar_sequence,
         "signal": signal,
     }
     provisional = UsForwardShadowSignalArtifact.model_construct(**payload)
@@ -132,6 +136,7 @@ def build_us_forward_shadow_outcome_artifact(
     trial_id: str,
     signal_artifact_id: str,
     exit_completed_bar_id: str,
+    exit_completed_bar_sequence: int,
     entry_price: Decimal,
     legs: tuple[UsForwardShadowOutcomeLeg, UsForwardShadowOutcomeLeg],
     round_trip_cost_bps: Decimal,
@@ -150,6 +155,7 @@ def build_us_forward_shadow_outcome_artifact(
         "trial_id": trial_id,
         "signal_artifact_id": signal_artifact_id,
         "exit_completed_bar_id": exit_completed_bar_id,
+        "exit_completed_bar_sequence": exit_completed_bar_sequence,
         "entry_price": entry_price,
         "exit_price": exit_price,
         "legs": checked_legs,

@@ -4,7 +4,7 @@ import datetime as dt
 import hashlib
 import json
 
-from pydantic import BaseModel
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from trading_agent.day_forward_trial_identity import (
     DayForwardExitReason,
@@ -24,6 +24,14 @@ from trading_agent.us_forward_shadow_artifacts import (
     artifact_sha256,
 )
 from trading_agent.us_forward_shadow_models import UsForwardShadowTick
+
+
+class UsForwardShadowEventLineage(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    completed_bar_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    completed_bar_sequence: int = Field(ge=1)
+    completed_bar_at: AwareDatetime
 
 
 def build_us_forward_shadow_trial(
@@ -70,6 +78,33 @@ def build_us_forward_shadow_event(
     outcome_ref: DayForwardOutcomeRef | None = None,
     reason_codes: tuple[str, ...] = (),
 ) -> DayForwardTrialEvent:
+    return build_us_forward_shadow_event_from_lineage(
+        trial,
+        UsForwardShadowEventLineage(
+            completed_bar_id=tick.completed_bar_id,
+            completed_bar_sequence=tick.completed_bar_sequence,
+            completed_bar_at=completed_bar_at(tick),
+        ),
+        kind,
+        sequence=sequence,
+        previous_event_id=previous_event_id,
+        exit_reason=exit_reason,
+        outcome_ref=outcome_ref,
+        reason_codes=reason_codes,
+    )
+
+
+def build_us_forward_shadow_event_from_lineage(
+    trial: DayForwardTrial,
+    lineage: UsForwardShadowEventLineage,
+    kind: DayForwardTrialEventKind,
+    *,
+    sequence: int,
+    previous_event_id: str | None,
+    exit_reason: DayForwardExitReason | None = None,
+    outcome_ref: DayForwardOutcomeRef | None = None,
+    reason_codes: tuple[str, ...] = (),
+) -> DayForwardTrialEvent:
     payload = {
         "schema_version": 1,
         "event_id": "",
@@ -80,10 +115,10 @@ def build_us_forward_shadow_event(
         "sequence": sequence,
         "previous_event_id": previous_event_id,
         "event_kind": kind,
-        "completed_bar_id": tick.completed_bar_id,
-        "completed_bar_sequence": tick.completed_bar_sequence,
-        "completed_bar_at": completed_bar_at(tick),
-        "event_at": completed_bar_at(tick),
+        "completed_bar_id": lineage.completed_bar_id,
+        "completed_bar_sequence": lineage.completed_bar_sequence,
+        "completed_bar_at": lineage.completed_bar_at,
+        "event_at": lineage.completed_bar_at,
         "exit_reason": exit_reason,
         "outcome_ref": outcome_ref,
         "reason_codes": tuple(sorted(set(reason_codes))),
@@ -131,7 +166,9 @@ def _model_sha256(value: BaseModel | tuple[str, ...]) -> str:
 
 
 __all__ = (
+    "UsForwardShadowEventLineage",
     "build_us_forward_shadow_event",
+    "build_us_forward_shadow_event_from_lineage",
     "build_us_forward_shadow_outcome_ref",
     "build_us_forward_shadow_trial",
     "completed_bar_at",

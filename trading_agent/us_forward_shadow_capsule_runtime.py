@@ -19,14 +19,15 @@ from trading_agent.us_forward_shadow_models import (
     UsForwardShadowCapsuleResult,
     UsForwardShadowStatus,
     UsForwardShadowTick,
-    completed_bar_id,
 )
 from trading_agent.us_forward_shadow_services import (
     InvalidUsForwardShadowRuntimeError,
     UsForwardShadowServices,
 )
 from trading_agent.us_forward_shadow_trial import (
+    UsForwardShadowEventLineage,
     build_us_forward_shadow_event,
+    build_us_forward_shadow_event_from_lineage,
     build_us_forward_shadow_outcome_ref,
     build_us_forward_shadow_trial,
     completed_bar_at,
@@ -136,6 +137,7 @@ def _observe_generated(
         trial_id=state.trial.trial_id,
         capsule_id=capsule.capsule_id,
         completed_bar_id=tick.completed_bar_id,
+        completed_bar_sequence=tick.completed_bar_sequence,
         signal=projection,
     )
     _ = services.shadow_artifacts.publish_signal(signal_artifact)
@@ -175,17 +177,21 @@ def _recover_signal_events(
         return state
     if artifact.capsule_id != capsule.capsule_id:
         raise InvalidUsForwardShadowRuntimeError("signal_artifact_mismatch")
-    recovered_tick = _artifact_tick(tick, artifact.completed_bar_id)
-    signal_event = build_us_forward_shadow_event(
+    lineage = UsForwardShadowEventLineage(
+        completed_bar_id=artifact.completed_bar_id,
+        completed_bar_sequence=artifact.completed_bar_sequence,
+        completed_bar_at=artifact.signal.observed_at,
+    )
+    signal_event = build_us_forward_shadow_event_from_lineage(
         state.trial,
-        recovered_tick,
+        lineage,
         DayForwardTrialEventKind.SIGNAL,
         sequence=1,
         previous_event_id=None,
     )
-    entry_event = build_us_forward_shadow_event(
+    entry_event = build_us_forward_shadow_event_from_lineage(
         state.trial,
-        recovered_tick,
+        lineage,
         DayForwardTrialEventKind.ENTRY,
         sequence=2,
         previous_event_id=signal_event.event_id,
@@ -206,10 +212,13 @@ def _recover_exit_event(
     signal = services.shadow_artifacts.signal(state.trial.trial_id)
     if outcome.signal_artifact_id != signal.artifact_id:
         raise InvalidUsForwardShadowRuntimeError("outcome_artifact_mismatch")
-    recovered_tick = _artifact_tick(tick, outcome.exit_completed_bar_id)
-    event = build_us_forward_shadow_event(
+    event = build_us_forward_shadow_event_from_lineage(
         state.trial,
-        recovered_tick,
+        UsForwardShadowEventLineage(
+            completed_bar_id=outcome.exit_completed_bar_id,
+            completed_bar_sequence=outcome.exit_completed_bar_sequence,
+            completed_bar_at=outcome.recorded_at,
+        ),
         DayForwardTrialEventKind.EXIT,
         sequence=len(state.events) + 1,
         previous_event_id=state.events[-1].event_id,
@@ -225,26 +234,6 @@ def _recover_exit_event(
         event_ids=(stored.event_id,),
         outcome_id=outcome.outcome_id,
     )
-
-
-def _artifact_tick(tick: UsForwardShadowTick, completed_bar_id: str) -> UsForwardShadowTick:
-    matching_indexes = tuple(
-        index for index, bar in enumerate(tick.bars) if completed_bar_id == completed_bar_id_for(bar)
-    )
-    if len(matching_indexes) != 1:
-        raise InvalidUsForwardShadowRuntimeError("artifact_bar_missing")
-    index = matching_indexes[0]
-    return tick.model_copy(
-        update={
-            "bars": tick.bars[: index + 1],
-            "completed_bar_id": completed_bar_id,
-            "completed_bar_sequence": tick.completed_bar_sequence - (len(tick.bars) - index - 1),
-        }
-    )
-
-
-def completed_bar_id_for(bar) -> str:
-    return completed_bar_id(bar)
 
 
 def _state_for_trial(trial_id: str, services: UsForwardShadowServices) -> DayForwardTrialState:
@@ -351,6 +340,7 @@ def _exit_entered(
         trial_id=state.trial.trial_id,
         signal_artifact_id=signal_artifact_id,
         exit_completed_bar_id=tick.completed_bar_id,
+        exit_completed_bar_sequence=tick.completed_bar_sequence,
         entry_price=entry_price,
         legs=legs,
         round_trip_cost_bps=costs,
