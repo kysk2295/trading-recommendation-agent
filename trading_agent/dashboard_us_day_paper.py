@@ -12,6 +12,8 @@ from trading_agent.dashboard_paper_finalized_terminal import (
 from trading_agent.execution_ledger_identity import ExecutionLedgerSnapshotIdentity
 from trading_agent.execution_ledger_reader import ReconciliationLedger
 from trading_agent.execution_store import ExecutionStore
+from trading_agent.hermes_delivery_models import HermesDeliveryEvent
+from trading_agent.hermes_delivery_reader import HermesDeliveryReader
 from trading_agent.lane_contract_keys import lane_daily_snapshot_key, lane_manifest_key
 from trading_agent.lane_contract_models import LaneDailySnapshot
 from trading_agent.lane_policy_models import LaneId, LaneOrderAuthority
@@ -27,6 +29,7 @@ class VerifiedDayPaperLedger:
     ledger: ReconciliationLedger
     identity: ExecutionLedgerSnapshotIdentity
     snapshot: LaneDailySnapshot
+    hermes_events: tuple[HermesDeliveryEvent, ...]
 
 
 def read_verified_day_paper_ledger(outputs: Path, *, now: dt.datetime) -> VerifiedDayPaperLedger | None:
@@ -45,6 +48,7 @@ def read_verified_day_paper_ledger(outputs: Path, *, now: dt.datetime) -> Verifi
         ledger = store.reconciliation_ledger()
         if store.ledger_snapshot_identity() != identity:
             return None
+        events = HermesDeliveryReader(outputs / "hermes" / "delivery.sqlite3").events()
     except (
         InvalidLaneRegistrySourceError,
         OSError,
@@ -54,7 +58,7 @@ def read_verified_day_paper_ledger(outputs: Path, *, now: dt.datetime) -> Verifi
         ValueError,
     ):
         return None
-    return VerifiedDayPaperLedger(ledger, identity, snapshot)
+    return VerifiedDayPaperLedger(ledger, identity, snapshot, events)
 
 
 def _latest_snapshot(outputs: Path) -> LaneDailySnapshot | None:

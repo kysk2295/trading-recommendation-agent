@@ -19,6 +19,7 @@ from trading_agent.day_agent_task_models import DayAgentResearchTask
 from trading_agent.day_agent_task_store import DayAgentTaskReader, DayAgentTaskStore, DayAgentTaskStoreError
 from trading_agent.day_learning_report_models import MarketCloseReport
 from trading_agent.day_learning_report_store import InvalidDayLearningReportError, load_market_close_report
+from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.paper_execution_models import IntentId
 from trading_agent.us_day_thesis_models import DayTradeDecision, UsDayThesisChange, UsDayTradeThesis
 from trading_agent.us_day_thesis_store import InvalidUsDayThesisStoreError, UsDayThesisStore
@@ -314,7 +315,34 @@ def _paper_items(
         observed_at,
         source,
     )
-    return (item,)
+    exits = tuple(
+        event
+        for event in paper_ledger.hermes_events
+        if event.kind is HermesDeliveryKind.EXIT
+        and event.source_event_id.startswith("us-day-terminal-")
+        and event.market_id == "us_equities"
+        and event.agent_family == "day_trading"
+        and event.lane_id == "intraday_momentum"
+        and event.instrument_id == thesis.symbol
+        and event.status == "completed"
+        and event.evidence_refs == (f"intent:{thesis.thesis_id}",)
+        and event.occurred_at <= paper_ledger.snapshot.finalized_at
+        and event.occurred_at.date() == paper_ledger.snapshot.session_date
+    )
+    if not exits:
+        return (item,)
+    exit_event = max(exits, key=lambda event: (event.occurred_at, event.delivery_id))
+    return (
+        item,
+        _item(
+            f"day.paper_exit.{thesis.symbol}",
+            "paper",
+            f"{thesis.symbol} Paper exit",
+            "closed",
+            exit_event.occurred_at,
+            source,
+        ),
+    )
 
 
 def _blocked(
