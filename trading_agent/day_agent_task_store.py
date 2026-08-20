@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import sqlite3
-import stat
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
@@ -22,7 +22,13 @@ from trading_agent.private_directory_identity import (
     require_open_directory_path,
     require_private_directory,
     require_private_directory_query_only,
-    require_same_file,
+)
+from trading_agent.systematic_regime_store_file import (
+    InvalidSystematicRegimeFileError,
+    load_sqlite_database,
+    open_private_file,
+    replace_sqlite_database,
+    require_private_file,
 )
 
 # SIZE_OK — one SQLite authority keeps task, step, and projection invariants transactional.
@@ -105,17 +111,19 @@ class DayAgentTaskStore:
             parent = open_private_parent(self.path.parent, create=True)
             require_private_directory(parent)
             require_open_directory_path(self.path.parent, parent)
-            descriptor = _open_private_database(parent, self.path.name, create=True, write=True)
-            identity = _DatabaseIdentity(parent=parent, name=self.path.name, descriptor=descriptor, path=self.path)
-            with closing(_connect_database(identity, write=True)) as connection:
-                _prepare_writer_connection(connection)
-                writer = DayAgentTaskWriter(connection)
+            with _writer_lease(self.path, parent):
+                descriptor = _open_private_database(parent, self.path.name, create=True, write=True)
+                identity = _DatabaseIdentity(parent=parent, name=self.path.name, descriptor=descriptor, path=self.path)
                 try:
-                    yield writer
+                    with _writer_connection(identity) as connection:
+                        writer = DayAgentTaskWriter(connection)
+                        try:
+                            yield writer
+                        finally:
+                            writer.close()
                 finally:
-                    writer.close()
-                _require_database_identity(identity)
-            _require_database_identity(identity)
+                    os.close(descriptor)
+                    descriptor = -1
             require_open_directory_path(self.path.parent, parent)
         except (OSError, sqlite3.Error, TypeError, ValueError) as error:
             if isinstance(error, DayAgentTaskStoreError):
@@ -315,7 +323,9 @@ def _reader_connection(path: Path) -> Iterator[sqlite3.Connection]:
         require_open_directory_path(path.parent, parent)
         descriptor = _open_private_database(parent, path.name, create=False, write=False)
         identity = _DatabaseIdentity(parent=parent, name=path.name, descriptor=descriptor, path=path)
-        with closing(_connect_database(identity, write=False)) as connection:
+        with closing(_connect_descriptor(descriptor)) as connection:
+            _require_database_identity(identity)
+            _enable_foreign_keys(connection)
             _ = connection.execute("PRAGMA query_only = ON")
             _require_schema(connection)
             yield connection
@@ -336,65 +346,66 @@ def _reader_connection(path: Path) -> Iterator[sqlite3.Connection]:
 
 
 def _open_private_database(parent: int, name: str, *, create: bool, write: bool) -> int:
-    flags = os.O_NOFOLLOW | os.O_NONBLOCK
-    flags |= os.O_RDWR if write else os.O_RDONLY
-    if hasattr(os, "O_CLOEXEC"):
-        flags |= os.O_CLOEXEC
     try:
-        descriptor = os.open(name, flags, dir_fd=parent)
+        return open_private_file(parent, name, create=create, write=write)
     except FileNotFoundError:
-        if not create:
-            raise
-        try:
-            descriptor = os.open(name, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=parent)
-        except OSError as error:
-            raise InvalidDayAgentTaskStoreError(reason="database_path_invalid") from error
-    except OSError as error:
-        raise InvalidDayAgentTaskStoreError(reason="database_path_invalid") from error
-    try:
-        _require_private_database_descriptor(descriptor)
-    except (OSError, ValueError):
-        os.close(descriptor)
-        raise InvalidDayAgentTaskStoreError(reason="database_path_invalid") from None
-    return descriptor
-
-
-def _connect_database(identity: _DatabaseIdentity, *, write: bool) -> sqlite3.Connection:
-    connection: sqlite3.Connection | None = None
-    try:
-        _require_database_identity(identity)
-        if write:
-            connection = sqlite3.connect(identity.path, timeout=10.0)
-        else:
-            connection = sqlite3.connect(f"{identity.path.as_uri()}?mode=ro", uri=True)
-        _require_database_identity(identity)
-        return connection
-    except BaseException:
-        if connection is not None:
-            connection.close()
         raise
+    except (InvalidSystematicRegimeFileError, OSError, ValueError) as error:
+        raise InvalidDayAgentTaskStoreError(reason="database_path_invalid") from error
+
+
+@contextmanager
+def _writer_lease(path: Path, parent: int) -> Iterator[None]:
+    descriptor = _open_private_database(parent, f"{path.name}.writer.lock", create=True, write=True)
+    parent_locked = False
+    locked = False
+    try:
+        require_open_directory_path(path.parent, parent)
+        fcntl.flock(parent, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        parent_locked = True
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        locked = True
+        yield
+    finally:
+        if locked:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        if parent_locked:
+            fcntl.flock(parent, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+@contextmanager
+def _writer_connection(identity: _DatabaseIdentity) -> Iterator[sqlite3.Connection]:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        _require_database_identity(identity)
+        original = load_sqlite_database(connection, identity.descriptor)
+        _enable_foreign_keys(connection)
+        _prepare_writer_connection(connection)
+        yield connection
+        _require_database_identity(identity)
+        connection.commit()
+        payload = connection.serialize()
+        if payload != original:
+            replace_sqlite_database(identity.parent, identity.name, payload)
+
+
+def _connect_descriptor(descriptor: int) -> sqlite3.Connection:
+    return sqlite3.connect(f"file:/dev/fd/{descriptor}?mode=ro", uri=True, timeout=0.0)
+
+
+def _enable_foreign_keys(connection: sqlite3.Connection) -> None:
+    _ = connection.execute("PRAGMA foreign_keys = ON")
+    if connection.execute("PRAGMA foreign_keys").fetchone() != (1,):
+        raise sqlite3.DatabaseError
 
 
 def _require_database_identity(identity: _DatabaseIdentity) -> None:
     require_open_directory_path(identity.path.parent, identity.parent)
-    current = os.open(identity.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=identity.parent)
-    try:
-        _require_private_database_descriptor(identity.descriptor)
-        _require_private_database_descriptor(current)
-        require_same_file(identity.descriptor, current)
-    finally:
-        os.close(current)
-
-
-def _require_private_database_descriptor(descriptor: int) -> None:
-    metadata = os.fstat(descriptor)
-    if (
-        not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o600
-        or metadata.st_nlink != 1
-    ):
+    named = os.stat(identity.name, dir_fd=identity.parent, follow_symlinks=False)
+    opened = os.fstat(identity.descriptor)
+    if (named.st_dev, named.st_ino) != (opened.st_dev, opened.st_ino):
         raise OSError
+    require_private_file(identity.descriptor)
 
 
 def _prepare_writer_connection(connection: sqlite3.Connection) -> None:

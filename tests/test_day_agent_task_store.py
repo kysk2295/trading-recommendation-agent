@@ -5,6 +5,7 @@ import os
 import sqlite3
 import stat
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -187,12 +188,12 @@ def test_writer_rejects_symlink_replacement_during_connection(
     with DayAgentTaskStore(attacker).writer() as writer:
         assert writer.create_task(day_task(task_id="task-20260821-AMD"))
     attacker_before = attacker.read_bytes()
-    original_connect = task_store.sqlite3.connect
+    original_connect: Any = task_store.sqlite3.connect
 
-    def replace_with_symlink(database: str | Path, timeout: float) -> sqlite3.Connection:
+    def replace_with_symlink(database: str | Path, *args: object, **kwargs: object) -> sqlite3.Connection:
         path.replace(tmp_path / "held.sqlite3")
         path.symlink_to(attacker)
-        return original_connect(database, timeout=timeout)
+        return original_connect(database, *args, **kwargs)
 
     monkeypatch.setattr(task_store.sqlite3, "connect", replace_with_symlink)
 
@@ -214,12 +215,12 @@ def test_reader_rejects_hardlink_replacement_during_connection(
         assert writer.create_task(task)
     with DayAgentTaskStore(alternate).writer() as writer:
         assert writer.create_task(day_task(task_id="task-20260821-AMD"))
-    original_connect = task_store.sqlite3.connect
+    original_connect: Any = task_store.sqlite3.connect
 
-    def replace_with_hardlink(database: str, *, uri: bool) -> sqlite3.Connection:
+    def replace_with_hardlink(database: str | Path, *args: object, **kwargs: object) -> sqlite3.Connection:
         path.replace(tmp_path / "held.sqlite3")
         os.link(alternate, path)
-        return original_connect(database, uri=uri)
+        return original_connect(database, *args, **kwargs)
 
     monkeypatch.setattr(task_store.sqlite3, "connect", replace_with_hardlink)
 
@@ -227,6 +228,70 @@ def test_reader_rejects_hardlink_replacement_during_connection(
         _ = DayAgentTaskStore(path).reader().task(task.task_id)
 
     assert path.samefile(alternate)
+
+
+def test_writer_stays_bound_to_opened_database_during_transient_swap_and_restore(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "day-agent.sqlite3"
+    alternate = tmp_path / "alternate.sqlite3"
+    original = day_task()
+    candidate = day_task(task_id="task-20260821-AMD")
+    with DayAgentTaskStore(path).writer() as writer:
+        assert writer.create_task(original)
+    with DayAgentTaskStore(alternate).writer() as writer:
+        assert writer.create_task(day_task(task_id="task-20260821-MSFT"))
+    alternate_before = alternate.read_bytes()
+    original_connect: Any = task_store.sqlite3.connect
+
+    def transient_swap_and_restore(database: str | Path, *args: object, **kwargs: object) -> sqlite3.Connection:
+        held = tmp_path / "held-original.sqlite3"
+        path.replace(held)
+        alternate.replace(path)
+        try:
+            return original_connect(database, *args, **kwargs)
+        finally:
+            path.replace(alternate)
+            held.replace(path)
+
+    monkeypatch.setattr(task_store.sqlite3, "connect", transient_swap_and_restore)
+
+    with DayAgentTaskStore(path).writer() as writer:
+        assert writer.create_task(candidate)
+
+    assert DayAgentTaskStore(path).reader().task(candidate.task_id) == candidate
+    assert DayAgentTaskStore(alternate).reader().task(candidate.task_id) is None
+    assert alternate.read_bytes() == alternate_before
+
+
+def test_reader_stays_bound_to_opened_database_during_transient_swap_and_restore(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "day-agent.sqlite3"
+    alternate = tmp_path / "alternate.sqlite3"
+    original = day_task()
+    with DayAgentTaskStore(path).writer() as writer:
+        assert writer.create_task(original)
+    with DayAgentTaskStore(alternate).writer() as writer:
+        assert writer.create_task(day_task(task_id="task-20260821-AMD"))
+    original_connect: Any = task_store.sqlite3.connect
+
+    def transient_swap_and_restore(database: str | Path, *args: object, **kwargs: object) -> sqlite3.Connection:
+        held = tmp_path / "held-original.sqlite3"
+        path.replace(held)
+        alternate.replace(path)
+        try:
+            return original_connect(database, *args, **kwargs)
+        finally:
+            path.replace(alternate)
+            held.replace(path)
+
+    monkeypatch.setattr(task_store.sqlite3, "connect", transient_swap_and_restore)
+
+    assert DayAgentTaskStore(path).reader().task(original.task_id) == original
+    assert DayAgentTaskStore(alternate).reader().task(original.task_id) is None
 
 
 def test_reader_projects_latest_step_state_budget_and_evidence_after_reopen(tmp_path: Path) -> None:
