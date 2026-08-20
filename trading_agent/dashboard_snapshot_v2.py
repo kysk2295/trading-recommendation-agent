@@ -49,6 +49,7 @@ from trading_agent.dashboard_system_current_authority import (
 )
 from trading_agent.dashboard_system_evidence import project_system_evidence
 from trading_agent.dashboard_us_day_live import DayAgentVersionReader, merge_us_day_live, project_us_day_live
+from trading_agent.dashboard_us_day_paper import read_verified_day_paper_ledger
 
 ROOT_BY_WORKSPACE: Final[dict[WorkspaceName, str]] = {
     "command_center": "system",
@@ -111,11 +112,16 @@ def collect_dashboard_snapshot_v2(
     projections["strategies"] = project_strategies(outputs, now=generated_at)
     projections["derivatives"] = project_derivatives(outputs, now=generated_at)
     projections["paper"] = _paper_projection(outputs, generated_at)
+    paper_ledger = (
+        read_verified_day_paper_ledger(outputs, now=generated_at)
+        if projections["paper"].workspace.state in {"populated", "stale"}
+        else None
+    )
     day_live = project_us_day_live(
         outputs,
         now=generated_at,
         version_reader=day_version_reader,
-        paper_finalized=projections["paper"].workspace.state in {"populated", "stale"},
+        paper_ledger=paper_ledger,
     )
     projections["markets"] = merge_us_day_live(projections["markets"], day_live, workspace="markets")
     projections["paper"] = merge_us_day_live(projections["paper"], day_live, workspace="paper")

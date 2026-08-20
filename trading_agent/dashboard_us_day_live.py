@@ -9,14 +9,16 @@ from typing import Literal, Protocol
 from trading_agent.dashboard_models_v2 import SourceStateV2, TraceEdgeV2, TraceNodeV2, WorkspaceItemV2
 from trading_agent.dashboard_outbound_redaction import redact_outbound_text
 from trading_agent.dashboard_projection_common import WorkspaceProjection
+from trading_agent.dashboard_us_day_paper import VerifiedDayPaperLedger
+from trading_agent.dashboard_us_day_versions import (
+    DayAgentVersionReader,
+    DayAgentVersionView,
+    read_day_versions,
+)
 from trading_agent.day_agent_task_models import DayAgentResearchTask
 from trading_agent.day_agent_task_store import DayAgentTaskReader, DayAgentTaskStore, DayAgentTaskStoreError
 from trading_agent.day_learning_report_models import MarketCloseReport
 from trading_agent.day_learning_report_store import InvalidDayLearningReportError, load_market_close_report
-from trading_agent.execution_ledger_reader import ReconciliationLedger, read_reconciliation_ledger
-from trading_agent.hermes_delivery_errors import InvalidHermesDeliveryStoreError
-from trading_agent.hermes_delivery_models import HermesDeliveryEvent, HermesDeliveryKind
-from trading_agent.hermes_delivery_reader import HermesDeliveryReader
 from trading_agent.paper_execution_models import IntentId
 from trading_agent.us_day_thesis_models import DayTradeDecision, UsDayThesisChange, UsDayTradeThesis
 from trading_agent.us_day_thesis_store import InvalidUsDayThesisStoreError, UsDayThesisStore
@@ -28,26 +30,8 @@ class DayLiveSourceError(ValueError):
     pass
 
 
-@dataclass(frozen=True, slots=True)
-class DayAgentVersionView:
-    version_id: str
-    deployment_state: Literal["champion", "shadow"]
-    task_id: str
-    observed_at: dt.datetime
-
-
-class DayAgentVersionReader(Protocol):
-    def versions(self) -> tuple[DayAgentVersionView, ...]: ...
-
-
 class DayCloseReportReader(Protocol):
     def reports(self) -> tuple[MarketCloseReport, ...]: ...
-
-
-@dataclass(frozen=True, slots=True)
-class _EmptyVersionReader:
-    def versions(self) -> tuple[DayAgentVersionView, ...]:
-        return ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,10 +53,8 @@ class _Readers:
     theses: tuple[UsDayTradeThesis, ...]
     changes: dict[str, tuple[UsDayThesisChange, ...]]
     task_reader: DayAgentTaskReader | None
-    version_reader: DayAgentVersionReader
+    version_reader: DayAgentVersionReader | None
     close_reports: DayCloseReportReader
-    hermes_events: tuple[HermesDeliveryEvent, ...]
-    ledger: ReconciliationLedger | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +70,7 @@ def project_us_day_live(
     *,
     now: dt.datetime,
     version_reader: DayAgentVersionReader | None = None,
-    paper_finalized: bool = False,
+    paper_ledger: VerifiedDayPaperLedger | None = None,
 ) -> DayLiveProjection:
     try:
         readers = _canonical_readers(outputs, version_reader)
@@ -96,7 +78,6 @@ def project_us_day_live(
     except (
         DayLiveSourceError,
         DayAgentTaskStoreError,
-        InvalidHermesDeliveryStoreError,
         InvalidUsDayThesisStoreError,
         OSError,
         ValueError,
@@ -104,7 +85,7 @@ def project_us_day_live(
         return _blocked(now)
     if readers.theses and now - max(item.observed_at for item in readers.theses) > _STALE_AFTER:
         return _blocked(now, state="blocked", value="stale")
-    return _accepted(readers, reports, now, paper_finalized)
+    return _accepted(readers, reports, now, paper_ledger)
 
 
 def merge_us_day_live(
@@ -135,18 +116,12 @@ def _canonical_readers(outputs: Path, version_reader: DayAgentVersionReader | No
     changes = {item.thesis_id: UsDayThesisStore(thesis_root).changes(item.thesis_id) for item in theses}
     task_path = root / "day_agent.sqlite3"
     task_reader = DayAgentTaskStore(task_path).reader() if task_path.exists() else None
-    hermes_path = outputs / "hermes" / "delivery.sqlite3"
-    events = HermesDeliveryReader(hermes_path).events() if hermes_path.exists() else ()
-    ledger_path = outputs / "paper" / "execution.sqlite3"
-    ledger = read_reconciliation_ledger(ledger_path) if ledger_path.exists() else None
     return _Readers(
         theses,
         changes,
         task_reader,
-        _EmptyVersionReader() if version_reader is None else version_reader,
+        version_reader,
         _ImmutableCloseReportReader(root / "close_reports"),
-        events,
-        ledger,
     )
 
 
@@ -154,14 +129,25 @@ def _accepted(
     readers: _Readers,
     reports: tuple[MarketCloseReport, ...],
     now: dt.datetime,
-    paper_finalized: bool,
+    paper_ledger: VerifiedDayPaperLedger | None,
 ) -> DayLiveProjection:
     source = "trace.day.source"
     ordered = tuple(sorted(readers.theses, key=lambda item: (item.observed_at, item.thesis_id), reverse=True))
-    versions = tuple(
-        sorted(readers.version_reader.versions(), key=lambda item: (item.observed_at, item.version_id), reverse=True)
-    )
+    version_read = read_day_versions(readers.version_reader, readers.task_reader, now=now)
+    versions = version_read.records
     market_items: list[WorkspaceItemV2] = []
+    if version_read.blocker_code is not None:
+        market_items.append(
+            WorkspaceItemV2(
+                item_id="day.version_source",
+                kind="system",
+                label="Day version source",
+                state="blocked",
+                value=version_read.blocker_code,
+                observed_at=now,
+                trace_id=source,
+            )
+        )
     champion = next((item for item in versions if item.deployment_state == "champion"), None)
     if champion is not None:
         market_items.append(_version_item("day.champion", "Current Champion", champion, source))
@@ -206,8 +192,8 @@ def _accepted(
         if thesis.decision is not DayTradeDecision.RECOMMEND:
             terminal_index += 1
         market_items.extend(_thesis_items(thesis, readers.changes[thesis.thesis_id], terminal_index, source))
-        if thesis.decision is DayTradeDecision.RECOMMEND and readers.ledger is not None and paper_finalized:
-            paper_items.extend(_paper_items(thesis, readers.ledger, readers.hermes_events, source))
+        if thesis.decision is DayTradeDecision.RECOMMEND and paper_ledger is not None:
+            paper_items.extend(_paper_items(thesis, paper_ledger, source))
     close_index = 0
     for report in reports:
         if report.payload.market_id.value != "us_equities":
@@ -229,10 +215,29 @@ def _accepted(
         _node(source, "source_receipt", "Day canonical readers", observed_at, safe_ref, "accepted"),
         _node("trace.day.decision", "reviewer_decision", "Day thesis decision", observed_at, safe_ref, "accepted"),
         _node("trace.day.paper", "paper_receipt", "Day Paper lifecycle", observed_at, safe_ref, "accepted"),
+        *(
+            ()
+            if version_read.blocker_code is None
+            else (
+                _node(
+                    "trace.day.version_blocked",
+                    "blocker_terminal",
+                    "Day version source blocked",
+                    now,
+                    safe_ref,
+                    "blocked",
+                ),
+            )
+        ),
     )
     edges = (
         TraceEdgeV2(from_node_id=source, to_node_id="trace.day.decision", kind="reviewed_by"),
         TraceEdgeV2(from_node_id=source, to_node_id="trace.day.paper", kind="executed_as"),
+        *(
+            ()
+            if version_read.blocker_code is None
+            else (TraceEdgeV2(from_node_id=source, to_node_id="trace.day.version_blocked", kind="blocked_by"),)
+        ),
     )
     return DayLiveProjection(tuple(market_items), tuple(paper_items), nodes, edges)
 
@@ -286,9 +291,10 @@ def _thesis_items(
 
 
 def _paper_items(
-    thesis: UsDayTradeThesis, ledger: ReconciliationLedger, events: tuple[HermesDeliveryEvent, ...], source: str
+    thesis: UsDayTradeThesis, paper_ledger: VerifiedDayPaperLedger, source: str
 ) -> tuple[WorkspaceItemV2, ...]:
     assert thesis.symbol is not None
+    ledger = paper_ledger.ledger
     intent_id = IntentId(thesis.thesis_id)
     state = next((item for item in ledger.order_states if item.intent_id == intent_id), None)
     if state is None:
@@ -308,25 +314,7 @@ def _paper_items(
         observed_at,
         source,
     )
-    exits = tuple(
-        event
-        for event in events
-        if event.kind is HermesDeliveryKind.EXIT and f"intent:{thesis.thesis_id}" in event.evidence_refs
-    )
-    if not exits:
-        return (item,)
-    exit_event = max(exits, key=lambda event: (event.occurred_at, event.delivery_id))
-    return (
-        item,
-        _item(
-            f"day.paper_exit.{thesis.symbol}",
-            "paper",
-            f"{thesis.symbol} Paper exit",
-            "closed",
-            exit_event.occurred_at,
-            source,
-        ),
-    )
+    return (item,)
 
 
 def _blocked(

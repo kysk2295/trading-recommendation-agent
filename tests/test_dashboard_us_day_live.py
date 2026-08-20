@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
+
+import pytest
 
 from tests.dashboard_paper_projection_fixtures import (
     FINGERPRINT,
@@ -19,6 +20,7 @@ from trading_agent.alpaca_trade_updates import parse_alpaca_trade_update
 from trading_agent.dashboard_paper_finalized_terminal_writer import publish_finalized_paper_terminal
 from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
 from trading_agent.dashboard_us_day_live import DayAgentVersionView
+from trading_agent.dashboard_us_day_paper import read_verified_day_paper_ledger
 from trading_agent.day_agent_task_store import DayAgentTaskStore
 from trading_agent.day_learning_report_models import MarketCloseReport, MarketCloseReportPayload
 from trading_agent.day_learning_report_store import publish_market_close_report
@@ -43,6 +45,12 @@ class _VersionReader:
         return self.records
 
 
+@dataclass(frozen=True, slots=True)
+class _RaisingVersionReader:
+    def versions(self) -> tuple[DayAgentVersionView, ...]:
+        raise RuntimeError("untrusted reader failed")
+
+
 def test_dashboard_projects_canonical_thesis_task_version_and_close_report(tmp_path: Path) -> None:
     outputs = _day_outputs(tmp_path)
     recommendation = _eligible_request().thesis
@@ -54,7 +62,14 @@ def test_dashboard_projects_canonical_thesis_task_version_and_close_report(tmp_p
     reader = _seed_versioned_task(
         outputs,
         recommendation.agent_version_id,
-        shadows=(DayAgentVersionView("c" * 64, "shadow", "task-20260820-NVDA", NOW - dt.timedelta(minutes=1)),),
+        shadows=(
+            DayAgentVersionView(
+                version_id="c" * 64,
+                deployment_state="shadow",
+                task_id="task-20260820-NVDA",
+                observed_at=NOW - dt.timedelta(minutes=1),
+            ),
+        ),
     )
     _publish_close_report(outputs)
 
@@ -85,8 +100,18 @@ def test_dashboard_sorts_challengers_and_terminal_records_before_cap(tmp_path: P
         outputs,
         "a" * 64,
         shadows=(
-            DayAgentVersionView("d" * 64, "shadow", "task-20260820-NVDA", NOW - dt.timedelta(minutes=2)),
-            DayAgentVersionView("c" * 64, "shadow", "task-20260820-NVDA", NOW - dt.timedelta(minutes=1)),
+            DayAgentVersionView(
+                version_id="d" * 64,
+                deployment_state="shadow",
+                task_id="task-20260820-NVDA",
+                observed_at=NOW - dt.timedelta(minutes=2),
+            ),
+            DayAgentVersionView(
+                version_id="c" * 64,
+                deployment_state="shadow",
+                task_id="task-20260820-NVDA",
+                observed_at=NOW - dt.timedelta(minutes=1),
+            ),
         ),
     )
 
@@ -118,6 +143,41 @@ def test_dashboard_blocks_only_day_items_for_stale_or_corrupt_source(tmp_path: P
     assert corrupt_snapshot.workspaces.paper.state != "corrupt"
 
 
+def test_dashboard_isolates_untrusted_day_version_reader_failures(tmp_path: Path) -> None:
+    outputs = _day_outputs(tmp_path)
+    recommendation = _eligible_request().thesis
+    store = UsDayThesisStore(outputs / "us_day" / "theses")
+    assert store.publish_thesis(recommendation)
+
+    snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW, day_version_reader=_RaisingVersionReader())
+
+    markets = {item.item_id: item for item in snapshot.workspaces.markets.items}
+    assert markets["day.version_source"].state == "blocked"
+    assert "day.recommendation.NVDA" in markets
+    assert snapshot.workspaces.overview.state != "corrupt"
+    assert snapshot.workspaces.paper.state != "corrupt"
+
+
+def test_dashboard_blocks_only_invalid_day_version_records(tmp_path: Path) -> None:
+    outputs = _day_outputs(tmp_path)
+    recommendation = _eligible_request().thesis
+    store = UsDayThesisStore(outputs / "us_day" / "theses")
+    assert store.publish_thesis(recommendation)
+    malformed = DayAgentVersionView.model_construct(
+        version_id="not-a-version",
+        deployment_state="champion",
+        task_id="missing-task",
+        observed_at=dt.datetime(2026, 8, 20, 14, 8),
+    )
+
+    snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW, day_version_reader=_VersionReader((malformed,)))
+
+    markets = {item.item_id: item for item in snapshot.workspaces.markets.items}
+    assert markets["day.version_source"].state == "blocked"
+    assert "day.champion" not in markets
+    assert "day.recommendation.NVDA" in markets
+
+
 def test_dashboard_projects_lifecycle_only_from_finalized_paper_ledger(tmp_path: Path) -> None:
     outputs = _day_outputs(tmp_path)
     recommendation = _eligible_request().thesis
@@ -125,6 +185,7 @@ def test_dashboard_projects_lifecycle_only_from_finalized_paper_ledger(tmp_path:
     assert store.publish_thesis(recommendation)
     _append_change(store, recommendation, ThesisChangeKind.CLOSE, "filled-and-closed-in-note")
     _append_finalized_canceled_intent(outputs, recommendation)
+    _append_unrelated_hermes_exit(outputs, recommendation.thesis_id)
 
     snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW)
 
@@ -133,10 +194,9 @@ def test_dashboard_projects_lifecycle_only_from_finalized_paper_ledger(tmp_path:
     assert "day.paper_exit.NVDA" not in paper
 
 
-def test_dashboard_sorts_immutable_close_reviews_and_redacts_hermes_payload(tmp_path: Path) -> None:
+def test_dashboard_sorts_immutable_close_reviews(tmp_path: Path) -> None:
     outputs = _day_outputs(tmp_path)
     _publish_close_reports_in_source_order(outputs)
-    _append_sensitive_hermes_event(outputs)
 
     snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW)
 
@@ -144,10 +204,66 @@ def test_dashboard_sorts_immutable_close_reviews_and_redacts_hermes_payload(tmp_
     assert tuple(item.item_id for item in reviews) == ("day.close_review.1", "day.close_review.2")
     assert reviews[0].observed_at == NOW
     assert reviews[1].observed_at == NOW - dt.timedelta(days=1)
-    rendered = snapshot.model_dump_json()
-    assert "api-key-should-not-project" not in rendered
-    assert "provider-account-987" not in rendered
-    assert "Authorization" not in rendered
+
+
+@pytest.mark.parametrize(
+    "observed_at",
+    (dt.datetime(2026, 8, 20, 14, 7), NOW + dt.timedelta(seconds=1)),
+)
+def test_dashboard_blocks_naive_or_future_day_version_records(tmp_path: Path, observed_at: dt.datetime) -> None:
+    outputs = _day_outputs(tmp_path)
+    recommendation = _eligible_request().thesis
+    store = UsDayThesisStore(outputs / "us_day" / "theses")
+    assert store.publish_thesis(recommendation)
+    malformed = DayAgentVersionView.model_construct(
+        version_id="a" * 64,
+        deployment_state="champion",
+        task_id="task-20260820-NVDA",
+        observed_at=observed_at,
+    )
+
+    snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW, day_version_reader=_VersionReader((malformed,)))
+
+    markets = {item.item_id: item for item in snapshot.workspaces.markets.items}
+    assert markets["day.version_source"].state == "blocked"
+    assert "day.recommendation.NVDA" in markets
+
+
+def test_dashboard_redacts_projected_task_hypothesis(tmp_path: Path) -> None:
+    outputs = _day_outputs(tmp_path)
+    recommendation = _eligible_request().thesis
+    store = UsDayThesisStore(outputs / "us_day" / "theses")
+    assert store.publish_thesis(recommendation)
+    reader = _seed_versioned_task(
+        outputs,
+        recommendation.agent_version_id,
+        hypothesis="Bearer api-key-should-not-project",
+    )
+
+    snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW, day_version_reader=reader)
+
+    values = {item.item_id: item.value for item in snapshot.workspaces.markets.items}
+    assert "api-key-should-not-project" not in (values["day.regime"] or "")
+
+
+def test_verified_paper_ledger_rejects_identity_change_during_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outputs = _day_outputs(tmp_path)
+    recommendation = _eligible_request().thesis
+    store = UsDayThesisStore(outputs / "us_day" / "theses")
+    assert store.publish_thesis(recommendation)
+    _append_finalized_canceled_intent(outputs, recommendation)
+    original = ExecutionStore.reconciliation_ledger
+
+    def replace_ledger(execution: ExecutionStore):
+        with execution.writer() as writer:
+            assert writer.save_intent(_replacement_intent(), quantity=1)
+        return original(execution)
+
+    monkeypatch.setattr(ExecutionStore, "reconciliation_ledger", replace_ledger)
+
+    assert read_verified_day_paper_ledger(outputs, now=NOW) is None
 
 
 def _day_outputs(tmp_path: Path) -> Path:
@@ -161,17 +277,23 @@ def _seed_versioned_task(
     champion_id: str,
     *,
     shadows: tuple[DayAgentVersionView, ...] = (),
+    hypothesis: str = "risk_on",
 ) -> _VersionReader:
     task = day_task(task_id="task-20260820-NVDA").model_copy(
         update={
-            "current_hypothesis": "risk_on",
+            "current_hypothesis": hypothesis,
             "created_at": NOW - dt.timedelta(minutes=2),
             "updated_at": NOW - dt.timedelta(minutes=1),
         }
     )
     with DayAgentTaskStore(outputs / "us_day" / "day_agent.sqlite3").writer() as writer:
         assert writer.create_task(task)
-    champion = DayAgentVersionView(champion_id, "champion", task.task_id, NOW - dt.timedelta(minutes=1))
+    champion = DayAgentVersionView(
+        version_id=champion_id,
+        deployment_state="champion",
+        task_id=task.task_id,
+        observed_at=NOW - dt.timedelta(minutes=1),
+    )
     return _VersionReader((champion, *shadows))
 
 
@@ -312,15 +434,31 @@ def _append_finalized_canceled_intent(outputs: Path, thesis: UsDayTradeThesis) -
     )
 
 
-def _append_sensitive_hermes_event(outputs: Path) -> None:
+def _replacement_intent() -> PaperOrderIntent:
+    return PaperOrderIntent(
+        intent_id=IntentId("f" * 64),
+        strategy_id="day_orb",
+        strategy_version="day-v1",
+        symbol="MSFT",
+        created_at=dt.datetime(2026, 7, 25, 13, 31, tzinfo=dt.UTC),
+        side=PaperOrderSide.BUY,
+        entry_limit=10.0,
+        stop=9.5,
+        target_1r=10.5,
+        target_2r=11.0,
+    )
+
+
+def _append_unrelated_hermes_exit(outputs: Path, thesis_id: str) -> None:
     event = build_hermes_delivery_event(
-        kind=HermesDeliveryKind.WATCH,
-        source_event_id="day-sensitive-payload",
+        kind=HermesDeliveryKind.EXIT,
+        source_event_id="unrelated-day-exit",
         market_id="us_equities",
         lane_id="intraday_momentum",
         occurred_at=NOW,
-        payload_sha256=hashlib.sha256(b"canonical-sensitive-payload").hexdigest(),
-        rendered_text="Authorization: Bearer api-key-should-not-project provider-account-987",
+        payload_sha256="e" * 64,
+        rendered_text="unrelated exit",
+        evidence_refs=(f"intent:{thesis_id}",),
     )
     with HermesDeliveryStore(outputs / "hermes" / "delivery.sqlite3").writer() as writer:
         assert writer.append_event(event).inserted
