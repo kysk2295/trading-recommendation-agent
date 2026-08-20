@@ -8,6 +8,7 @@ from typing import Literal
 
 from trading_agent.broker_order_projection import BrokerOrderLedgerState
 from trading_agent.dashboard_models_v2 import WorkspaceItemV2
+from trading_agent.execution_ledger_identity import ExecutionLedgerSnapshotIdentity
 from trading_agent.execution_ledger_reader import ReconciliationLedger
 from trading_agent.execution_store import ExecutionStore
 from trading_agent.lane_contract_models import LaneDailySnapshot
@@ -34,6 +35,9 @@ class PaperLifecycleProjection:
 def project_paper_lifecycle(
     outputs: Path,
     snapshot: LaneDailySnapshot,
+    *,
+    bundled_ledger: ReconciliationLedger | None = None,
+    bundled_identity: ExecutionLedgerSnapshotIdentity | None = None,
 ) -> PaperLifecycleProjection:
     path = outputs / "paper" / "execution.sqlite3"
     if not path.exists():
@@ -42,10 +46,10 @@ def project_paper_lifecycle(
         reader = ExecutionStore(path)
         if not reader.is_initialized():
             return PaperLifecycleProjection("corrupt", "paper_finalized_ledger_invalid", ())
-        identity = reader.ledger_snapshot_identity()
+        identity = reader.ledger_snapshot_identity() if bundled_identity is None else bundled_identity
         if identity.generation != snapshot.source_ledger_generation or identity.sha256 != snapshot.source_ledger_sha256:
             return PaperLifecycleProjection("corrupt", "paper_epoch_mismatch", ())
-        ledger = reader.reconciliation_ledger()
+        ledger = reader.reconciliation_ledger() if bundled_ledger is None else bundled_ledger
         if any(state.anomaly_reasons for state in ledger.order_states):
             return PaperLifecycleProjection("corrupt", "paper_lifecycle_invalid", ())
         if (
@@ -69,7 +73,7 @@ def project_paper_lifecycle(
         if any(intent_id not in protected_ids for intent_id in ledger.filled_intent_ids):
             return PaperLifecycleProjection("blocked", "protective_oco_missing", ())
         if any(
-            not _protective_plan_terminal(plan, ledger, snapshot.finalized_at)
+            not protective_plan_terminal(plan, ledger, snapshot.finalized_at)
             for plan in plans
             if plan.plan.parent_intent_id in ledger.filled_intent_ids
         ):
@@ -208,7 +212,7 @@ def _stage_terminal(
     return True
 
 
-def _protective_plan_terminal(
+def protective_plan_terminal(
     plan: StoredProtectiveOcoPlan,
     ledger: ReconciliationLedger,
     finalized_at: dt.datetime,
@@ -263,4 +267,4 @@ def _instant(value: str) -> dt.datetime:
     return instant
 
 
-__all__ = ("PaperLifecycleProjection", "project_paper_lifecycle")
+__all__ = ("PaperLifecycleProjection", "project_paper_lifecycle", "protective_plan_terminal")

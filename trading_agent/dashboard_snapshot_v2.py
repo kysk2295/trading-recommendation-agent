@@ -28,16 +28,13 @@ from trading_agent.dashboard_models_v2 import (
     WorkspacesV2,
 )
 from trading_agent.dashboard_options_workbench_projection import project_options_workbench
-from trading_agent.dashboard_projection_common import (
-    WorkspaceProjection,
-    receipt_projection,
-)
+from trading_agent.dashboard_projection_common import WorkspaceProjection, receipt_projection
 from trading_agent.dashboard_projection_derivatives import project_derivatives
 from trading_agent.dashboard_projection_experiments import (
     project_research,
     project_strategies,
 )
-from trading_agent.dashboard_projection_paper import project_finalized_paper
+from trading_agent.dashboard_projection_paper import project_paper_with_bundle
 from trading_agent.dashboard_projection_receipts import (
     WorkspaceName,
     read_projection_receipts,
@@ -49,7 +46,6 @@ from trading_agent.dashboard_system_current_authority import (
 )
 from trading_agent.dashboard_system_evidence import project_system_evidence
 from trading_agent.dashboard_us_day_live import DayAgentVersionReader, merge_us_day_live, project_us_day_live
-from trading_agent.dashboard_us_day_paper import read_verified_day_paper_ledger
 
 ROOT_BY_WORKSPACE: Final[dict[WorkspaceName, str]] = {
     "command_center": "system",
@@ -111,17 +107,16 @@ def collect_dashboard_snapshot_v2(
     projections["research"] = project_research(outputs, now=generated_at)
     projections["strategies"] = project_strategies(outputs, now=generated_at)
     projections["derivatives"] = project_derivatives(outputs, now=generated_at)
-    projections["paper"] = _paper_projection(outputs, generated_at)
-    paper_ledger = (
-        read_verified_day_paper_ledger(outputs, now=generated_at)
-        if projections["paper"].workspace.state in {"populated", "stale"}
-        else None
+    projections["paper"], paper_bundle = project_paper_with_bundle(
+        outputs,
+        outputs / ROOT_BY_WORKSPACE["paper"],
+        now=generated_at,
     )
     day_live = project_us_day_live(
         outputs,
         now=generated_at,
         version_reader=day_version_reader,
-        paper_ledger=paper_ledger,
+        paper_ledger=paper_bundle,
     )
     projections["markets"] = merge_us_day_live(projections["markets"], day_live, workspace="markets")
     projections["paper"] = merge_us_day_live(projections["paper"], day_live, workspace="paper")
@@ -221,7 +216,11 @@ def _research_board(cycle_database: Path | None) -> tuple[ResearchAgentCycleView
         try:
             return read_research_board_cycles(cycle_database)
         except InvalidAgentCycleRuntimeError:
-            pass
+            return _unavailable_research_board()
+    return _unavailable_research_board()
+
+
+def _unavailable_research_board() -> tuple[ResearchAgentCycleViewV2, ...]:
     return tuple(
         ResearchAgentCycleViewV2(
             agent_family_id=family,
@@ -237,17 +236,4 @@ def _research_board(cycle_database: Path | None) -> tuple[ResearchAgentCycleView
         )
         for family in PRIMARY_AGENT_FAMILIES
     )
-
-
-def _paper_projection(outputs: Path, now: dt.datetime) -> WorkspaceProjection:
-    ledger = outputs / "lane_control" / "lane_registry.sqlite3"
-    if ledger.exists() or ledger.with_name(f"{ledger.name}-wal").exists():
-        return project_finalized_paper(outputs, now=now)
-    return receipt_projection(
-        "paper",
-        read_projection_receipts(outputs / ROOT_BY_WORKSPACE["paper"], "paper", now=now),
-        now=now,
-    )
-
-
 __all__ = ("DashboardSnapshotV2TimeError", "collect_dashboard_snapshot_v2")

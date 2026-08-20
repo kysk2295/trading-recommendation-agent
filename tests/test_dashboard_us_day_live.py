@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -20,14 +21,30 @@ from trading_agent.alpaca_trade_updates import parse_alpaca_trade_update
 from trading_agent.dashboard_paper_finalized_terminal_writer import publish_finalized_paper_terminal
 from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
 from trading_agent.dashboard_us_day_live import DayAgentVersionView
-from trading_agent.dashboard_us_day_paper import read_verified_day_paper_ledger
+from trading_agent.dashboard_us_day_paper import FinalizedPaperProjectionBundle, read_finalized_paper_bundle
 from trading_agent.day_agent_task_store import DayAgentTaskStore
 from trading_agent.day_learning_report_models import MarketCloseReport, MarketCloseReportPayload
 from trading_agent.day_learning_report_store import publish_market_close_report
 from trading_agent.execution_store import ExecutionStore
 from trading_agent.hermes_delivery_models import HermesDeliveryKind, build_hermes_delivery_event
+from trading_agent.hermes_delivery_projection import HermesProjectionRecord, project_outcomes
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
-from trading_agent.paper_execution_models import IntentId, PaperOrderIntent, PaperOrderSide
+from trading_agent.paper_execution_models import (
+    BrokerOrderEventType,
+    BrokerOrderId,
+    IntentId,
+    PaperOrderIntent,
+    PaperOrderSide,
+)
+from trading_agent.paper_mutation_keys import paper_mutation_key
+from trading_agent.paper_mutation_ledger_models import (
+    PaperMutationEvent,
+    PaperMutationEventType,
+    PaperMutationIntent,
+    PaperMutationOperation,
+)
+from trading_agent.paper_protective_oco_models import ProtectiveOcoClientOrderId, ProtectiveOcoExitPlan
+from trading_agent.paper_protective_oco_store import protective_oco_plan_key
 from trading_agent.paper_safety_models import PaperSafetyPhase
 from trading_agent.paper_stream_recovery_models import PaperStreamRecoveryObservation
 from trading_agent.research_identity_models import MarketId
@@ -263,7 +280,96 @@ def test_verified_paper_ledger_rejects_identity_change_during_read(
 
     monkeypatch.setattr(ExecutionStore, "reconciliation_ledger", replace_ledger)
 
-    assert read_verified_day_paper_ledger(outputs, now=NOW) is None
+    assert not isinstance(read_finalized_paper_bundle(outputs, now=NOW), FinalizedPaperProjectionBundle)
+
+
+def test_dashboard_reads_one_finalized_bundle_when_ledger_view_changes_between_consumers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outputs = _day_outputs(tmp_path)
+    recommendation = _eligible_request().thesis
+    assert UsDayThesisStore(outputs / "us_day" / "theses").publish_thesis(recommendation)
+    _append_finalized_canceled_intent(outputs, recommendation)
+    original = ExecutionStore.reconciliation_ledger
+    reads = 0
+
+    def alternating_ledger(execution: ExecutionStore):
+        nonlocal reads
+        reads += 1
+        ledger = original(execution)
+        if reads == 1:
+            return ledger
+        state = ledger.order_states[0]
+        return replace(
+            ledger,
+            filled_intent_ids=frozenset((state.intent_id,)),
+            order_states=(
+                replace(
+                    state,
+                    terminal_event_types=(BrokerOrderEventType.FILL,),
+                    complete_fill=True,
+                    has_fill_evidence=True,
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(ExecutionStore, "reconciliation_ledger", alternating_ledger)
+
+    snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW)
+
+    paper = {item.item_id: item.value for item in snapshot.workspaces.paper.items}
+    assert reads == 1
+    assert paper["day.paper.NVDA"] == "submitted · reconciled"
+
+
+def test_dashboard_closes_day_trade_only_from_canonical_hermes_and_finalized_ledger(tmp_path: Path) -> None:
+    outputs = _day_outputs(tmp_path)
+    recommendation = _eligible_request().thesis
+    assert UsDayThesisStore(outputs / "us_day" / "theses").publish_thesis(recommendation)
+    intent = _append_finalized_filled_intent(outputs, recommendation)
+    _append_canonical_hermes_pair(outputs, intent)
+
+    snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW)
+
+    paper = {item.item_id: item.value for item in snapshot.workspaces.paper.items}
+    assert paper["day.paper.NVDA"] == "filled · protected · reconciled"
+    assert paper["day.paper_exit.NVDA"] == "closed"
+
+
+@pytest.mark.parametrize(
+    "shape",
+    ("unlinked", "wrong_intent", "wrong_strategy", "submitted_exit", "late_exit"),
+)
+def test_dashboard_never_closes_from_shaped_unrelated_hermes(tmp_path: Path, shape: str) -> None:
+    outputs = _day_outputs(tmp_path)
+    recommendation = _eligible_request().thesis
+    assert UsDayThesisStore(outputs / "us_day" / "theses").publish_thesis(recommendation)
+    intent = _append_finalized_filled_intent(outputs, recommendation)
+    _append_canonical_hermes_pair(outputs, intent, shape=shape)
+
+    snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW)
+
+    paper = {item.item_id: item.value for item in snapshot.workspaces.paper.items}
+    assert paper["day.paper.NVDA"] == "filled · protected · reconciled"
+    assert "day.paper_exit.NVDA" not in paper
+
+
+def test_corrupt_day_hermes_isolated_from_finalized_paper_projection(tmp_path: Path) -> None:
+    outputs = _day_outputs(tmp_path)
+    recommendation = _eligible_request().thesis
+    assert UsDayThesisStore(outputs / "us_day" / "theses").publish_thesis(recommendation)
+    _append_finalized_canceled_intent(outputs, recommendation)
+    delivery = outputs / "hermes" / "delivery.sqlite3"
+    delivery.parent.mkdir(parents=True)
+    delivery.write_bytes(b"not sqlite")
+
+    snapshot = collect_dashboard_snapshot_v2(outputs, now=NOW)
+
+    paper = {item.item_id: item for item in snapshot.workspaces.paper.items}
+    assert snapshot.workspaces.paper.state in {"populated", "stale"}
+    assert paper["day.paper_source"].state == "corrupt"
+    assert "paper.daily_pnl" in paper
 
 
 def _day_outputs(tmp_path: Path) -> Path:
@@ -462,6 +568,188 @@ def _append_unrelated_hermes_exit(outputs: Path, thesis_id: str) -> None:
     )
     with HermesDeliveryStore(outputs / "hermes" / "delivery.sqlite3").writer() as writer:
         assert writer.append_event(event).inserted
+
+
+def _append_finalized_filled_intent(outputs: Path, thesis: UsDayTradeThesis) -> PaperOrderIntent:
+    created_at = dt.datetime(2026, 7, 25, 13, 30, tzinfo=dt.UTC)
+    intent = PaperOrderIntent(
+        intent_id=IntentId(thesis.thesis_id),
+        strategy_id="day_orb",
+        strategy_version="day-v1",
+        symbol="NVDA",
+        created_at=created_at,
+        side=PaperOrderSide.BUY,
+        entry_limit=200.05,
+        stop=199.5,
+        target_1r=200.60,
+        target_2r=201.15,
+    )
+    raw_update = json.dumps(
+        {
+            "stream": "trade_updates",
+            "data": {
+                "event": "fill",
+                "event_id": "day-filled-order",
+                "timestamp": "2026-07-25T13:35:00Z",
+                "order": {
+                    "id": "day-filled-order",
+                    "client_order_id": thesis.thesis_id,
+                    "asset_class": "us_equity",
+                    "symbol": "NVDA",
+                    "side": "buy",
+                    "status": "filled",
+                    "qty": "1",
+                    "filled_qty": "1",
+                    "filled_avg_price": "200.05",
+                    "limit_price": "200.05",
+                    "time_in_force": "day",
+                    "extended_hours": False,
+                    "updated_at": "2026-07-25T13:35:00Z",
+                },
+                "execution_id": "day-fill-execution",
+                "qty": "1",
+                "price": "200.05",
+                "position_qty": "1",
+            },
+        }
+    )
+    plan = ProtectiveOcoExitPlan(
+        client_order_id=ProtectiveOcoClientOrderId("protect-day-" + "a" * 32),
+        parent_intent_id=intent.intent_id,
+        symbol=intent.symbol,
+        side=PaperOrderSide.SELL,
+        quantity=1,
+        take_profit_limit=Decimal("201.15"),
+        stop_price=Decimal("199.5"),
+    )
+    plan_key = protective_oco_plan_key(plan)
+    mutation = PaperMutationIntent(
+        account_fingerprint=FINGERPRINT,
+        created_at=created_at + dt.timedelta(minutes=7),
+        operation=PaperMutationOperation.SUBMIT_PROTECTIVE_OCO,
+        protective_plan_key=plan_key,
+        safety_plan_key=None,
+        action_sequence=None,
+        request_sha256="c" * 64,
+        symbol=intent.symbol,
+        broker_order_id=None,
+        side=PaperOrderSide.SELL,
+        quantity=Decimal(1),
+    )
+    mutation_key = paper_mutation_key(mutation)
+    execution = ExecutionStore(outputs / "paper" / "execution.sqlite3")
+    with execution.writer() as writer:
+        assert writer.bind_account(FINGERPRINT, created_at)
+        assert writer.save_intent(intent, quantity=1)
+        assert writer.append_trade_update(
+            parse_alpaca_trade_update(raw_update),
+            account_fingerprint=FINGERPRINT,
+            connection_epoch="dashboard-day-filled",
+            received_at=created_at + dt.timedelta(minutes=5),
+        )
+        assert writer.save_protective_oco_plan(plan, created_at + dt.timedelta(minutes=6))
+        assert writer.save_paper_mutation_intent(mutation)
+        assert writer.append_paper_mutation_event(
+            mutation_key,
+            PaperMutationEvent(
+                1,
+                created_at + dt.timedelta(minutes=8),
+                PaperMutationEventType.ATTEMPTED,
+                None,
+                None,
+                None,
+                "d" * 64,
+            ),
+        )
+        assert writer.append_paper_mutation_event(
+            mutation_key,
+            PaperMutationEvent(
+                1,
+                created_at + dt.timedelta(minutes=9),
+                PaperMutationEventType.ACKNOWLEDGED,
+                "protective-request",
+                200,
+                BrokerOrderId("protective-parent"),
+                "e" * 64,
+            ),
+        )
+        assert writer.append_paper_stream_recovery(
+            PaperStreamRecoveryObservation(
+                account_fingerprint=FINGERPRINT,
+                connection_epoch="dashboard-day-finalized",
+                started_at=dt.datetime(2026, 7, 25, 19, 39, tzinfo=dt.UTC),
+                completed_at=dt.datetime(2026, 7, 25, 19, 40, tzinfo=dt.UTC),
+                snapshot_json='{"orders":[],"positions":[]}',
+                execution_detail_complete=True,
+            )
+        )
+        assert writer.save_paper_safety_plan(
+            safety_plan(PaperSafetyPhase.ENTRY_CUTOFF, dt.datetime(2026, 7, 25, 19, 45, tzinfo=dt.UTC))
+        )
+        assert writer.save_paper_safety_plan(
+            safety_plan(PaperSafetyPhase.EOD_FLATTEN, dt.datetime(2026, 7, 25, 19, 50, tzinfo=dt.UTC))
+        )
+    identity = execution.ledger_snapshot_identity()
+    append_daily_snapshot(outputs, complete=True, source_generation=identity.generation, source_sha256=identity.sha256)
+    assert publish_finalized_paper_terminal(
+        outputs,
+        finalized_snapshot(source_generation=identity.generation, source_sha256=identity.sha256),
+        execution,
+    )
+    return intent
+
+
+def _append_canonical_hermes_pair(
+    outputs: Path,
+    intent: PaperOrderIntent,
+    *,
+    shape: str | None = None,
+) -> None:
+    actionable_source = "us-day-actionable-canonical"
+    intent_ref = f"intent:{intent.intent_id}"
+    exit_ref = "intent:unrelated" if shape == "wrong_intent" else intent_ref
+    exit_strategy = "unrelated-version" if shape == "wrong_strategy" else intent.strategy_version
+    exit_status = "submitted" if shape == "submitted_exit" else "completed"
+    exit_at = (
+        dt.datetime(2026, 7, 25, 20, 6, tzinfo=dt.UTC)
+        if shape == "late_exit"
+        else dt.datetime(2026, 7, 25, 19, 55, tzinfo=dt.UTC)
+    )
+    records = (
+        HermesProjectionRecord(
+            source_event_id=actionable_source,
+            root_source_event_id=None,
+            kind=HermesDeliveryKind.ACTIONABLE,
+            market_id="us_equities",
+            agent_family="day_trading",
+            lane_id="intraday_momentum",
+            strategy_version=intent.strategy_version,
+            instrument_id=intent.symbol,
+            occurred_at=dt.datetime(2026, 7, 25, 13, 31, tzinfo=dt.UTC),
+            status="current_quote_validated",
+            evidence_refs=(intent_ref,),
+            rendered_text="canonical actionable",
+            payload_sha256="a" * 64,
+        ),
+        HermesProjectionRecord(
+            source_event_id="us-day-terminal-canonical",
+            root_source_event_id=None if shape == "unlinked" else actionable_source,
+            kind=HermesDeliveryKind.EXIT,
+            market_id="us_equities",
+            agent_family="day_trading",
+            lane_id="intraday_momentum",
+            strategy_version=exit_strategy,
+            instrument_id=intent.symbol,
+            occurred_at=exit_at,
+            status=exit_status,
+            evidence_refs=(exit_ref,),
+            rendered_text="canonical exit",
+            payload_sha256="b" * 64,
+        ),
+    )
+    with HermesDeliveryStore(outputs / "hermes" / "delivery.sqlite3").writer() as writer:
+        result = project_outcomes(records, writer)
+    assert result.inserted == 2
 
 
 def _no_trade(observed_at: dt.datetime, *, index: int = 0) -> UsDayTradeThesis:

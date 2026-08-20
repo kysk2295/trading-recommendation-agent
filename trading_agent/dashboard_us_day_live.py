@@ -9,7 +9,7 @@ from typing import Literal, Protocol
 from trading_agent.dashboard_models_v2 import SourceStateV2, TraceEdgeV2, TraceNodeV2, WorkspaceItemV2
 from trading_agent.dashboard_outbound_redaction import redact_outbound_text
 from trading_agent.dashboard_projection_common import WorkspaceProjection
-from trading_agent.dashboard_us_day_paper import VerifiedDayPaperLedger
+from trading_agent.dashboard_us_day_paper import FinalizedPaperProjectionBundle, canonical_day_exit_event
 from trading_agent.dashboard_us_day_versions import (
     DayAgentVersionReader,
     DayAgentVersionView,
@@ -19,7 +19,6 @@ from trading_agent.day_agent_task_models import DayAgentResearchTask
 from trading_agent.day_agent_task_store import DayAgentTaskReader, DayAgentTaskStore, DayAgentTaskStoreError
 from trading_agent.day_learning_report_models import MarketCloseReport
 from trading_agent.day_learning_report_store import InvalidDayLearningReportError, load_market_close_report
-from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.paper_execution_models import IntentId
 from trading_agent.us_day_thesis_models import DayTradeDecision, UsDayThesisChange, UsDayTradeThesis
 from trading_agent.us_day_thesis_store import InvalidUsDayThesisStoreError, UsDayThesisStore
@@ -71,7 +70,7 @@ def project_us_day_live(
     *,
     now: dt.datetime,
     version_reader: DayAgentVersionReader | None = None,
-    paper_ledger: VerifiedDayPaperLedger | None = None,
+    paper_ledger: FinalizedPaperProjectionBundle | None = None,
 ) -> DayLiveProjection:
     try:
         readers = _canonical_readers(outputs, version_reader)
@@ -83,6 +82,8 @@ def project_us_day_live(
         OSError,
         ValueError,
     ):
+        return _blocked(now)
+    if paper_ledger is not None and not paper_ledger.hermes_valid:
         return _blocked(now)
     if readers.theses and now - max(item.observed_at for item in readers.theses) > _STALE_AFTER:
         return _blocked(now, state="blocked", value="stale")
@@ -130,7 +131,7 @@ def _accepted(
     readers: _Readers,
     reports: tuple[MarketCloseReport, ...],
     now: dt.datetime,
-    paper_ledger: VerifiedDayPaperLedger | None,
+    paper_ledger: FinalizedPaperProjectionBundle | None,
 ) -> DayLiveProjection:
     source = "trace.day.source"
     ordered = tuple(sorted(readers.theses, key=lambda item: (item.observed_at, item.thesis_id), reverse=True))
@@ -292,7 +293,7 @@ def _thesis_items(
 
 
 def _paper_items(
-    thesis: UsDayTradeThesis, paper_ledger: VerifiedDayPaperLedger, source: str
+    thesis: UsDayTradeThesis, paper_ledger: FinalizedPaperProjectionBundle, source: str
 ) -> tuple[WorkspaceItemV2, ...]:
     assert thesis.symbol is not None
     ledger = paper_ledger.ledger
@@ -315,23 +316,13 @@ def _paper_items(
         observed_at,
         source,
     )
-    exits = tuple(
-        event
-        for event in paper_ledger.hermes_events
-        if event.kind is HermesDeliveryKind.EXIT
-        and event.source_event_id.startswith("us-day-terminal-")
-        and event.market_id == "us_equities"
-        and event.agent_family == "day_trading"
-        and event.lane_id == "intraday_momentum"
-        and event.instrument_id == thesis.symbol
-        and event.status == "completed"
-        and event.evidence_refs == (f"intent:{thesis.thesis_id}",)
-        and event.occurred_at <= paper_ledger.snapshot.finalized_at
-        and event.occurred_at.date() == paper_ledger.snapshot.session_date
+    exit_event = canonical_day_exit_event(
+        paper_ledger,
+        intent_id=intent_id,
+        symbol=thesis.symbol,
     )
-    if not exits:
+    if exit_event is None:
         return (item,)
-    exit_event = max(exits, key=lambda event: (event.occurred_at, event.delivery_id))
     return (
         item,
         _item(
