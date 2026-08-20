@@ -48,6 +48,7 @@ from trading_agent.dashboard_system_current_authority import (
     SystemAuthorityVerifierInput,
 )
 from trading_agent.dashboard_system_evidence import project_system_evidence
+from trading_agent.dashboard_us_day_live import merge_us_day_live, project_us_day_live
 
 ROOT_BY_WORKSPACE: Final[dict[WorkspaceName, str]] = {
     "command_center": "system",
@@ -109,6 +110,9 @@ def collect_dashboard_snapshot_v2(
     projections["strategies"] = project_strategies(outputs, now=generated_at)
     projections["derivatives"] = project_derivatives(outputs, now=generated_at)
     projections["paper"] = _paper_projection(outputs, generated_at)
+    day_live = project_us_day_live(outputs, now=generated_at)
+    projections["markets"] = merge_us_day_live(projections["markets"], day_live, workspace="markets")
+    projections["paper"] = merge_us_day_live(projections["paper"], day_live, workspace="paper")
     projections["system"] = project_system_evidence(
         outputs,
         now=generated_at,
@@ -178,6 +182,7 @@ def collect_dashboard_snapshot_v2(
                 "alpaca-options-reader-v1",
                 "cftc-tff-reader-v1",
                 "dashboard-receipt-reader-v2",
+                "day-agent-live-reader-v1",
                 "experiment-ledger-reader-v1",
                 "fred-alfred-artifact-reader-v1",
                 "futures-security-master-reader-v1",

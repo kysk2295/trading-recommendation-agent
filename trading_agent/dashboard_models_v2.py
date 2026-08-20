@@ -48,7 +48,17 @@ class FreshnessV2(StrictDashboardModelV2):
 
 class WorkspaceItemV2(StrictDashboardModelV2):
     item_id: str = Field(pattern=r"^[a-zA-Z0-9_.:-]{1,100}$")
-    kind: Literal["metric", "research", "strategy", "derivative", "paper", "system"]
+    kind: Literal[
+        "metric",
+        "research",
+        "strategy",
+        "derivative",
+        "paper",
+        "system",
+        "day_theme",
+        "day_recommendation",
+        "day_agent_version",
+    ]
     label: str = Field(min_length=1, max_length=80)
     state: SourceStateName
     value: str | None = Field(max_length=160)
