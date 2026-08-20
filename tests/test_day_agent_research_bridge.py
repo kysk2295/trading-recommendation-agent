@@ -114,6 +114,8 @@ def _persisted_request(
     task_id: str = "task-20260821-liquidity-echo",
     submitted_at: dt.datetime = SUBMITTED_AT,
     prompt: str = "bounded day-agent research prompt",
+    agent_version: str = "day-agent-v1",
+    champion_version: str = "champion-2026-08-21",
 ) -> DayAgentDiscoveryBridgeRequest:
     task_store = DayAgentTaskStore(root / "day-agent.sqlite3")
     task = _task(task_id=task_id, submitted_at=submitted_at)
@@ -156,8 +158,8 @@ def _persisted_request(
         task_id=task.task_id,
         step_id=decision.step_id,
         call_id=verified.record.call_id,
-        agent_version="day-agent-v1",
-        champion_version="champion-2026-08-21",
+        agent_version=agent_version,
+        champion_version=champion_version,
         bound_at=submitted_at,
     )
     return DayAgentDiscoveryBridgeRequest(
@@ -317,6 +319,7 @@ def test_bridge_rejects_semantic_duplicate_before_discovery(tmp_path: Path) -> N
         task_id="task-20260821-liquidity-echo-duplicate",
         submitted_at=SUBMITTED_AT + dt.timedelta(seconds=10),
         prompt="different prompt with the same semantic proposal",
+        champion_version="champion-2026-08-22",
     )
     second_view = _view(cursor="second-cursor")
 
@@ -330,10 +333,14 @@ def test_bridge_rejects_semantic_duplicate_before_discovery(tmp_path: Path) -> N
     assert result.capsule_id is None
     reader = first_services.discovery_loop.config.pipeline.stores.ledger.reader()
     assert len(reader.day_hypothesis_versions()) == 1
+    assert len(reader.day_strategy_capsules(MarketId.US_EQUITIES)) == 1
     state = reader.day_discovery_cycle_state(result.cycle_id)
     assert state.events[-1].event_kind.value == "cycle_finalized"
     branch = next(event for event in state.events if event.event_kind.value == "branch_finalized")
     assert json.loads(branch.payload_json)["terminal_reason"] == "semantic_duplicate"
+    prepared = next(event for event in state.events if event.event_kind.value == "branch_prepared")
+    prepared_payload = json.loads(prepared.payload_json)
+    assert "champion-2026-08-22" in prepared_payload["prepared"]["version"]["source_refs"]
     duplicate_attempts = tuple(
         attempt
         for version in reader.day_hypothesis_versions()
@@ -368,6 +375,34 @@ def test_close_submission_rolls_to_next_xnys_first_completed_minute(tmp_path: Pa
 
     assert result.accepted is True
     assert result.first_shadow_eligible_at == dt.datetime(2026, 8, 24, 13, 31, tzinfo=dt.UTC)
+
+
+def test_bridge_rejects_premarket_submission_with_prior_session_close(tmp_path: Path) -> None:
+    prior_friday_close = dt.datetime(2026, 8, 21, 20, 0, tzinfo=dt.UTC)
+    monday_premarket = dt.datetime(2026, 8, 24, 13, 20, 10, tzinfo=dt.UTC)
+    request = _persisted_request(tmp_path, _submission(), submitted_at=monday_premarket)
+    view = _view(
+        completed_bar_at=prior_friday_close,
+        observed_at=prior_friday_close,
+        first_eligible_at=monday_premarket + dt.timedelta(minutes=11),
+    )
+
+    with pytest.raises(DayAgentResearchBridgeError, match="day_agent_current_session_bar_unavailable"):
+        submit_day_agent_hypothesis(request, discovery_bridge_services(tmp_path, view=view))
+
+
+def test_bridge_rejects_stale_intraday_completed_bar(tmp_path: Path) -> None:
+    submitted = dt.datetime(2026, 8, 21, 14, 35, 10, tzinfo=dt.UTC)
+    stale_bar = dt.datetime(2026, 8, 21, 14, 30, tzinfo=dt.UTC)
+    request = _persisted_request(tmp_path, _submission(), submitted_at=submitted)
+    view = _view(
+        completed_bar_at=stale_bar,
+        observed_at=stale_bar,
+        first_eligible_at=submitted.replace(second=0) + dt.timedelta(minutes=1),
+    )
+
+    with pytest.raises(DayAgentResearchBridgeError, match="day_agent_completed_bar_not_latest"):
+        submit_day_agent_hypothesis(request, discovery_bridge_services(tmp_path, view=view))
 
 
 def test_bridge_rejects_saturday_completed_bar(tmp_path: Path) -> None:

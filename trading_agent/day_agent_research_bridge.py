@@ -144,7 +144,7 @@ class DayAgentDiscoveryBridgeServices:
     def proposal_for(self, request: DayAgentDiscoveryBridgeRequest) -> ProposedHypothesis:
         binding = self.lineage_binding(request)
         submission = _validated_submission(request, self, binding)
-        return _proposal(request, submission, binding, self.researcher_context.sources)
+        return _proposal(request, submission, self.researcher_context.sources)
 
     def lineage_binding(self, request: DayAgentDiscoveryBridgeRequest) -> DayAgentResearchLineageBinding:
         if _HEX64.fullmatch(request.lineage_binding_id) is None:
@@ -168,7 +168,7 @@ def submit_day_agent_hypothesis(
 ) -> DayAgentDiscoveryBridgeResult:
     binding = services.lineage_binding(request)
     submission = _validated_submission(request, services, binding)
-    proposal = _proposal(request, submission, binding, services.researcher_context.sources)
+    proposal = _proposal(request, submission, services.researcher_context.sources)
     view = _lineage_view(request, proposal, binding, services)
     context = _task_context(request.task, proposal.cited_sources, services.researcher_context)
     base_config = services.discovery_loop.config
@@ -220,7 +220,10 @@ def _validated_submission(
         raise DayAgentResearchBridgeError("day_agent_market_invalid")
     if request.submitted_at < services.evidence_view.completed_bar_at:
         raise DayAgentResearchBridgeError("day_agent_future_only_boundary_invalid")
-    _require_xnys_completed_bar(services.evidence_view.completed_bar_at)
+    _require_latest_xnys_completed_bar(
+        request.submitted_at,
+        services.evidence_view.completed_bar_at,
+    )
     source_ids = {source.source_id for source in services.researcher_context.sources}
     if any(reference not in source_ids for reference in submission.evidence_refs):
         raise DayAgentResearchBridgeError("day_agent_source_citation_unresolved")
@@ -236,7 +239,6 @@ def _validated_submission(
 def _proposal(
     request: DayAgentDiscoveryBridgeRequest,
     submission: DayAgentHypothesisSubmission,
-    binding: DayAgentResearchLineageBinding,
     available_sources: tuple[ResearchSource, ...],
 ) -> ProposedHypothesis:
     cited = tuple(source for source in available_sources if source.source_id in submission.evidence_refs)
@@ -264,15 +266,6 @@ def _proposal(
         economic_mechanism=submission.mechanism,
         counterfactual_baseline=submission.baseline,
     )
-    methodology_tags = tuple(
-        sorted(
-            {
-                "day_agent_submitted",
-                f"agent_{binding.agent_version}",
-                f"champion_{binding.champion_version}",
-            }
-        )
-    )
     return ProposedHypothesis(
         card=card,
         cited_sources=cited,
@@ -280,7 +273,7 @@ def _proposal(
         strategy_draft=CandidateStrategyDraft(
             source_code=submission.experiment_code or "",
             free_parameters=submission.free_parameters,
-            methodology_tags=methodology_tags,
+            methodology_tags=("day_agent_submitted",),
         ),
     )
 
@@ -381,6 +374,27 @@ def _require_xnys_completed_bar(completed_at: dt.datetime) -> None:
         or not bounds[0] < local <= bounds[1]
     ):
         raise DayAgentResearchBridgeError("day_agent_completed_bar_not_xnys")
+
+
+def _require_latest_xnys_completed_bar(
+    submitted_at: dt.datetime,
+    completed_at: dt.datetime,
+) -> None:
+    _require_xnys_completed_bar(completed_at)
+    submitted_local = submitted_at.astimezone(NEW_YORK)
+    bounds = regular_session_bounds(submitted_local.date())
+    if bounds is None:
+        raise DayAgentResearchBridgeError("day_agent_submission_not_xnys")
+    first_completed = bounds[0] + dt.timedelta(minutes=1)
+    if submitted_local < first_completed:
+        raise DayAgentResearchBridgeError("day_agent_current_session_bar_unavailable")
+    latest_completed = (
+        bounds[1]
+        if submitted_local >= bounds[1]
+        else submitted_local.replace(second=0, microsecond=0)
+    )
+    if completed_at.astimezone(dt.UTC) != latest_completed.astimezone(dt.UTC):
+        raise DayAgentResearchBridgeError("day_agent_completed_bar_not_latest")
 
 
 def _next_xnys_completed_bar(submitted_at: dt.datetime) -> dt.datetime:
