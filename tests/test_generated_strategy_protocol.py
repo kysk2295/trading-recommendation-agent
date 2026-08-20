@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 
 import pytest
 
@@ -86,6 +87,58 @@ def test_protocol_rejects_sequence_symbol_and_timestamp_substitution() -> None:
     for response in responses:
         with pytest.raises(GeneratedStrategyProtocolError):
             _ = signal_from_response(request, response, "generated-python:test")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("targets", [11.5]),
+        ("position_size", 100),
+        ("provider", "alpaca"),
+        ("authority", True),
+        ("order", {"type": "market"}),
+    ),
+)
+def test_protocol_rejects_generated_host_owned_fields(
+    field: str,
+    value: str | int | bool | list[float] | dict[str, str],
+) -> None:
+    # Given: an otherwise valid signal frame with one host-owned field injected.
+    payload = {
+        "kind": "signal",
+        "sequence": 1,
+        "symbol": "TEST",
+        "timestamp": "2026-07-23T13:31:00Z",
+        "entry": 11.0,
+        "stop": 10.0,
+        "rationale": "x",
+        field: value,
+    }
+
+    # When/Then: the host parser rejects the whole frame at the trust boundary.
+    with pytest.raises(GeneratedStrategyProtocolError):
+        _ = parse_runner_frame((json.dumps(payload, separators=(",", ":")) + "\n").encode())
+
+
+@pytest.mark.parametrize(("entry", "stop"), ((10.0, 10.0), (9.5, 10.0)))
+def test_protocol_rejects_wrong_long_entry_stop_direction(
+    entry: float,
+    stop: float,
+) -> None:
+    # Given: a generated long candidate whose stop is not below entry.
+    payload = {
+        "kind": "signal",
+        "sequence": 1,
+        "symbol": "TEST",
+        "timestamp": "2026-07-23T13:31:00Z",
+        "entry": entry,
+        "stop": stop,
+        "rationale": "x",
+    }
+
+    # When/Then: the host parser rejects it before signal projection.
+    with pytest.raises(GeneratedStrategyProtocolError):
+        _ = parse_runner_frame((json.dumps(payload, separators=(",", ":")) + "\n").encode())
 
 
 def _bar() -> BarInput:
