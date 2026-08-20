@@ -11,6 +11,7 @@ from trading_agent.lane_identity_models import LaneId
 from trading_agent.paper_execution_models import IntentId, PaperBrokerState
 from trading_agent.paper_mutation_arm import PaperMutationArm
 from trading_agent.paper_operating_session_models import PaperOrderAdmissionRequest
+from trading_agent.us_day_thesis_models import UsDayTradeThesis
 from trading_agent.us_equity_calendar import NEW_YORK
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -56,7 +57,8 @@ class UsDayOperatingRequest:
     quote_observed_at: dt.datetime
     evaluated_at: dt.datetime
     actionable_payload_sha256: str
-    lane_id: LaneId = LaneId.INTRADAY_MOMENTUM
+    lane_id: LaneId
+    thesis: UsDayTradeThesis | None = None
 
     def __post_init__(self) -> None:
         try:

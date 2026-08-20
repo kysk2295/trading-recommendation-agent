@@ -45,14 +45,10 @@ def project_us_day_actionable(request: UsDayOperatingRequest, store: HermesDeliv
         occurred_at=request.evaluated_at,
         status="current_quote_validated",
         evidence_refs=(f"intent:{intent.intent_id}",),
-        rendered_text=(
-            f"day_trading: {intent.symbol}, entry {intent.entry_limit}, stop {intent.stop}, "
-            f"targets {intent.target_1r}, {intent.target_2r}."
-        ),
+        rendered_text=_actionable_text(request),
         payload_sha256=request.actionable_payload_sha256,
     )
-    with store.writer() as writer:
-        _ = project_outcomes((record,), writer)
+    _project_replayable_outcome(record, store)
     return ProjectedUsDayEvent(
         record.source_event_id,
         hermes_delivery_id(record.source_event_id, HERMES_DELIVERY_CONTRACT_VERSION),
@@ -97,8 +93,7 @@ def project_us_day_terminal(
         rendered_text=f"day_trading operating result: {intent.symbol} {status.value}.",
         payload_sha256=hashlib.sha256(material.encode()).hexdigest(),
     )
-    with store.writer() as writer:
-        _ = project_outcomes((record,), writer)
+    _project_replayable_outcome(record, store)
     return ProjectedUsDayEvent(
         record.source_event_id,
         hermes_delivery_id(record.source_event_id, HERMES_DELIVERY_CONTRACT_VERSION),
@@ -197,3 +192,19 @@ def _source_id(prefix: str, request: UsDayOperatingRequest, reasons: tuple[str, 
         separators=(",", ":"),
     )
     return f"us-day-{prefix}-{hashlib.sha256(material.encode()).hexdigest()}"
+
+
+def _actionable_text(request: UsDayOperatingRequest) -> str:
+    intent = request.order_admission.candidate_intent
+    thesis = request.thesis
+    if thesis is None:
+        return (
+            f"day_trading: {intent.symbol}, entry {intent.entry_limit}, stop {intent.stop}, "
+            f"targets {intent.target_1r}, {intent.target_2r}."
+        )
+    targets = ", ".join(str(item.price) for item in thesis.targets)
+    return (
+        f"day_trading: {intent.symbol}; theme {thesis.theme_name}; entry {thesis.entry_price}; "
+        f"stop {thesis.stop_price}; targets {targets}; invalidation {thesis.invalidation_rule}; "
+        f"agent_version {thesis.agent_version_id}."
+    )

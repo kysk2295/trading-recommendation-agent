@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, assert_never
 
+from trading_agent.lane_identity_models import LaneId
 from trading_agent.paper_auto_arm_policy import load_paper_auto_arm_policy
 from trading_agent.paper_auto_arm_runtime import paper_auto_arm_request_id
 from trading_agent.paper_entry_source import load_current_orb_paper_entry
@@ -180,4 +181,5 @@ def _request(
         quote_observed_at=intent.created_at,
         evaluated_at=evaluated_at,
         actionable_payload_sha256=hashlib.sha256(material.encode()).hexdigest(),
+        lane_id=LaneId.INTRADAY_MOMENTUM,
     )

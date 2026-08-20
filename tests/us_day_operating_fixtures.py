@@ -14,6 +14,7 @@ from trading_agent.alpaca_paper_order_stream import PaperOrderStreamHeartbeat, P
 from trading_agent.execution_store import ExecutionStore
 from trading_agent.hermes_arm_request import HermesArmConsumeCommand
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
+from trading_agent.lane_identity_models import LaneId
 from trading_agent.paper_execution_models import (
     BrokerOrderId,
     IntentId,
@@ -196,6 +197,7 @@ def operating_request(
         quote_observed_at=quote_observed_at,
         evaluated_at=AT,
         actionable_payload_sha256="b" * 64,
+        lane_id=LaneId.INTRADAY_MOMENTUM,
     )
 
 
@@ -227,9 +229,7 @@ def readiness(request: PaperOrderAdmissionRequest, phase: int) -> PaperRuntimeRe
     )
     orders = (order,) if phase in (1, 2) else ()
     positions = (
-        (PaperPositionSnapshot(intent.symbol, Decimal(1), Decimal(str(intent.entry_limit))),)
-        if phase == 2
-        else ()
+        (PaperPositionSnapshot(intent.symbol, Decimal(1), Decimal(str(intent.entry_limit))),) if phase == 2 else ()
     )
     broker = PaperBrokerState(account(), orders, positions)
     portfolio = CompletePaperPortfolio(
