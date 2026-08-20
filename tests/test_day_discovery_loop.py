@@ -216,6 +216,60 @@ def test_budget_epoch_is_shared_across_distinct_cursor_cycles(tmp_path: Path) ->
     assert second.remaining_budget == 1
 
 
+def test_finalized_first_cursor_replay_after_later_same_epoch_spend_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    first_generator = _SequenceGenerator([_proposal(no_signal_source())])
+    first = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, first_generator, runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
+            1,
+        )
+    ).run(_view())
+    later_view = _view().model_copy(
+        update={
+            "cursor": "us:fixture:later",
+            "observed_at": _view().observed_at + dt.timedelta(seconds=1),
+        }
+    )
+    second_generator = _SequenceGenerator([_proposal(no_signal_source())])
+    second = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, second_generator, runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", later_view.resource_limits),
+            1,
+        )
+    ).run(later_view)
+    reader = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader()
+    first_state = reader.day_discovery_cycle_state(first.cycle_id)
+
+    assert first.remaining_budget == 2
+    assert second.remaining_budget == 1
+    assert first_state.remaining_budget == second.remaining_budget
+    assert first.remaining_budget != first_state.remaining_budget
+
+    replay_generator = _SequenceGenerator([])
+    replay = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, replay_generator, runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
+            1,
+        )
+    ).run(_view())
+    replayed_state = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader().day_discovery_cycle_state(
+        first.cycle_id
+    )
+
+    assert replay == first
+    assert first_generator.calls == 1
+    assert second_generator.calls == 1
+    assert replay_generator.calls == 0
+    assert replayed_state.debits == first_state.debits
+    assert replayed_state.events == first_state.events
+
+
 @pytest.mark.parametrize(
     ("reason", "source"),
     (

@@ -710,6 +710,43 @@ def _event_after(
     )
 
 
+def _cycle_local_remaining_budget(state: DayDiscoveryCycleState) -> int:
+    last_branch = next(
+        (
+            event
+            for event in reversed(state.events)
+            if event.event_kind is DayDiscoveryEventKind.BRANCH_FINALIZED
+        ),
+        None,
+    )
+    if last_branch is None:
+        if state.debits:
+            raise DayDiscoveryError("cycle_final_budget_invalid")
+        return 0
+    payload = json.loads(last_branch.payload_json)
+    if "remaining_budget" in payload:
+        remaining = payload["remaining_budget"]
+    else:
+        prepared_event = next(
+            (
+                event
+                for event in reversed(state.events)
+                if event.event_kind is DayDiscoveryEventKind.BRANCH_PREPARED
+                and event.branch_index == last_branch.branch_index
+            ),
+            None,
+        )
+        if prepared_event is None:
+            raise DayDiscoveryError("cycle_final_budget_invalid")
+        prepared = json.loads(prepared_event.payload_json)["prepared"]
+        remaining = prepared["remaining_budget_before"] - sum(
+            debit.amount for debit in state.debits if debit.branch_index == last_branch.branch_index
+        )
+    if not isinstance(remaining, int) or remaining < 0:
+        raise DayDiscoveryError("cycle_final_budget_invalid")
+    return remaining
+
+
 def _project_final_cycle(
     loop: DayDiscoveryLoop,
     view: DayDiscoveryEvidenceView,
@@ -723,7 +760,7 @@ def _project_final_cycle(
     if final_payload.get("ledger_head_event_id") != final_event.previous_event_id:
         raise DayDiscoveryError("cycle_final_ledger_head_invalid")
     result = DayDiscoveryCycleResult.model_validate(final_payload.get("result"))
-    if result.remaining_budget != state.remaining_budget:
+    if result.remaining_budget != _cycle_local_remaining_budget(state):
         raise DayDiscoveryError("cycle_final_budget_invalid")
     if result.accepted:
         if result.capsule_id is None or result.hypothesis_version_id is None:
