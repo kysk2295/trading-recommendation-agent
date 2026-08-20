@@ -107,6 +107,10 @@ class DayAgentTaskStep(BaseModel):
     occurred_at: AwareDatetime
     scheduled_wake_at: AwareDatetime | None = None
     terminal_reason: str | None = Field(default=None, max_length=160)
+    current_hypothesis: str | None = Field(default=None, max_length=4_000)
+    falsification_conditions: tuple[str, ...] | None = Field(default=None, max_length=32)
+    open_questions: tuple[str, ...] | None = Field(default=None, max_length=32)
+    resume_condition: str | None = Field(default=None, max_length=2_000)
 
     @field_validator("occurred_at", "scheduled_wake_at", mode="after")
     @classmethod
@@ -116,6 +120,13 @@ class DayAgentTaskStep(BaseModel):
     @model_validator(mode="after")
     def require_invariants_and_identity(self) -> Self:
         _require_sorted_unique(self.evidence_refs, reason="sorted_unique_evidence_refs_required")
+        if self.falsification_conditions is not None:
+            _require_sorted_unique(
+                self.falsification_conditions,
+                reason="sorted_unique_falsification_conditions_required",
+            )
+        if self.open_questions is not None:
+            _require_sorted_unique(self.open_questions, reason="sorted_unique_open_questions_required")
         _require_state_invariants(
             state=self.state,
             budget=self.budget,
@@ -154,7 +165,11 @@ def _require_state_invariants(
         case DayAgentTaskState.OPEN:
             if scheduled_wake_at is not None or terminal_reason is not None:
                 raise InvalidDayAgentTaskFieldError(reason=f"open_{label}_terminal_fields_invalid")
-            if budget.remaining_model_calls == 0 or budget.remaining_runtime_seconds == 0:
+            if (
+                budget.remaining_model_calls == 0
+                or budget.remaining_tool_calls == 0
+                or budget.remaining_runtime_seconds == 0
+            ):
                 raise InvalidDayAgentTaskFieldError(reason="active_task_budget_exhausted")
         case DayAgentTaskState.WAITING:
             if scheduled_wake_at is None:

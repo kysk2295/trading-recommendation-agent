@@ -53,6 +53,7 @@ def day_step(
     state: DayAgentTaskState | None = None,
     budget: DayAgentBudget | None = None,
     evidence_refs: tuple[str, ...] | None = None,
+    occurred_at: dt.datetime = NOW,
 ) -> DayAgentTaskStep:
     resulting_state = task.state if state is None else state
     scheduled_wake_at = NOW + dt.timedelta(minutes=5) if resulting_state is DayAgentTaskState.WAITING else None
@@ -67,7 +68,7 @@ def day_step(
         evidence_refs=task.evidence_refs if evidence_refs is None else evidence_refs,
         budget=task.budget if budget is None else budget,
         state=resulting_state,
-        occurred_at=NOW,
+        occurred_at=occurred_at,
         scheduled_wake_at=scheduled_wake_at,
         terminal_reason=terminal_reason,
     )

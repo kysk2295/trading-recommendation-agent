@@ -186,6 +186,7 @@ class DayAgentTaskWriter:
                     return False
                 raise DayAgentTaskConflictError(reason="step_replay_conflict")
             steps = _steps_for_task(self._connection, task.task_id)
+            _require_step_progress(task, steps, step)
             _require_appendable(task, steps, step)
             _ = self._connection.execute("INSERT INTO day_task_steps VALUES (?,?,?,?,?)", _step_row(step))
             self._connection.commit()
@@ -233,6 +234,23 @@ def _require_appendable(
             assert_never(unreachable)
 
 
+def _require_step_progress(
+    task: DayAgentResearchTask,
+    steps: tuple[DayAgentTaskStep, ...],
+    step: DayAgentTaskStep,
+) -> None:
+    previous_time = task.created_at if not steps else steps[-1].occurred_at
+    previous_budget = task.budget if not steps else steps[-1].budget
+    if step.occurred_at < previous_time:
+        raise DayAgentTaskConflictError(reason="step_timestamp_invalid")
+    if (
+        step.budget.remaining_model_calls > previous_budget.remaining_model_calls
+        or step.budget.remaining_tool_calls > previous_budget.remaining_tool_calls
+        or step.budget.remaining_runtime_seconds > previous_budget.remaining_runtime_seconds
+    ):
+        raise DayAgentTaskConflictError(reason="step_budget_increase")
+
+
 def _project_task(
     task: DayAgentResearchTask,
     steps: tuple[DayAgentTaskStep, ...],
@@ -240,17 +258,18 @@ def _project_task(
     if not steps:
         return task
     latest = steps[-1]
-    return DayAgentResearchTask.model_validate(
-        task.model_dump(mode="python")
-        | {
+    updates = {
             "state": latest.state,
             "evidence_refs": latest.evidence_refs,
             "budget": latest.budget,
             "updated_at": latest.occurred_at,
             "scheduled_wake_at": latest.scheduled_wake_at,
             "terminal_reason": latest.terminal_reason,
-        }
-    )
+    }
+    for field in ("current_hypothesis", "falsification_conditions", "open_questions", "resume_condition"):
+        if field in latest.model_fields_set:
+            updates[field] = getattr(latest, field)
+    return DayAgentResearchTask.model_validate(task.model_dump(mode="python") | updates)
 
 
 @contextmanager
@@ -328,7 +347,12 @@ def _step_row(step: DayAgentTaskStep) -> tuple[str, str, int, str, str]:
 
 
 def _payload(item: DayAgentResearchTask | DayAgentTaskStep) -> str:
-    return json.dumps(item.model_dump(mode="json"), ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    return json.dumps(
+        item.model_dump(mode="json", exclude_unset=isinstance(item, DayAgentTaskStep)),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _task_from_row(row: tuple[str, str, str]) -> DayAgentResearchTask:
