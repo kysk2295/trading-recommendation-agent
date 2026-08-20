@@ -328,7 +328,19 @@ def test_bridge_rejects_semantic_duplicate_before_discovery(tmp_path: Path) -> N
     assert result.accepted is False
     assert result.terminal_reason == "semantic_duplicate"
     assert result.capsule_id is None
-    assert len(first_services.discovery_loop.config.pipeline.stores.ledger.reader().day_hypothesis_versions()) == 1
+    reader = first_services.discovery_loop.config.pipeline.stores.ledger.reader()
+    assert len(reader.day_hypothesis_versions()) == 1
+    state = reader.day_discovery_cycle_state(result.cycle_id)
+    assert state.events[-1].event_kind.value == "cycle_finalized"
+    branch = next(event for event in state.events if event.event_kind.value == "branch_finalized")
+    assert json.loads(branch.payload_json)["terminal_reason"] == "semantic_duplicate"
+    duplicate_attempts = tuple(
+        attempt
+        for version in reader.day_hypothesis_versions()
+        for attempt in reader.day_attempts_for_review(version.version.market_id, version.version.hypothesis_version_id)
+        if attempt.attempt.error_class == "semantic_duplicate"
+    )
+    assert len(duplicate_attempts) == 1
 
 
 def test_bridge_rejects_forged_receipt_and_lineage_metadata(tmp_path: Path) -> None:

@@ -273,7 +273,6 @@ def test_finalized_first_cursor_replay_after_later_same_epoch_spend_is_idempoten
 @pytest.mark.parametrize(
     ("reason", "source"),
     (
-        ("semantic_duplicate", no_signal_source()),
         (
             "point_in_time_leakage",
             "def create_strategy(context):\n"
@@ -299,8 +298,6 @@ def test_finalized_first_cursor_replay_after_later_same_epoch_spend_is_idempoten
 def test_terminal_failures_are_visible_attempts_and_debit_budget(tmp_path: Path, reason: str, source: str) -> None:
     runtime = resolve_generated_strategy_runtime(Path(sys.executable))
     view = _view()
-    if reason == "semantic_duplicate":
-        view = view.model_copy(update={"existing_semantic_hashes": (_proposal_semantic_hash(_proposal(source)),)})
     result = DayDiscoveryLoop(
         DayDiscoveryLoopConfig(
             pipeline=_pipeline(tmp_path, FixedHypothesisGenerator(_proposal(source)), runtime),
@@ -316,6 +313,55 @@ def test_terminal_failures_are_visible_attempts_and_debit_budget(tmp_path: Path,
     reader = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader()
     version = reader.day_hypothesis_versions(market_id=view.market_id)[0].version
     assert len(reader.day_attempts_for_review(view.market_id, version.hypothesis_version_id)) == 1
+
+
+def test_semantic_duplicate_reuses_existing_parent_and_persists_terminal_cycle(
+    tmp_path: Path,
+) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    candidate = _proposal(no_signal_source())
+    pipeline = _pipeline(tmp_path, FixedHypothesisGenerator(candidate), runtime)
+    first = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            pipeline=pipeline,
+            sandbox=GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
+            max_drafts=1,
+        )
+    ).run(_view())
+    duplicate_view = _view().model_copy(
+        update={
+            "cursor": "semantic-duplicate-with-parent",
+            "existing_semantic_hashes": (_proposal_semantic_hash(candidate),),
+        }
+    )
+    duplicate_candidate = replace(
+        candidate,
+        llm_receipt=replace(
+            candidate.llm_receipt,
+            prompt_sha256="c" * 64,
+            response_sha256="d" * 64,
+        ),
+    )
+
+    duplicate = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            pipeline=_pipeline(tmp_path, FixedHypothesisGenerator(duplicate_candidate), runtime),
+            sandbox=GeneratedStrategySandbox(runtime, tmp_path / "sandbox", duplicate_view.resource_limits),
+            max_drafts=1,
+        )
+    ).run(duplicate_view)
+
+    reader = pipeline.stores.ledger.reader()
+    assert first.accepted is True
+    assert duplicate.terminal_reason == "semantic_duplicate"
+    assert len(reader.day_hypothesis_versions()) == 1
+    assert len(reader.day_strategy_capsules()) == 1
+    state = reader.day_discovery_cycle_state(duplicate.cycle_id)
+    assert state.events[-1].event_kind.value == "cycle_finalized"
+    version_id = first.hypothesis_version_id
+    assert version_id is not None
+    reviewed = reader.day_attempts_for_review(MarketId.US_EQUITIES, version_id)
+    assert tuple(item.attempt.error_class for item in reviewed) == (None, "semantic_duplicate")
 
 
 def test_feedback_allowlist_excludes_sealed_symbol_account_provider_and_secret() -> None:
@@ -472,14 +518,19 @@ def test_terminal_drafts_exhaust_cartesian_budget_without_extra_generation(
     tmp_path: Path,
 ) -> None:
     runtime = resolve_generated_strategy_runtime(Path(sys.executable))
-    view = _view().model_copy(
-        update={"existing_semantic_hashes": (_proposal_semantic_hash(_proposal(no_signal_source())),)}
+    view = _view()
+    leaking_source = (
+        "def create_strategy(context):\n"
+        "    class Strategy:\n"
+        "        def observe(self, bar, candidate):\n"
+        "            return bar['future_bar']\n"
+        "    return Strategy()\n"
     )
     candidates = [
         replace(
-            _proposal(no_signal_source()),
+            _proposal(leaking_source),
             llm_receipt=replace(
-                _proposal(no_signal_source()).llm_receipt,
+                _proposal(leaking_source).llm_receipt,
                 response_sha256=f"{index:064x}",
                 called_at=_view().observed_at + dt.timedelta(microseconds=index),
             ),

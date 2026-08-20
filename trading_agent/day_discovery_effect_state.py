@@ -17,10 +17,12 @@ from trading_agent.day_discovery_loop import (
     _canonical_view,
     _capsule_request,
     _preflight_reason,
+    _proposal_semantic_hash,
     _safe_reason_token,
     _sha,
 )
 from trading_agent.day_discovery_state_machine import _event_after, _prepared_from_state
+from trading_agent.day_hypothesis_models import HypothesisFamily, HypothesisVersion
 from trading_agent.day_research_attempt_binding import preregistered_attempted_artifact_ref
 from trading_agent.day_strategy_capsule import build_strategy_capsule
 from trading_agent.day_strategy_capsule_models import InvalidStrategyCapsuleError, StrategyCapsule
@@ -234,17 +236,33 @@ def _finalize_science_and_branch(
     capsule: StrategyCapsule | None,
 ) -> None:
     prepared = _prepared_from_state(state)
-    artifact_ref = preregistered_attempted_artifact_ref(prepared.version.code_sha256)
+    family = prepared.family
+    version = prepared.version
+    register_science = True
+    if reason == "semantic_duplicate":
+        family, version = _existing_semantic_parent(loop, prepared.proposal())
+        register_science = False
+    attempt_branch_index = prepared.branch_index
+    if not register_science:
+        prior_attempts = loop.config.pipeline.stores.ledger.reader().day_attempts_for_review(
+            version.market_id,
+            version.hypothesis_version_id,
+        )
+        attempt_branch_index = 1 + max(
+            (stored.attempt.branch_index for stored in prior_attempts),
+            default=-1,
+        )
+    artifact_ref = preregistered_attempted_artifact_ref(version.code_sha256)
     if capsule is not None:
         artifact_ref = capsule.artifact_ref
     status = AttemptStatus.SUCCEEDED if reason is None else AttemptStatus.FAILED
     attempt = ResearchAttempt(
         attempt_id=prepared.attempt_id,
-        hypothesis_id=prepared.version.hypothesis_version_id,
-        branch_index=prepared.branch_index,
+        hypothesis_id=version.hypothesis_version_id,
+        branch_index=attempt_branch_index,
         input_hashes=(view.data_manifest_sha256,),
-        code_sha256=prepared.version.code_sha256,
-        data_manifest_sha256=view.data_manifest_sha256,
+        code_sha256=version.code_sha256,
+        data_manifest_sha256=version.data_manifest_sha256,
         started_at=prepared.attempt_started_at,
         finished_at=prepared.attempt_finished_at,
         status=status,
@@ -254,7 +272,7 @@ def _finalize_science_and_branch(
     )
     binding = _binding(
         attempt,
-        prepared.version,
+        version,
         artifact_ref,
         prepared.bound_at,
         prepared.search_budget_debit,
@@ -274,8 +292,8 @@ def _finalize_science_and_branch(
     branch_payload = {
         "accepted": capsule is not None,
         "attempt_id": attempt.attempt_id,
-        "family_id": prepared.family.family_id,
-        "hypothesis_version_id": prepared.version.hypothesis_version_id,
+        "family_id": family.family_id,
+        "hypothesis_version_id": version.hypothesis_version_id,
         "capsule_id": None if capsule is None else capsule.capsule_id,
         "admission_id": admission_id,
         "terminal_reason": reason,
@@ -289,11 +307,39 @@ def _finalize_science_and_branch(
         loop.config.clock,
     )
     with loop.config.pipeline.stores.ledger.writer() as writer:
-        writer.register_strategy_research(prepared.preregistration)
-        writer.register_day_hypothesis_family(prepared.family)
-        writer.register_day_hypothesis_version(prepared.version)
+        if register_science:
+            writer.register_strategy_research(prepared.preregistration)
+            writer.register_day_hypothesis_family(family)
+            writer.register_day_hypothesis_version(version)
         writer.append_strategy_research_attempt(attempt)
         writer.register_day_research_attempt_binding(binding)
         if capsule is not None:
             writer._register_day_strategy_capsule(capsule)
         writer.finalize_day_discovery_branch(event)
+
+
+def _existing_semantic_parent(
+    loop: DayDiscoveryLoop,
+    proposal: ProposedHypothesis,
+) -> tuple[HypothesisFamily, HypothesisVersion]:
+    reader = loop.config.pipeline.stores.ledger.reader()
+    families = {stored.family.family_id: stored.family for stored in reader.day_hypothesis_families()}
+    expected = _proposal_semantic_hash(proposal)
+    matches = tuple(
+        (family, stored.version)
+        for stored in reader.day_hypothesis_versions()
+        if (family := families.get(stored.version.family_id)) is not None
+        and _sha(
+            "|".join(
+                (
+                    family.canonical_question.casefold().strip(),
+                    family.economic_mechanism.casefold().strip(),
+                    *stored.version.methodology_tags,
+                )
+            )
+        )
+        == expected
+    )
+    if len(matches) != 1:
+        raise DayDiscoveryError("semantic_duplicate_parent_invalid")
+    return matches[0]

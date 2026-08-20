@@ -170,17 +170,6 @@ def submit_day_agent_hypothesis(
     submission = _validated_submission(request, services, binding)
     proposal = _proposal(request, submission, binding, services.researcher_context.sources)
     view = _lineage_view(request, proposal, binding, services)
-    if _proposal_semantic_hash(proposal) in view.existing_semantic_hashes:
-        return DayAgentDiscoveryBridgeResult(
-            accepted=False,
-            capsule_id=None,
-            first_shadow_eligible_at=view.first_eligible_completed_bar_at,
-            terminal_reason="semantic_duplicate",
-            cycle_id=hashlib.sha256(
-                f"{request.task.task_id}:{request.decision_step.step_id}:semantic_duplicate".encode()
-            ).hexdigest(),
-            hypothesis_version_id=None,
-        )
     context = _task_context(request.task, proposal.cited_sources, services.researcher_context)
     base_config = services.discovery_loop.config
     fixed_pipeline = replace(
@@ -434,14 +423,6 @@ def _semantic_hash(hypothesis: str, mechanism: str, methodology_tags: tuple[str,
             (hypothesis.casefold().strip(), mechanism.casefold().strip(), *methodology_tags)
         ).encode()
     ).hexdigest()
-
-
-def _proposal_semantic_hash(proposal: ProposedHypothesis) -> str:
-    return _semantic_hash(
-        proposal.card.hypothesis.hypothesis,
-        proposal.card.economic_mechanism,
-        proposal.strategy_draft.methodology_tags,
-    )
 
 
 def _task_context(
