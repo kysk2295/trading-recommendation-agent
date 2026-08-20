@@ -11,9 +11,11 @@ from typing import Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
+from trading_agent.generated_strategy_protocol import BarFrame
 from trading_agent.research_identity_models import AgentFamily, MarketId, StrategyLaneRef
 from trading_agent.signal_contract_models import EvidenceRef, QuoteValidation, TradeTarget
-from trading_agent.us_day_situation_models import FlowObservationKind, UsDaySituationMap
+from trading_agent.us_day_situation_models import FlowInferenceKind, FlowObservationKind, UsDaySituationMap
+from trading_agent.us_forward_shadow_models import completed_bar_id
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _TOKEN = re.compile(r"^[a-z0-9][a-z0-9_]{0,63}$")
@@ -95,7 +97,7 @@ class UsDayCurrentMarket(BaseModel):
     quote: QuoteValidation
     quote_ref: EvidenceRef
     current_bar_ref: EvidenceRef
-    allowed_prices: tuple[Decimal, ...] = Field(min_length=4, max_length=16)
+    current_bar: BarFrame
 
     @model_validator(mode="after")
     def validate_market(self) -> Self:
@@ -103,10 +105,10 @@ class UsDayCurrentMarket(BaseModel):
             _SYMBOL.fullmatch(self.symbol) is None
             or self.quote_ref.namespace != "quote/snapshot"
             or self.current_bar_ref.namespace != "research/current_bar"
-            or any(not item.is_finite() or item <= 0 for item in self.allowed_prices)
-            or self.allowed_prices != tuple(sorted(set(self.allowed_prices)))
-            or self.quote.bid not in self.allowed_prices
-            or self.quote.ask not in self.allowed_prices
+            or self.current_bar.symbol != self.symbol
+            or self.current_bar_ref.record_id != completed_bar_id(self.current_bar)
+            or self.current_bar_ref.observed_at != self.current_bar.timestamp
+            or self.quote_ref.observed_at != self.quote.observed_at
         ):
             raise ValueError("invalid current market evidence")
         return self
@@ -121,6 +123,9 @@ class UsDayTradeThesis(BaseModel):
     situation_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     agent_version_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     playbook_id: str
+    theme_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    catalyst_event_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    flow_inference_kind: FlowInferenceKind | None
     theme_name: str = Field(min_length=1, max_length=80)
     symbol: str | None
     entry_price: Decimal | None

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, cast, override
+from decimal import Decimal
+from typing import Any, Protocol, override
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -13,7 +14,7 @@ from trading_agent.signal_contract_models import (
     SignalSide,
     TradeSignalEnvelope,
 )
-from trading_agent.us_day_situation_models import UsDaySituationMap
+from trading_agent.us_day_situation_models import FlowObservationKind, ThemeMap, UsDaySituationMap
 from trading_agent.us_day_thesis_models import (
     DayTradeDecision,
     EvidenceBoundRationale,
@@ -42,6 +43,9 @@ class _ThesisSubmission(BaseModel):
     situation_id: str
     agent_version_id: str
     playbook_id: str
+    theme_id: str
+    catalyst_event_id: str
+    flow_inference_kind: str | None
     theme_name: str
     symbol: str | None
     entry_price: object | None
@@ -125,9 +129,10 @@ def reason_trade_thesis(
             **submission.model_dump(mode="python"),
             evidence_refs=evidence_refs,
         )
+        theme, markets = _validate_current_context(thesis, situation, current_markets)
         if thesis.decision is not DayTradeDecision.RECOMMEND:
             return UsDayThesisResult(thesis=thesis, signal=None)
-        market = _validate_recommendation(thesis, champion, situation, current_markets)
+        market = _validate_recommendation(thesis, champion, theme, markets)
         return UsDayThesisResult(thesis=thesis, signal=_project_signal(thesis, champion, market))
     except (AttributeError, TypeError, ValidationError, ValueError):
         raise InvalidUsDayThesisError from None
@@ -149,60 +154,101 @@ def _validate_authority(
         raise InvalidUsDayThesisError
 
 
+def _validate_current_context(
+    thesis: UsDayTradeThesis,
+    situation: UsDaySituationMap,
+    markets: tuple[UsDayCurrentMarket, ...],
+) -> tuple[ThemeMap, dict[str, UsDayCurrentMarket]]:
+    theme = next((item for item in situation.themes if item.theme_id == thesis.theme_id), None)
+    if theme is None:
+        raise InvalidUsDayThesisError
+    catalyst = next((item for item in theme.catalysts if item.event_id == thesis.catalyst_event_id), None)
+    labels = set(thesis.theme_name.split("_"))
+    meaningful_keywords = set(theme.keywords) - {"active", "demand", "market", "stock", "theme"}
+    market_by_symbol = {item.symbol: item for item in markets}
+    leader_by_symbol = {item.symbol: item for item in theme.leaders}
+    all_leaders = {leader.symbol: leader for item in situation.themes for leader in item.leaders}
+    if (
+        catalyst is None
+        or not labels & meaningful_keywords
+        or len(market_by_symbol) != len(markets)
+        or set(market_by_symbol) != set(all_leaders)
+    ):
+        raise InvalidUsDayThesisError
+    for symbol, market in market_by_symbol.items():
+        leader = all_leaders[symbol]
+        if (
+            market.current_bar.timestamp != situation.completed_bar_at
+            or market.current_bar_ref not in leader.evidence_refs
+            or market.quote_ref not in leader.evidence_refs
+            or thesis.observed_at < market.quote.observed_at
+            or thesis.observed_at > market.quote.valid_until
+            or thesis.valid_until > market.quote.valid_until
+        ):
+            raise InvalidUsDayThesisError
+    if (
+        thesis.observed_at < situation.evaluated_at
+        or any(ref.observed_at > thesis.observed_at for ref in situation.evidence_refs)
+        or (thesis.symbol is not None and thesis.symbol not in leader_by_symbol)
+    ):
+        raise InvalidUsDayThesisError
+    return theme, market_by_symbol
+
+
 def _validate_recommendation(
     thesis: UsDayTradeThesis,
     champion: UsDayChampion,
-    situation: UsDaySituationMap,
-    markets: tuple[UsDayCurrentMarket, ...],
+    theme: ThemeMap,
+    markets: dict[str, UsDayCurrentMarket],
 ) -> UsDayCurrentMarket:
     assert thesis.symbol is not None and thesis.entry_price is not None and thesis.stop_price is not None
-    theme = next(
-        (item for item in situation.themes if any(leader.symbol == thesis.symbol for leader in item.leaders)),
-        None,
-    )
-    leader = None if theme is None else next(item for item in theme.leaders if item.symbol == thesis.symbol)
-    market = next((item for item in markets if item.symbol == thesis.symbol), None)
+    leader = next(item for item in theme.leaders if item.symbol == thesis.symbol)
+    catalyst = next(item for item in theme.catalysts if item.event_id == thesis.catalyst_event_id)
+    market = markets[thesis.symbol]
     playbook = next(item for item in champion.playbooks if item.playbook_id == thesis.playbook_id)
-    if theme is None or leader is None or market is None:
-        raise InvalidUsDayThesisError
-    all_situation_refs = {item.canonical_id: item for item in situation.evidence_refs}
-    if any(
-        ref.canonical_id not in all_situation_refs or all_situation_refs[ref.canonical_id] != ref
-        for ref in thesis.evidence_refs
-    ):
-        raise InvalidUsDayThesisError
-    unvalidated_rationales = (
+    rationales = (
         thesis.theme_rationale,
         thesis.catalyst_rationale,
         thesis.leader_rationale,
         thesis.flow_rationale,
     )
-    if any(item is None for item in unvalidated_rationales):
+    if any(item is None for item in rationales):
         raise InvalidUsDayThesisError
-    rationales = cast(tuple[EvidenceBoundRationale, ...], unvalidated_rationales)
-    allowed_rationale_refs = (
-        {ref.canonical_id for ref in theme.claims[0].evidence_refs},
-        {ref.canonical_id for catalyst in theme.catalysts for ref in catalyst.evidence_refs},
-        {ref.canonical_id for ref in leader.evidence_refs},
-        {ref.canonical_id for ref in leader.flow.evidence_refs}
-        | {ref.canonical_id for inference in leader.inferences for ref in inference.evidence_refs},
+    theme_rationale, catalyst_rationale, leader_rationale, flow_rationale = rationales
+    assert theme_rationale and catalyst_rationale and leader_rationale and flow_rationale
+    expected_flow_refs = leader.flow.evidence_refs
+    if flow_rationale.observation_kind is FlowObservationKind.OBSERVED:
+        if thesis.flow_inference_kind is not None:
+            raise InvalidUsDayThesisError
+    else:
+        inference = next(
+            (item for item in leader.inferences if item.kind == thesis.flow_inference_kind),
+            None,
+        )
+        if inference is None:
+            raise InvalidUsDayThesisError
+        expected_flow_refs = inference.evidence_refs
+    exact_bindings = (
+        (theme_rationale.evidence_refs, theme.claims[0].evidence_refs),
+        (catalyst_rationale.evidence_refs, catalyst.evidence_refs),
+        (leader_rationale.evidence_refs, leader.evidence_refs),
+        (flow_rationale.evidence_refs, expected_flow_refs),
     )
-    if any(
-        not {ref.canonical_id for ref in rationale.evidence_refs} <= allowed
-        for rationale, allowed in zip(rationales, allowed_rationale_refs, strict=True)
-    ):
+    if any(actual != expected for actual, expected in exact_bindings):
         raise InvalidUsDayThesisError
-    prices = (thesis.stop_price, thesis.entry_price, *(item.price for item in thesis.targets))
+    entry = market.quote.ask if playbook.entry_type == "stop_trigger" else market.quote.bid
+    structure = {
+        Decimal(str(market.current_bar.low)),
+        Decimal(str(market.current_bar.open)),
+        Decimal(str(market.current_bar.prior_close)),
+    }
+    risk = entry - thesis.stop_price
+    expected_targets = tuple(entry + risk * Decimal(index) for index in range(1, len(thesis.targets) + 1))
     if (
-        any(item not in market.allowed_prices for item in prices)
-        or thesis.entry_price != market.quote.ask
-        or market.quote_ref not in situation.evidence_refs
-        or market.current_bar_ref not in situation.evidence_refs
-        or thesis.observed_at < situation.evaluated_at
-        or thesis.observed_at < market.quote.observed_at
-        or thesis.observed_at > market.quote.valid_until
-        or thesis.valid_until > market.quote.valid_until
-        or (playbook.entry_type == "limit" and thesis.entry_price != market.quote.bid)
+        thesis.entry_price != entry
+        or thesis.stop_price not in structure
+        or risk <= 0
+        or tuple(item.price for item in thesis.targets) != expected_targets
     ):
         raise InvalidUsDayThesisError
     return market

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import override
 
@@ -21,7 +22,7 @@ class InvalidUsDayThesisStoreError(ValueError):
 
 class UsDayThesisStore:
     def __init__(self, root: Path) -> None:
-        self.root = root
+        self.root = Path(os.path.abspath(root.expanduser())).resolve(strict=False)
 
     def publish_thesis(self, thesis: UsDayTradeThesis) -> bool:
         return self._publish(self.root / "theses" / f"{thesis.thesis_id}.json", thesis.model_dump_json())
@@ -29,9 +30,19 @@ class UsDayThesisStore:
     def publish_change(self, change: UsDayThesisChange) -> bool:
         thesis = self.thesis(change.thesis_id)
         prior = self.changes(change.thesis_id)
-        parent_times = {thesis.thesis_id: thesis.observed_at} | {item.event_id: item.occurred_at for item in prior}
-        parent_time = parent_times.get(change.parent_event_id)
-        if parent_time is None or change.occurred_at < parent_time:
+        existing = next((item for item in prior if item.event_id == change.event_id), None)
+        if existing is not None:
+            if existing != change:
+                raise InvalidUsDayThesisStoreError
+            return False
+        latest_id = thesis.thesis_id if not prior else prior[-1].event_id
+        latest_time = thesis.observed_at if not prior else prior[-1].occurred_at
+        terminal = {"cancel_entry", "invalidate_logic", "close"}
+        if (
+            change.parent_event_id != latest_id
+            or change.occurred_at < latest_time
+            or (prior and prior[-1].kind.value in terminal)
+        ):
             raise InvalidUsDayThesisStoreError
         return self._publish(
             self.root / "changes" / change.thesis_id / f"{change.event_id}.json",
@@ -75,7 +86,23 @@ class UsDayThesisStore:
                 for item, path in zip(changes, paths, strict=True)
             ):
                 raise InvalidUsDayThesisStoreError
-            return tuple(sorted(changes, key=lambda item: (item.occurred_at, item.event_id)))
+            ordered: list[UsDayThesisChange] = []
+            parent = thesis_id
+            parent_time = self.thesis(thesis_id).observed_at
+            terminal = {"cancel_entry", "invalidate_logic", "close"}
+            remaining = {item.event_id: item for item in changes}
+            while remaining:
+                children = tuple(item for item in remaining.values() if item.parent_event_id == parent)
+                if len(children) != 1 or (ordered and ordered[-1].kind.value in terminal):
+                    raise InvalidUsDayThesisStoreError
+                child = children[0]
+                if child.occurred_at < parent_time:
+                    raise InvalidUsDayThesisStoreError
+                ordered.append(child)
+                del remaining[child.event_id]
+                parent = child.event_id
+                parent_time = child.occurred_at
+            return tuple(ordered)
         except (InvalidPrivateImmutableFileError, OSError, ValidationError, ValueError):
             raise InvalidUsDayThesisStoreError from None
 
