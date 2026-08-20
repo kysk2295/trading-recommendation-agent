@@ -112,7 +112,7 @@ def _bars_valid(
     if (
         any(item.symbol != first_symbol for item in bars)
         or timestamps != tuple(sorted(set(timestamps)))
-        or any(not bounds[0] < timestamp < bounds[1] for timestamp in timestamps)
+        or any(not bounds[0] <= timestamp < bounds[1] for timestamp in timestamps)
     ):
         return False
     if len(timestamps) < 3:
@@ -127,7 +127,7 @@ def _current_time_valid(
     bounds: tuple[dt.datetime, dt.datetime],
 ) -> bool:
     return (
-        latest_at <= observed_at < bounds[1]
+        latest_at + dt.timedelta(minutes=1) <= observed_at < bounds[1]
         and bounds[0] < observed_at
         and observed_at - latest_at <= dt.timedelta(seconds=90)
     )
@@ -156,7 +156,10 @@ def current_xnys_tick_at(tick: UsForwardShadowTick, evaluation_at: dt.datetime) 
         return False
     bounds = regular_session_bounds(tick.session_date)
     latest = tick.bars[-1]
-    expected_completed_bar_at = evaluation_at.astimezone(dt.UTC).replace(second=0, microsecond=0)
+    expected_completed_bar_at = evaluation_at.astimezone(dt.UTC).replace(
+        second=0,
+        microsecond=0,
+    ) - dt.timedelta(minutes=1)
     return (
         bounds is not None
         and tick.session_date == evaluation_at.astimezone(NEW_YORK).date()

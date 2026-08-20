@@ -29,7 +29,11 @@ def run_us_forward_shadow_tick(
 ) -> UsForwardShadowTickResult:
     checked = validate_current_us_forward_shadow_tick(tick, evaluation_at=evaluation_at)
     reader = services.ledger.reader()
-    policy = _exact_policy(checked, reader.day_exploration_policies(MarketId.US_EQUITIES))
+    policy = _exact_policy(
+        checked,
+        reader.day_exploration_policies(MarketId.US_EQUITIES),
+        evaluation_at=evaluation_at,
+    )
     capsules = _active_capsules(policy, services)
     states = reader.day_forward_trials(MarketId.US_EQUITIES)
     by_capsule = {
@@ -39,7 +43,11 @@ def run_us_forward_shadow_tick(
     }
     results = tuple(
         advance_us_forward_shadow_capsule(
-            checked, capsule, by_capsule.get(capsule.capsule_id), services
+            checked,
+            capsule,
+            by_capsule.get(capsule.capsule_id),
+            services,
+            evaluation_at=evaluation_at,
         )
         for capsule in capsules
     )
@@ -65,6 +73,8 @@ def validate_current_us_forward_shadow_tick(
 def _exact_policy(
     tick: UsForwardShadowTick,
     policies: tuple[ExplorationPolicy, ...],
+    *,
+    evaluation_at: dt.datetime,
 ) -> ExplorationPolicy:
     matches = tuple(policy for policy in policies if policy.policy_id == tick.policy_id)
     if len(matches) != 1:
@@ -75,7 +85,7 @@ def _exact_policy(
         payload.market_id is not MarketId.US_EQUITIES
         or payload.effective_session_date != tick.session_date
         or payload.calendar_snapshot_id != tick.calendar_snapshot_id
-        or payload.effective_at > tick.observed_at
+        or payload.effective_at > evaluation_at
         or len(payload.active_capsule_ids) > 3
     ):
         raise InvalidUsForwardShadowRuntimeError("policy_not_effective")

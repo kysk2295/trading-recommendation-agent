@@ -28,6 +28,8 @@ def evaluate_generated_signal(
     tick: UsForwardShadowTick,
     capsule: StrategyCapsule,
     services: UsForwardShadowServices,
+    *,
+    evaluation_at: dt.datetime,
 ) -> DayTradeSignalProjection | None:
     generated_id = capsule.generated_artifact_id
     if generated_id is None:
@@ -58,10 +60,10 @@ def evaluate_generated_signal(
             completed_bar=DayCompletedBarLineage(
                 market_id=MarketId.US_EQUITIES,
                 bar=tick.bars[-1],
-                valid_until=tick.bars[-1].timestamp + dt.timedelta(seconds=90),
+                valid_until=evaluation_at + dt.timedelta(seconds=5),
                 record_id=tick.completed_bar_id,
             ),
-            observed_at=tick.observed_at,
+            observed_at=evaluation_at,
             quote_validation=tick.quote,
             target_policy=DayTargetProjectionPolicy(
                 rules=(

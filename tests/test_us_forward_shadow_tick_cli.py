@@ -72,7 +72,7 @@ def test_tick_cli_happy_path_is_restart_safe(tmp_path: Path, capsys) -> None:
     (
         dt.datetime(2026, 8, 21, 14, 1, 30, tzinfo=dt.UTC),
         dt.datetime(2026, 8, 20, 21, 0, tzinfo=dt.UTC),
-        dt.datetime(2026, 8, 20, 14, 2, 30, tzinfo=dt.UTC),
+        dt.datetime(2026, 8, 20, 14, 3, 30, tzinfo=dt.UTC),
     ),
 )
 def test_tick_cli_rejects_noncurrent_or_stale_tick_before_ledger_creation(

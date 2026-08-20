@@ -170,10 +170,15 @@ class DayForwardTrialEvent(ForwardTrialModel):
             case (
                 DayForwardTrialEventKind.SIGNAL
                 | DayForwardTrialEventKind.ENTRY
-                | DayForwardTrialEventKind.OBSERVED
                 | DayForwardTrialEventKind.NO_SIGNAL
             ):
                 valid_payload = self.exit_reason is None and self.outcome_ref is None and not self.reason_codes
+            case DayForwardTrialEventKind.OBSERVED:
+                valid_payload = (
+                    self.exit_reason is None
+                    and self.outcome_ref is None
+                    and self.reason_codes in ((), ("target_r1_reached",))
+                )
             case DayForwardTrialEventKind.EXIT:
                 valid_payload = self.exit_reason is not None and self.outcome_ref is not None and not self.reason_codes
             case DayForwardTrialEventKind.BLOCKED | DayForwardTrialEventKind.FAILED:

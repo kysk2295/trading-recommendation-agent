@@ -25,11 +25,16 @@ from trading_agent.us_forward_shadow_artifacts import (
     InvalidUsForwardShadowArtifactError,
     UsForwardShadowArtifactStore,
     UsForwardShadowOutcomeArtifact,
+    UsForwardShadowOutcomeLeg,
     UsForwardShadowSignalArtifact,
     build_us_forward_shadow_outcome_artifact,
     build_us_forward_shadow_signal_artifact,
 )
-from trading_agent.us_forward_shadow_models import UsForwardShadowTick, completed_bar_id
+from trading_agent.us_forward_shadow_models import (
+    UsForwardShadowTick,
+    completed_bar_id,
+    current_xnys_tick_at,
+)
 
 SHA_A = "a" * 64
 SHA_B = "b" * 64
@@ -72,6 +77,42 @@ def test_tick_rejects_quote_older_than_five_seconds_despite_extended_valid_until
         UsForwardShadowTick.model_validate(payload)
 
     # Then untrusted valid_until cannot make a stale quote current.
+
+
+def test_current_tick_requires_the_last_completed_minute_and_admits_opening_bar() -> None:
+    payload = _tick_payload()
+    tick = UsForwardShadowTick.model_validate(payload)
+
+    assert current_xnys_tick_at(tick, dt.datetime(2026, 8, 20, 14, 1, 30, tzinfo=dt.UTC))
+
+    forming = _tick_payload()
+    bars = cast(list[TestValue], forming["bars"])
+    latest = cast(dict[str, TestValue], bars[-1])
+    latest["timestamp"] = dt.datetime(2026, 8, 20, 14, 1, tzinfo=dt.UTC)
+    forming["completed_bar_id"] = completed_bar_id(BarFrame.model_validate(latest))
+    cast(dict[str, TestValue], forming["candidate"])["timestamp"] = latest["timestamp"]
+    with pytest.raises((ValidationError, ValueError), match="us_forward_shadow_tick_invalid"):
+        UsForwardShadowTick.model_validate(forming)
+
+    opening = _tick_payload()
+    opening_bar = _bar(dt.datetime(2026, 8, 20, 13, 30, tzinfo=dt.UTC), 100.0)
+    opening["bars"] = [opening_bar]
+    opening["completed_bar_id"] = completed_bar_id(BarFrame.model_validate(opening_bar))
+    cast(dict[str, TestValue], opening["candidate"])["timestamp"] = opening_bar["timestamp"]
+    cast(dict[str, TestValue], opening["quote"])["observed_at"] = dt.datetime(
+        2026, 8, 20, 13, 31, tzinfo=dt.UTC
+    )
+    cast(dict[str, TestValue], opening["quote"])["valid_until"] = dt.datetime(
+        2026, 8, 20, 13, 31, 10, tzinfo=dt.UTC
+    )
+    evidence = cast(list[TestValue], opening["evidence_refs"])
+    cast(dict[str, TestValue], evidence[0])["observed_at"] = opening_bar["timestamp"]
+    opening["observed_at"] = dt.datetime(2026, 8, 20, 13, 31, tzinfo=dt.UTC)
+
+    assert current_xnys_tick_at(
+        UsForwardShadowTick.model_validate(opening),
+        dt.datetime(2026, 8, 20, 13, 31, tzinfo=dt.UTC),
+    )
 
 
 @pytest.mark.parametrize("mutation", ("closed", "stale", "future", "cross_session"))
@@ -177,8 +218,8 @@ def test_shadow_artifact_store_rejects_conflict_tamper_symlink_and_wrong_mode(tm
 
 
 def _tick_payload() -> dict[str, TestValue]:
-    first = _bar(dt.datetime(2026, 8, 20, 14, 0, tzinfo=dt.UTC), 100.0)
-    latest = _bar(dt.datetime(2026, 8, 20, 14, 1, tzinfo=dt.UTC), 101.0)
+    first = _bar(dt.datetime(2026, 8, 20, 13, 59, tzinfo=dt.UTC), 100.0)
+    latest = _bar(dt.datetime(2026, 8, 20, 14, 0, tzinfo=dt.UTC), 101.0)
     quote_at = dt.datetime(2026, 8, 20, 14, 1, 25, tzinfo=dt.UTC)
     return {
         "schema_version": 1,
@@ -283,7 +324,24 @@ def _outcome_artifact() -> UsForwardShadowOutcomeArtifact:
         signal_artifact_id=_signal_artifact().artifact_id,
         exit_completed_bar_id="d" * 64,
         entry_price=Decimal("101"),
-        exit_price=Decimal("102"),
+        legs=(
+            UsForwardShadowOutcomeLeg(
+                target_label="r1",
+                exit_completed_bar_id="d" * 64,
+                exit_price=Decimal("102"),
+                exit_reason=DayForwardExitReason.TARGET,
+                weight=Decimal("0.5"),
+                gross_return=Decimal("0"),
+            ),
+            UsForwardShadowOutcomeLeg(
+                target_label="r2",
+                exit_completed_bar_id="d" * 64,
+                exit_price=Decimal("103"),
+                exit_reason=DayForwardExitReason.TARGET,
+                weight=Decimal("0.5"),
+                gross_return=Decimal("0"),
+            ),
+        ),
         round_trip_cost_bps=Decimal("5"),
         exit_reason=DayForwardExitReason.TARGET,
         recorded_at=dt.datetime(2026, 8, 20, 14, 5, tzinfo=dt.UTC),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -45,19 +46,19 @@ def test_no_signal_trial_is_future_only_and_tick_replay_is_idempotent(tmp_path: 
     assert tuple(event.event_kind for event in state.events) == (DayForwardTrialEventKind.NO_SIGNAL,)
 
 
-def test_signal_entry_observed_exit_survives_restart(tmp_path: Path) -> None:
+def test_r1_observation_keeps_trial_open_until_r2_then_records_equal_weight_legs(tmp_path: Path) -> None:
     # Given one sandboxed strategy that emits a long signal only for AAPL.
     services, _ = prepared_runtime(tmp_path, source=signal_source())
     _ = run_us_forward_shadow_tick(shadow_tick(services, 1, 1), services)
 
-    # When future bars enter, remain between stop and target, then hit target.
+    # When future bars enter, reach 1R only, then reach the final 2R target.
     entered = run_us_forward_shadow_tick(shadow_tick(services, 2, 2), services)
-    observed = run_us_forward_shadow_tick(shadow_tick(services, 3, 3), services)
-    exited = run_us_forward_shadow_tick(shadow_tick(services, 4, 4, high=102.2), services)
+    r1_observed = run_us_forward_shadow_tick(shadow_tick(services, 3, 3, high=102.2), services)
+    exited = run_us_forward_shadow_tick(shadow_tick(services, 4, 4, high=103.2), services)
 
     # Then append-only state and immutable modeled outcome survive fresh readers.
     state = services.ledger.reader().day_forward_trials()[0]
-    assert [entered.results[0].status, observed.results[0].status, exited.results[0].status] == [
+    assert [entered.results[0].status, r1_observed.results[0].status, exited.results[0].status] == [
         UsForwardShadowStatus.ENTERED,
         UsForwardShadowStatus.OBSERVED,
         UsForwardShadowStatus.EXITED,
@@ -72,6 +73,10 @@ def test_signal_entry_observed_exit_survives_restart(tmp_path: Path) -> None:
     assert outcome_id is not None
     outcome = services.shadow_artifacts.outcome(outcome_id)
     assert outcome.modeled is True and outcome.profitability_claim is False
+    assert [(leg.target_label, leg.exit_reason.value, leg.weight) for leg in outcome.legs] == [
+        ("r1", "target", Decimal("0.5")),
+        ("r2", "target", Decimal("0.5")),
+    ]
 
 
 def test_same_bar_stop_target_collision_resolves_to_stop(tmp_path: Path) -> None:
@@ -81,12 +86,17 @@ def test_same_bar_stop_target_collision_resolves_to_stop(tmp_path: Path) -> None
     _ = run_us_forward_shadow_tick(shadow_tick(services, 2, 2), services)
 
     # When the collision bar is evaluated.
-    result = run_us_forward_shadow_tick(shadow_tick(services, 3, 3, low=99.9, high=102.2), services)
+    result = run_us_forward_shadow_tick(shadow_tick(services, 3, 3, low=99.9, high=103.2), services)
 
     # Then the conservative stop outcome is immutable.
     outcome_id = result.results[0].outcome_id
     assert outcome_id is not None
-    assert services.shadow_artifacts.outcome(outcome_id).exit_reason.value == "stop"
+    outcome = services.shadow_artifacts.outcome(outcome_id)
+    assert outcome.exit_reason.value == "stop"
+    assert [(leg.target_label, leg.exit_reason.value) for leg in outcome.legs] == [
+        ("r1", "stop"),
+        ("r2", "stop"),
+    ]
 
 
 def test_bar_gap_censors_before_outcome_and_wrong_policy_mutates_nothing(tmp_path: Path) -> None:
@@ -123,12 +133,36 @@ def test_generated_failure_is_terminal_and_redacted(tmp_path: Path) -> None:
     assert state.events[-1].event_kind is DayForwardTrialEventKind.FAILED
 
 
+def test_host_clock_owns_trial_event_signal_and_outcome_timestamps_and_identities(tmp_path: Path) -> None:
+    baseline = _host_timed_signal_run(tmp_path / "baseline", shift_untrusted_observed_at=False)
+    shifted = _host_timed_signal_run(tmp_path / "shifted", shift_untrusted_observed_at=True)
+
+    baseline_state, baseline_signal, baseline_outcome, host_times = baseline
+    shifted_state, shifted_signal, shifted_outcome, _ = shifted
+
+    assert baseline_state.trial.trial_id == shifted_state.trial.trial_id
+    assert baseline_state.trial.preregistered_at == host_times[0]
+    assert tuple(event.event_id for event in baseline_state.events) == tuple(
+        event.event_id for event in shifted_state.events
+    )
+    assert tuple(event.event_at for event in baseline_state.events) == (
+        host_times[1],
+        host_times[1],
+        host_times[2],
+        host_times[3],
+    )
+    assert baseline_signal.artifact_id == shifted_signal.artifact_id
+    assert baseline_signal.signal.observed_at == host_times[1]
+    assert baseline_outcome.outcome_id == shifted_outcome.outcome_id
+    assert baseline_outcome.recorded_at == host_times[3]
+
+
 @pytest.mark.parametrize(
     "evaluation_at",
     (
         dt.datetime(2026, 8, 21, 14, 1, 30, tzinfo=dt.UTC),
         dt.datetime(2026, 8, 20, 21, 0, tzinfo=dt.UTC),
-        dt.datetime(2026, 8, 20, 14, 2, 30, tzinfo=dt.UTC),
+        dt.datetime(2026, 8, 20, 14, 3, 30, tzinfo=dt.UTC),
     ),
 )
 def test_runtime_rejects_noncurrent_or_stale_host_tick_before_ledger_read(
@@ -142,3 +176,31 @@ def test_runtime_rejects_noncurrent_or_stale_host_tick_before_ledger_read(
         _run_us_forward_shadow_tick(tick, services, evaluation_at=evaluation_at)
 
     assert services.ledger.reader().day_forward_trials() == ()
+
+
+def _host_timed_signal_run(
+    root: Path,
+    *,
+    shift_untrusted_observed_at: bool,
+):
+    services, _ = prepared_runtime(root, source=signal_source())
+    ticks = (
+        shadow_tick(services, 1, 1),
+        shadow_tick(services, 2, 2),
+        shadow_tick(services, 3, 3, high=102.2),
+        shadow_tick(services, 4, 4, high=103.2),
+    )
+    host_times = tuple(tick.observed_at for tick in ticks)
+    outcome_id: str | None = None
+    for tick, evaluation_at in zip(ticks, host_times, strict=True):
+        checked = (
+            tick.model_copy(update={"observed_at": tick.observed_at - dt.timedelta(seconds=1)})
+            if shift_untrusted_observed_at
+            else tick
+        )
+        result = _run_us_forward_shadow_tick(checked, services, evaluation_at=evaluation_at)
+        outcome_id = result.results[0].outcome_id or outcome_id
+    state = services.ledger.reader().day_forward_trials()[0]
+    signal = services.shadow_artifacts.signal(state.trial.trial_id)
+    assert outcome_id is not None
+    return state, signal, services.shadow_artifacts.outcome(outcome_id), host_times

@@ -42,6 +42,27 @@ class UsForwardShadowSignalArtifact(UsForwardShadowArtifact):
         return self
 
 
+class UsForwardShadowOutcomeLeg(UsForwardShadowArtifact):
+    target_label: Literal["r1", "r2"]
+    exit_completed_bar_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    exit_price: Decimal
+    exit_reason: DayForwardExitReason
+    weight: Decimal
+    gross_return: Decimal
+
+    @model_validator(mode="after")
+    def validate_leg(self) -> Self:
+        if (
+            not self.exit_price.is_finite()
+            or self.exit_price <= 0
+            or not self.weight.is_finite()
+            or self.weight <= 0
+            or not self.gross_return.is_finite()
+        ):
+            raise InvalidUsForwardShadowArtifactError
+        return self
+
+
 class UsForwardShadowOutcomeArtifact(UsForwardShadowArtifact):
     schema_version: Literal[1] = 1
     outcome_id: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -50,6 +71,7 @@ class UsForwardShadowOutcomeArtifact(UsForwardShadowArtifact):
     exit_completed_bar_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     entry_price: Decimal
     exit_price: Decimal
+    legs: tuple[UsForwardShadowOutcomeLeg, UsForwardShadowOutcomeLeg]
     gross_return: Decimal
     round_trip_cost_bps: Decimal
     cost_adjusted_return: Decimal
@@ -60,7 +82,8 @@ class UsForwardShadowOutcomeArtifact(UsForwardShadowArtifact):
 
     @model_validator(mode="after")
     def validate_outcome(self) -> Self:
-        expected_gross = (self.exit_price - self.entry_price) / self.entry_price
+        expected_exit_price = sum((leg.exit_price * leg.weight for leg in self.legs), Decimal(0))
+        expected_gross = sum((leg.gross_return * leg.weight for leg in self.legs), Decimal(0))
         expected_adjusted = expected_gross - self.round_trip_cost_bps / Decimal(10_000)
         if (
             self.outcome_id != _artifact_identity(self, "outcome_id")
@@ -68,6 +91,13 @@ class UsForwardShadowOutcomeArtifact(UsForwardShadowArtifact):
             or self.entry_price <= 0
             or not self.exit_price.is_finite()
             or self.exit_price <= 0
+            or tuple(leg.target_label for leg in self.legs) != ("r1", "r2")
+            or tuple(leg.weight for leg in self.legs) != (Decimal("0.5"), Decimal("0.5"))
+            or any(
+                leg.gross_return != (leg.exit_price - self.entry_price) / self.entry_price
+                for leg in self.legs
+            )
+            or self.exit_price != expected_exit_price
             or not self.round_trip_cost_bps.is_finite()
             or self.round_trip_cost_bps < 0
             or self.gross_return != expected_gross
@@ -103,12 +133,17 @@ def build_us_forward_shadow_outcome_artifact(
     signal_artifact_id: str,
     exit_completed_bar_id: str,
     entry_price: Decimal,
-    exit_price: Decimal,
+    legs: tuple[UsForwardShadowOutcomeLeg, UsForwardShadowOutcomeLeg],
     round_trip_cost_bps: Decimal,
     exit_reason: DayForwardExitReason,
     recorded_at: AwareDatetime,
 ) -> UsForwardShadowOutcomeArtifact:
-    gross_return = (exit_price - entry_price) / entry_price
+    checked_legs = tuple(
+        leg.model_copy(update={"gross_return": (leg.exit_price - entry_price) / entry_price})
+        for leg in legs
+    )
+    exit_price = sum((leg.exit_price * leg.weight for leg in checked_legs), Decimal(0))
+    gross_return = sum((leg.gross_return * leg.weight for leg in checked_legs), Decimal(0))
     payload = {
         "schema_version": 1,
         "outcome_id": "0" * 64,
@@ -117,6 +152,7 @@ def build_us_forward_shadow_outcome_artifact(
         "exit_completed_bar_id": exit_completed_bar_id,
         "entry_price": entry_price,
         "exit_price": exit_price,
+        "legs": checked_legs,
         "gross_return": gross_return,
         "round_trip_cost_bps": round_trip_cost_bps,
         "cost_adjusted_return": gross_return - round_trip_cost_bps / Decimal(10_000),
@@ -214,6 +250,7 @@ __all__ = (
     "InvalidUsForwardShadowArtifactError",
     "UsForwardShadowArtifactStore",
     "UsForwardShadowOutcomeArtifact",
+    "UsForwardShadowOutcomeLeg",
     "UsForwardShadowSignalArtifact",
     "artifact_sha256",
     "build_us_forward_shadow_outcome_artifact",

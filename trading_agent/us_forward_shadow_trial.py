@@ -30,9 +30,11 @@ def build_us_forward_shadow_trial(
     capsule: StrategyCapsule,
     source_refs: tuple[str, ...],
     tick: UsForwardShadowTick,
+    *,
+    evaluation_at: dt.datetime,
 ) -> DayForwardTrial:
-    latest_at = tick.bars[-1].timestamp
-    interval = latest_at - tick.bars[-2].timestamp if len(tick.bars) > 1 else dt.timedelta(minutes=1)
+    registration_completed_bar_at = completed_bar_at(tick)
+    interval = completed_bar_interval(tick)
     payload = {
         "schema_version": 1,
         "trial_id": "",
@@ -46,9 +48,9 @@ def build_us_forward_shadow_trial(
         "cost_model_sha256": _model_sha256(capsule.cost_model),
         "source_refs_sha256": _model_sha256(source_refs),
         "evidence_schema_sha256": _model_sha256(capsule.evidence_schema),
-        "preregistered_at": tick.observed_at,
-        "registration_completed_bar_at": latest_at,
-        "first_eligible_completed_bar_at": latest_at + interval,
+        "preregistered_at": evaluation_at,
+        "registration_completed_bar_at": registration_completed_bar_at,
+        "first_eligible_completed_bar_at": registration_completed_bar_at + interval,
         "trading_authority": False,
         "profitability_claim": False,
     }
@@ -62,6 +64,7 @@ def build_us_forward_shadow_event(
     tick: UsForwardShadowTick,
     kind: DayForwardTrialEventKind,
     *,
+    evaluation_at: dt.datetime,
     sequence: int,
     previous_event_id: str | None,
     exit_reason: DayForwardExitReason | None = None,
@@ -80,8 +83,8 @@ def build_us_forward_shadow_event(
         "event_kind": kind,
         "completed_bar_id": tick.completed_bar_id,
         "completed_bar_sequence": tick.completed_bar_sequence,
-        "completed_bar_at": tick.bars[-1].timestamp,
-        "event_at": tick.observed_at,
+        "completed_bar_at": completed_bar_at(tick),
+        "event_at": evaluation_at,
         "exit_reason": exit_reason,
         "outcome_ref": outcome_ref,
         "reason_codes": tuple(sorted(set(reason_codes))),
@@ -110,6 +113,16 @@ def build_us_forward_shadow_outcome_ref(
     )
 
 
+def completed_bar_interval(tick: UsForwardShadowTick) -> dt.timedelta:
+    if len(tick.bars) < 2:
+        return dt.timedelta(minutes=1)
+    return tick.bars[-1].timestamp - tick.bars[-2].timestamp
+
+
+def completed_bar_at(tick: UsForwardShadowTick) -> dt.datetime:
+    return tick.bars[-1].timestamp + completed_bar_interval(tick)
+
+
 def _model_sha256(value: BaseModel | tuple[str, ...]) -> str:
     if isinstance(value, BaseModel):
         encoded = canonical_experiment_ledger_json(value)
@@ -122,4 +135,6 @@ __all__ = (
     "build_us_forward_shadow_event",
     "build_us_forward_shadow_outcome_ref",
     "build_us_forward_shadow_trial",
+    "completed_bar_at",
+    "completed_bar_interval",
 )

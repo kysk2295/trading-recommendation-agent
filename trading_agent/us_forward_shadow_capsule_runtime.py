@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import datetime as dt
 from decimal import Decimal
 
 from trading_agent.day_forward_probe_bridge import DaySignalBlocked
 from trading_agent.day_forward_trial_identity import DayForwardExitReason, DayForwardTrialEventKind
 from trading_agent.day_forward_trial_ledger import DayForwardTrialState
-from trading_agent.day_forward_trial_models import DayForwardBarOutcomeRequest, resolve_day_forward_bar_outcome
 from trading_agent.day_strategy_capsule_models import StrategyCapsule
 from trading_agent.generated_strategy_execution import GeneratedStrategyExecutionError
 from trading_agent.us_forward_shadow_artifacts import (
+    UsForwardShadowOutcomeLeg,
     build_us_forward_shadow_outcome_artifact,
     build_us_forward_shadow_signal_artifact,
 )
@@ -26,6 +27,7 @@ from trading_agent.us_forward_shadow_trial import (
     build_us_forward_shadow_event,
     build_us_forward_shadow_outcome_ref,
     build_us_forward_shadow_trial,
+    completed_bar_at,
 )
 
 
@@ -34,26 +36,47 @@ def advance_us_forward_shadow_capsule(
     capsule: StrategyCapsule,
     state: DayForwardTrialState | None,
     services: UsForwardShadowServices,
+    *,
+    evaluation_at: dt.datetime,
 ) -> UsForwardShadowCapsuleResult:
     if state is None:
         version = services.ledger.reader().day_hypothesis_version(capsule.hypothesis_version_id)
         if version is None:
             raise InvalidUsForwardShadowRuntimeError("hypothesis_version_missing")
-        trial = build_us_forward_shadow_trial(capsule, version.version.source_refs, tick)
+        trial = build_us_forward_shadow_trial(
+            capsule,
+            version.version.source_refs,
+            tick,
+            evaluation_at=evaluation_at,
+        )
         with services.ledger.writer() as writer:
             _ = writer.register_day_forward_trial(trial)
         return _result(capsule, trial.trial_id, UsForwardShadowStatus.REGISTERED)
     if state.terminal or any(event.completed_bar_id == tick.completed_bar_id for event in state.events):
         return _replayed_result(capsule, state)
-    if tick.bars[-1].timestamp < state.trial.first_eligible_completed_bar_at:
+    if completed_bar_at(tick) < state.trial.first_eligible_completed_bar_at:
         return _result(capsule, state.trial.trial_id, UsForwardShadowStatus.REGISTERED)
-    if not state.events and tick.bars[-1].timestamp > state.trial.first_eligible_completed_bar_at:
-        return _append_single(tick, capsule, state, DayForwardTrialEventKind.CENSORED, services)
+    if not state.events and completed_bar_at(tick) > state.trial.first_eligible_completed_bar_at:
+        return _append_single(
+            tick,
+            capsule,
+            state,
+            DayForwardTrialEventKind.CENSORED,
+            services,
+            evaluation_at=evaluation_at,
+        )
     if state.events and tick.completed_bar_sequence > state.events[-1].completed_bar_sequence + 1:
-        return _append_single(tick, capsule, state, DayForwardTrialEventKind.CENSORED, services)
+        return _append_single(
+            tick,
+            capsule,
+            state,
+            DayForwardTrialEventKind.CENSORED,
+            services,
+            evaluation_at=evaluation_at,
+        )
     if any(event.event_kind is DayForwardTrialEventKind.ENTRY for event in state.events):
-        return _advance_entered(tick, capsule, state, services)
-    return _observe_generated(tick, capsule, state, services)
+        return _advance_entered(tick, capsule, state, services, evaluation_at=evaluation_at)
+    return _observe_generated(tick, capsule, state, services, evaluation_at=evaluation_at)
 
 
 def _observe_generated(
@@ -61,9 +84,11 @@ def _observe_generated(
     capsule: StrategyCapsule,
     state: DayForwardTrialState,
     services: UsForwardShadowServices,
+    *,
+    evaluation_at: dt.datetime,
 ) -> UsForwardShadowCapsuleResult:
     try:
-        projection = evaluate_generated_signal(tick, capsule, services)
+        projection = evaluate_generated_signal(tick, capsule, services, evaluation_at=evaluation_at)
     except GeneratedStrategyExecutionError:
         return _append_single(
             tick,
@@ -71,10 +96,18 @@ def _observe_generated(
             state,
             DayForwardTrialEventKind.FAILED,
             services,
+            evaluation_at=evaluation_at,
             reason_codes=("generated_strategy_failed",),
         )
     if projection is None:
-        return _append_single(tick, capsule, state, DayForwardTrialEventKind.NO_SIGNAL, services)
+        return _append_single(
+            tick,
+            capsule,
+            state,
+            DayForwardTrialEventKind.NO_SIGNAL,
+            services,
+            evaluation_at=evaluation_at,
+        )
     if isinstance(projection, DaySignalBlocked):
         return _append_single(
             tick,
@@ -82,6 +115,7 @@ def _observe_generated(
             state,
             DayForwardTrialEventKind.BLOCKED,
             services,
+            evaluation_at=evaluation_at,
             reason_codes=(projection.reason.value,),
         )
     signal_artifact = build_us_forward_shadow_signal_artifact(
@@ -95,6 +129,7 @@ def _observe_generated(
         state.trial,
         tick,
         DayForwardTrialEventKind.SIGNAL,
+        evaluation_at=evaluation_at,
         sequence=len(state.events) + 1,
         previous_event_id=state.events[-1].event_id if state.events else None,
     )
@@ -102,6 +137,7 @@ def _observe_generated(
         state.trial,
         tick,
         DayForwardTrialEventKind.ENTRY,
+        evaluation_at=evaluation_at,
         sequence=signal_event.sequence + 1,
         previous_event_id=signal_event.event_id,
     )
@@ -121,40 +157,111 @@ def _advance_entered(
     capsule: StrategyCapsule,
     state: DayForwardTrialState,
     services: UsForwardShadowServices,
+    *,
+    evaluation_at: dt.datetime,
 ) -> UsForwardShadowCapsuleResult:
     signal_artifact = services.shadow_artifacts.signal(state.trial.trial_id)
     signal = signal_artifact.signal
-    target = signal.targets[0].price
-    reason = resolve_day_forward_bar_outcome(
-        DayForwardBarOutcomeRequest(
-            low=tick.bars[-1].low,
-            high=tick.bars[-1].high,
-            stop=float(signal.stop_price),
-            target=float(target),
-        )
+    targets = {target.label: target.price for target in signal.targets}
+    if tuple(targets) != ("r1", "r2"):
+        raise InvalidUsForwardShadowRuntimeError("host_targets_invalid")
+    r1_event = next(
+        (event for event in state.events if event.reason_codes == ("target_r1_reached",)),
+        None,
     )
-    if reason is None:
-        return _append_single(tick, capsule, state, DayForwardTrialEventKind.OBSERVED, services)
-    exit_price = signal.stop_price if reason is DayForwardExitReason.STOP else target
+    stop_hit = tick.bars[-1].low <= float(signal.stop_price)
+    r1_hit = tick.bars[-1].high >= float(targets["r1"])
+    r2_hit = tick.bars[-1].high >= float(targets["r2"])
+    if stop_hit:
+        return _exit_entered(
+            tick,
+            capsule,
+            state,
+            signal_artifact.artifact_id,
+            signal.entry_price,
+            signal.stop_price,
+            targets,
+            DayForwardExitReason.STOP,
+            r1_completed_bar_id=None if r1_event is None else r1_event.completed_bar_id,
+            services=services,
+            evaluation_at=evaluation_at,
+        )
+    if r2_hit:
+        return _exit_entered(
+            tick,
+            capsule,
+            state,
+            signal_artifact.artifact_id,
+            signal.entry_price,
+            signal.stop_price,
+            targets,
+            DayForwardExitReason.TARGET,
+            r1_completed_bar_id=tick.completed_bar_id if r1_event is None else r1_event.completed_bar_id,
+            services=services,
+            evaluation_at=evaluation_at,
+        )
+    if r1_hit and r1_event is None:
+        return _append_single(
+            tick,
+            capsule,
+            state,
+            DayForwardTrialEventKind.OBSERVED,
+            services,
+            evaluation_at=evaluation_at,
+            reason_codes=("target_r1_reached",),
+        )
+    return _append_single(
+        tick,
+        capsule,
+        state,
+        DayForwardTrialEventKind.OBSERVED,
+        services,
+        evaluation_at=evaluation_at,
+    )
+
+
+def _exit_entered(
+    tick: UsForwardShadowTick,
+    capsule: StrategyCapsule,
+    state: DayForwardTrialState,
+    signal_artifact_id: str,
+    entry_price: Decimal,
+    stop_price: Decimal,
+    targets: dict[str, Decimal],
+    exit_reason: DayForwardExitReason,
+    *,
+    r1_completed_bar_id: str | None,
+    services: UsForwardShadowServices,
+    evaluation_at: dt.datetime,
+) -> UsForwardShadowCapsuleResult:
+    legs = _modeled_legs(
+        tick,
+        entry_price,
+        stop_price,
+        targets,
+        exit_reason,
+        r1_completed_bar_id=r1_completed_bar_id,
+    )
     costs = Decimal("2") * (capsule.cost_model.commission_bps + capsule.cost_model.slippage_bps)
     outcome = build_us_forward_shadow_outcome_artifact(
         trial_id=state.trial.trial_id,
-        signal_artifact_id=signal_artifact.artifact_id,
+        signal_artifact_id=signal_artifact_id,
         exit_completed_bar_id=tick.completed_bar_id,
-        entry_price=signal.entry_price,
-        exit_price=exit_price,
+        entry_price=entry_price,
+        legs=legs,
         round_trip_cost_bps=costs,
-        exit_reason=reason,
-        recorded_at=tick.observed_at,
+        exit_reason=exit_reason,
+        recorded_at=evaluation_at,
     )
     _ = services.shadow_artifacts.publish_outcome(outcome)
     event = build_us_forward_shadow_event(
         state.trial,
         tick,
         DayForwardTrialEventKind.EXIT,
+        evaluation_at=evaluation_at,
         sequence=len(state.events) + 1,
         previous_event_id=state.events[-1].event_id,
-        exit_reason=reason,
+        exit_reason=exit_reason,
         outcome_ref=build_us_forward_shadow_outcome_ref(outcome),
     )
     with services.ledger.writer() as writer:
@@ -168,6 +275,50 @@ def _advance_entered(
     )
 
 
+def _modeled_legs(
+    tick: UsForwardShadowTick,
+    entry_price: Decimal,
+    stop_price: Decimal,
+    targets: dict[str, Decimal],
+    exit_reason: DayForwardExitReason,
+    *,
+    r1_completed_bar_id: str | None,
+) -> tuple[UsForwardShadowOutcomeLeg, UsForwardShadowOutcomeLeg]:
+    r1_targeted = r1_completed_bar_id is not None
+    if exit_reason is DayForwardExitReason.TARGET:
+        r1_price = targets["r1"]
+        r2_price = targets["r2"]
+        r1_reason = DayForwardExitReason.TARGET
+        r2_reason = DayForwardExitReason.TARGET
+    elif r1_targeted:
+        r1_price = targets["r1"]
+        r2_price = stop_price
+        r1_reason = DayForwardExitReason.TARGET
+        r2_reason = DayForwardExitReason.STOP
+    else:
+        r1_price = stop_price
+        r2_price = stop_price
+        r1_reason = DayForwardExitReason.STOP
+        r2_reason = DayForwardExitReason.STOP
+    r1_bar_id = tick.completed_bar_id if r1_completed_bar_id is None else r1_completed_bar_id
+    return (
+        UsForwardShadowOutcomeLeg(
+            target_label="r1",
+            exit_completed_bar_id=r1_bar_id,
+            exit_price=r1_price,
+            exit_reason=r1_reason,
+            weight=Decimal("0.5"),
+            gross_return=(r1_price - entry_price) / entry_price,
+        ),
+        UsForwardShadowOutcomeLeg(
+            target_label="r2",
+            exit_completed_bar_id=tick.completed_bar_id,
+            exit_price=r2_price,
+            exit_reason=r2_reason,
+            weight=Decimal("0.5"),
+            gross_return=(r2_price - entry_price) / entry_price,
+        ),
+    )
 def _append_single(
     tick: UsForwardShadowTick,
     capsule: StrategyCapsule,
@@ -175,12 +326,14 @@ def _append_single(
     kind: DayForwardTrialEventKind,
     services: UsForwardShadowServices,
     *,
+    evaluation_at: dt.datetime,
     reason_codes: tuple[str, ...] = (),
 ) -> UsForwardShadowCapsuleResult:
     event = build_us_forward_shadow_event(
         state.trial,
         tick,
         kind,
+        evaluation_at=evaluation_at,
         sequence=len(state.events) + 1,
         previous_event_id=state.events[-1].event_id if state.events else None,
         reason_codes=("completed_bar_gap",) if kind is DayForwardTrialEventKind.CENSORED else reason_codes,
