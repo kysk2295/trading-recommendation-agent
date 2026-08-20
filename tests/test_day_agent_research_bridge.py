@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import json
 import sys
 from dataclasses import replace
@@ -16,6 +15,7 @@ from trading_agent.day_agent_research_bridge import (
     DayAgentDiscoveryBridgeRequest,
     DayAgentDiscoveryBridgeServices,
     DayAgentResearchBridgeError,
+    publish_day_agent_research_lineage_binding,
     submit_day_agent_hypothesis,
 )
 from trading_agent.day_agent_task_models import (
@@ -33,7 +33,6 @@ from trading_agent.day_discovery_loop import (
     DayDiscoveryLoop,
     DayDiscoveryLoopConfig,
     DayDiscoveryTriggerKind,
-    _proposal_semantic_hash,
 )
 from trading_agent.experiment_ledger_models import ResearchSource, ResearchSourceKind
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
@@ -43,7 +42,7 @@ from trading_agent.generated_strategy_sandbox import GeneratedStrategySandbox
 from trading_agent.lane_identity_models import LaneId
 from trading_agent.models import BarInput
 from trading_agent.research_identity_models import MarketId
-from trading_agent.researcher_agent import FailureDigest, LlmCallReceipt, ResearcherContext
+from trading_agent.researcher_agent import FailureDigest, ResearcherContext
 from trading_agent.researcher_pipeline import (
     ResearcherPipeline,
     ResearcherPipelineArtifacts,
@@ -52,8 +51,9 @@ from trading_agent.researcher_pipeline import (
 )
 from trading_agent.researcher_receipt_store import ResearcherReceiptStore
 
-SUBMITTED_AT = dt.datetime(2026, 8, 21, 14, 30, tzinfo=dt.UTC)
-NEXT_BAR_AT = SUBMITTED_AT + dt.timedelta(minutes=1)
+COMPLETED_BAR_AT = dt.datetime(2026, 8, 21, 14, 30, tzinfo=dt.UTC)
+SUBMITTED_AT = COMPLETED_BAR_AT + dt.timedelta(seconds=10)
+NEXT_BAR_AT = COMPLETED_BAR_AT + dt.timedelta(minutes=1)
 
 
 def _submission(**updates: object) -> DayAgentHypothesisSubmission:
@@ -86,9 +86,13 @@ def _source() -> ResearchSource:
     )
 
 
-def _task() -> DayAgentResearchTask:
+def _task(
+    *,
+    task_id: str = "task-20260821-liquidity-echo",
+    submitted_at: dt.datetime = SUBMITTED_AT,
+) -> DayAgentResearchTask:
     return DayAgentResearchTask(
-        task_id="task-20260821-liquidity-echo",
+        task_id=task_id,
         objective="Test one bounded liquidity-echo mechanism.",
         question="Does the cited mechanism warrant future-only shadow research?",
         state=DayAgentTaskState.OPEN,
@@ -98,14 +102,21 @@ def _task() -> DayAgentResearchTask:
             remaining_tool_calls=1,
             remaining_runtime_seconds=60,
         ),
-        created_at=SUBMITTED_AT,
-        updated_at=SUBMITTED_AT,
+        created_at=submitted_at,
+        updated_at=submitted_at,
     )
 
 
-def _persisted_request(root: Path, submission: DayAgentHypothesisSubmission) -> DayAgentDiscoveryBridgeRequest:
+def _persisted_request(
+    root: Path,
+    submission: DayAgentHypothesisSubmission,
+    *,
+    task_id: str = "task-20260821-liquidity-echo",
+    submitted_at: dt.datetime = SUBMITTED_AT,
+    prompt: str = "bounded day-agent research prompt",
+) -> DayAgentDiscoveryBridgeRequest:
     task_store = DayAgentTaskStore(root / "day-agent.sqlite3")
-    task = _task()
+    task = _task(task_id=task_id, submitted_at=submitted_at)
     payload_json = json.dumps(
         submission.model_dump(mode="json"),
         ensure_ascii=True,
@@ -122,27 +133,38 @@ def _persisted_request(root: Path, submission: DayAgentHypothesisSubmission) -> 
         evidence_refs=task.evidence_refs,
         budget=task.budget,
         state=DayAgentTaskState.WAITING,
-        occurred_at=SUBMITTED_AT,
-        scheduled_wake_at=SUBMITTED_AT + dt.timedelta(seconds=1),
+        occurred_at=submitted_at,
+        scheduled_wake_at=submitted_at + dt.timedelta(seconds=1),
     )
     with task_store.writer() as writer:
         assert writer.create_task(task)
         assert writer.append_step(decision)
     persisted_task = task_store.reader().task(task.task_id)
     assert persisted_task is not None
+    receipt_store = ResearcherReceiptStore(root / "receipts")
+    receipt = receipt_store.record_call(
+        model_id="day-agent-coder-v1",
+        prompt=prompt,
+        response=payload_json.encode(),
+        seed=7,
+        temperature=0.0,
+        called_at=submitted_at,
+    )
+    verified = receipt_store.require_call(receipt)
+    binding = publish_day_agent_research_lineage_binding(
+        root / "lineage",
+        task_id=task.task_id,
+        step_id=decision.step_id,
+        call_id=verified.record.call_id,
+        agent_version="day-agent-v1",
+        champion_version="champion-2026-08-21",
+        bound_at=submitted_at,
+    )
     return DayAgentDiscoveryBridgeRequest(
         task=persisted_task,
         decision_step=decision,
-        llm_receipt=LlmCallReceipt(
-            model_id="day-agent-coder-v1",
-            prompt_sha256="a" * 64,
-            response_sha256=hashlib.sha256(payload_json.encode()).hexdigest(),
-            seed=7,
-            temperature=0.0,
-            called_at=SUBMITTED_AT,
-        ),
-        agent_version="day-agent-v1",
-        champion_version="champion-2026-08-21",
+        llm_receipt=receipt,
+        lineage_binding_id=binding.binding_id,
     )
 
 
@@ -150,22 +172,28 @@ def accepted_hypothesis_submission(root: Path) -> DayAgentDiscoveryBridgeRequest
     return _persisted_request(root, _submission())
 
 
-def _view() -> DayDiscoveryEvidenceView:
+def _view(
+    *,
+    completed_bar_at: dt.datetime = COMPLETED_BAR_AT,
+    observed_at: dt.datetime = COMPLETED_BAR_AT,
+    first_eligible_at: dt.datetime = NEXT_BAR_AT,
+    cursor: str = "origin",
+) -> DayDiscoveryEvidenceView:
     return DayDiscoveryEvidenceView(
         market_id=MarketId.US_EQUITIES,
         trigger_kind=DayDiscoveryTriggerKind.COMPLETED_BAR,
-        observed_at=SUBMITTED_AT,
-        completed_bar_at=SUBMITTED_AT,
-        first_eligible_completed_bar_at=NEXT_BAR_AT,
+        observed_at=observed_at,
+        completed_bar_at=completed_bar_at,
+        first_eligible_completed_bar_at=first_eligible_at,
         universe_snapshot_id="us-universe-20260821-1430",
-        universe_snapshot_at=SUBMITTED_AT - dt.timedelta(minutes=2),
+        universe_snapshot_at=completed_bar_at - dt.timedelta(minutes=2),
         source_refs=("evidence:point-in-time:test",),
         evidence_schema=("completed_bar_v1", "fresh_spread_v1"),
         data_manifest_sha256="d" * 64,
         replay_bars=(
             BarInput(
                 "TEST",
-                SUBMITTED_AT - dt.timedelta(minutes=1),
+                completed_bar_at - dt.timedelta(minutes=1),
                 10.0,
                 11.0,
                 9.5,
@@ -178,10 +206,16 @@ def _view() -> DayDiscoveryEvidenceView:
         ),
         budget_epoch_ref="us-equities-2026-08-21",
         search_budget=4,
+        cursor=cursor,
     )
 
 
-def discovery_bridge_services(root: Path) -> DayAgentDiscoveryBridgeServices:
+def discovery_bridge_services(
+    root: Path,
+    *,
+    view: DayDiscoveryEvidenceView | None = None,
+) -> DayAgentDiscoveryBridgeServices:
+    evidence_view = _view() if view is None else view
     runtime = resolve_generated_strategy_runtime(Path(sys.executable))
     ledger = ExperimentLedgerStore(root / "ledger.sqlite3")
     pipeline = ResearcherPipeline(
@@ -201,11 +235,13 @@ def discovery_bridge_services(root: Path) -> DayAgentDiscoveryBridgeServices:
         discovery_loop=DayDiscoveryLoop(
             DayDiscoveryLoopConfig(
                 pipeline=pipeline,
-                sandbox=GeneratedStrategySandbox(runtime, root / "sandbox", _view().resource_limits),
+                sandbox=GeneratedStrategySandbox(runtime, root / "sandbox", evidence_view.resource_limits),
                 max_drafts=1,
             )
         ),
-        evidence_view=_view(),
+        evidence_view=evidence_view,
+        receipt_store=ResearcherReceiptStore(root / "receipts"),
+        lineage_root=root / "lineage",
         researcher_context=ResearcherContext(
             lane_id=LaneId.INTRADAY_MOMENTUM,
             sources=(_source(),),
@@ -242,8 +278,10 @@ def test_persisted_submission_publishes_one_future_only_research_capsule(tmp_pat
     assert request.decision_step.step_id in version.source_refs
     assert request.llm_receipt.response_sha256 in version.source_refs
     assert request.llm_receipt.model_id in version.source_refs
-    assert request.agent_version in version.source_refs
-    assert request.champion_version in version.source_refs
+    binding = services.lineage_binding(request)
+    assert binding.agent_version in version.source_refs
+    assert binding.champion_version in version.source_refs
+    assert binding.call_id in version.source_refs
     capsule = reader.day_strategy_capsules(MarketId.US_EQUITIES)[0].capsule
     assert capsule.authority_ceiling.value == "research_only"
 
@@ -270,21 +308,67 @@ def test_bridge_rejects_unverifiable_data_and_unsafe_python(
 
 
 def test_bridge_rejects_semantic_duplicate_before_discovery(tmp_path: Path) -> None:
-    request = accepted_hypothesis_submission(tmp_path)
-    services = discovery_bridge_services(tmp_path)
-    proposal = services.proposal_for(request)
-    duplicate_services = replace(
-        services,
-        evidence_view=services.evidence_view.model_copy(
-            update={"existing_semantic_hashes": (_proposal_semantic_hash(proposal),)}
-        ),
+    first = accepted_hypothesis_submission(tmp_path)
+    first_services = discovery_bridge_services(tmp_path)
+    assert submit_day_agent_hypothesis(first, first_services).accepted is True
+    second = _persisted_request(
+        tmp_path,
+        _submission(reason="A different explanation does not change semantic identity."),
+        task_id="task-20260821-liquidity-echo-duplicate",
+        submitted_at=SUBMITTED_AT + dt.timedelta(seconds=10),
+        prompt="different prompt with the same semantic proposal",
     )
+    second_view = _view(cursor="second-cursor")
 
-    result = submit_day_agent_hypothesis(request, duplicate_services)
+    result = submit_day_agent_hypothesis(
+        second,
+        discovery_bridge_services(tmp_path, view=second_view),
+    )
 
     assert result.accepted is False
     assert result.terminal_reason == "semantic_duplicate"
     assert result.capsule_id is None
+    assert len(first_services.discovery_loop.config.pipeline.stores.ledger.reader().day_hypothesis_versions()) == 1
+
+
+def test_bridge_rejects_forged_receipt_and_lineage_metadata(tmp_path: Path) -> None:
+    request = accepted_hypothesis_submission(tmp_path)
+    services = discovery_bridge_services(tmp_path)
+    forged_receipt = replace(request.llm_receipt, prompt_sha256="f" * 64)
+
+    with pytest.raises(DayAgentResearchBridgeError, match="day_agent_model_receipt_mismatch"):
+        submit_day_agent_hypothesis(replace(request, llm_receipt=forged_receipt), services)
+    with pytest.raises(DayAgentResearchBridgeError, match="day_agent_lineage_binding_invalid"):
+        submit_day_agent_hypothesis(replace(request, lineage_binding_id="f" * 64), services)
+
+
+def test_close_submission_rolls_to_next_xnys_first_completed_minute(tmp_path: Path) -> None:
+    completed = dt.datetime(2026, 8, 21, 20, 0, tzinfo=dt.UTC)
+    submitted = completed + dt.timedelta(seconds=10)
+    request = _persisted_request(tmp_path, _submission(), submitted_at=submitted)
+    view = _view(
+        completed_bar_at=completed,
+        observed_at=completed,
+        first_eligible_at=completed + dt.timedelta(minutes=1),
+    )
+
+    result = submit_day_agent_hypothesis(request, discovery_bridge_services(tmp_path, view=view))
+
+    assert result.accepted is True
+    assert result.first_shadow_eligible_at == dt.datetime(2026, 8, 24, 13, 31, tzinfo=dt.UTC)
+
+
+def test_bridge_rejects_saturday_completed_bar(tmp_path: Path) -> None:
+    saturday = dt.datetime(2026, 8, 22, 14, 30, tzinfo=dt.UTC)
+    request = _persisted_request(tmp_path, _submission(), submitted_at=saturday + dt.timedelta(seconds=10))
+    view = _view(
+        completed_bar_at=saturday,
+        observed_at=saturday,
+        first_eligible_at=saturday + dt.timedelta(minutes=1),
+    )
+
+    with pytest.raises(DayAgentResearchBridgeError, match="day_agent_completed_bar_not_xnys"):
+        submit_day_agent_hypothesis(request, discovery_bridge_services(tmp_path, view=view))
 
 
 def test_hypothesis_submission_requires_citations_and_at_most_four_parameters() -> None:
