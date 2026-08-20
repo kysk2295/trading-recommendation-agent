@@ -66,6 +66,7 @@ class UsDayThesisStore:
     @contextmanager
     def _chain_lock(self, thesis_id: str) -> Iterator[None]:
         directory = self.root / "changes" / thesis_id
+        _require_safe_creation_path(directory, self.root)
         parent = open_private_parent(directory, create=True)
         descriptor = -1
         try:
@@ -95,6 +96,7 @@ class UsDayThesisStore:
 
     def thesis(self, thesis_id: str) -> UsDayTradeThesis:
         try:
+            _require_safe_creation_path(self.root / "theses", self.root)
             payload = read_private_text(self.root / "theses" / f"{thesis_id}.json")
             thesis = UsDayTradeThesis.model_validate_json(payload)
             if thesis.thesis_id != thesis_id:
@@ -106,6 +108,7 @@ class UsDayThesisStore:
     def theses(self) -> tuple[UsDayTradeThesis, ...]:
         try:
             directory = self.root / "theses"
+            _require_safe_creation_path(directory, self.root)
             if not directory.exists():
                 return ()
             return tuple(self.thesis(path.stem) for path in sorted(directory.glob("*.json")))
@@ -115,6 +118,7 @@ class UsDayThesisStore:
     def changes(self, thesis_id: str) -> tuple[UsDayThesisChange, ...]:
         try:
             directory = self.root / "changes" / thesis_id
+            _require_safe_creation_path(directory, self.root)
             if not directory.exists():
                 return ()
             paths = tuple(sorted(directory.glob("*.json")))
@@ -144,9 +148,9 @@ class UsDayThesisStore:
         except (InvalidPrivateImmutableFileError, OSError, ValidationError, ValueError):
             raise InvalidUsDayThesisStoreError from None
 
-    @staticmethod
-    def _publish(path: Path, payload: str) -> bool:
+    def _publish(self, path: Path, payload: str) -> bool:
         try:
+            _require_safe_creation_path(path.parent, self.root)
             return publish_private_immutable_text(path, payload)
         except InvalidPrivateImmutableFileError:
             raise InvalidUsDayThesisStoreError from None
@@ -167,6 +171,39 @@ def _absolute_without_symlinks(root: Path) -> Path:
                 continue
             if stat.S_ISLNK(metadata.st_mode):
                 raise InvalidUsDayThesisStoreError
+        _require_safe_creation_path(absolute, absolute)
         return absolute
     except (OSError, ValueError):
         raise InvalidUsDayThesisStoreError from None
+
+
+def _require_safe_creation_path(path: Path, store_root: Path) -> None:
+    try:
+        path.relative_to(store_root)
+    except ValueError:
+        if path != store_root:
+            raise InvalidUsDayThesisStoreError from None
+    current = path
+    while not os.path.lexists(current):
+        if current == current.parent:
+            raise InvalidUsDayThesisStoreError
+        current = current.parent
+    if current != store_root and os.path.lexists(store_root):
+        current = store_root
+    limit = path
+    while True:
+        metadata = os.lstat(current)
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o700
+        ):
+            raise InvalidUsDayThesisStoreError
+        if current == limit:
+            return
+        relative = limit.relative_to(current)
+        next_path = current / relative.parts[0]
+        if not os.path.lexists(next_path):
+            return
+        current = next_path

@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import multiprocessing
 import os
+import stat
 from pathlib import Path
 from typing import Protocol
 
@@ -103,6 +104,37 @@ def test_store_rejects_symlink_root_or_path_component(tmp_path: Path) -> None:
         UsDayThesisStore(link)
     with pytest.raises(InvalidUsDayThesisStoreError):
         UsDayThesisStore(link / "child")
+
+
+def test_store_rejects_unsafe_existing_root_without_mutating_permissions(tmp_path: Path) -> None:
+    root = tmp_path / "unsafe-root"
+    root.mkdir(mode=0o777)
+    root.chmod(0o777)
+    with pytest.raises(InvalidUsDayThesisStoreError):
+        UsDayThesisStore(root)
+    assert stat.S_IMODE(root.stat().st_mode) == 0o777
+
+
+def test_store_rejects_replaced_unsafe_namespace_without_mutating_it(tmp_path: Path) -> None:
+    root = tmp_path / "private-root"
+    root.mkdir(mode=0o700)
+    store = UsDayThesisStore(root)
+    namespace = root / "theses"
+    namespace.mkdir(mode=0o777)
+    namespace.chmod(0o777)
+    with pytest.raises(InvalidUsDayThesisStoreError):
+        store.publish_thesis(_terminal_thesis())
+    assert stat.S_IMODE(namespace.stat().st_mode) == 0o777
+
+
+def test_store_rejects_unsafe_existing_intermediate_for_new_root(tmp_path: Path) -> None:
+    intermediate = tmp_path / "unsafe-intermediate"
+    intermediate.mkdir(mode=0o777)
+    intermediate.chmod(0o777)
+    with pytest.raises(InvalidUsDayThesisStoreError):
+        UsDayThesisStore(intermediate / "new-store")
+    assert stat.S_IMODE(intermediate.stat().st_mode) == 0o777
+    assert not (intermediate / "new-store").exists()
 
 
 def test_concurrent_siblings_fail_closed_at_write_time(tmp_path: Path) -> None:
