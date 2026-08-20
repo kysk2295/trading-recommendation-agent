@@ -343,6 +343,7 @@ class DayDiscoveryCycleReceipt(BaseModel):
 
     cycle_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    ledger_head_event_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     result: DayDiscoveryCycleResult
 
     @model_validator(mode="after")
@@ -743,6 +744,7 @@ def _read_cycle_receipt(
     path: Path,
     cycle_id: str,
     evidence_sha256: str,
+    ledger_head_event_id: str,
 ) -> DayDiscoveryCycleResult | None:
     if not path.exists() and not path.is_symlink():
         return None
@@ -763,6 +765,8 @@ def _read_cycle_receipt(
         raise DayDiscoveryError("cycle_receipt_identity_conflict")
     if receipt.evidence_sha256 != evidence_sha256:
         raise DayDiscoveryError("cycle_evidence_identity_conflict")
+    if receipt.ledger_head_event_id != ledger_head_event_id:
+        raise DayDiscoveryError("cycle_receipt_ledger_head_mismatch")
     return receipt.result
 
 

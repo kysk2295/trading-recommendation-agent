@@ -309,11 +309,14 @@ def prepare_day_discovery_branch(
     try:
         prepared_payload = json.loads(checked.payload_json)
         cartesian_demand = prepared_payload["cartesian_demand"]
+        prepared_debit = prepared_payload["prepared"]["search_budget_debit"]
     except (KeyError, TypeError, ValueError):
         raise InvalidDayDiscoveryLedgerSourceError("prepared_payload_invalid") from None
     if not isinstance(cartesian_demand, int) or isinstance(cartesian_demand, bool) or cartesian_demand < 1:
         raise InvalidDayDiscoveryLedgerSourceError("prepared_cartesian_demand_invalid")
-    expected_top_up = cartesian_demand - 1
+    if not isinstance(prepared_debit, int) or isinstance(prepared_debit, bool) or prepared_debit != cartesian_demand:
+        raise InvalidDayDiscoveryLedgerSourceError("prepared_debit_invalid")
+    expected_top_up = max(cartesian_demand - 1, 0)
     if (debit is None) != (expected_top_up == 0):
         raise InvalidDayDiscoveryLedgerSourceError("prepared_debit_invalid")
     if debit is not None:
@@ -605,6 +608,7 @@ def _audit_prepared_events(
         try:
             payload = json.loads(event.payload_json)
             demand = payload["cartesian_demand"]
+            prepared_debit = payload["prepared"]["search_budget_debit"]
         except (KeyError, TypeError, ValueError):
             raise InvalidDayDiscoveryLedgerSourceError("prepared_payload_invalid") from None
         branch_index = event.branch_index
@@ -615,6 +619,12 @@ def _audit_prepared_events(
             or demand < 1
         ):
             raise InvalidDayDiscoveryLedgerSourceError("prepared_cartesian_demand_invalid")
+        if (
+            not isinstance(prepared_debit, int)
+            or isinstance(prepared_debit, bool)
+            or prepared_debit != demand
+        ):
+            raise InvalidDayDiscoveryLedgerSourceError("prepared_debit_invalid")
         top_up = top_ups.get(branch_index)
         if demand == 1:
             if top_up is not None:

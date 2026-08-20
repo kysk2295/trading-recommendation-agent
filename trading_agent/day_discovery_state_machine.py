@@ -752,6 +752,7 @@ def _project_final_cycle(
     receipt = DayDiscoveryCycleReceipt(
         cycle_id=cycle_id,
         evidence_sha256=evidence_sha256,
+        ledger_head_event_id=final_event.event_id,
         result=result,
     )
     canonical = json.dumps(
@@ -761,7 +762,12 @@ def _project_final_cycle(
         sort_keys=True,
     )
     if path.exists() or path.is_symlink():
-        replay = _read_cycle_receipt(path, cycle_id, evidence_sha256)
+        replay = _read_cycle_receipt(
+            path,
+            cycle_id,
+            evidence_sha256,
+            final_event.event_id,
+        )
         if replay != result:
             raise DayDiscoveryError("cycle_receipt_authority_mismatch")
         return result

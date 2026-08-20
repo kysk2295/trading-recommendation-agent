@@ -675,6 +675,65 @@ def test_cycle_receipt_rejects_tampered_identity_and_noncanonical_bytes(tmp_path
     assert generator.calls == 1
 
 
+def test_cycle_receipt_binds_ledger_head_event_id_and_reconstructs_from_sqlite(
+    tmp_path: Path,
+) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    generator = _SequenceGenerator([_proposal(no_signal_source())])
+    loop = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, generator, runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
+            1,
+        )
+    )
+    result = loop.run(_view())
+    state = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader().day_discovery_cycle_state(
+        result.cycle_id
+    )
+    final = state.events[-1]
+    receipt_path = tmp_path / "manifests" / "day-discovery-cycle-receipts" / f"{result.cycle_id}.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+
+    assert receipt["ledger_head_event_id"] == final.event_id
+    assert json.loads(final.payload_json).get("ledger_head_event_id") != final.event_id
+
+    receipt_path.unlink()
+    replayed = loop.run(_view())
+    republished = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert replayed == result
+    assert republished["ledger_head_event_id"] == final.event_id
+    assert generator.calls == 1
+
+
+def test_cycle_receipt_rejects_swapped_ledger_head_event_id(tmp_path: Path) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    generator = _SequenceGenerator([_proposal(no_signal_source())])
+    loop = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            _pipeline(tmp_path, generator, runtime),
+            GeneratedStrategySandbox(runtime, tmp_path / "sandbox", _view().resource_limits),
+            1,
+        )
+    )
+    result = loop.run(_view())
+    state = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader().day_discovery_cycle_state(
+        result.cycle_id
+    )
+    receipt_path = tmp_path / "manifests" / "day-discovery-cycle-receipts" / f"{result.cycle_id}.json"
+    payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    payload["ledger_head_event_id"] = state.events[0].event_id
+    receipt_path.write_text(
+        json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+        encoding="utf-8",
+    )
+    receipt_path.chmod(0o600)
+
+    with pytest.raises(DayDiscoveryError, match="cycle_receipt"):
+        loop.run(_view())
+    assert generator.calls == 1
+
+
 def test_missing_ai_methodology_is_terminal_and_market_failures_stay_isolated(tmp_path: Path) -> None:
     runtime = resolve_generated_strategy_runtime(Path(sys.executable))
     raw = proposal(no_signal_source())
