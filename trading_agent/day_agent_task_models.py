@@ -143,9 +143,16 @@ class DayAgentTaskStep(BaseModel):
 
 
 def day_agent_step_id(step: DayAgentTaskStep) -> str:
-    payload = step.model_dump(mode="json", exclude={"step_id"})
-    material = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
-    return hashlib.sha256(material.encode()).hexdigest()
+    return hashlib.sha256(day_agent_step_payload(step).encode()).hexdigest()
+
+
+def day_agent_step_payload(step: DayAgentTaskStep) -> str:
+    return json.dumps(
+        step.model_dump(mode="json", exclude={"step_id"}, exclude_none=True),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _require_sorted_unique(values: tuple[str, ...], *, reason: str) -> None:
@@ -193,4 +200,5 @@ __all__ = (
     "DayAgentTaskStep",
     "InvalidDayAgentTaskFieldError",
     "day_agent_step_id",
+    "day_agent_step_payload",
 )

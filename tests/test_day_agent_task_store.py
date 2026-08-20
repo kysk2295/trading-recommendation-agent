@@ -266,3 +266,44 @@ def test_step_budget_cannot_increase_and_open_zero_tool_budget_is_invalid(tmp_pa
         budget=DayAgentBudget(remaining_model_calls=0, remaining_tool_calls=0, remaining_runtime_seconds=0),
     )
     assert waiting.state is DayAgentTaskState.WAITING
+
+
+def test_first_step_cannot_precede_task_updated_at(tmp_path: Path) -> None:
+    task = day_task().model_validate(
+        day_task().model_dump(mode="python") | {"updated_at": NOW + dt.timedelta(seconds=2)}
+    )
+    step = day_step(
+        task, sequence=1, action=DayAgentAction.INSPECT_SITUATION, occurred_at=NOW + dt.timedelta(seconds=1)
+    )
+    with DayAgentTaskStore(tmp_path / "day-agent.sqlite3").writer() as writer:
+        assert writer.create_task(task)
+        with pytest.raises(DayAgentTaskConflictError, match="step_timestamp_invalid"):
+            writer.append_step(step)
+
+
+def test_projection_folds_research_updates_and_reconstructed_step_replays(tmp_path: Path) -> None:
+    task = day_task()
+    first = DayAgentTaskStep(
+        task_id=task.task_id, sequence=1, action=DayAgentAction.DEFER, reason="Wait for catalyst verification.",
+        evidence_refs=task.evidence_refs,
+        budget=DayAgentBudget(remaining_model_calls=3, remaining_tool_calls=7, remaining_runtime_seconds=45),
+        state=DayAgentTaskState.WAITING, occurred_at=NOW, scheduled_wake_at=NOW + dt.timedelta(minutes=5),
+        current_hypothesis="Catalyst verification is required.", falsification_conditions=("catalyst_refuted",),
+        open_questions=("Is the catalyst verified?",), resume_condition="Resume after verification.",
+    )
+    second = day_step(
+        task, sequence=2, action=DayAgentAction.DEFER, state=DayAgentTaskState.WAITING, budget=first.budget
+    )
+    reconstructed = DayAgentTaskStep.model_validate_json(first.model_dump_json())
+    path = tmp_path / "day-agent.sqlite3"
+    with DayAgentTaskStore(path).writer() as writer:
+        assert writer.create_task(task)
+        assert writer.append_step(first)
+        assert writer.append_step(second)
+        assert writer.append_step(reconstructed) is False
+    projected = DayAgentTaskStore(path).reader().task(task.task_id)
+    assert projected is not None
+    assert projected.current_hypothesis == first.current_hypothesis
+    assert projected.falsification_conditions == first.falsification_conditions
+    assert projected.open_questions == first.open_questions
+    assert projected.resume_condition == first.resume_condition

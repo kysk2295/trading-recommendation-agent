@@ -14,6 +14,7 @@ from trading_agent.day_agent_task_models import (
     DayAgentResearchTask,
     DayAgentTaskState,
     DayAgentTaskStep,
+    day_agent_step_payload,
 )
 
 # SIZE_OK — one SQLite authority keeps task, step, and projection invariants transactional.
@@ -239,7 +240,7 @@ def _require_step_progress(
     steps: tuple[DayAgentTaskStep, ...],
     step: DayAgentTaskStep,
 ) -> None:
-    previous_time = task.created_at if not steps else steps[-1].occurred_at
+    previous_time = task.updated_at if not steps else steps[-1].occurred_at
     previous_budget = task.budget if not steps else steps[-1].budget
     if step.occurred_at < previous_time:
         raise DayAgentTaskConflictError(reason="step_timestamp_invalid")
@@ -266,9 +267,11 @@ def _project_task(
             "scheduled_wake_at": latest.scheduled_wake_at,
             "terminal_reason": latest.terminal_reason,
     }
-    for field in ("current_hypothesis", "falsification_conditions", "open_questions", "resume_condition"):
-        if field in latest.model_fields_set:
-            updates[field] = getattr(latest, field)
+    for prior in steps:
+        for field in ("current_hypothesis", "falsification_conditions", "open_questions", "resume_condition"):
+            value = getattr(prior, field)
+            if value is not None:
+                updates[field] = value
     return DayAgentResearchTask.model_validate(task.model_dump(mode="python") | updates)
 
 
@@ -347,8 +350,10 @@ def _step_row(step: DayAgentTaskStep) -> tuple[str, str, int, str, str]:
 
 
 def _payload(item: DayAgentResearchTask | DayAgentTaskStep) -> str:
+    if isinstance(item, DayAgentTaskStep):
+        return day_agent_step_payload(item)
     return json.dumps(
-        item.model_dump(mode="json", exclude_unset=isinstance(item, DayAgentTaskStep)),
+        item.model_dump(mode="json"),
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,
