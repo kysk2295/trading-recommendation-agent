@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import stat
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
@@ -101,7 +102,8 @@ class DayAgentTaskStore:
     path: Path
 
     def __init__(self, path: Path) -> None:
-        self.path = Path(os.path.abspath(path.expanduser()))
+        absolute = Path(os.path.abspath(path.expanduser()))
+        self.path = absolute.parent.resolve(strict=False) / absolute.name
 
     @contextmanager
     def writer(self) -> Iterator[DayAgentTaskWriter]:
@@ -357,8 +359,8 @@ def _reader_connection(path: Path) -> Iterator[sqlite3.Connection]:
             _ = connection.execute("PRAGMA query_only = ON")
             _require_schema(connection)
             yield connection
-            _require_database_identity(identity)
-        _require_database_identity(identity)
+            _require_reader_snapshot(identity)
+        _require_reader_snapshot(identity)
         require_open_directory_path(path.parent, parent)
     except FileNotFoundError:
         raise
@@ -470,6 +472,18 @@ def _require_database_identity(identity: _DatabaseIdentity) -> None:
     if (named.st_dev, named.st_ino) != (opened.st_dev, opened.st_ino):
         raise OSError
     require_private_file(identity.descriptor)
+
+
+def _require_reader_snapshot(identity: _DatabaseIdentity) -> None:
+    require_open_directory_path(identity.path.parent, identity.parent)
+    metadata = os.fstat(identity.descriptor)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_nlink not in {0, 1}
+    ):
+        raise OSError
 
 
 def _prepare_writer_connection(connection: sqlite3.Connection) -> None:

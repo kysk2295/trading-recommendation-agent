@@ -5,6 +5,7 @@ import multiprocessing
 import os
 import sqlite3
 import stat
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -142,6 +143,22 @@ def test_database_is_private_and_reader_rejects_symlink_and_hardlink(tmp_path: P
     os.link(path, hardlink)
     with pytest.raises(InvalidDayAgentTaskStoreError, match="database_path_invalid"):
         _ = DayAgentTaskStore(hardlink).reader().task("task-20260821-NVDA")
+
+
+def test_store_accepts_macos_var_alias_without_resolving_database_name() -> None:
+    if not Path("/var").is_symlink():
+        pytest.skip("/var is not a system alias")
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        if not str(root).startswith("/var/"):
+            pytest.skip("temporary directory does not use the /var spelling")
+        path = root / "day-agent.sqlite3"
+        task = day_task()
+
+        with DayAgentTaskStore(path).writer() as writer:
+            assert writer.create_task(task)
+
+        assert DayAgentTaskStore(path).reader().task(task.task_id) == task
 
 
 def test_writer_creates_database_with_no_follow_exclusive_private_descriptor(
@@ -293,6 +310,22 @@ def test_reader_stays_bound_to_opened_database_during_transient_swap_and_restore
 
     assert DayAgentTaskStore(path).reader().task(original.task_id) == original
     assert DayAgentTaskStore(alternate).reader().task(original.task_id) is None
+
+
+def test_open_reader_finishes_old_snapshot_while_writer_publishes_new_generation(tmp_path: Path) -> None:
+    path = tmp_path / "day-agent.sqlite3"
+    task = day_task()
+    step = day_step(task, sequence=1, action=DayAgentAction.INSPECT_SITUATION)
+    with DayAgentTaskStore(path).writer() as writer:
+        assert writer.create_task(task)
+
+    with task_store._reader_connection(path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM day_task_steps").fetchone() == (0,)
+        with DayAgentTaskStore(path).writer() as writer:
+            assert writer.append_step(step)
+        assert connection.execute("SELECT COUNT(*) FROM day_task_steps").fetchone() == (0,)
+
+    assert DayAgentTaskStore(path).reader().steps(task.task_id) == (step,)
 
 
 def test_create_task_survives_process_exit_before_writer_context_exit(tmp_path: Path) -> None:
