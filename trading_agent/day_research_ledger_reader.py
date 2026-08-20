@@ -3,6 +3,13 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from trading_agent.day_forward_trial_ledger import (
+    DayForwardTrialState,
+    read_day_forward_trial_state,
+)
+from trading_agent.day_forward_trial_ledger import (
+    day_forward_trials as _day_forward_trials,
+)
 from trading_agent.day_research_attempt_binding import DayResearchAttemptBinding
 from trading_agent.day_research_ledger import (
     InvalidDayResearchLedgerSourceError,
@@ -131,6 +138,24 @@ def day_strategy_capsule(
         (stored for stored in day_strategy_capsules(connection) if stored.capsule.capsule_id == capsule_id),
         None,
     )
+
+
+def day_forward_trials(
+    connection: sqlite3.Connection,
+    market_id: MarketId | None = None,
+) -> tuple[DayForwardTrialState, ...]:
+    return _day_forward_trials(connection, market_id)
+
+
+def day_forward_trial(
+    connection: sqlite3.Connection,
+    trial_id: str,
+) -> DayForwardTrialState | None:
+    row = connection.execute(
+        "SELECT 1 FROM day_forward_trials WHERE trial_id=?",
+        (trial_id,),
+    ).fetchone()
+    return None if row is None else read_day_forward_trial_state(connection, trial_id)
 
 
 def read_day_attempts_for_review(

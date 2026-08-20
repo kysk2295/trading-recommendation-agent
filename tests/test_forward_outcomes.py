@@ -9,6 +9,11 @@ import pytest
 from scr_backtest.kis_intraday import KisMinuteBar
 from trading_agent import forward_outcomes
 from trading_agent.bar_archive import CandidateBarBatch, archive_candidate_bars
+from trading_agent.day_forward_trial_models import (
+    DayForwardBarOutcomeRequest,
+    DayForwardExitReason,
+    resolve_day_forward_bar_outcome,
+)
 from trading_agent.kis_provider import KisRankedStock
 from trading_agent.ranking_journal import (
     RankingGroup,
@@ -126,3 +131,19 @@ def test_late_complete_session_leaves_unavailable_horizons_empty() -> None:
     assert result.return_15m is None
     assert result.return_30m is None
     assert result.eod_return == pytest.approx(0.01)
+
+
+def test_same_bar_stop_and_target_collision_resolves_to_stop() -> None:
+    # Given: one completed bar crosses both the preregistered stop and target.
+    request = DayForwardBarOutcomeRequest(
+        low=99,
+        high=103,
+        stop=100,
+        target=102,
+    )
+
+    # When: the host resolves the modeled bar outcome.
+    outcome = resolve_day_forward_bar_outcome(request)
+
+    # Then: the conservative stop policy wins.
+    assert outcome is DayForwardExitReason.STOP
