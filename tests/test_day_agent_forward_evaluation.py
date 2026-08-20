@@ -6,11 +6,10 @@ from pathlib import Path
 import pytest
 
 from tests.day_agent_forward_shadow_support import (
-    EvaluationFixture,
     dual_capsule_runtime,
-    registered_evaluation,
     session_request,
 )
+from tests.day_agent_loop_e2e_support import LoopEvaluationFixture, loop_evaluation
 from tests.day_agent_version_learning_support import SESSION, champion
 from tests.test_day_learning_report_models import NOW, SHA_A
 from trading_agent.day_agent_challenger_evaluation import (
@@ -51,17 +50,25 @@ def test_real_forward_shadow_controller_runs_both_capsules_on_identical_snapshot
 
 
 def _evaluated_promotion(
-    fixture: EvaluationFixture,
+    fixture: LoopEvaluationFixture,
 ) -> AgentPromotionRecommendation:
     sessions = (
-        session_request(fixture.controller.services, fixture.policy_ids[0], dt.date(2026, 8, 21)),
-        session_request(fixture.controller.services, fixture.policy_ids[1], dt.date(2026, 8, 24)),
+        session_request(
+            fixture.controller.services,
+            fixture.policies[0].policy_id,
+            fixture.policies[0].payload.effective_session_date,
+        ),
+        session_request(
+            fixture.controller.services,
+            fixture.policies[1].policy_id,
+            fixture.policies[1].payload.effective_session_date,
+        ),
     )
     request = DayAgentChallengerEvaluationRequest(
         champion=fixture.baseline,
         challenger=fixture.challenger,
-        champion_capsule_id=fixture.baseline.playbook_ids[0],
-        challenger_capsule_id=fixture.challenger.playbook_ids[0],
+        champion_capsule_id=fixture.champion_capsule.capsule_id,
+        challenger_capsule_id=fixture.challenger_capsule.capsule_id,
         sessions=sessions,
         minimum_sessions=2,
         evaluated_at=dt.datetime(2026, 8, 24, 20, 0, tzinfo=dt.UTC),
@@ -77,7 +84,7 @@ def test_host_deployment_promotes_only_validated_multi_session_recommendation(
     tmp_path: Path,
 ) -> None:
     # Given: a promotion recommendation derived from two paired future controller sessions.
-    fixture = registered_evaluation(tmp_path / "evaluation")
+    fixture = loop_evaluation(tmp_path / "evaluation")
     recommendation = _evaluated_promotion(fixture)
 
     # When: the deterministic host deployment function applies the stored recommendation.
@@ -135,15 +142,23 @@ class _DerivedController(UsForwardShadowControllerRunner):
 
 def test_public_evaluation_rejects_substituted_controller_output(tmp_path: Path) -> None:
     # Given: valid persisted versions and sessions but a substituted controller subtype.
-    fixture = registered_evaluation(tmp_path)
+    fixture = loop_evaluation(tmp_path)
     request = DayAgentChallengerEvaluationRequest(
         champion=fixture.baseline,
         challenger=fixture.challenger,
-        champion_capsule_id=fixture.baseline.playbook_ids[0],
-        challenger_capsule_id=fixture.challenger.playbook_ids[0],
+        champion_capsule_id=fixture.champion_capsule.capsule_id,
+        challenger_capsule_id=fixture.challenger_capsule.capsule_id,
         sessions=(
-            session_request(fixture.controller.services, fixture.policy_ids[0], dt.date(2026, 8, 21)),
-            session_request(fixture.controller.services, fixture.policy_ids[1], dt.date(2026, 8, 24)),
+            session_request(
+                fixture.controller.services,
+                fixture.policies[0].policy_id,
+                fixture.policies[0].payload.effective_session_date,
+            ),
+            session_request(
+                fixture.controller.services,
+                fixture.policies[1].policy_id,
+                fixture.policies[1].payload.effective_session_date,
+            ),
         ),
         minimum_sessions=2,
         evaluated_at=dt.datetime(2026, 8, 24, 20, 0, tzinfo=dt.UTC),

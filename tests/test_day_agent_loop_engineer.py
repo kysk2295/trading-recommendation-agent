@@ -6,9 +6,13 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from tests.day_agent_version_learning_support import LeaderAuthor, champion, diagnostics
+from tests.day_agent_loop_e2e_support import loop_evaluation
+from tests.day_agent_version_learning_support import champion
+from tests.day_strategy_capsule_support import builtin_capsule
 from tests.test_day_learning_report_models import _payload
-from trading_agent.day_agent_loop_engineer import DayAgentLoopServices, run_loop_engineer
+from tests.us_forward_shadow_support import no_signal_source
+from trading_agent import day_agent_loop_engineer
+from trading_agent.day_agent_challenger_builders import DerivedSourceRequest, render_derived_source
 from trading_agent.day_agent_version_models import (
     AgentChangeKind,
     AgentDeploymentState,
@@ -19,24 +23,17 @@ from trading_agent.day_agent_version_models import (
 )
 from trading_agent.day_agent_version_store import DayAgentVersionStore
 from trading_agent.day_learning_report_models import DayDecisionStage
+from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 
 
 def test_loop_engineer_turns_leader_error_into_shadow_challenger(tmp_path: Path) -> None:
-    # Given: an explicit Champion and a finalized report whose weakest stage is leader selection.
-    store = DayAgentVersionStore(tmp_path / "versions.sqlite3")
-    baseline = champion()
-    with store.writer() as writer:
-        assert writer.register_initial_champion(baseline)
-    report = _payload().model_copy(update={"agent_version_id": baseline.version_id, "diagnostics": diagnostics()})
+    # Given: a finalized leader-selection diagnostic and concrete generated-capsule publisher.
+    fixture = loop_evaluation(tmp_path)
 
-    # When: the Loop Engineer proposes its single bounded change.
-    proposal = run_loop_engineer(
-        report,
-        baseline,
-        DayAgentLoopServices(store=store, author=LeaderAuthor()),
-    )
+    # When: the Loop Engineer persists its single bounded change.
+    proposal = fixture.proposal
 
-    # Then: the stored version is a research-only Shadow and Dashboard can query it after restart.
+    # Then: the stored version references the exact persisted research-only capsule after restart.
     assert proposal.problem_stage is DayDecisionStage.LEADER_SELECTION
     assert proposal.allowed_changes == (AgentChangeKind.LEADER_RANKING_POLICY,)
     assert proposal.patch == LeaderRankingPatch(
@@ -44,12 +41,13 @@ def test_loop_engineer_turns_leader_error_into_shadow_challenger(tmp_path: Path)
         feature=LeaderRankingFeature.RELATIVE_VOLUME,
         weight_bps=2_500,
     )
-    challenger = DayAgentVersionStore(store.path).reader().challenger(proposal.version_id)
+    challenger = DayAgentVersionStore(fixture.store.path).reader().challenger(proposal.version_id)
     assert challenger is not None
     assert challenger.order_authority is False
     assert challenger.deployment_state is AgentDeploymentState.SHADOW
-    assert DayAgentVersionStore(store.path).reader().proposals(proposal.version_id) == (proposal,)
-    views = DayAgentVersionStore(store.path).reader().versions()
+    assert challenger.playbook_ids == (fixture.challenger_capsule.capsule_id,)
+    assert DayAgentVersionStore(fixture.store.path).reader().proposals(proposal.version_id) == (proposal,)
+    views = DayAgentVersionStore(fixture.store.path).reader().versions()
     assert {view.deployment_state for view in views} == {"champion", "shadow"}
 
 
@@ -66,6 +64,45 @@ def test_typed_patch_rejects_arbitrary_text_extra_keys_and_unicode(payload: dict
     # Given / When / Then: non-allowlisted patch shapes cannot cross the typed boundary.
     with pytest.raises(ValidationError):
         _ = TypeAdapter(AgentVersionPatch).validate_python(payload)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {"kind": "market_regime_policy", "rule": "trend_alignment", "confirmation_bars": 2},
+        {"kind": "theme_selection_policy", "timing_window": "opening_30_minutes", "minimum_catalyst_count": 1},
+        {"kind": "catalyst_interpretation_policy", "rule": "freshness_first", "maximum_age_minutes": 30},
+        {"kind": "leader_ranking_policy", "feature": "relative_volume", "weight_bps": 2500},
+        {"kind": "flow_interpretation_policy", "rule": "volume_confirmation", "confirmation_bars": 2},
+        {"kind": "entry_policy", "rule": "breakout_confirmation", "confirmation_bars": 2},
+        {"kind": "exit_policy", "rule": "trailing_structure", "trailing_window_bars": 5},
+        {"kind": "execution_review_policy", "rule": "slippage_attribution", "review_window_sessions": 5},
+    ),
+)
+def test_every_typed_patch_renders_an_executable_lineage_bound_wrapper(payload: dict[str, str | int]) -> None:
+    # Given: one member of the closed typed-patch union and immutable parent identities.
+    patch = TypeAdapter(AgentVersionPatch).validate_python(payload)
+    baseline = champion()
+    parent = builtin_capsule()
+
+    # When: the deterministic generated Playbook wrapper is rendered.
+    source = render_derived_source(
+        DerivedSourceRequest(baseline, parent, patch, "9" * 64, no_signal_source())
+    )
+    challenger = day_agent_loop_engineer._challenger(
+        baseline,
+        patch,
+        parent.capsule_id,
+        ("a" * 64,),
+        _payload(),
+    )
+
+    # Then: it compiles and carries machine-readable patch and parent lineage tokens.
+    _ = compile(source, "<day-agent-challenger>", "exec")
+    assert canonical_experiment_ledger_json(patch) in source
+    assert baseline.version_id in source
+    assert parent.capsule_id in source
+    assert challenger.playbook_ids == (parent.capsule_id,)
 
 
 def test_version_store_is_private_and_rejects_linked_paths(tmp_path: Path) -> None:

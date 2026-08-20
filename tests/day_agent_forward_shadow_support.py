@@ -3,27 +3,17 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
 from tests.day_agent_version_learning_support import SESSION
 from tests.day_strategy_capsule_support import bar, builtin_capsule, proposal
 from tests.strategy_research_contract_fixtures import hypothesis
-from tests.test_day_learning_report_models import NOW, SHA_A
 from tests.test_day_research_attempt_binding import _attempt, _binding, _family, _version
 from tests.us_forward_shadow_support import no_signal_source, prepared_runtime, shadow_tick, signal_source
 from trading_agent.day_agent_challenger_evaluation import (
     DayForwardShadowSessionRequest,
     DayForwardShadowTickRequest,
-    UsForwardShadowControllerRunner,
 )
-from trading_agent.day_agent_version_models import (
-    AgentDeploymentState,
-    AgentModelRoleBinding,
-    AgentVersion,
-    build_agent_version,
-)
-from trading_agent.day_agent_version_store import DayAgentVersionStore
 from trading_agent.day_learning_policy import ExplorationPolicy, ExplorationPolicyPayload
 from trading_agent.day_strategy_capsule import (
     DayStrategyCapsuleRequest,
@@ -156,56 +146,6 @@ def _policy_for_session(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class EvaluationFixture:
-    store: DayAgentVersionStore
-    baseline: AgentVersion
-    challenger: AgentVersion
-    controller: UsForwardShadowControllerRunner
-    policy_ids: tuple[str, str]
-
-
-def registered_evaluation(root: Path) -> EvaluationFixture:
-    services, champion_capsule, challenger_capsule, policies = dual_capsule_runtime(root / "controller")
-    baseline = build_agent_version(
-        model_role_bindings=(AgentModelRoleBinding(role="reasoning", model_id="reasoner-v1"),),
-        prompt_sha256="1" * 64,
-        tool_policy_sha256="2" * 64,
-        memory_retrieval_policy_sha256="3" * 64,
-        playbook_ids=(champion_capsule.capsule_id,),
-        parent_version_id=None,
-        creation_evidence_ids=(SHA_A,),
-        deployment_state=AgentDeploymentState.CHAMPION,
-        task_id="task-20260820-NVDA",
-        created_at=NOW,
-        created_session_date=SESSION,
-    )
-    challenger = build_agent_version(
-        model_role_bindings=baseline.model_role_bindings,
-        prompt_sha256=baseline.prompt_sha256,
-        tool_policy_sha256="5" * 64,
-        memory_retrieval_policy_sha256=baseline.memory_retrieval_policy_sha256,
-        playbook_ids=(challenger_capsule.capsule_id,),
-        parent_version_id=baseline.version_id,
-        creation_evidence_ids=(SHA_A,),
-        deployment_state=AgentDeploymentState.SHADOW,
-        task_id=baseline.task_id,
-        created_at=NOW,
-        created_session_date=SESSION,
-    )
-    store = DayAgentVersionStore(root / "versions.sqlite3")
-    with store.writer() as writer:
-        assert writer.register_initial_champion(baseline)
-        assert writer.register_challenger(challenger)
-    return EvaluationFixture(
-        store=store,
-        baseline=baseline,
-        challenger=challenger,
-        controller=UsForwardShadowControllerRunner(services),
-        policy_ids=(policies[0].policy_id, policies[1].policy_id),
-    )
-
-
 def session_request(services, policy_id: str, session_date: dt.date) -> DayForwardShadowSessionRequest:
     baseline = tuple(
         shadow_tick(
@@ -253,4 +193,4 @@ def _shift_tick(tick, delta: dt.timedelta, session_date: dt.date):
     )
 
 
-__all__ = ("EvaluationFixture", "dual_capsule_runtime", "registered_evaluation", "session_request")
+__all__ = ("dual_capsule_runtime", "session_request")

@@ -6,6 +6,10 @@ from typing import Protocol, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from trading_agent.day_agent_challenger_publisher import (
+    DayAgentChallengerPublicationRequest,
+    DayAgentGeneratedCapsulePublisher,
+)
 from trading_agent.day_agent_change_patches import (
     CatalystInterpretationPatch,
     EntryPolicyPatch,
@@ -48,20 +52,15 @@ class DayAgentChangeAuthor(Protocol):
 class DayAgentLoopServices:
     store: DayAgentVersionStore
     author: DayAgentChangeAuthor
+    publisher: DayAgentGeneratedCapsulePublisher
 
 
 def run_loop_engineer(
-    report: MarketCloseReport | MarketCloseReportPayload,
+    report: MarketCloseReport,
     champion: AgentVersion,
     services: DayAgentLoopServices,
 ) -> AgentChangeProposal:
-    match report:
-        case MarketCloseReport(payload=payload):
-            pass
-        case MarketCloseReportPayload() as payload:
-            pass
-        case unreachable:
-            assert_never(unreachable)
+    payload = report.payload
     if (
         champion.deployment_state is not AgentDeploymentState.CHAMPION
         or payload.agent_version_id != champion.version_id
@@ -75,7 +74,16 @@ def run_loop_engineer(
     if authored.patch.kind is not allowed:
         raise DayAgentVersionStoreError("change_kind_not_allowed")
     patch_sha256 = hashlib.sha256(canonical_experiment_ledger_json(authored.patch).encode()).hexdigest()
-    challenger = _challenger(champion, authored.patch, problem.evidence_ids, payload)
+    published = services.publisher.publish(
+        DayAgentChallengerPublicationRequest(report=report, champion=champion, patch=authored.patch)
+    )
+    challenger = _challenger(
+        champion,
+        authored.patch,
+        published.capsule.capsule_id,
+        problem.evidence_ids,
+        payload,
+    )
     _require_only_allowed_change(champion, challenger, authored.patch)
     proposal_payload = {
         "version_id": challenger.version_id,
@@ -100,18 +108,19 @@ def run_loop_engineer(
 def _challenger(
     champion: AgentVersion,
     patch: AgentVersionPatch,
+    capsule_id: str,
     evidence_ids: tuple[str, ...],
     report: MarketCloseReportPayload,
 ) -> AgentVersion:
     prompt_sha256 = champion.prompt_sha256
     tool_policy_sha256 = champion.tool_policy_sha256
-    playbook_ids = champion.playbook_ids
+    playbook_ids = (capsule_id,)
     rendered_sha256 = hashlib.sha256(canonical_experiment_ledger_json(patch).encode()).hexdigest()
     match patch:
         case MarketRegimePatch() | ThemeSelectionPatch() | CatalystInterpretationPatch() | FlowInterpretationPatch():
             prompt_sha256 = rendered_sha256
         case LeaderRankingPatch() | EntryPolicyPatch() | ExitPolicyPatch():
-            playbook_ids = (rendered_sha256,)
+            pass
         case ExecutionReviewPatch():
             tool_policy_sha256 = rendered_sha256
         case unreachable:
@@ -177,11 +186,11 @@ def _require_only_allowed_change(
     changed = {field for field in baseline if baseline[field] != candidate[field]}
     match patch:
         case MarketRegimePatch() | ThemeSelectionPatch() | CatalystInterpretationPatch() | FlowInterpretationPatch():
-            expected = {"prompt_sha256"}
+            expected = {"prompt_sha256", "playbook_ids"}
         case LeaderRankingPatch() | EntryPolicyPatch() | ExitPolicyPatch():
             expected = {"playbook_ids"}
         case ExecutionReviewPatch():
-            expected = {"tool_policy_sha256"}
+            expected = {"tool_policy_sha256", "playbook_ids"}
         case unreachable:
             assert_never(unreachable)
     if changed != expected:
