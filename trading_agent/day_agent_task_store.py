@@ -5,7 +5,7 @@ import hashlib
 import json
 import os
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -86,7 +86,7 @@ class InvalidDayAgentTaskStoreError(DayAgentTaskStoreError):
     pass
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class _DatabaseIdentity:
     parent: int
     name: str
@@ -114,16 +114,19 @@ class DayAgentTaskStore:
             with _writer_lease(self.path, parent):
                 descriptor = _open_private_database(parent, self.path.name, create=True, write=True)
                 identity = _DatabaseIdentity(parent=parent, name=self.path.name, descriptor=descriptor, path=self.path)
+                descriptor = -1
                 try:
                     with _writer_connection(identity) as connection:
-                        writer = DayAgentTaskWriter(connection)
+                        writer = DayAgentTaskWriter(
+                            connection,
+                            lambda: _flush_writer_generation(identity, connection),
+                        )
                         try:
                             yield writer
                         finally:
                             writer.close()
                 finally:
-                    os.close(descriptor)
-                    descriptor = -1
+                    os.close(identity.descriptor)
             require_open_directory_path(self.path.parent, parent)
         except (OSError, sqlite3.Error, TypeError, ValueError) as error:
             if isinstance(error, DayAgentTaskStoreError):
@@ -172,13 +175,15 @@ class DayAgentTaskReader:
 
 @final
 class DayAgentTaskWriter:
-    __slots__ = ("_active", "_connection")
+    __slots__ = ("_active", "_connection", "_flush")
 
     _active: bool
     _connection: sqlite3.Connection
+    _flush: Callable[[], None]
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(self, connection: sqlite3.Connection, flush: Callable[[], None]) -> None:
         self._connection = connection
+        self._flush = flush
         self._active = True
 
     def create_task(self, task: DayAgentResearchTask) -> bool:
@@ -196,6 +201,7 @@ class DayAgentTaskWriter:
                 raise DayAgentTaskConflictError(reason="task_replay_conflict")
             _ = self._connection.execute("INSERT INTO day_tasks VALUES (?,?,?)", row)
             self._connection.commit()
+            self._flush()
             return True
         except DayAgentTaskStoreError:
             self._connection.rollback()
@@ -229,6 +235,7 @@ class DayAgentTaskWriter:
             _require_appendable(task, steps, step)
             _ = self._connection.execute("INSERT INTO day_task_steps VALUES (?,?,?,?,?)", _step_row(step))
             self._connection.commit()
+            self._flush()
             return True
         except DayAgentTaskStoreError:
             self._connection.rollback()
@@ -381,12 +388,32 @@ def _writer_connection(identity: _DatabaseIdentity) -> Iterator[sqlite3.Connecti
         original = load_sqlite_database(connection, identity.descriptor)
         _enable_foreign_keys(connection)
         _prepare_writer_connection(connection)
+        if connection.serialize() != original:
+            _flush_writer_generation(identity, connection)
         yield connection
         _require_database_identity(identity)
-        connection.commit()
-        payload = connection.serialize()
-        if payload != original:
-            replace_sqlite_database(identity.parent, identity.name, payload)
+
+
+def _flush_writer_generation(identity: _DatabaseIdentity, connection: sqlite3.Connection) -> None:
+    _require_database_identity(identity)
+    payload = connection.serialize()
+    replace_sqlite_database(identity.parent, identity.name, payload)
+    replacement = _open_private_database(identity.parent, identity.name, create=False, write=True)
+    original = identity.descriptor
+    try:
+        _require_generation_payload(replacement, payload)
+        identity.descriptor = replacement
+        _require_database_identity(identity)
+    except BaseException:
+        identity.descriptor = original
+        os.close(replacement)
+        raise
+    os.close(original)
+
+
+def _require_generation_payload(descriptor: int, payload: bytes) -> None:
+    if os.fstat(descriptor).st_size != len(payload) or os.pread(descriptor, len(payload), 0) != payload:
+        raise OSError
 
 
 def _connect_descriptor(descriptor: int) -> sqlite3.Connection:

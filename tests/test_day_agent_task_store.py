@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import multiprocessing
 import os
 import sqlite3
 import stat
@@ -294,6 +295,101 @@ def test_reader_stays_bound_to_opened_database_during_transient_swap_and_restore
     assert DayAgentTaskStore(alternate).reader().task(original.task_id) is None
 
 
+def test_create_task_survives_process_exit_before_writer_context_exit(tmp_path: Path) -> None:
+    path = tmp_path / "day-agent.sqlite3"
+    process = multiprocessing.get_context("spawn").Process(target=_create_task_then_exit, args=(str(path),))
+
+    process.start()
+    process.join(timeout=30)
+
+    assert process.exitcode == 0
+    assert DayAgentTaskStore(path).reader().task("task-20260821-NVDA") == day_task()
+
+
+def test_append_step_survives_process_exit_before_writer_context_exit(tmp_path: Path) -> None:
+    path = tmp_path / "day-agent.sqlite3"
+    task = day_task()
+    with DayAgentTaskStore(path).writer() as writer:
+        assert writer.create_task(task)
+    process = multiprocessing.get_context("spawn").Process(target=_append_step_then_exit, args=(str(path),))
+
+    process.start()
+    process.join(timeout=30)
+
+    assert process.exitcode == 0
+    assert DayAgentTaskStore(path).reader().steps(task.task_id) == (
+        day_step(task, sequence=1, action=DayAgentAction.INSPECT_SITUATION),
+    )
+
+
+def test_writer_rebind_rejects_swap_after_durable_replace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "day-agent.sqlite3"
+    attacker = tmp_path / "attacker.sqlite3"
+    with DayAgentTaskStore(path).writer() as writer:
+        assert writer.create_task(day_task())
+    with DayAgentTaskStore(attacker).writer() as writer:
+        assert writer.create_task(day_task(task_id="task-20260821-AMD"))
+    attacker_before = attacker.read_bytes()
+    original_replace = task_store.replace_sqlite_database
+
+    def replace_then_swap(parent: int, name: str, payload: bytes) -> None:
+        original_replace(parent, name, payload)
+        path.replace(tmp_path / "held.sqlite3")
+        attacker.replace(path)
+
+    monkeypatch.setattr(task_store, "replace_sqlite_database", replace_then_swap)
+
+    with (
+        pytest.raises(InvalidDayAgentTaskStoreError, match="database_write_failed"),
+        DayAgentTaskStore(path).writer() as writer,
+    ):
+        assert writer.create_task(day_task(task_id="task-20260821-MSFT"))
+
+    assert path.read_bytes() == attacker_before
+
+
+def test_writer_persists_two_operations_before_context_exit(tmp_path: Path) -> None:
+    path = tmp_path / "day-agent.sqlite3"
+    task = day_task()
+    step = day_step(task, sequence=1, action=DayAgentAction.INSPECT_SITUATION)
+
+    with DayAgentTaskStore(path).writer() as writer:
+        assert writer.create_task(task)
+        assert DayAgentTaskStore(path).reader().task(task.task_id) == task
+        assert writer.append_step(step)
+        assert DayAgentTaskStore(path).reader().steps(task.task_id) == (step,)
+
+
+def test_retry_is_idempotent_after_post_replace_uncertain_outcome(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "day-agent.sqlite3"
+    task = day_task()
+    with DayAgentTaskStore(path).writer() as writer:
+        assert writer.create_task(day_task(task_id="task-20260821-AMD"))
+    original_require = task_store._require_generation_payload
+
+    def reject_after_replace(descriptor: int, payload: bytes) -> None:
+        original_require(descriptor, payload)
+        raise OSError
+
+    monkeypatch.setattr(task_store, "_require_generation_payload", reject_after_replace)
+
+    with (
+        pytest.raises(InvalidDayAgentTaskStoreError, match="database_write_failed"),
+        DayAgentTaskStore(path).writer() as writer,
+    ):
+        assert writer.create_task(task)
+
+    monkeypatch.setattr(task_store, "_require_generation_payload", original_require)
+    with DayAgentTaskStore(path).writer() as writer:
+        assert writer.create_task(task) is False
+
+
 def test_reader_projects_latest_step_state_budget_and_evidence_after_reopen(tmp_path: Path) -> None:
     task = day_task()
     budget = DayAgentBudget(remaining_model_calls=3, remaining_tool_calls=7, remaining_runtime_seconds=45)
@@ -461,3 +557,16 @@ def test_projection_folds_research_updates_and_reconstructed_step_replays(tmp_pa
     assert projected.falsification_conditions == first.falsification_conditions
     assert projected.open_questions == first.open_questions
     assert projected.resume_condition == first.resume_condition
+
+
+def _create_task_then_exit(path: str) -> None:
+    with DayAgentTaskStore(Path(path)).writer() as writer:
+        assert writer.create_task(day_task())
+        os._exit(0)
+
+
+def _append_step_then_exit(path: str) -> None:
+    task = day_task()
+    with DayAgentTaskStore(Path(path)).writer() as writer:
+        assert writer.append_step(day_step(task, sequence=1, action=DayAgentAction.INSPECT_SITUATION))
+        os._exit(0)
