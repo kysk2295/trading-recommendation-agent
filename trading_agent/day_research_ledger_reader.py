@@ -28,6 +28,11 @@ from trading_agent.day_research_ledger import (
     _version_by_id,
     require_same_market,
 )
+from trading_agent.day_research_review_models import ExecutionEligibility, PromotionDecision
+from trading_agent.day_research_review_reader import (
+    read_execution_eligibility_events,
+    read_promotion_decisions,
+)
 from trading_agent.research_identity_models import MarketId
 from trading_agent.strategy_research_results import ResearchAttempt
 
@@ -36,6 +41,22 @@ from trading_agent.strategy_research_results import ResearchAttempt
 class DayResearchAttemptForReview:
     binding: DayResearchAttemptBinding
     attempt: ResearchAttempt
+
+
+def day_promotion_decisions(
+    connection: sqlite3.Connection,
+    market_id: MarketId | None = None,
+    capsule_id: str | None = None,
+) -> tuple[PromotionDecision, ...]:
+    return read_promotion_decisions(connection, market_id, capsule_id)
+
+
+def day_execution_eligibility_events(
+    connection: sqlite3.Connection,
+    market_id: MarketId | None = None,
+    capsule_id: str | None = None,
+) -> tuple[ExecutionEligibility, ...]:
+    return read_execution_eligibility_events(connection, market_id, capsule_id)
 
 
 def day_hypothesis_families(

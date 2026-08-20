@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import importlib
 
 import pytest
 from pydantic import ValidationError
@@ -17,6 +18,17 @@ from trading_agent.intraday_promotion_models import (
 )
 
 NOW = dt.datetime(2026, 7, 27, 20, 30, tzinfo=dt.UTC)
+
+
+def test_day_promotion_and_execution_authority_statuses_are_distinct() -> None:
+    # Given: the legacy intraday promotion contract.
+    module = importlib.import_module("trading_agent.intraday_promotion_models")
+
+    # When: the Day review status surface is inspected.
+    names = {"DayExecutionAuthorityClass", "DayPromotionStatus"}
+
+    # Then: evidence-only promotion and owner-granted authority use separate enums.
+    assert names <= set(module.__all__)
 
 
 def _assessment() -> IntradayPromotionAssessment:

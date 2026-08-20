@@ -3,17 +3,36 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import re
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from trading_agent.day_research_review_models import (
+    DayExecutionAuthorityClass,
+    DayExecutionEligibilityStatus,
+    DayOwnerAuthorityEvent,
+    DayPromotionStatus,
+    DayReviewWindow,
+    ExecutionEligibility,
+    PromotionDecision,
+    ReviewFeedbackSummary,
+)
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.experiment_ledger_models import StrategyLifecycleState
 from trading_agent.us_equity_calendar import NEW_YORK
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+
+
+@dataclass(frozen=True, slots=True)
+class InvalidIntradayPromotionModelError(ValueError):
+    reason: str
+
+    def __str__(self) -> str:
+        return self.reason
 
 
 class PromotionAssessmentStatus(StrEnum):
@@ -41,10 +60,7 @@ class PromotionAssessmentContent(BaseModel):
             StrategyLifecycleState.PAPER_CHAMPION,
         }
         status_valid = (
-            (
-                self.status is PromotionAssessmentStatus.ELIGIBLE
-                and not self.blockers
-            )
+            (self.status is PromotionAssessmentStatus.ELIGIBLE and not self.blockers)
             or (
                 self.status is PromotionAssessmentStatus.MANUAL_APPROVAL_PENDING
                 and self.blockers == ("manual_approval_required",)
@@ -66,7 +82,7 @@ class PromotionAssessmentContent(BaseModel):
             or self.blockers != tuple(sorted(set(self.blockers)))
             or not status_valid
         ):
-            raise ValueError("invalid intraday promotion assessment content")
+            raise InvalidIntradayPromotionModelError("invalid intraday promotion assessment content")
         return self
 
 
@@ -80,7 +96,7 @@ class IntradayPromotionAssessment(BaseModel):
     @model_validator(mode="after")
     def validate_assessment(self) -> Self:
         if self.assessment_id != assessment_id(self.content):
-            raise ValueError("invalid intraday promotion assessment identity")
+            raise InvalidIntradayPromotionModelError("invalid intraday promotion assessment identity")
         return self
 
 
@@ -109,7 +125,7 @@ class PromotionApprovalContent(BaseModel):
                 StrategyLifecycleState.PAPER_CHAMPION,
             }
         ):
-            raise ValueError("invalid intraday promotion approval content")
+            raise InvalidIntradayPromotionModelError("invalid intraday promotion approval content")
         return self
 
 
@@ -123,7 +139,7 @@ class IntradayPromotionApproval(BaseModel):
     @model_validator(mode="after")
     def validate_approval(self) -> Self:
         if self.approval_id != approval_id(self.content):
-            raise ValueError("invalid intraday promotion approval identity")
+            raise InvalidIntradayPromotionModelError("invalid intraday promotion approval identity")
         return self
 
 
@@ -140,11 +156,20 @@ def _aware(value: dt.datetime) -> bool:
 
 
 __all__ = (
+    "DayExecutionAuthorityClass",
+    "DayExecutionEligibilityStatus",
+    "DayOwnerAuthorityEvent",
+    "DayPromotionStatus",
+    "DayReviewWindow",
+    "ExecutionEligibility",
     "IntradayPromotionApproval",
     "IntradayPromotionAssessment",
+    "InvalidIntradayPromotionModelError",
     "PromotionApprovalContent",
     "PromotionAssessmentContent",
     "PromotionAssessmentStatus",
+    "PromotionDecision",
+    "ReviewFeedbackSummary",
     "approval_id",
     "assessment_id",
 )
