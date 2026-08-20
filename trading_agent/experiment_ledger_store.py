@@ -1,3 +1,5 @@
+"""Single transaction and migration authority facade. # noqa: SIZE_OK"""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -32,7 +34,17 @@ from trading_agent.day_discovery_ledger_schema import (
     CREATE_DAY_DISCOVERY_LEDGER_SCHEMA_V11,
     DAY_DISCOVERY_SCHEMA_OBJECTS,
 )
+from trading_agent.day_forward_trial_ledger import (
+    DayForwardTrialLedgerConflictError,
+    DayForwardTrialState,
+    InvalidDayForwardTrialLedgerSourceError,
+    append_day_forward_trial_event,
+    day_forward_trials,
+    register_day_forward_trial,
+)
+from trading_agent.day_forward_trial_models import DayForwardTrial, DayForwardTrialEvent
 from trading_agent.day_hypothesis_models import HypothesisFamily, HypothesisVersion
+from trading_agent.day_learning_policy import ExplorationPolicy
 from trading_agent.day_research_attempt_binding import DayResearchAttemptBinding
 from trading_agent.day_research_ledger import (
     DayResearchLedgerConflictError,
@@ -44,11 +56,13 @@ from trading_agent.day_research_ledger import (
     _register_day_research_attempt_binding_after_audit,
     _register_day_strategy_capsule,
     audit_day_research_attempt_bindings,
+    record_day_exploration_policy,
     register_day_hypothesis_family,
     register_day_hypothesis_version,
 )
 from trading_agent.day_research_ledger_reader import (
     DayResearchAttemptForReview,
+    day_exploration_policies,
     day_hypothesis_families,
     day_hypothesis_family,
     day_hypothesis_version,
@@ -692,6 +706,30 @@ class ExperimentLedgerReader:
             except InvalidDayResearchLedgerSourceError:
                 raise InvalidExperimentLedgerSourceError from None
 
+    def day_forward_trials(
+        self,
+        market_id: MarketId | None = None,
+    ) -> tuple[DayForwardTrialState, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            try:
+                return day_forward_trials(connection, market_id)
+            except InvalidDayForwardTrialLedgerSourceError:
+                raise InvalidExperimentLedgerSourceError from None
+
+    def day_exploration_policies(
+        self,
+        market_id: MarketId | None = None,
+    ) -> tuple[ExplorationPolicy, ...]:
+        if not self.path.is_file():
+            return ()
+        with self._reader_connection() as connection:
+            try:
+                return day_exploration_policies(connection, market_id)
+            except InvalidDayResearchLedgerSourceError:
+                raise InvalidExperimentLedgerSourceError from None
+
     def strategy_research_preregistrations(self) -> tuple[PreregistrationManifest, ...]:
         if not self.path.is_file():
             return ()
@@ -772,7 +810,7 @@ class ExperimentLedgerStore(ExperimentLedgerReader):
                 writer = ExperimentLedgerWriter(connection)
                 try:
                     yield writer
-                except BaseException:
+                except (Exception, GeneratorExit, KeyboardInterrupt, SystemExit):
                     connection.rollback()
                     raise
                 else:
@@ -1110,6 +1148,36 @@ class ExperimentLedgerWriter:
         except InvalidDayResearchLedgerSourceError:
             raise InvalidExperimentLedgerSourceError from None
 
+    def register_day_forward_trial(self, trial: DayForwardTrial) -> bool:
+        self._require_active()
+        try:
+            return register_day_forward_trial(self._connection, trial)
+        except DayForwardTrialLedgerConflictError:
+            raise ExperimentLedgerConflictError from None
+        except InvalidDayForwardTrialLedgerSourceError:
+            raise InvalidExperimentLedgerSourceError from None
+
+    def record_day_exploration_policy(self, policy: ExplorationPolicy) -> bool:
+        self._require_active()
+        try:
+            return record_day_exploration_policy(self._connection, policy)
+        except DayResearchLedgerConflictError:
+            raise ExperimentLedgerConflictError from None
+        except InvalidDayResearchLedgerSourceError:
+            raise InvalidExperimentLedgerSourceError from None
+
+    def append_day_forward_trial_event(
+        self,
+        event: DayForwardTrialEvent,
+    ) -> DayForwardTrialEvent:
+        self._require_active()
+        try:
+            return append_day_forward_trial_event(self._connection, event)
+        except DayForwardTrialLedgerConflictError:
+            raise ExperimentLedgerConflictError from None
+        except InvalidDayForwardTrialLedgerSourceError:
+            raise InvalidExperimentLedgerSourceError from None
+
     def register_strategy_authority_binding(self, binding: StrategyAuthorityBinding) -> bool:
         self._require_active()
         binding = _validated_strategy_authority_binding(binding)
@@ -1236,7 +1304,7 @@ class ExperimentLedgerWriter:
         key_column: str,
         key: str,
         insert_sql: str,
-        insert_values: tuple[object, ...],
+        insert_values: tuple[None | int | float | str | bytes, ...],
     ) -> bool:
         collision = self._connection.execute(
             f"SELECT 1 FROM {table} WHERE {key_column} = ?",

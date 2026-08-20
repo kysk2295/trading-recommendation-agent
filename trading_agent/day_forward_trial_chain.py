@@ -72,6 +72,11 @@ def require_event_chain(
                 ):
                     raise InvalidDayForwardTrialLedgerSourceError("forward_trial_entry_without_signal")
                 entered = True
+            case DayForwardTrialEventKind.OBSERVED:
+                if not entered:
+                    raise InvalidDayForwardTrialLedgerSourceError(
+                        "forward_trial_observed_without_entry"
+                    )
             case DayForwardTrialEventKind.EXIT:
                 if not entered:
                     raise InvalidDayForwardTrialLedgerSourceError("forward_trial_exit_without_entry")

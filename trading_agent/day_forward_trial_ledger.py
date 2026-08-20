@@ -44,6 +44,7 @@ class DayForwardTrialState:
             case (
                 DayForwardTrialEventKind.SIGNAL
                 | DayForwardTrialEventKind.ENTRY
+                | DayForwardTrialEventKind.OBSERVED
                 | DayForwardTrialEventKind.NO_SIGNAL
                 | DayForwardTrialEventKind.BLOCKED
             ):

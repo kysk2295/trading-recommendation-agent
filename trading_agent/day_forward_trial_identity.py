@@ -21,6 +21,7 @@ class ForwardExecutionLane(StrEnum):
 class DayForwardTrialEventKind(StrEnum):
     SIGNAL = "signal"
     ENTRY = "entry"
+    OBSERVED = "observed"
     EXIT = "exit"
     NO_SIGNAL = "no_signal"
     BLOCKED = "blocked"

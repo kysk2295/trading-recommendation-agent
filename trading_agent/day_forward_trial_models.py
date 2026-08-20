@@ -167,7 +167,12 @@ class DayForwardTrialEvent(ForwardTrialModel):
         ):
             raise InvalidDayForwardTrialModelError("forward_trial_event_invalid")
         match self.event_kind:
-            case DayForwardTrialEventKind.SIGNAL | DayForwardTrialEventKind.ENTRY | DayForwardTrialEventKind.NO_SIGNAL:
+            case (
+                DayForwardTrialEventKind.SIGNAL
+                | DayForwardTrialEventKind.ENTRY
+                | DayForwardTrialEventKind.OBSERVED
+                | DayForwardTrialEventKind.NO_SIGNAL
+            ):
                 valid_payload = self.exit_reason is None and self.outcome_ref is None and not self.reason_codes
             case DayForwardTrialEventKind.EXIT:
                 valid_payload = self.exit_reason is not None and self.outcome_ref is not None and not self.reason_codes

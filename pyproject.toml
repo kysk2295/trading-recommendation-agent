@@ -46,6 +46,7 @@ include = [
   "run_kis_paper_watch.py",
   "run_forward_session_progress.py",
   "run_forward_runtime_readiness.py",
+  "run_us_forward_shadow_tick.py",
   "run_option_iv_term_context.py",
   "run_kis_overseas_futures_quotes.py",
   "run_kis_futures_entitlement_admission.py",
