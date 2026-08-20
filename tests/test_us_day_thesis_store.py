@@ -137,6 +137,56 @@ def test_store_rejects_unsafe_existing_intermediate_for_new_root(tmp_path: Path)
     assert not (intermediate / "new-store").exists()
 
 
+def test_store_detects_internal_directory_replacement_same_instance_and_restart(tmp_path: Path) -> None:
+    root = tmp_path / "bound-root"
+    store = UsDayThesisStore(root)
+    thesis = _terminal_thesis()
+    assert store.publish_thesis(thesis)
+    original = root / "theses-original"
+    (root / "theses").rename(original)
+    (root / "theses").mkdir(mode=0o700)
+    with pytest.raises(InvalidUsDayThesisStoreError):
+        store.theses()
+    with pytest.raises(InvalidUsDayThesisStoreError):
+        UsDayThesisStore(root).publish_thesis(thesis)
+
+
+def test_store_detects_root_replacement_same_instance_and_restart(tmp_path: Path) -> None:
+    root = tmp_path / "bound-root"
+    store = UsDayThesisStore(root)
+    thesis = _terminal_thesis()
+    assert store.publish_thesis(thesis)
+    root.rename(tmp_path / "root-original")
+    root.mkdir(mode=0o700)
+    with pytest.raises(InvalidUsDayThesisStoreError):
+        store.theses()
+    with pytest.raises(InvalidUsDayThesisStoreError):
+        UsDayThesisStore(root)
+
+
+def test_fresh_store_reopen_preserves_exact_replay(tmp_path: Path) -> None:
+    root = tmp_path / "bound-root"
+    thesis = _terminal_thesis()
+    assert UsDayThesisStore(root).publish_thesis(thesis)
+    reopened = UsDayThesisStore(root)
+    assert reopened.publish_thesis(thesis) is False
+    assert reopened.thesis(thesis.thesis_id) == thesis
+
+
+def test_store_rejects_missing_namespace_identity_marker(tmp_path: Path) -> None:
+    root = tmp_path / "bound-root"
+    store = UsDayThesisStore(root)
+    thesis = _terminal_thesis()
+    assert store.publish_thesis(thesis)
+    markers = tuple((root / ".identity-registry").glob("*.json"))
+    assert len(markers) == 1
+    markers[0].unlink()
+    with pytest.raises(InvalidUsDayThesisStoreError):
+        store.theses()
+    with pytest.raises(InvalidUsDayThesisStoreError):
+        UsDayThesisStore(root).theses()
+
+
 def test_concurrent_siblings_fail_closed_at_write_time(tmp_path: Path) -> None:
     store = UsDayThesisStore(tmp_path)
     thesis = _terminal_thesis()

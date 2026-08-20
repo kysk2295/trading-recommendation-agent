@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
+import json
 import os
+import secrets
 import stat
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -26,8 +29,21 @@ class InvalidUsDayThesisStoreError(ValueError):
 
 
 class UsDayThesisStore:
+    """Bind private store paths to durable inode records.
+
+    This detects accidental or untrusted rename/replacement, link, ownership, and
+    permission changes. It assumes the current-user-only parent holding the
+    external anchor is not maliciously rewritten by that same OS user.
+    """
+
     def __init__(self, root: Path) -> None:
         self.root = _absolute_without_symlinks(root)
+        self._anchor = self.root.parent / f".{self.root.name}.us-day-thesis-root.json"
+        self._identity_lock_path = self.root.parent / f".{self.root.name}.us-day-thesis-root.lock"
+        try:
+            self._root_identity, self._registry_identity, self._identity_payload = self._initialize_or_verify_root()
+        except (InvalidPrivateImmutableFileError, OSError, TypeError, ValueError):
+            raise InvalidUsDayThesisStoreError from None
 
     def publish_thesis(self, thesis: UsDayTradeThesis) -> bool:
         return self._publish(self.root / "theses" / f"{thesis.thesis_id}.json", thesis.model_dump_json())
@@ -66,7 +82,7 @@ class UsDayThesisStore:
     @contextmanager
     def _chain_lock(self, thesis_id: str) -> Iterator[None]:
         directory = self.root / "changes" / thesis_id
-        _require_safe_creation_path(directory, self.root)
+        self._prepare_bound_directory(directory, create=True)
         parent = open_private_parent(directory, create=True)
         descriptor = -1
         try:
@@ -96,7 +112,7 @@ class UsDayThesisStore:
 
     def thesis(self, thesis_id: str) -> UsDayTradeThesis:
         try:
-            _require_safe_creation_path(self.root / "theses", self.root)
+            self._prepare_bound_directory(self.root / "theses", create=False)
             payload = read_private_text(self.root / "theses" / f"{thesis_id}.json")
             thesis = UsDayTradeThesis.model_validate_json(payload)
             if thesis.thesis_id != thesis_id:
@@ -108,7 +124,7 @@ class UsDayThesisStore:
     def theses(self) -> tuple[UsDayTradeThesis, ...]:
         try:
             directory = self.root / "theses"
-            _require_safe_creation_path(directory, self.root)
+            self._prepare_bound_directory(directory, create=False)
             if not directory.exists():
                 return ()
             return tuple(self.thesis(path.stem) for path in sorted(directory.glob("*.json")))
@@ -118,7 +134,7 @@ class UsDayThesisStore:
     def changes(self, thesis_id: str) -> tuple[UsDayThesisChange, ...]:
         try:
             directory = self.root / "changes" / thesis_id
-            _require_safe_creation_path(directory, self.root)
+            self._prepare_bound_directory(directory, create=False)
             if not directory.exists():
                 return ()
             paths = tuple(sorted(directory.glob("*.json")))
@@ -150,10 +166,111 @@ class UsDayThesisStore:
 
     def _publish(self, path: Path, payload: str) -> bool:
         try:
-            _require_safe_creation_path(path.parent, self.root)
+            self._prepare_bound_directory(path.parent, create=True)
             return publish_private_immutable_text(path, payload)
         except InvalidPrivateImmutableFileError:
             raise InvalidUsDayThesisStoreError from None
+
+    def _initialize_or_verify_root(self) -> tuple[tuple[int, int], tuple[int, int], str]:
+        with self._identity_lock():
+            anchor_exists = os.path.lexists(self._anchor)
+            root_exists = os.path.lexists(self.root)
+            if anchor_exists:
+                if not root_exists:
+                    raise InvalidUsDayThesisStoreError
+                payload = read_private_text(self._anchor)
+                return self._verify_identity_payload(payload)
+            if root_exists:
+                _require_private_directory_path(self.root)
+                if tuple(self.root.iterdir()):
+                    raise InvalidUsDayThesisStoreError
+            else:
+                self.root.mkdir(mode=0o700)
+            registry = self.root / ".identity-registry"
+            registry.mkdir(mode=0o700)
+            token = secrets.token_hex(32)
+            payload = _identity_payload(self.root, registry, token)
+            marker = self.root / ".store-identity.json"
+            if not publish_private_immutable_text(marker, payload):
+                raise InvalidUsDayThesisStoreError
+            if not publish_private_immutable_text(self._anchor, payload):
+                raise InvalidUsDayThesisStoreError
+            return _directory_identity(self.root), _directory_identity(registry), payload
+
+    def _verify_identity_payload(self, payload: str) -> tuple[tuple[int, int], tuple[int, int], str]:
+        try:
+            decoded = json.loads(payload)
+            registry = self.root / ".identity-registry"
+            marker = self.root / ".store-identity.json"
+            root_identity = _directory_identity(self.root)
+            registry_identity = _directory_identity(registry)
+            if (
+                decoded != json.loads(_identity_payload(self.root, registry, str(decoded["token"])))
+                or read_private_text(marker) != payload
+            ):
+                raise InvalidUsDayThesisStoreError
+            return root_identity, registry_identity, payload
+        except (KeyError, TypeError, json.JSONDecodeError, InvalidPrivateImmutableFileError, ValueError):
+            raise InvalidUsDayThesisStoreError from None
+
+    def _verify_root_binding(self) -> None:
+        try:
+            if (
+                _directory_identity(self.root) != self._root_identity
+                or _directory_identity(self.root / ".identity-registry") != self._registry_identity
+                or read_private_text(self._anchor) != self._identity_payload
+                or read_private_text(self.root / ".store-identity.json") != self._identity_payload
+            ):
+                raise InvalidUsDayThesisStoreError
+        except (InvalidPrivateImmutableFileError, OSError, ValueError):
+            raise InvalidUsDayThesisStoreError from None
+
+    def _prepare_bound_directory(self, directory: Path, *, create: bool) -> None:
+        with self._identity_lock():
+            self._verify_root_binding()
+            try:
+                relative = directory.relative_to(self.root)
+            except ValueError:
+                raise InvalidUsDayThesisStoreError from None
+            current = self.root
+            for component in relative.parts:
+                current /= component
+                created = False
+                if not os.path.lexists(current):
+                    if not create:
+                        return
+                    current.mkdir(mode=0o700)
+                    created = True
+                _require_private_directory_path(current)
+                identity = _directory_identity(current)
+                identity_path = self.root / ".identity-registry" / f"{_namespace_key(current, self.root)}.json"
+                expected = _namespace_payload(current, self.root, identity, self._identity_payload)
+                if os.path.lexists(identity_path):
+                    if read_private_text(identity_path) != expected:
+                        raise InvalidUsDayThesisStoreError
+                else:
+                    if not created or tuple(current.iterdir()):
+                        raise InvalidUsDayThesisStoreError
+                    if not publish_private_immutable_text(identity_path, expected):
+                        raise InvalidUsDayThesisStoreError
+
+    @contextmanager
+    def _identity_lock(self) -> Iterator[None]:
+        _require_safe_creation_path(self.root.parent, self.root.parent)
+        descriptor = os.open(
+            self._identity_lock_path,
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
+            0o600,
+        )
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_nlink != 1:
+                raise InvalidUsDayThesisStoreError
+            os.fchmod(descriptor, 0o600)
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(descriptor)
 
 
 __all__ = ("InvalidUsDayThesisStoreError", "UsDayThesisStore")
@@ -207,3 +324,54 @@ def _require_safe_creation_path(path: Path, store_root: Path) -> None:
         if not os.path.lexists(next_path):
             return
         current = next_path
+
+
+def _require_private_directory_path(path: Path) -> None:
+    metadata = os.lstat(path)
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+    ):
+        raise InvalidUsDayThesisStoreError
+
+
+def _directory_identity(path: Path) -> tuple[int, int]:
+    _require_private_directory_path(path)
+    metadata = os.lstat(path)
+    return metadata.st_dev, metadata.st_ino
+
+
+def _identity_payload(root: Path, registry: Path, token: str) -> str:
+    root_device, root_inode = _directory_identity(root)
+    registry_device, registry_inode = _directory_identity(registry)
+    return json.dumps(
+        {
+            "root": str(root),
+            "root_device": root_device,
+            "root_inode": root_inode,
+            "registry_device": registry_device,
+            "registry_inode": registry_inode,
+            "token": token,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _namespace_key(path: Path, root: Path) -> str:
+    return hashlib.sha256(str(path.relative_to(root)).encode()).hexdigest()
+
+
+def _namespace_payload(path: Path, root: Path, identity: tuple[int, int], root_payload: str) -> str:
+    return json.dumps(
+        {
+            "relative_path": str(path.relative_to(root)),
+            "device": identity[0],
+            "inode": identity[1],
+            "root_identity_sha256": hashlib.sha256(root_payload.encode()).hexdigest(),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
