@@ -309,8 +309,6 @@ def _project_theme(
             bid_size=quotes[symbol].bid_size,
             ask_size=quotes[symbol].ask_size,
             vwap_relation=_vwap_relation(tick),
-            breakout_absorption_proxy=None,
-            cross_symbol_relative_strength=None,
             evidence_refs=flow_refs,
         )
         score = relative_volume + changes[symbol] + scanner_by_symbol[symbol].score

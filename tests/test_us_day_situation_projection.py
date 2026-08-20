@@ -101,9 +101,16 @@ def test_situation_map_links_theme_catalyst_flow_and_leader_evidence() -> None:
     assert theme.leaders[0].flow.relative_volume == Decimal("3.90078")
     assert theme.leaders[0].flow.dollar_volume == Decimal("6000600")
     assert theme.leaders[0].flow.vwap_relation == "crossing"
-    assert theme.leaders[0].flow.breakout_absorption_proxy is None
-    assert theme.leaders[0].flow.cross_symbol_relative_strength is None
-    assert theme.leaders[0].flow.inference_rule is None
+    assert set(ObservableFlow.model_fields) == {
+        "observation_kind",
+        "relative_volume",
+        "dollar_volume",
+        "spread_bps",
+        "bid_size",
+        "ask_size",
+        "vwap_relation",
+        "evidence_refs",
+    }
     absorption, cross_symbol = theme.leaders[0].inferences
     assert absorption.kind is FlowInferenceKind.BREAKOUT_ABSORPTION_PROXY
     assert absorption.rule == "bar_quote_absorption_proxy_v1"
@@ -186,12 +193,14 @@ def test_projection_rejects_forged_quote_and_completed_bar_references() -> None:
 
 
 def test_inferred_flow_requires_rule_while_observed_flow_forbids_one() -> None:
+    observed = _project(_inputs()).themes[0].leaders[0].flow
+    legacy_payload = observed.model_dump(mode="python") | {
+        "observation_kind": FlowObservationKind.INFERRED,
+        "breakout_absorption_proxy": Decimal("5"),
+        "inference_rule": "bar_quote_absorption_proxy_v1",
+    }
     with pytest.raises(ValidationError):
-        _flow(FlowObservationKind.INFERRED)
-    with pytest.raises(ValidationError):
-        _flow(FlowObservationKind.OBSERVED, inference_rule="invented")
-    with pytest.raises(ValidationError):
-        _flow(FlowObservationKind.INFERRED, inference_rule="invented")
+        ObservableFlow.model_validate(legacy_payload)
 
 
 def test_claim_is_closed_typed_catalyst_structure_with_deterministic_text() -> None:
@@ -228,19 +237,21 @@ def test_claim_rejects_hostile_prose_mismatched_symbols_and_wrong_evidence() -> 
 def test_absorption_inference_rejects_missing_proxy_value() -> None:
     evidence = _canonical_refs((_valid_bar_ref("a"), _valid_quote_ref()))
     with pytest.raises(ValidationError):
-        _flow(
-            FlowObservationKind.INFERRED,
-            inference_rule="bar_quote_absorption_proxy_v1",
-            evidence_refs=evidence,
+        FlowInference.model_validate(
+            {
+                "kind": FlowInferenceKind.BREAKOUT_ABSORPTION_PROXY,
+                "rule": "bar_quote_absorption_proxy_v1",
+                "evidence_refs": evidence,
+            }
         )
 
 
 def test_absorption_inference_requires_bar_and_quote_evidence() -> None:
     with pytest.raises(ValidationError):
-        _flow(
-            FlowObservationKind.INFERRED,
-            inference_rule="bar_quote_absorption_proxy_v1",
-            breakout_absorption_proxy=Decimal("5"),
+        FlowInference(
+            kind=FlowInferenceKind.BREAKOUT_ABSORPTION_PROXY,
+            value=Decimal("5"),
+            rule="bar_quote_absorption_proxy_v1",
             evidence_refs=(_valid_bar_ref("a"),),
         )
     with pytest.raises(ValidationError):
@@ -252,38 +263,33 @@ def test_absorption_inference_requires_bar_and_quote_evidence() -> None:
         )
 
     evidence = _canonical_refs((_valid_bar_ref("a"), _valid_quote_ref()))
-    flow = _flow(
-        FlowObservationKind.INFERRED,
-        inference_rule="bar_quote_absorption_proxy_v1",
-        breakout_absorption_proxy=Decimal("5"),
-        evidence_refs=evidence,
-    )
     inference = FlowInference(
         kind=FlowInferenceKind.BREAKOUT_ABSORPTION_PROXY,
         value=Decimal("5"),
         rule="bar_quote_absorption_proxy_v1",
         evidence_refs=evidence,
     )
-    assert flow.breakout_absorption_proxy == Decimal("5")
+    assert inference.value == Decimal("5")
     assert inference.evidence_refs == evidence
 
 
 def test_cross_symbol_inference_requires_value_and_two_distinct_bar_records() -> None:
     one_bar = (_valid_bar_ref("a"),)
     with pytest.raises(ValidationError):
-        _flow(
-            FlowObservationKind.INFERRED,
-            inference_rule="cross_symbol_relative_strength_v1",
-            cross_symbol_relative_strength=Decimal("2"),
+        FlowInference(
+            kind=FlowInferenceKind.CROSS_SYMBOL_RELATIVE_STRENGTH,
+            value=Decimal("2"),
+            rule="cross_symbol_relative_strength_v1",
             evidence_refs=one_bar,
         )
     two_bars = (_valid_bar_ref("a"), _valid_bar_ref("b"))
     with pytest.raises(ValidationError):
-        _flow(
-            FlowObservationKind.INFERRED,
-            inference_rule="cross_symbol_relative_strength_v1",
-            cross_symbol_relative_strength=None,
-            evidence_refs=two_bars,
+        FlowInference.model_validate(
+            {
+                "kind": FlowInferenceKind.CROSS_SYMBOL_RELATIVE_STRENGTH,
+                "rule": "cross_symbol_relative_strength_v1",
+                "evidence_refs": two_bars,
+            }
         )
     with pytest.raises(ValidationError):
         FlowInference(
@@ -293,19 +299,13 @@ def test_cross_symbol_inference_requires_value_and_two_distinct_bar_records() ->
             evidence_refs=one_bar,
         )
 
-    flow = _flow(
-        FlowObservationKind.INFERRED,
-        inference_rule="cross_symbol_relative_strength_v1",
-        cross_symbol_relative_strength=Decimal("2"),
-        evidence_refs=two_bars,
-    )
     inference = FlowInference(
         kind=FlowInferenceKind.CROSS_SYMBOL_RELATIVE_STRENGTH,
         value=Decimal("2"),
         rule="cross_symbol_relative_strength_v1",
         evidence_refs=two_bars,
     )
-    assert flow.cross_symbol_relative_strength == Decimal("2")
+    assert inference.value == Decimal("2")
     assert inference.evidence_refs == two_bars
 
 
@@ -538,29 +538,6 @@ def _tick_with_adversarial_candidate(tick: UsForwardShadowTick) -> UsForwardShad
         "cumulative_dollar_volume": 777,
     }
     return UsForwardShadowTick.model_validate(payload)
-
-
-def _flow(
-    observation_kind: FlowObservationKind,
-    *,
-    inference_rule: str | None = None,
-    breakout_absorption_proxy: Decimal | None = None,
-    cross_symbol_relative_strength: Decimal | None = None,
-    evidence_refs: tuple[EvidenceRef, ...] | None = None,
-) -> ObservableFlow:
-    return ObservableFlow(
-        observation_kind=observation_kind,
-        relative_volume=Decimal("1"),
-        dollar_volume=Decimal("100"),
-        spread_bps=Decimal("2"),
-        bid_size=10,
-        ask_size=12,
-        vwap_relation="unavailable",
-        breakout_absorption_proxy=breakout_absorption_proxy,
-        cross_symbol_relative_strength=cross_symbol_relative_strength,
-        inference_rule=inference_rule,
-        evidence_refs=(_valid_quote_ref(),) if evidence_refs is None else evidence_refs,
-    )
 
 
 def _valid_quote_ref() -> EvidenceRef:

@@ -15,12 +15,6 @@ _SYMBOL = re.compile(r"^[A-Z][A-Z0-9./-]{0,19}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _QUOTE_ID = re.compile(r"^us-quote:[0-9a-f]{64}$")
 _OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
-_ALLOWED_INFERENCE_RULES = frozenset(
-    {
-        "bar_quote_absorption_proxy_v1",
-        "cross_symbol_relative_strength_v1",
-    }
-)
 
 
 class ThemeState(StrEnum):
@@ -134,32 +128,19 @@ class CatalystEvidence(BaseModel):
 class ObservableFlow(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
-    observation_kind: FlowObservationKind
+    observation_kind: Literal[FlowObservationKind.OBSERVED] = FlowObservationKind.OBSERVED
     relative_volume: Decimal = Field(ge=0)
     dollar_volume: Decimal = Field(ge=0)
     spread_bps: Decimal = Field(ge=0)
     bid_size: int = Field(ge=0)
     ask_size: int = Field(ge=0)
     vwap_relation: Literal["above", "below", "crossing", "unavailable"]
-    breakout_absorption_proxy: Decimal | None = Field(default=None, ge=0)
-    cross_symbol_relative_strength: Decimal | None = None
-    inference_rule: str | None = Field(default=None, min_length=1, max_length=500)
     evidence_refs: tuple[EvidenceRef, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_flow(self) -> Self:
-        finite = (
-            self.relative_volume.is_finite()
-            and self.dollar_volume.is_finite()
-            and self.spread_bps.is_finite()
-            and (self.breakout_absorption_proxy is None or self.breakout_absorption_proxy.is_finite())
-            and (self.cross_symbol_relative_strength is None or self.cross_symbol_relative_strength.is_finite())
-        )
-        if (
-            not finite
-            or not _inference_valid(self.observation_kind, self.inference_rule)
-            or not _flow_inference_compatible(self)
-        ):
+        finite = self.relative_volume.is_finite() and self.dollar_volume.is_finite() and self.spread_bps.is_finite()
+        if not finite:
             raise ValueError("invalid observable flow")
         _require_canonical_refs(self.evidence_refs)
         return self
@@ -282,30 +263,6 @@ class UsDaySituationMap(BaseModel):
             raise ValueError("invalid US day situation map")
         _require_canonical_refs(self.evidence_refs)
         return self
-
-
-def _inference_valid(kind: FlowObservationKind, rule: str | None) -> bool:
-    return (kind is FlowObservationKind.OBSERVED and rule is None) or (
-        kind is FlowObservationKind.INFERRED and rule in _ALLOWED_INFERENCE_RULES
-    )
-
-
-def _flow_inference_compatible(flow: ObservableFlow) -> bool:
-    if flow.observation_kind is FlowObservationKind.OBSERVED:
-        return (
-            flow.inference_rule is None
-            and flow.breakout_absorption_proxy is None
-            and flow.cross_symbol_relative_strength is None
-        )
-    if not _inference_evidence_valid(flow.observation_kind, flow.inference_rule, flow.evidence_refs):
-        return False
-    match flow.inference_rule:
-        case "bar_quote_absorption_proxy_v1":
-            return flow.breakout_absorption_proxy is not None and flow.cross_symbol_relative_strength is None
-        case "cross_symbol_relative_strength_v1":
-            return flow.cross_symbol_relative_strength is not None and flow.breakout_absorption_proxy is None
-        case _:
-            return False
 
 
 def _inference_evidence_valid(
