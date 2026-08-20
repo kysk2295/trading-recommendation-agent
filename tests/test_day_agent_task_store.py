@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import sqlite3
 import stat
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+import trading_agent.day_agent_task_store as task_store
 from tests.day_agent_support import NOW, day_step, day_task
 from trading_agent.day_agent_task_models import DayAgentAction, DayAgentBudget, DayAgentTaskState, DayAgentTaskStep
 from trading_agent.day_agent_task_store import (
@@ -138,6 +140,93 @@ def test_database_is_private_and_reader_rejects_symlink_and_hardlink(tmp_path: P
     os.link(path, hardlink)
     with pytest.raises(InvalidDayAgentTaskStoreError, match="database_path_invalid"):
         _ = DayAgentTaskStore(hardlink).reader().task("task-20260821-NVDA")
+
+
+def test_writer_creates_database_with_no_follow_exclusive_private_descriptor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "day-agent.sqlite3"
+    original_open = task_store.os.open
+    opens: list[tuple[str, int, int, int | None]] = []
+
+    def recording_open(
+        name: str,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        if name == path.name:
+            opens.append((name, flags, mode, dir_fd))
+        return original_open(name, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(task_store.os, "open", recording_open)
+
+    with DayAgentTaskStore(path).writer() as writer:
+        assert writer.create_task(day_task())
+
+    matching = [entry for entry in opens if entry[1] & os.O_CREAT]
+    assert matching
+    _, flags, mode, parent = matching[0]
+    assert flags & os.O_EXCL
+    assert flags & os.O_NOFOLLOW
+    assert mode == 0o600
+    assert parent is not None
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_writer_rejects_symlink_replacement_during_connection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "day-agent.sqlite3"
+    attacker = tmp_path / "attacker.sqlite3"
+    with DayAgentTaskStore(path).writer() as writer:
+        assert writer.create_task(day_task())
+    with DayAgentTaskStore(attacker).writer() as writer:
+        assert writer.create_task(day_task(task_id="task-20260821-AMD"))
+    attacker_before = attacker.read_bytes()
+    original_connect = task_store.sqlite3.connect
+
+    def replace_with_symlink(database: str | Path, timeout: float) -> sqlite3.Connection:
+        path.replace(tmp_path / "held.sqlite3")
+        path.symlink_to(attacker)
+        return original_connect(database, timeout=timeout)
+
+    monkeypatch.setattr(task_store.sqlite3, "connect", replace_with_symlink)
+
+    with pytest.raises(InvalidDayAgentTaskStoreError, match="database_write_failed"), DayAgentTaskStore(path).writer():
+        pass
+
+    assert path.is_symlink()
+    assert attacker.read_bytes() == attacker_before
+
+
+def test_reader_rejects_hardlink_replacement_during_connection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "day-agent.sqlite3"
+    alternate = tmp_path / "alternate.sqlite3"
+    task = day_task()
+    with DayAgentTaskStore(path).writer() as writer:
+        assert writer.create_task(task)
+    with DayAgentTaskStore(alternate).writer() as writer:
+        assert writer.create_task(day_task(task_id="task-20260821-AMD"))
+    original_connect = task_store.sqlite3.connect
+
+    def replace_with_hardlink(database: str, *, uri: bool) -> sqlite3.Connection:
+        path.replace(tmp_path / "held.sqlite3")
+        os.link(alternate, path)
+        return original_connect(database, uri=uri)
+
+    monkeypatch.setattr(task_store.sqlite3, "connect", replace_with_hardlink)
+
+    with pytest.raises(InvalidDayAgentTaskStoreError, match="database_read_failed"):
+        _ = DayAgentTaskStore(path).reader().task(task.task_id)
+
+    assert path.samefile(alternate)
 
 
 def test_reader_projects_latest_step_state_budget_and_evidence_after_reopen(tmp_path: Path) -> None:

@@ -7,6 +7,7 @@ import sqlite3
 import stat
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, assert_never, final, override
 
@@ -15,6 +16,13 @@ from trading_agent.day_agent_task_models import (
     DayAgentTaskState,
     DayAgentTaskStep,
     day_agent_step_payload,
+)
+from trading_agent.private_directory_identity import (
+    open_private_parent,
+    require_open_directory_path,
+    require_private_directory,
+    require_private_directory_query_only,
+    require_same_file,
 )
 
 # SIZE_OK — one SQLite authority keeps task, step, and projection invariants transactional.
@@ -72,6 +80,14 @@ class InvalidDayAgentTaskStoreError(DayAgentTaskStoreError):
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class _DatabaseIdentity:
+    parent: int
+    name: str
+    descriptor: int
+    path: Path
+
+
 @final
 class DayAgentTaskStore:
     __slots__ = ("path",)
@@ -83,21 +99,33 @@ class DayAgentTaskStore:
 
     @contextmanager
     def writer(self) -> Iterator[DayAgentTaskWriter]:
-        _require_writable_database_path(self.path)
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        parent = -1
+        descriptor = -1
         try:
-            with closing(sqlite3.connect(self.path, timeout=10.0)) as connection:
-                os.chmod(self.path, 0o600)
+            parent = open_private_parent(self.path.parent, create=True)
+            require_private_directory(parent)
+            require_open_directory_path(self.path.parent, parent)
+            descriptor = _open_private_database(parent, self.path.name, create=True, write=True)
+            identity = _DatabaseIdentity(parent=parent, name=self.path.name, descriptor=descriptor, path=self.path)
+            with closing(_connect_database(identity, write=True)) as connection:
                 _prepare_writer_connection(connection)
                 writer = DayAgentTaskWriter(connection)
                 try:
                     yield writer
                 finally:
                     writer.close()
+                _require_database_identity(identity)
+            _require_database_identity(identity)
+            require_open_directory_path(self.path.parent, parent)
         except (OSError, sqlite3.Error, TypeError, ValueError) as error:
             if isinstance(error, DayAgentTaskStoreError):
                 raise
             raise InvalidDayAgentTaskStoreError(reason="database_write_failed") from error
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            if parent >= 0:
+                os.close(parent)
 
     def reader(self) -> DayAgentTaskReader:
         return DayAgentTaskReader(self.path)
@@ -113,23 +141,25 @@ class DayAgentTaskReader:
         self._path = path
 
     def task(self, task_id: str) -> DayAgentResearchTask | None:
-        if not _database_exists(self._path):
+        try:
+            with _reader_connection(self._path) as connection:
+                row = connection.execute(
+                    "SELECT task_id,payload_sha256,payload_json FROM day_tasks WHERE task_id=?", (task_id,)
+                ).fetchone()
+                if row is None:
+                    return None
+                task = _task_from_row(row)
+                steps = _steps_for_task(connection, task.task_id)
+        except FileNotFoundError:
             return None
-        with _reader_connection(self._path) as connection:
-            row = connection.execute(
-                "SELECT task_id,payload_sha256,payload_json FROM day_tasks WHERE task_id=?", (task_id,)
-            ).fetchone()
-            if row is None:
-                return None
-            task = _task_from_row(row)
-            steps = _steps_for_task(connection, task.task_id)
         return _project_task(task, steps)
 
     def steps(self, task_id: str) -> tuple[DayAgentTaskStep, ...]:
-        if not _database_exists(self._path):
+        try:
+            with _reader_connection(self._path) as connection:
+                return _steps_for_task(connection, task_id)
+        except FileNotFoundError:
             return ()
-        with _reader_connection(self._path) as connection:
-            return _steps_for_task(connection, task_id)
 
 
 @final
@@ -277,43 +307,94 @@ def _project_task(
 
 @contextmanager
 def _reader_connection(path: Path) -> Iterator[sqlite3.Connection]:
+    parent = -1
+    descriptor = -1
     try:
-        _require_private_database_file(path)
-        with closing(sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)) as connection:
+        parent = open_private_parent(path.parent, create=False)
+        require_private_directory_query_only(parent)
+        require_open_directory_path(path.parent, parent)
+        descriptor = _open_private_database(parent, path.name, create=False, write=False)
+        identity = _DatabaseIdentity(parent=parent, name=path.name, descriptor=descriptor, path=path)
+        with closing(_connect_database(identity, write=False)) as connection:
             _ = connection.execute("PRAGMA query_only = ON")
             _require_schema(connection)
             yield connection
+            _require_database_identity(identity)
+        _require_database_identity(identity)
+        require_open_directory_path(path.parent, parent)
+    except FileNotFoundError:
+        raise
     except (OSError, sqlite3.Error, TypeError, ValueError) as error:
         if isinstance(error, DayAgentTaskStoreError):
             raise
         raise InvalidDayAgentTaskStoreError(reason="database_read_failed") from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if parent >= 0:
+            os.close(parent)
 
 
-def _database_exists(path: Path) -> bool:
-    if path.is_symlink():
-        raise InvalidDayAgentTaskStoreError(reason="database_path_invalid")
-    return path.exists()
-
-
-def _require_writable_database_path(path: Path) -> None:
-    if path.is_symlink():
-        raise InvalidDayAgentTaskStoreError(reason="database_path_invalid")
-    if path.exists():
-        _require_private_database_file(path)
-
-
-def _require_private_database_file(path: Path) -> None:
+def _open_private_database(parent: int, name: str, *, create: bool, write: bool) -> int:
+    flags = os.O_NOFOLLOW | os.O_NONBLOCK
+    flags |= os.O_RDWR if write else os.O_RDONLY
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
     try:
-        metadata = path.lstat()
+        descriptor = os.open(name, flags, dir_fd=parent)
+    except FileNotFoundError:
+        if not create:
+            raise
+        try:
+            descriptor = os.open(name, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=parent)
+        except OSError as error:
+            raise InvalidDayAgentTaskStoreError(reason="database_path_invalid") from error
     except OSError as error:
         raise InvalidDayAgentTaskStoreError(reason="database_path_invalid") from error
+    try:
+        _require_private_database_descriptor(descriptor)
+    except (OSError, ValueError):
+        os.close(descriptor)
+        raise InvalidDayAgentTaskStoreError(reason="database_path_invalid") from None
+    return descriptor
+
+
+def _connect_database(identity: _DatabaseIdentity, *, write: bool) -> sqlite3.Connection:
+    connection: sqlite3.Connection | None = None
+    try:
+        _require_database_identity(identity)
+        if write:
+            connection = sqlite3.connect(identity.path, timeout=10.0)
+        else:
+            connection = sqlite3.connect(f"{identity.path.as_uri()}?mode=ro", uri=True)
+        _require_database_identity(identity)
+        return connection
+    except BaseException:
+        if connection is not None:
+            connection.close()
+        raise
+
+
+def _require_database_identity(identity: _DatabaseIdentity) -> None:
+    require_open_directory_path(identity.path.parent, identity.parent)
+    current = os.open(identity.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=identity.parent)
+    try:
+        _require_private_database_descriptor(identity.descriptor)
+        _require_private_database_descriptor(current)
+        require_same_file(identity.descriptor, current)
+    finally:
+        os.close(current)
+
+
+def _require_private_database_descriptor(descriptor: int) -> None:
+    metadata = os.fstat(descriptor)
     if (
         not stat.S_ISREG(metadata.st_mode)
         or metadata.st_uid != os.getuid()
         or stat.S_IMODE(metadata.st_mode) != 0o600
         or metadata.st_nlink != 1
     ):
-        raise InvalidDayAgentTaskStoreError(reason="database_path_invalid")
+        raise OSError
 
 
 def _prepare_writer_connection(connection: sqlite3.Connection) -> None:
