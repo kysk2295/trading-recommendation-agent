@@ -54,8 +54,11 @@ def _thesis_call() -> DayAgentThesisSubmission:
 def _hypothesis_call(*, experiment_code: str | None = None) -> DayAgentHypothesisSubmission:
     return DayAgentHypothesisSubmission(
         hypothesis="Current-session leader persistence is a falsifiable research hypothesis.",
+        mechanism="Delayed participation may sustain relative-strength leadership.",
+        baseline="Matched eligible leaders without persistent relative strength.",
         falsification_conditions=("leader_loses_relative_strength",),
         evidence_refs=("evidence.situation",),
+        data_requests=("completed_bar_v1",),
         experiment_code=experiment_code,
         reason="The bounded evidence supports a research-only hypothesis artifact.",
     )

@@ -203,8 +203,11 @@ class CompletedPersistentDayRuntime:
             case DayAgentAction.SUBMIT_RESEARCH_HYPOTHESIS:
                 submission = DayAgentHypothesisSubmission(
                     hypothesis="A valid completed research hypothesis artifact.",
+                    mechanism="Delayed participation may sustain relative-strength leadership.",
+                    baseline="Matched leaders without persistent relative strength.",
                     falsification_conditions=("leader_loses_relative_strength",),
                     evidence_refs=open_task.evidence_refs,
+                    data_requests=("completed_bar_v1",),
                     reason="Current evidence supports the bounded hypothesis artifact.",
                 )
                 expected_reason = "day_agent_research_hypothesis_submitted"

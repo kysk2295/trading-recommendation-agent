@@ -99,8 +99,12 @@ class DayAgentHypothesisSubmission(BaseModel):
     kind: Literal["hypothesis_submission"] = "hypothesis_submission"
     action: Literal[DayAgentAction.SUBMIT_RESEARCH_HYPOTHESIS] = DayAgentAction.SUBMIT_RESEARCH_HYPOTHESIS
     hypothesis: str = Field(min_length=8, max_length=4_000)
+    mechanism: str = Field(min_length=8, max_length=2_000)
+    baseline: str = Field(min_length=8, max_length=2_000)
     falsification_conditions: tuple[str, ...] = Field(min_length=1, max_length=32)
-    evidence_refs: tuple[str, ...] = Field(max_length=64)
+    evidence_refs: tuple[str, ...] = Field(min_length=1, max_length=64)
+    free_parameters: tuple[str, ...] = Field(default=(), max_length=4)
+    data_requests: tuple[str, ...] = Field(default=(), max_length=32)
     experiment_code: str | None = Field(default=None, min_length=8, max_length=8_000)
     reason: str = Field(min_length=8, max_length=500)
 
@@ -108,6 +112,8 @@ class DayAgentHypothesisSubmission(BaseModel):
     def require_canonical_values(self) -> Self:
         _require_sorted_unique(self.falsification_conditions)
         _require_sorted_unique(self.evidence_refs)
+        _require_sorted_unique(self.free_parameters)
+        _require_sorted_unique(self.data_requests)
         return self
 
 
