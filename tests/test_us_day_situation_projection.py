@@ -35,9 +35,14 @@ from trading_agent.signal_contract_models import (
     SourceCoverage,
 )
 from trading_agent.us_day_situation_models import (
+    CatalystClaimEvent,
     EvidenceBoundClaim,
+    FlowInference,
+    FlowInferenceKind,
     FlowObservationKind,
     ObservableFlow,
+    SituationClaimKind,
+    ThemeMap,
     ThemeState,
     UsDaySituationMap,
 )
@@ -96,8 +101,15 @@ def test_situation_map_links_theme_catalyst_flow_and_leader_evidence() -> None:
     assert theme.leaders[0].flow.relative_volume == Decimal("3.90078")
     assert theme.leaders[0].flow.dollar_volume == Decimal("6000600")
     assert theme.leaders[0].flow.vwap_relation == "crossing"
-    assert theme.leaders[0].flow.breakout_absorption_proxy is not None
-    assert sum(item.namespace == "research/current_bar" for item in theme.leaders[0].flow.evidence_refs) == 2
+    assert theme.leaders[0].flow.breakout_absorption_proxy is None
+    assert theme.leaders[0].flow.cross_symbol_relative_strength is None
+    assert theme.leaders[0].flow.inference_rule is None
+    absorption, cross_symbol = theme.leaders[0].inferences
+    assert absorption.kind is FlowInferenceKind.BREAKOUT_ABSORPTION_PROXY
+    assert absorption.rule == "bar_quote_absorption_proxy_v1"
+    assert cross_symbol.kind is FlowInferenceKind.CROSS_SYMBOL_RELATIVE_STRENGTH
+    assert cross_symbol.rule == "cross_symbol_relative_strength_v1"
+    assert len({item.record_id for item in cross_symbol.evidence_refs}) == 2
     assert all(claim.evidence_refs for claim in theme.claims)
 
 
@@ -182,21 +194,35 @@ def test_inferred_flow_requires_rule_while_observed_flow_forbids_one() -> None:
         _flow(FlowObservationKind.INFERRED, inference_rule="invented")
 
 
-def test_claim_rejects_observed_institutional_accumulation_language() -> None:
-    evidence = _canonical_refs((_valid_bar_ref("a"), _valid_quote_ref()))
-    with pytest.raises(ValidationError):
-        EvidenceBoundClaim(
-            text="Institutional accumulation confirmed.",
-            observation_kind=FlowObservationKind.OBSERVED,
-            evidence_refs=evidence,
-        )
-    claim = EvidenceBoundClaim(
-        text="Inferred institutional accumulation proxy from observed bars and quote.",
-        observation_kind=FlowObservationKind.INFERRED,
-        inference_rule="bar_quote_absorption_proxy_v1",
-        evidence_refs=evidence,
+def test_claim_is_closed_typed_catalyst_structure_with_deterministic_text() -> None:
+    claim = _shared_catalyst_claim()
+    assert claim.kind is SituationClaimKind.SHARED_CURRENT_SESSION_CATALYST
+    assert claim.text == "Shared current-session catalyst links AMD, NVDA from 1 verified event."
+
+
+def test_claim_rejects_hostile_prose_mismatched_symbols_and_wrong_evidence() -> None:
+    payload = _shared_catalyst_claim().model_dump(mode="python")
+    hostile_prose = (
+        "Buy NVDA.",
+        "Risk-free NVDA.",
+        "Manipulation confirmed.",
+        "NVDA recommendation.",
+        "NVDA prediction.",
     )
-    assert claim.inference_rule == "bar_quote_absorption_proxy_v1"
+    for text in hostile_prose:
+        with pytest.raises(ValidationError):
+            EvidenceBoundClaim.model_validate(payload | {"text": text})
+    with pytest.raises(ValidationError):
+        EvidenceBoundClaim.model_validate(payload | {"symbols": ("AMD",)})
+    with pytest.raises(ValidationError):
+        EvidenceBoundClaim.model_validate(payload | {"evidence_refs": (_valid_quote_ref(),)})
+
+    theme = _project(_inputs()).themes[0]
+    claim_payload = theme.claims[0].model_dump(mode="python")
+    event_payload = theme.claims[0].events[0].model_dump(mode="python") | {"symbols": ("AMD", "MSFT")}
+    claim_payload["events"] = (event_payload,)
+    with pytest.raises(ValidationError):
+        ThemeMap.model_validate(theme.model_dump(mode="python") | {"claims": (claim_payload,)})
 
 
 def test_absorption_inference_rejects_missing_proxy_value() -> None:
@@ -218,10 +244,10 @@ def test_absorption_inference_requires_bar_and_quote_evidence() -> None:
             evidence_refs=(_valid_bar_ref("a"),),
         )
     with pytest.raises(ValidationError):
-        EvidenceBoundClaim(
-            text="Inferred institutional accumulation proxy.",
-            observation_kind=FlowObservationKind.INFERRED,
-            inference_rule="bar_quote_absorption_proxy_v1",
+        FlowInference(
+            kind=FlowInferenceKind.BREAKOUT_ABSORPTION_PROXY,
+            value=Decimal("5"),
+            rule="bar_quote_absorption_proxy_v1",
             evidence_refs=(_valid_quote_ref(),),
         )
 
@@ -232,14 +258,14 @@ def test_absorption_inference_requires_bar_and_quote_evidence() -> None:
         breakout_absorption_proxy=Decimal("5"),
         evidence_refs=evidence,
     )
-    claim = EvidenceBoundClaim(
-        text="Inferred institutional accumulation proxy.",
-        observation_kind=FlowObservationKind.INFERRED,
-        inference_rule="bar_quote_absorption_proxy_v1",
+    inference = FlowInference(
+        kind=FlowInferenceKind.BREAKOUT_ABSORPTION_PROXY,
+        value=Decimal("5"),
+        rule="bar_quote_absorption_proxy_v1",
         evidence_refs=evidence,
     )
     assert flow.breakout_absorption_proxy == Decimal("5")
-    assert claim.evidence_refs == evidence
+    assert inference.evidence_refs == evidence
 
 
 def test_cross_symbol_inference_requires_value_and_two_distinct_bar_records() -> None:
@@ -260,10 +286,10 @@ def test_cross_symbol_inference_requires_value_and_two_distinct_bar_records() ->
             evidence_refs=two_bars,
         )
     with pytest.raises(ValidationError):
-        EvidenceBoundClaim(
-            text="Inferred cross-symbol relative-strength proxy.",
-            observation_kind=FlowObservationKind.INFERRED,
-            inference_rule="cross_symbol_relative_strength_v1",
+        FlowInference(
+            kind=FlowInferenceKind.CROSS_SYMBOL_RELATIVE_STRENGTH,
+            value=Decimal("2"),
+            rule="cross_symbol_relative_strength_v1",
             evidence_refs=one_bar,
         )
 
@@ -273,14 +299,14 @@ def test_cross_symbol_inference_requires_value_and_two_distinct_bar_records() ->
         cross_symbol_relative_strength=Decimal("2"),
         evidence_refs=two_bars,
     )
-    claim = EvidenceBoundClaim(
-        text="Inferred cross-symbol relative-strength proxy.",
-        observation_kind=FlowObservationKind.INFERRED,
-        inference_rule="cross_symbol_relative_strength_v1",
+    inference = FlowInference(
+        kind=FlowInferenceKind.CROSS_SYMBOL_RELATIVE_STRENGTH,
+        value=Decimal("2"),
+        rule="cross_symbol_relative_strength_v1",
         evidence_refs=two_bars,
     )
     assert flow.cross_symbol_relative_strength == Decimal("2")
-    assert claim.evidence_refs == two_bars
+    assert inference.evidence_refs == two_bars
 
 
 def _inputs() -> SituationInputs:
@@ -519,7 +545,7 @@ def _flow(
     *,
     inference_rule: str | None = None,
     breakout_absorption_proxy: Decimal | None = None,
-    cross_symbol_relative_strength: Decimal | None = Decimal("0"),
+    cross_symbol_relative_strength: Decimal | None = None,
     evidence_refs: tuple[EvidenceRef, ...] | None = None,
 ) -> ObservableFlow:
     return ObservableFlow(
@@ -548,6 +574,23 @@ def _valid_bar_ref(character: str) -> EvidenceRef:
 
 def _canonical_refs(refs: tuple[EvidenceRef, ...]) -> tuple[EvidenceRef, ...]:
     return tuple(sorted(refs, key=lambda item: item.canonical_id))
+
+
+def _shared_catalyst_claim() -> EvidenceBoundClaim:
+    evidence = (_ref("alpaca/news/article", "f" * 64, LATEST_BAR_AT),)
+    return EvidenceBoundClaim(
+        kind=SituationClaimKind.SHARED_CURRENT_SESSION_CATALYST,
+        events=(
+            CatalystClaimEvent(
+                event_id="e" * 64,
+                symbols=("AMD", "NVDA"),
+                evidence_refs=evidence,
+            ),
+        ),
+        observation_kind=FlowObservationKind.OBSERVED,
+        inference_rule=None,
+        evidence_refs=evidence,
+    )
 
 
 def _ref(namespace: str, record_id: str, observed_at: dt.datetime) -> EvidenceRef:

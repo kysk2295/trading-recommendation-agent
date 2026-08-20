@@ -15,11 +15,15 @@ from trading_agent.alpaca_news_opportunity_evidence import AlpacaNewsOpportunity
 from trading_agent.market_context_models import MarketContextSnapshot
 from trading_agent.signal_contract_models import EvidenceRef
 from trading_agent.us_day_situation_models import (
+    CatalystClaimEvent,
     CatalystEvidence,
     EvidenceBoundClaim,
+    FlowInference,
+    FlowInferenceKind,
     FlowObservationKind,
     LeaderCandidate,
     ObservableFlow,
+    SituationClaimKind,
     ThemeMap,
     ThemeState,
     UsDaySituationMap,
@@ -238,17 +242,65 @@ def _project_theme(
     scanner_by_symbol = {item.symbol: item for item in scanner.opportunity.candidates}
     changes = {symbol: _change_pct(ticks[symbol]) for symbol in symbols}
     theme_bar_refs = tuple(_completed_bar_ref(ticks[item]) for item in symbols)
-    raw_leaders: list[tuple[Decimal, Decimal, Decimal, str, ObservableFlow, tuple[EvidenceRef, ...]]] = []
+    raw_leaders: list[
+        tuple[
+            Decimal,
+            Decimal,
+            Decimal,
+            str,
+            ObservableFlow,
+            tuple[EvidenceRef, ...],
+            tuple[FlowInference, ...],
+        ]
+    ] = []
     for symbol in symbols:
         tick = ticks[symbol]
         candidate = tick.candidate
         if candidate is None:
             _fail()
-        flow_refs = _refs((*theme_bar_refs, _quote_ref(quotes[symbol])))
-        leader_refs = _refs((*flow_refs, _scanner_ref(scanner)))
+        flow_refs = _refs((_completed_bar_ref(tick), _quote_ref(quotes[symbol])))
         relative_volume = _relative_volume(tick)
         dollar_volume = _dollar_volume(tick)
         relative_strength = changes[symbol] - sum(changes.values(), Decimal(0)) / Decimal(len(changes))
+        absorption_value = _breakout_absorption_proxy(tick, quotes[symbol])
+        inferences = tuple(
+            sorted(
+                (
+                    *(
+                        (
+                            FlowInference(
+                                kind=FlowInferenceKind.BREAKOUT_ABSORPTION_PROXY,
+                                value=absorption_value,
+                                rule="bar_quote_absorption_proxy_v1",
+                                evidence_refs=flow_refs,
+                            ),
+                        )
+                        if absorption_value is not None
+                        else ()
+                    ),
+                    *(
+                        (
+                            FlowInference(
+                                kind=FlowInferenceKind.CROSS_SYMBOL_RELATIVE_STRENGTH,
+                                value=relative_strength,
+                                rule="cross_symbol_relative_strength_v1",
+                                evidence_refs=_refs(theme_bar_refs),
+                            ),
+                        )
+                        if len(theme_bar_refs) >= 2
+                        else ()
+                    ),
+                ),
+                key=lambda item: item.kind.value,
+            )
+        )
+        leader_refs = _refs(
+            (
+                *flow_refs,
+                *(ref for item in inferences for ref in item.evidence_refs),
+                _scanner_ref(scanner),
+            )
+        )
         flow = ObservableFlow(
             observation_kind=FlowObservationKind.OBSERVED,
             relative_volume=relative_volume,
@@ -257,12 +309,12 @@ def _project_theme(
             bid_size=quotes[symbol].bid_size,
             ask_size=quotes[symbol].ask_size,
             vwap_relation=_vwap_relation(tick),
-            breakout_absorption_proxy=_breakout_absorption_proxy(tick, quotes[symbol]),
-            cross_symbol_relative_strength=relative_strength,
+            breakout_absorption_proxy=None,
+            cross_symbol_relative_strength=None,
             evidence_refs=flow_refs,
         )
         score = relative_volume + changes[symbol] + scanner_by_symbol[symbol].score
-        raw_leaders.append((score, relative_volume, dollar_volume, symbol, flow, leader_refs))
+        raw_leaders.append((score, relative_volume, dollar_volume, symbol, flow, leader_refs, inferences))
     ordered = sorted(raw_leaders, key=lambda item: (-item[0], -item[1], -item[2], item[3]))
     leaders = tuple(
         LeaderCandidate(
@@ -270,6 +322,7 @@ def _project_theme(
             rank=index,
             leader_score=item[0],
             flow=item[4],
+            inferences=item[6],
             evidence_refs=item[5],
         )
         for index, item in enumerate(ordered, start=1)
@@ -284,6 +337,15 @@ def _project_theme(
     state = (
         ThemeState.EMERGING if age <= _EMERGING_AGE else ThemeState.ACTIVE if age <= _ACTIVE_AGE else ThemeState.AGING
     )
+    claim_events = tuple(
+        CatalystClaimEvent(
+            event_id=item.event_id,
+            symbols=item.symbols,
+            evidence_refs=item.evidence_refs,
+        )
+        for item in sorted(catalysts, key=lambda value: value.event_id)
+    )
+    claim_refs = _refs(tuple(ref for item in claim_events for ref in item.evidence_refs))
     return ThemeMap(
         theme_id=hashlib.sha256(
             json.dumps(identity_material, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode()
@@ -295,9 +357,11 @@ def _project_theme(
         leaders=leaders,
         claims=(
             EvidenceBoundClaim(
-                text=f"Shared current-session catalyst links {', '.join(symbols)}.",
+                kind=SituationClaimKind.SHARED_CURRENT_SESSION_CATALYST,
+                events=claim_events,
                 observation_kind=FlowObservationKind.OBSERVED,
-                evidence_refs=theme_refs,
+                inference_rule=None,
+                evidence_refs=claim_refs,
             ),
         ),
         evidence_refs=theme_refs,

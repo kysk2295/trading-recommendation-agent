@@ -21,15 +21,6 @@ _ALLOWED_INFERENCE_RULES = frozenset(
         "cross_symbol_relative_strength_v1",
     }
 )
-_UNOBSERVED_FLOW_PHRASES = (
-    "accumulation",
-    "distribution",
-    "institutional",
-    "smart money",
-    "buying pressure",
-    "selling pressure",
-    "whale",
-)
 
 
 class ThemeState(StrEnum):
@@ -43,32 +34,73 @@ class FlowObservationKind(StrEnum):
     INFERRED = "inferred"
 
 
+class FlowInferenceKind(StrEnum):
+    BREAKOUT_ABSORPTION_PROXY = "breakout_absorption_proxy"
+    CROSS_SYMBOL_RELATIVE_STRENGTH = "cross_symbol_relative_strength"
+
+
+class SituationClaimKind(StrEnum):
+    SHARED_CURRENT_SESSION_CATALYST = "shared_current_session_catalyst"
+
+
+class CatalystClaimEvent(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    event_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    symbols: tuple[str, ...] = Field(min_length=1, max_length=64)
+    evidence_refs: tuple[EvidenceRef, ...] = Field(min_length=1)
+
+    @field_validator("symbols", mode="before")
+    @classmethod
+    def canonical_symbols(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(sorted(set(value)))
+
+    @model_validator(mode="after")
+    def validate_event(self) -> Self:
+        if any(_SYMBOL.fullmatch(item) is None for item in self.symbols) or any(
+            item.namespace != "alpaca/news/article" for item in self.evidence_refs
+        ):
+            raise ValueError("invalid catalyst claim event")
+        _require_canonical_refs(self.evidence_refs)
+        return self
+
+
 class EvidenceBoundClaim(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    text: str = Field(min_length=1, max_length=500)
-    observation_kind: FlowObservationKind
-    inference_rule: str | None = Field(default=None, min_length=1, max_length=500)
+    kind: SituationClaimKind
+    events: tuple[CatalystClaimEvent, ...] = Field(min_length=1)
+    observation_kind: Literal[FlowObservationKind.OBSERVED] = FlowObservationKind.OBSERVED
+    inference_rule: Literal[None] = None
     evidence_refs: tuple[EvidenceRef, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_claim(self) -> Self:
-        lowered = self.text.casefold()
-        makes_unobserved_flow_claim = any(item in lowered for item in _UNOBSERVED_FLOW_PHRASES)
-        labeled_inference = "inferred" in lowered or "proxy" in lowered
+        event_ids = tuple(item.event_id for item in self.events)
+        expected_refs = _canonical_refs(tuple(ref for item in self.events for ref in item.evidence_refs))
         if (
-            not _inference_valid(self.observation_kind, self.inference_rule)
-            or not _inference_evidence_valid(
-                self.observation_kind,
-                self.inference_rule,
-                self.evidence_refs,
-            )
-            or (makes_unobserved_flow_claim and self.observation_kind is FlowObservationKind.OBSERVED)
-            or (makes_unobserved_flow_claim and not labeled_inference)
+            self.kind is not SituationClaimKind.SHARED_CURRENT_SESSION_CATALYST
+            or event_ids != tuple(sorted(set(event_ids)))
+            or len(self.symbols) < 2
+            or self.evidence_refs != expected_refs
         ):
             raise ValueError("invalid evidence-bound claim")
         _require_canonical_refs(self.evidence_refs)
         return self
+
+    @property
+    def symbols(self) -> tuple[str, ...]:
+        return tuple(sorted({symbol for item in self.events for symbol in item.symbols}))
+
+    @property
+    def event_ids(self) -> tuple[str, ...]:
+        return tuple(item.event_id for item in self.events)
+
+    @property
+    def text(self) -> str:
+        noun = "event" if len(self.events) == 1 else "events"
+        symbols = ", ".join(self.symbols)
+        return f"Shared current-session catalyst links {symbols} from {len(self.events)} verified {noun}."
 
 
 class CatalystEvidence(BaseModel):
@@ -133,6 +165,36 @@ class ObservableFlow(BaseModel):
         return self
 
 
+class FlowInference(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
+
+    kind: FlowInferenceKind
+    value: Decimal
+    rule: Literal["bar_quote_absorption_proxy_v1", "cross_symbol_relative_strength_v1"]
+    evidence_refs: tuple[EvidenceRef, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_inference(self) -> Self:
+        expected_rule = (
+            "bar_quote_absorption_proxy_v1"
+            if self.kind is FlowInferenceKind.BREAKOUT_ABSORPTION_PROXY
+            else "cross_symbol_relative_strength_v1"
+        )
+        if (
+            not self.value.is_finite()
+            or self.rule != expected_rule
+            or (self.kind is FlowInferenceKind.BREAKOUT_ABSORPTION_PROXY and self.value < 0)
+            or not _inference_evidence_valid(
+                FlowObservationKind.INFERRED,
+                self.rule,
+                self.evidence_refs,
+            )
+        ):
+            raise ValueError("invalid flow inference")
+        _require_canonical_refs(self.evidence_refs)
+        return self
+
+
 class LeaderCandidate(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
@@ -140,11 +202,17 @@ class LeaderCandidate(BaseModel):
     rank: int = Field(ge=1)
     leader_score: Decimal
     flow: ObservableFlow
+    inferences: tuple[FlowInference, ...] = Field(max_length=2)
     evidence_refs: tuple[EvidenceRef, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_leader(self) -> Self:
-        if _SYMBOL.fullmatch(self.symbol) is None or not self.leader_score.is_finite():
+        inference_kinds = tuple(item.kind.value for item in self.inferences)
+        if (
+            _SYMBOL.fullmatch(self.symbol) is None
+            or not self.leader_score.is_finite()
+            or inference_kinds != tuple(sorted(set(inference_kinds)))
+        ):
             raise ValueError("invalid leader candidate")
         _require_canonical_refs(self.evidence_refs)
         return self
@@ -165,12 +233,24 @@ class ThemeMap(BaseModel):
     @model_validator(mode="after")
     def validate_theme(self) -> Self:
         ranks = tuple(item.rank for item in self.leaders)
+        claim = self.claims[0] if len(self.claims) == 1 else None
+        catalysts = {item.event_id: item for item in self.catalysts}
+        claim_events_match = claim is not None and all(
+            (catalyst := catalysts.get(item.event_id)) is not None
+            and item.symbols == catalyst.symbols
+            and item.evidence_refs == catalyst.evidence_refs
+            for item in claim.events
+        )
         if (
             self.symbols != tuple(sorted(set(self.symbols)))
             or any(_SYMBOL.fullmatch(item) is None for item in self.symbols)
             or self.keywords != tuple(sorted(set(self.keywords)))
             or ranks != tuple(range(1, len(self.leaders) + 1))
             or any(item.symbol not in self.symbols for item in self.leaders)
+            or claim is None
+            or claim.symbols != self.symbols
+            or claim.event_ids != tuple(sorted(catalysts))
+            or not claim_events_match
         ):
             raise ValueError("invalid theme map")
         _require_canonical_refs(self.evidence_refs)
@@ -212,14 +292,18 @@ def _inference_valid(kind: FlowObservationKind, rule: str | None) -> bool:
 
 def _flow_inference_compatible(flow: ObservableFlow) -> bool:
     if flow.observation_kind is FlowObservationKind.OBSERVED:
-        return True
+        return (
+            flow.inference_rule is None
+            and flow.breakout_absorption_proxy is None
+            and flow.cross_symbol_relative_strength is None
+        )
     if not _inference_evidence_valid(flow.observation_kind, flow.inference_rule, flow.evidence_refs):
         return False
     match flow.inference_rule:
         case "bar_quote_absorption_proxy_v1":
-            return flow.breakout_absorption_proxy is not None
+            return flow.breakout_absorption_proxy is not None and flow.cross_symbol_relative_strength is None
         case "cross_symbol_relative_strength_v1":
-            return flow.cross_symbol_relative_strength is not None
+            return flow.cross_symbol_relative_strength is not None and flow.breakout_absorption_proxy is None
         case _:
             return False
 
@@ -248,6 +332,11 @@ def _require_canonical_refs(refs: tuple[EvidenceRef, ...]) -> None:
         raise ValueError("evidence references are not canonical")
 
 
+def _canonical_refs(refs: tuple[EvidenceRef, ...]) -> tuple[EvidenceRef, ...]:
+    by_id = {item.canonical_id: item for item in refs}
+    return tuple(by_id[item] for item in sorted(by_id))
+
+
 def _known_evidence_ref(ref: EvidenceRef) -> bool:
     match ref.namespace:
         case "alpaca/news/article" | "research/current_bar":
@@ -261,11 +350,15 @@ def _known_evidence_ref(ref: EvidenceRef) -> bool:
 
 
 __all__ = (
+    "CatalystClaimEvent",
     "CatalystEvidence",
     "EvidenceBoundClaim",
+    "FlowInference",
+    "FlowInferenceKind",
     "FlowObservationKind",
     "LeaderCandidate",
     "ObservableFlow",
+    "SituationClaimKind",
     "ThemeMap",
     "ThemeState",
     "UsDaySituationMap",
