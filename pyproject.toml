@@ -100,6 +100,7 @@ include = [
   "run_sec_edgar_collect.py",
   "run_sec_edgar_history_collect.py",
   "run_kr_theme_day_open_smoke_verify.py",
+  "run_day_research_contract_smoke.py",
   "trading_agent/alpaca_archive.py",
   "trading_agent/alpaca_daily_cache.py",
   "trading_agent/alpaca_daily_store.py",
