@@ -42,6 +42,12 @@ class MomentumCandidate:
     cumulative_dollar_volume: float
     spread_bps: float
     catalyst: str
+    minutes_from_open: int = 0
+    theme_catalyst_count: int = 1
+    catalyst_age_minutes: int = 0
+    execution_review_sessions: int = 0
+    estimated_slippage_bps: float = 0.0
+    fill_quality_bps: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)

@@ -106,6 +106,12 @@ def _candidate_input(candidate: CandidateFrame) -> MomentumCandidate:
         cumulative_dollar_volume=candidate.cumulative_dollar_volume,
         spread_bps=candidate.spread_bps,
         catalyst=candidate.catalyst,
+        minutes_from_open=candidate.minutes_from_open,
+        theme_catalyst_count=candidate.theme_catalyst_count,
+        catalyst_age_minutes=candidate.catalyst_age_minutes,
+        execution_review_sessions=candidate.execution_review_sessions,
+        estimated_slippage_bps=candidate.estimated_slippage_bps,
+        fill_quality_bps=candidate.fill_quality_bps,
     )
 
 

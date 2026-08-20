@@ -84,26 +84,63 @@ def test_host_deployment_promotes_only_validated_multi_session_recommendation(
     tmp_path: Path,
 ) -> None:
     # Given: a promotion recommendation derived from two paired future controller sessions.
-    fixture = loop_evaluation(tmp_path / "evaluation")
-    recommendation = _evaluated_promotion(fixture)
+    services, champion_capsule, challenger_capsule, policies = dual_capsule_runtime(tmp_path / "evaluation")
+    base = champion()
+    baseline = build_agent_version(
+        model_role_bindings=base.model_role_bindings,
+        prompt_sha256=base.prompt_sha256,
+        tool_policy_sha256=base.tool_policy_sha256,
+        memory_retrieval_policy_sha256=base.memory_retrieval_policy_sha256,
+        playbook_ids=(champion_capsule.capsule_id,),
+        parent_version_id=None,
+        creation_evidence_ids=base.payload.creation_evidence_ids,
+        deployment_state=AgentDeploymentState.CHAMPION,
+        task_id=base.task_id,
+        created_at=base.created_at,
+        created_session_date=base.created_session_date,
+    )
+    challenger = build_agent_version(
+        model_role_bindings=baseline.model_role_bindings,
+        prompt_sha256="5" * 64,
+        tool_policy_sha256=baseline.tool_policy_sha256,
+        memory_retrieval_policy_sha256=baseline.memory_retrieval_policy_sha256,
+        playbook_ids=(challenger_capsule.capsule_id,),
+        parent_version_id=baseline.version_id,
+        creation_evidence_ids=(SHA_A,),
+        deployment_state=AgentDeploymentState.SHADOW,
+        task_id=baseline.task_id,
+        created_at=NOW,
+        created_session_date=SESSION,
+    )
+    store = DayAgentVersionStore(tmp_path / "promotion-versions.sqlite3")
+    with store.writer() as writer:
+        assert writer.register_initial_champion(baseline)
+        assert writer.register_challenger(challenger)
+    sessions = tuple(
+        session_request(services, policy.policy_id, policy.payload.effective_session_date)
+        for policy in policies
+    )
+    recommendation = evaluate_day_agent_challenger(
+        DayAgentChallengerEvaluationRequest(
+            champion=baseline,
+            challenger=challenger,
+            champion_capsule_id=champion_capsule.capsule_id,
+            challenger_capsule_id=challenger_capsule.capsule_id,
+            sessions=sessions,
+            minimum_sessions=2,
+            evaluated_at=dt.datetime(2026, 8, 24, 20, 0, tzinfo=dt.UTC),
+        ),
+        store,
+        UsForwardShadowControllerRunner(services),
+    )
 
     # When: the deterministic host deployment function applies the stored recommendation.
-    transition = deploy_recommended_challenger(recommendation, fixture.store)
+    transition = deploy_recommended_challenger(recommendation, store)
 
     # Then: promotion is atomic and the prior Champion is demoted in the query projection.
     assert recommendation.decision is AgentPromotionDecision.PROMOTE
     assert recommendation.comparison.challenger.provenance_ids
     assert recommendation.comparison.challenger.theme_timing > recommendation.comparison.champion.theme_timing
-    assert set(AgentEvaluationMetrics.model_fields) >= {
-        "theme_timing",
-        "leader_rank",
-        "recommendation_calibration",
-        "mfe",
-        "mae",
-        "cost_adjusted_modeled_result",
-        "no_trade_quality",
-        "evidence_fidelity",
-    }
     metrics = recommendation.comparison.challenger
     assert metrics.theme_timing == 0.75
     assert metrics.leader_rank == 0.4
@@ -113,26 +150,26 @@ def test_host_deployment_promotes_only_validated_multi_session_recommendation(
     assert metrics.cost_adjusted_modeled_result == pytest.approx(0.014251485148514851)
     assert metrics.no_trade_quality == 1.0
     assert metrics.evidence_fidelity == 1.0
-    assert transition.promoted_version_id == fixture.challenger.version_id
-    states = {item.version_id: item.deployment_state for item in fixture.store.reader().versions()}
+    assert transition.promoted_version_id == challenger.version_id
+    states = {item.version_id: item.deployment_state for item in store.reader().versions()}
     assert states == {
-        fixture.baseline.version_id: "shadow",
-        fixture.challenger.version_id: "champion",
+        baseline.version_id: "shadow",
+        challenger.version_id: "champion",
     }
     next_challenger = build_agent_version(
-        model_role_bindings=fixture.challenger.model_role_bindings,
+        model_role_bindings=challenger.model_role_bindings,
         prompt_sha256="6" * 64,
-        tool_policy_sha256=fixture.challenger.tool_policy_sha256,
-        memory_retrieval_policy_sha256=fixture.challenger.memory_retrieval_policy_sha256,
-        playbook_ids=fixture.challenger.playbook_ids,
-        parent_version_id=fixture.challenger.version_id,
+        tool_policy_sha256=challenger.tool_policy_sha256,
+        memory_retrieval_policy_sha256=challenger.memory_retrieval_policy_sha256,
+        playbook_ids=challenger.playbook_ids,
+        parent_version_id=challenger.version_id,
         creation_evidence_ids=(transition.transition_id,),
         deployment_state=AgentDeploymentState.SHADOW,
-        task_id=fixture.challenger.task_id,
+        task_id=challenger.task_id,
         created_at=NOW + dt.timedelta(days=1),
         created_session_date=dt.date(2026, 8, 25),
     )
-    with fixture.store.writer() as writer:
+    with store.writer() as writer:
         assert writer.register_challenger(next_challenger)
 
 

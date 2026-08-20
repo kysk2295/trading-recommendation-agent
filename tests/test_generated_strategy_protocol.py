@@ -30,6 +30,12 @@ def test_protocol_round_trips_one_canonical_completed_bar() -> None:
         700_000.0,
         bar.spread_bps,
         "filing",
+        minutes_from_open=17,
+        theme_catalyst_count=3,
+        catalyst_age_minutes=8,
+        execution_review_sessions=6,
+        estimated_slippage_bps=4.5,
+        fill_quality_bps=7.5,
     )
 
     # When: the host builds a single ordered observation frame.
@@ -42,6 +48,12 @@ def test_protocol_round_trips_one_canonical_completed_bar() -> None:
     assert b"bars" not in payload
     assert request.bar.symbol == "TEST"
     assert request.candidate is not None
+    assert request.candidate.minutes_from_open == 17
+    assert request.candidate.theme_catalyst_count == 3
+    assert request.candidate.catalyst_age_minutes == 8
+    assert request.candidate.execution_review_sessions == 6
+    assert request.candidate.estimated_slippage_bps == 4.5
+    assert request.candidate.fill_quality_bps == 7.5
 
 
 def test_protocol_rejects_oversized_extra_and_non_finite_frames() -> None:

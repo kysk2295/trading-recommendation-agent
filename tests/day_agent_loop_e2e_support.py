@@ -7,7 +7,7 @@ from pathlib import Path
 from tests.day_agent_version_learning_support import SESSION, LeaderAuthor, diagnostics
 from tests.day_strategy_capsule_support import bar, proposal
 from tests.test_day_learning_report_models import _payload
-from tests.us_forward_shadow_support import no_signal_source, prepared_runtime
+from tests.us_forward_shadow_support import prepared_runtime, signal_source
 from trading_agent.day_agent_challenger_publisher import (
     DayAgentFutureShadowSession,
     DayAgentGeneratedCapsulePublisher,
@@ -40,7 +40,7 @@ class LoopEvaluationFixture:
 
 
 def loop_evaluation(root: Path) -> LoopEvaluationFixture:
-    shadow_services, champion_capsule = prepared_runtime(root / "shadow", source=no_signal_source())
+    shadow_services, champion_capsule = prepared_runtime(root / "shadow", source=signal_source())
     baseline = build_agent_version(
         model_role_bindings=(AgentModelRoleBinding(role="reasoning", model_id="reasoner-v1"),),
         prompt_sha256="1" * 64,
@@ -85,7 +85,7 @@ def loop_evaluation(root: Path) -> LoopEvaluationFixture:
             author=LeaderAuthor(),
             publisher=DayAgentGeneratedCapsulePublisher(
                 services=shadow_services,
-                proposal_template=proposal(no_signal_source()),
+                proposal_template=proposal(signal_source()),
                 replay_bars=(bar(),),
                 future_sessions=future_sessions,
             ),

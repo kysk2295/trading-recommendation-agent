@@ -74,6 +74,12 @@ class CandidateFrame(BaseModel):
     cumulative_dollar_volume: float = Field(ge=0.0)
     spread_bps: float = Field(ge=0.0)
     catalyst: str = Field(max_length=4_096)
+    minutes_from_open: int = Field(default=0, ge=0, le=390)
+    theme_catalyst_count: int = Field(default=1, ge=0, le=100)
+    catalyst_age_minutes: int = Field(default=0, ge=0, le=10_080)
+    execution_review_sessions: int = Field(default=0, ge=0, le=10_000)
+    estimated_slippage_bps: float = Field(default=0.0, ge=0.0)
+    fill_quality_bps: float = Field(default=0.0, ge=0.0)
 
     @model_validator(mode="after")
     def validate_numbers(self) -> Self:
@@ -84,6 +90,8 @@ class CandidateFrame(BaseModel):
             self.relative_volume,
             self.cumulative_dollar_volume,
             self.spread_bps,
+            self.estimated_slippage_bps,
+            self.fill_quality_bps,
         )
         if not all(math.isfinite(value) for value in values):
             raise GeneratedStrategyProtocolError("candidate_invalid")
@@ -241,4 +249,10 @@ def _candidate_fields(candidate: MomentumCandidate) -> dict[str, str | float]:
         "cumulative_dollar_volume": candidate.cumulative_dollar_volume,
         "spread_bps": candidate.spread_bps,
         "catalyst": candidate.catalyst,
+        "minutes_from_open": candidate.minutes_from_open,
+        "theme_catalyst_count": candidate.theme_catalyst_count,
+        "catalyst_age_minutes": candidate.catalyst_age_minutes,
+        "execution_review_sessions": candidate.execution_review_sessions,
+        "estimated_slippage_bps": candidate.estimated_slippage_bps,
+        "fill_quality_bps": candidate.fill_quality_bps,
     }

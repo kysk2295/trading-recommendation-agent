@@ -52,7 +52,7 @@ def test_finalized_close_change_runs_as_the_exact_future_shadow_challenger(tmp_p
         for policy in fixture.policies
     )
     assert len(fixture.policies) == len(sessions) == 2
-    assert recommendation.decision is AgentPromotionDecision.PROMOTE
+    assert recommendation.decision is AgentPromotionDecision.REJECT
     assert fixture.store.reader().recommendations(fixture.challenger.version_id) == (recommendation,)
     with pytest.raises(InvalidUsForwardShadowRuntimeError, match="policy_not_effective"):
         _ = fixture.controller.run_session(

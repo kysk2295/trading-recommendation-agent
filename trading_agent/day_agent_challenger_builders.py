@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
+from trading_agent.day_agent_challenger_strategy_source import DERIVED_STRATEGY_SOURCE
 from trading_agent.day_agent_version_models import AgentVersion, AgentVersionPatch
 from trading_agent.day_hypothesis_models import HypothesisVersion
 from trading_agent.day_learning_policy import ExplorationPolicy, ExplorationPolicyAction, ExplorationPolicyPayload
@@ -74,25 +75,14 @@ class FuturePolicyRequest:
 def render_derived_source(request: DerivedSourceRequest) -> str:
     patch_json = canonical_experiment_ledger_json(request.patch)
     return (
+        f"{request.parent_source}\n"
+        "_PARENT_CREATE_STRATEGY = create_strategy\n"
         f'AGENT_VERSION_PATCH_SHA256 = "{request.binding_sha256}"\n'
         f'PARENT_AGENT_VERSION_ID = "{request.champion.version_id}"\n'
         f'PARENT_PLAYBOOK_CAPSULE_ID = "{request.parent_capsule.capsule_id}"\n'
         f'PATCH_JSON = {patch_json!r}\n'
-        f"{request.parent_source}\n"
-        "_PARENT_CREATE_STRATEGY = create_strategy\n"
-        "def create_strategy(context):\n"
-        "    parent_strategy = _PARENT_CREATE_STRATEGY(context)\n"
-        "    class DerivedStrategy:\n"
-        "        def observe(self, bar, candidate):\n"
-        "            inherited = parent_strategy.observe(bar, candidate)\n"
-        "            if inherited is not None:\n"
-        "                return inherited\n"
-        "            if candidate is None:\n"
-        "                return None\n"
-        "            return {'symbol': bar['symbol'], 'timestamp': bar['timestamp'], "
-        "'entry': bar['close'], 'stop': bar['close'] - 1.0, "
-        "'rationale': 'typed day-agent challenger'}\n"
-        "    return DerivedStrategy()\n"
+        "_PATCH = __import__('json').loads(PATCH_JSON)\n"
+        + DERIVED_STRATEGY_SOURCE
     )
 
 
