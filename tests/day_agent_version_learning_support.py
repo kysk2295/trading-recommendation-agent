@@ -17,7 +17,8 @@ from trading_agent.day_agent_version_models import (
     AgentDeploymentState,
     AgentModelRoleBinding,
     AgentVersion,
-    AgentVersionPatch,
+    LeaderRankingFeature,
+    LeaderRankingPatch,
     build_agent_version,
 )
 from trading_agent.day_learning_report_models import (
@@ -132,14 +133,15 @@ def paper_bundle(thesis: UsDayTradeThesis) -> FinalizedPaperProjectionBundle:
 
 @dataclass(frozen=True, slots=True)
 class LeaderAuthor:
-    content: str = "rank leaders using catalyst freshness and relative volume"
-
     def propose(self, stage: DayDecisionStage, champion: AgentVersion) -> ProposedAgentChange:
         assert stage is DayDecisionStage.LEADER_SELECTION
         assert champion.deployment_state is AgentDeploymentState.CHAMPION
         return ProposedAgentChange(
-            kind=AgentChangeKind.LEADER_RANKING_POLICY,
-            patch=AgentVersionPatch(playbook_content=self.content),
+            patch=LeaderRankingPatch(
+                kind=AgentChangeKind.LEADER_RANKING_POLICY,
+                feature=LeaderRankingFeature.RELATIVE_VOLUME,
+                weight_bps=2_500,
+            ),
         )
 
 

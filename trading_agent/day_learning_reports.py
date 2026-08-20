@@ -3,10 +3,14 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 from dataclasses import dataclass
+from typing import assert_never
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from trading_agent.dashboard_paper_finalized_terminal import FinalizedPaperAuthority
+from trading_agent.dashboard_paper_finalized_terminal import (
+    FinalizedPaperAuthority,
+    FinalizedPaperAuthorityFailure,
+)
 from trading_agent.dashboard_us_day_paper import FinalizedPaperProjectionBundle
 from trading_agent.day_learning_report_models import (
     DailyLearningReport,
@@ -22,7 +26,13 @@ from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_jso
 from trading_agent.lane_contract_keys import lane_daily_snapshot_key
 from trading_agent.research_identity_models import MarketId
 from trading_agent.us_day_situation_models import UsDaySituationMap
-from trading_agent.us_day_thesis_models import DayTradeDecision, UsDayTradeThesis, situation_id_for
+from trading_agent.us_day_thesis_models import (
+    DayTradeDecision,
+    ThesisChangeKind,
+    UsDayThesisChange,
+    UsDayTradeThesis,
+    situation_id_for,
+)
 from trading_agent.us_equity_calendar import NEW_YORK
 
 
@@ -43,6 +53,7 @@ class DayStageAssessment(BaseModel):
 @dataclass(frozen=True, slots=True)
 class FinalizedDayDecisionEvidence:
     thesis: UsDayTradeThesis
+    thesis_changes: tuple[UsDayThesisChange, ...]
     situation: UsDaySituationMap
     paper: FinalizedPaperProjectionBundle
     assessed_at: dt.datetime
@@ -73,17 +84,56 @@ def _canonical_diagnostic_evidence(
 ) -> tuple[str, ...]:
     thesis = UsDayTradeThesis.model_validate(evidence.thesis.model_dump(mode="python"))
     situation = UsDaySituationMap.model_validate(evidence.situation.model_dump(mode="python"))
+    changes = tuple(
+        UsDayThesisChange.model_validate(item.model_dump(mode="python")) for item in evidence.thesis_changes
+    )
     paper = evidence.paper
     stages = tuple(item.stage for item in evidence.assessments)
-    authority = paper.authority
-    if not isinstance(authority, FinalizedPaperAuthority):
-        raise InvalidDayLearningReportError("day_diagnostic_evidence_invalid")
+    match paper.authority:
+        case FinalizedPaperAuthority() as authority:
+            pass
+        case FinalizedPaperAuthorityFailure():
+            raise InvalidDayLearningReportError("day_diagnostic_evidence_invalid") from None
+        case unreachable:
+            assert_never(unreachable)
     receipt = authority.receipt
     intent_matches = tuple(item for item in paper.ledger.intents if str(item.intent_id) == thesis.thesis_id)
     intent = intent_matches[0] if len(intent_matches) == 1 else None
     intent_created_at = None if intent is None else dt.datetime.fromisoformat(intent.created_at)
     situation_evidence = tuple(item.canonical_id for item in situation.evidence_refs)
     thesis_evidence = tuple(item.canonical_id for item in thesis.evidence_refs)
+    change_parents = (thesis.thesis_id, *(item.event_id for item in changes[:-1]))
+    change_chain_valid = all(
+        item.thesis_id == thesis.thesis_id
+        and item.parent_event_id == parent_id
+        and item.occurred_at <= paper.snapshot.finalized_at
+        for item, parent_id in zip(changes, change_parents, strict=True)
+    )
+    last_change_kind = None if not changes else changes[-1].kind
+    match last_change_kind:
+        case ThesisChangeKind.CLOSE | ThesisChangeKind.CANCEL_ENTRY | ThesisChangeKind.INVALIDATE_LOGIC:
+            terminal_change = True
+        case ThesisChangeKind.HOLD | ThesisChangeKind.PARTIAL_EXIT | None:
+            terminal_change = False
+        case unreachable:
+            assert_never(unreachable)
+    canonical_source_ids = tuple(
+        sorted(
+            {
+                thesis.thesis_id,
+                paper.identity.sha256,
+                authority.safe_ref,
+                receipt.snapshot_key,
+                receipt.recovery_snapshot_sha256,
+                *situation_evidence,
+                *thesis_evidence,
+                *(str(item.intent_id) for item in paper.ledger.intents),
+                *(item.event_id for item in changes),
+                *paper.ledger.pending_trade_update_receipt_keys,
+                *paper.ledger.unrecovered_trade_update_quarantine_keys,
+            }
+        )
+    )
     theme = next((item for item in situation.themes if item.theme_id == thesis.theme_id), None)
     session_date = thesis.observed_at.astimezone(NEW_YORK).date()
     paper_valid = (
@@ -119,6 +169,8 @@ def _canonical_diagnostic_evidence(
         evidence.assessed_at.tzinfo is None
         or evidence.assessed_at.utcoffset() is None
         or stages != tuple(DayDecisionStage)
+        or not change_chain_valid
+        or not terminal_change
         or situation_id_for(situation) != thesis.situation_id
         or thesis.agent_version_id not in receipt.strategy_versions
         or theme is None
@@ -131,22 +183,12 @@ def _canonical_diagnostic_evidence(
         or situation.evaluated_at > thesis.observed_at
         or evidence.assessed_at < paper.snapshot.finalized_at
         or evidence.assessed_at < watermark.finalized_through
+        or watermark.source_event_ids != canonical_source_ids
         or not paper_valid
         or not recommendation_valid
     ):
         raise InvalidDayLearningReportError("day_diagnostic_evidence_invalid")
-    return tuple(
-        sorted(
-            {
-                thesis.thesis_id,
-                paper.identity.sha256,
-                authority.safe_ref,
-                receipt.snapshot_key,
-                *situation_evidence,
-                *watermark.source_event_ids,
-            }
-        )
-    )
+    return canonical_source_ids
 
 
 def _diagnostic_outcome(score: float) -> DayDecisionOutcome:

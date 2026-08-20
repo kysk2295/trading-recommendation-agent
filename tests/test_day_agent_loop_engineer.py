@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 import pytest
+from pydantic import TypeAdapter, ValidationError
 
 from tests.day_agent_version_learning_support import LeaderAuthor, champion, diagnostics
 from tests.test_day_learning_report_models import _payload
@@ -11,7 +12,10 @@ from trading_agent.day_agent_loop_engineer import DayAgentLoopServices, run_loop
 from trading_agent.day_agent_version_models import (
     AgentChangeKind,
     AgentDeploymentState,
+    AgentVersionPatch,
     DayAgentVersionStoreError,
+    LeaderRankingFeature,
+    LeaderRankingPatch,
 )
 from trading_agent.day_agent_version_store import DayAgentVersionStore
 from trading_agent.day_learning_report_models import DayDecisionStage
@@ -35,7 +39,11 @@ def test_loop_engineer_turns_leader_error_into_shadow_challenger(tmp_path: Path)
     # Then: the stored version is a research-only Shadow and Dashboard can query it after restart.
     assert proposal.problem_stage is DayDecisionStage.LEADER_SELECTION
     assert proposal.allowed_changes == (AgentChangeKind.LEADER_RANKING_POLICY,)
-    assert proposal.patch.playbook_content == LeaderAuthor().content
+    assert proposal.patch == LeaderRankingPatch(
+        kind=AgentChangeKind.LEADER_RANKING_POLICY,
+        feature=LeaderRankingFeature.RELATIVE_VOLUME,
+        weight_bps=2_500,
+    )
     challenger = DayAgentVersionStore(store.path).reader().challenger(proposal.version_id)
     assert challenger is not None
     assert challenger.order_authority is False
@@ -46,40 +54,18 @@ def test_loop_engineer_turns_leader_error_into_shadow_challenger(tmp_path: Path)
 
 
 @pytest.mark.parametrize(
-    "content",
+    "payload",
     (
-        "change endpoint to a different broker",
-        "read credential from another file",
-        "increase account risk and order quantity",
-        "disable safety gates",
-        "lower promotion thresholds",
-        "delete audit history",
-        "InCrEaSe_risk-limits",
-        "erase.audit records",
-        "change-Alpaca_URL",
-        "alter/order sizing",
-        "bypass compliance guard",
+        {"kind": "leader_ranking_policy", "feature": "relative_volume", "weight_bps": 2500, "text": "broker"},
+        {"kind": "leader_ranking_policy", "feature": "risk_limit", "weight_bps": 2500},
+        {"kind": "leader_ranking_policy", "feature": "\uff42\uff52\uff4f\uff4b\uff45\uff52", "weight_bps": 2500},
+        {"kind": "leader_ranking_policy", "feature": "relative_volume", "weight_bps": "audit"},
     ),
 )
-def test_loop_engineer_rejects_prohibited_change_before_storage(
-    tmp_path: Path,
-    content: str,
-) -> None:
-    # Given: a valid Champion but an authored change touching protected authority.
-    store = DayAgentVersionStore(tmp_path / "versions.sqlite3")
-    baseline = champion()
-    with store.writer() as writer:
-        assert writer.register_initial_champion(baseline)
-    report = _payload().model_copy(update={"agent_version_id": baseline.version_id, "diagnostics": diagnostics()})
-
-    # When / Then: the proposal is rejected and no Challenger exists.
-    with pytest.raises(DayAgentVersionStoreError, match="change_prohibited"):
-        _ = run_loop_engineer(
-            report,
-            baseline,
-            DayAgentLoopServices(store=store, author=LeaderAuthor(content)),
-        )
-    assert store.reader().challengers() == ()
+def test_typed_patch_rejects_arbitrary_text_extra_keys_and_unicode(payload: dict[str, str | int]) -> None:
+    # Given / When / Then: non-allowlisted patch shapes cannot cross the typed boundary.
+    with pytest.raises(ValidationError):
+        _ = TypeAdapter(AgentVersionPatch).validate_python(payload)
 
 
 def test_version_store_is_private_and_rejects_linked_paths(tmp_path: Path) -> None:

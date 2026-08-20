@@ -2,65 +2,208 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import sys
 from dataclasses import dataclass
-from decimal import Decimal
 from pathlib import Path
 
 from tests.day_agent_version_learning_support import SESSION
-from tests.test_us_forward_shadow_models import _signal_artifact
-from tests.us_forward_shadow_support import prepared_runtime, shadow_tick
+from tests.day_strategy_capsule_support import bar, builtin_capsule, proposal
+from tests.strategy_research_contract_fixtures import hypothesis
+from tests.test_day_learning_report_models import NOW, SHA_A
+from tests.test_day_research_attempt_binding import _attempt, _binding, _family, _version
+from tests.us_forward_shadow_support import no_signal_source, prepared_runtime, shadow_tick, signal_source
 from trading_agent.day_agent_challenger_evaluation import (
-    DayForwardShadowSessionEvidence,
     DayForwardShadowSessionRequest,
     DayForwardShadowTickRequest,
+    UsForwardShadowControllerRunner,
 )
-from trading_agent.day_forward_trial_identity import DayForwardExitReason
+from trading_agent.day_agent_version_models import (
+    AgentDeploymentState,
+    AgentModelRoleBinding,
+    AgentVersion,
+    build_agent_version,
+)
+from trading_agent.day_agent_version_store import DayAgentVersionStore
 from trading_agent.day_learning_policy import ExplorationPolicy, ExplorationPolicyPayload
-from trading_agent.day_strategy_capsule import _publish_prebuilt_day_strategy_capsule
-from trading_agent.day_strategy_capsule_models import StrategyCapsule
+from trading_agent.day_strategy_capsule import (
+    DayStrategyCapsuleRequest,
+    GeneratedCapsuleVerification,
+    generated_evaluator_bundle_sha256,
+    generated_protocol_bundle_sha256,
+    publish_day_strategy_capsule,
+)
+from trading_agent.day_strategy_capsule_models import CapsuleArtifactKind
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
-from trading_agent.us_forward_shadow_artifacts import (
-    UsForwardShadowOutcomeLeg,
-    build_us_forward_shadow_outcome_artifact,
-    build_us_forward_shadow_signal_artifact,
-)
-from trading_agent.us_forward_shadow_models import (
-    UsForwardShadowCapsuleResult,
-    UsForwardShadowStatus,
-    UsForwardShadowTickResult,
-    completed_bar_id,
-)
+from trading_agent.generated_strategy_runtime import resolve_generated_strategy_runtime
+from trading_agent.generated_strategy_sandbox import GeneratedStrategySandbox
+from trading_agent.strategy_research_models import PreregistrationManifest
+from trading_agent.strategy_research_types import AttemptStatus
+from trading_agent.us_forward_shadow_models import completed_bar_id
 
 
 def dual_capsule_runtime(root: Path):
-    from tests.us_forward_shadow_support import signal_source
-
-    services, champion_capsule = prepared_runtime(root, source=signal_source())
-    payload = champion_capsule.model_dump(mode="python") | {
-        "capsule_id": "",
-        "slippage_model_id": "bounded_intraday_slippage_v2",
+    services, champion_capsule = prepared_runtime(root, source=no_signal_source())
+    published = services.generated_artifacts.publish(proposal(signal_source()))
+    source_sha256 = published.artifact.payload.source_sha256
+    family = _family()
+    base_version = _version(family, code_sha256=source_sha256)
+    version_payload = base_version.model_dump(mode="python") | {
+        "hypothesis_version_id": "",
+        "protocol_sha256": generated_protocol_bundle_sha256(),
     }
-    challenger_capsule = StrategyCapsule.model_validate(
-        payload | {"capsule_id": StrategyCapsule.canonical_id_for(payload)}
+    version = base_version.model_validate(
+        version_payload | {"hypothesis_version_id": base_version.canonical_id_for(version_payload)}
     )
-    assert _publish_prebuilt_day_strategy_capsule(services.ledger, challenger_capsule)
-    original = services.ledger.reader().day_exploration_policies()[0]
-    policy_payload = ExplorationPolicyPayload.model_validate(
-        original.payload.model_dump(mode="python")
-        | {
-            "final_report_id": "9" * 64,
-            "effective_session_date": dt.date(2026, 8, 21),
-            "effective_at": original.payload.effective_at + dt.timedelta(days=1),
-            "active_capsule_ids": tuple(sorted((champion_capsule.capsule_id, challenger_capsule.capsule_id))),
+    hypothesis_fixture = hypothesis()
+    registered_hypothesis = hypothesis_fixture.model_copy(
+        update={
+            "hypothesis_id": "hypothesis-catalyst-002",
+            "code_sha256": source_sha256,
+            "holdout_period_sealed_ref": hypothesis_fixture.holdout_period_sealed_ref.model_copy(
+                update={"seal_id": "sealed-holdout-catalyst-2026q3-challenger"}
+            ),
         }
     )
-    policy = ExplorationPolicy(
-        policy_id=hashlib.sha256(canonical_experiment_ledger_json(policy_payload).encode()).hexdigest(),
-        payload=policy_payload,
+    manifest = PreregistrationManifest.from_hypothesis(
+        registered_hypothesis,
+        preregistered_at=registered_hypothesis.created_at,
+    )
+    attempt = _attempt(1, AttemptStatus.SUCCEEDED).model_copy(
+        update={
+            "hypothesis_id": registered_hypothesis.hypothesis_id,
+            "code_sha256": source_sha256,
+            "artifact_refs": (f"artifact://safe/{source_sha256}",),
+        }
+    )
+    binding = _binding(attempt, version, artifact_ref=f"artifact://safe/{source_sha256}")
+    with services.ledger.writer() as writer:
+        _ = writer.register_strategy_research(manifest)
+        _ = writer.register_day_hypothesis_family(family)
+        assert writer.register_day_hypothesis_version(version)
+        assert writer.append_strategy_research_attempt(attempt)
+        assert writer.register_day_research_attempt_binding(binding)
+    limits = builtin_capsule().resource_limits
+    sandbox = GeneratedStrategySandbox(
+        resolve_generated_strategy_runtime(Path(sys.executable)),
+        root / "challenger-preflight",
+        limits.to_generated_limits(),
+    )
+    request = DayStrategyCapsuleRequest(
+        hypothesis_version_id=version.hypothesis_version_id,
+        attempt_binding_id=binding.binding_id,
+        market_id=champion_capsule.market_id,
+        artifact_kind=CapsuleArtifactKind.GENERATED_PYTHON,
+        artifact_ref=binding.artifact_ref,
+        artifact_sha256=source_sha256,
+        generated_artifact_id=published.artifact.artifact_id,
+        evaluation_cadence=version.evaluation_cadence,
+        evidence_schema=("completed_bar_v1",),
+        entry_rule=version.entry_rule,
+        exit_rule=version.exit_rule,
+        stop_rule=version.stop_rule,
+        target_rule="host_projects_preregistered_targets",
+        cost_model=version.cost_model,
+        slippage_model_id="bounded_intraday_slippage_v1",
+        resource_limits=limits,
+        risk_policy_ref="risk-policy://day-research/v1",
+        protocol_version=1,
+        protocol_sha256=generated_protocol_bundle_sha256(),
+        evaluator_sha256=generated_evaluator_bundle_sha256(),
+        published_at=binding.bound_at + dt.timedelta(minutes=1),
+        authority_ceiling=champion_capsule.authority_ceiling,
+        generated_verification=GeneratedCapsuleVerification(services.generated_artifacts, sandbox, (bar(),)),
+    )
+    challenger_capsule, created = publish_day_strategy_capsule(services.ledger, request)
+    assert created
+    original = services.ledger.reader().day_exploration_policies()[0]
+    policies = tuple(
+        _policy_for_session(
+            original,
+            (session_date, report_id),
+            (
+                min(champion_capsule.capsule_id, challenger_capsule.capsule_id),
+                max(champion_capsule.capsule_id, challenger_capsule.capsule_id),
+            ),
+        )
+        for session_date, report_id in (
+            (dt.date(2026, 8, 21), "9" * 64),
+            (dt.date(2026, 8, 24), "8" * 64),
+        )
     )
     with services.ledger.writer() as writer:
-        assert writer.record_day_exploration_policy(policy)
-    return services, champion_capsule, challenger_capsule, policy
+        assert all(writer.record_day_exploration_policy(policy) for policy in policies)
+    return services, champion_capsule, challenger_capsule, policies
+
+
+def _policy_for_session(
+    original: ExplorationPolicy,
+    specification: tuple[dt.date, str],
+    capsule_ids: tuple[str, str],
+) -> ExplorationPolicy:
+    session_date, report_id = specification
+    payload = ExplorationPolicyPayload.model_validate(
+        original.payload.model_dump(mode="python")
+        | {
+            "final_report_id": report_id,
+            "effective_session_date": session_date,
+            "effective_at": dt.datetime.combine(session_date, dt.time(13, 30), tzinfo=dt.UTC),
+            "active_capsule_ids": capsule_ids,
+        }
+    )
+    return ExplorationPolicy(
+        policy_id=hashlib.sha256(canonical_experiment_ledger_json(payload).encode()).hexdigest(),
+        payload=payload,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationFixture:
+    store: DayAgentVersionStore
+    baseline: AgentVersion
+    challenger: AgentVersion
+    controller: UsForwardShadowControllerRunner
+    policy_ids: tuple[str, str]
+
+
+def registered_evaluation(root: Path) -> EvaluationFixture:
+    services, champion_capsule, challenger_capsule, policies = dual_capsule_runtime(root / "controller")
+    baseline = build_agent_version(
+        model_role_bindings=(AgentModelRoleBinding(role="reasoning", model_id="reasoner-v1"),),
+        prompt_sha256="1" * 64,
+        tool_policy_sha256="2" * 64,
+        memory_retrieval_policy_sha256="3" * 64,
+        playbook_ids=(champion_capsule.capsule_id,),
+        parent_version_id=None,
+        creation_evidence_ids=(SHA_A,),
+        deployment_state=AgentDeploymentState.CHAMPION,
+        task_id="task-20260820-NVDA",
+        created_at=NOW,
+        created_session_date=SESSION,
+    )
+    challenger = build_agent_version(
+        model_role_bindings=baseline.model_role_bindings,
+        prompt_sha256=baseline.prompt_sha256,
+        tool_policy_sha256="5" * 64,
+        memory_retrieval_policy_sha256=baseline.memory_retrieval_policy_sha256,
+        playbook_ids=(challenger_capsule.capsule_id,),
+        parent_version_id=baseline.version_id,
+        creation_evidence_ids=(SHA_A,),
+        deployment_state=AgentDeploymentState.SHADOW,
+        task_id=baseline.task_id,
+        created_at=NOW,
+        created_session_date=SESSION,
+    )
+    store = DayAgentVersionStore(root / "versions.sqlite3")
+    with store.writer() as writer:
+        assert writer.register_initial_champion(baseline)
+        assert writer.register_challenger(challenger)
+    return EvaluationFixture(
+        store=store,
+        baseline=baseline,
+        challenger=challenger,
+        controller=UsForwardShadowControllerRunner(services),
+        policy_ids=(policies[0].policy_id, policies[1].policy_id),
+    )
 
 
 def session_request(services, policy_id: str, session_date: dt.date) -> DayForwardShadowSessionRequest:
@@ -69,7 +212,7 @@ def session_request(services, policy_id: str, session_date: dt.date) -> DayForwa
             services,
             minute,
             sequence,
-            high=103.2 if sequence == 4 else None,
+            high=120.0 if sequence == 4 else None,
             policy_id=policy_id,
         )
         for sequence, minute in enumerate((1, 2, 3, 4), start=1)
@@ -110,89 +253,4 @@ def _shift_tick(tick, delta: dt.timedelta, session_date: dt.date):
     )
 
 
-@dataclass(frozen=True, slots=True)
-class TypedControllerFake:
-    champion_capsule_id: str
-    challenger_capsule_id: str
-
-    def run_session(
-        self,
-        request: DayForwardShadowSessionRequest,
-        capsule_ids: tuple[str, str],
-    ) -> DayForwardShadowSessionEvidence:
-        assert capsule_ids == (self.champion_capsule_id, self.challenger_capsule_id)
-        first = request.ticks[0].tick
-        last = request.ticks[-1].tick
-        champion_trial = hashlib.sha256(f"champion:{first.session_id}".encode()).hexdigest()
-        challenger_trial = hashlib.sha256(f"challenger:{first.session_id}".encode()).hexdigest()
-        signal = build_us_forward_shadow_signal_artifact(
-            trial_id=challenger_trial,
-            capsule_id=self.challenger_capsule_id,
-            completed_bar_id=first.completed_bar_id,
-            completed_bar_sequence=first.completed_bar_sequence,
-            signal=_signal_artifact().signal,
-        )
-        entry = signal.signal.entry_price
-        legs = (
-            UsForwardShadowOutcomeLeg(
-                target_label="r1",
-                exit_completed_bar_id=last.completed_bar_id,
-                exit_price=entry * Decimal("1.02"),
-                exit_reason=DayForwardExitReason.TARGET,
-                weight=Decimal("0.5"),
-                gross_return=Decimal("0"),
-            ),
-            UsForwardShadowOutcomeLeg(
-                target_label="r2",
-                exit_completed_bar_id=last.completed_bar_id,
-                exit_price=entry * Decimal("1.03"),
-                exit_reason=DayForwardExitReason.TARGET,
-                weight=Decimal("0.5"),
-                gross_return=Decimal("0"),
-            ),
-        )
-        outcome = build_us_forward_shadow_outcome_artifact(
-            trial_id=challenger_trial,
-            signal_artifact_id=signal.artifact_id,
-            exit_completed_bar_id=last.completed_bar_id,
-            exit_completed_bar_sequence=last.completed_bar_sequence,
-            entry_price=entry,
-            legs=legs,
-            round_trip_cost_bps=Decimal("4"),
-            exit_reason=DayForwardExitReason.TARGET,
-            recorded_at=last.observed_at,
-        )
-        tick_results = tuple(
-            UsForwardShadowTickResult(
-                policy_id=item.tick.policy_id,
-                session_id=item.tick.session_id,
-                completed_bar_id=item.tick.completed_bar_id,
-                results=(
-                    UsForwardShadowCapsuleResult(
-                        capsule_id=self.champion_capsule_id,
-                        trial_id=champion_trial,
-                        status=UsForwardShadowStatus.NO_SIGNAL,
-                        event_ids=(hashlib.sha256(f"c:{item.tick.completed_bar_id}".encode()).hexdigest(),),
-                    ),
-                    UsForwardShadowCapsuleResult(
-                        capsule_id=self.challenger_capsule_id,
-                        trial_id=challenger_trial,
-                        status=UsForwardShadowStatus.EXITED,
-                        event_ids=(hashlib.sha256(f"x:{item.tick.completed_bar_id}".encode()).hexdigest(),),
-                        outcome_id=outcome.outcome_id,
-                    ),
-                ),
-            )
-            for item in request.ticks
-        )
-        return DayForwardShadowSessionEvidence(
-            session_id=first.session_id,
-            session_date=first.session_date,
-            completed_bar_ids=tuple(item.tick.completed_bar_id for item in request.ticks),
-            tick_results=tick_results,
-            signals=(signal,),
-            outcomes=(outcome,),
-        )
-
-
-__all__ = ("TypedControllerFake", "dual_capsule_runtime", "session_request")
+__all__ = ("EvaluationFixture", "dual_capsule_runtime", "registered_evaluation", "session_request")

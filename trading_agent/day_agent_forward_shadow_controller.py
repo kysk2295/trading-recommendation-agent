@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
-from typing import Protocol
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
@@ -46,14 +45,6 @@ class DayForwardShadowSessionEvidence(BaseModel):
     tick_results: tuple[UsForwardShadowTickResult, ...] = Field(min_length=1)
     signals: tuple[UsForwardShadowSignalArtifact, ...]
     outcomes: tuple[UsForwardShadowOutcomeArtifact, ...]
-
-
-class DayForwardShadowRunner(Protocol):
-    def run_session(
-        self,
-        request: DayForwardShadowSessionRequest,
-        capsule_ids: tuple[str, str],
-    ) -> DayForwardShadowSessionEvidence: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +98,6 @@ class UsForwardShadowControllerRunner:
 
 
 __all__ = (
-    "DayForwardShadowRunner",
     "DayForwardShadowSessionEvidence",
     "DayForwardShadowSessionRequest",
     "DayForwardShadowTickRequest",

@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-import math
 from enum import StrEnum
 from typing import Literal, Self, override
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
+from trading_agent.day_agent_change_patches import (
+    AgentChangeKind,
+    AgentVersionPatch,
+    LeaderRankingFeature,
+    LeaderRankingPatch,
+)
+from trading_agent.day_agent_evaluation_metrics import AgentEvaluationMetrics, AgentScoreComparison
 from trading_agent.day_learning_report_models import DayDecisionStage
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 
@@ -32,17 +38,6 @@ class DayAgentVersionStoreError(ValueError):
 class AgentDeploymentState(StrEnum):
     CHAMPION = "champion"
     SHADOW = "shadow"
-
-
-class AgentChangeKind(StrEnum):
-    MARKET_REGIME_POLICY = "market_regime_policy"
-    THEME_SELECTION_POLICY = "theme_selection_policy"
-    CATALYST_INTERPRETATION_POLICY = "catalyst_interpretation_policy"
-    LEADER_RANKING_POLICY = "leader_ranking_policy"
-    FLOW_INTERPRETATION_POLICY = "flow_interpretation_policy"
-    ENTRY_POLICY = "entry_policy"
-    EXIT_POLICY = "exit_policy"
-    EXECUTION_REVIEW_POLICY = "execution_review_policy"
 
 
 class AgentPromotionDecision(StrEnum):
@@ -182,19 +177,6 @@ class AgentChangeProposal(DayAgentVersionModel):
         return self
 
 
-class AgentVersionPatch(DayAgentVersionModel):
-    prompt_content: str | None = Field(default=None, min_length=16, max_length=8_000)
-    tool_policy_content: str | None = Field(default=None, min_length=16, max_length=8_000)
-    playbook_content: str | None = Field(default=None, min_length=16, max_length=8_000)
-
-    @model_validator(mode="after")
-    def validate_single_field(self) -> Self:
-        values = (self.prompt_content, self.tool_policy_content, self.playbook_content)
-        if sum(item is not None for item in values) != 1:
-            raise DayAgentVersionStoreError("agent_version_patch_invalid")
-        return self
-
-
 class AgentPromotionRecommendation(DayAgentVersionModel):
     recommendation_id: str = Field(pattern=_SHA256)
     champion_version_id: str = Field(pattern=_SHA256)
@@ -203,23 +185,34 @@ class AgentPromotionRecommendation(DayAgentVersionModel):
     evaluated_session_dates: tuple[dt.date, ...] = Field(min_length=1)
     paired_snapshot_ids: tuple[str, ...] = Field(min_length=1)
     controller_evidence_ids: tuple[str, ...] = Field(min_length=1)
-    champion_score: float
-    challenger_score: float
+    comparison: AgentScoreComparison
     reason_codes: tuple[str, ...] = Field(min_length=1)
     evaluated_at: AwareDatetime
     deployment_authority: Literal[False] = False
 
     @model_validator(mode="after")
     def validate_recommendation(self) -> Self:
+        metric_provenance = {
+            *self.comparison.champion.provenance_ids,
+            *self.comparison.challenger.provenance_ids,
+        }
         if (
-            not all(math.isfinite(item) for item in (self.champion_score, self.challenger_score))
-            or self.evaluated_session_dates != tuple(sorted(set(self.evaluated_session_dates)))
+            self.evaluated_session_dates != tuple(sorted(set(self.evaluated_session_dates)))
             or len(self.paired_snapshot_ids) < len(self.evaluated_session_dates)
             or self.controller_evidence_ids != tuple(sorted(set(self.controller_evidence_ids)))
+            or not metric_provenance <= set(self.controller_evidence_ids)
             or self.reason_codes != tuple(sorted(set(self.reason_codes)))
         ):
             raise DayAgentVersionStoreError("agent_promotion_recommendation_invalid")
         return self
+
+    @property
+    def champion_score(self) -> float:
+        return self.comparison.champion_score
+
+    @property
+    def challenger_score(self) -> float:
+        return self.comparison.challenger_score
 
 
 class AgentDeploymentTransition(DayAgentVersionModel):
@@ -268,12 +261,16 @@ __all__ = (
     "AgentChangeProposal",
     "AgentDeploymentState",
     "AgentDeploymentTransition",
+    "AgentEvaluationMetrics",
     "AgentModelRoleBinding",
     "AgentPromotionDecision",
     "AgentPromotionRecommendation",
+    "AgentScoreComparison",
     "AgentVersion",
     "AgentVersionPatch",
     "AgentVersionPayload",
     "DayAgentVersionStoreError",
+    "LeaderRankingFeature",
+    "LeaderRankingPatch",
     "build_agent_version",
 )

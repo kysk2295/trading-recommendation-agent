@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import hashlib
-from statistics import fmean
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
+from trading_agent.day_agent_evaluation_metrics import AgentScoreComparison
 from trading_agent.day_agent_forward_shadow_controller import (
-    DayForwardShadowRunner,
     DayForwardShadowSessionEvidence,
     DayForwardShadowSessionRequest,
     DayForwardShadowTickRequest,
     UsForwardShadowControllerRunner,
 )
+from trading_agent.day_agent_shadow_scoring import aggregate_capsule_metrics
 from trading_agent.day_agent_version_models import (
     AgentDeploymentTransition,
     AgentPromotionDecision,
@@ -38,14 +38,15 @@ class DayAgentChallengerEvaluationRequest(BaseModel):
 def evaluate_day_agent_challenger(
     request: DayAgentChallengerEvaluationRequest,
     store: DayAgentVersionStore,
-    runner: DayForwardShadowRunner,
+    controller: UsForwardShadowControllerRunner,
 ) -> AgentPromotionRecommendation:
     checked = DayAgentChallengerEvaluationRequest.model_validate(request.model_dump(mode="python"))
     stored_champion = store.reader().champion()
     stored_challenger = store.reader().challenger(checked.challenger.version_id)
     capsule_ids = (checked.champion_capsule_id, checked.challenger_capsule_id)
     if (
-        stored_champion != checked.champion
+        type(controller) is not UsForwardShadowControllerRunner
+        or stored_champion != checked.champion
         or stored_challenger != checked.challenger
         or checked.challenger.parent_version_id != checked.champion.version_id
         or checked.champion_capsule_id not in checked.champion.playbook_ids
@@ -53,15 +54,13 @@ def evaluate_day_agent_challenger(
         or checked.champion_capsule_id == checked.challenger_capsule_id
     ):
         raise DayAgentVersionStoreError("future_shadow_version_invalid")
-    evidence = tuple(runner.run_session(item, capsule_ids) for item in checked.sessions)
+    evidence = tuple(controller.run_session(item, capsule_ids) for item in checked.sessions)
     _validate_controller_evidence(checked, evidence, capsule_ids)
-    champion_score = fmean(
-        _capsule_session_score(item, checked.sessions[index], capsule_ids[0]) for index, item in enumerate(evidence)
+    comparison = AgentScoreComparison(
+        champion=aggregate_capsule_metrics(evidence, checked.sessions, capsule_ids[0]),
+        challenger=aggregate_capsule_metrics(evidence, checked.sessions, capsule_ids[1]),
     )
-    challenger_score = fmean(
-        _capsule_session_score(item, checked.sessions[index], capsule_ids[1]) for index, item in enumerate(evidence)
-    )
-    decision, reasons = _promotion_decision(champion_score, challenger_score)
+    decision, reasons = _promotion_decision(comparison.margin)
     sessions = tuple(item.session_date for item in evidence)
     paired_ids = tuple(hashlib.sha256(":".join(item.completed_bar_ids).encode()).hexdigest() for item in evidence)
     controller_ids = tuple(
@@ -76,6 +75,7 @@ def evaluate_day_agent_challenger(
                 ),
                 *(item.artifact_id for session in evidence for item in session.signals),
                 *(item.outcome_id for session in evidence for item in session.outcomes),
+                *(bar_id for session in evidence for bar_id in session.completed_bar_ids),
             }
         )
     )
@@ -87,8 +87,7 @@ def evaluate_day_agent_challenger(
         evaluated_session_dates=sessions,
         paired_snapshot_ids=paired_ids,
         controller_evidence_ids=controller_ids,
-        champion_score=champion_score,
-        challenger_score=challenger_score,
+        comparison=comparison,
         reason_codes=reasons,
         evaluated_at=checked.evaluated_at,
     )
@@ -147,42 +146,7 @@ def _validate_controller_evidence(
             raise DayAgentVersionStoreError("future_shadow_controller_evidence_invalid")
 
 
-def _capsule_session_score(
-    evidence: DayForwardShadowSessionEvidence,
-    source: DayForwardShadowSessionRequest,
-    capsule_id: str,
-) -> float:
-    results = tuple(item for tick in evidence.tick_results for item in tick.results if item.capsule_id == capsule_id)
-    trial_ids = {item.trial_id for item in results}
-    signal = next((item for item in evidence.signals if item.capsule_id == capsule_id), None)
-    outcome = next((item for item in evidence.outcomes if item.trial_id in trial_ids), None)
-    if signal is None:
-        return 0.0
-    entry = float(signal.signal.entry_price)
-    bars = tuple(bar for item in source.ticks for bar in item.tick.bars if bar.timestamp >= signal.signal.observed_at)
-    mfe = max((bar.high / entry - 1.0 for bar in bars), default=0.0)
-    mae = min((bar.low / entry - 1.0 for bar in bars), default=0.0)
-    candidate_symbols = {item.tick.candidate.symbol for item in source.ticks if item.tick.candidate is not None}
-    evidence_refs = {ref.canonical_id for item in source.ticks for ref in item.tick.evidence_refs}
-    signal_refs = {ref.canonical_id for ref in signal.signal.evidence_refs}
-    cost_adjusted = 0.0 if outcome is None else float(outcome.cost_adjusted_return)
-    return fmean(
-        (
-            1.0,
-            float(signal.signal.symbol in candidate_symbols),
-            mfe,
-            mae,
-            cost_adjusted,
-            float(signal_refs <= evidence_refs),
-        )
-    )
-
-
-def _promotion_decision(
-    champion_score: float,
-    challenger_score: float,
-) -> tuple[AgentPromotionDecision, tuple[str, ...]]:
-    margin = challenger_score - champion_score
+def _promotion_decision(margin: float) -> tuple[AgentPromotionDecision, tuple[str, ...]]:
     if margin >= 0.05:
         return AgentPromotionDecision.PROMOTE, ("challenger_margin_met",)
     if margin <= -0.05:
@@ -220,7 +184,6 @@ def deploy_recommended_challenger(
 
 __all__ = (
     "DayAgentChallengerEvaluationRequest",
-    "DayForwardShadowRunner",
     "DayForwardShadowSessionEvidence",
     "DayForwardShadowSessionRequest",
     "DayForwardShadowTickRequest",
