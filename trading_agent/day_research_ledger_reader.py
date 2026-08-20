@@ -10,6 +10,7 @@ from trading_agent.day_forward_trial_ledger import (
 from trading_agent.day_forward_trial_ledger import (
     day_forward_trials as _day_forward_trials,
 )
+from trading_agent.day_learning_policy import ExplorationPolicy
 from trading_agent.day_research_attempt_binding import DayResearchAttemptBinding
 from trading_agent.day_research_ledger import (
     InvalidDayResearchLedgerSourceError,
@@ -23,6 +24,7 @@ from trading_agent.day_research_ledger import (
     _stored_attempt,
     _stored_binding_audit,
     _stored_capsule,
+    _stored_day_exploration_policy,
     _stored_family,
     _stored_version,
     _version_by_id,
@@ -57,6 +59,21 @@ def day_execution_eligibility_events(
     capsule_id: str | None = None,
 ) -> tuple[ExecutionEligibility, ...]:
     return read_execution_eligibility_events(connection, market_id, capsule_id)
+
+
+def day_exploration_policies(
+    connection: sqlite3.Connection,
+    market_id: MarketId | None = None,
+) -> tuple[ExplorationPolicy, ...]:
+    rows: list[tuple[str, str, str, str, str]] = connection.execute(
+        "SELECT policy_id,market_id,effective_session_date,effective_at,payload_json "
+        "FROM day_exploration_policies ORDER BY rowid"
+    ).fetchall()
+    policies = tuple(_stored_day_exploration_policy(row) for row in rows)
+    session_keys = tuple((policy.payload.market_id, policy.payload.effective_session_date) for policy in policies)
+    if len(set(session_keys)) != len(session_keys):
+        raise InvalidDayResearchLedgerSourceError("stored_day_exploration_policy_duplicate")
+    return tuple(policy for policy in policies if market_id is None or policy.payload.market_id is market_id)
 
 
 def day_hypothesis_families(

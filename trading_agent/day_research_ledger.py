@@ -5,7 +5,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import assert_never
 
+from pydantic import ValidationError
+
 from trading_agent.day_hypothesis_models import HypothesisFamily, HypothesisVersion
+from trading_agent.day_learning_policy import ExplorationPolicy
 from trading_agent.day_research_attempt_binding import (
     DayResearchAttemptBinding,
     preregistered_attempted_artifact_ref,
@@ -71,6 +74,60 @@ class StoredDayResearchVersionGraph:
 def require_same_market(parent_market: MarketId, child_market: MarketId) -> None:
     if parent_market is not child_market:
         raise InvalidDayResearchLedgerSourceError("day_research_cross_market_reference")
+
+
+def record_day_exploration_policy(
+    connection: sqlite3.Connection,
+    policy: ExplorationPolicy,
+) -> bool:
+    try:
+        checked = ExplorationPolicy.model_validate(policy.model_dump(mode="python"))
+    except (AttributeError, ValidationError):
+        raise InvalidDayResearchLedgerSourceError("invalid_day_exploration_policy") from None
+    payload = checked.payload
+    rows: list[tuple[str, str, str, str, str]] = connection.execute(
+        "SELECT policy_id,market_id,effective_session_date,effective_at,payload_json "
+        "FROM day_exploration_policies WHERE market_id=? AND effective_session_date=?",
+        (payload.market_id.value, payload.effective_session_date.isoformat()),
+    ).fetchall()
+    existing = tuple(_stored_day_exploration_policy(row) for row in rows)
+    if existing:
+        if existing == (checked,):
+            return False
+        raise DayResearchLedgerConflictError
+    try:
+        _ = connection.execute(
+            "INSERT INTO day_exploration_policies VALUES (?,?,?,?,?)",
+            (
+                checked.policy_id,
+                payload.market_id.value,
+                payload.effective_session_date.isoformat(),
+                payload.effective_at.isoformat(),
+                canonical_experiment_ledger_json(checked),
+            ),
+        )
+    except sqlite3.IntegrityError as error:
+        raise DayResearchLedgerConflictError from error
+    return True
+
+
+def _stored_day_exploration_policy(
+    row: tuple[str, str, str, str, str],
+) -> ExplorationPolicy:
+    try:
+        policy = ExplorationPolicy.model_validate_json(row[4])
+    except ValidationError as error:
+        raise InvalidDayResearchLedgerSourceError("stored_day_exploration_policy_invalid") from error
+    payload = policy.payload
+    if (
+        row[0] != policy.policy_id
+        or row[1] != payload.market_id.value
+        or row[2] != payload.effective_session_date.isoformat()
+        or row[3] != payload.effective_at.isoformat()
+        or row[4] != canonical_experiment_ledger_json(policy)
+    ):
+        raise InvalidDayResearchLedgerSourceError("stored_day_exploration_policy_projection_invalid")
+    return policy
 
 
 def register_day_hypothesis_family(
