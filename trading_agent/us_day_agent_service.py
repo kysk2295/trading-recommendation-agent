@@ -82,6 +82,12 @@ from trading_agent.us_day_post_close_checkpoint import (
     ReportPublishedCheckpoint,
     UsDayPostCloseCheckpointStore,
 )
+from trading_agent.us_day_post_close_lease import (
+    InvalidUsDayPostCloseLeaseError,
+    UsDayPostCloseLeaseBusyError,
+    UsDayPostCloseLeaseKey,
+    us_day_post_close_lease,
+)
 from trading_agent.us_day_recommendation_card import persist_and_queue_thesis
 from trading_agent.us_day_signal_admission import UsDaySignalAdmissionRequest
 from trading_agent.us_day_situation_models import UsDaySituationMap
@@ -918,6 +924,8 @@ class UsDayAgentService:
             entry_cutoff_before_close=self.config.entry_cutoff_before_close,
             eod_before_close=self.config.eod_before_close,
         )
+        if phase is UsDaySessionPhase.POST_CLOSE:
+            return self._post_close_tick(request)
         try:
             match phase:
                 case UsDaySessionPhase.PREMARKET:
@@ -931,8 +939,7 @@ class UsDayAgentService:
                     self.runtime.recover(request)
                     result = self.runtime.eod(request)
                 case UsDaySessionPhase.POST_CLOSE:
-                    self.runtime.recover(request)
-                    result = self.runtime.post_close(request)
+                    raise UsDayAgentServiceError("post_close_dispatch_invalid")
                 case UsDaySessionPhase.CLOSED:
                     result = UsDayAgentTickResult.blocked(request, "xnys_session_closed")
                 case unreachable:
@@ -942,6 +949,30 @@ class UsDayAgentService:
         if result.phase is not phase or result.tick_id != tick_id_for(request):
             raise UsDayAgentServiceError("vertical_result_identity_invalid")
         return _publish_receipt(self.config.receipt_root, result)
+
+    def _post_close_tick(self, request: UsDayAgentTickRequest) -> UsDayAgentTickResult:
+        key = UsDayPostCloseLeaseKey(
+            tick_id=tick_id_for(request),
+            session_id=f"XNYS-{request.evaluated_at.astimezone(NEW_YORK).date().isoformat()}",
+        )
+        try:
+            with us_day_post_close_lease(self.config.receipt_root / ".post_close_leases", key) as lease:
+                replay = _read_receipt(self.config.receipt_root, request)
+                if replay is not None:
+                    return replay
+                self.runtime.recover(request)
+                try:
+                    result = self.runtime.post_close(request)
+                except UsDayAgentServiceError as error:
+                    result = UsDayAgentTickResult.blocked(request, error.reason)
+                if result.phase is not UsDaySessionPhase.POST_CLOSE or result.tick_id != tick_id_for(request):
+                    raise UsDayAgentServiceError("vertical_result_identity_invalid")
+                lease.require_bound()
+                return _publish_receipt(self.config.receipt_root, result)
+        except UsDayPostCloseLeaseBusyError:
+            return UsDayAgentTickResult.blocked(request, "post_close_busy")
+        except InvalidUsDayPostCloseLeaseError:
+            return UsDayAgentTickResult.blocked(request, "post_close_lease_invalid")
 
 
 def build_us_day_agent_service(
