@@ -356,7 +356,8 @@ def test_canonical_vertical_persists_real_task_thesis_paper_hermes_dashboard_and
     assert next_tick.recommendation_id == first.recommendation_id
     assert next_tick.paper_status is None
     assert control.calls == ["recover", "recover", "finalize"]
-    steps = DayAgentTaskStore(outputs / "us_day" / "day_agent.sqlite3").reader().steps(fixture.baseline.task_id)
+    assert first.task_id is not None
+    steps = DayAgentTaskStore(outputs / "us_day" / "day_agent.sqlite3").reader().steps(first.task_id)
     assert len(steps) == 2
     assert thesis_store.theses() == (thesis_result.thesis,)
     assert paper_store.recommendations()[0].recommendation_id == thesis_result.thesis.thesis_id

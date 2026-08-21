@@ -17,6 +17,7 @@ from trading_agent.alpaca_paper_config import load_alpaca_paper_credentials
 from trading_agent.day_agent_task_store import DayAgentTaskStore
 from trading_agent.day_agent_tool_models import DayAgentReasoningRequest, DayAgentReasoningResponse
 from trading_agent.day_agent_tool_runtime import DayAgentToolRuntime
+from trading_agent.day_agent_version_models import AgentVersion
 from trading_agent.day_agent_version_store import DayAgentVersionStore
 from trading_agent.execution_store import ExecutionStore
 from trading_agent.hermes_arm_authority import LedgerHermesArmAuthorityConfig, LedgerHermesArmAuthorityResolver
@@ -26,6 +27,7 @@ from trading_agent.hermes_arm_store import HermesArmStore
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.lane_registry_store import LaneRegistryStore
 from trading_agent.private_immutable_file import InvalidPrivateImmutableFileError, read_private_text
+from trading_agent.researcher_llm import HermesCliProposalClient, ResearcherLlmError
 from trading_agent.store import PaperStore
 from trading_agent.us_day_agent_cli_bindings import (
     ProductionBindingError,
@@ -49,6 +51,7 @@ from trading_agent.us_day_agent_service import (
     build_us_day_agent_service,
     session_phase_at,
 )
+from trading_agent.us_day_live_models import UsDayStructuredReasoner, UsDayStructuredThesisReasoner
 from trading_agent.us_day_operating_arm import StrategyBoundHermesArmConsumer
 from trading_agent.us_day_operating_coordinator import UsDayOperatingCoordinator, UsDayOperatingCoordinatorConfig
 from trading_agent.us_day_signal_admission import UsDayMarketLiquidityContext
@@ -148,7 +151,32 @@ def _source(path: Path, now: dt.datetime) -> CanonicalUsDaySource:
         raise _CliError("situation_invalid") from None
 
 
-def _model_bindings(day_path: Path, thesis_path: Path, clock: dt.datetime) -> UsDayModelBindings:
+def _model_bindings(
+    day_path: Path | None,
+    thesis_path: Path | None,
+    live_model_provider: str | None,
+    champion: AgentVersion,
+    clock: dt.datetime,
+) -> UsDayModelBindings:
+    if day_path is None and thesis_path is None and live_model_provider is not None:
+        reasoning = tuple(item for item in champion.model_role_bindings if item.role == "reasoning")
+        if len(reasoning) != 1:
+            raise _CliError("champion_reasoning_model_binding_invalid")
+        try:
+            client = HermesCliProposalClient(
+                Path.home() / ".local" / "bin" / "hermes",
+                reasoning[0].model_id,
+                live_model_provider,
+            )
+        except ResearcherLlmError:
+            raise _CliError("live_model_configuration_invalid") from None
+        return UsDayModelBindings(
+            UsDayStructuredReasoner(client),
+            UsDayStructuredThesisReasoner(client),
+            DayAgentToolRuntime((), lambda: clock),
+        )
+    if day_path is None or thesis_path is None or live_model_provider is not None:
+        raise _CliError("model_bindings_invalid")
     try:
         day = _DAY_RESPONSES.validate_json(read_private_text(day_path))
         thesis = TypeAdapter(dict[str, object]).validate_json(read_private_text(thesis_path))
@@ -168,8 +196,9 @@ def _service(
     production_manifest: Path | None,
     strategy_manifest: Path | None,
     experiment_ledger: Path | None,
-    day_model_responses: Path,
-    thesis_model_response: Path,
+    day_model_responses: Path | None,
+    thesis_model_response: Path | None,
+    live_model_provider: str | None,
     evaluated_at: dt.datetime,
     entry_cutoff_minutes: int,
     eod_minutes: int,
@@ -221,7 +250,13 @@ def _service(
                 paper_store,
                 version_store,
             ),
-            models=_model_bindings(day_model_responses, thesis_model_response, evaluated_at),
+            models=_model_bindings(
+                day_model_responses,
+                thesis_model_response,
+                live_model_provider,
+                champion,
+                evaluated_at,
+            ),
             strategy=strategy,
             source_reader=LocalUsDaySourceReader(),
             paper=paper,
@@ -322,6 +357,7 @@ def main(
     experiment_ledger: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
     day_model_responses: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
     thesis_model_response: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+    live_model_provider: Annotated[str | None, typer.Option()] = None,
     now: Annotated[str | None, typer.Option()] = None,
     entry_cutoff_minutes: Annotated[int, typer.Option(min=6, max=59)] = 15,
     eod_minutes: Annotated[int, typer.Option(min=1, max=5)] = 5,
@@ -333,7 +369,10 @@ def main(
         raise typer.Exit(2) from None
     try:
         canonical_source = _source(situation, evaluated_at)
-        if day_model_responses is None or thesis_model_response is None:
+        if (
+            live_model_provider is None
+            and (day_model_responses is None or thesis_model_response is None)
+        ):
             raise _CliError("model_bindings_required")
         result = _service(
             outputs,
@@ -344,6 +383,7 @@ def main(
             experiment_ledger,
             day_model_responses,
             thesis_model_response,
+            live_model_provider,
             evaluated_at,
             entry_cutoff_minutes,
             eod_minutes,

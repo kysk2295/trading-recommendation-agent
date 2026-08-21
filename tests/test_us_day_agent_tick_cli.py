@@ -79,6 +79,7 @@ def test_help_has_no_broker_endpoint_option() -> None:
     assert "--agent-executable" not in completed.stdout
     assert "--day-model-responses" in completed.stdout
     assert "--thesis-model-respo" in completed.stdout
+    assert "--live-model-provider" in completed.stdout
 
 
 def test_stale_situation_blocks_with_compact_json_before_runtime(tmp_path: Path) -> None:

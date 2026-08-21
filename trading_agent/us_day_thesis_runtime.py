@@ -62,6 +62,10 @@ class _ThesisSubmission(BaseModel):
     flow_rationale: EvidenceBoundRationale | None
 
 
+def us_day_thesis_response_schema() -> dict[str, object]:
+    return _ThesisSubmission.model_json_schema()
+
+
 @dataclass(frozen=True, slots=True)
 class UsDayThesisResult:
     thesis: UsDayTradeThesis
@@ -296,4 +300,5 @@ __all__ = (
     "build_trade_thesis_request",
     "generate_trade_thesis",
     "reason_trade_thesis",
+    "us_day_thesis_response_schema",
 )
