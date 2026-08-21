@@ -16,6 +16,7 @@ from typing import Final, Literal, Protocol, Self, assert_never
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from trading_agent.alpaca_paper_config import AlpacaPaperCredentials, load_alpaca_paper_credentials
+from trading_agent.dashboard_paper_finalized_terminal import FinalizedPaperAuthority
 from trading_agent.dashboard_paper_finalized_terminal_writer import publish_finalized_paper_terminal
 from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
 from trading_agent.dashboard_us_day_paper import FinalizedPaperProjectionBundle, read_finalized_paper_bundle
@@ -439,6 +440,8 @@ class StoreBackedUsDayClosePayloadReader:
         if not isinstance(bundle, FinalizedPaperProjectionBundle):
             raise UsDayAgentServiceError(bundle.blocker_code)
         session_date = request.evaluated_at.astimezone(NEW_YORK).date()
+        if bundle.snapshot.session_date != session_date or not isinstance(bundle.authority, FinalizedPaperAuthority):
+            raise UsDayAgentServiceError("close_finalized_paper_not_current")
         theses = tuple(
             item
             for item in self.thesis_store.theses()
@@ -454,6 +457,8 @@ class StoreBackedUsDayClosePayloadReader:
             situation = UsDaySituationMap.model_validate_json(read_private_text(situation_path))
         except (ValidationError, ValueError):
             raise UsDayAgentServiceError("close_situation_invalid") from None
+        if situation_id_for(situation) != thesis.situation_id:
+            raise UsDayAgentServiceError("close_situation_invalid")
         evidence_ids = tuple(
             sorted(
                 {
@@ -701,10 +706,10 @@ class UsDayProductionRuntime:
 
     def post_close(self, request: UsDayAgentTickRequest) -> UsDayAgentTickResult:
         paper = self._paper()
-        finalized = paper.session_control.finalize(request.evaluated_at)
         close = self.config.close
         if close is None:
             return UsDayAgentTickResult.blocked(request, "close_bindings_missing")
+        finalized = paper.session_control.finalize(request.evaluated_at)
         version, _ = self._champion()
         report = seal_market_close_report(close.payload_reader.read(request, version))
         _ = publish_market_close_report(self.config.stores.outputs / "us_day" / "close_reports", report)

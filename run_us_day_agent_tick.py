@@ -28,6 +28,12 @@ from trading_agent.lane_registry_store import LaneRegistryStore
 from trading_agent.private_immutable_file import InvalidPrivateImmutableFileError, read_private_text
 from trading_agent.research_identity_models import AgentFamily, MarketId, StrategyLaneRef
 from trading_agent.store import PaperStore
+from trading_agent.us_day_agent_cli_bindings import (
+    ProductionBindingError,
+    ProductionManifest,
+    build_close_bindings,
+    load_production_manifest,
+)
 from trading_agent.us_day_agent_operating import UsDayAgentOperatingServices
 from trading_agent.us_day_agent_service import (
     CanonicalUsDaySource,
@@ -60,21 +66,6 @@ class _SourceHeader(BaseModel):
 
     session_id: str
     evaluated_at: AwareDatetime
-
-
-class _ProductionManifest(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    repository: Path
-    review_ledger: Path
-    experiment_ledger: Path
-    lane_registry: Path
-    arm_database: Path
-    arm_signing_key: Path
-    execution_database: Path
-    delivery_database: Path
-    session_root: Path
-    safety_arm_request_id: str
 
 
 class _OneShareLiquidity:
@@ -199,10 +190,17 @@ def _service(
     if not version_store.path.is_file() or version_store.reader().champion() is None:
         raise _CliError("existing_champion_store_required")
     paper_store = PaperStore(private / "paper.sqlite3")
+    try:
+        manifest = None if production_manifest is None else load_production_manifest(production_manifest)
+        close = (
+            None
+            if manifest is None
+            else build_close_bindings(manifest, root, thesis_store, version_store, source.situation.session_date)
+        )
+    except ProductionBindingError as error:
+        raise _CliError(error.reason) from None
     paper = (
-        None
-        if production_manifest is None
-        else _paper_bindings(production_manifest, source, root, thesis_store, paper_store, evaluated_at)
+        None if manifest is None else _paper_bindings(manifest, source, root, thesis_store, paper_store, evaluated_at)
     )
     return build_us_day_agent_service(
         UsDayProductionConfig(
@@ -217,6 +215,7 @@ def _service(
             strategy=UsDayStrategyBinding(playbook.playbook_id, lane, (playbook,)),
             source_reader=LocalUsDaySourceReader(),
             paper=paper,
+            close=close,
         ),
         UsDayAgentServiceConfig(
             private / "tick_receipts",
@@ -228,7 +227,7 @@ def _service(
 
 
 def _paper_bindings(
-    manifest_path: Path,
+    manifest: ProductionManifest,
     source: CanonicalUsDaySource,
     outputs: Path,
     thesis_store: UsDayThesisStore,
@@ -236,7 +235,6 @@ def _paper_bindings(
     evaluated_at: dt.datetime,
 ) -> UsDayPaperBindings:
     try:
-        manifest = _ProductionManifest.model_validate_json(read_private_text(manifest_path))
         signer = HermesArmSigner(load_hermes_arm_signing_key(manifest.arm_signing_key))
         arm_store = HermesArmStore(manifest.arm_database, signer)
         resolver = LedgerHermesArmAuthorityResolver(
