@@ -76,6 +76,7 @@ from trading_agent.us_day_agent_service import (
 )
 from trading_agent.us_day_operating_arm import StrategyBoundHermesArmConsumer
 from trading_agent.us_day_operating_coordinator import UsDayOperatingCoordinator, UsDayOperatingCoordinatorConfig
+from trading_agent.us_day_post_close_checkpoint import UsDayPostCloseCheckpointStore
 from trading_agent.us_day_signal_admission import UsDaySignalAdmissionRequest, admit_us_day_signal
 from trading_agent.us_day_thesis_models import UsDayChampion, UsDayPlaybook
 from trading_agent.us_day_thesis_runtime import reason_trade_thesis
@@ -105,9 +106,13 @@ class _PaperControl:
 @dataclass(frozen=True, slots=True)
 class _ThesisReasoner:
     version_id: str
+    playbook_id: str
 
     def __call__(self, request: Mapping[str, object]) -> Mapping[str, object]:
-        return _valid_response() | {"agent_version_id": self.version_id}
+        return _valid_response() | {
+            "agent_version_id": self.version_id,
+            "playbook_id": self.playbook_id,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,11 +139,15 @@ def test_canonical_vertical_persists_real_task_thesis_paper_hermes_dashboard_and
     source = CanonicalUsDaySource(situation=situation, current_markets=_markets())
     source_path = tmp_path / "source.json"
     assert publish_private_immutable_text(source_path, source.model_dump_json())
-    playbook = UsDayPlaybook(playbook_id="leader_breakout", title="대장주 돌파", entry_type="stop_trigger")
+    playbook = UsDayPlaybook(
+        playbook_id=fixture.champion_capsule.capsule_id,
+        title="대장주 돌파",
+        entry_type="stop_trigger",
+    )
     lane = StrategyLaneRef(
         market_id=MarketId.US_EQUITIES,
         agent_family=AgentFamily.DAY_TRADING,
-        strategy_id="leader_breakout",
+        strategy_id=playbook.playbook_id,
     )
     day_champion = UsDayChampion(
         version_id=fixture.baseline.version_id,
@@ -208,7 +217,10 @@ def test_canonical_vertical_persists_real_task_thesis_paper_hermes_dashboard_and
             confirmation=prepared.confirmation,
         )
     )
-    response = _valid_response() | {"agent_version_id": fixture.baseline.version_id}
+    response = _valid_response() | {
+        "agent_version_id": fixture.baseline.version_id,
+        "playbook_id": playbook.playbook_id,
+    }
     thesis_result = reason_trade_thesis(response, day_champion, situation, _markets())
     assert thesis_result.signal is not None
     market = next(item for item in _markets() if item.symbol == thesis_result.signal.symbol)
@@ -283,10 +295,14 @@ def test_canonical_vertical_persists_real_task_thesis_paper_hermes_dashboard_and
         ),
         models=UsDayModelBindings(
             ScriptedDayReasoner((_thesis_call(),)),
-            _ThesisReasoner(fixture.baseline.version_id),
+            _ThesisReasoner(fixture.baseline.version_id, playbook.playbook_id),
             DayAgentToolRuntime((), lambda: EVALUATED_AT),
         ),
-        strategy=UsDayStrategyBinding(playbook.playbook_id, lane, (playbook,)),
+        strategy=UsDayStrategyBinding(
+            playbook.playbook_id,
+            lane,
+            (playbook,),
+        ),
         source_reader=LocalUsDaySourceReader(),
         paper=UsDayPaperBindings(
             operating,
@@ -305,6 +321,7 @@ def test_canonical_vertical_persists_real_task_thesis_paper_hermes_dashboard_and
                     future_sessions=future_sessions,
                 ),
             ),
+            UsDayPostCloseCheckpointStore(outputs / "us_day" / "post_close_checkpoints"),
         ),
     )
     service = build_us_day_agent_service(

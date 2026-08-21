@@ -65,7 +65,7 @@ from trading_agent.paper_operating_session import open_paper_operating_session
 from trading_agent.paper_operating_session_models import PaperOperatingSession
 from trading_agent.paper_safety_models import BlockedPaperSafetyPlan
 from trading_agent.private_immutable_file import publish_private_immutable_text, read_private_text
-from trading_agent.research_identity_models import MarketId, StrategyLaneRef
+from trading_agent.research_identity_models import AgentFamily, MarketId, StrategyLaneRef
 from trading_agent.store import PaperStore
 from trading_agent.us_day_agent_operating import (
     UsDayAgentOperatingRequest,
@@ -74,6 +74,14 @@ from trading_agent.us_day_agent_operating import (
 )
 from trading_agent.us_day_operating_driver import execution_acknowledged, is_flat, readiness_barrier
 from trading_agent.us_day_operating_models import UsDayArmConsumer
+from trading_agent.us_day_post_close_checkpoint import (
+    InvalidUsDayPostCloseCheckpointError,
+    LoopProposedCheckpoint,
+    PaperFinalizedCheckpoint,
+    PostCloseCheckpointIdentity,
+    ReportPublishedCheckpoint,
+    UsDayPostCloseCheckpointStore,
+)
 from trading_agent.us_day_recommendation_card import persist_and_queue_thesis
 from trading_agent.us_day_signal_admission import UsDaySignalAdmissionRequest
 from trading_agent.us_day_situation_models import UsDaySituationMap
@@ -590,6 +598,7 @@ class UsDayPaperBindings:
 class UsDayCloseBindings:
     payload_reader: UsDayClosePayloadReader
     loop_services: DayAgentLoopServices
+    checkpoint_store: UsDayPostCloseCheckpointStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -709,11 +718,41 @@ class UsDayProductionRuntime:
         close = self.config.close
         if close is None:
             return UsDayAgentTickResult.blocked(request, "close_bindings_missing")
-        finalized = paper.session_control.finalize(request.evaluated_at)
         version, _ = self._champion()
-        report = seal_market_close_report(close.payload_reader.read(request, version))
+        identity = PostCloseCheckpointIdentity(
+            tick_id=tick_id_for(request),
+            session_id=f"XNYS-{request.evaluated_at.astimezone(NEW_YORK).date().isoformat()}",
+            source_sha256=request.source_sha256,
+            champion_version_id=version.version_id,
+        )
+        try:
+            checkpoint = close.checkpoint_store.read(identity)
+        except InvalidUsDayPostCloseCheckpointError:
+            raise UsDayAgentServiceError("post_close_checkpoint_invalid") from None
+        if checkpoint.paper is None:
+            finalized = paper.session_control.finalize(request.evaluated_at)
+            close.checkpoint_store.publish_paper(PaperFinalizedCheckpoint(identity=identity, paper_status=finalized))
+        else:
+            finalized = checkpoint.paper.paper_status
+        if checkpoint.report is None:
+            report = seal_market_close_report(close.payload_reader.read(request, version))
+            close.checkpoint_store.publish_report(
+                ReportPublishedCheckpoint(identity=identity, paper_status=finalized, report=report)
+            )
+        else:
+            report = checkpoint.report.report
         _ = publish_market_close_report(self.config.stores.outputs / "us_day" / "close_reports", report)
-        proposal = run_loop_engineer(report, version, close.loop_services)
+        if checkpoint.loop is None:
+            proposal = run_loop_engineer(report, version, close.loop_services)
+            close.checkpoint_store.publish_loop(
+                LoopProposedCheckpoint(identity=identity, report_id=report.report_id, proposal=proposal)
+            )
+        else:
+            proposal = checkpoint.loop.proposal
+            challenger = close.loop_services.store.reader().challenger(proposal.version_id)
+            proposals = close.loop_services.store.reader().proposals(proposal.version_id)
+            if challenger is None or proposal not in proposals:
+                raise UsDayAgentServiceError("post_close_checkpoint_lineage_missing")
         return UsDayAgentTickResult.accepted(
             request,
             paper_status=finalized,
@@ -741,6 +780,15 @@ class UsDayProductionRuntime:
         strategy = self.config.strategy
         if version is None or version.deployment_state is not AgentDeploymentState.CHAMPION:
             raise UsDayAgentServiceError("champion_missing")
+        playbook_ids = tuple(item.playbook_id for item in strategy.playbooks)
+        if (
+            len(playbook_ids) != 1
+            or version.playbook_ids != playbook_ids
+            or strategy.strategy_lane.market_id is not MarketId.US_EQUITIES
+            or strategy.strategy_lane.agent_family is not AgentFamily.DAY_TRADING
+            or strategy.strategy_lane.strategy_id != playbook_ids[0]
+        ):
+            raise UsDayAgentServiceError("champion_strategy_lineage_invalid")
         return version, UsDayChampion(
             version_id=version.version_id,
             strategy_version=strategy.strategy_version,

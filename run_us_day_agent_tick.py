@@ -26,13 +26,13 @@ from trading_agent.hermes_arm_store import HermesArmStore
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.lane_registry_store import LaneRegistryStore
 from trading_agent.private_immutable_file import InvalidPrivateImmutableFileError, read_private_text
-from trading_agent.research_identity_models import AgentFamily, MarketId, StrategyLaneRef
 from trading_agent.store import PaperStore
 from trading_agent.us_day_agent_cli_bindings import (
     ProductionBindingError,
     ProductionManifest,
     build_close_bindings,
     load_production_manifest,
+    resolve_strategy_binding,
 )
 from trading_agent.us_day_agent_operating import UsDayAgentOperatingServices
 from trading_agent.us_day_agent_service import (
@@ -46,14 +46,12 @@ from trading_agent.us_day_agent_service import (
     UsDayModelBindings,
     UsDayPaperBindings,
     UsDayProductionConfig,
-    UsDayStrategyBinding,
     build_us_day_agent_service,
     session_phase_at,
 )
 from trading_agent.us_day_operating_arm import StrategyBoundHermesArmConsumer
 from trading_agent.us_day_operating_coordinator import UsDayOperatingCoordinator, UsDayOperatingCoordinatorConfig
 from trading_agent.us_day_signal_admission import UsDayMarketLiquidityContext
-from trading_agent.us_day_thesis_models import UsDayPlaybook
 from trading_agent.us_day_thesis_store import UsDayThesisStore
 from trading_agent.us_equity_calendar import NEW_YORK
 
@@ -168,6 +166,8 @@ def _service(
     version_store_path: Path,
     source: CanonicalUsDaySource,
     production_manifest: Path | None,
+    strategy_manifest: Path | None,
+    experiment_ledger: Path | None,
     day_model_responses: Path,
     thesis_model_response: Path,
     evaluated_at: dt.datetime,
@@ -179,17 +179,11 @@ def _service(
     private.mkdir(parents=True, exist_ok=True, mode=0o700)
     root.chmod(0o700)
     private.chmod(0o700)
-    playbook = UsDayPlaybook(playbook_id="leader_breakout", title="대장주 돌파", entry_type="stop_trigger")
-    lane = StrategyLaneRef(
-        market_id=MarketId.US_EQUITIES,
-        agent_family=AgentFamily.DAY_TRADING,
-        strategy_id=playbook.playbook_id,
-    )
     thesis_store = UsDayThesisStore(private / "theses")
     version_store = DayAgentVersionStore(version_store_path)
-    if not version_store.path.is_file() or version_store.reader().champion() is None:
+    champion = version_store.reader().champion() if version_store.path.is_file() else None
+    if champion is None:
         raise _CliError("existing_champion_store_required")
-    paper_store = PaperStore(private / "paper.sqlite3")
     try:
         manifest = None if production_manifest is None else load_production_manifest(production_manifest)
         close = (
@@ -197,10 +191,26 @@ def _service(
             if manifest is None
             else build_close_bindings(manifest, root, thesis_store, version_store, source.situation.session_date)
         )
+        strategy = resolve_strategy_binding(
+            manifest.strategy_manifest if manifest is not None else _required_strategy_path(strategy_manifest),
+            manifest.experiment_ledger if manifest is not None else _required_strategy_path(experiment_ledger),
+            champion,
+        )
     except ProductionBindingError as error:
         raise _CliError(error.reason) from None
+    paper_store = PaperStore(private / "paper.sqlite3")
     paper = (
-        None if manifest is None else _paper_bindings(manifest, source, root, thesis_store, paper_store, evaluated_at)
+        None
+        if manifest is None
+        else _paper_bindings(
+            manifest,
+            source,
+            root,
+            thesis_store,
+            paper_store,
+            evaluated_at,
+            strategy.strategy_version,
+        )
     )
     return build_us_day_agent_service(
         UsDayProductionConfig(
@@ -212,7 +222,7 @@ def _service(
                 version_store,
             ),
             models=_model_bindings(day_model_responses, thesis_model_response, evaluated_at),
-            strategy=UsDayStrategyBinding(playbook.playbook_id, lane, (playbook,)),
+            strategy=strategy,
             source_reader=LocalUsDaySourceReader(),
             paper=paper,
             close=close,
@@ -233,6 +243,7 @@ def _paper_bindings(
     thesis_store: UsDayThesisStore,
     paper_store: PaperStore,
     evaluated_at: dt.datetime,
+    strategy_version: str,
 ) -> UsDayPaperBindings:
     try:
         signer = HermesArmSigner(load_hermes_arm_signing_key(manifest.arm_signing_key))
@@ -283,12 +294,18 @@ def _paper_bindings(
                 session_root=manifest.session_root,
                 arm_consumer=consumer,
                 safety_arm_request_id=manifest.safety_arm_request_id,
-                strategy_version="leader_breakout",
+                strategy_version=strategy_version,
                 session_id=source.situation.session_id,
             ),
         )
     except (OSError, RuntimeError, ValidationError, ValueError):
         raise _CliError("production_manifest_or_credentials_invalid") from None
+
+
+def _required_strategy_path(path: Path | None) -> Path:
+    if path is None:
+        raise ProductionBindingError("strategy_bindings_required")
+    return path
 
 
 def _emit(payload: dict[str, str]) -> None:
@@ -301,6 +318,8 @@ def main(
     outputs: Annotated[Path, typer.Option(file_okay=False)] = Path(".private/us-day-agent"),
     version_store: Annotated[Path | None, typer.Option(exists=False, dir_okay=False)] = None,
     production_manifest: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+    strategy_manifest: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+    experiment_ledger: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
     day_model_responses: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
     thesis_model_response: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
     now: Annotated[str | None, typer.Option()] = None,
@@ -321,6 +340,8 @@ def main(
             version_store or outputs.expanduser().absolute() / "us_day" / "versions.sqlite3",
             canonical_source,
             production_manifest,
+            strategy_manifest,
+            experiment_ledger,
             day_model_responses,
             thesis_model_response,
             evaluated_at,

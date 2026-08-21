@@ -4,14 +4,17 @@ import datetime as dt
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, assert_never
 
+import pytest
 from typer.testing import CliRunner
 
 import run_us_day_agent_tick as cli
+import trading_agent.us_day_agent_service as service_module
 from tests.day_strategy_capsule_support import bar, proposal
 from tests.test_us_day_situation_projection import EVALUATED_AT, _inputs, _project
 from tests.test_us_day_thesis_runtime import _markets, _valid_response
-from tests.us_day_agent_tick_close_support import CLOSE_AT, publish_finalized_paper
+from tests.us_day_agent_tick_close_support import CLOSE_AT, publish_close_manifest, publish_finalized_paper
 from tests.us_forward_shadow_support import prepared_runtime, signal_source
 from trading_agent.day_agent_challenger_publisher import DayAgentFutureShadowSession
 from trading_agent.day_agent_change_patches import AgentChangeKind, MarketRegimePatch, MarketRegimeRule
@@ -24,13 +27,19 @@ from trading_agent.day_agent_version_models import (
 from trading_agent.day_agent_version_store import DayAgentVersionStore
 from trading_agent.private_immutable_file import publish_private_immutable_text
 from trading_agent.research_identity_models import AgentFamily, MarketId, StrategyLaneRef
-from trading_agent.us_day_agent_cli_bindings import LoopInputBundle, ProductionManifest
+from trading_agent.us_day_agent_cli_bindings import LoopInputBundle
 from trading_agent.us_day_agent_service import CanonicalUsDaySource
+from trading_agent.us_day_post_close_checkpoint import UsDayPostCloseCheckpointStore
 from trading_agent.us_day_thesis_models import UsDayChampion, UsDayPlaybook, situation_id_for
 from trading_agent.us_day_thesis_runtime import reason_trade_thesis
 from trading_agent.us_day_thesis_store import UsDayThesisStore
 
 ROOT = Path(__file__).parents[1]
+type FailureStage = Literal["after_finalize", "after_report", "after_loop"]
+
+
+class _InjectedPostCloseCrash(RuntimeError):
+    pass
 
 
 class _FinalizedPaperControl:
@@ -52,9 +61,11 @@ class _PaperBindings:
     session_control: _FinalizedPaperControl
 
 
+@pytest.mark.parametrize("failure_stage", ("after_finalize", "after_report", "after_loop"))
 def test_production_cli_composition_closes_learns_and_replays_from_private_stores(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_stage: FailureStage,
 ) -> None:
     # Given: canonical finalized stores, a Champion capsule, and strict private loop/model-output bundles.
     outputs = tmp_path / "outputs"
@@ -78,7 +89,11 @@ def test_production_cli_composition_closes_learns_and_replays_from_private_store
         assert writer.register_initial_champion(champion)
     thesis_situation = _project(_inputs())
     source_situation = thesis_situation.model_copy(update={"evaluated_at": CLOSE_AT})
-    playbook = UsDayPlaybook(playbook_id="leader_breakout", title="대장주 돌파", entry_type="stop_trigger")
+    playbook = UsDayPlaybook(
+        playbook_id=parent_capsule.capsule_id,
+        title="대장주 돌파",
+        entry_type="stop_trigger",
+    )
     lane = StrategyLaneRef(
         market_id=MarketId.US_EQUITIES,
         agent_family=AgentFamily.DAY_TRADING,
@@ -89,10 +104,11 @@ def test_production_cli_composition_closes_learns_and_replays_from_private_store
         | {
             "agent_version_id": champion.version_id,
             "situation_id": situation_id_for(thesis_situation),
+            "playbook_id": playbook.playbook_id,
         },
         UsDayChampion(
             version_id=champion.version_id,
-            strategy_version=playbook.playbook_id,
+            strategy_version=parent_capsule.hypothesis_version_id,
             strategy_lane=lane,
             deployed=True,
             playbooks=(playbook,),
@@ -141,13 +157,70 @@ def test_production_cli_composition_closes_learns_and_replays_from_private_store
             )
         ).model_dump_json(),
     )
-    manifest = _manifest(tmp_path, forward, loop_inputs, patch_response)
+    manifest = publish_close_manifest(
+        tmp_path,
+        ROOT,
+        forward,
+        parent_capsule,
+        lane,
+        playbook,
+        loop_inputs,
+        patch_response,
+    )
     day_responses = tmp_path / "day-responses.json"
     thesis_response = tmp_path / "thesis-response.json"
     assert publish_private_immutable_text(day_responses, "[]")
     assert publish_private_immutable_text(thesis_response, "{}")
     control = _FinalizedPaperControl()
     monkeypatch.setattr(cli, "_paper_bindings", lambda *args, **kwargs: _PaperBindings(control))
+    payload_reads = 0
+    original_read = service_module.StoreBackedUsDayClosePayloadReader.read
+
+    def count_payload_reads(reader, request, agent_version):
+        nonlocal payload_reads
+        payload_reads += 1
+        return original_read(reader, request, agent_version)
+
+    monkeypatch.setattr(service_module.StoreBackedUsDayClosePayloadReader, "read", count_payload_reads)
+    failed = False
+    match failure_stage:
+        case "after_finalize":
+            original_paper = UsDayPostCloseCheckpointStore.publish_paper
+
+            def fail_once_after_finalize(store, checkpoint):
+                nonlocal failed
+                original_paper(store, checkpoint)
+                if not failed:
+                    failed = True
+                    raise _InjectedPostCloseCrash("injected_after_finalize")
+
+            monkeypatch.setattr(UsDayPostCloseCheckpointStore, "publish_paper", fail_once_after_finalize)
+        case "after_report":
+            original_publish = service_module.publish_market_close_report
+
+            def fail_once_after_report_publish(root, report):
+                nonlocal failed
+                created = original_publish(root, report)
+                if not failed:
+                    failed = True
+                    raise _InjectedPostCloseCrash("injected_after_report_publish")
+                return created
+
+            monkeypatch.setattr(service_module, "publish_market_close_report", fail_once_after_report_publish)
+        case "after_loop":
+            original_loop = service_module.run_loop_engineer
+
+            def fail_once_after_loop_persistence(report, version, services):
+                nonlocal failed
+                proposal_record = original_loop(report, version, services)
+                if not failed:
+                    failed = True
+                    raise _InjectedPostCloseCrash("injected_after_loop_persistence")
+                return proposal_record
+
+            monkeypatch.setattr(service_module, "run_loop_engineer", fail_once_after_loop_persistence)
+        case unreachable:
+            assert_never(unreachable)
 
     command = [
         "--situation",
@@ -167,42 +240,27 @@ def test_production_cli_composition_closes_learns_and_replays_from_private_store
     ]
 
     # When: post-close runs once and an independently reconstructed CLI invocation replays the same tick.
-    first_run = CliRunner().invoke(cli._APP, command)
+    interrupted_run = CliRunner().invoke(cli._APP, command)
     replay_run = CliRunner().invoke(cli._APP, command)
-    first = json.loads(first_run.stdout)
+    exact_replay_run = CliRunner().invoke(cli._APP, command)
     replay = json.loads(replay_run.stdout)
 
     # Then: exact report/challenger IDs are durable and replay causes no second finalize or proposal.
-    assert first_run.exit_code == replay_run.exit_code == 0, (first_run.stdout, replay_run.stdout)
-    assert first == replay
-    report_id = first["market_close_report_id"]
-    challenger_id = first["challenger_version_id"]
-    assert versions.reader().challenger(challenger_id) is not None
-    assert versions.reader().proposals(challenger_id)[0].version_id == challenger_id
+    assert interrupted_run.exit_code == 1
+    assert replay_run.exit_code == 0, replay_run.stdout
+    assert exact_replay_run.exit_code == 0, exact_replay_run.stdout
+    assert json.loads(exact_replay_run.stdout) == replay
+    report_id = replay["market_close_report_id"]
+    challenger_id = replay["challenger_version_id"]
+    challenger = versions.reader().challenger(challenger_id)
+    assert challenger is not None
+    proposals = versions.reader().proposals(challenger_id)
+    assert len(proposals) == 1
+    assert proposals[0].version_id == challenger_id
+    capsules = forward.ledger.reader().day_strategy_capsules(MarketId.US_EQUITIES)
+    assert len(capsules) == 2
+    assert len(tuple(item for item in capsules if item.capsule.capsule_id in challenger.playbook_ids)) == 1
     assert tuple((outputs / "us_day" / "close_reports").glob(f"*{report_id}*.json"))
-    assert control.calls == ["recover", "finalize"]
-
-
-def _manifest(tmp_path: Path, forward, loop_inputs: Path, patch_response: Path) -> Path:
-    path = tmp_path / "production.json"
-    assert publish_private_immutable_text(
-        path,
-        ProductionManifest(
-            repository=ROOT,
-            review_ledger=tmp_path / "review.sqlite3",
-            experiment_ledger=forward.ledger.path,
-            lane_registry=tmp_path / "paper-lane.sqlite3",
-            arm_database=tmp_path / "arms.sqlite3",
-            arm_signing_key=tmp_path / "arm.key",
-            execution_database=tmp_path / "paper-execution.sqlite3",
-            delivery_database=tmp_path / "delivery.sqlite3",
-            session_root=tmp_path / "sessions",
-            safety_arm_request_id="a" * 64,
-            generated_artifact_root=forward.generated_artifacts.root,
-            forward_shadow_artifact_root=forward.shadow_artifacts.root,
-            loop_task_root=tmp_path / "loop-tasks",
-            loop_inputs=loop_inputs,
-            patch_model_response=patch_response,
-        ).model_dump_json(),
-    )
-    return path
+    assert len(tuple((outputs / "us_day" / "close_reports").glob("*.json"))) == 1
+    assert control.calls == ["recover", "finalize", "recover"]
+    assert payload_reads == 1

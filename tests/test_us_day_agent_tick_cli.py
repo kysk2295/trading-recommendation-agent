@@ -6,16 +6,60 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tests.day_agent_version_learning_support import champion
 from tests.test_day_agent_runtime import _thesis_call
 from tests.test_us_day_situation_projection import EVALUATED_AT, _inputs, _project
 from tests.test_us_day_thesis_runtime import _markets
+from tests.us_forward_shadow_support import prepared_runtime, signal_source
+from trading_agent.day_agent_version_models import (
+    AgentDeploymentState,
+    AgentModelRoleBinding,
+    build_agent_version,
+)
 from trading_agent.day_agent_version_store import DayAgentVersionStore
 from trading_agent.private_immutable_file import publish_private_immutable_text
+from trading_agent.research_identity_models import AgentFamily, MarketId, StrategyLaneRef
+from trading_agent.us_day_agent_cli_bindings import ReviewedUsDayStrategyManifest
 from trading_agent.us_day_agent_service import CanonicalUsDaySource
-from trading_agent.us_day_thesis_models import situation_id_for
+from trading_agent.us_day_thesis_models import UsDayPlaybook, situation_id_for
 
 ROOT = Path(__file__).parents[1]
+
+
+def _strategy_runtime(root: Path):
+    forward, capsule = prepared_runtime(root / "forward", source=signal_source())
+    version = build_agent_version(
+        model_role_bindings=(AgentModelRoleBinding(role="reasoning", model_id="reasoner-v1"),),
+        prompt_sha256="1" * 64,
+        tool_policy_sha256="2" * 64,
+        memory_retrieval_policy_sha256="3" * 64,
+        playbook_ids=(capsule.capsule_id,),
+        parent_version_id=None,
+        creation_evidence_ids=("a" * 64,),
+        deployment_state=AgentDeploymentState.CHAMPION,
+        task_id="task-20260820-NVDA",
+        created_at=EVALUATED_AT - dt.timedelta(minutes=6),
+        created_session_date=EVALUATED_AT.date(),
+    )
+    playbook = UsDayPlaybook(
+        playbook_id=capsule.capsule_id,
+        title="대장주 돌파",
+        entry_type="stop_trigger",
+    )
+    manifest_path = root / "strategy.json"
+    assert publish_private_immutable_text(
+        manifest_path,
+        ReviewedUsDayStrategyManifest(
+            capsule_id=capsule.capsule_id,
+            strategy_lane=StrategyLaneRef(
+                market_id=MarketId.US_EQUITIES,
+                agent_family=AgentFamily.DAY_TRADING,
+                strategy_id=capsule.capsule_id,
+            ),
+            playbook=playbook,
+            reviewed=True,
+        ).model_dump_json(),
+    )
+    return version, playbook, manifest_path, forward.ledger.path
 
 
 def test_help_has_no_broker_endpoint_option() -> None:
@@ -112,7 +156,7 @@ def test_local_no_trade_tick_uses_existing_champion_store_and_replays_after_rest
     thesis_response = tmp_path / "thesis-response.json"
     assert publish_private_immutable_text(source_path, source.model_dump_json())
     assert publish_private_immutable_text(day_responses, json.dumps([_thesis_call().model_dump(mode="json")]))
-    version = champion()
+    version, playbook, strategy_manifest, experiment_ledger = _strategy_runtime(tmp_path)
     version_store = DayAgentVersionStore(tmp_path / "versions.sqlite3")
     with version_store.writer() as writer:
         assert writer.register_initial_champion(version)
@@ -121,7 +165,7 @@ def test_local_no_trade_tick_uses_existing_champion_store_and_replays_after_rest
         "decision": "no_trade",
         "situation_id": situation_id_for(source.situation),
         "agent_version_id": version.version_id,
-        "playbook_id": "leader_breakout",
+        "playbook_id": playbook.playbook_id,
         "theme_id": theme.theme_id,
         "catalyst_event_id": theme.catalysts[0].event_id,
         "flow_inference_kind": None,
@@ -150,6 +194,10 @@ def test_local_no_trade_tick_uses_existing_champion_store_and_replays_after_rest
         str(tmp_path / "outputs"),
         "--version-store",
         str(version_store.path),
+        "--strategy-manifest",
+        str(strategy_manifest),
+        "--experiment-ledger",
+        str(experiment_ledger),
         "--day-model-responses",
         str(day_responses),
         "--thesis-model-response",
@@ -178,7 +226,7 @@ def test_local_model_failure_runs_real_task_runtime_without_changing_champion(tm
     assert publish_private_immutable_text(source_path, source.model_dump_json())
     assert publish_private_immutable_text(day_responses, "[]")
     assert publish_private_immutable_text(thesis_response, "{}")
-    version = champion()
+    version, _, strategy_manifest, experiment_ledger = _strategy_runtime(tmp_path)
     version_store = DayAgentVersionStore(tmp_path / "versions.sqlite3")
     with version_store.writer() as writer:
         assert writer.register_initial_champion(version)
@@ -194,6 +242,10 @@ def test_local_model_failure_runs_real_task_runtime_without_changing_champion(tm
             str(tmp_path / "outputs"),
             "--version-store",
             str(version_store.path),
+            "--strategy-manifest",
+            str(strategy_manifest),
+            "--experiment-ledger",
+            str(experiment_ledger),
             "--day-model-responses",
             str(day_responses),
             "--thesis-model-response",

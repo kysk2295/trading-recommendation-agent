@@ -3,9 +3,9 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 from pathlib import Path
-from typing import override
+from typing import Literal, Self, override
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from trading_agent.day_agent_challenger_publisher import (
     DayAgentFutureShadowSession,
@@ -23,11 +23,22 @@ from trading_agent.generated_strategy_runtime import (
 )
 from trading_agent.models import BarInput
 from trading_agent.private_immutable_file import InvalidPrivateImmutableFileError, read_private_text
+from trading_agent.research_identity_models import AgentFamily, MarketId, StrategyLaneRef
 from trading_agent.researcher_agent import ProposedHypothesis
-from trading_agent.us_day_agent_service import StoreBackedUsDayClosePayloadReader, UsDayCloseBindings
+from trading_agent.us_day_agent_service import (
+    StoreBackedUsDayClosePayloadReader,
+    UsDayCloseBindings,
+    UsDayStrategyBinding,
+)
+from trading_agent.us_day_post_close_checkpoint import UsDayPostCloseCheckpointStore
+from trading_agent.us_day_thesis_models import UsDayPlaybook
 from trading_agent.us_day_thesis_store import UsDayThesisStore
 from trading_agent.us_forward_shadow_artifacts import UsForwardShadowArtifactStore
 from trading_agent.us_forward_shadow_services import UsForwardShadowServices
+
+
+class _InvalidReviewedStrategyManifestError(ValueError):
+    pass
 
 
 class ProductionManifest(BaseModel):
@@ -36,6 +47,7 @@ class ProductionManifest(BaseModel):
     repository: Path
     review_ledger: Path
     experiment_ledger: Path
+    strategy_manifest: Path
     lane_registry: Path
     arm_database: Path
     arm_signing_key: Path
@@ -48,6 +60,26 @@ class ProductionManifest(BaseModel):
     loop_task_root: Path
     loop_inputs: Path
     patch_model_response: Path
+
+
+class ReviewedUsDayStrategyManifest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    capsule_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    strategy_lane: StrategyLaneRef
+    playbook: UsDayPlaybook
+    reviewed: Literal[True]
+
+    @model_validator(mode="after")
+    def validate_lane(self) -> Self:
+        if (
+            self.strategy_lane.market_id is not MarketId.US_EQUITIES
+            or self.strategy_lane.agent_family is not AgentFamily.DAY_TRADING
+            or self.strategy_lane.strategy_id != self.capsule_id
+            or self.playbook.playbook_id != self.capsule_id
+        ):
+            raise _InvalidReviewedStrategyManifestError("strategy_manifest_lineage_invalid")
+        return self
 
 
 class LoopInputBundle(BaseModel):
@@ -83,6 +115,32 @@ def load_production_manifest(path: Path) -> ProductionManifest:
         return ProductionManifest.model_validate_json(read_private_text(path))
     except (InvalidPrivateImmutableFileError, ValidationError, ValueError):
         raise ProductionBindingError("production_manifest_invalid") from None
+
+
+def resolve_strategy_binding(
+    manifest_path: Path,
+    experiment_ledger_path: Path,
+    champion: AgentVersion,
+) -> UsDayStrategyBinding:
+    try:
+        manifest = ReviewedUsDayStrategyManifest.model_validate_json(read_private_text(manifest_path))
+        stored = ExperimentLedgerStore(experiment_ledger_path).reader().day_strategy_capsule(manifest.capsule_id)
+        if (
+            champion.playbook_ids != (manifest.capsule_id,)
+            or stored is None
+            or stored.capsule.capsule_id != manifest.capsule_id
+            or stored.capsule.market_id is not MarketId.US_EQUITIES
+        ):
+            raise ProductionBindingError("champion_strategy_lineage_invalid")
+        return UsDayStrategyBinding(
+            stored.capsule.capsule_id,
+            manifest.strategy_lane,
+            (manifest.playbook,),
+        )
+    except ProductionBindingError:
+        raise
+    except (InvalidPrivateImmutableFileError, OSError, RuntimeError, ValidationError, ValueError):
+        raise ProductionBindingError("champion_strategy_lineage_invalid") from None
 
 
 def build_close_bindings(
@@ -125,6 +183,7 @@ def build_close_bindings(
                     inputs.future_sessions,
                 ),
             ),
+            UsDayPostCloseCheckpointStore(outputs / "us_day" / "post_close_checkpoints"),
         )
     except ProductionBindingError:
         raise
@@ -136,6 +195,8 @@ __all__ = (
     "LoopInputBundle",
     "ProductionBindingError",
     "ProductionManifest",
+    "ReviewedUsDayStrategyManifest",
     "build_close_bindings",
     "load_production_manifest",
+    "resolve_strategy_binding",
 )

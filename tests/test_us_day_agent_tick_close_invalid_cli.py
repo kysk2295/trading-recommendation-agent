@@ -49,6 +49,7 @@ def test_invalid_production_close_config_fails_before_paper_binding(
             repository=ROOT,
             review_ledger=tmp_path / "review.sqlite3",
             experiment_ledger=tmp_path / "experiment.sqlite3",
+            strategy_manifest=tmp_path / "strategy.json",
             lane_registry=tmp_path / "lane.sqlite3",
             arm_database=tmp_path / "arms.sqlite3",
             arm_signing_key=tmp_path / "arm.key",
