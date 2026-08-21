@@ -4,8 +4,10 @@ import datetime as dt
 import hashlib
 import json
 import os
+import sqlite3
 import stat
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from enum import StrEnum, unique
 from pathlib import Path
@@ -13,7 +15,10 @@ from typing import Final, Literal, Protocol, Self, assert_never
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from trading_agent.alpaca_paper_config import AlpacaPaperCredentials, load_alpaca_paper_credentials
+from trading_agent.dashboard_paper_finalized_terminal_writer import publish_finalized_paper_terminal
 from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
+from trading_agent.dashboard_us_day_paper import FinalizedPaperProjectionBundle, read_finalized_paper_bundle
 from trading_agent.day_agent_loop_engineer import DayAgentLoopServices, run_loop_engineer
 from trading_agent.day_agent_reasoning import DayAgentReasoningClient
 from trading_agent.day_agent_runtime import DayAgentRuntime, run_day_agent_task
@@ -22,19 +27,52 @@ from trading_agent.day_agent_task_store import DayAgentTaskStore
 from trading_agent.day_agent_tool_runtime import DayAgentToolRuntime
 from trading_agent.day_agent_version_models import AgentDeploymentState, AgentVersion
 from trading_agent.day_agent_version_store import DayAgentVersionStore
-from trading_agent.day_learning_report_models import MarketCloseReportPayload
+from trading_agent.day_learning_report_models import (
+    CumulativeLineageSection,
+    DayDecisionDiagnostic,
+    DayDecisionOutcome,
+    DayDecisionStage,
+    ExecutionReportSection,
+    MarketCloseReport,
+    MarketCloseReportPayload,
+    MarketFinalizationWatermark,
+    NextSessionSection,
+    ResearchReportSection,
+)
 from trading_agent.day_learning_report_store import publish_market_close_report
 from trading_agent.day_learning_reports import seal_market_close_report
 from trading_agent.day_research_review_models import ExecutionEligibility, PromotionDecision
+from trading_agent.day_research_review_reader import read_execution_eligibility_events, read_promotion_decisions
+from trading_agent.day_research_review_types import DayExecutionEligibilityStatus, DayPromotionStatus
+from trading_agent.execution_store import ExecutionStore
+from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
+from trading_agent.hermes_arm_authority import LedgerHermesArmAuthorityResolver
+from trading_agent.hermes_arm_request import (
+    HermesArmConsumeCommand,
+    HermesArmScope,
+    HermesArmTransitionKind,
+    InvalidHermesArmRequestError,
+)
+from trading_agent.hermes_arm_store import HermesArmStore
+from trading_agent.intraday_lane_daily_snapshot import finalize_intraday_lane_day
+from trading_agent.lane_defaults import INTRADAY_PILOT_PAPER_RISK_CONFIG
 from trading_agent.lane_identity_models import LaneId
+from trading_agent.lane_registry_store import LaneRegistryStore
+from trading_agent.paper_auto_arm_policy import PaperAutoArmPolicy, load_paper_auto_arm_policy
+from trading_agent.paper_auto_arm_runtime import verify_paper_auto_arm_session
+from trading_agent.paper_operating_session import open_paper_operating_session
+from trading_agent.paper_operating_session_models import PaperOperatingSession
+from trading_agent.paper_safety_models import BlockedPaperSafetyPlan
 from trading_agent.private_immutable_file import publish_private_immutable_text, read_private_text
-from trading_agent.research_identity_models import StrategyLaneRef
+from trading_agent.research_identity_models import MarketId, StrategyLaneRef
 from trading_agent.store import PaperStore
 from trading_agent.us_day_agent_operating import (
     UsDayAgentOperatingRequest,
     UsDayAgentOperatingServices,
     operate_us_day_agent,
 )
+from trading_agent.us_day_operating_driver import execution_acknowledged, is_flat, readiness_barrier
+from trading_agent.us_day_operating_models import UsDayArmConsumer
 from trading_agent.us_day_recommendation_card import persist_and_queue_thesis
 from trading_agent.us_day_signal_admission import UsDaySignalAdmissionRequest
 from trading_agent.us_day_situation_models import UsDaySituationMap
@@ -177,6 +215,105 @@ class UsDayExecutionAuthorityReader(Protocol):
     ) -> UsDayExecutionAuthority: ...
 
 
+@dataclass(frozen=True, slots=True)
+class LedgerUsDayExecutionAuthorityReader:
+    review_ledger: Path
+    arm_store: HermesArmStore | None = None
+    auto_arm_policy: Path | None = None
+    arm_authority_resolver: LedgerHermesArmAuthorityResolver | None = None
+
+    def read(
+        self,
+        source: CanonicalUsDaySource,
+        thesis: UsDayThesisResult,
+        champion: UsDayChampion,
+        evaluated_at: dt.datetime,
+    ) -> UsDayExecutionAuthority:
+        try:
+            promotion, eligibility = self._review_authority(source, champion, evaluated_at)
+            scope = HermesArmScope(session_id=source.situation.session_id, lane_id=LaneId.INTRADAY_MOMENTUM)
+            request_ids = (
+                *self._confirmed_arm_ids(scope, champion, evaluated_at),
+                *self._auto_arm_ids(scope, champion, evaluated_at),
+            )
+            if len(request_ids) != 1 or thesis.signal is None:
+                raise UsDayAgentServiceError("execution_authority_ambiguous")
+            actionable = canonical_experiment_ledger_json(thesis.signal)
+            return UsDayExecutionAuthority(
+                promotion=promotion,
+                eligibility=eligibility,
+                lane_id=LaneId.INTRADAY_MOMENTUM,
+                arm_request_id=request_ids[0],
+                actionable_payload_sha256=hashlib.sha256(actionable.encode()).hexdigest(),
+            )
+        except UsDayAgentServiceError:
+            raise
+        except (InvalidHermesArmRequestError, OSError, sqlite3.Error, ValueError):
+            raise UsDayAgentServiceError("execution_authority_invalid") from None
+
+    def _review_authority(
+        self,
+        source: CanonicalUsDaySource,
+        champion: UsDayChampion,
+        evaluated_at: dt.datetime,
+    ) -> tuple[PromotionDecision, ExecutionEligibility]:
+        uri = f"file:{self.review_ledger.expanduser().absolute()}?mode=ro"
+        with sqlite3.connect(uri, uri=True) as connection:
+            promotions = tuple(
+                item
+                for item in read_promotion_decisions(connection, MarketId.US_EQUITIES)
+                if item.payload.hypothesis_version_id == champion.version_id
+                and item.payload.status is DayPromotionStatus.PAPER_CHAMPION_CANDIDATE
+                and item.payload.effective_after_session <= source.situation.session_date
+            )
+            eligible = tuple(
+                item
+                for item in read_execution_eligibility_events(connection, MarketId.US_EQUITIES)
+                if item.payload.hypothesis_version_id == champion.version_id
+                and item.payload.session_date == source.situation.session_date
+                and item.payload.status is DayExecutionEligibilityStatus.ELIGIBLE
+                and item.payload.paper_order_authority
+                and item.payload.effective_at <= evaluated_at < item.payload.expires_at
+            )
+        if len(promotions) != 1 or len(eligible) != 1 or eligible[0].payload.decision_id != promotions[0].decision_id:
+            raise UsDayAgentServiceError("execution_authority_not_current")
+        return promotions[0], eligible[0]
+
+    def _confirmed_arm_ids(
+        self,
+        scope: HermesArmScope,
+        champion: UsDayChampion,
+        evaluated_at: dt.datetime,
+    ) -> tuple[str, ...]:
+        if self.arm_store is None:
+            return ()
+        return tuple(
+            request.request_id
+            for request in self.arm_store.requests()
+            if request.authority.scope == scope
+            and request.authority.strategy_version == champion.strategy_version
+            and request.prepared_at <= evaluated_at <= request.expires_at
+            and (transitions := self.arm_store.transitions(request.request_id))
+            and transitions[-1].kind is HermesArmTransitionKind.CONFIRMED
+        )
+
+    def _auto_arm_ids(
+        self,
+        scope: HermesArmScope,
+        champion: UsDayChampion,
+        evaluated_at: dt.datetime,
+    ) -> tuple[str, ...]:
+        if self.auto_arm_policy is None and self.arm_authority_resolver is None:
+            return ()
+        if self.auto_arm_policy is None or self.arm_authority_resolver is None:
+            raise UsDayAgentServiceError("execution_auto_arm_configuration_invalid")
+        policy: PaperAutoArmPolicy = load_paper_auto_arm_policy(self.auto_arm_policy)
+        authority = self.arm_authority_resolver.resolve(scope)
+        if authority.strategy_version != champion.strategy_version:
+            raise UsDayAgentServiceError("execution_auto_arm_champion_mismatch")
+        return (verify_paper_auto_arm_session(policy, authority, scope.session_id, evaluated_at),)
+
+
 class UsDayPaperSessionControl(Protocol):
     def recover_and_reconcile(self, evaluated_at: dt.datetime) -> None: ...
 
@@ -187,8 +324,230 @@ class UsDayPaperSessionControl(Protocol):
     def finalize(self, evaluated_at: dt.datetime) -> str: ...
 
 
+type PaperSessionOpener = Callable[
+    [AlpacaPaperCredentials, ExecutionStore],
+    AbstractContextManager[PaperOperatingSession],
+]
+
+
+@dataclass(frozen=True, slots=True)
+class LiveUsDayPaperSessionControl:
+    outputs: Path
+    execution_store: ExecutionStore
+    lane_registry: LaneRegistryStore
+    session_root: Path
+    arm_consumer: UsDayArmConsumer
+    safety_arm_request_id: str
+    strategy_version: str
+    session_id: str
+    credentials_loader: Callable[[], AlpacaPaperCredentials] = load_alpaca_paper_credentials
+    session_opener: PaperSessionOpener = open_paper_operating_session
+
+    def recover_and_reconcile(self, evaluated_at: dt.datetime) -> None:
+        try:
+            credentials = self.credentials_loader()
+            with self.session_opener(credentials, self.execution_store) as session:
+                _ = session.recover_mutations()
+                if readiness_barrier(session.readiness()):
+                    raise UsDayAgentServiceError("paper_recovery_not_reconciled")
+        except UsDayAgentServiceError:
+            raise
+        except (OSError, RuntimeError, ValueError):
+            raise UsDayAgentServiceError("paper_credentials_or_recovery_invalid") from None
+
+    def block_new_entries(self, evaluated_at: dt.datetime) -> str:
+        payload = json.dumps(
+            {"blocked_at": evaluated_at.isoformat(), "session_id": self.session_id},
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        _ = publish_private_immutable_text(
+            self.outputs / "us_day" / "entry_cutoff" / f"{self.session_id}.json",
+            payload,
+        )
+        return "entries_blocked"
+
+    def flatten(self, evaluated_at: dt.datetime) -> str:
+        try:
+            credentials = self.credentials_loader()
+            with self.session_opener(credentials, self.execution_store) as session:
+                _ = session.recover_mutations()
+                readiness = session.readiness()
+                if readiness_barrier(readiness):
+                    raise UsDayAgentServiceError("paper_eod_not_reconciled")
+                if is_flat(readiness.broker_state):
+                    return "flat"
+                arm = self.arm_consumer.consume(
+                    HermesArmConsumeCommand(
+                        request_id=self.safety_arm_request_id,
+                        expected_scope=HermesArmScope(
+                            session_id=self.session_id,
+                            lane_id=LaneId.INTRADAY_MOMENTUM,
+                        ),
+                    ),
+                    self.strategy_version,
+                )
+                execution = session.execute_safety_actions(arm, INTRADAY_PILOT_PAPER_RISK_CONFIG)
+                if isinstance(execution, BlockedPaperSafetyPlan) or not all(
+                    execution_acknowledged(item, execution.recoveries) for item in execution.results
+                ):
+                    raise UsDayAgentServiceError("paper_eod_flatten_failed")
+                final = session.readiness()
+                if readiness_barrier(final) or not is_flat(final.broker_state):
+                    raise UsDayAgentServiceError("paper_eod_flatten_failed")
+                return "flat"
+        except UsDayAgentServiceError:
+            raise
+        except (InvalidHermesArmRequestError, OSError, RuntimeError, ValueError):
+            raise UsDayAgentServiceError("paper_eod_control_invalid") from None
+
+    def finalize(self, evaluated_at: dt.datetime) -> str:
+        try:
+            credentials = self.credentials_loader()
+            with self.session_opener(credentials, self.execution_store) as session:
+                _ = session.recover_mutations()
+                readiness = session.readiness()
+            if readiness_barrier(readiness) or not is_flat(readiness.broker_state):
+                raise UsDayAgentServiceError("paper_finalize_not_flat")
+            result = finalize_intraday_lane_day(
+                self.lane_registry,
+                self.execution_store,
+                self.session_root,
+                evaluated_at.astimezone(NEW_YORK).date(),
+                readiness,
+                evaluated_at=evaluated_at,
+            )
+            _ = publish_finalized_paper_terminal(self.outputs, result.snapshot, self.execution_store)
+            return "finalized"
+        except UsDayAgentServiceError:
+            raise
+        except (OSError, RuntimeError, ValueError):
+            raise UsDayAgentServiceError("paper_finalize_invalid") from None
+
+
 class UsDayClosePayloadReader(Protocol):
     def read(self, request: UsDayAgentTickRequest, champion: AgentVersion) -> MarketCloseReportPayload: ...
+
+
+@dataclass(frozen=True, slots=True)
+class StoreBackedUsDayClosePayloadReader:
+    outputs: Path
+    thesis_store: UsDayThesisStore
+
+    def read(self, request: UsDayAgentTickRequest, champion: AgentVersion) -> MarketCloseReportPayload:
+        bundle = read_finalized_paper_bundle(self.outputs, now=request.evaluated_at)
+        if not isinstance(bundle, FinalizedPaperProjectionBundle):
+            raise UsDayAgentServiceError(bundle.blocker_code)
+        session_date = request.evaluated_at.astimezone(NEW_YORK).date()
+        theses = tuple(
+            item
+            for item in self.thesis_store.theses()
+            if item.agent_version_id == champion.version_id
+            and item.observed_at.astimezone(NEW_YORK).date() == session_date
+        )
+        if len(theses) != 1:
+            raise UsDayAgentServiceError("close_thesis_ambiguous")
+        thesis = theses[0]
+        changes = self.thesis_store.changes(thesis.thesis_id)
+        situation_path = self.outputs / "us_day" / "situations" / f"{thesis.situation_id}.json"
+        try:
+            situation = UsDaySituationMap.model_validate_json(read_private_text(situation_path))
+        except (ValidationError, ValueError):
+            raise UsDayAgentServiceError("close_situation_invalid") from None
+        evidence_ids = tuple(
+            sorted(
+                {
+                    thesis.thesis_id,
+                    bundle.identity.sha256,
+                    *(item.canonical_id for item in situation.evidence_refs),
+                    *(item.canonical_id for item in thesis.evidence_refs),
+                    *(item.event_id for item in changes),
+                    *(str(item.intent_id) for item in bundle.ledger.intents),
+                    *bundle.ledger.pending_trade_update_receipt_keys,
+                    *bundle.ledger.unrecovered_trade_update_quarantine_keys,
+                }
+            )
+        )
+        complete = (
+            bundle.hermes_valid
+            and bundle.snapshot.data_quality_complete
+            and bundle.snapshot.open_order_count == 0
+            and bundle.snapshot.open_position_count == 0
+            and not bundle.ledger.unresolved_intent_ids
+            and not bundle.ledger.pending_trade_update_receipt_keys
+            and not bundle.ledger.unrecovered_trade_update_quarantine_keys
+        )
+        diagnostics = tuple(
+            DayDecisionDiagnostic(
+                stage=stage,
+                outcome=DayDecisionOutcome.SUPPORTED if complete else DayDecisionOutcome.REFUTED,
+                score=1.0 if complete else 0.0,
+                evidence_ids=evidence_ids,
+                reason_codes=(
+                    "finalized_store_evidence_complete" if complete else "finalized_store_evidence_incomplete",
+                ),
+            )
+            for stage in DayDecisionStage
+        )
+        prior = self._prior_reports(session_date)
+        realized = float(bundle.snapshot.realized_pnl)
+        return MarketCloseReportPayload(
+            market_id=MarketId.US_EQUITIES,
+            session_date=session_date,
+            watermark=MarketFinalizationWatermark(
+                watermark_id=hashlib.sha256("\0".join(evidence_ids).encode()).hexdigest(),
+                market_id=MarketId.US_EQUITIES,
+                session_date=session_date,
+                finalized_through=bundle.snapshot.finalized_at,
+                source_event_ids=evidence_ids,
+            ),
+            revision=len(prior) + 1,
+            previous_report_id=None if not prior else prior[-1].report_id,
+            execution=ExecutionReportSection(
+                market_id=MarketId.US_EQUITIES,
+                actual_return=realized,
+                modeled_return=realized,
+                filled_order_count=len(bundle.ledger.filled_intent_ids),
+                unresolved_count=len(bundle.ledger.unresolved_intent_ids),
+                censored_count=0,
+                provider_read_only=False,
+                eligibility_event_ids=(),
+            ),
+            research=ResearchReportSection(
+                market_id=MarketId.US_EQUITIES,
+                attempted_variant_count=len(diagnostics),
+                supported_count=sum(item.outcome is DayDecisionOutcome.SUPPORTED for item in diagnostics),
+                refuted_count=sum(item.outcome is DayDecisionOutcome.REFUTED for item in diagnostics),
+                inconclusive_count=0,
+                modeled_return=realized,
+                evidence_ids=evidence_ids,
+            ),
+            lineage=CumulativeLineageSection(
+                market_id=MarketId.US_EQUITIES,
+                report_count=len(prior) + 1,
+                cumulative_actual_return=sum(item.payload.execution.actual_return or 0.0 for item in prior) + realized,
+                cumulative_modeled_return=sum(item.payload.execution.modeled_return for item in prior) + realized,
+                lineage_report_ids=tuple(item.report_id for item in prior),
+            ),
+            next_session=NextSessionSection(
+                market_id=MarketId.US_EQUITIES,
+                active_capsule_ids=champion.playbook_ids,
+                queued_capsule_ids=(),
+                reason_codes=("retain_current_champion",),
+            ),
+            agent_version_id=champion.version_id,
+            diagnostics=diagnostics,
+            finalized_at=bundle.snapshot.finalized_at,
+        )
+
+    def _prior_reports(self, session_date: dt.date) -> tuple[MarketCloseReport, ...]:
+        root = self.outputs / "us_day" / "close_reports"
+        if not root.exists():
+            return ()
+        reports = tuple(
+            MarketCloseReport.model_validate_json(read_private_text(path)) for path in sorted(root.glob("*.json"))
+        )
+        return tuple(item for item in reports if item.payload.session_date <= session_date)
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,6 +650,7 @@ class UsDayProductionRuntime:
         paper = self.config.paper
         if paper is None:
             return UsDayAgentTickResult.blocked(request, "paper_bindings_missing")
+        paper.session_control.recover_and_reconcile(request.evaluated_at)
         authority = paper.authority_reader.read(source, thesis_result, champion, request.evaluated_at)
         market = next(item for item in source.current_markets if item.symbol == thesis_result.signal.symbol)
         result = operate_us_day_agent(
@@ -510,7 +870,6 @@ class UsDayAgentService:
                 case UsDaySessionPhase.PREMARKET:
                     result = self.runtime.premarket(request)
                 case UsDaySessionPhase.REGULAR:
-                    self.runtime.recover(request)
                     result = self.runtime.regular(request)
                 case UsDaySessionPhase.ENTRY_CUTOFF:
                     self.runtime.recover(request)

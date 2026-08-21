@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import secrets
 import stat
 import sys
 from collections.abc import Mapping
@@ -12,25 +13,40 @@ from typing import Annotated, Literal, override
 import typer
 from pydantic import AwareDatetime, BaseModel, ConfigDict, TypeAdapter, ValidationError
 
+from trading_agent.alpaca_paper_config import load_alpaca_paper_credentials
 from trading_agent.day_agent_task_store import DayAgentTaskStore
 from trading_agent.day_agent_tool_models import DayAgentReasoningRequest, DayAgentReasoningResponse
 from trading_agent.day_agent_tool_runtime import DayAgentToolRuntime
 from trading_agent.day_agent_version_store import DayAgentVersionStore
+from trading_agent.execution_store import ExecutionStore
+from trading_agent.hermes_arm_authority import LedgerHermesArmAuthorityConfig, LedgerHermesArmAuthorityResolver
+from trading_agent.hermes_arm_gateway import HermesArmGateway, HermesArmGatewayConfig
+from trading_agent.hermes_arm_signing import HermesArmSigner, load_hermes_arm_signing_key
+from trading_agent.hermes_arm_store import HermesArmStore
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
+from trading_agent.lane_registry_store import LaneRegistryStore
 from trading_agent.private_immutable_file import InvalidPrivateImmutableFileError, read_private_text
 from trading_agent.research_identity_models import AgentFamily, MarketId, StrategyLaneRef
 from trading_agent.store import PaperStore
+from trading_agent.us_day_agent_operating import UsDayAgentOperatingServices
 from trading_agent.us_day_agent_service import (
     CanonicalUsDaySource,
+    LedgerUsDayExecutionAuthorityReader,
+    LiveUsDayPaperSessionControl,
     LocalUsDaySourceReader,
     UsDayAgentServiceConfig,
     UsDayAgentServiceError,
     UsDayLocalStores,
     UsDayModelBindings,
+    UsDayPaperBindings,
     UsDayProductionConfig,
     UsDayStrategyBinding,
     build_us_day_agent_service,
     session_phase_at,
 )
+from trading_agent.us_day_operating_arm import StrategyBoundHermesArmConsumer
+from trading_agent.us_day_operating_coordinator import UsDayOperatingCoordinator, UsDayOperatingCoordinatorConfig
+from trading_agent.us_day_signal_admission import UsDayMarketLiquidityContext
 from trading_agent.us_day_thesis_models import UsDayPlaybook
 from trading_agent.us_day_thesis_store import UsDayThesisStore
 from trading_agent.us_equity_calendar import NEW_YORK
@@ -44,6 +60,26 @@ class _SourceHeader(BaseModel):
 
     session_id: str
     evaluated_at: AwareDatetime
+
+
+class _ProductionManifest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    repository: Path
+    review_ledger: Path
+    experiment_ledger: Path
+    lane_registry: Path
+    arm_database: Path
+    arm_signing_key: Path
+    execution_database: Path
+    delivery_database: Path
+    session_root: Path
+    safety_arm_request_id: str
+
+
+class _OneShareLiquidity:
+    def allowed_quantity(self, context: UsDayMarketLiquidityContext) -> int:
+        return 1
 
 
 class _CliError(ValueError):
@@ -129,8 +165,6 @@ def _model_bindings(day_path: Path, thesis_path: Path, clock: dt.datetime) -> Us
         thesis = TypeAdapter(dict[str, object]).validate_json(read_private_text(thesis_path))
     except (InvalidPrivateImmutableFileError, ValidationError, ValueError):
         raise _CliError("model_bindings_invalid") from None
-    if not day:
-        raise _CliError("model_bindings_invalid")
     return UsDayModelBindings(
         _BoundDayResponses(day),
         _BoundThesisResponse(thesis),
@@ -140,6 +174,9 @@ def _model_bindings(day_path: Path, thesis_path: Path, clock: dt.datetime) -> Us
 
 def _service(
     outputs: Path,
+    version_store_path: Path,
+    source: CanonicalUsDaySource,
+    production_manifest: Path | None,
     day_model_responses: Path,
     thesis_model_response: Path,
     evaluated_at: dt.datetime,
@@ -158,18 +195,28 @@ def _service(
         strategy_id=playbook.playbook_id,
     )
     thesis_store = UsDayThesisStore(private / "theses")
+    version_store = DayAgentVersionStore(version_store_path)
+    if not version_store.path.is_file() or version_store.reader().champion() is None:
+        raise _CliError("existing_champion_store_required")
+    paper_store = PaperStore(private / "paper.sqlite3")
+    paper = (
+        None
+        if production_manifest is None
+        else _paper_bindings(production_manifest, source, root, thesis_store, paper_store, evaluated_at)
+    )
     return build_us_day_agent_service(
         UsDayProductionConfig(
             stores=UsDayLocalStores(
                 root,
                 DayAgentTaskStore(private / "day_agent.sqlite3"),
                 thesis_store,
-                PaperStore(private / "paper.sqlite3"),
-                DayAgentVersionStore(private / "versions.sqlite3"),
+                paper_store,
+                version_store,
             ),
             models=_model_bindings(day_model_responses, thesis_model_response, evaluated_at),
             strategy=UsDayStrategyBinding(playbook.playbook_id, lane, (playbook,)),
             source_reader=LocalUsDaySourceReader(),
+            paper=paper,
         ),
         UsDayAgentServiceConfig(
             private / "tick_receipts",
@@ -180,6 +227,72 @@ def _service(
     )
 
 
+def _paper_bindings(
+    manifest_path: Path,
+    source: CanonicalUsDaySource,
+    outputs: Path,
+    thesis_store: UsDayThesisStore,
+    paper_store: PaperStore,
+    evaluated_at: dt.datetime,
+) -> UsDayPaperBindings:
+    try:
+        manifest = _ProductionManifest.model_validate_json(read_private_text(manifest_path))
+        signer = HermesArmSigner(load_hermes_arm_signing_key(manifest.arm_signing_key))
+        arm_store = HermesArmStore(manifest.arm_database, signer)
+        resolver = LedgerHermesArmAuthorityResolver(
+            LedgerHermesArmAuthorityConfig(
+                repository=manifest.repository,
+                lane_registry=manifest.lane_registry,
+                experiment_ledger=manifest.experiment_ledger,
+            )
+        )
+        gateway = HermesArmGateway(
+            HermesArmGatewayConfig(
+                store=arm_store,
+                authority_resolver=resolver,
+                signer=signer,
+                clock=lambda: evaluated_at,
+                nonce_factory=lambda: secrets.token_bytes(32),
+                ttl_seconds=300,
+            )
+        )
+        consumer = StrategyBoundHermesArmConsumer(gateway, arm_store)
+        execution = ExecutionStore(manifest.execution_database)
+        credentials = load_alpaca_paper_credentials()
+        coordinator = UsDayOperatingCoordinator(
+            UsDayOperatingCoordinatorConfig(
+                arm_consumer=consumer,
+                credentials=credentials,
+                execution_store=execution,
+                delivery_store=HermesDeliveryStore(manifest.delivery_database),
+            )
+        )
+        return UsDayPaperBindings(
+            operating=UsDayAgentOperatingServices(
+                coordinator=coordinator,
+                thesis_store=thesis_store,
+                paper_store=paper_store,
+                market_liquidity_policy=_OneShareLiquidity(),
+            ),
+            authority_reader=LedgerUsDayExecutionAuthorityReader(
+                manifest.review_ledger,
+                arm_store=arm_store,
+            ),
+            session_control=LiveUsDayPaperSessionControl(
+                outputs=outputs,
+                execution_store=execution,
+                lane_registry=LaneRegistryStore(manifest.lane_registry),
+                session_root=manifest.session_root,
+                arm_consumer=consumer,
+                safety_arm_request_id=manifest.safety_arm_request_id,
+                strategy_version="leader_breakout",
+                session_id=source.situation.session_id,
+            ),
+        )
+    except (OSError, RuntimeError, ValidationError, ValueError):
+        raise _CliError("production_manifest_or_credentials_invalid") from None
+
+
 def _emit(payload: dict[str, str]) -> None:
     sys.stdout.write(json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n")
 
@@ -188,6 +301,8 @@ def _emit(payload: dict[str, str]) -> None:
 def main(
     situation: Annotated[Path, typer.Option(exists=False, dir_okay=False, readable=True)],
     outputs: Annotated[Path, typer.Option(file_okay=False)] = Path(".private/us-day-agent"),
+    version_store: Annotated[Path | None, typer.Option(exists=False, dir_okay=False)] = None,
+    production_manifest: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
     day_model_responses: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
     thesis_model_response: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
     now: Annotated[str | None, typer.Option()] = None,
@@ -200,11 +315,14 @@ def main(
         _emit({"phase": "closed", "reason": str(error), "status": "blocked"})
         raise typer.Exit(2) from None
     try:
-        _ = _source(situation, evaluated_at)
+        canonical_source = _source(situation, evaluated_at)
         if day_model_responses is None or thesis_model_response is None:
             raise _CliError("model_bindings_required")
         result = _service(
             outputs,
+            version_store or outputs.expanduser().absolute() / "us_day" / "versions.sqlite3",
+            canonical_source,
+            production_manifest,
             day_model_responses,
             thesis_model_response,
             evaluated_at,

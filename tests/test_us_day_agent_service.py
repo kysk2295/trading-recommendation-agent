@@ -1,15 +1,32 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
+
+from trading_agent.alpaca_paper_config import AlpacaPaperCredentials
+from trading_agent.execution_store import ExecutionStore
+from trading_agent.hermes_arm_request import HermesArmConsumeCommand
+from trading_agent.lane_registry_store import LaneRegistryStore
+from trading_agent.paper_mutation_arm import PaperMutationArm
+from trading_agent.paper_operating_session_models import PaperOperatingSession
 from trading_agent.us_day_agent_service import (
+    LiveUsDayPaperSessionControl,
     UsDayAgentService,
     UsDayAgentServiceConfig,
+    UsDayAgentServiceError,
     UsDayAgentTickRequest,
     UsDayAgentTickResult,
     UsDaySessionPhase,
 )
+
+
+class _UnusedArmConsumer:
+    def consume(self, command: HermesArmConsumeCommand, expected_strategy_version: str) -> PaperMutationArm:
+        raise AssertionError
 
 
 class _FakeVertical:
@@ -76,7 +93,7 @@ def test_regular_tick_recovers_paper_before_new_entry_and_replays_after_restart(
     replay = UsDayAgentService(config, fake, lambda: request.evaluated_at).tick(request)
 
     # Then: recovery precedes one entry attempt and replay is exact.
-    assert fake.calls == ["recover", "regular"]
+    assert fake.calls == ["regular"]
     assert replay == first
     assert first.recommendation_id == "rec-1"
 
@@ -129,4 +146,40 @@ def test_model_failure_is_blocked_without_changing_champion(tmp_path: Path) -> N
     # Then: it records a stable blocker and never invokes the post-close promotion boundary.
     assert result.status == "blocked"
     assert result.reason == "day_agent_model_call_failed"
-    assert fake.calls == ["recover", "regular"]
+    assert fake.calls == ["regular"]
+
+
+def test_live_paper_control_blocks_missing_standard_credentials_before_transport(tmp_path: Path) -> None:
+    # Given: concrete live Paper control whose standard credential loader fails.
+    opened = False
+
+    @contextmanager
+    def opener(credentials: AlpacaPaperCredentials, store: ExecutionStore) -> Iterator[PaperOperatingSession]:
+        nonlocal opened
+        opened = True
+        raise AssertionError
+        yield
+
+    def missing_credentials() -> AlpacaPaperCredentials:
+        raise FileNotFoundError
+
+    control = LiveUsDayPaperSessionControl(
+        outputs=tmp_path,
+        execution_store=ExecutionStore(tmp_path / "execution.sqlite3"),
+        lane_registry=LaneRegistryStore(tmp_path / "lane.sqlite3"),
+        session_root=tmp_path / "session",
+        arm_consumer=_UnusedArmConsumer(),
+        safety_arm_request_id="a" * 64,
+        strategy_version="leader_breakout",
+        session_id="XNYS-2026-08-21",
+        credentials_loader=missing_credentials,
+        session_opener=opener,
+    )
+
+    # When: recovery is required before admission.
+    with pytest.raises(UsDayAgentServiceError) as blocked:
+        control.recover_and_reconcile(dt.datetime(2026, 8, 21, 15, tzinfo=dt.UTC))
+
+    # Then: the stable blocker is produced without opening broker transport.
+    assert blocked.value.reason == "paper_credentials_or_recovery_invalid"
+    assert not opened
