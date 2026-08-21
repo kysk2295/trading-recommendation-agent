@@ -20,7 +20,7 @@ class _FakeVertical:
         self.calls.append("premarket")
         return UsDayAgentTickResult.accepted(request, market_map_id="map-1")
 
-    def recover_paper(self, request: UsDayAgentTickRequest) -> None:
+    def recover(self, request: UsDayAgentTickRequest) -> None:
         self.calls.append("recover")
 
     def regular(self, request: UsDayAgentTickRequest) -> UsDayAgentTickResult:
@@ -28,15 +28,8 @@ class _FakeVertical:
         return UsDayAgentTickResult.accepted(
             request,
             recommendation_id="rec-1",
-            paper_eligible=True,
+            paper_status="completed",
         )
-
-    def publish_regular(self, request: UsDayAgentTickRequest, result: UsDayAgentTickResult) -> None:
-        self.calls.append("publish")
-
-    def execute_paper(self, request: UsDayAgentTickRequest, result: UsDayAgentTickResult) -> str:
-        self.calls.append("paper")
-        return "completed"
 
     def cutoff(self, request: UsDayAgentTickRequest) -> UsDayAgentTickResult:
         self.calls.append("cutoff")
@@ -79,11 +72,11 @@ def test_regular_tick_recovers_paper_before_new_entry_and_replays_after_restart(
     config = UsDayAgentServiceConfig(receipt_root=tmp_path / "receipts")
 
     # When: the exact tick is run twice across service instances.
-    first = UsDayAgentService(config, fake).tick(request)
-    replay = UsDayAgentService(config, fake).tick(request)
+    first = UsDayAgentService(config, fake, lambda: request.evaluated_at).tick(request)
+    replay = UsDayAgentService(config, fake, lambda: request.evaluated_at).tick(request)
 
     # Then: recovery precedes one entry attempt and replay is exact.
-    assert fake.calls == ["recover", "regular", "publish", "paper"]
+    assert fake.calls == ["recover", "regular"]
     assert replay == first
     assert first.recommendation_id == "rec-1"
 
@@ -91,7 +84,9 @@ def test_regular_tick_recovers_paper_before_new_entry_and_replays_after_restart(
 def test_session_phases_dispatch_cutoff_eod_and_post_close(tmp_path: Path) -> None:
     # Given: official-XNYS phase timestamps.
     fake = _FakeVertical()
-    service = UsDayAgentService(UsDayAgentServiceConfig(receipt_root=tmp_path / "receipts"), fake)
+    service = UsDayAgentService(
+        UsDayAgentServiceConfig(receipt_root=tmp_path / "receipts"), fake, lambda: dt.datetime.now(dt.UTC)
+    )
 
     # When: one unique tick is run in each non-regular phase.
     results = tuple(
@@ -127,27 +122,11 @@ def test_model_failure_is_blocked_without_changing_champion(tmp_path: Path) -> N
     request = _request(tmp_path / "situation.json", UsDaySessionPhase.REGULAR)
 
     # When: the service executes the regular tick.
-    result = UsDayAgentService(UsDayAgentServiceConfig(receipt_root=tmp_path / "receipts"), fake).tick(request)
+    result = UsDayAgentService(
+        UsDayAgentServiceConfig(receipt_root=tmp_path / "receipts"), fake, lambda: request.evaluated_at
+    ).tick(request)
 
     # Then: it records a stable blocker and never invokes the post-close promotion boundary.
     assert result.status == "blocked"
     assert result.reason == "day_agent_model_call_failed"
     assert fake.calls == ["recover", "regular"]
-
-
-def test_ineligible_regular_result_publishes_without_paper_mutation(tmp_path: Path) -> None:
-    # Given: an accepted NO_TRADE research result without Champion Paper eligibility.
-    class _NoTrade(_FakeVertical):
-        def regular(self, request: UsDayAgentTickRequest) -> UsDayAgentTickResult:
-            self.calls.append("regular")
-            return UsDayAgentTickResult.accepted(request)
-
-    fake = _NoTrade()
-    request = _request(tmp_path / "situation.json", UsDaySessionPhase.REGULAR)
-
-    # When: the service publishes the regular-session decision.
-    result = UsDayAgentService(UsDayAgentServiceConfig(receipt_root=tmp_path / "receipts"), fake).tick(request)
-
-    # Then: no Paper execution method is reached.
-    assert result.status == "accepted"
-    assert fake.calls == ["recover", "regular", "publish"]

@@ -5,23 +5,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests.test_us_day_situation_projection import EVALUATED_AT, _inputs, _project
+from tests.test_us_day_thesis_runtime import _markets
+from trading_agent.private_immutable_file import publish_private_immutable_text
+from trading_agent.us_day_agent_service import CanonicalUsDaySource
+
 ROOT = Path(__file__).parents[1]
-
-
-def _fake_executable(path: Path, marker: Path) -> Path:
-    path.write_text(
-        "#!/usr/bin/env python3\n"
-        "import json, pathlib, sys\n"
-        f"pathlib.Path({str(marker)!r}).write_text('called')\n"
-        "args = dict(zip(sys.argv[1::2], sys.argv[2::2], strict=True))\n"
-        "if args['--operation'] == 'regular':\n"
-        " print(json.dumps({'status':'accepted','phase':'regular','tick_id':args['--tick-id'],"
-        "'recommendation_id':'rec-local','paper_eligible':True}))\n"
-        "elif args['--operation'] == 'paper': print(json.dumps({'paper_status':'completed'}))\n",
-        encoding="utf-8",
-    )
-    path.chmod(0o700)
-    return path
 
 
 def test_help_has_no_broker_endpoint_option() -> None:
@@ -38,14 +27,14 @@ def test_help_has_no_broker_endpoint_option() -> None:
     assert completed.returncode == 0
     assert "--broker" not in completed.stdout
     assert "--base-url" not in completed.stdout
+    assert "--agent-executable" not in completed.stdout
+    assert "--day-model-responses" in completed.stdout
+    assert "--thesis-model-respo" in completed.stdout
 
 
 def test_stale_situation_blocks_with_compact_json_before_runtime(tmp_path: Path) -> None:
     # Given: a canonical but stale local situation fixture.
     fixture = ROOT / "tests/fixtures/day-agent/stale-situation.json"
-    marker = tmp_path / "called"
-    executable = _fake_executable(tmp_path / "fake-agent", marker)
-
     # When: the scheduler CLI validates it.
     completed = subprocess.run(
         [
@@ -57,8 +46,6 @@ def test_stale_situation_blocks_with_compact_json_before_runtime(tmp_path: Path)
             str(tmp_path),
             "--now",
             "2026-08-21T15:00:00Z",
-            "--agent-executable",
-            str(executable),
         ],
         cwd=ROOT,
         check=False,
@@ -74,20 +61,17 @@ def test_stale_situation_blocks_with_compact_json_before_runtime(tmp_path: Path)
         "status": "blocked",
     }
     assert completed.stderr == ""
-    assert not marker.exists()
 
 
-def test_fresh_local_situation_runs_bound_executable_and_emits_ids_only(tmp_path: Path) -> None:
-    # Given: a current regular-session situation and a local fake vertical executable.
+def test_fresh_canonical_source_requires_only_explicit_model_response_bindings(tmp_path: Path) -> None:
+    # Given: a fresh canonical local source with no model response bindings.
     situation = tmp_path / "situation.json"
-    situation.write_text(
-        json.dumps({"evaluated_at": "2026-08-21T14:59:00Z", "session_id": "XNYS-2026-08-21"}),
-        encoding="utf-8",
+    assert publish_private_immutable_text(
+        situation,
+        CanonicalUsDaySource(situation=_project(_inputs()), current_markets=_markets()).model_dump_json(),
     )
-    marker = tmp_path / "called"
-    executable = _fake_executable(tmp_path / "fake-agent", marker)
 
-    # When: the scheduler runs the local happy path.
+    # When: the scheduler reaches its explicit model boundary.
     completed = subprocess.run(
         [
             sys.executable,
@@ -97,11 +81,7 @@ def test_fresh_local_situation_runs_bound_executable_and_emits_ids_only(tmp_path
             "--outputs",
             str(tmp_path / "outputs"),
             "--now",
-            "2026-08-21T15:00:00Z",
-            "--agent-executable",
-            str(executable),
-            "--reasoning-model",
-            "local-test-model",
+            EVALUATED_AT.isoformat(),
         ],
         cwd=ROOT,
         check=False,
@@ -109,13 +89,11 @@ def test_fresh_local_situation_runs_bound_executable_and_emits_ids_only(tmp_path
         text=True,
     )
 
-    # Then: recovery and regular execution complete with compact identifiers only.
-    assert completed.returncode == 0
+    # Then: it blocks compactly without acquiring broker or arbitrary process authority.
+    assert completed.returncode == 2
     assert json.loads(completed.stdout) == {
-        "paper_status": "completed",
         "phase": "regular",
-        "recommendation_id": "rec-local",
-        "status": "accepted",
+        "reason": "model_bindings_required",
+        "status": "blocked",
     }
-    assert marker.read_text(encoding="utf-8") == "called"
     assert completed.stderr == ""
