@@ -154,7 +154,7 @@ class ResearchAgentServiceReport(BaseModel):
     agent_family_id: str | None
     cycle_id: str | None
     result_status: str | None
-    model_calls: Literal[0, 1]
+    model_calls: int = Field(ge=0, le=12)
     recovered_cycles: int
     projected_results: int
     systematic_input_status: Literal["ready", "blocked"]
