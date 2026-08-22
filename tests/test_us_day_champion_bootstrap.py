@@ -83,6 +83,43 @@ def test_bootstrap_rejects_unsafe_review_evidence_before_store_creation(tmp_path
     assert not fixture.request.version_store.exists()
 
 
+def test_plan_rejects_a_session_older_than_the_latest_completed_xnys_session(
+    tmp_path: Path,
+) -> None:
+    # Given: a bootstrap timestamp after the August 20 close but an August 19 session claim.
+    from trading_agent.us_day_champion_bootstrap import (
+        UsDayChampionBootstrapError,
+        plan_us_day_champion_bootstrap,
+    )
+
+    fixture = _fixture(tmp_path)
+    stale = fixture.request.model_copy(update={"created_session_date": dt.date(2026, 8, 19)})
+
+    # When / Then: planning rejects the stale session without creating a store.
+    with pytest.raises(UsDayChampionBootstrapError, match="champion_bootstrap_invalid"):
+        plan_us_day_champion_bootstrap(stale)
+    assert not fixture.request.version_store.exists()
+
+
+def test_receipt_conflict_cannot_leave_a_champion_without_its_receipt(tmp_path: Path) -> None:
+    # Given: an immutable conflicting file at the planned receipt identity.
+    from trading_agent.us_day_champion_bootstrap import (
+        UsDayChampionBootstrapError,
+        bootstrap_us_day_champion,
+        plan_us_day_champion_bootstrap,
+    )
+
+    fixture = _fixture(tmp_path)
+    plan = plan_us_day_champion_bootstrap(fixture.request)
+    receipt = fixture.request.receipt_root / f"champion_bootstrap_{plan.version.version_id}.json"
+    assert publish_private_immutable_text(receipt, '{"conflict":true}\n')
+
+    # When / Then: publication failure happens before any Champion store mutation.
+    with pytest.raises(UsDayChampionBootstrapError, match="champion_bootstrap_invalid"):
+        bootstrap_us_day_champion(fixture.request)
+    assert not fixture.request.version_store.exists()
+
+
 def _fixture(tmp_path: Path) -> _BootstrapFixture:
     from trading_agent.us_day_champion_bootstrap import UsDayChampionBootstrapRequest
 

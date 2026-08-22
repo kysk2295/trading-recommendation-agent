@@ -24,7 +24,7 @@ from trading_agent.private_immutable_file import (
 )
 from trading_agent.research_identity_models import MarketId
 from trading_agent.us_day_strategy_review_models import ReviewedUsDayStrategyManifest
-from trading_agent.us_equity_calendar import regular_session_bounds
+from trading_agent.us_equity_calendar import NEW_YORK, PUBLISHED_CALENDAR_YEARS, regular_session_bounds
 
 
 class UsDayChampionBootstrapError(ValueError):
@@ -95,13 +95,11 @@ def plan_us_day_champion_bootstrap(
         stored = ExperimentLedgerStore(request.experiment_ledger).reader().day_strategy_capsule(
             manifest.capsule_id
         )
-        bounds = regular_session_bounds(request.created_session_date)
         if (
             stored is None
             or stored.capsule.capsule_id != manifest.capsule_id
             or stored.capsule.market_id is not MarketId.US_EQUITIES
-            or bounds is None
-            or request.created_at.astimezone(dt.UTC) < bounds[1].astimezone(dt.UTC)
+            or request.created_session_date != _latest_completed_session(request.created_at)
         ):
             raise UsDayChampionBootstrapError
         version = build_agent_version(
@@ -147,13 +145,13 @@ def bootstrap_us_day_champion(
 ) -> UsDayChampionBootstrapResult:
     plan = plan_us_day_champion_bootstrap(request)
     try:
-        with DayAgentVersionStore(request.version_store).writer() as writer:
-            version_created = writer.register_initial_champion(plan.version)
         receipt_path = request.receipt_root / f"champion_bootstrap_{plan.version.version_id}.json"
         receipt_created = publish_private_immutable_text(
             receipt_path,
             canonical_experiment_ledger_json(plan.receipt) + "\n",
         )
+        with DayAgentVersionStore(request.version_store).writer() as writer:
+            version_created = writer.register_initial_champion(plan.version)
         return UsDayChampionBootstrapResult(
             receipt=plan.receipt,
             version_created=version_created,
@@ -165,6 +163,20 @@ def bootstrap_us_day_champion(
 
 def _private_sha256(path: Path) -> str:
     return hashlib.sha256(read_private_text(path).encode()).hexdigest()
+
+
+def _latest_completed_session(created_at: dt.datetime) -> dt.date | None:
+    local_date = created_at.astimezone(NEW_YORK).date()
+    if local_date.year not in PUBLISHED_CALENDAR_YEARS:
+        return None
+    candidate = local_date
+    first_published = dt.date(min(PUBLISHED_CALENDAR_YEARS), 1, 1)
+    while candidate >= first_published:
+        bounds = regular_session_bounds(candidate)
+        if bounds is not None and created_at.astimezone(dt.UTC) >= bounds[1].astimezone(dt.UTC):
+            return candidate
+        candidate -= dt.timedelta(days=1)
+    return None
 
 
 __all__ = (
