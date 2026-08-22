@@ -133,7 +133,12 @@ def test_receipt_only_recovery_blocks_a_different_bootstrap_intent(tmp_path: Pat
         bootstrap_us_day_champion(fixture.request)
     assert store.reader().champion() is None
     assert len(tuple(fixture.request.receipt_root.glob("champion_bootstrap_*.json"))) == 1
-    different = fixture.request.model_copy(update={"reasoning_model_id": "other-reasoner-v1"})
+    different = fixture.request.model_copy(
+        update={
+            "reasoning_model_id": "other-reasoner-v1",
+            "receipt_root": tmp_path / "different-receipts",
+        }
+    )
 
     # When / Then: a different intent is blocked and the exact original intent resumes safely.
     with pytest.raises(UsDayChampionBootstrapError, match="champion_bootstrap_invalid"):

@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import fcntl
 import os
-import re
 import stat
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, override
+from typing import override
 
 from trading_agent.private_directory_identity import (
     InvalidPrivateDirectoryIdentityError,
@@ -17,9 +16,6 @@ from trading_agent.private_directory_identity import (
     require_open_directory_path,
     require_private_directory,
 )
-
-_RECEIPT: Final = re.compile(r"^champion_bootstrap_[0-9a-f]{64}\.json$")
-_LOCK_NAME: Final = ".champion-bootstrap.lock"
 
 
 class UsDayChampionBootstrapLeaseError(RuntimeError):
@@ -30,17 +26,13 @@ class UsDayChampionBootstrapLeaseError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class UsDayChampionBootstrapLease:
-    root: Path
+    path: Path
     parent_descriptor: int
     lock_descriptor: int
 
-    def receipt_names(self) -> tuple[str, ...]:
-        self.require_bound()
-        return tuple(sorted(name for name in os.listdir(self.parent_descriptor) if _RECEIPT.fullmatch(name)))
-
     def require_bound(self) -> None:
         try:
-            _require_binding(self.root / _LOCK_NAME, self.parent_descriptor, self.lock_descriptor)
+            _require_binding(self.path, self.parent_descriptor, self.lock_descriptor)
         except (InvalidPrivateDirectoryIdentityError, OSError, ValueError):
             raise UsDayChampionBootstrapLeaseError from None
 
@@ -49,34 +41,32 @@ class UsDayChampionBootstrapLease:
 class _LeaseResources:
     parent: int
     descriptor: int
-    parent_locked: bool
     descriptor_locked: bool
 
 
 @contextmanager
-def us_day_champion_bootstrap_lease(root: Path) -> Iterator[UsDayChampionBootstrapLease]:
-    lock_path = absolute_private_path(root / _LOCK_NAME)
+def us_day_champion_bootstrap_lease(version_store: Path) -> Iterator[UsDayChampionBootstrapLease]:
+    lock_path = absolute_private_path(
+        version_store.parent / f".{version_store.name}.champion-bootstrap.lock"
+    )
     parent = descriptor = -1
-    parent_locked = descriptor_locked = False
+    descriptor_locked = False
     try:
         parent = open_private_parent(lock_path.parent, create=True)
         require_private_directory(parent)
         descriptor = _open_lock(parent, lock_path.name)
         _require_binding(lock_path, parent, descriptor)
-        fcntl.flock(parent, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        parent_locked = True
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         descriptor_locked = True
         _require_binding(lock_path, parent, descriptor)
     except (BlockingIOError, InvalidPrivateDirectoryIdentityError, OSError, ValueError):
-        _close(_LeaseResources(parent, descriptor, parent_locked, descriptor_locked))
+        _close(_LeaseResources(parent, descriptor, descriptor_locked))
         raise UsDayChampionBootstrapLeaseError from None
     try:
-        lease = UsDayChampionBootstrapLease(lock_path.parent, parent, descriptor)
+        lease = UsDayChampionBootstrapLease(lock_path, parent, descriptor)
         yield lease
-        lease.require_bound()
     finally:
-        _close(_LeaseResources(parent, descriptor, parent_locked, descriptor_locked))
+        _close(_LeaseResources(parent, descriptor, descriptor_locked))
 
 
 def _open_lock(parent: int, name: str) -> int:
@@ -107,9 +97,6 @@ def _close(resources: _LeaseResources) -> None:
     if resources.descriptor_locked:
         with suppress(OSError):
             fcntl.flock(resources.descriptor, fcntl.LOCK_UN)
-    if resources.parent_locked:
-        with suppress(OSError):
-            fcntl.flock(resources.parent, fcntl.LOCK_UN)
     for descriptor in (resources.descriptor, resources.parent):
         if descriptor >= 0:
             with suppress(OSError):

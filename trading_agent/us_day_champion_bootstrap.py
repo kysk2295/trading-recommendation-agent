@@ -70,6 +70,13 @@ class UsDayChampionBootstrapReceipt(BaseModel):
     paper_trading_enabled: Literal[False] = False
 
 
+class UsDayChampionBootstrapIntent(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    receipt: UsDayChampionBootstrapReceipt
+    receipt_path: Path
+
+
 class UsDayChampionBootstrapPlan(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -149,16 +156,24 @@ def bootstrap_us_day_champion(
 ) -> UsDayChampionBootstrapResult:
     plan = plan_us_day_champion_bootstrap(request)
     try:
-        receipt_path = request.receipt_root / f"champion_bootstrap_{plan.version.version_id}.json"
-        with us_day_champion_bootstrap_lease(request.receipt_root) as lease:
-            if lease.receipt_names() not in ((), (receipt_path.name,)):
-                raise UsDayChampionBootstrapError
+        version_store = request.version_store.expanduser().absolute()
+        receipt_path = (
+            request.receipt_root / f"champion_bootstrap_{plan.version.version_id}.json"
+        ).expanduser().absolute()
+        intent_path = version_store.parent / f".{version_store.name}.champion-bootstrap-intent.json"
+        intent = UsDayChampionBootstrapIntent(receipt=plan.receipt, receipt_path=receipt_path)
+        with us_day_champion_bootstrap_lease(version_store) as lease:
+            _ = publish_private_immutable_text(
+                intent_path,
+                canonical_experiment_ledger_json(intent) + "\n",
+            )
+            lease.require_bound()
             receipt_created = publish_private_immutable_text(
                 receipt_path,
                 canonical_experiment_ledger_json(plan.receipt) + "\n",
             )
             lease.require_bound()
-            with DayAgentVersionStore(request.version_store).writer() as writer:
+            with DayAgentVersionStore(version_store).writer() as writer:
                 version_created = writer.register_initial_champion(plan.version)
         return UsDayChampionBootstrapResult(
             receipt=plan.receipt,
@@ -195,6 +210,7 @@ def _latest_completed_session(created_at: dt.datetime) -> dt.date | None:
 
 __all__ = (
     "UsDayChampionBootstrapError",
+    "UsDayChampionBootstrapIntent",
     "UsDayChampionBootstrapPlan",
     "UsDayChampionBootstrapReceipt",
     "UsDayChampionBootstrapRequest",
