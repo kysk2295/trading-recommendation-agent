@@ -72,6 +72,7 @@ from trading_agent.us_day_agent_operating import (
     UsDayAgentOperatingServices,
     operate_us_day_agent,
 )
+from trading_agent.us_day_agent_tools import build_us_day_read_tools
 from trading_agent.us_day_operating_driver import execution_acknowledged, is_flat, readiness_barrier
 from trading_agent.us_day_operating_models import UsDayArmConsumer
 from trading_agent.us_day_post_close_checkpoint import (
@@ -91,9 +92,10 @@ from trading_agent.us_day_post_close_lease import (
 from trading_agent.us_day_recommendation_card import persist_and_queue_thesis
 from trading_agent.us_day_signal_admission import UsDaySignalAdmissionRequest
 from trading_agent.us_day_situation_models import UsDaySituationMap
+from trading_agent.us_day_source_models import CanonicalUsDaySource
+from trading_agent.us_day_task_identity import us_day_task_id
 from trading_agent.us_day_thesis_models import (
     UsDayChampion,
-    UsDayCurrentMarket,
     UsDayPlaybook,
     situation_id_for,
 )
@@ -124,20 +126,6 @@ class UsDayAgentServiceError(ValueError):
     def __init__(self, reason: str) -> None:
         self.reason: str = reason
         super().__init__(reason)
-
-
-class CanonicalUsDaySource(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    situation: UsDaySituationMap
-    current_markets: tuple[UsDayCurrentMarket, ...]
-
-    @model_validator(mode="after")
-    def require_market_lineage(self) -> Self:
-        leaders = {leader.symbol for theme in self.situation.themes for leader in theme.leaders}
-        if {item.symbol for item in self.current_markets} != leaders or len(self.current_markets) != len(leaders):
-            raise UsDayAgentServiceError("canonical_market_lineage_invalid")
-        return self
 
 
 class UsDaySourceReader(Protocol):
@@ -643,7 +631,10 @@ class UsDayProductionRuntime:
         source = self._source(request)
         map_id = self._publish_situation(source.situation)
         version, champion = self._champion()
-        task_result = run_day_agent_task(self._day_runtime(), self._task(version, source, request.evaluated_at))
+        task_result = run_day_agent_task(
+            self._day_runtime(source),
+            self._task(version, source, request.evaluated_at),
+        )
         if self.config.stores.version_store.reader().champion() != version:
             raise UsDayAgentServiceError("champion_changed_during_tick")
         if task_result.state is DayAgentTaskState.BLOCKED:
@@ -809,12 +800,13 @@ class UsDayProductionRuntime:
         source: CanonicalUsDaySource,
         evaluated_at: dt.datetime,
     ) -> DayAgentResearchTask:
-        existing = self.config.stores.task_store.reader().task(version.task_id)
+        task_id = us_day_task_id(version.version_id, situation_id_for(source.situation))
+        existing = self.config.stores.task_store.reader().task(task_id)
         if existing is not None:
             return existing
         refs = tuple(sorted(item.canonical_id for item in source.situation.evidence_refs))[:64]
         return DayAgentResearchTask(
-            task_id=version.task_id,
+            task_id=task_id,
             objective="Assess the current XNYS Day setup using canonical completed-bar evidence.",
             question="Does the current session support a Champion trade thesis?",
             current_hypothesis="The current theme leader may support a bounded Day thesis.",
@@ -828,11 +820,17 @@ class UsDayProductionRuntime:
             updated_at=evaluated_at,
         )
 
-    def _day_runtime(self) -> DayAgentRuntime:
+    def _day_runtime(self, source: CanonicalUsDaySource) -> DayAgentRuntime:
+        configured_tools = self.config.models.tools
+        tools = (
+            configured_tools
+            if configured_tools.allowed_tool_names
+            else build_us_day_read_tools(source, self.clock)
+        )
         return DayAgentRuntime(
             store=self.config.stores.task_store,
             reasoner=self.config.models.day_reasoner,
-            tools=self.config.models.tools,
+            tools=tools,
             max_steps=self.config.strategy.max_steps,
             clock=self.clock,
         )
