@@ -23,6 +23,10 @@ from trading_agent.private_immutable_file import (
     read_private_text,
 )
 from trading_agent.research_identity_models import MarketId
+from trading_agent.us_day_champion_bootstrap_lease import (
+    UsDayChampionBootstrapLeaseError,
+    us_day_champion_bootstrap_lease,
+)
 from trading_agent.us_day_strategy_review_models import ReviewedUsDayStrategyManifest
 from trading_agent.us_equity_calendar import NEW_YORK, PUBLISHED_CALENDAR_YEARS, regular_session_bounds
 
@@ -146,18 +150,28 @@ def bootstrap_us_day_champion(
     plan = plan_us_day_champion_bootstrap(request)
     try:
         receipt_path = request.receipt_root / f"champion_bootstrap_{plan.version.version_id}.json"
-        receipt_created = publish_private_immutable_text(
-            receipt_path,
-            canonical_experiment_ledger_json(plan.receipt) + "\n",
-        )
-        with DayAgentVersionStore(request.version_store).writer() as writer:
-            version_created = writer.register_initial_champion(plan.version)
+        with us_day_champion_bootstrap_lease(request.receipt_root) as lease:
+            if lease.receipt_names() not in ((), (receipt_path.name,)):
+                raise UsDayChampionBootstrapError
+            receipt_created = publish_private_immutable_text(
+                receipt_path,
+                canonical_experiment_ledger_json(plan.receipt) + "\n",
+            )
+            lease.require_bound()
+            with DayAgentVersionStore(request.version_store).writer() as writer:
+                version_created = writer.register_initial_champion(plan.version)
         return UsDayChampionBootstrapResult(
             receipt=plan.receipt,
             version_created=version_created,
             receipt_created=receipt_created,
         )
-    except (DayAgentVersionStoreError, InvalidPrivateImmutableFileError, OSError, ValueError):
+    except (
+        DayAgentVersionStoreError,
+        InvalidPrivateImmutableFileError,
+        UsDayChampionBootstrapLeaseError,
+        OSError,
+        ValueError,
+    ):
         raise UsDayChampionBootstrapError from None
 
 

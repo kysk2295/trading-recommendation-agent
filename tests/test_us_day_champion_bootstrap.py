@@ -120,6 +120,31 @@ def test_receipt_conflict_cannot_leave_a_champion_without_its_receipt(tmp_path: 
     assert not fixture.request.version_store.exists()
 
 
+def test_receipt_only_recovery_blocks_a_different_bootstrap_intent(tmp_path: Path) -> None:
+    # Given: receipt publication succeeds while another process holds the version writer lease.
+    from trading_agent.us_day_champion_bootstrap import (
+        UsDayChampionBootstrapError,
+        bootstrap_us_day_champion,
+    )
+
+    fixture = _fixture(tmp_path)
+    store = DayAgentVersionStore(fixture.request.version_store)
+    with store.writer(), pytest.raises(UsDayChampionBootstrapError, match="champion_bootstrap_invalid"):
+        bootstrap_us_day_champion(fixture.request)
+    assert store.reader().champion() is None
+    assert len(tuple(fixture.request.receipt_root.glob("champion_bootstrap_*.json"))) == 1
+    different = fixture.request.model_copy(update={"reasoning_model_id": "other-reasoner-v1"})
+
+    # When / Then: a different intent is blocked and the exact original intent resumes safely.
+    with pytest.raises(UsDayChampionBootstrapError, match="champion_bootstrap_invalid"):
+        bootstrap_us_day_champion(different)
+    recovered = bootstrap_us_day_champion(fixture.request)
+    assert recovered.receipt_created is False
+    assert recovered.version_created is True
+    assert store.reader().champion() == recovered.receipt.version
+    assert len(tuple(fixture.request.receipt_root.glob("champion_bootstrap_*.json"))) == 1
+
+
 def _fixture(tmp_path: Path) -> _BootstrapFixture:
     from trading_agent.us_day_champion_bootstrap import UsDayChampionBootstrapRequest
 
