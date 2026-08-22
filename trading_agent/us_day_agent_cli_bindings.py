@@ -3,9 +3,9 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Self, override
+from typing import override
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from trading_agent.day_agent_challenger_publisher import (
     DayAgentFutureShadowSession,
@@ -23,7 +23,7 @@ from trading_agent.generated_strategy_runtime import (
 )
 from trading_agent.models import BarInput
 from trading_agent.private_immutable_file import InvalidPrivateImmutableFileError, read_private_text
-from trading_agent.research_identity_models import AgentFamily, MarketId, StrategyLaneRef
+from trading_agent.research_identity_models import MarketId
 from trading_agent.researcher_agent import ProposedHypothesis
 from trading_agent.us_day_agent_service import (
     StoreBackedUsDayClosePayloadReader,
@@ -31,14 +31,10 @@ from trading_agent.us_day_agent_service import (
     UsDayStrategyBinding,
 )
 from trading_agent.us_day_post_close_checkpoint import UsDayPostCloseCheckpointStore
-from trading_agent.us_day_thesis_models import UsDayPlaybook
+from trading_agent.us_day_strategy_review_models import ReviewedUsDayStrategyManifest
 from trading_agent.us_day_thesis_store import UsDayThesisStore
 from trading_agent.us_forward_shadow_artifacts import UsForwardShadowArtifactStore
 from trading_agent.us_forward_shadow_services import UsForwardShadowServices
-
-
-class _InvalidReviewedStrategyManifestError(ValueError):
-    pass
 
 
 class ProductionManifest(BaseModel):
@@ -60,26 +56,6 @@ class ProductionManifest(BaseModel):
     loop_task_root: Path
     loop_inputs: Path
     patch_model_response: Path
-
-
-class ReviewedUsDayStrategyManifest(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    capsule_id: str = Field(pattern=r"^[0-9a-f]{64}$")
-    strategy_lane: StrategyLaneRef
-    playbook: UsDayPlaybook
-    reviewed: Literal[True]
-
-    @model_validator(mode="after")
-    def validate_lane(self) -> Self:
-        if (
-            self.strategy_lane.market_id is not MarketId.US_EQUITIES
-            or self.strategy_lane.agent_family is not AgentFamily.DAY_TRADING
-            or self.strategy_lane.strategy_id != self.capsule_id
-            or self.playbook.playbook_id != self.capsule_id
-        ):
-            raise _InvalidReviewedStrategyManifestError("strategy_manifest_lineage_invalid")
-        return self
 
 
 class LoopInputBundle(BaseModel):
