@@ -14,7 +14,7 @@ from trading_agent.private_directory_identity import (
     absolute_private_path,
     open_private_parent,
     require_open_directory_path,
-    require_private_directory,
+    require_private_directory_query_only,
 )
 
 
@@ -52,8 +52,8 @@ def us_day_champion_bootstrap_lease(version_store: Path) -> Iterator[UsDayChampi
     parent = descriptor = -1
     descriptor_locked = False
     try:
-        parent = open_private_parent(lock_path.parent, create=True)
-        require_private_directory(parent)
+        parent = _open_parent(lock_path.parent)
+        require_private_directory_query_only(parent)
         descriptor = _open_lock(parent, lock_path.name)
         _require_binding(lock_path, parent, descriptor)
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -77,6 +77,13 @@ def _open_lock(parent: int, name: str) -> int:
         return descriptor
     except FileExistsError:
         return os.open(name, os.O_CLOEXEC | os.O_RDWR | os.O_NOFOLLOW, dir_fd=parent)
+
+
+def _open_parent(path: Path) -> int:
+    try:
+        return open_private_parent(path, create=False)
+    except FileNotFoundError:
+        return open_private_parent(path, create=True)
 
 
 def _require_binding(path: Path, parent: int, descriptor: int) -> None:

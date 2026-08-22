@@ -150,6 +150,24 @@ def test_receipt_only_recovery_blocks_a_different_bootstrap_intent(tmp_path: Pat
     assert len(tuple(fixture.request.receipt_root.glob("champion_bootstrap_*.json"))) == 1
 
 
+def test_bootstrap_lease_rejects_an_existing_public_parent_without_chmod(tmp_path: Path) -> None:
+    # Given: an existing owner-owned version-store parent with unsafe public permissions.
+    from trading_agent.us_day_champion_bootstrap_lease import (
+        UsDayChampionBootstrapLeaseError,
+        us_day_champion_bootstrap_lease,
+    )
+
+    unsafe = tmp_path / "unsafe-store"
+    unsafe.mkdir(mode=0o755)
+
+    # When / Then: lease acquisition fails without repairing or mutating that directory.
+    with pytest.raises(UsDayChampionBootstrapLeaseError), us_day_champion_bootstrap_lease(
+        unsafe / "versions.sqlite3"
+    ):
+        pytest.fail("unsafe lease acquired")
+    assert unsafe.stat().st_mode & 0o777 == 0o755
+
+
 def _fixture(tmp_path: Path) -> _BootstrapFixture:
     from trading_agent.us_day_champion_bootstrap import UsDayChampionBootstrapRequest
 
