@@ -10,6 +10,7 @@ from typing import Literal, Self, assert_never, override
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
+from trading_agent.kr_day_capsule_models import KrDayCapsuleEvaluation
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -137,6 +138,23 @@ def _require_status_shape(event: KrDayCapsuleShadowEventPayload) -> None:
         raise InvalidKrDayCapsuleShadowError
 
 
+def kr_day_capsule_evaluation_lineage_matches(evaluation: KrDayCapsuleEvaluation) -> bool:
+    opportunity = evaluation.setup_input.opportunity
+    cycle_ids = tuple(
+        item.record_id
+        for item in opportunity.evidence_refs
+        if item.namespace == "kr/collection_cycle"
+    )
+    return (
+        evaluation.setup_input.producer_strategy_version == evaluation.capsule_id
+        and evaluation.setup_input.evaluated_at == evaluation.evaluated_at
+        and opportunity.opportunity_id == evaluation.opportunity_id
+        and opportunity.candidates[0].symbol == evaluation.symbol
+        and cycle_ids == (evaluation.collection_cycle_id,)
+        and all(bar.symbol == evaluation.symbol for bar in evaluation.setup_input.bars)
+    )
+
+
 def _aware(value: dt.datetime) -> bool:
     return value.tzinfo is not None and value.utcoffset() is not None
 
@@ -147,4 +165,5 @@ __all__ = (
     "KrDayCapsuleShadowEventPayload",
     "KrDayCapsuleShadowReason",
     "KrDayCapsuleShadowStatus",
+    "kr_day_capsule_evaluation_lineage_matches",
 )

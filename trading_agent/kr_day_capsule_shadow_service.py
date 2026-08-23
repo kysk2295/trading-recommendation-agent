@@ -18,6 +18,7 @@ from trading_agent.kr_day_capsule_shadow_models import (
     KrDayCapsuleShadowEventPayload,
     KrDayCapsuleShadowReason,
     KrDayCapsuleShadowStatus,
+    kr_day_capsule_evaluation_lineage_matches,
 )
 from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
 from trading_agent.kr_intraday_market_gate import KrIntradayGateStatus, assess_kr_shadow_entry
@@ -194,6 +195,7 @@ def _require_evaluation(evaluation: KrDayCapsuleEvaluation) -> None:
     if (
         evaluation.authority_ceiling is not CapsuleAuthorityCeiling.RESEARCH_ONLY
         or evaluation.trading_authority is not False
+        or not kr_day_capsule_evaluation_lineage_matches(evaluation)
         or evaluation.session_date != evaluation.evaluated_at.astimezone(_KST).date()
         or evaluation.symbol != latest.symbol
         or evaluation.symbol != evaluation.market.symbol

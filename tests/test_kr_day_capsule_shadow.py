@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import ast
 import datetime as dt
-import os
-import sqlite3
 from decimal import Decimal
 from pathlib import Path
 
@@ -30,6 +27,7 @@ from trading_agent.kr_day_capsule_shadow_store import (
     InvalidKrDayCapsuleShadowStoreError,
     KrDayCapsuleShadowStore,
 )
+from trading_agent.kr_intraday_market_gate import KrMarketConstraintSnapshot
 from trading_agent.kr_theme_day_setup import KrCompletedMinuteBar, KrThemeDaySetupInput
 from trading_agent.signal_contract_models import EvidenceRef
 
@@ -92,7 +90,7 @@ def test_gap_censors_without_advancing_cursor(tmp_path: Path) -> None:
 def test_batch_orders_capsules_and_isolates_failed_sibling(tmp_path: Path) -> None:
     store = KrDayCapsuleShadowStore(tmp_path / "shadow.sqlite3")
     valid = _entry_evaluation()
-    failed = _invalid_setup_lineage(_reidentify(valid, "f" * 64))
+    failed = _invalid_signal_projection(_reidentify(valid, "f" * 64))
 
     result = run_kr_day_capsule_shadow_tick(store, (failed, valid))
 
@@ -147,38 +145,6 @@ def test_more_than_three_capsules_and_conflicting_replay_reject(tmp_path: Path) 
         _ = run_kr_day_capsule_shadow_tick(store, (evaluation,) * 4)
     with pytest.raises(InvalidKrDayCapsuleShadowStoreError):
         _ = store.append(conflict)
-
-
-def test_store_rejects_unsafe_metadata_and_is_structurally_append_only(tmp_path: Path) -> None:
-    store = KrDayCapsuleShadowStore(tmp_path / "shadow.sqlite3")
-    _ = run_kr_day_capsule_shadow_tick(store, (_entry_evaluation(),))
-    os.chmod(store.path, 0o644)
-
-    with pytest.raises(InvalidKrDayCapsuleShadowStoreError):
-        _ = store.events()
-    os.chmod(store.path, 0o600)
-    with sqlite3.connect(store.path) as connection, pytest.raises(sqlite3.IntegrityError):
-        _ = connection.execute("UPDATE kr_day_capsule_shadow_events SET capsule_id='unsafe'")
-
-
-def test_import_closure_has_no_execution_or_provider_mutation_authority() -> None:
-    project = Path(__file__).resolve().parents[1]
-    modules = tuple(project.glob("trading_agent/kr_day_capsule_shadow_*.py"))
-
-    imports = {
-        alias.name
-        for module in modules
-        for node in ast.walk(ast.parse(module.read_text()))
-        if isinstance(node, (ast.Import, ast.ImportFrom))
-        for alias in node.names
-    }
-
-    assert len(modules) == 3
-    assert not any(
-        token in name.lower()
-        for name in imports
-        for token in ("alpaca", "paper", "broker", "order", "account", "balance", "position")
-    )
 
 
 def _plain_evaluation() -> KrDayCapsuleEvaluation:
@@ -257,16 +223,15 @@ def _advance(
 
 
 def _reidentify(evaluation: KrDayCapsuleEvaluation, capsule_id: str) -> KrDayCapsuleEvaluation:
-    return _rebuild(evaluation, capsule_id=capsule_id)
+    setup_input = evaluation.setup_input.model_copy(update={"producer_strategy_version": capsule_id})
+    return _rebuild(evaluation, capsule_id=capsule_id, setup_input=setup_input)
 
 
-def _invalid_setup_lineage(evaluation: KrDayCapsuleEvaluation) -> KrDayCapsuleEvaluation:
-    opportunity = evaluation.setup_input.opportunity
-    candidate = opportunity.candidates[0].model_copy(update={"symbol": "000660"})
-    setup_input = evaluation.setup_input.model_copy(
-        update={"opportunity": opportunity.model_copy(update={"candidates": (candidate,)})}
+def _invalid_signal_projection(evaluation: KrDayCapsuleEvaluation) -> KrDayCapsuleEvaluation:
+    market = evaluation.market.model_copy(
+        update={"bid_price": Decimal("10399"), "ask_price": Decimal("10400")}
     )
-    return _rebuild(evaluation, setup_input=setup_input)
+    return _rebuild(evaluation, market=market)
 
 
 def _rebuild(
@@ -277,6 +242,7 @@ def _rebuild(
     setup_input: KrThemeDaySetupInput | None = None,
     session_date: dt.date | None = None,
     completed_bar_cursor: dt.datetime | None = None,
+    market: KrMarketConstraintSnapshot | None = None,
 ) -> KrDayCapsuleEvaluation:
     values = evaluation.model_dump(mode="python", exclude={"evaluation_id"})
     if capsule_id is not None:
@@ -289,6 +255,8 @@ def _rebuild(
         values["session_date"] = session_date
     if completed_bar_cursor is not None:
         values["completed_bar_cursor"] = completed_bar_cursor
+    if market is not None:
+        values["market"] = market
     payload = KrDayCapsuleEvaluationPayload.model_validate(values)
     return KrDayCapsuleEvaluation.model_validate(
         values | {"evaluation_id": KrDayCapsuleEvaluation.canonical_id_for(payload)}

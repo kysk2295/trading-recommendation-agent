@@ -10,7 +10,12 @@ from typing import Final, final, override
 
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowEvent
-from trading_agent.private_directory_identity import absolute_private_path
+from trading_agent.private_directory_identity import (
+    absolute_private_path,
+    open_private_parent,
+    require_open_directory_path,
+    require_private_directory_query_only,
+)
 from trading_agent.sqlite_uri import sqlite_read_only_uri
 
 _SCHEMA_VERSION: Final = 1
@@ -91,13 +96,15 @@ class KrDayCapsuleShadowStore:
         return matches[0] if matches else None
 
     def append(self, event: KrDayCapsuleShadowEvent) -> bool:
+        parent = -1
         try:
             event = KrDayCapsuleShadowEvent.model_validate(event.model_dump(mode="python"))
             _ = self.events()
             if self.path.is_symlink():
                 raise InvalidKrDayCapsuleShadowStoreError
-            self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            os.chmod(self.path.parent, 0o700)
+            parent = open_private_parent(self.path.parent, create=True)
+            require_private_directory_query_only(parent)
+            require_open_directory_path(self.path.parent, parent)
             with closing(sqlite3.connect(self.path, timeout=0.0)) as connection:
                 _prepare(connection)
                 os.chmod(self.path, 0o600)
@@ -125,9 +132,13 @@ class KrDayCapsuleShadowStore:
                     row,
                 )
                 connection.commit()
+            require_open_directory_path(self.path.parent, parent)
             return True
         except (OSError, sqlite3.Error, TypeError, ValueError):
             raise InvalidKrDayCapsuleShadowStoreError from None
+        finally:
+            if parent >= 0:
+                os.close(parent)
 
 
 def _row(event: KrDayCapsuleShadowEvent) -> _EventRow:
