@@ -45,6 +45,8 @@ class _CliResult(BaseModel):
     mean_r: float | None
     profit_factor: float | None
     max_drawdown: float | None
+    no_signal_count: int | None
+    blocked_count: int | None
     failed_count: int | None
     censored_count: int | None
     risk_incident_count: int | None
@@ -105,6 +107,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             mean_r=report.metrics.payload.mean_r,
             profit_factor=report.metrics.payload.profit_factor,
             max_drawdown=report.metrics.payload.cumulative_max_drawdown,
+            no_signal_count=report.metrics.payload.no_signal_count,
+            blocked_count=report.metrics.payload.blocked_count,
             failed_count=report.metrics.payload.failed_count,
             censored_count=report.metrics.payload.censored_count,
             risk_incident_count=len(report.metrics.payload.risk_incident_ids),
@@ -136,6 +140,8 @@ def _blocked_result() -> _CliResult:
         mean_r=None,
         profit_factor=None,
         max_drawdown=None,
+        no_signal_count=None,
+        blocked_count=None,
         failed_count=None,
         censored_count=None,
         risk_incident_count=None,

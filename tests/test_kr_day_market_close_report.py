@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from tests.test_kr_day_capsule_shadow import _advance, _entry_evaluation
+from tests.test_kr_day_capsule_shadow import _advance, _entry_evaluation, _plain_evaluation, _rebuild
 from trading_agent import kr_day_market_close_report as report_module
 from trading_agent.kis_kr_session_calendar_models import (
     KIS_CALENDAR_ADAPTER_VERSION,
@@ -114,6 +114,55 @@ def test_close_report_rejects_preclose_or_unlinked_outcome(tmp_path: Path) -> No
     with pytest.raises(InvalidKrDayMarketCloseReportError):
         _ = publish_kr_day_market_close_report(tmp_path / "reports", bad)
     assert not tuple((tmp_path / "reports").glob("market_close_report_*.json"))
+
+
+def test_official_close_finalizes_no_signal_once_but_preclose_rejects(tmp_path: Path) -> None:
+    # Given: an exact intraday-continuable no-signal event and its immutable projected outcome.
+    store = KrDayCapsuleShadowStore(tmp_path / "shadow" / "events.sqlite3")
+    _ = run_kr_day_capsule_shadow_tick(store, (_plain_evaluation(),))
+    events = store.events()
+    outcome = _outcome(events)
+    request = _request(events, (outcome,))
+    preclose = request.model_copy(
+        update={"official_close_at": dt.datetime(2026, 8, 24, 15, 29, tzinfo=KST)}
+    )
+
+    # When: the exact request is published twice after close.
+    first = publish_kr_day_market_close_report(tmp_path / "reports", request)
+    replay = publish_kr_day_market_close_report(tmp_path / "reports", request)
+
+    # Then: no-signal is sealed only at close, counted once, and replay-deduplicated.
+    assert events[-1].terminal is False
+    assert (first.created, first.metrics_created) == (True, True)
+    assert (replay.created, replay.metrics_created) == (False, False)
+    assert replay.report.report_id == first.report.report_id
+    assert replay.metrics.metrics_id == first.metrics.metrics_id
+    assert first.metrics.payload.no_signal_count == 1
+    assert first.metrics.payload.blocked_count == 0
+    with pytest.raises(InvalidKrDayMarketCloseReportError):
+        _ = publish_kr_day_market_close_report(tmp_path / "preclose", preclose)
+    assert not (tmp_path / "preclose").exists()
+
+
+def test_close_metrics_count_blocked_outcome(tmp_path: Path) -> None:
+    # Given: a stale evaluation that the Shadow service records as a terminal blocked attempt.
+    store = KrDayCapsuleShadowStore(tmp_path / "shadow" / "events.sqlite3")
+    entry = _entry_evaluation()
+    blocked = _rebuild(entry, evaluated_at=entry.evaluated_at + dt.timedelta(seconds=10))
+    _ = run_kr_day_capsule_shadow_tick(store, (blocked,))
+    events = store.events()
+
+    # When: its exact outcome is finalized through the close report.
+    publication = publish_kr_day_market_close_report(
+        tmp_path / "reports",
+        _request(events, (_outcome(events),)),
+    )
+
+    # Then: immutable metrics account for the blocked outcome without a return claim.
+    assert publication.metrics.payload.blocked_count == 1
+    assert publication.metrics.payload.no_signal_count == 0
+    assert publication.report.payload.execution.actual_return is None
+    assert publication.report.payload.profitability_claim is False
 
 
 def test_report_only_crash_state_recovers_one_bound_metrics_artifact(

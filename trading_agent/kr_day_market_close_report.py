@@ -20,7 +20,11 @@ from trading_agent.kis_kr_session_calendar_models import KrSessionCalendarSnapsh
 from trading_agent.kr_day_capsule_outcomes import (
     KrDayCapsuleOutcome,
 )
-from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowEvent
+from trading_agent.kr_day_capsule_shadow_models import (
+    KrDayCapsuleShadowEvent,
+    KrDayCapsuleShadowReason,
+    KrDayCapsuleShadowStatus,
+)
 from trading_agent.kr_day_market_close_metrics import (
     KrDayMarketCloseMetrics,
     build_kr_day_market_close_metrics,
@@ -241,9 +245,16 @@ def _require_attempt_lineage(request: KrDayMarketCloseRequest) -> None:
             or outcome.session_date != request.session_date
             or outcome.market_id != MarketId.KR_EQUITIES.value
             or outcome.terminal_event_id != events[-1].event_id
-            or not events[-1].terminal
+            or not _event_is_close_finalizable(events[-1])
         ):
             raise InvalidKrDayMarketCloseReportError
+
+
+def _event_is_close_finalizable(event: KrDayCapsuleShadowEvent) -> bool:
+    return event.terminal or (
+        event.status is KrDayCapsuleShadowStatus.REGISTERED
+        and event.reason is KrDayCapsuleShadowReason.NO_SIGNAL
+    )
 
 
 def _same_revision_content(left: MarketCloseReport, right: MarketCloseReport) -> bool:
