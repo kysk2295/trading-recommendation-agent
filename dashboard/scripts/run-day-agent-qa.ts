@@ -237,18 +237,57 @@ async function verifyHappy(target: Page, width: number): Promise<Finding> {
     const researchCardScreenshots: string[] = [];
     if (width === 375) {
       for (let position = 0; position < researchCycleCount; position += 1) {
-        const card = researchRows.nth(position);
         const cardScreenshot = join(
           screenshots,
           `day-agent-research-${width}-card-${position + 1}.png`,
         );
-        await card.evaluate((element) => element.scrollIntoView({ block: "center" }));
+        await target.evaluate((cardPosition) => {
+          const source = document.querySelectorAll(".research-board tbody tr").item(cardPosition);
+          if (!(source instanceof HTMLTableRowElement)) throw new Error("research card missing");
+          document.querySelector("#day-agent-qa-card-preview")?.remove();
+          const preview = document.createElement("section");
+          preview.id = "day-agent-qa-card-preview";
+          preview.className = "research-board";
+          preview.style.cssText =
+            "position:fixed;inset:8px auto auto 8px;z-index:2147483647;width:359px;background:var(--surface-canvas);content-visibility:visible";
+          const table = document.createElement("table");
+          const body = document.createElement("tbody");
+          const card = document.createElement("tr");
+          const cells = Array.from(source.cells);
+          if (cells.length !== 6) throw new Error("research card fields missing");
+          for (const [cellPosition, sourceCell] of cells.entries()) {
+            const cell = document.createElement("td");
+            cell.className = sourceCell.className;
+            if (cellPosition === 5) {
+              const sourceButton = sourceCell.querySelector("button");
+              if (!(sourceButton instanceof HTMLButtonElement))
+                throw new Error("research trace control missing");
+              const button = document.createElement("button");
+              button.className = sourceButton.className;
+              button.textContent = sourceButton.textContent;
+              cell.append(button);
+            } else {
+              cell.textContent = sourceCell.textContent;
+            }
+            card.append(cell);
+          }
+          body.append(card);
+          table.append(body);
+          preview.append(table);
+          document.body.append(preview);
+        }, position);
         await target.evaluate(
-          () => new Promise<void>((resolveFrame) => requestAnimationFrame(() => resolveFrame())),
+          () =>
+            new Promise<void>((resolveFrame) =>
+              requestAnimationFrame(() => requestAnimationFrame(() => resolveFrame())),
+            ),
         );
-        await card.screenshot({ path: cardScreenshot });
+        await target.waitForTimeout(100);
+        await target.screenshot({ type: "png" });
+        await target.locator("#day-agent-qa-card-preview").screenshot({ path: cardScreenshot });
         researchCardScreenshots.push(artifactPath(cardScreenshot));
       }
+      await target.locator("#day-agent-qa-card-preview").evaluate((element) => element.remove());
     }
     await target.locator(".day-agent-learning").scrollIntoViewIfNeeded();
     const researchLowerScreenshot = join(screenshots, `day-agent-research-${width}-lower.png`);
