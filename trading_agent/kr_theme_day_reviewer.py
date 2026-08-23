@@ -3,14 +3,13 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 from dataclasses import dataclass
-from typing import Final, Protocol, Self, override
+from typing import TYPE_CHECKING, Final, Protocol, Self, override
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.experiment_ledger_models import TrialEventKind
-from trading_agent.experiment_ledger_store import ExperimentLedgerReader, InvalidExperimentLedgerSourceError
 from trading_agent.kr_theme_day_review_models import (
     CURRENT_KR_THEME_DAY_REVIEWER_VERSION,
     KrThemeDayReviewCounts,
@@ -32,7 +31,6 @@ from trading_agent.kr_theme_day_shadow_exit_store import (
     InvalidKrThemeDayShadowExitStoreError,
     KrThemeDayShadowExitStore,
 )
-from trading_agent.kr_theme_day_trial import InvalidKrThemeDayTrialError, require_exact_kr_theme_day_trial
 from trading_agent.kr_theme_day_trial_terminal_models import (
     InvalidKrThemeDayTrialTerminalModelError,
     KrThemeDayTrialTerminalArtifact,
@@ -42,6 +40,9 @@ from trading_agent.kr_theme_day_trial_terminal_store import (
     KrThemeDayTrialTerminalStore,
 )
 from trading_agent.multi_market_trial_models import MultiMarketExperimentTrialRegistration
+
+if TYPE_CHECKING:
+    from trading_agent.experiment_ledger_store import ExperimentLedgerReader
 
 _KST: Final = ZoneInfo("Asia/Seoul")
 _SESSION_CLOSE: Final = dt.time(15, 30)
@@ -103,15 +104,14 @@ def review_kr_theme_day_strategy(
         created = sources.review_store.append(event)
     except (
         AttributeError,
-        InvalidExperimentLedgerSourceError,
         InvalidKrThemeDayReviewError,
         InvalidKrThemeDayReviewStoreError,
         InvalidKrThemeDayShadowEntryStoreError,
         InvalidKrThemeDayShadowExitStoreError,
-        InvalidKrThemeDayTrialError,
         InvalidKrThemeDayTrialTerminalModelError,
         InvalidKrThemeDayTrialTerminalStoreError,
         OSError,
+        RuntimeError,
         TypeError,
         ValidationError,
         ValueError,
@@ -124,6 +124,8 @@ def _build_event(
     sources: KrThemeDayReviewSources,
     request: KrThemeDayReviewRequest,
 ) -> KrThemeDayReviewEvent:
+    from trading_agent.kr_theme_day_trial import require_exact_kr_theme_day_trial
+
     trials = tuple(
         sorted(
             (
