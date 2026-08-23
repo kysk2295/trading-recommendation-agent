@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 from dataclasses import dataclass
 from typing import Protocol, assert_never
@@ -8,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from trading_agent.day_agent_challenger_publisher import (
     DayAgentChallengerPublicationRequest,
-    DayAgentGeneratedCapsulePublisher,
+    PublishedDayAgentChallenger,
 )
 from trading_agent.day_agent_change_patches import (
     CatalystInterpretationPatch,
@@ -48,11 +49,15 @@ class DayAgentChangeAuthor(Protocol):
     def propose(self, stage: DayDecisionStage, champion: AgentVersion) -> ProposedAgentChange: ...
 
 
+class DayAgentChallengerPublisher(Protocol):
+    def publish(self, request: DayAgentChallengerPublicationRequest) -> PublishedDayAgentChallenger: ...
+
+
 @dataclass(frozen=True, slots=True)
 class DayAgentLoopServices:
     store: DayAgentVersionStore
     author: DayAgentChangeAuthor
-    publisher: DayAgentGeneratedCapsulePublisher
+    publisher: DayAgentChallengerPublisher
 
 
 def run_loop_engineer(
@@ -77,12 +82,20 @@ def run_loop_engineer(
     published = services.publisher.publish(
         DayAgentChallengerPublicationRequest(report=report, champion=champion, patch=authored.patch)
     )
+    future_sessions = tuple(policy.payload.effective_session_date for policy in published.policies)
+    if (
+        not future_sessions
+        or any(session_date <= payload.session_date for session_date in future_sessions)
+        or any(policy.payload.final_report_id != report.report_id for policy in published.policies)
+    ):
+        raise DayAgentVersionStoreError("challenger_future_policy_invalid")
     challenger = _challenger(
         champion,
         authored.patch,
         published.capsule.capsule_id,
         problem.evidence_ids,
         payload,
+        created_session_date=min(future_sessions),
     )
     _require_only_allowed_change(champion, challenger, authored.patch)
     proposal_payload = {
@@ -111,6 +124,8 @@ def _challenger(
     capsule_id: str,
     evidence_ids: tuple[str, ...],
     report: MarketCloseReportPayload,
+    *,
+    created_session_date: dt.date,
 ) -> AgentVersion:
     prompt_sha256 = champion.prompt_sha256
     tool_policy_sha256 = champion.tool_policy_sha256
@@ -136,7 +151,7 @@ def _challenger(
         deployment_state=AgentDeploymentState.SHADOW,
         task_id=champion.task_id,
         created_at=report.finalized_at,
-        created_session_date=report.session_date,
+        created_session_date=created_session_date,
     )
 
 
@@ -198,6 +213,7 @@ def _require_only_allowed_change(
 
 
 __all__ = (
+    "DayAgentChallengerPublisher",
     "DayAgentChangeAuthor",
     "DayAgentLoopServices",
     "ProposedAgentChange",

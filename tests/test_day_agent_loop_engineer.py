@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import os
 from pathlib import Path
 
@@ -45,6 +46,7 @@ def test_loop_engineer_turns_leader_error_into_shadow_challenger(tmp_path: Path)
     assert challenger is not None
     assert challenger.order_authority is False
     assert challenger.deployment_state is AgentDeploymentState.SHADOW
+    assert challenger.created_session_date.isoformat() == "2026-08-21"
     assert challenger.playbook_ids == (fixture.challenger_capsule.capsule_id,)
     assert DayAgentVersionStore(fixture.store.path).reader().proposals(proposal.version_id) == (proposal,)
     views = DayAgentVersionStore(fixture.store.path).reader().versions()
@@ -95,6 +97,7 @@ def test_every_typed_patch_renders_an_executable_lineage_bound_wrapper(payload: 
         parent.capsule_id,
         ("a" * 64,),
         _payload(),
+        created_session_date=dt.date(2026, 8, 21),
     )
 
     # Then: it compiles and carries machine-readable patch and parent lineage tokens.
