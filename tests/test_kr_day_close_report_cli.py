@@ -59,8 +59,10 @@ def test_cli_publishes_read_only_report_policy_and_replay_dedupes(tmp_path: Path
     replay_payload = cli._CliResult.model_validate_json(replay.stdout)
     assert (first.returncode, replay.returncode) == (0, 0)
     assert first_payload.report_created is True
+    assert first_payload.metrics_created is True
     assert first_payload.policy_created is True
     assert replay_payload.report_created is False
+    assert replay_payload.metrics_created is False
     assert replay_payload.policy_created is False
     assert replay_payload.report_id == first_payload.report_id
     assert replay_payload.metrics_id == first_payload.metrics_id

@@ -122,15 +122,38 @@ def publish_kr_day_market_close_report(
             )
         )
         if current is not None and _same_revision_content(current, report):
+            prior = latest_prior_kr_market_close_reports(existing, checked.session_date)
+            previous_metrics = (
+                None
+                if current.payload.previous_report_id is None
+                else metrics_for_report(report_root, current.payload.previous_report_id)
+            )
+            expected_metrics = build_kr_day_market_close_metrics(
+                current,
+                checked.outcomes,
+                diagnostics=checked.diagnostics,
+                risk_incident_ids=checked.risk_incident_ids,
+                data_incident_ids=checked.data_incident_ids,
+                shadow_event_ids=tuple(sorted(event.event_id for event in checked.shadow_events)),
+                next_review_date=next_session,
+                previous_metrics=previous_metrics,
+                prior_returns=tuple(item.payload.execution.modeled_return for item in prior),
+            )
             replay_metrics = metrics_for_report(report_root, current.report_id)
             if replay_metrics is None:
+                metrics_publication = publish_kr_day_market_close_metrics(report_root, expected_metrics)
+                replay_metrics = metrics_publication.metrics
+                metrics_created = metrics_publication.created
+            elif replay_metrics != expected_metrics:
                 raise InvalidKrDayMarketCloseReportError
+            else:
+                metrics_created = False
             return KrDayMarketClosePublication(
                 current,
                 replay_metrics,
                 next_session,
                 False,
-                False,
+                metrics_created,
                 _path(report_root, current),
                 report_root / f"kr_day_metrics_{replay_metrics.metrics_id}.json",
             )

@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from tests.test_kr_day_capsule_shadow import _advance, _entry_evaluation
+from trading_agent import kr_day_market_close_report as report_module
 from trading_agent.kis_kr_session_calendar_models import (
     KIS_CALENDAR_ADAPTER_VERSION,
     KIS_CALENDAR_SOURCE_COMMIT,
@@ -23,6 +24,10 @@ from trading_agent.kr_day_capsule_outcomes import (
 from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowEvent
 from trading_agent.kr_day_capsule_shadow_service import run_kr_day_capsule_shadow_tick
 from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
+from trading_agent.kr_day_market_close_metrics import (
+    KrDayMarketCloseMetrics,
+    KrDayMarketCloseMetricsPublication,
+)
 from trading_agent.kr_day_market_close_report import (
     InvalidKrDayMarketCloseReportError,
     KrDayMarketCloseRequest,
@@ -109,6 +114,85 @@ def test_close_report_rejects_preclose_or_unlinked_outcome(tmp_path: Path) -> No
     with pytest.raises(InvalidKrDayMarketCloseReportError):
         _ = publish_kr_day_market_close_report(tmp_path / "reports", bad)
     assert not tuple((tmp_path / "reports").glob("market_close_report_*.json"))
+
+
+def test_report_only_crash_state_recovers_one_bound_metrics_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: exact terminal evidence and an injected crash after generic report publication.
+    store = KrDayCapsuleShadowStore(tmp_path / "shadow" / "events.sqlite3")
+    entry = _entry_evaluation()
+    stopped = _advance(entry, low=Decimal("9900"), high=Decimal("10400"))
+    _ = run_kr_day_capsule_shadow_tick(store, (entry,))
+    _ = run_kr_day_capsule_shadow_tick(store, (stopped,))
+    events = store.events()
+    request = _request(events, (_outcome(events),))
+    original = report_module.publish_kr_day_market_close_metrics
+
+    def fail_metrics(
+        root: Path,
+        metrics: KrDayMarketCloseMetrics,
+    ) -> KrDayMarketCloseMetricsPublication:
+        _ = (root, metrics)
+        raise OSError
+
+    monkeypatch.setattr(report_module, "publish_kr_day_market_close_metrics", fail_metrics)
+    with pytest.raises(InvalidKrDayMarketCloseReportError):
+        _ = publish_kr_day_market_close_report(tmp_path / "reports", request)
+    assert len(tuple((tmp_path / "reports").glob("market_close_report_*.json"))) == 1
+    assert not tuple((tmp_path / "reports").glob("kr_day_metrics_*.json"))
+
+    # When: the process restarts and exact finalization is replayed twice.
+    monkeypatch.setattr(report_module, "publish_kr_day_market_close_metrics", original)
+    recovered = publish_kr_day_market_close_report(tmp_path / "reports", request)
+    replay = publish_kr_day_market_close_report(tmp_path / "reports", request)
+
+    # Then: recovery creates one correctly bound metrics artifact and later replay is a no-op.
+    assert (recovered.created, recovered.metrics_created) == (False, True)
+    assert (replay.created, replay.metrics_created) == (False, False)
+    assert recovered.metrics == replay.metrics
+    assert recovered.metrics.payload.report_id == recovered.report.report_id
+    assert len(tuple((tmp_path / "reports").glob("market_close_report_*.json"))) == 1
+    assert len(tuple((tmp_path / "reports").glob("kr_day_metrics_*.json"))) == 1
+
+
+def test_revised_report_only_state_uses_previous_report_metrics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a complete initial report and an injected metrics failure on its late-evidence revision.
+    store = KrDayCapsuleShadowStore(tmp_path / "shadow" / "events.sqlite3")
+    entry = _entry_evaluation()
+    stopped = _advance(entry, low=Decimal("9900"), high=Decimal("10400"))
+    _ = run_kr_day_capsule_shadow_tick(store, (entry,))
+    _ = run_kr_day_capsule_shadow_tick(store, (stopped,))
+    events = store.events()
+    request = _request(events, (_outcome(events),))
+    initial = publish_kr_day_market_close_report(tmp_path / "reports", request)
+    revised_request = request.model_copy(update={"data_incident_ids": ("late",)})
+    original = report_module.publish_kr_day_market_close_metrics
+
+    def fail_metrics(
+        root: Path,
+        metrics: KrDayMarketCloseMetrics,
+    ) -> KrDayMarketCloseMetricsPublication:
+        _ = (root, metrics)
+        raise OSError
+
+    monkeypatch.setattr(report_module, "publish_kr_day_market_close_metrics", fail_metrics)
+    with pytest.raises(InvalidKrDayMarketCloseReportError):
+        _ = publish_kr_day_market_close_report(tmp_path / "reports", revised_request)
+
+    # When: the exact revision is replayed after restart.
+    monkeypatch.setattr(report_module, "publish_kr_day_market_close_metrics", original)
+    recovered = publish_kr_day_market_close_report(tmp_path / "reports", revised_request)
+
+    # Then: revision metrics link to the initial report metrics, never to themselves.
+    assert recovered.report.payload.revision == 2
+    assert recovered.metrics_created is True
+    assert recovered.metrics.payload.previous_metrics_id == initial.metrics.metrics_id
+    assert recovered.metrics.metrics_id != initial.metrics.metrics_id
 
 
 def _calendar():

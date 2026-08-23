@@ -54,6 +54,7 @@ class _CliResult(BaseModel):
     provider_read_only: Literal[True] = True
     profitability_claim: Literal[False] = False
     report_created: bool
+    metrics_created: bool
     policy_created: bool
 
 
@@ -110,6 +111,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             data_incident_count=len(report.metrics.payload.data_incident_ids),
             selection_diagnostic_count=len(report.metrics.payload.selection_diagnostics),
             report_created=report.created,
+            metrics_created=report.metrics_created,
             policy_created=policy.created,
         )
     except (OSError, TypeError, ValidationError, ValueError):
@@ -140,6 +142,7 @@ def _blocked_result() -> _CliResult:
         data_incident_count=None,
         selection_diagnostic_count=None,
         report_created=False,
+        metrics_created=False,
         policy_created=False,
     )
 
