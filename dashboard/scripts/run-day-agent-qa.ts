@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import AxeBuilder from "@axe-core/playwright";
 import { websocket } from "hono/bun";
@@ -230,10 +230,10 @@ async function verifyHappy(target: Page, width: number): Promise<Finding> {
     if (mutationRequestCount !== 0) throw new DayAgentQaError(`browser mutation:${width}`);
     return {
       width,
-      screenshot,
-      lowerScreenshot,
-      researchScreenshot,
-      researchLowerScreenshot,
+      screenshot: artifactPath(screenshot),
+      lowerScreenshot: artifactPath(lowerScreenshot),
+      researchScreenshot: artifactPath(researchScreenshot),
+      researchLowerScreenshot: artifactPath(researchLowerScreenshot),
       axeViolations: axe.violations.length + researchAxe.violations.length,
       pageOverflow: pageOverflow || researchOverflow,
       keyboardTraceReturn,
@@ -252,6 +252,9 @@ async function verifyIsolation(
 ): Promise<IsolationFinding> {
   await publish(lane);
   await target.goto(`${baseUrl}/#markets`, { waitUntil: "networkidle" });
+  await target.locator("#workspace-main").evaluate((element) => {
+    element.scrollTop = 0;
+  });
   const valid = target.getByText(validLabel, { exact: true }).first();
   const blocked = target.getByText(blockedLabel, { exact: true }).first();
   const validLaneVisible = await valid.isVisible();
@@ -273,10 +276,17 @@ async function verifyIsolation(
   await target.screenshot({ path: screenshot, fullPage: true });
   return {
     lane,
-    screenshot,
+    screenshot: artifactPath(screenshot),
     validLaneVisible,
     blockedLaneVisible,
     pageOverflow,
     mutationControlCount,
   };
+}
+
+function artifactPath(path: string): string {
+  const value = relative(resolve(process.cwd(), ".."), resolve(path));
+  if (value.startsWith("..") || value.length === 0)
+    throw new DayAgentQaError("artifact path invalid");
+  return value;
 }

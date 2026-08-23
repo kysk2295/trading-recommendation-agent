@@ -249,7 +249,10 @@ def _us_recommendations(
                 f"day_agent.us.recommendation.{position}",
                 f"US · Shadow · {thesis.symbol}",
                 state,
-                f"entry {thesis.entry_price} · stop {thesis.stop_price} · targets {targets} · {reason}",
+                (
+                    f"entry {thesis.entry_price} · stop {thesis.stop_price} · targets {targets} · "
+                    f"rationale {reason} · outcome pending"
+                ),
                 now,
             )
         )

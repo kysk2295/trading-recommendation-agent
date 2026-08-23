@@ -48,7 +48,8 @@
 @media (max-width: 767px) {
   .workstation-shell {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: calc(52px + env(safe-area-inset-top)) minmax(0, 1fr)
+    grid-template-rows:
+      calc(52px + env(safe-area-inset-top)) minmax(0, 1fr)
       calc(56px + env(safe-area-inset-bottom));
   }
 
@@ -130,7 +131,11 @@
   }
 
   .market-metadata {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .market-metadata > div:first-child {
+    grid-column: 1 / -1;
   }
 
   .market-live-cycle {

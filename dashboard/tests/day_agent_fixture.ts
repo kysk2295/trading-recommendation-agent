@@ -32,7 +32,7 @@ export function dayAgentFixture(lane: Lane): unknown {
       "day_agent.us.recommendation.1",
       "US · Shadow · NVDA",
       usState,
-      "entry 200.05 · stop 199.50 · targets 200.60/201.15 · theme and flow evidence",
+      "entry 200.05 · stop 199.50 · targets 200.60/201.15 · rationale theme and flow evidence · outcome pending",
       generatedAt,
     ),
     item(

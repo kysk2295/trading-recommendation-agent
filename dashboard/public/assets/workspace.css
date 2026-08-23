@@ -387,7 +387,7 @@
 
 .market-metadata {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(12ch, 1.6fr) repeat(2, minmax(5ch, 1fr));
   gap: var(--space-3);
   padding-block-start: var(--space-3);
   border-block-start: 1px solid var(--border-subtle);
@@ -402,6 +402,12 @@
 .market-metadata dt {
   color: var(--text-tertiary);
   font-size: var(--type-small);
+}
+
+.market-metadata time {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--type-small);
+  white-space: nowrap;
 }
 
 .market-withheld-row {

@@ -4,10 +4,12 @@ import datetime as dt
 from pathlib import Path
 
 from tests.test_day_learning_report_models import NOW, _payload, _report
+from tests.test_us_day_signal_admission import _eligible_request
 from trading_agent.dashboard_projection_day_agent import project_day_agent_facade
 from trading_agent.day_learning_report_models import MarketCloseReport
 from trading_agent.day_learning_report_store import publish_market_close_report
 from trading_agent.research_identity_models import MarketId
+from trading_agent.us_day_thesis_store import UsDayThesisStore
 
 
 def test_projects_independent_us_paper_us_shadow_and_kr_read_only_lanes(tmp_path: Path) -> None:
@@ -17,6 +19,7 @@ def test_projects_independent_us_paper_us_shadow_and_kr_read_only_lanes(tmp_path
     kr_report = _report(_payload(MarketId.KR_EQUITIES))
     _publish(outputs / "us_day" / "close_reports", us_report)
     _publish(outputs / "kr_day" / "close_reports", kr_report)
+    assert UsDayThesisStore(outputs / "us_day" / "theses").publish_thesis(_eligible_request().thesis)
 
     # When: the query-only dashboard facade reads the two isolated roots.
     projection = project_day_agent_facade(outputs, now=NOW + dt.timedelta(minutes=1))
@@ -28,6 +31,7 @@ def test_projects_independent_us_paper_us_shadow_and_kr_read_only_lanes(tmp_path
     assert "KR · Shadow · provider read-only" in labels
     rendered = " ".join((item.value or "") for item in (*projection.markets, *projection.research))
     assert "active" in rendered and "queued" in rendered and "suspended" in rendered
+    assert all(token in rendered for token in ("entry", "stop", "targets", "rationale", "outcome"))
     assert "combined" not in rendered.lower()
     assert "confidence" not in rendered.lower()
     assert all("return" not in item.item_id for item in (*projection.markets, *projection.research))
