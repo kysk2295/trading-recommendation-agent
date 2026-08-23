@@ -17,6 +17,9 @@ type Finding = Readonly<{
   lowerScreenshot: string;
   researchScreenshot: string;
   researchLowerScreenshot: string;
+  researchCardScreenshots: readonly string[];
+  researchCycleCount: number;
+  researchTraceControlCount: number;
   axeViolations: number;
   pageOverflow: boolean;
   keyboardTraceReturn: boolean;
@@ -210,6 +213,16 @@ async function verifyHappy(target: Page, width: number): Promise<Finding> {
     }
     if (/combined|confidence|profitability/i.test(research))
       throw new DayAgentQaError(`unsafe research claim:${width}`);
+    await target.locator(".research-board").evaluate((element) => {
+      element.style.contentVisibility = "visible";
+    });
+    const researchRows = target.locator(".research-board tbody tr");
+    const researchCycleCount = await researchRows.count();
+    const researchTraceControlCount = await target
+      .locator(".research-board tbody .trace-button")
+      .count();
+    if (researchCycleCount !== 6 || researchTraceControlCount !== 6)
+      throw new DayAgentQaError(`research board incomplete:${width}`);
     const researchAxe = await new AxeBuilder({ page: target }).include("#workspace-view").analyze();
     if (researchAxe.violations.length > 0)
       throw new DayAgentQaError(
@@ -221,6 +234,22 @@ async function verifyHappy(target: Page, width: number): Promise<Finding> {
     if (researchOverflow) throw new DayAgentQaError(`research overflow:${width}`);
     const researchScreenshot = join(screenshots, `day-agent-research-${width}.png`);
     await target.screenshot({ path: researchScreenshot, fullPage: true });
+    const researchCardScreenshots: string[] = [];
+    if (width === 375) {
+      for (let position = 0; position < researchCycleCount; position += 1) {
+        const card = researchRows.nth(position);
+        const cardScreenshot = join(
+          screenshots,
+          `day-agent-research-${width}-card-${position + 1}.png`,
+        );
+        await card.evaluate((element) => element.scrollIntoView({ block: "center" }));
+        await target.evaluate(
+          () => new Promise<void>((resolveFrame) => requestAnimationFrame(() => resolveFrame())),
+        );
+        await card.screenshot({ path: cardScreenshot });
+        researchCardScreenshots.push(artifactPath(cardScreenshot));
+      }
+    }
     await target.locator(".day-agent-learning").scrollIntoViewIfNeeded();
     const researchLowerScreenshot = join(screenshots, `day-agent-research-${width}-lower.png`);
     await target.screenshot({ path: researchLowerScreenshot });
@@ -234,6 +263,9 @@ async function verifyHappy(target: Page, width: number): Promise<Finding> {
       lowerScreenshot: artifactPath(lowerScreenshot),
       researchScreenshot: artifactPath(researchScreenshot),
       researchLowerScreenshot: artifactPath(researchLowerScreenshot),
+      researchCardScreenshots,
+      researchCycleCount,
+      researchTraceControlCount,
       axeViolations: axe.violations.length + researchAxe.violations.length,
       pageOverflow: pageOverflow || researchOverflow,
       keyboardTraceReturn,
