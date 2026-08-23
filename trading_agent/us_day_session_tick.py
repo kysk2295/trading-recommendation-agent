@@ -93,7 +93,7 @@ def run_us_day_session_tick(request: UsDaySessionTickRequest) -> tuple[int, UsDa
                 session_id=session_id,
                 reason=projection_payload.get("reason", "source_projection_blocked"),
             )
-            return 2, _publish_receipt(request.outputs, result)
+            return _finalize(request.outputs, result)
         source_name, situation_id = selected
     elif projection_payload.get("session_id") != session_id:
         result = UsDaySessionTickResult(
@@ -102,7 +102,7 @@ def run_us_day_session_tick(request: UsDaySessionTickRequest) -> tuple[int, UsDa
             session_id=session_id,
             reason="source_session_mismatch",
         )
-        return 2, _publish_receipt(request.outputs, result)
+        return _finalize(request.outputs, result)
     else:
         source_name = projection_payload.get("source")
         situation_id = projection_payload.get("situation_id")
@@ -113,7 +113,7 @@ def run_us_day_session_tick(request: UsDaySessionTickRequest) -> tuple[int, UsDa
                 session_id=session_id,
                 reason="source_projection_receipt_invalid",
             )
-            return 2, _publish_receipt(request.outputs, result)
+            return _finalize(request.outputs, result)
     tick = _run(
         (
             sys.executable,
@@ -152,7 +152,7 @@ def run_us_day_session_tick(request: UsDaySessionTickRequest) -> tuple[int, UsDa
         tick_phase=tick_payload.get("phase"),
         reason=None if status == "accepted" else tick_payload.get("reason", "day_agent_tick_blocked"),
     )
-    return (0 if status == "accepted" else 2), _publish_receipt(request.outputs, result)
+    return _finalize(request.outputs, result)
 
 
 def _run(command: tuple[str, ...]) -> subprocess.CompletedProcess[str]:
@@ -225,6 +225,11 @@ def _publish_receipt(outputs: Path, result: UsDaySessionTickResult) -> UsDaySess
             update={"status": "blocked", "reason": "session_tick_receipt_write_failed"}
         )
     return published
+
+
+def _finalize(outputs: Path, result: UsDaySessionTickResult) -> tuple[int, UsDaySessionTickResult]:
+    published = _publish_receipt(outputs, result)
+    return (0 if published.status == "accepted" else 2), published
 
 
 __all__ = ("UsDaySessionTickRequest", "UsDaySessionTickResult", "run_us_day_session_tick")
