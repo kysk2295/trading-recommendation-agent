@@ -29,6 +29,7 @@ from trading_agent.dashboard_models_v2 import (
 )
 from trading_agent.dashboard_options_workbench_projection import project_options_workbench
 from trading_agent.dashboard_projection_common import WorkspaceProjection, receipt_projection
+from trading_agent.dashboard_projection_day_agent import merge_day_agent_facade, project_day_agent_facade
 from trading_agent.dashboard_projection_derivatives import project_derivatives
 from trading_agent.dashboard_projection_experiments import (
     project_research,
@@ -120,6 +121,9 @@ def collect_dashboard_snapshot_v2(
     )
     projections["markets"] = merge_us_day_live(projections["markets"], day_live, workspace="markets")
     projections["paper"] = merge_us_day_live(projections["paper"], day_live, workspace="paper")
+    day_agent = project_day_agent_facade(outputs, now=generated_at)
+    projections["markets"] = merge_day_agent_facade(projections["markets"], day_agent, workspace="markets")
+    projections["research"] = merge_day_agent_facade(projections["research"], day_agent, workspace="research")
     projections["system"] = project_system_evidence(
         outputs,
         now=generated_at,
@@ -190,6 +194,7 @@ def collect_dashboard_snapshot_v2(
                 "cftc-tff-reader-v1",
                 "dashboard-receipt-reader-v2",
                 "day-agent-live-reader-v1",
+                "day-agent-query-facade-v1",
                 "experiment-ledger-reader-v1",
                 "fred-alfred-artifact-reader-v1",
                 "futures-security-master-reader-v1",
@@ -236,4 +241,6 @@ def _unavailable_research_board() -> tuple[ResearchAgentCycleViewV2, ...]:
         )
         for family in PRIMARY_AGENT_FAMILIES
     )
+
+
 __all__ = ("DashboardSnapshotV2TimeError", "collect_dashboard_snapshot_v2")

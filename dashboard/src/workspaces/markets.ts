@@ -35,6 +35,8 @@ export const renderMarkets: WorkspaceRenderer = (snapshot, drawer) => {
   const workspace = snapshot.workspaces.markets;
   const fragment = document.createDocumentFragment();
   fragment.append(renderSummary(workspace, snapshot, drawer));
+  const dayAgent = renderDayAgentMarkets(workspace.items, snapshot, drawer);
+  if (dayAgent !== null) fragment.append(dayAgent);
   const realtime = renderRealtimeCycle(workspace.items, snapshot, drawer);
   if (realtime !== null) fragment.append(realtime);
   fragment.append(renderSessions(workspace.items, snapshot, drawer));
@@ -65,6 +67,52 @@ export function krRealtimeCyclePresentation(
     return null;
   }
   return { records, successfulSources, totalSources, cycleId };
+}
+
+function renderDayAgentMarkets(
+  items: readonly MarketItem[],
+  snapshot: DashboardSnapshotV2,
+  drawer: EvidenceTraceDrawer,
+): HTMLElement | null {
+  const lanes = items.filter((item) => item.item_id.startsWith("day_agent."));
+  if (lanes.length === 0) return null;
+  const section = document.createElement("section");
+  section.className = "day-agent-lanes";
+  section.append(
+    textElement("h2", "Day Agent · 독립 관측 슬라이스"),
+    textElement(
+      "p",
+      "Paper와 Shadow는 서로 합산하지 않으며, 표시된 결과는 미래 수익성을 뜻하지 않습니다.",
+      "state-guidance",
+    ),
+  );
+  const laneGroups = [
+    (item: MarketItem) => item.item_id === "day_agent.us.paper",
+    (item: MarketItem) =>
+      item.item_id.startsWith("day_agent.us.") && item.item_id !== "day_agent.us.paper",
+    (item: MarketItem) => item.item_id.startsWith("day_agent.kr."),
+  ] as const;
+  for (const belongsToLane of laneGroups) {
+    const laneItems = lanes.filter(belongsToLane);
+    if (laneItems.length === 0) continue;
+    const lane = document.createElement("article");
+    lane.className = "day-agent-lane";
+    for (const item of laneItems) {
+      const presentation = sourceStatePresentation(item.state);
+      const row = document.createElement("div");
+      row.className = "day-agent-row";
+      row.dataset["sourceState"] = item.state;
+      row.append(
+        textElement("p", presentation.label, `state-badge state-${presentation.tone}`),
+        textElement("h3", item.label),
+        textElement("p", item.value ?? "Unavailable", "day-agent-value"),
+        traceButton(item.label, item.trace_id, snapshot, drawer),
+      );
+      lane.append(row);
+    }
+    section.append(lane);
+  }
+  return section;
 }
 
 export function marketEvidencePresentation(
@@ -243,7 +291,10 @@ function renderContext(
   );
   section.append(textElement("h2", "시장 데이터 권위"), guidance);
   for (const item of items.filter(
-    (value) => !value.item_id.endsWith(".session") && value.item_id !== "market.kr.realtime_cycle",
+    (value) =>
+      !value.item_id.endsWith(".session") &&
+      value.item_id !== "market.kr.realtime_cycle" &&
+      !value.item_id.startsWith("day_agent."),
   )) {
     const row = document.createElement("div");
     row.className = "market-withheld-row";

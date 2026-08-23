@@ -32,6 +32,10 @@ export function renderResearchStrategiesWorkspace(
   const fragment = document.createDocumentFragment();
   fragment.append(renderSummary(workspace, snapshot, drawer));
   if (workspaceKey === "research") fragment.append(renderResearchBoard(snapshot, drawer));
+  if (workspaceKey === "research") {
+    const dayAgent = renderDayAgentLearning(workspace.items, snapshot, drawer);
+    if (dayAgent !== null) fragment.append(dayAgent);
+  }
   fragment.append(renderCausalLedger(workspaceKey, workspace, snapshot, drawer));
   if (workspaceKey === "strategies")
     fragment.append(renderStrategyGovernance(workspace, snapshot, drawer));
@@ -193,7 +197,9 @@ function renderCausalLedger(
   viewport.setAttribute("aria-label", "causal evidence queue");
   const table = document.createElement("table");
   const body = document.createElement("tbody");
-  for (const item of workspace.items.filter((candidate) => candidate.kind !== "system")) {
+  for (const item of workspace.items.filter(
+    (candidate) => candidate.kind !== "system" && !candidate.item_id.startsWith("day_agent."),
+  )) {
     const trace = resolveEvidenceTrace(item.trace_id, snapshot.traces.nodes, snapshot.traces.edges);
     const evidence = causalTracePresentation(workspaceKey, item.state, trace);
     const row = document.createElement("tr");
@@ -234,6 +240,39 @@ function renderCausalLedger(
   );
   viewport.append(table);
   section.append(viewport);
+  return section;
+}
+
+function renderDayAgentLearning(
+  items: readonly Workspace["items"][number][],
+  snapshot: DashboardSnapshotV2,
+  drawer: EvidenceTraceDrawer,
+): HTMLElement | null {
+  const learning = items.filter((item) => item.item_id.startsWith("day_agent."));
+  if (learning.length === 0) return null;
+  const section = document.createElement("section");
+  section.className = "day-agent-learning";
+  section.append(
+    textElement("h2", "Day Agent · 종가 학습과 다음 세션 정책"),
+    textElement(
+      "p",
+      "가설 검증용 읽기 전용 기록입니다. 승격·주문·취소 제어는 제공하지 않습니다.",
+      "state-guidance",
+    ),
+  );
+  for (const item of learning) {
+    const presentation = sourceStatePresentation(item.state);
+    const row = document.createElement("article");
+    row.className = "day-agent-row";
+    row.dataset["sourceState"] = item.state;
+    row.append(
+      textElement("p", presentation.label, `state-badge state-${presentation.tone}`),
+      textElement("h3", item.label),
+      textElement("p", item.value ?? "Unavailable", "day-agent-value"),
+      traceButton(item.label, item.trace_id, snapshot, drawer),
+    );
+    section.append(row);
+  }
   return section;
 }
 
