@@ -4,9 +4,11 @@ import datetime as dt
 import hashlib
 import json
 import os
+import pwd
 import re
 import stat
 import subprocess
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +40,7 @@ from trading_agent.researcher_receipt_store import ResearcherReceiptStore
 _MAX_RESPONSE_BYTES = 256 * 1024
 _MAX_FREE_PARAMETERS: Final = 4
 _PROVIDER_ID: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,127}$")
+_CLAUDE_MAX_BUDGET_USD: Final = "0.05"
 
 
 class ResearcherLlmError(RuntimeError):
@@ -159,6 +162,13 @@ class HermesCliProposalClient:
                 or not os.access(executable, os.X_OK)
             ):
                 raise ResearcherLlmError
+            if self.provider_id == "claude-code":
+                return _complete_with_claude(
+                    executable,
+                    self.model_id,
+                    prompt,
+                    timeout_seconds=self.timeout_seconds,
+                )
             completed = subprocess.run(
                 (
                     str(executable),
@@ -182,6 +192,75 @@ class HermesCliProposalClient:
             return completed.stdout
         except (OSError, subprocess.SubprocessError, ValueError) as error:
             raise ResearcherLlmError from error
+
+
+def _complete_with_claude(
+    executable: Path,
+    model_id: str,
+    prompt: str,
+    *,
+    timeout_seconds: float,
+) -> bytes:
+    schema = json.dumps(
+        LlmHypothesisDraft.model_json_schema(),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    completed = subprocess.run(
+        (
+            str(executable),
+            "-p",
+            "--safe-mode",
+            "--disable-slash-commands",
+            "--tools",
+            "",
+            "--no-session-persistence",
+            "--model",
+            model_id,
+            "--max-budget-usd",
+            _CLAUDE_MAX_BUDGET_USD,
+            "--json-schema",
+            schema,
+            "--output-format",
+            "json",
+            prompt,
+        ),
+        check=False,
+        capture_output=True,
+        stdin=subprocess.DEVNULL,
+        timeout=timeout_seconds,
+        env=_claude_environment(executable),
+    )
+    if completed.returncode != 0 or not completed.stdout or len(completed.stdout) > _MAX_RESPONSE_BYTES:
+        raise ResearcherLlmError
+    try:
+        wrapper = json.loads(completed.stdout)
+        if not isinstance(wrapper, dict) or wrapper.get("is_error") is not False:
+            raise ResearcherLlmError
+        structured = wrapper["structured_output"]
+        if not isinstance(structured, dict):
+            raise ResearcherLlmError
+        return json.dumps(
+            structured,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    except (KeyError, TypeError, ValueError) as error:
+        raise ResearcherLlmError from error
+
+
+def _claude_environment(executable: Path) -> dict[str, str]:
+    account = pwd.getpwuid(os.geteuid())
+    return {
+        "HOME": account.pw_dir,
+        "LOGNAME": account.pw_name,
+        "PATH": f"{executable.parent}{os.pathsep}{os.defpath}",
+        "SHELL": account.pw_shell,
+        "TMPDIR": tempfile.gettempdir(),
+        "USER": account.pw_name,
+    }
 
 
 @dataclass(frozen=True, slots=True)

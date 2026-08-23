@@ -169,6 +169,33 @@ def test_hermes_client_binds_the_receipted_model_to_the_invocation(tmp_path: Pat
     assert response == b'{"schema_version":1}'
 
 
+def test_hermes_client_uses_claude_cli_without_provider_fallback_when_provider_is_claude_code(
+    tmp_path: Path,
+) -> None:
+    # Given: the pinned Claude executable used by the production claude-code binding.
+    executable = tmp_path / "claude-fixture"
+    executable.write_text(
+        "#!/bin/sh\n"
+        "[ \"$1\" = \"-p\" ] || exit 41\n"
+        "previous=''\n"
+        "for argument in \"$@\"; do\n"
+        "  [ \"$argument\" = \"--provider\" ] && exit 42\n"
+        "  if [ \"$previous\" = \"--model\" ]; then [ \"$argument\" = \"haiku\" ] || exit 43; fi\n"
+        "  previous=\"$argument\"\n"
+        "done\n"
+        "printf '{\"is_error\":false,\"structured_output\":{\"schema_version\":1}}'\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o700)
+    client = HermesCliProposalClient(executable, "haiku", "claude-code")
+
+    # When: one structured completion is requested through the Claude provider binding.
+    response = client.complete("{}")
+
+    # Then: the direct Claude result is returned without entering Hermes provider fallback routing.
+    assert response == b'{"schema_version":1}'
+
+
 def test_researcher_prompt_carries_the_machine_output_schema() -> None:
     # Given: the typed response boundary used to parse a model completion.
     expected_schema = LlmHypothesisDraft.model_json_schema()
