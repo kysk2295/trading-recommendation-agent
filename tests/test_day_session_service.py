@@ -1,23 +1,62 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import plistlib
 import shutil
+from dataclasses import replace
 from pathlib import Path
 from typing import Literal
 
 import pytest
 
 import run_day_session_service as cli
-from trading_agent.day_session_service import DaySessionServiceResult, run_day_session_service_tick
+from tests.day_strategy_capsule_support import builtin_request
+from tests.test_day_research_attempt_binding import _attempt, _binding, _family, _manifest, _version
+from tests.test_kis_kr_market_projection import (
+    _minute_body,
+    _price_body,
+    _quote_body,
+)
+from tests.test_kis_kr_market_projection import (
+    _receipt as market_receipt,
+)
+from tests.test_kis_kr_session_calendar import _payload as calendar_payload
+from tests.test_kis_kr_session_calendar import _row as calendar_row
+from tests.test_kr_day_capsule_adapter import EVALUATED as KR_EVALUATED
+from tests.test_kr_day_capsule_adapter import _request as kr_request
+from tests.test_us_day_situation_projection import EVALUATED_AT as US_EVALUATED
+from tests.test_us_day_situation_projection import _inputs as us_inputs
+from trading_agent.alpaca_models import AlpacaBar
+from trading_agent.contract_outbox import append_opportunity_snapshot
+from trading_agent.day_session_service import (
+    DaySessionServiceResult,
+    _materialize_kr_requests,
+    run_day_session_service_tick,
+)
 from trading_agent.day_session_service_config import (
     KR_DAY_SESSION_LABEL,
     US_DAY_SESSION_LABEL,
     KrDaySessionServiceConfig,
     UsDaySessionServiceConfig,
     load_day_session_service_config,
+    replace_day_session_launch_agent,
     verify_day_session_launch_agent,
 )
+from trading_agent.day_strategy_capsule import publish_day_strategy_capsule
+from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
+from trading_agent.experiment_ledger_store import ExperimentLedgerStore
+from trading_agent.kis_kr_market_models import KisKrMarketReceiptKind
+from trading_agent.kis_kr_market_receipt_store import KisKrMarketReceiptStore
+from trading_agent.kis_kr_session_calendar import project_kis_kr_session_calendar
+from trading_agent.kis_kr_session_calendar_models import KisKrSessionCalendarReceipt
+from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStore
+from trading_agent.private_immutable_file import publish_private_immutable_text
+from trading_agent.research_identity_models import MarketId
+from trading_agent.strategy_research_types import AttemptStatus
+from trading_agent.us_equity_calendar import NEW_YORK
+from trading_agent.us_strategy_day_input import UsStrategyDayInput, candidate_evidence
+from trading_agent.us_strategy_research_source import UsLatestQuote
 
 ROOT = Path(__file__).resolve().parents[1]
 SHA = "a" * 40
@@ -26,9 +65,10 @@ SHA = "a" * 40
 def test_provision_writes_exact_bounded_launch_agents(tmp_path: Path) -> None:
     # Given: private config destinations for both market services.
     uv = Path(shutil.which("uv") or "/bin/false").resolve()
-    us_config = tmp_path / "us.json"
+    _source_contracts(tmp_path / "sources")
+    us_config = tmp_path / f"us-{SHA}.json"
     us_plist = tmp_path / "us.plist"
-    kr_config = tmp_path / "kr.json"
+    kr_config = tmp_path / f"kr-{SHA}.json"
     kr_plist = tmp_path / "kr.plist"
 
     # When: each service is provisioned through the operator CLI.
@@ -70,7 +110,7 @@ def test_sunday_tick_is_service_success_without_child_or_state(
     # Then: the service succeeds with explicit no-action before authority or input access.
     assert result == DaySessionServiceResult(market=market, status="no_action", reason="session_closed")
     assert calls == []
-    assert not config.state_root.exists()
+    assert (config.state_root / "health/day_session_service_health.json").is_file()
 
 
 def test_missing_inputs_and_authority_mismatch_are_retryable_service_success(
@@ -98,42 +138,146 @@ def test_missing_inputs_and_authority_mismatch_are_retryable_service_success(
     assert moved.reason == "commit_mismatch"
 
 
-def test_child_provider_failure_is_preserved_without_fallback(
+def test_open_session_real_collector_shaped_artifacts_reach_both_children(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Given: complete US path bindings and a failing fixed Claude provider child.
-    config = _config("us", tmp_path)
-    for name in ("scanner.json", "articles.json", "news-evidence.json", "market-context.json"):
-        (config.source_root / name).parent.mkdir(parents=True, exist_ok=True)
-        (config.source_root / name).touch()
-    for folder in ("quotes", "completed-ticks"):
-        path = config.source_root / folder / "one.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch()
+    # Given: exact typed artifacts shaped like the installed US and KR collectors.
+    us_config = _config("us", tmp_path / "us")
+    kr_config = _config("kr", tmp_path / "kr")
+    _write_us_sources(us_config.source_root)
+    request_root = kr_config.source_root / "capsule_requests"
+    request_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    (request_root / "current.json").write_text(canonical_experiment_ledger_json(kr_request()) + "\n")
+    os.chmod(request_root / "current.json", 0o600)
     monkeypatch.setattr("trading_agent.day_session_service._authority_reason", lambda _: None)
-    monkeypatch.setattr(
-        "trading_agent.day_session_service._run_us",
-        lambda *_: (2, "claude_decision_call_failed"),
+
+    # When: both open-session services execute their real child CLIs.
+    us = run_day_session_service_tick(us_config, clock=lambda: US_EVALUATED)
+    kr = run_day_session_service_tick(
+        kr_config,
+        clock=lambda: KR_EVALUATED.astimezone(dt.UTC),
     )
 
-    # When: the service runs the current evidence composition.
-    result = run_day_session_service_tick(
-        config,
-        clock=lambda: dt.datetime(2026, 8, 24, 15, 0, tzinfo=dt.UTC),
-    )
+    # Then: US reaches the Day Agent stage and the empty installed KR ledger fails closed.
+    assert us.reason != "source_missing"
+    assert tuple((us_config.state_root / "us_day/session_sources").glob("us_day_source_*.json"))
+    assert kr.status == "no_action"
+    assert kr.reason == "capsule_authority_missing"
+    assert not tuple((kr_config.state_root / "receipts").glob("kr_day_capsule_shadow_*.json"))
 
-    # Then: Claude remains the only provider and its blocker stays retryable.
-    assert isinstance(config, UsDaySessionServiceConfig)
-    assert config.live_model_provider == "claude-code"
-    assert result.status == "no_action"
-    assert result.reason == "claude_decision_call_failed"
+
+def test_failed_candidate_cutover_restores_current_launch_agent(tmp_path: Path) -> None:
+    _source_contracts(tmp_path / "sources")
+    uv = Path(shutil.which("uv") or "/bin/false").resolve()
+    current_sha = "a" * 40
+    candidate_sha = "b" * 40
+    current_config = tmp_path / f"us-{current_sha}.json"
+    candidate_config = tmp_path / f"us-{candidate_sha}.json"
+    current_plist = tmp_path / "current.plist"
+    candidate_plist = tmp_path / "candidate.plist"
+    assert cli.main(_provision("us", uv, current_config, current_plist, tmp_path, current_sha)) == 0
+    assert cli.main(_provision("us", uv, candidate_config, candidate_plist, tmp_path, candidate_sha)) == 0
+    calls: list[tuple[str, ...]] = []
+
+    def runner(command: tuple[str, ...]) -> int:
+        calls.append(command)
+        return 1 if "bootstrap" in command and str(candidate_plist) in command else 0
+
+    assert not replace_day_session_launch_agent(
+        current_config, current_plist, candidate_config, candidate_plist, runner=runner
+    )
+    assert calls[-2][1] == "bootstrap"
+    assert str(current_plist) in calls[-2]
+
+
+def test_kr_materializer_reads_cycle_calendar_market_and_ledger_stores(tmp_path: Path) -> None:
+    evaluated_at = dt.datetime(2026, 8, 24, 9, 4, 4, tzinfo=dt.timezone(dt.timedelta(hours=9)))
+    config = _config("kr", tmp_path)
+    assert isinstance(config, KrDaySessionServiceConfig)
+    cycle_id = "kr-research-20260824-090400"
+    source = kr_request()
+    observed_at = evaluated_at - dt.timedelta(minutes=2)
+    opportunity = source.opportunity.model_copy(
+        update={
+            "observed_at": observed_at,
+            "valid_until": evaluated_at + dt.timedelta(minutes=3),
+            "evidence_refs": (
+                source.opportunity.evidence_refs[0].model_copy(
+                    update={"record_id": cycle_id, "observed_at": observed_at}
+                ),
+            ),
+            "source_coverage": tuple(
+                item.model_copy(update={"observed_at": observed_at}) for item in source.opportunity.source_coverage
+            ),
+        }
+    )
+    cycle = config.source_root / cycle_id
+    assert append_opportunity_snapshot(cycle / "projection/opportunities.v1.jsonl", opportunity)
+    market_store = KisKrMarketReceiptStore(cycle / "005930.market.sqlite3")
+    for kind, body, seconds in (
+        (KisKrMarketReceiptKind.MINUTE_BARS, _minute_body(), 2),
+        (KisKrMarketReceiptKind.PRICE_STATUS, _price_body(), 2),
+        (KisKrMarketReceiptKind.ORDER_BOOK, _quote_body(), 3),
+    ):
+        receipt = replace(
+            market_receipt(kind, body, seconds=seconds),
+            received_at=evaluated_at.replace(second=seconds),
+        )
+        assert market_store.append(receipt)
+    calendar_receipt = KisKrSessionCalendarReceipt(
+        base_date=evaluated_at.date(),
+        received_at=evaluated_at - dt.timedelta(hours=1),
+        status_code=200,
+        content_type="application/json",
+        raw_payload=calendar_payload(
+            rows=(
+                calendar_row("20260824", "Y", "Y", "Y", "Y"),
+                calendar_row("20260825", "Y", "Y", "Y", "Y"),
+            )
+        ),
+    )
+    calendar_snapshot = project_kis_kr_session_calendar(calendar_receipt)
+    assert KisKrSessionCalendarStore(config.calendar_store).append(calendar_receipt, calendar_snapshot)
+    ledger = ExperimentLedgerStore(config.experiment_ledger)
+    family = _family()
+    version = _version(family, market_id=MarketId.KR_EQUITIES)
+    attempt = _attempt(0, AttemptStatus.SUCCEEDED)
+    binding = _binding(attempt, version)
+    with ledger.writer() as writer:
+        assert writer.register_strategy_research(_manifest())
+        assert writer.register_day_hypothesis_family(family)
+        assert writer.register_day_hypothesis_version(version)
+        assert writer.append_strategy_research_attempt(attempt)
+        assert writer.register_day_research_attempt_binding(binding)
+    capsule_request = replace(
+        builtin_request(market_id=MarketId.KR_EQUITIES),
+        hypothesis_version_id=version.hypothesis_version_id,
+        attempt_binding_id=binding.binding_id,
+        artifact_ref=binding.artifact_ref,
+        evaluation_cadence=version.evaluation_cadence,
+        entry_rule=version.entry_rule,
+        exit_rule=version.exit_rule,
+        stop_rule=version.stop_rule,
+        cost_model=version.cost_model,
+        protocol_sha256=version.protocol_sha256,
+        published_at=binding.bound_at + dt.timedelta(minutes=1),
+    )
+    capsule, _ = publish_day_strategy_capsule(ledger, capsule_request)
+
+    paths = _materialize_kr_requests(config, evaluated_at.astimezone(dt.UTC), (capsule.capsule_id,))
+
+    materialized = kr_request().model_validate_json(paths[0].read_text())
+    assert materialized.capsule.capsule_id == capsule.capsule_id
+    assert materialized.opportunity.opportunity_id == opportunity.opportunity_id
+    assert materialized.market.symbol == "005930"
 
 
 def _config(
     market: Literal["us", "kr"],
     root: Path,
 ) -> UsDaySessionServiceConfig | KrDaySessionServiceConfig:
+    _source_contracts(root / "sources")
     common = {
         "project_root": ROOT,
         "expected_commit": SHA,
@@ -143,7 +287,11 @@ def _config(
     }
     if market == "us":
         return UsDaySessionServiceConfig(**common)
-    return KrDaySessionServiceConfig(**common)
+    return KrDaySessionServiceConfig(
+        **common,
+        calendar_store=root / "calendar/calendar.sqlite3",
+        experiment_ledger=root / "ledger/experiment.sqlite3",
+    )
 
 
 def _provision(
@@ -152,15 +300,16 @@ def _provision(
     config: Path,
     plist: Path,
     root: Path,
+    sha: str = SHA,
 ) -> tuple[str, ...]:
-    return (
+    arguments = (
         "provision",
         "--market",
         market,
         "--project-root",
         str(ROOT),
         "--expected-commit",
-        SHA,
+        sha,
         "--uv-path",
         str(uv),
         "--source-root",
@@ -172,3 +321,68 @@ def _provision(
         "--plist",
         str(plist),
     )
+    if market == "kr":
+        return (
+            *arguments,
+            "--calendar-store",
+            str(root / "calendar/calendar.sqlite3"),
+            "--experiment-ledger",
+            str(root / "ledger/experiment.sqlite3"),
+        )
+    return arguments
+
+
+def _source_contracts(root: Path) -> None:
+    for path in (
+        root,
+        root / "capsule_requests",
+        root.parent / "calendar",
+        root.parent / "ledger",
+    ):
+        path.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+
+def _write_us_sources(root: Path) -> None:
+    inputs = us_inputs()
+    bars_by_symbol = {
+        tick.bars[-1].symbol: tuple(
+            AlpacaBar(
+                t=bar.timestamp,
+                o=bar.open,
+                h=bar.high,
+                l=bar.low,
+                c=bar.close,
+                v=bar.volume,
+                n=1,
+                vw=bar.close,
+            )
+            for bar in tick.bars
+        )
+        for tick in inputs.completed_bars
+    }
+    quotes_by_symbol = {
+        quote.symbol: UsLatestQuote(
+            symbol=quote.symbol,
+            bid=float(quote.bid),
+            ask=float(quote.ask),
+            observed_at=quote.provider_observed_at,
+        )
+        for quote in inputs.quotes
+    }
+    day_input = UsStrategyDayInput(
+        opportunity=inputs.scanner.opportunity,
+        market_context=inputs.market_context,
+        articles=inputs.articles,
+        news_evidence=inputs.news_evidence,
+        candidates=candidate_evidence(
+            inputs.scanner.opportunity,
+            bars_by_symbol,
+            quotes_by_symbol,
+            US_EVALUATED,
+        ),
+        materialized_at=US_EVALUATED,
+    )
+    session = root / US_EVALUATED.astimezone(NEW_YORK).strftime("%Y%m%d")
+    session.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = session / f"{day_input.input_id}.day-input.json"
+    _ = publish_private_immutable_text(path, day_input.model_dump_json() + "\n")

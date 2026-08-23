@@ -20,6 +20,7 @@ from trading_agent.day_session_service_config import (
     KrDaySessionServiceConfig,
     UsDaySessionServiceConfig,
     load_day_session_service_config,
+    replace_day_session_launch_agent,
     verify_day_session_launch_agent,
     write_day_session_launch_agent,
     write_day_session_service_config,
@@ -33,6 +34,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     provision.add_argument("--market", choices=("us", "kr"), required=True)
     for name in ("project-root", "uv-path", "source-root", "state-root", "config", "plist"):
         provision.add_argument(f"--{name}", type=Path, required=True)
+    provision.add_argument("--calendar-store", type=Path)
+    provision.add_argument("--experiment-ledger", type=Path)
     provision.add_argument("--expected-commit", required=True)
     for name in ("verify",):
         command = commands.add_parser(name)
@@ -40,6 +43,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         command.add_argument("--plist", type=Path, required=True)
     tick = commands.add_parser("tick")
     tick.add_argument("--config", type=Path, required=True)
+    replace = commands.add_parser("replace")
+    for generation in ("current", "candidate"):
+        replace.add_argument(f"--{generation}-config", type=Path, required=True)
+        replace.add_argument(f"--{generation}-plist", type=Path, required=True)
     return parser.parse_args(argv)
 
 
@@ -56,6 +63,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             verified = verify_day_session_launch_agent(args.config, args.plist)
             print(json.dumps({"interval_seconds": verified.interval_seconds, "mutation": 0, "ready": True}))
             return 0
+        if args.command == "replace":
+            replaced = replace_day_session_launch_agent(
+                args.current_config,
+                args.current_plist,
+                args.candidate_config,
+                args.candidate_plist,
+            )
+            print(json.dumps({"cutover": "complete" if replaced else "rolled_back", "mutation": 0}))
+            return 0 if replaced else 2
         config = load_day_session_service_config(args.config)
         result = run_day_session_service_tick(config)
         print(json.dumps(asdict(result), separators=(",", ":"), sort_keys=True))
@@ -75,6 +91,12 @@ def _config(args: argparse.Namespace) -> UsDaySessionServiceConfig | KrDaySessio
     }
     if args.market == "us":
         return UsDaySessionServiceConfig.model_validate(values)
+    if args.calendar_store is None or args.experiment_ledger is None:
+        raise ValueError
+    values |= {
+        "calendar_store": args.calendar_store.expanduser().absolute(),
+        "experiment_ledger": args.experiment_ledger.expanduser().absolute(),
+    }
     return KrDaySessionServiceConfig.model_validate(values)
 
 

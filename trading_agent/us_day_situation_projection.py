@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 from collections import deque
+from collections.abc import Mapping
 from decimal import Decimal
 from typing import Final, Literal, Never, override
 
@@ -12,8 +13,9 @@ from pydantic import ValidationError
 
 from trading_agent.alpaca_news_models import AlpacaNewsArticle
 from trading_agent.alpaca_news_opportunity_evidence import AlpacaNewsOpportunityEvidenceBundle
+from trading_agent.generated_strategy_protocol import BarFrame
 from trading_agent.market_context_models import MarketContextSnapshot
-from trading_agent.signal_contract_models import EvidenceRef
+from trading_agent.signal_contract_models import EvidenceRef, OpportunitySnapshot
 from trading_agent.us_day_situation_models import (
     CatalystClaimEvent,
     CatalystEvidence,
@@ -29,9 +31,16 @@ from trading_agent.us_day_situation_models import (
     UsDaySituationMap,
 )
 from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
-from trading_agent.us_forward_shadow_models import UsForwardShadowTick, current_xnys_tick_at
+from trading_agent.us_forward_shadow_models import UsForwardShadowTick, completed_bar_id, current_xnys_tick_at
 from trading_agent.us_opportunity_scanner_models import UsOpportunityScannerBundle
 from trading_agent.us_quote_actionability_evidence import UsQuotePolicyEvidence
+from trading_agent.us_strategy_day_input import (
+    UsStrategyDayCandidateEvidence,
+    UsStrategyDayInput,
+)
+from trading_agent.us_strategy_day_input import (
+    spread_bps as strategy_spread_bps,
+)
 
 _MAX_SCANNER_AGE: Final = dt.timedelta(minutes=1)
 _MAX_NEWS_AGE: Final = dt.timedelta(minutes=5)
@@ -80,7 +89,7 @@ def project_us_day_situation(
                 (
                     _project_theme(
                         group,
-                        scanner,
+                        scanner.opportunity,
                         observation_refs,
                         quote_by_symbol,
                         tick_by_symbol,
@@ -108,6 +117,96 @@ def project_us_day_situation(
         )
     except (TypeError, ValidationError, ValueError):
         raise UsDaySituationProjectionError from None
+
+
+def project_us_strategy_day_situation(source: UsStrategyDayInput, evaluated_at: dt.datetime) -> UsDaySituationMap:
+    try:
+        checked = UsStrategyDayInput.model_validate(source.model_dump(mode="python"))
+        session_date = _validate_strategy_input(checked, evaluated_at)
+        evidence_by_symbol = {item.symbol: item for item in checked.candidates}
+        observation_refs = _observation_refs(checked.news_evidence)
+        themes = tuple(
+            sorted(
+                (
+                    _project_theme(
+                        group,
+                        checked.opportunity,
+                        observation_refs,
+                        evidence_by_symbol,
+                        evidence_by_symbol,
+                        evaluated_at,
+                    )
+                    for group in _article_groups(checked.articles)
+                ),
+                key=lambda item: item.theme_id,
+            )
+        )
+        if not themes:
+            _fail()
+        return UsDaySituationMap(
+            session_id=f"XNYS-{session_date.isoformat()}",
+            session_date=session_date,
+            completed_bar_at=checked.candidates[0].bars[-1].timestamp,
+            evaluated_at=evaluated_at,
+            themes=themes,
+            evidence_refs=_refs(
+                (
+                    *(ref for theme in themes for ref in theme.evidence_refs),
+                    _context_ref(checked.market_context),
+                )
+            ),
+        )
+    except (TypeError, ValidationError, ValueError):
+        raise UsDaySituationProjectionError from None
+
+
+def _validate_strategy_input(source: UsStrategyDayInput, evaluated_at: dt.datetime) -> dt.date:
+    if evaluated_at.tzinfo is None or evaluated_at.utcoffset() is None:
+        _fail()
+    session_date = evaluated_at.astimezone(NEW_YORK).date()
+    bounds = regular_session_bounds(session_date)
+    opportunity = source.opportunity
+    symbols = {item.symbol for item in opportunity.candidates}
+    articles = source.articles
+    article_by_id = {item.event_id: item for item in articles}
+    observed_pairs = {
+        (observation.event_id, snapshot.symbol)
+        for snapshot in source.news_evidence.snapshots
+        for observation in snapshot.observations
+    }
+    if (
+        bounds is None
+        or not bounds[0] < evaluated_at < bounds[1]
+        or opportunity.valid_until < evaluated_at
+        or not _fresh(opportunity.observed_at, evaluated_at, _MAX_SCANNER_AGE)
+        or any(not item.complete for item in opportunity.source_coverage)
+        or not articles
+        or len(article_by_id) != len(articles)
+        or not source.news_evidence.assessment.complete
+        or not _fresh(source.news_evidence.assessment.assessed_at, evaluated_at, _MAX_NEWS_AGE)
+        or tuple(item.symbol for item in source.news_evidence.snapshots) != tuple(sorted(symbols))
+        or any(not item.coverage.complete for item in source.news_evidence.snapshots)
+        or source.market_context.valid_until < evaluated_at
+        or not _fresh(source.market_context.observed_at, evaluated_at, _MAX_CONTEXT_AGE)
+        or {item.symbol for item in source.candidates} != symbols
+        or any(
+            not _fresh(item.quote.observed_at, evaluated_at, _MAX_QUOTE_AGE)
+            or item.received_at > evaluated_at
+            or item.bars[-1].timestamp
+            != evaluated_at.astimezone(dt.UTC).replace(second=0, microsecond=0) - dt.timedelta(minutes=1)
+            for item in source.candidates
+        )
+    ):
+        _fail()
+    for article in articles:
+        if (
+            article.created_at < bounds[0]
+            or article.updated_at > evaluated_at
+            or not set(article.symbols).issubset(symbols)
+            or any((article.event_id, symbol) not in observed_pairs for symbol in article.symbols)
+        ):
+            _fail()
+    return session_date
 
 
 def _validate_inputs(
@@ -215,10 +314,10 @@ def _validate_inputs(
 
 def _project_theme(
     articles: tuple[AlpacaNewsArticle, ...],
-    scanner: UsOpportunityScannerBundle,
+    opportunity: OpportunitySnapshot,
     observation_refs: dict[tuple[str, str], tuple[EvidenceRef, ...]],
-    quotes: dict[str, UsQuotePolicyEvidence],
-    ticks: dict[str, UsForwardShadowTick],
+    quotes: Mapping[str, UsQuotePolicyEvidence | UsStrategyDayCandidateEvidence],
+    ticks: Mapping[str, UsForwardShadowTick | UsStrategyDayCandidateEvidence],
     evaluated_at: dt.datetime,
 ) -> ThemeMap:
     symbols = tuple(sorted({symbol for item in articles for symbol in item.symbols}))
@@ -239,7 +338,7 @@ def _project_theme(
         )
         for item in sorted(articles, key=lambda value: (value.created_at, value.event_id))
     )
-    scanner_by_symbol = {item.symbol: item for item in scanner.opportunity.candidates}
+    scanner_by_symbol = {item.symbol: item for item in opportunity.candidates}
     changes = {symbol: _change_pct(ticks[symbol]) for symbol in symbols}
     theme_bar_refs = tuple(_completed_bar_ref(ticks[item]) for item in symbols)
     raw_leaders: list[
@@ -255,8 +354,7 @@ def _project_theme(
     ] = []
     for symbol in symbols:
         tick = ticks[symbol]
-        candidate = tick.candidate
-        if candidate is None:
+        if isinstance(tick, UsForwardShadowTick) and tick.candidate is None:
             _fail()
         flow_refs = _refs((_completed_bar_ref(tick), _quote_ref(quotes[symbol])))
         relative_volume = _relative_volume(tick)
@@ -298,16 +396,16 @@ def _project_theme(
             (
                 *flow_refs,
                 *(ref for item in inferences for ref in item.evidence_refs),
-                _scanner_ref(scanner),
+                _opportunity_ref(opportunity),
             )
         )
         flow = ObservableFlow(
             observation_kind=FlowObservationKind.OBSERVED,
             relative_volume=relative_volume,
             dollar_volume=dollar_volume,
-            spread_bps=quotes[symbol].spread_bps,
-            bid_size=quotes[symbol].bid_size,
-            ask_size=quotes[symbol].ask_size,
+            spread_bps=_spread_bps(quotes[symbol]),
+            bid_size=_bid_size(quotes[symbol]),
+            ask_size=_ask_size(quotes[symbol]),
             vwap_relation=_vwap_relation(tick),
             evidence_refs=flow_refs,
         )
@@ -408,7 +506,14 @@ def _observation_refs(
     return result
 
 
-def _quote_ref(quote: UsQuotePolicyEvidence) -> EvidenceRef:
+def _quote_ref(quote: UsQuotePolicyEvidence | UsStrategyDayCandidateEvidence) -> EvidenceRef:
+    if isinstance(quote, UsStrategyDayCandidateEvidence):
+        source = next(item for item in quote.evidence_refs if item.namespace == "quote/alpaca-sip")
+        return EvidenceRef(
+            namespace="quote/snapshot",
+            record_id=f"us-quote:{hashlib.sha256(source.canonical_id.encode()).hexdigest()}",
+            observed_at=source.observed_at,
+        )
     return EvidenceRef(
         namespace="quote/snapshot",
         record_id=quote.quote_id,
@@ -416,7 +521,13 @@ def _quote_ref(quote: UsQuotePolicyEvidence) -> EvidenceRef:
     )
 
 
-def _completed_bar_ref(tick: UsForwardShadowTick) -> EvidenceRef:
+def _completed_bar_ref(tick: UsForwardShadowTick | UsStrategyDayCandidateEvidence) -> EvidenceRef:
+    if isinstance(tick, UsStrategyDayCandidateEvidence):
+        return EvidenceRef(
+            namespace="research/current_bar",
+            record_id=completed_bar_id(_strategy_bar_frame(tick)),
+            observed_at=tick.bars[-1].timestamp,
+        )
     latest = tick.bars[-1]
     return EvidenceRef(
         namespace="research/current_bar",
@@ -425,11 +536,11 @@ def _completed_bar_ref(tick: UsForwardShadowTick) -> EvidenceRef:
     )
 
 
-def _scanner_ref(scanner: UsOpportunityScannerBundle) -> EvidenceRef:
+def _opportunity_ref(opportunity: OpportunitySnapshot) -> EvidenceRef:
     return EvidenceRef(
         namespace="scanner/opportunity",
-        record_id=scanner.opportunity.opportunity_id,
-        observed_at=scanner.opportunity.observed_at,
+        record_id=opportunity.opportunity_id,
+        observed_at=opportunity.observed_at,
     )
 
 
@@ -460,32 +571,43 @@ def _decimal(value: float) -> Decimal:
     return Decimal(str(value))
 
 
-def _change_pct(tick: UsForwardShadowTick) -> Decimal:
+def _change_pct(tick: UsForwardShadowTick | UsStrategyDayCandidateEvidence) -> Decimal:
     latest = tick.bars[-1]
     close = _decimal(latest.close)
-    prior_close = _decimal(latest.prior_close)
+    if isinstance(tick, UsStrategyDayCandidateEvidence):
+        prior_close = _decimal(tick.bars[0].open)
+    else:
+        prior_close = _decimal(tick.bars[-1].prior_close)
     return (close - prior_close) / prior_close * Decimal(100)
 
 
-def _dollar_volume(tick: UsForwardShadowTick) -> Decimal:
+def _dollar_volume(tick: UsForwardShadowTick | UsStrategyDayCandidateEvidence) -> Decimal:
     return sum((_decimal(item.close) * item.volume for item in tick.bars), Decimal(0))
 
 
-def _relative_volume(tick: UsForwardShadowTick) -> Decimal:
+def _relative_volume(tick: UsForwardShadowTick | UsStrategyDayCandidateEvidence) -> Decimal:
     """Latest minute volume / (latest average daily volume / fixed 390-minute XNYS session)."""
     latest = tick.bars[-1]
-    expected_minute_volume = Decimal(latest.average_daily_volume) / _REGULAR_SESSION_MINUTES
+    if isinstance(tick, UsStrategyDayCandidateEvidence):
+        prior = tick.bars[:-1]
+        expected_minute_volume = sum((Decimal(item.volume) for item in prior), Decimal(0)) / Decimal(len(prior))
+    else:
+        expected_minute_volume = Decimal(tick.bars[-1].average_daily_volume) / _REGULAR_SESSION_MINUTES
+    if expected_minute_volume == 0:
+        return Decimal(0)
     return Decimal(latest.volume) / expected_minute_volume
 
 
-def _vwap_relation(tick: UsForwardShadowTick) -> Literal["above", "below", "crossing", "unavailable"]:
+def _vwap_relation(
+    tick: UsForwardShadowTick | UsStrategyDayCandidateEvidence,
+) -> Literal["above", "below", "crossing", "unavailable"]:
     total_volume = sum(item.volume for item in tick.bars)
     if total_volume == 0:
         return "unavailable"
     vwap = _dollar_volume(tick) / Decimal(total_volume)
     latest = tick.bars[-1]
     current = _decimal(latest.close) - vwap
-    previous_close = tick.bars[-2].close if len(tick.bars) > 1 else latest.prior_close
+    previous_close = tick.bars[-2].close if len(tick.bars) > 1 else latest.open
     previous = _decimal(previous_close) - vwap
     if current == 0 or previous == 0 or (current < 0 < previous) or (previous < 0 < current):
         return "crossing"
@@ -493,22 +615,57 @@ def _vwap_relation(tick: UsForwardShadowTick) -> Literal["above", "below", "cros
 
 
 def _breakout_absorption_proxy(
-    tick: UsForwardShadowTick,
-    quote: UsQuotePolicyEvidence,
+    tick: UsForwardShadowTick | UsStrategyDayCandidateEvidence,
+    quote: UsQuotePolicyEvidence | UsStrategyDayCandidateEvidence,
 ) -> Decimal | None:
     latest = tick.bars[-1]
     bar_range = _decimal(latest.high) - _decimal(latest.low)
-    displayed_size = quote.bid_size + quote.ask_size
+    displayed_size = _bid_size(quote) + _ask_size(quote)
     if bar_range == 0 or displayed_size == 0:
         return None
     directional_fraction = abs(_decimal(latest.close) - _decimal(latest.open)) / bar_range
     remaining_fraction = max(Decimal(0), Decimal(1) - directional_fraction)
-    balanced_size_fraction = Decimal(min(quote.bid_size, quote.ask_size)) / Decimal(displayed_size)
+    balanced_size_fraction = Decimal(min(_bid_size(quote), _ask_size(quote))) / Decimal(displayed_size)
     return Decimal(latest.volume) * remaining_fraction * balanced_size_fraction
+
+
+def _spread_bps(quote: UsQuotePolicyEvidence | UsStrategyDayCandidateEvidence) -> Decimal:
+    return strategy_spread_bps(quote) if isinstance(quote, UsStrategyDayCandidateEvidence) else quote.spread_bps
+
+
+def _bid_size(quote: UsQuotePolicyEvidence | UsStrategyDayCandidateEvidence) -> int:
+    return 0 if isinstance(quote, UsStrategyDayCandidateEvidence) else quote.bid_size
+
+
+def _ask_size(quote: UsQuotePolicyEvidence | UsStrategyDayCandidateEvidence) -> int:
+    return 0 if isinstance(quote, UsStrategyDayCandidateEvidence) else quote.ask_size
+
+
+def _strategy_bar_frame(evidence: UsStrategyDayCandidateEvidence) -> BarFrame:
+    latest = evidence.bars[-1]
+    prior = evidence.bars[:-1]
+    average_minute_volume = max(1, sum(item.volume for item in prior) // len(prior))
+    return BarFrame(
+        symbol=evidence.symbol,
+        timestamp=latest.timestamp,
+        open=latest.open,
+        high=latest.high,
+        low=latest.low,
+        close=latest.close,
+        volume=latest.volume,
+        prior_close=evidence.bars[0].open,
+        average_daily_volume=average_minute_volume * 390,
+        spread_bps=float(strategy_spread_bps(evidence)),
+        catalyst="",
+    )
 
 
 def _fail() -> Never:
     raise UsDaySituationProjectionError
 
 
-__all__ = ("UsDaySituationProjectionError", "project_us_day_situation")
+__all__ = (
+    "UsDaySituationProjectionError",
+    "project_us_day_situation",
+    "project_us_strategy_day_situation",
+)

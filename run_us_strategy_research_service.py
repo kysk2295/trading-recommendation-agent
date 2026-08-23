@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import subprocess
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -44,11 +45,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "credentials-path",
         "live-session-root",
         "market-context-root",
+        "day-source-root",
+        "news-database",
         "runtime-output-root",
         "config",
         "plist",
     ):
         provision.add_argument(f"--{name}", type=Path, required=True)
+    provision.add_argument("--expected-commit", required=True)
     verify = commands.add_parser("verify")
     verify.add_argument("--config", type=Path, required=True)
     verify.add_argument("--plist", type=Path, required=True)
@@ -69,10 +73,13 @@ def main(
             config = UsStrategyResearchServiceConfig(
                 label=US_STRATEGY_RESEARCH_SERVICE_LABEL,
                 project_root=_absolute(args.project_root),
+                expected_commit=args.expected_commit,
                 uv_path=_absolute(args.uv_path),
                 credentials_path=_absolute(args.credentials_path),
                 live_session_root=_absolute(args.live_session_root),
                 market_context_root=_absolute(args.market_context_root),
+                day_source_root=_absolute(args.day_source_root),
+                news_database=_absolute(args.news_database),
                 output_root=_absolute(args.runtime_output_root),
             )
             _ = write_us_strategy_research_service_config(config_path, config)
@@ -86,6 +93,9 @@ def main(
             return 0
         if args.command == "tick":
             config = load_us_strategy_research_service_config(args.config)
+            if _authority_reason(config) is not None:
+                _write_report(config, 2, clock())
+                return 2
             result = run_us_strategy_research_live_cycle.main(_cycle_args(config), clock=clock)
             _write_report(config, result, clock())
             return result
@@ -113,6 +123,10 @@ def _cycle_args(config: UsStrategyResearchServiceConfig) -> tuple[str, ...]:
         str(config.live_session_root),
         "--market-context-root",
         str(config.market_context_root),
+        "--day-source-root",
+        str(config.day_source_root),
+        "--news-database",
+        str(config.news_database),
     )
 
 
@@ -141,6 +155,31 @@ def _write_report(
 
 def _absolute(path: Path) -> Path:
     return path.expanduser().absolute()
+
+
+def _authority_reason(config: UsStrategyResearchServiceConfig) -> str | None:
+    try:
+        root = config.project_root.resolve(strict=True)
+        branch = _git(root, "symbolic-ref", "--quiet", "--short", "HEAD")
+        head = _git(root, "rev-parse", "HEAD")
+        local_main = _git(root, "rev-parse", "refs/heads/main")
+        tracked = _git(root, "status", "--porcelain=v1", "--untracked-files=no")
+    except (OSError, subprocess.SubprocessError):
+        return "project_root_invalid"
+    if root != config.project_root or branch != "main" or head != local_main or head != config.expected_commit:
+        return "commit_mismatch"
+    return "tracked_worktree_dirty" if tracked else None
+
+
+def _git(root: Path, *arguments: str) -> str:
+    completed = subprocess.run(
+        ("git", "-C", str(root), *arguments),
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    return completed.stdout.strip()
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import plistlib
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, Self
@@ -20,6 +21,7 @@ US_STRATEGY_RESEARCH_SERVICE_LABEL: Final = "ai.trading-agent.us-strategy-resear
 US_STRATEGY_RESEARCH_SERVICE_INTERVAL_SECONDS: Final = 120
 _SERVICE_SCRIPT: Final = "run_us_strategy_research_service.py"
 _CYCLE_SCRIPT: Final = "run_us_strategy_research_live_cycle.py"
+_SHA: Final = re.compile(r"[a-f0-9]{40}")
 
 
 class InvalidUsStrategyResearchServiceError(RuntimeError):
@@ -36,17 +38,22 @@ class UsStrategyResearchServiceConfig(BaseModel):
     schema_version: Literal[1] = 1
     label: Literal["ai.trading-agent.us-strategy-research-source"] = US_STRATEGY_RESEARCH_SERVICE_LABEL
     project_root: Path
+    expected_commit: str
     uv_path: Path
     credentials_path: Path
     live_session_root: Path
     market_context_root: Path
+    day_source_root: Path
+    news_database: Path
     output_root: Path
 
     @model_validator(mode="after")
     def require_absolute_paths(self) -> Self:
-        paths = tuple(value for name, value in self if name not in {"schema_version", "label"})
+        paths = tuple(value for name, value in self if name not in {"schema_version", "label", "expected_commit"})
         if any(not path.is_absolute() for path in paths):
             raise InvalidUsStrategyResearchServiceError(reason="service_path_not_absolute")
+        if _SHA.fullmatch(self.expected_commit) is None:
+            raise InvalidUsStrategyResearchServiceError(reason="service_commit_invalid")
         return self
 
 
@@ -64,6 +71,8 @@ def write_us_strategy_research_service_config(
 ) -> bool:
     try:
         checked = UsStrategyResearchServiceConfig.model_validate(config.model_dump(mode="python"))
+        if checked.expected_commit not in path.name:
+            raise InvalidUsStrategyResearchServiceError(reason="service_config_not_versioned")
         return publish_private_immutable_text(path, _config_text(checked))
     except (
         InvalidPrivateImmutableFileError,

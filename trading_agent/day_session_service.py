@@ -1,22 +1,42 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo
+
+from pydantic import ValidationError
 
 from trading_agent.day_session_service_config import (
     DaySessionServiceConfig,
     KrDaySessionServiceConfig,
     UsDaySessionServiceConfig,
 )
+from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
+from trading_agent.experiment_ledger_store import ExperimentLedgerStore
+from trading_agent.hermes_delivery_projection import read_opportunity_snapshots
+from trading_agent.kis_kr_market_models import (
+    KisKrMarketReceiptKind,
+    KisKrMinuteProjectionInput,
+    KisKrSnapshotProjectionInput,
+)
+from trading_agent.kis_kr_market_projection import project_kis_kr_completed_minutes, project_kis_kr_market_snapshot
+from trading_agent.kis_kr_market_receipt_store import KisKrMarketReceiptStore
+from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStore
+from trading_agent.kr_day_capsule_models import KrDayCapsuleEvaluationRequest
+from trading_agent.private_immutable_file import publish_private_immutable_text, read_private_text
+from trading_agent.private_stable_report import write_private_stable_report
+from trading_agent.research_identity_models import MarketId
 from trading_agent.us_day_session_tick import UsDaySessionTickRequest, run_us_day_session_tick
 from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
+from trading_agent.us_strategy_day_input import UsStrategyDayInput
 
 _KST = ZoneInfo("Asia/Seoul")
 Clock = Callable[[], dt.datetime]
@@ -37,20 +57,24 @@ def run_day_session_service_tick(
 ) -> DaySessionServiceResult:
     now = clock().astimezone(dt.UTC)
     if _session_is_closed(config, now):
-        return DaySessionServiceResult(config.market, "no_action", "session_closed")
-    authority = _authority_reason(config)
-    if authority is not None:
-        return DaySessionServiceResult(config.market, "no_action", authority)
-    match config:
-        case UsDaySessionServiceConfig():
-            code, reason = _run_us(config, now)
-        case KrDaySessionServiceConfig():
-            code, reason = _run_kr(config)
-    return DaySessionServiceResult(
-        config.market,
-        "processed" if code == 0 else "no_action",
-        reason,
-    )
+        result = DaySessionServiceResult(config.market, "no_action", "session_closed")
+    else:
+        authority = _authority_reason(config)
+        if authority is not None:
+            result = DaySessionServiceResult(config.market, "no_action", authority)
+        else:
+            match config:
+                case UsDaySessionServiceConfig():
+                    code, reason = _run_us(config, now)
+                case KrDaySessionServiceConfig():
+                    code, reason = _run_kr(config, now)
+            result = DaySessionServiceResult(
+                config.market,
+                "processed" if code == 0 else "no_action",
+                reason,
+            )
+    _persist_health(config, now, result)
+    return result
 
 
 def _session_is_closed(config: DaySessionServiceConfig, now: dt.datetime) -> bool:
@@ -89,38 +113,36 @@ def _git(root: Path, *arguments: str) -> str:
 
 
 def _run_us(config: UsDaySessionServiceConfig, now: dt.datetime) -> tuple[int, str]:
-    fixed = tuple(config.source_root / name for name in (
-        "scanner.json",
-        "articles.json",
-        "news-evidence.json",
-        "market-context.json",
-    ))
-    quotes = tuple(sorted((config.source_root / "quotes").glob("*.json")))
-    ticks = tuple(sorted((config.source_root / "completed-ticks").glob("*.json")))
-    if any(not path.is_file() for path in fixed) or not quotes or not ticks:
+    session = config.source_root / now.astimezone(NEW_YORK).strftime("%Y%m%d")
+    day_input = _latest_day_input(session)
+    if day_input is None:
         return 2, "source_missing"
     code, result = run_us_day_session_tick(
         UsDaySessionTickRequest(
-            scanner=fixed[0],
-            articles=fixed[1],
-            news_evidence=fixed[2],
-            market_context=fixed[3],
-            quotes=quotes,
-            completed_ticks=ticks,
+            day_input=day_input,
             outputs=config.state_root,
             evaluated_at=now,
             version_store=config.source_root / "version-store.sqlite3",
             production_manifest=config.source_root / "production-manifest.json",
             live_model_provider=config.live_model_provider,
+            allow_post_close_source_fallback=False,
         )
     )
     return code, result.reason or result.tick_status or result.status
 
 
-def _run_kr(config: KrDaySessionServiceConfig) -> tuple[int, str]:
-    requests = tuple(sorted(config.source_root.glob("*.json")))
-    if not requests:
-        return 2, "source_missing"
+def _run_kr(config: KrDaySessionServiceConfig, now: dt.datetime) -> tuple[int, str]:
+    try:
+        policies = tuple(
+            item
+            for item in ExperimentLedgerStore(config.experiment_ledger).day_exploration_policies(MarketId.KR_EQUITIES)
+            if item.payload.effective_session_date == now.astimezone(_KST).date()
+        )
+        if not policies or not policies[-1].payload.active_capsule_ids:
+            return 2, "capsule_authority_missing"
+        requests = _materialize_kr_requests(config, now, policies[-1].payload.active_capsule_ids)
+    except (OSError, TypeError, ValidationError, ValueError):
+        return 2, "source_invalid"
     command = (
         sys.executable,
         str(config.project_root / "run_kr_day_capsule_shadow.py"),
@@ -139,11 +161,144 @@ def _run_kr(config: KrDaySessionServiceConfig) -> tuple[int, str]:
     return completed.returncode, reason
 
 
+def _materialize_kr_requests(
+    config: KrDaySessionServiceConfig,
+    evaluated_at: dt.datetime,
+    capsule_ids: tuple[str, ...],
+) -> tuple[Path, ...]:
+    local_date = evaluated_at.astimezone(_KST).date()
+    cycle_prefix = f"kr-research-{local_date.strftime('%Y%m%d')}-"
+    cycles = tuple(
+        path
+        for path in sorted(config.source_root.iterdir())[-24:]
+        if path.is_dir() and path.name.startswith(cycle_prefix)
+    )
+    opportunities = tuple(
+        opportunity
+        for cycle in reversed(cycles)
+        for opportunity in reversed(read_opportunity_snapshots(cycle / "projection" / "opportunities.v1.jsonl"))
+        if opportunity.observed_at <= evaluated_at < opportunity.valid_until
+    )
+    calendars = tuple(
+        item
+        for item in KisKrSessionCalendarStore(config.calendar_store).snapshots()
+        if item.payload.base_date == local_date and item.payload.observed_at <= evaluated_at
+    )
+    if not opportunities or not calendars:
+        raise ValueError
+    opportunity = opportunities[0]
+    symbol = opportunity.candidates[0].symbol
+    cycle_ids = tuple(item.record_id for item in opportunity.evidence_refs if item.namespace == "kr/collection_cycle")
+    if len(cycle_ids) != 1:
+        raise ValueError
+    cycle = next((item for item in cycles if item.name == cycle_ids[0]), None)
+    if cycle is None:
+        raise ValueError
+    receipts = tuple(
+        item
+        for item in KisKrMarketReceiptStore(cycle / f"{symbol}.market.sqlite3").receipts()
+        if item.symbol == symbol and item.received_at <= evaluated_at
+    )
+    minute_receipts = tuple(item for item in receipts if item.kind is KisKrMarketReceiptKind.MINUTE_BARS)
+    prices = tuple(item for item in receipts if item.kind is KisKrMarketReceiptKind.PRICE_STATUS)
+    quotes = tuple(item for item in receipts if item.kind is KisKrMarketReceiptKind.ORDER_BOOK)
+    if not minute_receipts or not prices or not quotes:
+        raise ValueError
+    bars = project_kis_kr_completed_minutes(
+        KisKrMinuteProjectionInput(receipts=minute_receipts, evaluated_at=evaluated_at)
+    )
+    market = project_kis_kr_market_snapshot(
+        KisKrSnapshotProjectionInput(
+            price_receipt=prices[-1],
+            quote_receipt=quotes[-1],
+            evaluated_at=evaluated_at,
+        )
+    )
+    ledger = ExperimentLedgerStore(config.experiment_ledger)
+    capsules = tuple(ledger.day_strategy_capsule(item) for item in capsule_ids[:3])
+    if any(item is None for item in capsules):
+        raise ValueError
+    root = config.state_root / "materialized_requests" / local_date.isoformat()
+    paths: list[Path] = []
+    for stored in capsules:
+        if stored is None:
+            raise ValueError
+        request = KrDayCapsuleEvaluationRequest(
+            capsule=stored.capsule,
+            calendar=calendars[-1],
+            opportunity=opportunity,
+            market=market,
+            bars=bars,
+            evaluated_at=evaluated_at,
+            max_slippage_bps=Decimal("20"),
+        )
+        path = root / f"{stored.capsule.capsule_id}.json"
+        _ = publish_private_immutable_text(path, canonical_experiment_ledger_json(request) + "\n")
+        paths.append(path)
+    return tuple(paths)
+
+
 def _run_child(command: tuple[str, ...]) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(command, check=False, capture_output=True, text=True, timeout=180)
     except (OSError, subprocess.SubprocessError):
         return subprocess.CompletedProcess(command, 2, "", "")
+
+
+_TypedArtifact = type[KrDayCapsuleEvaluationRequest]
+
+
+def _typed_files(root: Path, model: _TypedArtifact) -> tuple[Path, ...]:
+    if not root.is_dir():
+        return ()
+    accepted: list[Path] = []
+    for path in sorted(root.glob("*.json"))[-12:]:
+        try:
+            _ = model.model_validate_json(read_private_text(path))
+        except (OSError, TypeError, ValidationError, ValueError):
+            continue
+        accepted.append(path)
+    return tuple(accepted[-3:])
+
+
+def _latest_day_input(root: Path) -> Path | None:
+    if not root.is_dir():
+        return None
+    for path in reversed(sorted(root.glob("*.day-input.json"))[-12:]):
+        try:
+            _ = UsStrategyDayInput.model_validate_json(read_private_text(path))
+        except (OSError, TypeError, ValidationError, ValueError):
+            continue
+        return path
+    return None
+
+
+def _persist_health(
+    config: DaySessionServiceConfig,
+    observed_at: dt.datetime,
+    result: DaySessionServiceResult,
+) -> None:
+    payload = {
+        "market": result.market,
+        "mutation": 0,
+        "observed_at": observed_at.isoformat(),
+        "reason": result.reason,
+        "schema_version": 1,
+        "source_contract": "typed-collector-artifacts-v1",
+        "status": result.status,
+    }
+    canonical = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    digest = hashlib.sha256(canonical.encode()).hexdigest()
+    write_private_stable_report(
+        config.state_root / "health" / "day_session_service_health.json",
+        json.dumps(
+            payload | {"receipt_sha256": digest},
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n",
+    )
 
 
 __all__ = ("DaySessionServiceResult", "run_day_session_service_tick")

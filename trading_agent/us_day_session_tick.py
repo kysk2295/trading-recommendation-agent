@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
 from trading_agent.private_immutable_file import (
     InvalidPrivateImmutableFileError,
@@ -25,12 +25,13 @@ _ROOT = Path(__file__).parents[1]
 class UsDaySessionTickRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    scanner: Path
-    articles: Path
-    news_evidence: Path
-    market_context: Path
-    quotes: tuple[Path, ...] = Field(min_length=1)
-    completed_ticks: tuple[Path, ...] = Field(min_length=1)
+    day_input: Path | None = None
+    scanner: Path | None = None
+    articles: Path | None = None
+    news_evidence: Path | None = None
+    market_context: Path | None = None
+    quotes: tuple[Path, ...] = ()
+    completed_ticks: tuple[Path, ...] = ()
     outputs: Path
     evaluated_at: AwareDatetime
     version_store: Path | None = None
@@ -42,6 +43,17 @@ class UsDaySessionTickRequest(BaseModel):
     live_model_provider: str | None = Field(default=None, min_length=1)
     entry_cutoff_minutes: int = Field(default=15, ge=6, le=59)
     eod_minutes: int = Field(default=5, ge=1, le=5)
+    allow_post_close_source_fallback: bool = True
+
+    @model_validator(mode="after")
+    def validate_source_route(self) -> UsDaySessionTickRequest:
+        legacy = (self.scanner, self.articles, self.news_evidence, self.market_context)
+        if self.day_input is not None:
+            if any(value is not None for value in legacy) or self.quotes or self.completed_ticks:
+                raise ValueError("day_input_conflicts_with_legacy_source")
+        elif any(value is None for value in legacy) or not self.quotes or not self.completed_ticks:
+            raise ValueError("day_source_missing")
+        return self
 
 
 class UsDaySessionTickResult(BaseModel):
@@ -63,10 +75,10 @@ def run_us_day_session_tick(request: UsDaySessionTickRequest) -> tuple[int, UsDa
     """Compose immutable US session evidence projection with one existing Day Agent tick."""
     session_id = f"XNYS-{request.evaluated_at.astimezone(NEW_YORK).date().isoformat()}"
     source_root = request.outputs.expanduser().absolute() / "us_day" / "session_sources"
-    projection = _run(
-        (
-            sys.executable,
-            str(_ROOT / "run_us_day_source_projection.py"),
+    source_arguments = (
+        ("--day-input", str(request.day_input))
+        if request.day_input is not None
+        else (
             "--scanner",
             str(request.scanner),
             "--articles",
@@ -77,6 +89,13 @@ def run_us_day_session_tick(request: UsDaySessionTickRequest) -> tuple[int, UsDa
             str(request.market_context),
             *(value for path in request.quotes for value in ("--quote", str(path))),
             *(value for path in request.completed_ticks for value in ("--completed-tick", str(path))),
+        )
+    )
+    projection = _run(
+        (
+            sys.executable,
+            str(_ROOT / "run_us_day_source_projection.py"),
+            *source_arguments,
             "--output-root",
             str(source_root),
             "--now",
@@ -85,6 +104,14 @@ def run_us_day_session_tick(request: UsDaySessionTickRequest) -> tuple[int, UsDa
     )
     projection_payload = _payload(projection)
     if projection.returncode != 0 or projection_payload.get("status") != "ready":
+        if not request.allow_post_close_source_fallback:
+            result = UsDaySessionTickResult(
+                status="blocked",
+                stage="projection",
+                session_id=session_id,
+                reason=projection_payload.get("reason", "source_projection_blocked"),
+            )
+            return _finalize(request.outputs, result)
         selected = _latest_post_close_source(source_root, request.evaluated_at, session_id)
         if selected is None:
             result = UsDaySessionTickResult(

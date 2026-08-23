@@ -19,8 +19,19 @@ from trading_agent.alpaca_http import (
     AlpacaSecretFileError,
     MissingAlpacaCredentialsError,
     create_alpaca_client,
+    create_alpaca_news_http_client,
     load_alpaca_credentials,
 )
+from trading_agent.alpaca_news_client import AlpacaNewsClient, AlpacaNewsTransportError
+from trading_agent.alpaca_news_collection import collect_alpaca_news
+from trading_agent.alpaca_news_coverage import assess_alpaca_news_coverage
+from trading_agent.alpaca_news_coverage_models import AlpacaNewsCoverageManifest
+from trading_agent.alpaca_news_models import AlpacaNewsContractError, AlpacaNewsRequest, AlpacaNewsRunStatus
+from trading_agent.alpaca_news_opportunity_evidence import (
+    AlpacaNewsOpportunityEvidenceError,
+    project_alpaca_news_opportunity_evidence,
+)
+from trading_agent.alpaca_news_store import AlpacaNewsStore, AlpacaNewsStoreError
 from trading_agent.contract_outbox import append_opportunity_snapshot
 from trading_agent.private_immutable_file import publish_private_immutable_text
 from trading_agent.signal_contract_models import OpportunitySnapshot
@@ -29,6 +40,7 @@ from trading_agent.strategy_research_forward_observations import (
     project_matured_intraday_observations,
 )
 from trading_agent.us_equity_calendar import NEW_YORK, regular_session_bounds
+from trading_agent.us_strategy_day_input import UsStrategyDayInput, candidate_evidence
 from trading_agent.us_strategy_research_http import AlpacaUsStrategyResearchClient
 from trading_agent.us_strategy_research_source import (
     UsStrategyResearchSourceError,
@@ -44,6 +56,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--credentials-path", type=Path, required=True)
     parser.add_argument("--live-session-root", type=Path, required=True)
     parser.add_argument("--market-context-root", type=Path, required=True)
+    parser.add_argument("--day-source-root", type=Path, required=True)
+    parser.add_argument("--news-database", type=Path, required=True)
     return parser.parse_args(argv)
 
 
@@ -64,6 +78,45 @@ def main(
         with create_alpaca_client() as http:
             bars, quotes = AlpacaUsStrategyResearchClient(http, credentials).fetch(SYMBOLS, now)
         opportunity, context = build_us_strategy_research_sources(bars, quotes, now)
+        news_request = AlpacaNewsRequest(
+            collection_id=f"us-day-{local.strftime('%Y%m%d-%H%M%S')}",
+            symbols=tuple(item.symbol for item in opportunity.candidates),
+            start_at=bounds[0],
+            end_at=now,
+            limit=50,
+            max_pages=2,
+        )
+        news_store = AlpacaNewsStore(args.news_database.expanduser().absolute())
+        with create_alpaca_news_http_client() as news_http:
+            news_result = collect_alpaca_news(
+                AlpacaNewsClient(news_http, credentials, _clock=lambda: now),
+                news_store,
+                news_request,
+                _clock=lambda: now,
+            )
+        if news_result.run.status is not AlpacaNewsRunStatus.SUCCESS:
+            raise UsStrategyResearchSourceError("news_collection_incomplete")
+        news_manifest = AlpacaNewsCoverageManifest(
+            universe_id="us-strategy-day-v1",
+            cutoff_at=now,
+            requests=(news_request,),
+        )
+        news_assessment = assess_alpaca_news_coverage(news_manifest, news_store)
+        news_evidence = project_alpaca_news_opportunity_evidence(
+            news_manifest,
+            news_assessment,
+            news_store,
+        )
+        symbols = {item.symbol for item in opportunity.candidates}
+        articles = tuple(item for item in news_result.articles if set(item.symbols).issubset(symbols))
+        day_input = UsStrategyDayInput(
+            opportunity=opportunity,
+            market_context=context,
+            articles=articles,
+            news_evidence=news_evidence,
+            candidates=candidate_evidence(opportunity, bars, quotes, now),
+            materialized_at=now,
+        )
         session = args.live_session_root.expanduser().absolute() / local.strftime("%Y%m%d")
         session.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(session, 0o700)
@@ -82,9 +135,20 @@ def main(
             / f"{context.observed_at.strftime('%Y%m%dT%H%M%S%fZ')}-{context.context_id}.market-context.json",
             context.model_dump_json() + "\n",
         )
+        day_root = args.day_source_root.expanduser().absolute() / local.strftime("%Y%m%d")
+        day_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(day_root, 0o700)
+        _ = publish_private_immutable_text(
+            day_root / f"{now.strftime('%Y%m%dT%H%M%S%fZ')}-{day_input.input_id}.day-input.json",
+            day_input.model_dump_json() + "\n",
+        )
     except (
         AlpacaApiError,
         AlpacaSecretFileError,
+        AlpacaNewsContractError,
+        AlpacaNewsOpportunityEvidenceError,
+        AlpacaNewsStoreError,
+        AlpacaNewsTransportError,
         MissingAlpacaCredentialsError,
         OSError,
         TypeError,
