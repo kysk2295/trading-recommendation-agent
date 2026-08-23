@@ -6,10 +6,14 @@ from dataclasses import replace
 import pytest
 
 from tests.test_us_day_situation_projection import _inputs
+from trading_agent.alpaca_models import AlpacaBar
 from trading_agent.us_day_source_projection import (
     UsDaySourceProjectionError,
     project_us_day_source,
+    project_us_strategy_day_source,
 )
+from trading_agent.us_strategy_day_input import UsStrategyDayInput, candidate_evidence
+from trading_agent.us_strategy_research_source import UsLatestQuote
 
 
 def test_projects_canonical_source_from_current_verified_inputs() -> None:
@@ -63,3 +67,56 @@ def test_source_projection_rejects_quote_that_outlives_tick_actionability() -> N
             completed_bars=inputs.completed_bars,
             evaluated_at=inputs.evaluated_at,
         )
+
+
+def test_strategy_projection_keeps_fixed_reviewed_slippage_bound_for_wide_spread() -> None:
+    inputs = _inputs()
+    bars_by_symbol = {
+        tick.bars[-1].symbol: tuple(
+            AlpacaBar(
+                t=bar.timestamp,
+                o=bar.open,
+                h=bar.high,
+                l=bar.low,
+                c=bar.close,
+                v=bar.volume,
+                n=1,
+                vw=bar.close,
+            )
+            for bar in tick.bars
+        )
+        for tick in inputs.completed_bars
+    }
+    quotes_by_symbol = {
+        quote.symbol: UsLatestQuote(
+            symbol=quote.symbol,
+            bid=float(quote.bid),
+            ask=float(quote.ask),
+            bid_size=quote.bid_size,
+            ask_size=quote.ask_size,
+            observed_at=quote.provider_observed_at,
+        )
+        for quote in inputs.quotes
+    }
+    first_symbol = inputs.scanner.opportunity.candidates[0].symbol
+    first = quotes_by_symbol[first_symbol]
+    quotes_by_symbol[first_symbol] = first.model_copy(update={"ask": first.bid * 1.01})
+    source = UsStrategyDayInput(
+        opportunity=inputs.scanner.opportunity,
+        market_context=inputs.market_context,
+        articles=inputs.articles,
+        news_evidence=inputs.news_evidence,
+        candidates=candidate_evidence(
+            inputs.scanner.opportunity,
+            bars_by_symbol,
+            quotes_by_symbol,
+            inputs.evaluated_at,
+        ),
+        materialized_at=inputs.evaluated_at,
+    )
+
+    projected = project_us_strategy_day_source(source, inputs.evaluated_at)
+
+    market = next(item for item in projected.current_markets if item.symbol == first_symbol)
+    assert market.quote.spread_bps > 20
+    assert market.quote.max_slippage_bps == 20

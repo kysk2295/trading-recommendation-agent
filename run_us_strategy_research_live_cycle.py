@@ -108,7 +108,7 @@ def main(
             news_store,
         )
         symbols = {item.symbol for item in opportunity.candidates}
-        articles = tuple(item for item in news_result.articles if set(item.symbols).issubset(symbols))
+        articles = tuple(item for item in news_result.articles if set(item.symbols).intersection(symbols))
         day_input = UsStrategyDayInput(
             opportunity=opportunity,
             market_context=context,

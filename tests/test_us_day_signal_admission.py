@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import fields, replace
+from decimal import Decimal
 
 import pytest
 
@@ -69,6 +70,21 @@ def test_champion_current_quote_signal_is_admitted_with_exact_identity() -> None
 
 def test_admission_request_has_no_caller_controlled_liquidity_quantity() -> None:
     assert "liquidity_allowed_quantity" not in {item.name for item in fields(UsDaySignalAdmissionRequest)}
+
+
+def test_signal_admission_blocks_projected_quote_above_reviewed_slippage_bound() -> None:
+    request = _eligible_request()
+    wide_quote = request.current_market.quote.model_copy(
+        update={"spread_bps": Decimal("25"), "max_slippage_bps": Decimal("20")}
+    )
+    changed = replace(
+        request,
+        current_market=request.current_market.model_copy(update={"quote": wide_quote}),
+        signal=request.signal.model_copy(update={"quote_validation": wide_quote}),
+    )
+
+    with pytest.raises(InvalidUsDaySignalAdmissionError, match="signal_not_eligible_for_paper"):
+        admit_us_day_signal(changed, RecordingLiquidityPolicy(37))
 
 
 @pytest.mark.parametrize("quantity", (0, -1, True))

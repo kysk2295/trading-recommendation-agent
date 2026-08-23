@@ -16,7 +16,9 @@ class _LatestQuotePayload(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore", populate_by_name=True)
 
     ask: float = Field(alias="ap", gt=0, allow_inf_nan=False)
+    ask_size: int = Field(default=0, alias="as", ge=0)
     bid: float = Field(alias="bp", gt=0, allow_inf_nan=False)
+    bid_size: int = Field(default=0, alias="bs", ge=0)
     observed_at: dt.datetime = Field(alias="t")
 
 
@@ -84,6 +86,8 @@ class AlpacaUsStrategyResearchClient:
                 symbol=symbol,
                 bid=quote.bid,
                 ask=quote.ask,
+                bid_size=quote.bid_size,
+                ask_size=quote.ask_size,
                 observed_at=quote.observed_at,
             )
             for symbol, quote in payload.quotes.items()

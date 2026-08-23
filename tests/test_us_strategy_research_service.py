@@ -12,6 +12,7 @@ import pytest
 
 import run_us_strategy_research_live_cycle as live_cycle
 import run_us_strategy_research_service as service
+from trading_agent.us_day_source_projection import project_us_strategy_day_source
 from trading_agent.us_strategy_day_input import UsStrategyDayInput
 from trading_agent.us_strategy_research_service_config import (
     US_STRATEGY_RESEARCH_SERVICE_LABEL,
@@ -100,12 +101,21 @@ def test_live_cycle_emits_producer_owned_day_input_from_get_only_responses(
                         "n": 10,
                         "vw": close,
                     }
-                    for minute, close in ((39, 100), (40, 103 if symbol == "DIA" else 101))
+                    for minute, close in ((40, 100), (41, 103 if symbol == "DIA" else 101))
                 ]
                 for symbol in live_cycle.SYMBOLS
             }
             return httpx2.Response(200, json={"bars": bars, "next_page_token": None})
-        quotes = {symbol: {"ap": 103.01, "bp": 102.99, "t": "2026-08-19T13:41:58Z"} for symbol in live_cycle.SYMBOLS}
+        quotes = {
+            symbol: {
+                "ap": 103.01,
+                "as": 567 if symbol == "DIA" else 100,
+                "bp": 102.99,
+                "bs": 1_234 if symbol == "DIA" else 100,
+                "t": "2026-08-19T13:41:58Z",
+            }
+            for symbol in live_cycle.SYMBOLS
+        }
         return httpx2.Response(200, json={"quotes": quotes})
 
     def news_handler(request: httpx2.Request) -> httpx2.Response:
@@ -116,7 +126,7 @@ def test_live_cycle_emits_producer_owned_day_input_from_get_only_responses(
                     "id": 1,
                     "headline": "Dow leaders extend verified session momentum",
                     "source": "benzinga",
-                    "symbols": ["DIA"],
+                    "symbols": ["DIA", "SPY", "NVDA"],
                     "created_at": "2026-08-19T13:35:00Z",
                     "updated_at": "2026-08-19T13:36:00Z",
                     "url": "https://example.invalid/news/1",
@@ -161,9 +171,23 @@ def test_live_cycle_emits_producer_owned_day_input_from_get_only_responses(
 
     artifact = next((tmp_path / "day-source/20260819").glob("*.day-input.json"))
     day_input = UsStrategyDayInput.model_validate_json(artifact.read_text())
+    source = project_us_strategy_day_source(day_input, now)
+    article = day_input.articles[0]
+    observation = day_input.news_evidence.snapshots[0].observations[0]
+    catalyst = source.situation.themes[0].catalysts[0]
+    flow = source.situation.themes[0].leaders[0].flow
     assert result == 0
     assert day_input.opportunity.candidates[0].symbol == "DIA"
-    assert day_input.articles[0].headline.startswith("Dow leaders")
+    assert article.headline.startswith("Dow leaders")
+    assert article.symbols == ("DIA", "NVDA", "SPY")
+    assert observation.event_id == article.event_id
+    assert catalyst.event_id == article.event_id
+    assert catalyst.symbols == ("DIA", "SPY")
+    assert source.situation.themes[0].symbols == ("DIA", "SPY")
+    assert source.situation.themes[0].claims[0].symbols == ("DIA", "SPY")
+    assert (flow.bid_size, flow.ask_size) == (1_234, 567)
+    assert flow.evidence_refs
+    assert source.situation.themes[0].leaders[0].inferences[0].value > 0
     assert [request.method for request in requests] == ["GET", "GET", "GET"]
 
 

@@ -95,7 +95,7 @@ def project_us_day_situation(
                         tick_by_symbol,
                         evaluated_at,
                     )
-                    for group in _article_groups(articles)
+                    for group in _article_groups(articles, set(quote_by_symbol))
                 ),
                 key=lambda item: item.theme_id,
             )
@@ -136,7 +136,7 @@ def project_us_strategy_day_situation(source: UsStrategyDayInput, evaluated_at: 
                         evidence_by_symbol,
                         evaluated_at,
                     )
-                    for group in _article_groups(checked.articles)
+                    for group in _article_groups(checked.articles, set(evidence_by_symbol))
                 ),
                 key=lambda item: item.theme_id,
             )
@@ -202,8 +202,11 @@ def _validate_strategy_input(source: UsStrategyDayInput, evaluated_at: dt.dateti
         if (
             article.created_at < bounds[0]
             or article.updated_at > evaluated_at
-            or not set(article.symbols).issubset(symbols)
-            or any((article.event_id, symbol) not in observed_pairs for symbol in article.symbols)
+            or not set(article.symbols).intersection(symbols)
+            or any(
+                (article.event_id, symbol) not in observed_pairs
+                for symbol in set(article.symbols).intersection(symbols)
+            )
         ):
             _fail()
     return session_date
@@ -249,7 +252,7 @@ def _validate_inputs(
         or tuple(item.symbol for item in news.snapshots) != tuple(sorted(symbols))
         or not _fresh(news.assessment.assessed_at, evaluated_at, _MAX_NEWS_AGE)
         or any(not item.coverage.complete for item in news.snapshots)
-        or any(not set(item.symbols).issubset(symbols) for item in articles)
+        or any(not set(item.symbols).intersection(symbols) for item in articles)
     ):
         _fail()
     article_by_id = {item.event_id: item for item in articles}
@@ -271,7 +274,10 @@ def _validate_inputs(
         item.created_at < bounds[0]
         or item.created_at > item.updated_at
         or item.updated_at > evaluated_at
-        or any((item.event_id, symbol) not in observed_pairs for symbol in item.symbols)
+        or any(
+            (item.event_id, symbol) not in observed_pairs
+            for symbol in set(item.symbols).intersection(symbols)
+        )
         for item in articles
     ):
         _fail()
@@ -320,20 +326,29 @@ def _project_theme(
     ticks: Mapping[str, UsForwardShadowTick | UsStrategyDayCandidateEvidence],
     evaluated_at: dt.datetime,
 ) -> ThemeMap:
-    symbols = tuple(sorted({symbol for item in articles for symbol in item.symbols}))
+    opportunity_symbols = {item.symbol for item in opportunity.candidates}
+    symbols = tuple(
+        sorted({symbol for item in articles for symbol in set(item.symbols).intersection(opportunity_symbols)})
+    )
     keywords = tuple(sorted({word for item in articles for word in _keywords(item.headline)}))[:12]
     catalysts = tuple(
         CatalystEvidence(
             event_id=item.event_id,
             headline=item.headline,
             source=item.source,
-            symbols=item.symbols,
+            symbols=tuple(sorted(set(item.symbols).intersection(opportunity_symbols))),
             published_at=item.created_at,
             received_at=max(
-                ref.observed_at for symbol in item.symbols for ref in observation_refs[(item.event_id, symbol)]
+                ref.observed_at
+                for symbol in set(item.symbols).intersection(opportunity_symbols)
+                for ref in observation_refs[(item.event_id, symbol)]
             ),
             evidence_refs=_refs(
-                tuple(ref for symbol in item.symbols for ref in observation_refs[(item.event_id, symbol)])
+                tuple(
+                    ref
+                    for symbol in set(item.symbols).intersection(opportunity_symbols)
+                    for ref in observation_refs[(item.event_id, symbol)]
+                )
             ),
         )
         for item in sorted(articles, key=lambda value: (value.created_at, value.event_id))
@@ -464,7 +479,10 @@ def _project_theme(
     )
 
 
-def _article_groups(articles: tuple[AlpacaNewsArticle, ...]) -> tuple[tuple[AlpacaNewsArticle, ...], ...]:
+def _article_groups(
+    articles: tuple[AlpacaNewsArticle, ...],
+    requested_symbols: set[str],
+) -> tuple[tuple[AlpacaNewsArticle, ...], ...]:
     by_id = {item.event_id: item for item in articles}
     remaining = set(by_id)
     groups: list[tuple[AlpacaNewsArticle, ...]] = []
@@ -477,13 +495,12 @@ def _article_groups(articles: tuple[AlpacaNewsArticle, ...]) -> tuple[tuple[Alpa
                 continue
             component.add(event_id)
             current = by_id[event_id]
-            current_symbols = set(current.symbols)
+            current_symbols = set(current.symbols).intersection(requested_symbols)
             current_keywords = set(_keywords(current.headline))
             for other_id in sorted(remaining - component):
                 other = by_id[other_id]
-                if current_symbols.intersection(other.symbols) and current_keywords.intersection(
-                    _keywords(other.headline)
-                ):
+                linked_symbols = current_symbols.intersection(set(other.symbols).intersection(requested_symbols))
+                if linked_symbols and current_keywords.intersection(_keywords(other.headline)):
                     queue.append(other_id)
         remaining -= component
         groups.append(tuple(by_id[item] for item in sorted(component)))
@@ -634,11 +651,11 @@ def _spread_bps(quote: UsQuotePolicyEvidence | UsStrategyDayCandidateEvidence) -
 
 
 def _bid_size(quote: UsQuotePolicyEvidence | UsStrategyDayCandidateEvidence) -> int:
-    return 0 if isinstance(quote, UsStrategyDayCandidateEvidence) else quote.bid_size
+    return quote.quote.bid_size if isinstance(quote, UsStrategyDayCandidateEvidence) else quote.bid_size
 
 
 def _ask_size(quote: UsQuotePolicyEvidence | UsStrategyDayCandidateEvidence) -> int:
-    return 0 if isinstance(quote, UsStrategyDayCandidateEvidence) else quote.ask_size
+    return quote.quote.ask_size if isinstance(quote, UsStrategyDayCandidateEvidence) else quote.ask_size
 
 
 def _strategy_bar_frame(evidence: UsStrategyDayCandidateEvidence) -> BarFrame:

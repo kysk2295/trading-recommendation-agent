@@ -31,6 +31,8 @@ class UsLatestQuote(BaseModel):
     symbol: str = Field(min_length=1)
     bid: float = Field(gt=0, allow_inf_nan=False)
     ask: float = Field(gt=0, allow_inf_nan=False)
+    bid_size: int = Field(default=0, ge=0)
+    ask_size: int = Field(default=0, ge=0)
     observed_at: dt.datetime
 
     @model_validator(mode="after")
@@ -56,23 +58,16 @@ def build_us_strategy_research_sources(
                 key=lambda item: (-_continuation_score(item[1]), item[0]),
             )
         )
-        symbol, bars = ranked[0]
-        quote = quotes_by_symbol.get(symbol)
-        if quote is None or quote.symbol != symbol:
-            raise UsStrategyResearchSourceError("latest_quote_missing")
-        if not dt.timedelta(0) <= now - quote.observed_at <= dt.timedelta(minutes=2):
-            raise UsStrategyResearchSourceError("latest_quote_stale")
-        last_bar = bars[-1]
-        ended_at = last_bar.timestamp + dt.timedelta(minutes=1)
-        observed_at = max(ended_at, quote.observed_at)
+        sources = _candidate_sources(ranked, quotes_by_symbol, now)
+        observed_at = max(max(ended_at, quote.observed_at) for _, _, quote, _, ended_at in sources)
         if observed_at > now:
             raise UsStrategyResearchSourceError("source_time_future")
-        spread_bps = (quote.ask - quote.bid) / ((quote.ask + quote.bid) / 2.0) * 10_000.0
-        if not math.isfinite(spread_bps):
-            raise UsStrategyResearchSourceError("latest_quote_invalid")
+        top_spread_bps = sources[0][3]
         source_hash = _sha(
             ":".join(
-                (
+                value
+                for symbol, bars, quote, _, _ in sources
+                for value in (
                     symbol,
                     *(bar.model_dump_json(by_alias=True) for bar in bars),
                     quote.model_dump_json(),
@@ -80,29 +75,33 @@ def build_us_strategy_research_sources(
             )
         )
         opportunity_id = f"us-momentum-{observed_at.strftime('%Y%m%dT%H%M%S')}-{source_hash[:16]}"
-        evidence = (
-            EvidenceRef(
-                namespace="bar/alpaca-sip",
-                record_id=f"{source_hash}:{last_bar.timestamp.isoformat()}",
-                observed_at=ended_at,
-            ),
-            EvidenceRef(
-                namespace="quote/alpaca-sip",
-                record_id=f"{source_hash}:{quote.observed_at.isoformat()}",
-                observed_at=quote.observed_at,
-            ),
+        evidence = tuple(
+            ref
+            for symbol, bars, quote, _, ended_at in sources
+            for ref in (
+                EvidenceRef(
+                    namespace="bar/alpaca-sip",
+                    record_id=f"{source_hash}:{symbol}:{bars[-1].timestamp.isoformat()}",
+                    observed_at=ended_at,
+                ),
+                EvidenceRef(
+                    namespace="quote/alpaca-sip",
+                    record_id=f"{source_hash}:{symbol}:{quote.observed_at.isoformat()}",
+                    observed_at=quote.observed_at,
+                ),
+            )
         )
         coverage = (
             SourceCoverage(
                 source_id="alpaca_sip_completed_bars",
-                observed_at=ended_at,
+                observed_at=max(item[4] for item in sources),
                 record_count=sum(len(item) for item in completed.values()),
                 complete=True,
             ),
             SourceCoverage(
                 source_id="alpaca_sip_latest_quote",
-                observed_at=quote.observed_at,
-                record_count=1,
+                observed_at=max(item[2].observed_at for item in sources),
+                record_count=len(sources),
                 complete=True,
             ),
         )
@@ -116,13 +115,14 @@ def build_us_strategy_research_sources(
             producer_strategy_version="alpaca-sip-current-session-momentum-v1",
             observed_at=observed_at,
             valid_until=observed_at + dt.timedelta(minutes=1),
-            candidates=(
+            candidates=tuple(
                 OpportunityCandidate(
                     symbol=symbol,
-                    rank=1,
+                    rank=rank,
                     score=Decimal(str(_continuation_score(bars))),
                     features=_features(bars, quote, spread_bps),
-                ),
+                )
+                for rank, (symbol, bars, quote, spread_bps, _) in enumerate(sources, start=1)
             ),
             evidence_refs=tuple(sorted(evidence, key=lambda item: item.canonical_id)),
             source_coverage=tuple(sorted(coverage, key=lambda item: item.source_id)),
@@ -135,7 +135,7 @@ def build_us_strategy_research_sources(
             regime_labels=(MarketRegimeLabel.UNKNOWN,),
             breadth_and_volatility_features=(
                 FeatureValue(name="candidate_count", value=str(len(completed))),
-                FeatureValue(name="spread_bps", value=_number(spread_bps)),
+                FeatureValue(name="spread_bps", value=_number(top_spread_bps)),
             ),
             macro_and_flow_refs=(),
             coverage=tuple(sorted(coverage, key=lambda item: item.source_id)),
@@ -146,6 +146,25 @@ def build_us_strategy_research_sources(
         raise
     except (ArithmeticError, KeyError, TypeError, ValueError):
         raise UsStrategyResearchSourceError("us_strategy_source_invalid") from None
+
+
+def _candidate_sources(
+    ranked: tuple[tuple[str, tuple[AlpacaBar, ...]], ...],
+    quotes_by_symbol: dict[str, UsLatestQuote],
+    now: dt.datetime,
+) -> tuple[tuple[str, tuple[AlpacaBar, ...], UsLatestQuote, float, dt.datetime], ...]:
+    result: list[tuple[str, tuple[AlpacaBar, ...], UsLatestQuote, float, dt.datetime]] = []
+    for symbol, bars in ranked:
+        quote = quotes_by_symbol.get(symbol)
+        if quote is None or quote.symbol != symbol:
+            raise UsStrategyResearchSourceError("latest_quote_missing")
+        if not dt.timedelta(0) <= now - quote.observed_at <= dt.timedelta(minutes=2):
+            raise UsStrategyResearchSourceError("latest_quote_stale")
+        spread_bps = (quote.ask - quote.bid) / ((quote.ask + quote.bid) / 2.0) * 10_000.0
+        if not math.isfinite(spread_bps):
+            raise UsStrategyResearchSourceError("latest_quote_invalid")
+        result.append((symbol, bars, quote, spread_bps, bars[-1].timestamp + dt.timedelta(minutes=1)))
+    return tuple(result)
 
 
 def _current_session_bounds(now: dt.datetime) -> tuple[dt.datetime, dt.datetime]:

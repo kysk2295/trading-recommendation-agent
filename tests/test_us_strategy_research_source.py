@@ -43,12 +43,12 @@ def test_builds_current_us_momentum_opportunity_from_completed_sip_bars_and_quot
 
     assert opportunity.strategy_lane.market_id is MarketId.US_EQUITIES
     assert opportunity.strategy_lane.strategy_id == "us_intraday_momentum"
-    assert opportunity.candidates[0].symbol == "SPY"
+    assert tuple(item.symbol for item in opportunity.candidates) == ("SPY", "QQQ")
     assert (
         dict((item.name, item.value) for item in opportunity.candidates[0].features)["completed_bar_end_at"]
         == "2026-08-19T13:41:00+00:00"
     )
-    assert opportunity.observed_at == NOW - dt.timedelta(seconds=5)
+    assert opportunity.observed_at == NOW - dt.timedelta(seconds=4)
     assert context.market_id is MarketId.US_EQUITIES
     assert context.observed_at == opportunity.observed_at
     assert all(item.complete for item in opportunity.source_coverage)

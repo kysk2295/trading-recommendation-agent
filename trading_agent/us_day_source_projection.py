@@ -62,7 +62,12 @@ def project_us_strategy_day_source(source: UsStrategyDayInput, evaluated_at: dt.
     try:
         checked = UsStrategyDayInput.model_validate(source.model_dump(mode="python"))
         situation = project_us_strategy_day_situation(checked, evaluated_at)
-        markets = tuple(_strategy_current_market(item, evaluated_at) for item in checked.candidates)
+        leader_symbols = {leader.symbol for theme in situation.themes for leader in theme.leaders}
+        markets = tuple(
+            _strategy_current_market(item, evaluated_at)
+            for item in checked.candidates
+            if item.symbol in leader_symbols
+        )
         return CanonicalUsDaySource(situation=situation, current_markets=markets)
     except (KeyError, TypeError, ValidationError, ValueError):
         raise UsDaySourceProjectionError from None
@@ -81,7 +86,7 @@ def _strategy_current_market(
         observed_at=evidence.quote.observed_at,
         valid_until=valid_until,
         spread_bps=spread,
-        max_slippage_bps=max(spread, Decimal("20")),
+        max_slippage_bps=Decimal("20"),
     )
     prior = evidence.bars[:-1]
     average_minute_volume = max(1, sum(item.volume for item in prior) // len(prior))
