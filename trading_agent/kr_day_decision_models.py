@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import json
 from decimal import Decimal
 from enum import StrEnum, unique
 from typing import Literal, Self, assert_never, override
@@ -70,7 +71,8 @@ class KrDayDecisionEvidenceValue(KrDayDecisionModel):
 
 
 class KrDayCandidateAdmissionPolicy(KrDayDecisionModel):
-    policy_id: Literal["kr-day-candidate-admission-v1"] = "kr-day-candidate-admission-v1"
+    policy_version: Literal["kr-day-candidate-admission-v1"]
+    policy_id: str = Field(pattern=_SHA256_PATTERN)
     capsule_id: str = Field(pattern=_SHA256_PATTERN)
     hypothesis_version_id: str = Field(pattern=_SHA256_PATTERN)
     min_related_symbol_count: int = Field(gt=0)
@@ -80,8 +82,20 @@ class KrDayCandidateAdmissionPolicy(KrDayDecisionModel):
     min_completed_bar_volume_ratio: Decimal = Field(gt=0)
     min_trading_value_krw: Decimal = Field(gt=0)
     min_completed_bar_trading_value_krw: Decimal = Field(gt=0)
-    min_completed_bar_price_response: Decimal = Field(ge=0)
+    min_completed_bar_price_response: Decimal = Field(gt=0)
     max_spread_bps: Decimal = Field(gt=0)
+
+    @classmethod
+    def canonical_id_for(cls, policy: Self) -> str:
+        material = policy.model_dump(mode="json", exclude={"policy_id"})
+        canonical = json.dumps(material, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        return hashlib.sha256(canonical.encode()).hexdigest()
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> Self:
+        if self.policy_id != self.canonical_id_for(self):
+            raise InvalidKrDayCandidateAdmissionError
+        return self
 
 
 class KrDayCandidateAdmissionRequest(KrDayDecisionModel):

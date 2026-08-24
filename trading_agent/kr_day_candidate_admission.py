@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 from decimal import Decimal, InvalidOperation
+from itertools import pairwise
 from typing import Final
 from zoneinfo import ZoneInfo
 
@@ -26,6 +27,7 @@ from trading_agent.kr_theme_day_setup import KrCompletedMinuteBar
 from trading_agent.signal_contract_models import OpportunitySnapshot
 
 _SEOUL: Final = ZoneInfo("Asia/Seoul")
+_SESSION_OPEN: Final = dt.time(9)
 
 
 def assess_kr_day_candidate_admission(request: KrDayCandidateAdmissionRequest) -> KrDayCandidateAdmissionResult:
@@ -36,7 +38,10 @@ def assess_kr_day_candidate_admission(request: KrDayCandidateAdmissionRequest) -
     evidence = _feature_evidence(values)
     theme_name = values.get("theme_name", "")
     thesis_key = _thesis_key(current.evaluated_at, candidate.symbol, theme_name)
-    _currentness_reasons(current, reasons)
+    if current.evaluated_at >= current.opportunity.valid_until:
+        reasons.add(KrDayDecisionReasonCode.OPPORTUNITY_EXPIRED)
+    if current.opportunity.observed_at > current.evaluated_at:
+        reasons.add(KrDayDecisionReasonCode.STALE_EVIDENCE)
     safe_bars = _safe_bars(current, candidate.symbol, reasons)
     _feature_reasons(values, current.policy, reasons)
     _bar_reasons(safe_bars, current.policy, evidence, reasons)
@@ -57,7 +62,20 @@ def assess_kr_day_candidate_admission(request: KrDayCandidateAdmissionRequest) -
         )
     )
     ordered_reasons = tuple(sorted(reasons, key=lambda item: item.value))
-    status = _status(current, ordered_reasons)
+    blocked = {
+        KrDayDecisionReasonCode.MARKET_GATE_BLOCKED,
+        KrDayDecisionReasonCode.SPREAD_TOO_WIDE,
+        KrDayDecisionReasonCode.STALE_EVIDENCE,
+    }
+    status = (
+        KrDayDecisionStatus.EXPIRED
+        if KrDayDecisionReasonCode.OPPORTUNITY_EXPIRED in ordered_reasons
+        else KrDayDecisionStatus.BLOCKED
+        if blocked & set(ordered_reasons)
+        else KrDayDecisionStatus.REJECTED
+        if ordered_reasons
+        else KrDayDecisionStatus.INVESTIGATING
+    )
     return KrDayCandidateAdmissionResult(
         admitted=status is KrDayDecisionStatus.INVESTIGATING,
         status=status,
@@ -74,6 +92,8 @@ def kr_day_candidate_thesis_key(opportunity: OpportunitySnapshot, symbol: str) -
         theme_name = next(item.value for item in current.candidates[0].features if item.name == "theme_name")
     except (AttributeError, StopIteration, TypeError, ValidationError, ValueError):
         raise InvalidKrDayCandidateAdmissionError from None
+    if symbol != current.candidates[0].symbol:
+        raise InvalidKrDayCandidateAdmissionError
     return _thesis_key(current.observed_at, symbol, theme_name)
 
 
@@ -91,34 +111,37 @@ def _validated_request(request: KrDayCandidateAdmissionRequest) -> KrDayCandidat
 
 
 def _feature_evidence(values: dict[str, str]) -> list[KrDayDecisionEvidenceValue]:
-    names = (
-        "is_leader",
-        "theme_name",
-        "theme_catalyst_count",
-        "theme_publisher_count",
-        "theme_related_symbol_count",
-        "trading_value_krw",
-        "volume_ratio",
-    )
+    names = ("is_leader", "theme_name", "theme_catalyst_count", "theme_publisher_count",
+             "theme_related_symbol_count", "trading_value_krw", "volume_ratio")
     return [
         KrDayDecisionEvidenceValue(name=name, value=_observed_feature_value(name, values.get(name))) for name in names
     ]
 
 
-def _currentness_reasons(request: KrDayCandidateAdmissionRequest, reasons: set[KrDayDecisionReasonCode]) -> None:
-    if request.evaluated_at >= request.opportunity.valid_until:
-        reasons.add(KrDayDecisionReasonCode.OPPORTUNITY_EXPIRED)
-    if request.opportunity.observed_at > request.evaluated_at:
-        reasons.add(KrDayDecisionReasonCode.STALE_EVIDENCE)
-
-
 def _safe_bars(
     request: KrDayCandidateAdmissionRequest, symbol: str, reasons: set[KrDayDecisionReasonCode]
 ) -> tuple[KrCompletedMinuteBar, ...]:
-    safe = tuple(bar for bar in request.bars if max(bar.end_at, bar.observed_at) <= request.evaluated_at)
-    if len(safe) != len(request.bars) or not safe or any(bar.symbol != symbol for bar in safe):
+    bars = request.bars
+    local_now = request.evaluated_at.astimezone(_SEOUL)
+    latest_end = local_now.replace(second=0, microsecond=0)
+    session_date = local_now.date()
+    valid = (
+        bool(bars)
+        and bars[0].start_at.astimezone(_SEOUL).time() == _SESSION_OPEN
+        and bars[-1].end_at == latest_end
+        and all(
+            bar.symbol == symbol
+            and bar.start_at.astimezone(_SEOUL).date() == session_date
+            and bar.end_at.astimezone(_SEOUL).date() == session_date
+            and max(bar.end_at, bar.observed_at) <= request.evaluated_at
+            for bar in bars
+        )
+        and all(current.start_at == previous.end_at for previous, current in pairwise(bars))
+    )
+    if not valid:
         reasons.add(KrDayDecisionReasonCode.STALE_EVIDENCE)
-    return tuple(sorted(safe, key=lambda bar: bar.end_at))
+        return ()
+    return bars
 
 
 def _feature_reasons(
@@ -167,6 +190,7 @@ def _bar_reasons(
         reasons.add(KrDayDecisionReasonCode.VOLUME_CONFIRMATION_MISSING)
     if (
         latest.trading_value_krw < policy.min_completed_bar_trading_value_krw
+        or price_response <= 0
         or price_response < policy.min_completed_bar_price_response
     ):
         reasons.add(KrDayDecisionReasonCode.FLOW_CONFIRMATION_MISSING)
@@ -200,23 +224,6 @@ def _market_reasons(
         raise InvalidKrDayCandidateAdmissionError
     if spread_bps > request.policy.max_spread_bps:
         reasons.add(KrDayDecisionReasonCode.SPREAD_TOO_WIDE)
-
-
-def _status(
-    request: KrDayCandidateAdmissionRequest, reasons: tuple[KrDayDecisionReasonCode, ...]
-) -> KrDayDecisionStatus:
-    if KrDayDecisionReasonCode.OPPORTUNITY_EXPIRED in reasons:
-        return KrDayDecisionStatus.EXPIRED
-    blocked = {
-        KrDayDecisionReasonCode.MARKET_GATE_BLOCKED,
-        KrDayDecisionReasonCode.SPREAD_TOO_WIDE,
-        KrDayDecisionReasonCode.STALE_EVIDENCE,
-    }
-    return (
-        KrDayDecisionStatus.BLOCKED
-        if blocked & set(reasons)
-        else (KrDayDecisionStatus.REJECTED if reasons else KrDayDecisionStatus.INVESTIGATING)
-    )
 
 
 def _source_refs(request: KrDayCandidateAdmissionRequest, bars: tuple[KrCompletedMinuteBar, ...]) -> tuple[str, ...]:
@@ -263,10 +270,6 @@ def _observed_feature_value(name: str, value: str | None) -> str:
     if name in {"trading_value_krw", "volume_ratio"}:
         return value if _decimal(value) is not None else "malformed"
     return value if value.strip() else "malformed"
-
-
-def _aware(value: dt.datetime) -> bool:
-    return value.tzinfo is not None and value.utcoffset() is not None
 
 
 __all__ = (
