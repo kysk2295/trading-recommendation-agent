@@ -122,14 +122,28 @@ def _adapt_requests(
             request = KrDayCapsuleEvaluationRequest.model_validate_json(payload)
             if canonical_experiment_ledger_json(request) + "\n" != payload:
                 raise ValueError
+            session_date = request.evaluated_at.astimezone(SEOUL).date().isoformat()
+            latest = store.latest(request.capsule.capsule_id, session_date)
             try:
                 evaluation = adapt_kr_day_capsule_evaluation(request)
             except ValueError:
-                session_date = request.evaluated_at.astimezone(SEOUL).date().isoformat()
-                latest = store.latest(request.capsule.capsule_id, session_date)
                 if latest is None or latest.status is not KrDayCapsuleShadowStatus.ACTIVE:
                     raise
                 evaluation = adapt_kr_day_capsule_management_evaluation(request)
+            if latest is not None and latest.status is KrDayCapsuleShadowStatus.ACTIVE and (
+                latest.capsule_id,
+                latest.session_date,
+                latest.symbol,
+                latest.collection_cycle_id,
+                latest.calendar_snapshot_id,
+            ) != (
+                evaluation.capsule_id,
+                evaluation.session_date,
+                evaluation.symbol,
+                evaluation.collection_cycle_id,
+                evaluation.calendar_snapshot_id,
+            ):
+                raise ValueError
             evaluations.append(evaluation)
         except (OSError, TypeError, ValidationError, ValueError):
             invalid_count += 1

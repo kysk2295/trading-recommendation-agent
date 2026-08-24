@@ -7,7 +7,6 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -24,24 +23,15 @@ from trading_agent.day_session_service_config import (
     KrDaySessionServiceConfig,
     UsDaySessionServiceConfig,
 )
-from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
-from trading_agent.hermes_delivery_projection import read_opportunity_snapshots
-from trading_agent.kis_kr_market_models import (
-    KisKrMarketReceiptKind,
-    KisKrMinuteProjectionInput,
-    KisKrSnapshotProjectionInput,
-)
-from trading_agent.kis_kr_market_projection import project_kis_kr_completed_minutes, project_kis_kr_market_snapshot
-from trading_agent.kis_kr_market_receipt_store import KisKrMarketReceiptStore
-from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStore
 from trading_agent.kr_day_capsule_models import KrDayCapsuleEvaluationRequest
-from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowStatus
-from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
 from trading_agent.kr_day_decision_models import KrDayDecisionEvent
 from trading_agent.kr_day_decision_service import run_kr_day_decision_tick
 from trading_agent.kr_day_decision_store import KrDayDecisionStore
-from trading_agent.private_immutable_file import publish_private_immutable_text, read_private_text
+from trading_agent.kr_day_session_materializer import (
+    materialize_kr_requests as _materialize_kr_requests,
+)
+from trading_agent.private_immutable_file import read_private_text
 from trading_agent.private_stable_report import write_private_stable_report
 from trading_agent.research_identity_models import MarketId
 from trading_agent.us_day_session_tick import UsDaySessionTickRequest, run_us_day_session_tick
@@ -212,94 +202,6 @@ def _kr_active_capsule_ids(ledger_path: Path, now: dt.datetime) -> tuple[str, ..
         )
     )
     return tuple(item.trial.capsule_id for item in selection.selected)
-
-
-def _materialize_kr_requests(
-    config: KrDaySessionServiceConfig,
-    evaluated_at: dt.datetime,
-    capsule_ids: tuple[str, ...],
-) -> tuple[Path, ...]:
-    local_date = evaluated_at.astimezone(_KST).date()
-    cycle_prefix = f"kr-research-{local_date.strftime('%Y%m%d')}-"
-    cycles = tuple(
-        path
-        for path in sorted(config.source_root.iterdir())[-24:]
-        if path.is_dir() and path.name.startswith(cycle_prefix)
-    )
-    all_opportunities = tuple(
-        opportunity
-        for cycle in reversed(cycles)
-        for opportunity in reversed(read_opportunity_snapshots(cycle / "projection" / "opportunities.v1.jsonl"))
-        if opportunity.observed_at <= evaluated_at
-    )
-    calendars = tuple(
-        item
-        for item in KisKrSessionCalendarStore(config.calendar_store).snapshots()
-        if item.payload.base_date == local_date and item.payload.observed_at <= evaluated_at
-    )
-    if not all_opportunities or not calendars:
-        raise ValueError
-    current = tuple(item for item in all_opportunities if evaluated_at < item.valid_until)
-    if current:
-        opportunity = current[0]
-    else:
-        shadow = KrDayCapsuleShadowStore(config.state_root / "kr-day-capsule-shadow.sqlite3")
-        active = tuple(shadow.latest(capsule_id, local_date.isoformat()) for capsule_id in capsule_ids[:3])
-        if not active or any(item is None or item.status is not KrDayCapsuleShadowStatus.ACTIVE for item in active):
-            raise ValueError
-        opportunity = all_opportunities[0]
-    symbol = opportunity.candidates[0].symbol
-    cycle_ids = tuple(item.record_id for item in opportunity.evidence_refs if item.namespace == "kr/collection_cycle")
-    if len(cycle_ids) != 1:
-        raise ValueError
-    cycle = next((item for item in cycles if item.name == cycle_ids[0]), None)
-    if cycle is None:
-        raise ValueError
-    receipts = tuple(
-        item
-        for item in KisKrMarketReceiptStore(cycle / f"{symbol}.market.sqlite3").receipts()
-        if item.symbol == symbol and item.received_at <= evaluated_at
-    )
-    minute_receipts = tuple(item for item in receipts if item.kind is KisKrMarketReceiptKind.MINUTE_BARS)
-    prices = tuple(item for item in receipts if item.kind is KisKrMarketReceiptKind.PRICE_STATUS)
-    quotes = tuple(item for item in receipts if item.kind is KisKrMarketReceiptKind.ORDER_BOOK)
-    if not minute_receipts or not prices or not quotes:
-        raise ValueError
-    bars = project_kis_kr_completed_minutes(
-        KisKrMinuteProjectionInput(receipts=minute_receipts, evaluated_at=evaluated_at)
-    )
-    market = project_kis_kr_market_snapshot(
-        KisKrSnapshotProjectionInput(
-            price_receipt=prices[-1],
-            quote_receipt=quotes[-1],
-            evaluated_at=evaluated_at,
-        )
-    )
-    ledger = ExperimentLedgerStore(config.experiment_ledger)
-    capsules = tuple(ledger.day_strategy_capsule(item) for item in capsule_ids[:3])
-    if any(item is None for item in capsules):
-        raise ValueError
-    root = config.state_root / "materialized_requests" / local_date.isoformat()
-    paths: list[Path] = []
-    for stored in capsules:
-        if stored is None:
-            raise ValueError
-        request = KrDayCapsuleEvaluationRequest(
-            capsule=stored.capsule,
-            calendar=calendars[-1],
-            opportunity=opportunity,
-            market=market,
-            bars=bars,
-            evaluated_at=evaluated_at,
-            max_slippage_bps=Decimal("20"),
-        )
-        canonical = canonical_experiment_ledger_json(request)
-        digest = hashlib.sha256(canonical.encode()).hexdigest()[:16]
-        bar = request.bars[-1].end_at.astimezone(_KST).strftime("%H%M%S")
-        path = root / f"{stored.capsule.capsule_id}-{bar}-{digest}.json"
-        _ = publish_private_immutable_text(path, canonical + "\n")
-        paths.append(path)
-    return tuple(paths)
 
 
 def _run_child(command: tuple[str, ...]) -> subprocess.CompletedProcess[str]:

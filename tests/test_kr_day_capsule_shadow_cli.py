@@ -6,9 +6,12 @@ import stat
 import subprocess
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal, assert_never
+
+import pytest
 
 import run_kr_day_capsule_shadow as cli
-from tests.test_kr_day_capsule_adapter import _request
+from tests.test_kr_day_capsule_adapter import _calendar, _request
 from tests.test_kr_day_capsule_shadow import _advance, _entry_evaluation
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.kr_day_capsule_models import (
@@ -96,7 +99,10 @@ def test_expired_opportunity_manages_only_existing_active_store(tmp_path: Path) 
     expired = request.model_copy(
         update={
             "opportunity": request.opportunity.model_copy(
-                update={"valid_until": current.evaluated_at - dt.timedelta(seconds=1)}
+                update={
+                    "opportunity_id": "KR-THEME-OPPORTUNITY-MANAGEMENT-REPLAY",
+                    "valid_until": current.evaluated_at - dt.timedelta(seconds=1),
+                }
             )
         }
     )
@@ -112,6 +118,55 @@ def test_expired_opportunity_manages_only_existing_active_store(tmp_path: Path) 
     assert _json(managed).events[0].status == "active"
     assert blocked.returncode == 2
     assert _json(blocked).events == ()
+
+
+@pytest.mark.parametrize("lineage", ("symbol", "cycle", "calendar"))
+def test_cli_rejects_active_management_lineage_substitution_without_append(
+    lineage: Literal["symbol", "cycle", "calendar"],
+    tmp_path: Path,
+) -> None:
+    # Given: an ACTIVE store and a coherent next-bar request on substituted lineage.
+    entry = _entry_evaluation()
+    active_store = tmp_path / "active" / "shadow.sqlite3"
+    entry_path = _publish_request(tmp_path, "entry-lineage", _request_for(entry))
+    assert _run(_command(entry_path, active_store)).returncode == 0
+    request = _request_for(_advance(entry))
+    match lineage:
+        case "symbol":
+            leader = request.opportunity.candidates[0].model_copy(update={"symbol": "000660"})
+            request = request.model_copy(
+                update={
+                    "opportunity": request.opportunity.model_copy(update={"candidates": (leader,)}),
+                    "bars": tuple(bar.model_copy(update={"symbol": "000660"}) for bar in request.bars),
+                    "market": request.market.model_copy(update={"symbol": "000660"}),
+                }
+            )
+        case "cycle":
+            cycle = request.opportunity.evidence_refs[0].model_copy(
+                update={"record_id": "kr-cycle-20260824-substitute"}
+            )
+            request = request.model_copy(
+                update={"opportunity": request.opportunity.model_copy(update={"evidence_refs": (cycle,)})}
+            )
+        case "calendar":
+            request = request.model_copy(
+                update={
+                    "calendar": _calendar(
+                        observed_at=request.calendar.payload.observed_at + dt.timedelta(seconds=1)
+                    )
+                }
+            )
+        case unreachable:
+            assert_never(unreachable)
+    substituted = _publish_request(tmp_path, f"substituted-{lineage}", request)
+
+    # When: the CLI evaluates the substituted request against the ACTIVE store.
+    completed = _run(_command(substituted, active_store))
+
+    # Then: it fails closed and the ACTIVE store remains one immutable row.
+    assert completed.returncode == 2
+    assert _json(completed).events == ()
+    assert len(KrDayCapsuleShadowStore(active_store).events()) == 1
 
 
 def test_cli_rejects_more_than_three_requests_before_store_mutation(tmp_path: Path) -> None:

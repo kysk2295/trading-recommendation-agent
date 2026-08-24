@@ -79,7 +79,7 @@ def test_import_closure_has_no_execution_or_provider_mutation_authority() -> Non
         for alias in node.names
     }
 
-    assert len(modules) == 3
+    assert len(modules) == 4
     assert not any(
         token in name.lower()
         for name in imports

@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal, assert_never
 
 import pytest
 
@@ -85,6 +86,37 @@ def test_gap_censors_without_advancing_cursor(tmp_path: Path) -> None:
     assert censored.reason is KrDayCapsuleShadowReason.BAR_GAP
     assert censored.accepted_bar_cursor == active.accepted_bar_cursor
     assert censored.accepted_bar_cursor != censored.attempted_bar_cursor
+
+
+@pytest.mark.parametrize(
+    "field",
+    ("symbol", "collection_cycle_id", "calendar_snapshot_id"),
+)
+def test_active_management_rejects_substituted_lineage_without_append(
+    field: Literal["symbol", "collection_cycle_id", "calendar_snapshot_id"],
+    tmp_path: Path,
+) -> None:
+    # Given: an ACTIVE position and a next-bar evaluation with substituted lineage.
+    store = KrDayCapsuleShadowStore(tmp_path / "shadow.sqlite3")
+    entry = _entry_evaluation()
+    _ = run_kr_day_capsule_shadow_tick(store, (entry,))
+    match field:
+        case "symbol":
+            substituted = _rebuild(_advance(entry), symbol="000660")
+        case "collection_cycle_id":
+            substituted = _rebuild(
+                _advance(entry),
+                collection_cycle_id="kr-cycle-20260824-substitute",
+            )
+        case "calendar_snapshot_id":
+            substituted = _rebuild(_advance(entry), calendar_snapshot_id="f" * 64)
+        case unreachable:
+            assert_never(unreachable)
+
+    # When / Then: management rejects before appending any lifecycle event.
+    with pytest.raises(InvalidKrDayCapsuleShadowServiceError):
+        _ = run_kr_day_capsule_shadow_tick(store, (substituted,))
+    assert len(store.events()) == 1
 
 
 def test_batch_orders_capsules_and_isolates_failed_sibling(tmp_path: Path) -> None:
@@ -243,6 +275,9 @@ def _rebuild(
     session_date: dt.date | None = None,
     completed_bar_cursor: dt.datetime | None = None,
     market: KrMarketConstraintSnapshot | None = None,
+    symbol: str | None = None,
+    collection_cycle_id: str | None = None,
+    calendar_snapshot_id: str | None = None,
 ) -> KrDayCapsuleEvaluation:
     values = evaluation.model_dump(mode="python", exclude={"evaluation_id"})
     if capsule_id is not None:
@@ -257,6 +292,12 @@ def _rebuild(
         values["completed_bar_cursor"] = completed_bar_cursor
     if market is not None:
         values["market"] = market
+    if symbol is not None:
+        values["symbol"] = symbol
+    if collection_cycle_id is not None:
+        values["collection_cycle_id"] = collection_cycle_id
+    if calendar_snapshot_id is not None:
+        values["calendar_snapshot_id"] = calendar_snapshot_id
     payload = KrDayCapsuleEvaluationPayload.model_validate(values)
     return KrDayCapsuleEvaluation.model_validate(
         values | {"evaluation_id": KrDayCapsuleEvaluation.canonical_id_for(payload)}

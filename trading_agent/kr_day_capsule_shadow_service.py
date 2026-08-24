@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 from dataclasses import dataclass
 from decimal import Decimal
 from itertools import pairwise
@@ -11,15 +10,14 @@ from zoneinfo import ZoneInfo
 from pydantic import ValidationError
 
 from trading_agent.day_strategy_capsule_models import CapsuleAuthorityCeiling
-from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.kr_day_capsule_models import KrDayCapsuleEvaluation
 from trading_agent.kr_day_capsule_shadow_models import (
     KrDayCapsuleShadowEvent,
-    KrDayCapsuleShadowEventPayload,
     KrDayCapsuleShadowReason,
     KrDayCapsuleShadowStatus,
     kr_day_capsule_evaluation_lineage_matches,
 )
+from trading_agent.kr_day_capsule_shadow_projection import project_kr_day_capsule_shadow_event
 from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
 from trading_agent.kr_intraday_market_gate import KrIntradayGateStatus, assess_kr_shadow_entry
 from trading_agent.kr_theme_day_setup import InvalidKrThemeDaySetupError, derive_kr_theme_day_setup
@@ -68,6 +66,7 @@ def run_kr_day_capsule_shadow_tick(
     ordered = tuple(sorted(checked, key=lambda item: item.capsule_id))
     if len({item.capsule_id for item in ordered}) != len(ordered):
         raise InvalidKrDayCapsuleShadowServiceError
+    _require_active_lineages(store, ordered)
     anchor = ordered[0]
     shared = (anchor.session_date, anchor.calendar_snapshot_id, anchor.completed_bar_cursor)
     results = tuple(
@@ -75,6 +74,28 @@ def run_kr_day_capsule_shadow_tick(
         for item in ordered
     )
     return KrDayCapsuleShadowBatchResult(results)
+
+
+def _require_active_lineages(
+    store: KrDayCapsuleShadowStore,
+    evaluations: tuple[KrDayCapsuleEvaluation, ...],
+) -> None:
+    for evaluation in evaluations:
+        previous = store.latest(evaluation.capsule_id, evaluation.session_date.isoformat())
+        if previous is not None and previous.status is KrDayCapsuleShadowStatus.ACTIVE and (
+            previous.capsule_id,
+            previous.session_date,
+            previous.symbol,
+            previous.collection_cycle_id,
+            previous.calendar_snapshot_id,
+        ) != (
+            evaluation.capsule_id,
+            evaluation.session_date,
+            evaluation.symbol,
+            evaluation.collection_cycle_id,
+            evaluation.calendar_snapshot_id,
+        ):
+            raise InvalidKrDayCapsuleShadowServiceError
 
 
 def _process_one(
@@ -92,27 +113,42 @@ def _process_one(
     if identity != shared:
         return _append(
             store,
-            _event(evaluation, previous, KrDayCapsuleShadowStatus.BLOCKED, KrDayCapsuleShadowReason.DIVERGENT_BATCH),
+            project_kr_day_capsule_shadow_event(
+                evaluation,
+                previous,
+                KrDayCapsuleShadowStatus.BLOCKED,
+                KrDayCapsuleShadowReason.DIVERGENT_BATCH,
+            ),
         )
     try:
         _require_evaluation(evaluation)
     except InvalidKrDayCapsuleShadowServiceError:
         return _append(
             store,
-            _event(evaluation, previous, KrDayCapsuleShadowStatus.BLOCKED, KrDayCapsuleShadowReason.INVALID_EVALUATION),
+            project_kr_day_capsule_shadow_event(
+                evaluation,
+                previous,
+                KrDayCapsuleShadowStatus.BLOCKED,
+                KrDayCapsuleShadowReason.INVALID_EVALUATION,
+            ),
         )
     accepted = None if previous is None else previous.accepted_bar_cursor
     if accepted is not None and evaluation.completed_bar_cursor != accepted + _ONE_MINUTE:
         return _append(
             store,
-            _event(evaluation, previous, KrDayCapsuleShadowStatus.CENSORED, KrDayCapsuleShadowReason.BAR_GAP),
+            project_kr_day_capsule_shadow_event(
+                evaluation,
+                previous,
+                KrDayCapsuleShadowStatus.CENSORED,
+                KrDayCapsuleShadowReason.BAR_GAP,
+            ),
         )
     if previous is not None and previous.status is KrDayCapsuleShadowStatus.ACTIVE:
         return _append(store, _active_event(evaluation, previous))
     try:
         setup = derive_kr_theme_day_setup(evaluation.setup_input)
         if setup is None:
-            projected = _event(
+            projected = project_kr_day_capsule_shadow_event(
                 evaluation,
                 previous,
                 KrDayCapsuleShadowStatus.REGISTERED,
@@ -127,7 +163,7 @@ def _process_one(
                 evaluated_at=evaluation.evaluated_at,
             )
             if decision.signal is None:
-                projected = _event(
+                projected = project_kr_day_capsule_shadow_event(
                     evaluation,
                     previous,
                     KrDayCapsuleShadowStatus.BLOCKED,
@@ -138,7 +174,7 @@ def _process_one(
                 fill = signal.entry_price * (
                     Decimal(1) + SHADOW_ENTRY_SLIPPAGE_BPS / Decimal(10_000)
                 )
-                projected = _event(
+                projected = project_kr_day_capsule_shadow_event(
                     evaluation,
                     previous,
                     KrDayCapsuleShadowStatus.ACTIVE,
@@ -150,7 +186,7 @@ def _process_one(
                     target_prices=tuple(target.price for target in signal.targets),
                 )
     except (InvalidKrThemeDaySetupError, InvalidKrThemeDaySignalError):
-        projected = _event(
+        projected = project_kr_day_capsule_shadow_event(
             evaluation,
             previous,
             KrDayCapsuleShadowStatus.FAILED,
@@ -175,7 +211,7 @@ def _active_event(
     else:
         status = KrDayCapsuleShadowStatus.ACTIVE
         reason = KrDayCapsuleShadowReason.ACTIVE
-    return _event(
+    return project_kr_day_capsule_shadow_event(
         evaluation,
         previous,
         status,
@@ -209,51 +245,6 @@ def _require_evaluation(evaluation: KrDayCapsuleEvaluation) -> None:
         or any(current.start_at != previous.end_at for previous, current in pairwise(bars))
     ):
         raise InvalidKrDayCapsuleShadowServiceError
-
-
-def _event(
-    evaluation: KrDayCapsuleEvaluation,
-    previous: KrDayCapsuleShadowEvent | None,
-    status: KrDayCapsuleShadowStatus,
-    reason: KrDayCapsuleShadowReason,
-    *,
-    accepted_cursor: dt.datetime | None = None,
-    signal_id: str | None = None,
-    entry_price: Decimal | None = None,
-    stop_price: Decimal | None = None,
-    target_prices: tuple[Decimal, ...] = (),
-) -> KrDayCapsuleShadowEvent:
-    latest = evaluation.setup_input.bars[-1]
-    payload = KrDayCapsuleShadowEventPayload(
-        capsule_id=evaluation.capsule_id,
-        evaluation_id=evaluation.evaluation_id,
-        session_date=evaluation.session_date,
-        calendar_snapshot_id=evaluation.calendar_snapshot_id,
-        collection_cycle_id=evaluation.collection_cycle_id,
-        symbol=evaluation.symbol,
-        attempted_bar_cursor=evaluation.completed_bar_cursor,
-        accepted_bar_cursor=accepted_cursor if accepted_cursor is not None else (
-            None if previous is None else previous.accepted_bar_cursor
-        ),
-        previous_event_id=None if previous is None else previous.event_id,
-        status=status,
-        reason=reason,
-        signal_id=signal_id,
-        entry_price=entry_price,
-        stop_price=stop_price,
-        target_prices=target_prices,
-        occurred_at=evaluation.evaluated_at,
-        evaluation_payload_sha256=hashlib.sha256(
-            canonical_experiment_ledger_json(evaluation).encode()
-        ).hexdigest(),
-        bar_payload_sha256=hashlib.sha256(
-            canonical_experiment_ledger_json(latest).encode()
-        ).hexdigest(),
-    )
-    return KrDayCapsuleShadowEvent.model_validate(
-        payload.model_dump(mode="python")
-        | {"event_id": KrDayCapsuleShadowEvent.canonical_id_for(payload)}
-    )
 
 
 def _append(

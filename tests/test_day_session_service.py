@@ -6,7 +6,10 @@ import json
 import os
 import plistlib
 import shutil
+import subprocess
+import sys
 from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
@@ -57,6 +60,14 @@ from trading_agent.kis_kr_market_receipt_store import KisKrMarketReceiptStore
 from trading_agent.kis_kr_session_calendar import project_kis_kr_session_calendar
 from trading_agent.kis_kr_session_calendar_models import KisKrSessionCalendarReceipt
 from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStore
+from trading_agent.kr_day_capsule_models import KrDayCapsuleEvaluationRequest
+from trading_agent.kr_day_capsule_shadow_models import (
+    KrDayCapsuleShadowEvent,
+    KrDayCapsuleShadowEventPayload,
+    KrDayCapsuleShadowReason,
+    KrDayCapsuleShadowStatus,
+)
+from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
 from trading_agent.private_immutable_file import publish_private_immutable_text
 from trading_agent.research_identity_models import MarketId
 from trading_agent.strategy_research_types import AttemptStatus
@@ -207,7 +218,7 @@ def test_kr_materializer_reads_cycle_calendar_market_and_ledger_stores(tmp_path:
     opportunity = source.opportunity.model_copy(
         update={
             "observed_at": observed_at,
-            "valid_until": evaluated_at + dt.timedelta(minutes=3),
+            "valid_until": evaluated_at + dt.timedelta(seconds=30),
             "evidence_refs": (
                 source.opportunity.evidence_refs[0].model_copy(
                     update={"record_id": cycle_id, "observed_at": observed_at}
@@ -222,7 +233,7 @@ def test_kr_materializer_reads_cycle_calendar_market_and_ledger_stores(tmp_path:
     assert append_opportunity_snapshot(cycle / "projection/opportunities.v1.jsonl", opportunity)
     market_store = KisKrMarketReceiptStore(cycle / "005930.market.sqlite3")
     for kind, body, seconds in (
-        (KisKrMarketReceiptKind.MINUTE_BARS, _minute_body(), 2),
+        (KisKrMarketReceiptKind.MINUTE_BARS, _minute_body_on(evaluated_at.date()), 2),
         (KisKrMarketReceiptKind.PRICE_STATUS, _price_body(), 2),
         (KisKrMarketReceiptKind.ORDER_BOOK, _quote_body(), 3),
     ):
@@ -309,9 +320,13 @@ def test_kr_materializer_reads_cycle_calendar_market_and_ledger_stores(tmp_path:
 
     paths = _materialize_kr_requests(config, evaluated_at.astimezone(dt.UTC), (capsule.capsule_id,))
     replay_paths = _materialize_kr_requests(config, evaluated_at.astimezone(dt.UTC), (capsule.capsule_id,))
+    materialized = kr_request().model_validate_json(paths[0].read_text())
+    _append_active_shadow(config, materialized)
     next_evaluated_at = evaluated_at + dt.timedelta(minutes=1)
-    minute_payload = json.loads(_minute_body())
-    minute_payload["output2"].insert(0, _minute_row("090500", "103", "105", "102", "104", "100", "59970"))
+    minute_payload = json.loads(_minute_body_on(evaluated_at.date()))
+    next_row = _minute_row("090500", "103", "105", "102", "104", "100", "59970")
+    next_row["stck_bsop_date"] = evaluated_at.strftime("%Y%m%d")
+    minute_payload["output2"].insert(0, next_row)
     next_bodies = (
         (KisKrMarketReceiptKind.MINUTE_BARS, json.dumps(minute_payload).encode(), 2),
         (KisKrMarketReceiptKind.PRICE_STATUS, _price_body(), 2),
@@ -323,19 +338,129 @@ def test_kr_materializer_reads_cycle_calendar_market_and_ledger_stores(tmp_path:
             received_at=next_evaluated_at.replace(second=seconds),
         )
         assert market_store.append(receipt)
+    newer_cycle_id = "kr-research-20260824-090500"
+    newer_observed_at = next_evaluated_at - dt.timedelta(seconds=20)
+    newer_opportunity = opportunity.model_copy(
+        update={
+            "opportunity_id": "KR-THEME-OPPORTUNITY-NEWER",
+            "observed_at": newer_observed_at,
+            "valid_until": next_evaluated_at + dt.timedelta(seconds=1),
+            "evidence_refs": (
+                opportunity.evidence_refs[0].model_copy(
+                    update={"record_id": newer_cycle_id, "observed_at": newer_observed_at}
+                ),
+            ),
+            "source_coverage": tuple(
+                item.model_copy(update={"observed_at": newer_observed_at})
+                for item in opportunity.source_coverage
+            ),
+        }
+    )
+    newer_cycle = config.source_root / newer_cycle_id
+    assert append_opportunity_snapshot(
+        newer_cycle / "projection/opportunities.v1.jsonl",
+        newer_opportunity,
+    )
+    newer_market_store = KisKrMarketReceiptStore(newer_cycle / "005930.market.sqlite3")
+    for kind, body, seconds in next_bodies:
+        receipt = replace(
+            market_receipt(kind, body, seconds=seconds),
+            received_at=next_evaluated_at.replace(second=seconds),
+        )
+        assert newer_market_store.append(receipt)
     next_paths = _materialize_kr_requests(
         config,
         next_evaluated_at.astimezone(dt.UTC),
         (capsule.capsule_id,),
     )
 
-    materialized = kr_request().model_validate_json(paths[0].read_text())
+    managed = kr_request().model_validate_json(next_paths[0].read_text())
     assert replay_paths == paths
     assert next_paths != paths
     assert paths[0].is_file() and next_paths[0].is_file()
     assert materialized.capsule.capsule_id == capsule.capsule_id
     assert materialized.opportunity.opportunity_id == opportunity.opportunity_id
     assert materialized.market.symbol == "005930"
+    assert managed.opportunity.opportunity_id == opportunity.opportunity_id
+    assert managed.opportunity.evidence_refs[0].record_id == cycle_id
+    assert managed.calendar.snapshot_id == materialized.calendar.snapshot_id
+    assert managed.opportunity.candidates[0].symbol == materialized.opportunity.candidates[0].symbol
+
+    sibling, _ = publish_day_strategy_capsule(
+        ledger,
+        replace(capsule_request, risk_policy_ref="risk-policy://day-research/sibling-v1"),
+    )
+    mixed_evaluated_at = next_evaluated_at + dt.timedelta(seconds=4)
+
+    mixed_paths = _materialize_kr_requests(
+        config,
+        mixed_evaluated_at.astimezone(dt.UTC),
+        (capsule.capsule_id, sibling.capsule_id),
+    )
+
+    assert len(mixed_paths) == 1
+    mixed = kr_request().model_validate_json(mixed_paths[0].read_text())
+    assert mixed.capsule.capsule_id == capsule.capsule_id
+    assert mixed.opportunity.opportunity_id == opportunity.opportunity_id
+    child = subprocess.run(
+        (
+            sys.executable,
+            str(ROOT / "run_kr_day_capsule_shadow.py"),
+            "--request",
+            str(mixed_paths[0]),
+            "--store",
+            str(config.state_root / "kr-day-capsule-shadow.sqlite3"),
+        ),
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    child_payload = json.loads(child.stdout)
+    assert child.returncode == 0
+    assert child_payload["events"][0]["status"] == "active"
+    assert len(KrDayCapsuleShadowStore(config.state_root / "kr-day-capsule-shadow.sqlite3").events()) == 2
+
+
+def _append_active_shadow(
+    config: KrDaySessionServiceConfig,
+    request: KrDayCapsuleEvaluationRequest,
+) -> None:
+    cursor = request.bars[-1].end_at
+    payload = KrDayCapsuleShadowEventPayload(
+        capsule_id=request.capsule.capsule_id,
+        evaluation_id="d" * 64,
+        session_date=request.evaluated_at.astimezone(dt.timezone(dt.timedelta(hours=9))).date(),
+        calendar_snapshot_id=request.calendar.snapshot_id,
+        collection_cycle_id=request.opportunity.evidence_refs[0].record_id,
+        symbol=request.opportunity.candidates[0].symbol,
+        attempted_bar_cursor=cursor,
+        accepted_bar_cursor=cursor,
+        previous_event_id=None,
+        status=KrDayCapsuleShadowStatus.ACTIVE,
+        reason=KrDayCapsuleShadowReason.ENTRY,
+        signal_id="active-signal",
+        entry_price=Decimal("104"),
+        stop_price=Decimal("90"),
+        target_prices=(Decimal("200"),),
+        occurred_at=request.evaluated_at,
+        evaluation_payload_sha256="e" * 64,
+        bar_payload_sha256="f" * 64,
+    )
+    event = KrDayCapsuleShadowEvent.model_validate(
+        payload.model_dump(mode="python")
+        | {"event_id": KrDayCapsuleShadowEvent.canonical_id_for(payload)}
+    )
+    assert KrDayCapsuleShadowStore(
+        config.state_root / "kr-day-capsule-shadow.sqlite3"
+    ).append(event)
+
+
+def _minute_body_on(session_date: dt.date) -> bytes:
+    payload = json.loads(_minute_body())
+    for row in payload["output2"]:
+        row["stck_bsop_date"] = session_date.strftime("%Y%m%d")
+    return json.dumps(payload).encode()
 
 
 def _config(
