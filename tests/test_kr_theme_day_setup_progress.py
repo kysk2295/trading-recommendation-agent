@@ -152,6 +152,19 @@ def test_earlier_bar_reclaim_is_never_backdated() -> None:
     assert setup is None
 
 
+def test_near_close_pullback_condition_ends_at_same_session_close() -> None:
+    # Given a completed VWAP pullback one minute before the Seoul session close
+    source = _near_close_pullback_input()
+
+    # When setup progression is assessed
+    assessment = assess_kr_theme_day_setup(source)
+
+    # Then its conditional validity cannot extend into the closed session
+    assert assessment.phase is KrThemeDaySetupPhase.PULLBACK_FOUND
+    assert assessment.conditional is not None
+    assert assessment.conditional.valid_until == SESSION.replace(hour=15, minute=30)
+
+
 def _input(bars: tuple[KrCompletedMinuteBar, ...]) -> KrThemeDaySetupInput:
     return KrThemeDaySetupInput(
         opportunity=_opportunity(),
@@ -160,6 +173,26 @@ def _input(bars: tuple[KrCompletedMinuteBar, ...]) -> KrThemeDaySetupInput:
         evaluated_at=bars[-1].observed_at + dt.timedelta(seconds=1),
         max_slippage_bps=Decimal("20"),
     )
+
+
+def _near_close_pullback_input() -> KrThemeDaySetupInput:
+    impulse = _bar(0, "50000", "50500", "50000", "50500", 100, "5000000")
+    extensions = tuple(
+        _bar(
+            minute,
+            str(50000 + 1000 * minute),
+            str(50000 + 1000 * minute),
+            str(50000 + 1000 * minute),
+            str(50000 + 1000 * minute),
+            100,
+            str((50000 + 1000 * minute) * 100),
+        )
+        for minute in range(1, 388)
+    )
+    pullback = _bar(388, "243500", "244000", "243000", "243500", 100, "24350000")
+    bars = (impulse, *extensions, pullback)
+    opportunity = _opportunity().model_copy(update={"valid_until": SESSION.replace(hour=16)})
+    return _input(bars).model_copy(update={"opportunity": opportunity})
 
 
 def _bars() -> tuple[KrCompletedMinuteBar, ...]:

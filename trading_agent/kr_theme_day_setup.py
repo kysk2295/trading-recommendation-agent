@@ -161,6 +161,7 @@ def _conditional_setup(
         valid_until=min(
             request.opportunity.valid_until,
             pullback.end_at + dt.timedelta(minutes=MAX_RECLAIM_BARS),
+            pullback.end_at.astimezone(SEOUL).replace(hour=15, minute=30, second=0, microsecond=0),
         ),
         rationale="A completed-bar VWAP pullback exists, but no current reclaim fill or quote is asserted.",
         evidence_refs=evidence,
