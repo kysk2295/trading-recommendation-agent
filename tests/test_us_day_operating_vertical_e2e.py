@@ -35,7 +35,17 @@ def test_us_day_vertical_closes_entry_protection_exit_reconciliation_and_deliver
     assert result.final_broker_state is not None
     assert result.final_broker_state.open_orders == ()
     assert result.final_broker_state.positions == ()
-    assert tuple(event.kind for event in delivery.events()) == (HermesDeliveryKind.ACTIONABLE, HermesDeliveryKind.EXIT)
+    assert tuple(event.kind for event in delivery.events()) == (
+        HermesDeliveryKind.ACTIONABLE,
+        HermesDeliveryKind.ACTIONABLE,
+        HermesDeliveryKind.EXIT,
+    )
+    assert tuple(event.status for event in delivery.events()) == ("ARMED", "ACTIVE", "TERMINAL")
+    assert all(event.status != "CENSORED" for event in delivery.events())
+    armed, active, terminal = delivery.events()
+    assert armed.payload_sha256 == "b" * 64
+    assert active.root_delivery_id == armed.delivery_id
+    assert terminal.root_delivery_id == armed.delivery_id
     assert session.entry_calls == 1
     assert session.protection_calls >= 1
     assert len(arm.calls) == 1

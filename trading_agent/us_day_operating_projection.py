@@ -18,6 +18,10 @@ from trading_agent.hermes_delivery_projection import (
     project_outcomes,
 )
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
+from trading_agent.us_day_lifecycle_delivery import (
+    build_us_day_active_record,
+    us_day_lifecycle_source_id,
+)
 from trading_agent.us_day_no_setup_source import OrbSessionRecommendation
 from trading_agent.us_day_operating_models import ProjectedUsDayEvent, UsDayOperatingRequest, UsDayOperatingStatus
 
@@ -32,7 +36,7 @@ class UsDayMissingTerminalProjection:
 
 def project_us_day_actionable(request: UsDayOperatingRequest, store: HermesDeliveryStore) -> ProjectedUsDayEvent:
     intent = request.order_admission.candidate_intent
-    source_id = _source_id("actionable", request, ())
+    source_id = us_day_lifecycle_source_id(request, "ARMED")
     record = HermesProjectionRecord(
         source_event_id=source_id,
         root_source_event_id=None,
@@ -43,11 +47,28 @@ def project_us_day_actionable(request: UsDayOperatingRequest, store: HermesDeliv
         strategy_version=request.strategy_version,
         instrument_id=intent.symbol,
         occurred_at=request.evaluated_at,
-        status="current_quote_validated",
-        evidence_refs=(f"intent:{intent.intent_id}",),
-        rendered_text=_actionable_text(request),
+        status="ARMED",
+        evidence_refs=(
+            f"actionable:{request.actionable_payload_sha256}",
+            f"intent:{intent.intent_id}",
+        ),
+        rendered_text=f"US Day Alpaca Paper ARMED: {_actionable_text(request)}",
         payload_sha256=request.actionable_payload_sha256,
     )
+    _project_replayable_outcome(record, store)
+    return ProjectedUsDayEvent(
+        record.source_event_id,
+        hermes_delivery_id(record.source_event_id, HERMES_DELIVERY_CONTRACT_VERSION),
+    )
+
+
+def project_us_day_active(
+    request: UsDayOperatingRequest,
+    store: HermesDeliveryStore,
+    *,
+    root_source_event_id: str,
+) -> ProjectedUsDayEvent:
+    record = build_us_day_active_record(request, root_source_event_id, _actionable_text(request))
     _project_replayable_outcome(record, store)
     return ProjectedUsDayEvent(
         record.source_event_id,
@@ -72,9 +93,21 @@ def project_us_day_terminal(
         case unreachable:
             assert_never(unreachable)
     intent = request.order_admission.candidate_intent
-    source_id = _source_id("terminal", request, reasons)
+    lifecycle_status = "TERMINAL" if status is UsDayOperatingStatus.COMPLETED else "INCIDENT"
+    source_id = (
+        us_day_lifecycle_source_id(request, lifecycle_status)
+        if root_source_event_id is not None
+        else _source_id("incident", request, reasons)
+    )
     material = json.dumps(
-        (request.session_id, request.strategy_version, intent.intent_id, status.value, reasons),
+        (
+            request.session_id,
+            request.strategy_version,
+            intent.intent_id,
+            request.actionable_payload_sha256,
+            status.value,
+            reasons,
+        ),
         ensure_ascii=True,
         separators=(",", ":"),
     )
@@ -88,9 +121,12 @@ def project_us_day_terminal(
         strategy_version=request.strategy_version,
         instrument_id=intent.symbol,
         occurred_at=occurred_at,
-        status=status.value,
-        evidence_refs=(f"intent:{intent.intent_id}",),
-        rendered_text=f"day_trading operating result: {intent.symbol} {status.value}.",
+        status=lifecycle_status,
+        evidence_refs=(
+            f"actionable:{request.actionable_payload_sha256}",
+            f"intent:{intent.intent_id}",
+        ),
+        rendered_text=f"US Day Alpaca Paper {lifecycle_status}: {intent.symbol}; reasons {', '.join(reasons)}.",
         payload_sha256=hashlib.sha256(material.encode()).hexdigest(),
     )
     _project_replayable_outcome(record, store)

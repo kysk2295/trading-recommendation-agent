@@ -93,13 +93,15 @@ def test_admission_barriers_block_before_arm_or_entry(tmp_path: Path, reason: st
     session = BlockedAdmissionSession(order_admission, reason)
     arm = OneUseArmConsumer()
 
-    result, _ = OperatingHarness(tmp_path, session).run(operating_request(order_admission), arm)
+    result, delivery = OperatingHarness(tmp_path, session).run(operating_request(order_admission), arm)
 
     assert result.status is UsDayOperatingStatus.BLOCKED
     assert result.reasons == (reason,)
     assert result.transitions == (UsDayOperatingTransition.HERMES_RESULT_PROJECTED,)
     assert session.entry_calls == 0
     assert arm.calls == []
+    assert tuple(event.status for event in delivery.events()) == ("INCIDENT",)
+    assert all("lifecycle" not in event.source_event_id for event in delivery.events())
 
 
 @pytest.mark.parametrize(

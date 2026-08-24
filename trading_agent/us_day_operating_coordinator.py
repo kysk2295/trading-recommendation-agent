@@ -36,7 +36,11 @@ from trading_agent.us_day_operating_models import (
     UsDayOperatingStatus,
     UsDayOperatingTransition,
 )
-from trading_agent.us_day_operating_projection import project_us_day_actionable, project_us_day_terminal
+from trading_agent.us_day_operating_projection import (
+    project_us_day_actionable,
+    project_us_day_active,
+    project_us_day_terminal,
+)
 
 type UsDaySessionOpener = Callable[
     [AlpacaPaperCredentials, ExecutionStore],
@@ -134,6 +138,15 @@ class UsDayOperatingCoordinator:
         )
 
     def _finish(self, request: UsDayOperatingRequest, draft: UsDayOperatingDraft) -> UsDayOperatingResult:
+        if (
+            draft.actionable is not None
+            and UsDayOperatingTransition.ENTRY_ACKNOWLEDGED in draft.transitions
+        ):
+            _ = project_us_day_active(
+                request,
+                self._config.delivery_store,
+                root_source_event_id=draft.actionable.source_event_id,
+            )
         terminal = project_us_day_terminal(
             request,
             self._config.delivery_store,

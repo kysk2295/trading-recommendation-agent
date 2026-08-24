@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -13,12 +14,18 @@ from trading_agent.dashboard_projection_day_agent_support import (
     day_agent_item,
     day_agent_trace_graph,
 )
+from trading_agent.dashboard_projection_day_agent_us import (
+    project_us_day_lifecycle_cards,
+    read_us_day_paper_events,
+)
 from trading_agent.day_learning_report_models import DailyLearningReport, MarketCloseReport
 from trading_agent.day_learning_report_store import load_market_close_report
 from trading_agent.day_learning_reports import build_daily_learning_report
 from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowEvent
+from trading_agent.models import RecommendationEvent
 from trading_agent.research_identity_models import MarketId
-from trading_agent.us_day_thesis_models import DayTradeDecision, UsDayTradeThesis
+from trading_agent.us_day_lifecycle import InvalidUsDayLifecycleError
+from trading_agent.us_day_thesis_models import UsDayTradeThesis
 from trading_agent.us_day_thesis_store import UsDayThesisStore
 
 
@@ -40,6 +47,7 @@ def project_day_agent_facade(
     us_reports, us_state = _read_reports(outputs / "us_day" / "close_reports", MarketId.US_EQUITIES)
     kr_reports, kr_state = _read_reports(outputs / "kr_day" / "close_reports", MarketId.KR_EQUITIES)
     us_theses, thesis_state = _read_us_theses(outputs / "us_day" / "theses")
+    us_paper_events, paper_state = _read_us_paper_events(outputs / "us_day" / "paper.sqlite3", us_theses)
     lifecycle_root = outputs / "kr_day" if kr_day_state_root is None else kr_day_state_root
     kr_lifecycle = project_kr_day_lifecycle(lifecycle_root, now=now)
     us_report = _latest(us_reports)
@@ -51,13 +59,19 @@ def project_day_agent_facade(
         and {us_state, kr_state, thesis_state, kr_lifecycle.shadow_state} <= {"unavailable"}
     ):
         return DayAgentFacadeProjection((), (), (), (), None)
-    us_lane_state: FacadeState = us_state if thesis_state != "corrupt" else "corrupt"
+    if thesis_state == "corrupt" or paper_state == "corrupt":
+        us_lane_state: FacadeState = "corrupt"
+    elif thesis_state == "populated":
+        us_lane_state = "populated"
+    else:
+        us_lane_state = us_state
+    us_lifecycle = project_us_day_lifecycle_cards(us_theses, us_paper_events, us_lane_state, now)
     kr_lane_state: FacadeState = kr_state if kr_lifecycle.shadow_state != "corrupt" else "corrupt"
     markets = (
         _us_paper_item(us_report, us_lane_state, now),
         _us_shadow_item(us_report, us_lane_state, now),
         _us_capsule_item(us_report, us_lane_state, now),
-        *_us_recommendations(us_theses, us_lane_state, now),
+        *us_lifecycle.items,
         _kr_shadow_item(kr_report, kr_lane_state, now),
         _kr_capsule_item(kr_report, kr_lifecycle.shadow_events, kr_lane_state, now),
         *kr_lifecycle.items,
@@ -78,10 +92,14 @@ def project_day_agent_facade(
             )
         )
     research = tuple(research_values)
-    generic_markets = tuple(item for item in markets if not item.item_id.startswith("day_agent.kr.lifecycle"))
+    generic_markets = tuple(
+        item
+        for item in markets
+        if not item.item_id.startswith(("day_agent.kr.lifecycle", "day_agent.us.lifecycle"))
+    )
     generic_nodes, generic_edges = day_agent_trace_graph((*generic_markets, *research), now)
-    nodes = (*generic_nodes, *kr_lifecycle.nodes)
-    edges = (*generic_edges, *kr_lifecycle.edges)
+    nodes = (*generic_nodes, *us_lifecycle.nodes, *kr_lifecycle.nodes)
+    edges = (*generic_edges, *us_lifecycle.edges, *kr_lifecycle.edges)
     daily_learning_report = (
         None
         if us_report is None or kr_report is None
@@ -131,6 +149,18 @@ def _read_us_theses(root: Path) -> tuple[tuple[UsDayTradeThesis, ...], FacadeSta
         return UsDayThesisStore(root).theses(), "populated"
     except (OSError, ValueError):
         return (), "corrupt"
+
+
+def _read_us_paper_events(
+    path: Path,
+    theses: tuple[UsDayTradeThesis, ...],
+) -> tuple[Mapping[str, tuple[RecommendationEvent, ...]], FacadeState]:
+    if not path.exists():
+        return {}, "unavailable"
+    try:
+        return read_us_day_paper_events(path, tuple(thesis.thesis_id for thesis in theses)), "populated"
+    except InvalidUsDayLifecycleError:
+        return {}, "corrupt"
 
 
 def _latest(reports: tuple[MarketCloseReport, ...]) -> MarketCloseReport | None:
@@ -215,37 +245,6 @@ def _capsule_item(
             f"queued {len(next_session.queued_capsule_ids)} · suspended {suspended}"
         )
     return _item(item_id, label, state, value, now)
-
-
-def _us_recommendations(
-    theses: tuple[UsDayTradeThesis, ...], state: FacadeState, now: dt.datetime
-) -> tuple[WorkspaceItemV2, ...]:
-    recommendations = sorted(
-        (item for item in theses if item.decision is DayTradeDecision.RECOMMEND),
-        key=lambda item: (item.observed_at, item.thesis_id),
-        reverse=True,
-    )[:3]
-    values: list[WorkspaceItemV2] = []
-    for position, thesis in enumerate(recommendations, start=1):
-        assert thesis.symbol is not None and thesis.entry_price is not None and thesis.stop_price is not None
-        targets = "/".join(str(target.price) for target in thesis.targets)
-        rationale = (
-            thesis.flow_rationale or thesis.leader_rationale or thesis.catalyst_rationale or thesis.theme_rationale
-        )
-        reason = "rationale withheld" if rationale is None else rationale.text
-        values.append(
-            _item(
-                f"day_agent.us.recommendation.{position}",
-                f"US · Shadow · {thesis.symbol}",
-                state,
-                (
-                    f"entry {thesis.entry_price} · stop {thesis.stop_price} · targets {targets} · "
-                    f"rationale {reason} · outcome pending"
-                ),
-                now,
-            )
-        )
-    return tuple(values)
 
 
 def _learning_item(

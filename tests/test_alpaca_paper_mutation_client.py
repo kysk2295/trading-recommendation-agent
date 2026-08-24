@@ -104,13 +104,22 @@ def _close_response() -> dict[str, str | bool | None]:
     }
 
 
-def test_mutation_client_rejects_live_endpoint_before_request() -> None:
+@pytest.mark.parametrize(
+    "url",
+    (
+        "https://api.alpaca.markets",
+        "http://paper-api.alpaca.markets",
+        "https://paper-api.alpaca.markets.evil.example",
+        "https://paper-api.alpaca.markets/v2",
+    ),
+)
+def test_mutation_client_rejects_every_nonpaper_endpoint_before_request(url: str) -> None:
     def reject(request: httpx2.Request) -> httpx2.Response:
         raise AssertionError(str(request.url))
 
     with (
         httpx2.Client(
-            base_url="https://api.alpaca.markets",
+            base_url=url,
             transport=httpx2.MockTransport(reject),
         ) as http_client,
         pytest.raises(NonPaperTradingEndpointError),

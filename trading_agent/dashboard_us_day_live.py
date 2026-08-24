@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
@@ -9,6 +10,7 @@ from typing import Literal, Protocol
 from trading_agent.dashboard_models_v2 import SourceStateV2, TraceEdgeV2, TraceNodeV2, WorkspaceItemV2
 from trading_agent.dashboard_outbound_redaction import redact_outbound_text
 from trading_agent.dashboard_projection_common import WorkspaceProjection
+from trading_agent.dashboard_projection_day_agent_us import read_us_day_paper_events
 from trading_agent.dashboard_us_day_paper import FinalizedPaperProjectionBundle, canonical_day_exit_event
 from trading_agent.dashboard_us_day_versions import (
     DayAgentVersionReader,
@@ -19,7 +21,9 @@ from trading_agent.day_agent_task_models import DayAgentResearchTask
 from trading_agent.day_agent_task_store import DayAgentTaskReader, DayAgentTaskStore, DayAgentTaskStoreError
 from trading_agent.day_learning_report_models import MarketCloseReport
 from trading_agent.day_learning_report_store import InvalidDayLearningReportError, load_market_close_report
+from trading_agent.models import RecommendationEvent
 from trading_agent.paper_execution_models import IntentId
+from trading_agent.us_day_lifecycle import derive_us_day_lifecycle
 from trading_agent.us_day_thesis_models import DayTradeDecision, UsDayThesisChange, UsDayTradeThesis
 from trading_agent.us_day_thesis_store import InvalidUsDayThesisStoreError, UsDayThesisStore
 
@@ -52,6 +56,7 @@ class _ImmutableCloseReportReader:
 class _Readers:
     theses: tuple[UsDayTradeThesis, ...]
     changes: dict[str, tuple[UsDayThesisChange, ...]]
+    paper_events: Mapping[str, tuple[RecommendationEvent, ...]]
     task_reader: DayAgentTaskReader | None
     version_reader: DayAgentVersionReader | None
     close_reports: DayCloseReportReader
@@ -116,11 +121,13 @@ def _canonical_readers(outputs: Path, version_reader: DayAgentVersionReader | No
     thesis_root = root / "theses"
     theses = () if not thesis_root.exists() else UsDayThesisStore(thesis_root).theses()
     changes = {item.thesis_id: UsDayThesisStore(thesis_root).changes(item.thesis_id) for item in theses}
+    paper_events = read_us_day_paper_events(root / "paper.sqlite3", tuple(item.thesis_id for item in theses))
     task_path = root / "day_agent.sqlite3"
     task_reader = DayAgentTaskStore(task_path).reader() if task_path.exists() else None
     return _Readers(
         theses,
         changes,
+        paper_events,
         task_reader,
         version_reader,
         _ImmutableCloseReportReader(root / "close_reports"),
@@ -193,7 +200,15 @@ def _accepted(
     for thesis in actionable + tuple(item for item in ordered if item.decision is not DayTradeDecision.RECOMMEND):
         if thesis.decision is not DayTradeDecision.RECOMMEND:
             terminal_index += 1
-        market_items.extend(_thesis_items(thesis, readers.changes[thesis.thesis_id], terminal_index, source))
+        market_items.extend(
+            _thesis_items(
+                thesis,
+                readers.changes[thesis.thesis_id],
+                readers.paper_events.get(thesis.thesis_id, ()),
+                terminal_index,
+                source,
+            )
+        )
         if thesis.decision is DayTradeDecision.RECOMMEND and paper_ledger is not None:
             paper_items.extend(_paper_items(thesis, paper_ledger, source))
     close_index = 0
@@ -253,8 +268,13 @@ def _version_item(item_id: str, label: str, version: DayAgentVersionView, source
 
 
 def _thesis_items(
-    thesis: UsDayTradeThesis, changes: tuple[UsDayThesisChange, ...], index: int, source: str
+    thesis: UsDayTradeThesis,
+    changes: tuple[UsDayThesisChange, ...],
+    paper_events: tuple[RecommendationEvent, ...],
+    index: int,
+    source: str,
 ) -> tuple[WorkspaceItemV2, ...]:
+    current = derive_us_day_lifecycle(thesis, paper_events)[-1]
     if thesis.decision is DayTradeDecision.RECOMMEND:
         assert thesis.symbol is not None and thesis.entry_price is not None and thesis.stop_price is not None
         targets = "/".join(str(item.price) for item in thesis.targets)
@@ -262,9 +282,9 @@ def _thesis_items(
             _item(
                 f"day.recommendation.{thesis.symbol}",
                 "day_recommendation",
-                f"{thesis.symbol} active thesis",
+                f"{thesis.symbol} {current.status.value}",
                 f"entry {thesis.entry_price} · stop {thesis.stop_price} · targets {targets}",
-                thesis.observed_at,
+                current.occurred_at,
                 source,
             )
         ]
@@ -288,7 +308,14 @@ def _thesis_items(
         else f"{thesis.decision.value.upper()} · {thesis.reason_code}"
     )
     return (
-        _item(f"{prefix}.{index}", "day_recommendation", "Day terminal decision", value, thesis.observed_at, source),
+        _item(
+            f"{prefix}.{index}",
+            "day_recommendation",
+            f"Day terminal decision · {current.status.value}",
+            value,
+            thesis.observed_at,
+            source,
+        ),
     )
 
 
