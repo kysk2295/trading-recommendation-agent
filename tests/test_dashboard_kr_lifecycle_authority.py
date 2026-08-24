@@ -106,8 +106,8 @@ def test_corrupt_thesis_history_does_not_hide_valid_sibling(tmp_path: Path) -> N
     assert "decision/shadow binding corrupt" in (corrupt[0].value or "")
 
 
-def test_hidden_fourth_thesis_shadows_are_classified_before_display_cap(tmp_path: Path) -> None:
-    # Given: four theses, with only the oldest carrying a valid registration and malformed follow-up.
+def test_hidden_corrupt_thesis_is_exposed_while_three_valid_theses_remain_visible(tmp_path: Path) -> None:
+    # Given: three visible valid theses and an older thesis with malformed shadow history.
     root = tmp_path / "state"
     first_bar = dt.datetime(2026, 8, 24, 1, 2, tzinfo=dt.UTC)
     decisions = tuple(
@@ -141,13 +141,18 @@ def test_hidden_fourth_thesis_shadows_are_classified_before_display_cap(tmp_path
     shadow_store = KrDayCapsuleShadowStore(root / "kr-day-capsule-shadow.sqlite3")
     assert shadow_store.append(registered) and shadow_store.append(malformed)
 
-    # When: the dashboard limits its recommendation display to the three latest thesis groups.
+    # When: every thesis is classified before the dashboard applies its three-card cap.
     projection = project_kr_day_lifecycle(root, now=malformed.occurred_at + dt.timedelta(seconds=1))
 
-    # Then: all hidden shadows are classified, while none can borrow into a visible thesis card.
+    # Then: valid current theses remain visible and the hidden corrupt thesis is non-actionable, not legacy.
     recommendations = tuple(item for item in projection.items if item.kind == "day_recommendation")
+    corrupt = tuple(item for item in projection.items if item.state == "corrupt")
     rendered = _rendered(projection.items)
     assert len(recommendations) == 3
+    assert len(corrupt) == 1
+    assert corrupt[0].item_id.endswith(".corrupt")
+    corrupt_digest = corrupt[0].item_id.removeprefix("day_agent.kr.lifecycle.").removesuffix(".corrupt")
+    assert corrupt[0].trace_id.endswith(corrupt_digest)
     assert "day_agent.kr.lifecycle.unbound" not in {item.item_id for item in projection.items}
     assert "ACTIVE" not in rendered and "71100" not in rendered
 

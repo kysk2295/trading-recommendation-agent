@@ -193,6 +193,52 @@ async def test_native_watch_emits_snapshot_when_explicit_kr_root_is_created_late
 
 
 @pytest.mark.anyio
+async def test_event_watch_rebinds_to_created_kr_root_for_later_ledger_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: the first event creates an explicit root and the next arrives inside that root.
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    state_parent = tmp_path / "kr-service"
+    state_parent.mkdir()
+    state_root = state_parent / "state"
+    watched: list[tuple[Path, ...]] = []
+    snapshots: list[Path | None] = []
+    socket = _Socket()
+    snapshot = DashboardSnapshotV2.model_validate(snapshot_payload())
+    monkeypatch.setattr(publisher_events, "current_code_sha", lambda: "a" * 40)
+
+    async def changes_after_rebind(*paths: Path, **_settings: int) -> AsyncIterator[frozenset[Path]]:
+        watched.append(paths)
+        if paths == (state_parent,):
+            state_root.mkdir()
+            yield frozenset({state_parent})
+        elif paths == (state_root,):
+            yield frozenset({state_root / "kr-day-decisions.sqlite3"})
+
+    def observe(_outputs: Path, **settings: Path | None) -> DashboardSnapshotV2:
+        snapshots.append(settings.get("kr_day_state_root"))
+        return snapshot
+
+    monkeypatch.setattr(publisher_events, "collect_dashboard_snapshot_v2", observe)
+
+    # When: the publisher snapshots root creation, rebinds, and observes the later ledger write.
+    await publisher_events.watch_output_events(
+        socket,
+        outputs,
+        anyio.Lock(),
+        changes_after_rebind,
+        kr_day_state_root=state_root,
+    )
+
+    # Then: native/custom watch ownership narrows from parent to root and emits both snapshots.
+    assert watched == [(state_parent,), (state_root,)]
+    assert snapshots == [state_root, state_root]
+    assert len(socket.messages) == 2
+
+
+@pytest.mark.anyio
 async def test_reconnect_rebuild_uses_explicit_kr_state_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

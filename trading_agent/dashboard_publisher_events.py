@@ -55,12 +55,7 @@ class SnapshotSocket(Protocol):
 
 
 class WatchFactory(Protocol):
-    def __call__(
-        self,
-        *paths: Path,
-        debounce: int,
-        step: int,
-    ) -> AsyncIterator[frozenset[Path]]: ...
+    def __call__(self, *paths: Path, debounce: int, step: int) -> AsyncIterator[frozenset[Path]]: ...
 
 
 async def send_snapshot(socket: SnapshotSocket, snapshot: DashboardSnapshotV2) -> None:
@@ -84,41 +79,51 @@ async def watch_output_events(
 ) -> None:
     event_source = watch_native_changes if watcher is None else watcher
     code_sha = current_code_sha()
-    async for changes in event_source(
-        *watch_roots(outputs, kr_day_state_root=kr_day_state_root),
-        debounce=WATCH_DEBOUNCE_MS,
-        step=WATCH_STEP_MS,
-    ):
-        try:
-            generated = publish_kr_autonomous_triggers(
-                outputs,
-                state_root=DEFAULT_AUTONOMOUS_STATE,
-                pinned_code_sha=code_sha,
-                now=dt.datetime.now(dt.UTC),
-            )
-        except InvalidKrAutonomousBridgeError:
-            generated = ()
-        for trigger_path in tuple(sorted(set(autonomous_trigger_paths(changes)) | set(generated))):
-            await stream_autonomous_trigger_event(
-                socket,
-                trigger_path,
-                send_lock,
-            )
-        if cycle_database is None:
-            snapshot = collect_dashboard_snapshot_v2(
-                outputs,
-                system_authority_verifier=system_authority_verifier,
-                kr_day_state_root=kr_day_state_root,
-            )
-        else:
-            snapshot = collect_dashboard_snapshot_v2(
-                outputs,
-                system_authority_verifier=system_authority_verifier,
-                cycle_database=cycle_database,
-                kr_day_state_root=kr_day_state_root,
-            )
-        async with send_lock:
-            await send_snapshot(socket, snapshot)
+    roots = watch_roots(outputs, kr_day_state_root=kr_day_state_root)
+    while True:
+        restarted = False
+        async for changes in event_source(
+            *roots,
+            debounce=WATCH_DEBOUNCE_MS,
+            step=WATCH_STEP_MS,
+        ):
+            try:
+                generated = publish_kr_autonomous_triggers(
+                    outputs,
+                    state_root=DEFAULT_AUTONOMOUS_STATE,
+                    pinned_code_sha=code_sha,
+                    now=dt.datetime.now(dt.UTC),
+                )
+            except InvalidKrAutonomousBridgeError:
+                generated = ()
+            for trigger_path in tuple(sorted(set(autonomous_trigger_paths(changes)) | set(generated))):
+                await stream_autonomous_trigger_event(
+                    socket,
+                    trigger_path,
+                    send_lock,
+                )
+            if cycle_database is None:
+                snapshot = collect_dashboard_snapshot_v2(
+                    outputs,
+                    system_authority_verifier=system_authority_verifier,
+                    kr_day_state_root=kr_day_state_root,
+                )
+            else:
+                snapshot = collect_dashboard_snapshot_v2(
+                    outputs,
+                    system_authority_verifier=system_authority_verifier,
+                    cycle_database=cycle_database,
+                    kr_day_state_root=kr_day_state_root,
+                )
+            async with send_lock:
+                await send_snapshot(socket, snapshot)
+            updated_roots = watch_roots(outputs, kr_day_state_root=kr_day_state_root)
+            if updated_roots != roots:
+                roots = updated_roots
+                restarted = True
+                break
+        if not restarted:
+            return
 
 
 def publisher_url(dashboard_url: str) -> str:

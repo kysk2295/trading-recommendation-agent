@@ -7,16 +7,17 @@ from pathlib import Path
 
 from trading_agent.dashboard_models_v2 import TraceEdgeV2, TraceNodeV2, WorkspaceItemV2
 from trading_agent.dashboard_projection_day_agent_kr_render import project_kr_thesis
+from trading_agent.dashboard_projection_day_agent_kr_validation import has_bound_history
 from trading_agent.dashboard_projection_day_agent_support import (
     FacadeState,
     InvalidKrDayLifecycleProjectionError,
     day_agent_item,
 )
-from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowEvent, KrDayCapsuleShadowStatus
+from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowEvent
 from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
 from trading_agent.kr_day_decision_delivery_identity import same_kr_day_thesis
 from trading_agent.kr_day_decision_delivery_record_builders import bound_kr_day_decision_id
-from trading_agent.kr_day_decision_models import KrDayDecisionEvent, KrDayDecisionStatus
+from trading_agent.kr_day_decision_models import KrDayDecisionEvent
 from trading_agent.kr_day_decision_store import KrDayDecisionStore
 
 
@@ -45,17 +46,24 @@ def project_kr_day_lifecycle(root: Path, *, now: dt.datetime) -> KrDayLifecycleP
         (
             history,
             tuple(event for event in shadows if _belongs_to_history(event, history, decision_ids)),
+            has_bound_history(
+                history,
+                tuple(event for event in shadows if _belongs_to_history(event, history, decision_ids)),
+            ),
         )
         for history in sorted(_decision_groups(decisions), key=lambda value: value[-1].observed_at, reverse=True)
     )
     items: list[WorkspaceItemV2] = []
     nodes: list[TraceNodeV2] = []
     edges: list[TraceEdgeV2] = []
-    claimed_shadow_ids = {event.event_id for _, shadow_history in groups for event in shadow_history}
-    for history, shadow_history in groups[:3]:
+    claimed_shadow_ids = {event.event_id for _, shadow_history, _ in groups for event in shadow_history}
+    for index, (history, shadow_history, is_bound) in enumerate(groups):
+        if is_bound and index >= 3:
+            continue
         thesis_root = history[0]
         try:
-            _require_bound_history(history, shadow_history)
+            if not is_bound:
+                raise InvalidKrDayLifecycleProjectionError
             card_items, card_nodes, card_edges = project_kr_thesis(history, shadow_history, now)
         except InvalidKrDayLifecycleProjectionError:
             item = _thesis_failure(thesis_root, now)
@@ -132,41 +140,6 @@ def _without_decisions(
         shadows[-1].occurred_at,
     )
     return KrDayLifecycleProjection((item,), *_trace_failure(item, now), shadows, state)
-
-
-def _require_bound_history(
-    decisions: tuple[KrDayDecisionEvent, ...], shadows: tuple[KrDayCapsuleShadowEvent, ...]
-) -> None:
-    by_id = {event.event_id: event for event in decisions}
-    previous: str | None = None
-    for shadow in shadows:
-        if shadow.previous_event_id != previous:
-            raise InvalidKrDayLifecycleProjectionError
-        previous = shadow.event_id
-        decision_id = bound_kr_day_decision_id(shadow)
-        if decision_id is None:
-            continue
-        decision = by_id.get(decision_id)
-        if decision is None or not _same_shadow_identity(decision, shadow):
-            raise InvalidKrDayLifecycleProjectionError
-        if (
-            shadow.status is not KrDayCapsuleShadowStatus.REGISTERED
-            and decision.status is not KrDayDecisionStatus.ARMED
-        ):
-            raise InvalidKrDayLifecycleProjectionError
-        later = decisions[decisions.index(decision) + 1 :]
-        if shadow.status is not KrDayCapsuleShadowStatus.REGISTERED and any(
-            event.status is not KrDayDecisionStatus.ARMED for event in later
-        ):
-            raise InvalidKrDayLifecycleProjectionError
-
-
-def _same_shadow_identity(decision: KrDayDecisionEvent, shadow: KrDayCapsuleShadowEvent) -> bool:
-    return (
-        decision.capsule_id == shadow.capsule_id
-        and decision.session_date == shadow.session_date
-        and decision.symbol == shadow.symbol
-    )
 
 
 def _belongs_to_history(
