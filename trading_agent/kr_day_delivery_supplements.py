@@ -95,6 +95,7 @@ def _summary_record(report: MarketCloseReport) -> HermesProjectionRecord:
             f"- 실패: {', '.join(diagnostics) if diagnostics else '없음'}\n"
             f"- challenger 결정 active/queued: {len(next_session.active_capsule_ids)}/"
             f"{len(next_session.queued_capsule_ids)}\n"
+            "- 신규 challenger 등록: 0\n"
             "- 국내 provider read-only, 실계좌 주문 없음"
         ),
         payload_sha256=hashlib.sha256(canonical_experiment_ledger_json(report).encode()).hexdigest(),
