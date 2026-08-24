@@ -12,6 +12,7 @@ import pytest
 
 import run_kr_day_close_service as cli
 from tests.kr_day_close_service_support import ROOT, close_fixture
+from trading_agent.day_agent_version_store import DayAgentVersionStore
 from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.kr_day_close_service import KrDayCloseRuntime, run_kr_day_close_service
@@ -81,23 +82,42 @@ def test_postclose_replay_completes_once_and_delivers_one_summary(tmp_path: Path
 
 
 def test_postclose_summary_reports_registered_challenger_result(tmp_path: Path) -> None:
-    # Given: a complete close whose deterministic slow-loop adapter registers one challenger.
-    fixture = close_fixture(tmp_path)
+    # Given: durable generated KR parent, Champion, typed patch, runtime, and XKRX loop inputs.
+    fixture = close_fixture(tmp_path, configured_loop=True)
 
-    # When: the close service runs the loop before projecting the daily summary.
-    result = run_kr_day_close_service(
-        fixture.config,
-        KrDayCloseRuntime(
-            clock=lambda: fixture.post_close,
-            stage_observer=lambda _stage: None,
-            loop_engineer=lambda _publication, _policy: 1,
-        ),
+    # When: the default configured close path runs and replays the real loop.
+    result = run_kr_day_close_service(fixture.config, _runtime(fixture.post_close))
+    replay = run_kr_day_close_service(fixture.config, _runtime(fixture.post_close))
+
+    # Then: one future-only Challenger exists, Champion is unchanged, and durable count remains one.
+    event = HermesDeliveryStore(fixture.config.hermes_delivery_database).events()[0]
+    versions = DayAgentVersionStore(fixture.config.state_root / "day-agent-versions.sqlite3")
+    champion = versions.reader().champion()
+    challengers = versions.reader().challengers()
+    assert champion is not None
+    assert (result.complete, result.challenger_count, replay.challenger_count) == (True, 1, 1)
+    assert len(challengers) == 1
+    assert challengers[0].parent_version_id == champion.version_id
+    assert challengers[0].created_session_date == dt.date(2026, 8, 26)
+    assert len(tuple(fixture.config.completion_root.glob("*.json"))) == 1
+    assert "신규 challenger 등록: 1" in event.rendered_text
+
+
+def test_configured_calendar_mismatch_blocks_before_summary_and_completion(tmp_path: Path) -> None:
+    # Given: eligible configured authorities whose future loop calendar differs from the close report.
+    fixture = close_fixture(
+        tmp_path,
+        configured_loop=True,
+        loop_calendar_snapshot_id="b" * 64,
     )
 
-    # Then: completion and the durable public summary both report the observed one-challenger result.
-    event = HermesDeliveryStore(fixture.config.hermes_delivery_database).events()[0]
-    assert (result.complete, result.challenger_count) == (True, 1)
-    assert "신규 challenger 등록: 1" in event.rendered_text
+    # When: the default close path validates the configured slow-loop authority.
+    result = run_kr_day_close_service(fixture.config, _runtime(fixture.post_close))
+
+    # Then: loop failure remains incomplete and publishes neither summary nor completion.
+    assert (result.status, result.stage, result.complete) == ("blocked", "loop", False)
+    assert HermesDeliveryStore(fixture.config.hermes_delivery_database).events() == ()
+    assert not fixture.config.completion_root.exists()
 
 
 @pytest.mark.parametrize("crash_stage", ("report", "policy", "loop", "summary", "completion"))

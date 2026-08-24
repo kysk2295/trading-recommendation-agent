@@ -293,6 +293,7 @@ def _request(events, outcomes):
         calendar_snapshot=_calendar(),
         expected_capsule_ids=tuple(sorted({event.capsule_id for event in events})),
         shadow_events=events,
+        decision_event_ids=("decision-event",),
         outcomes=outcomes,
         active_capsule_ids=tuple(sorted({event.capsule_id for event in events})),
         queued_capsule_ids=(),

@@ -62,6 +62,7 @@ class KrDayMarketCloseRequest(BaseModel):
     calendar_snapshot: KrSessionCalendarSnapshot
     expected_capsule_ids: tuple[str, ...] = Field(min_length=1, max_length=3)
     shadow_events: tuple[KrDayCapsuleShadowEvent, ...] = Field(min_length=1)
+    decision_event_ids: tuple[str, ...] = Field(min_length=1)
     outcomes: tuple[KrDayCapsuleOutcome, ...] = Field(min_length=1, max_length=3)
     active_capsule_ids: tuple[str, ...] = Field(max_length=3)
     queued_capsule_ids: tuple[str, ...]
@@ -78,6 +79,7 @@ class KrDayMarketCloseRequest(BaseModel):
             self.queued_capsule_ids,
             self.risk_incident_ids,
             self.data_incident_ids,
+            self.decision_event_ids,
         )
         if any(items != tuple(sorted(set(items))) for items in collections):
             raise InvalidKrDayMarketCloseReportError
@@ -114,6 +116,7 @@ def publish_kr_day_market_close_report(
                 calendar_snapshot_id=checked.calendar_snapshot.snapshot_id,
                 outcomes=checked.outcomes,
                 shadow_events=checked.shadow_events,
+                decision_event_ids=checked.decision_event_ids,
                 active_capsule_ids=checked.active_capsule_ids,
                 queued_capsule_ids=checked.queued_capsule_ids,
                 risk_incident_ids=checked.risk_incident_ids,

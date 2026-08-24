@@ -78,15 +78,20 @@ def run_configured_kr_day_loop_engineer(
     policy: ExplorationPolicy,
     paths: KrDayLoopAuthorityPaths,
 ) -> KrDayLoopResult:
-    preliminary = _preliminary_result(report, metrics)
+    checked_report, checked_metrics, checked_policy = _checked_evidence(
+        report,
+        metrics,
+        policy,
+    )
+    preliminary = _preliminary_result(checked_report, checked_metrics)
     if preliminary is not None:
         return preliminary
     try:
         inputs = LoopInputBundle.model_validate_json(read_private_text(paths.loop_inputs))
         first_session = inputs.future_sessions[0]
         if (
-            first_session.session_date != policy.payload.effective_session_date
-            or first_session.calendar_snapshot_id != policy.payload.calendar_snapshot_id
+            first_session.session_date != checked_policy.payload.effective_session_date
+            or first_session.calendar_snapshot_id != checked_policy.payload.calendar_snapshot_id
             or any(
                 not item.calendar_snapshot_id.startswith("calendar://official/XKRX/")
                 for item in inputs.future_sessions
@@ -111,7 +116,12 @@ def run_configured_kr_day_loop_engineer(
                 inputs.future_sessions,
             ),
         )
-        return run_kr_day_loop_engineer(report, metrics, policy, services)
+        return _run_checked_kr_day_loop_engineer(
+            checked_report,
+            checked_metrics,
+            checked_policy,
+            services,
+        )
     except InvalidKrDayLoopEvidenceError:
         raise
     except (AttributeError, OSError, RuntimeError, TypeError, ValidationError, ValueError):
@@ -125,27 +135,53 @@ def run_kr_day_loop_engineer(
     services: DayAgentLoopServices,
 ) -> KrDayLoopResult:
     try:
-        checked_report = MarketCloseReport.model_validate(report.model_dump(mode="python"))
-        checked_metrics = KrDayMarketCloseMetrics.model_validate(metrics.model_dump(mode="python"))
-        checked_policy = ExplorationPolicy.model_validate(policy.model_dump(mode="python"))
-        _require_canonical_lineage(checked_report, checked_metrics, checked_policy)
-        preliminary = _preliminary_result(checked_report, checked_metrics)
-        if preliminary is not None:
-            return preliminary
-        champion = services.store.reader().champion()
-        if champion is None:
-            raise InvalidKrDayLoopEvidenceError
-        if checked_report.payload.agent_version_id != champion.version_id:
-            raise InvalidKrDayLoopEvidenceError
-        existing = services.store.reader().proposal_for_report(checked_report.report_id)
-        proposal = run_loop_engineer(checked_report, champion, services)
-        if existing is not None:
-            return KrDayLoopResult(1, "exact_replay", proposal)
-        return KrDayLoopResult(1, "challenger_registered", proposal)
+        checked = _checked_evidence(report, metrics, policy)
+        return _run_checked_kr_day_loop_engineer(*checked, services)
     except InvalidKrDayLoopEvidenceError:
         raise
     except (AttributeError, TypeError, ValidationError, ValueError):
         raise InvalidKrDayLoopEvidenceError from None
+
+
+def _checked_evidence(
+    report: MarketCloseReport,
+    metrics: KrDayMarketCloseMetrics,
+    policy: ExplorationPolicy,
+) -> tuple[MarketCloseReport, KrDayMarketCloseMetrics, ExplorationPolicy]:
+    try:
+        checked = (
+            MarketCloseReport.model_validate(report.model_dump(mode="python")),
+            KrDayMarketCloseMetrics.model_validate(metrics.model_dump(mode="python")),
+            ExplorationPolicy.model_validate(policy.model_dump(mode="python")),
+        )
+        _require_canonical_lineage(*checked)
+        return checked
+    except InvalidKrDayLoopEvidenceError:
+        raise
+    except (AttributeError, TypeError, ValidationError, ValueError):
+        raise InvalidKrDayLoopEvidenceError from None
+
+
+def _run_checked_kr_day_loop_engineer(
+    report: MarketCloseReport,
+    metrics: KrDayMarketCloseMetrics,
+    policy: ExplorationPolicy,
+    services: DayAgentLoopServices,
+) -> KrDayLoopResult:
+    del policy
+    preliminary = _preliminary_result(report, metrics)
+    if preliminary is not None:
+        return preliminary
+    champion = services.store.reader().champion()
+    if champion is None or report.payload.agent_version_id != champion.version_id:
+        raise InvalidKrDayLoopEvidenceError
+    existing = services.store.reader().proposal_for_report(report.report_id)
+    proposal = run_loop_engineer(report, champion, services)
+    return KrDayLoopResult(
+        1,
+        "exact_replay" if existing is not None else "challenger_registered",
+        proposal,
+    )
 
 
 def _preliminary_result(
@@ -188,6 +224,8 @@ def _require_canonical_lineage(
         or policy_payload.effective_session_date != metric_payload.next_review_date
         or policy_payload.effective_session_date <= report_payload.session_date
         or not policy_payload.calendar_snapshot_id.startswith("calendar://official/XKRX/")
+        or policy_payload.calendar_snapshot_id.removeprefix("calendar://official/XKRX/")
+        not in canonical_evidence
     ):
         raise InvalidKrDayLoopEvidenceError
 

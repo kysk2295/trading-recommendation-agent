@@ -34,6 +34,7 @@ class KrDayMarketCloseProjectionInput:
     calendar_snapshot_id: str
     outcomes: tuple[KrDayCapsuleOutcome, ...]
     shadow_events: tuple[KrDayCapsuleShadowEvent, ...]
+    decision_event_ids: tuple[str, ...]
     active_capsule_ids: tuple[str, ...]
     queued_capsule_ids: tuple[str, ...]
     risk_incident_ids: tuple[str, ...]
@@ -54,6 +55,7 @@ def build_kr_day_market_close_report(source: KrDayMarketCloseProjectionInput) ->
             {
                 source.calendar_snapshot_id,
                 *(event.event_id for event in source.shadow_events),
+                *source.decision_event_ids,
                 *(outcome.outcome_id for outcome in source.outcomes),
                 *source.risk_incident_ids,
                 *source.data_incident_ids,

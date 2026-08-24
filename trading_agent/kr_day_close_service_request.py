@@ -6,11 +6,18 @@ from pathlib import Path
 from typing import Final, override
 from zoneinfo import ZoneInfo
 
+from trading_agent.day_agent_version_store import DayAgentVersionStore
+from trading_agent.day_learning_report_models import (
+    DayDecisionDiagnostic,
+    DayDecisionOutcome,
+    DayDecisionStage,
+)
 from trading_agent.day_strategy_capsule_models import StrategyCapsule
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.kis_kr_session_calendar_models import KrSessionCalendarSnapshot, KrSessionDay
 from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStore
 from trading_agent.kr_day_capsule_outcomes import (
+    KrDayCapsuleOutcome,
     KrDayCapsuleOutcomeAttempt,
     project_kr_day_capsule_outcome,
 )
@@ -100,6 +107,9 @@ def build_kr_day_close_request(
         for trial in sorted(trials, key=lambda item: item.capsule_id)
     )
     active, queued = _existing_authority(ledger, local.date(), tuple(sorted(selected_capsules)))
+    champion = DayAgentVersionStore(config.state_root / "day-agent-versions.sqlite3").reader().champion()
+    if champion is not None and set(champion.playbook_ids) != set(selected_capsules):
+        raise InvalidKrDayCloseRequestSourceError
     return KrDayMarketCloseRequest(
         session_date=local.date(),
         official_close_at=close_at,
@@ -107,11 +117,46 @@ def build_kr_day_close_request(
         calendar_snapshot=snapshot,
         expected_capsule_ids=tuple(sorted(trial.capsule_id for trial in trials)),
         shadow_events=shadows,
+        decision_event_ids=tuple(sorted(event.event_id for event in decisions)),
         outcomes=outcomes,
         active_capsule_ids=active,
         queued_capsule_ids=queued,
         risk_incident_ids=(),
         data_incident_ids=(),
+        agent_version_id=None if champion is None else champion.version_id,
+        diagnostics=() if champion is None else _close_diagnostics(decisions, outcomes),
+    )
+
+
+def _close_diagnostics(
+    decisions: tuple[KrDayDecisionEvent, ...],
+    outcomes: tuple[KrDayCapsuleOutcome, ...],
+) -> tuple[DayDecisionDiagnostic, ...]:
+    decision_ids = tuple(sorted(event.event_id for event in decisions))
+    outcome_ids = tuple(sorted(outcome.outcome_id for outcome in outcomes))
+    exit_refuted = any(
+        outcome.net_return is not None and outcome.net_return <= 0
+        for outcome in outcomes
+    )
+    failed = any(outcome.kind.value in {"blocked", "failed", "censored"} for outcome in outcomes)
+    failure = DayDecisionStage.EXIT if exit_refuted else DayDecisionStage.EXECUTION_QUALITY if failed else None
+    return tuple(
+        DayDecisionDiagnostic(
+            stage=stage,
+            outcome=(
+                DayDecisionOutcome.REFUTED
+                if stage is failure
+                else DayDecisionOutcome.SUPPORTED
+            ),
+            score=0.1 if stage is failure else 0.8,
+            evidence_ids=(
+                outcome_ids
+                if stage is DayDecisionStage.EXIT
+                else decision_ids
+            ),
+            reason_codes=("kr_close_refuted",) if stage is failure else ("kr_close_supported",),
+        )
+        for stage in DayDecisionStage
     )
 
 
