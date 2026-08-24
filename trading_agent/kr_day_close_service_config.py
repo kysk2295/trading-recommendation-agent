@@ -57,12 +57,12 @@ class KrDayCloseServiceConfig(BaseModel):
             self.completion_root,
             self.launch_agents_directory,
         )
-        state_paths = paths[4:-1]
+        service_owned_paths = paths[5:-1]
         if (
             any(not path.is_absolute() or path.is_symlink() for path in paths)
             or _SHA.fullmatch(self.expected_commit) is None
-            or any(not path.is_relative_to(self.state_root) for path in state_paths)
-            or len(set(state_paths)) != len(state_paths)
+            or any(not path.is_relative_to(self.state_root) for path in service_owned_paths)
+            or len(set(service_owned_paths)) != len(service_owned_paths)
         ):
             raise InvalidKrDayCloseServiceConfigError
         return self

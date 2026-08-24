@@ -16,7 +16,10 @@ from trading_agent.day_agent_version_store import DayAgentVersionStore
 from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.kr_day_close_service import KrDayCloseRuntime, run_kr_day_close_service
-from trading_agent.kr_day_close_service_config import write_kr_day_close_service_config
+from trading_agent.kr_day_close_service_config import (
+    KrDayCloseServiceConfig,
+    write_kr_day_close_service_config,
+)
 from trading_agent.kr_day_close_service_launchd import (
     provision_kr_day_close_launch_agent,
     verify_kr_day_close_launch_agent,
@@ -281,6 +284,30 @@ def test_config_and_launch_agent_pin_exact_recovery_schedule(tmp_path: Path) -> 
     assert payload["ProgramArguments"][-1] == str(fixture.config_path)
     assert fixture.config.expected_commit in plist_path.name
     assert "EnvironmentVariables" not in payload
+
+
+def test_close_config_accepts_external_read_only_experiment_ledger(tmp_path: Path) -> None:
+    # Given: production keeps the shared research ledger outside the KR session-owned state root.
+    fixture = close_fixture(tmp_path / "fixture")
+    shared_ledger = tmp_path / "experiment-control" / "experiment-ledger.sqlite3"
+
+    # When: the close service binds that shared read-only dependency.
+    config = KrDayCloseServiceConfig.model_validate(
+        fixture.config.model_dump(mode="python") | {"experiment_ledger": shared_ledger}
+    )
+
+    # Then: service-owned outputs remain scoped while the canonical ledger path is accepted.
+    assert config.experiment_ledger == shared_ledger
+    assert all(
+        path.is_relative_to(config.state_root)
+        for path in (
+            config.report_root,
+            config.policy_root,
+            config.hermes_delivery_database,
+            config.health_root,
+            config.completion_root,
+        )
+    )
 
 
 def test_cli_bad_config_and_fixture_replay_are_compact(
