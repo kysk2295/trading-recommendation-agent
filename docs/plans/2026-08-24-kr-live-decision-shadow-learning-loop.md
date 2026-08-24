@@ -14,7 +14,7 @@
 
 사용자에게 보이는 핵심 약속은 다음과 같다.
 
-1. 장중 포착된 종목은 다음 서비스 주기 안에 반드시 아래 둘 중 하나가 된다.
+1. 장중 포착된 종목은 다음 서비스 주기 안에 반드시 이유가 포함된 결정 상태가 된다. 최초 `INVESTIGATING`은 허용하지만 같은 근거와 같은 완료 봉에서 반복할 수 없고, 다음 완료 봉까지 아래 둘 중 하나로 확정돼야 한다.
    - `ARMED` 또는 `ACTIVE`: 진입 조건/가격, 손절, 목표가, 무효화 조건, 유효 시각, 근거가 포함된 계획
    - `REJECTED`, `BLOCKED`, 또는 `EXPIRED`: 매매하지 않는 구체적 이유가 포함된 판정
 2. 단순히 거래대금 순위에 들어왔다는 이유만으로 매매 추천을 만들지 않는다.
@@ -118,6 +118,8 @@ assert decision.observed_at is not None
 
 Also assert that no opportunity is silently represented only by `None` and that a no-op tick does not fabricate a recommendation.
 
+Add a second completed-bar cycle assertion: an unchanged candidate may not remain indefinitely `INVESTIGATING`; by that cycle it must become `ARMED`, `REJECTED`, `BLOCKED`, or `EXPIRED`.
+
 **Step 2: Run the new test and prove the missing boundary**
 
 Run: `pytest -q tests/test_kr_live_decision_contract.py`
@@ -180,10 +182,12 @@ Follow the established patterns in `trading_agent/kr_day_capsule_shadow_store.py
 Run:
 
 ```bash
-pytest -q tests/test_kr_day_decision_store.py tests/test_kr_live_decision_contract.py
+pytest -q tests/test_kr_day_decision_store.py
 ruff check trading_agent/kr_day_decision_models.py trading_agent/kr_day_decision_store.py tests/test_kr_day_decision_store.py
 basedpyright trading_agent/kr_day_decision_models.py trading_agent/kr_day_decision_store.py
 ```
+
+The Task 1 end-to-end contract remains intentionally red until Task 5 connects the decision service to the session service.
 
 **Step 5: Commit**
 
@@ -599,7 +603,7 @@ git commit -m "docs: record KR day-agent operating acceptance"
 
 The implementation is complete only when all of the following are observed:
 
-- Every current-session discovery becomes a recorded disposition within one subsequent 120-second service cycle.
+- Every current-session discovery becomes a reason-bearing recorded disposition within one subsequent 120-second service cycle, and an unchanged `INVESTIGATING` state resolves by the next completed bar.
 - Every `ARMED`/`ACTIVE` user-facing item contains timestamp, entry or trigger, stop, targets, rationale, invalidation, validity, and paper/shadow labeling.
 - Rejected candidates retain exact reason codes and feature evidence.
 - A current active shadow position is managed even when no new opportunity is discovered.
