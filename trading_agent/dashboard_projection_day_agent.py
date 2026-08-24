@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from trading_agent.dashboard_models_v2 import SourceStateName, TraceEdgeV2, TraceNodeV2, WorkspaceItemV2
-from trading_agent.dashboard_outbound_redaction import redact_outbound_text
+from trading_agent.dashboard_models_v2 import TraceEdgeV2, TraceNodeV2, WorkspaceItemV2
 from trading_agent.dashboard_projection_common import WorkspaceProjection
+from trading_agent.dashboard_projection_day_agent_kr import project_kr_day_lifecycle
+from trading_agent.dashboard_projection_day_agent_support import (
+    FacadeState,
+    day_agent_item,
+    day_agent_trace_graph,
+)
 from trading_agent.day_learning_report_models import DailyLearningReport, MarketCloseReport
 from trading_agent.day_learning_report_store import load_market_close_report
 from trading_agent.day_learning_reports import build_daily_learning_report
 from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowEvent
-from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
 from trading_agent.research_identity_models import MarketId
 from trading_agent.us_day_thesis_models import DayTradeDecision, UsDayTradeThesis
 from trading_agent.us_day_thesis_store import UsDayThesisStore
@@ -28,28 +31,30 @@ class DayAgentFacadeProjection:
     daily_learning_report: DailyLearningReport | None
 
 
-FacadeState = Literal["populated", "unavailable", "corrupt"]
-
-
 def project_day_agent_facade(outputs: Path, *, now: dt.datetime) -> DayAgentFacadeProjection:
     us_reports, us_state = _read_reports(outputs / "us_day" / "close_reports", MarketId.US_EQUITIES)
     kr_reports, kr_state = _read_reports(outputs / "kr_day" / "close_reports", MarketId.KR_EQUITIES)
     us_theses, thesis_state = _read_us_theses(outputs / "us_day" / "theses")
-    kr_events, event_state = _read_kr_events(outputs / "kr_day")
+    kr_lifecycle = project_kr_day_lifecycle(outputs / "kr_day", now=now)
     us_report = _latest(us_reports)
     kr_report = _latest(kr_reports)
-    if us_report is None and kr_report is None and {us_state, kr_state, thesis_state, event_state} <= {"unavailable"}:
+    if (
+        us_report is None
+        and kr_report is None
+        and not kr_lifecycle.items
+        and {us_state, kr_state, thesis_state, kr_lifecycle.shadow_state} <= {"unavailable"}
+    ):
         return DayAgentFacadeProjection((), (), (), (), None)
     us_lane_state: FacadeState = us_state if thesis_state != "corrupt" else "corrupt"
-    kr_lane_state: FacadeState = kr_state if event_state != "corrupt" else "corrupt"
+    kr_lane_state: FacadeState = kr_state if kr_lifecycle.shadow_state != "corrupt" else "corrupt"
     markets = (
         _us_paper_item(us_report, us_lane_state, now),
         _us_shadow_item(us_report, us_lane_state, now),
         _us_capsule_item(us_report, us_lane_state, now),
         *_us_recommendations(us_theses, us_lane_state, now),
         _kr_shadow_item(kr_report, kr_lane_state, now),
-        _kr_capsule_item(kr_report, kr_events, kr_lane_state, now),
-        *_kr_recommendations(kr_events, kr_lane_state, now),
+        _kr_capsule_item(kr_report, kr_lifecycle.shadow_events, kr_lane_state, now),
+        *kr_lifecycle.items,
     )
     research_values: list[WorkspaceItemV2] = []
     if us_report is not None or us_lane_state == "corrupt":
@@ -67,7 +72,10 @@ def project_day_agent_facade(outputs: Path, *, now: dt.datetime) -> DayAgentFaca
             )
         )
     research = tuple(research_values)
-    nodes, edges = _trace_graph(markets, research, now)
+    generic_markets = tuple(item for item in markets if not item.item_id.startswith("day_agent.kr.lifecycle"))
+    generic_nodes, generic_edges = day_agent_trace_graph((*generic_markets, *research), now)
+    nodes = (*generic_nodes, *kr_lifecycle.nodes)
+    edges = (*generic_edges, *kr_lifecycle.edges)
     daily_learning_report = (
         None
         if us_report is None or kr_report is None
@@ -119,37 +127,12 @@ def _read_us_theses(root: Path) -> tuple[tuple[UsDayTradeThesis, ...], FacadeSta
         return (), "corrupt"
 
 
-def _read_kr_events(root: Path) -> tuple[tuple[KrDayCapsuleShadowEvent, ...], FacadeState]:
-    candidates = (root / "shadow" / "events.sqlite3", root / "capsule_shadow.sqlite3", root / "shadow.sqlite3")
-    path = next((candidate for candidate in candidates if candidate.exists()), None)
-    if path is None:
-        return (), "unavailable"
-    try:
-        return KrDayCapsuleShadowStore(path).events(), "populated"
-    except (OSError, ValueError):
-        return (), "corrupt"
-
-
 def _latest(reports: tuple[MarketCloseReport, ...]) -> MarketCloseReport | None:
     return max(reports, key=lambda item: (item.payload.finalized_at, item.payload.revision), default=None)
 
 
-def _item(
-    item_id: str,
-    label: str,
-    state: SourceStateName,
-    value: str,
-    now: dt.datetime,
-) -> WorkspaceItemV2:
-    return WorkspaceItemV2(
-        item_id=item_id,
-        kind="research",
-        label=label,
-        state=state,
-        value=redact_outbound_text(value, max_chars=160),
-        observed_at=None if state == "unavailable" else now,
-        trace_id=f"trace.{item_id}",
-    )
+def _item(item_id: str, label: str, state: FacadeState, value: str, now: dt.datetime) -> WorkspaceItemV2:
+    return day_agent_item(item_id, label, state, value, None if state == "unavailable" else now)
 
 
 def _us_paper_item(report: MarketCloseReport | None, state: FacadeState, now: dt.datetime) -> WorkspaceItemV2:
@@ -259,30 +242,6 @@ def _us_recommendations(
     return tuple(values)
 
 
-def _kr_recommendations(
-    events: tuple[KrDayCapsuleShadowEvent, ...], state: FacadeState, now: dt.datetime
-) -> tuple[WorkspaceItemV2, ...]:
-    latest: dict[str, KrDayCapsuleShadowEvent] = {}
-    for event in events:
-        latest[event.capsule_id] = event
-    items: list[WorkspaceItemV2] = []
-    for position, event in enumerate(
-        sorted(latest.values(), key=lambda item: item.occurred_at, reverse=True)[:3], start=1
-    ):
-        if event.entry_price is None or event.stop_price is None:
-            value = f"{event.symbol} · outcome {event.status.value}/{event.reason.value} · no entry"
-        else:
-            targets = "/".join(str(target) for target in event.target_prices)
-            value = (
-                f"{event.symbol} · entry {event.entry_price} · stop {event.stop_price} · "
-                f"targets {targets} · rationale {event.reason.value} · outcome {event.status.value}"
-            )
-        items.append(
-            _item(f"day_agent.kr.recommendation.{position}", "KR · Shadow · provider read-only", state, value, now)
-        )
-    return tuple(items)
-
-
 def _learning_item(
     prefix: str, label: str, report: MarketCloseReport | None, state: FacadeState, now: dt.datetime
 ) -> WorkspaceItemV2:
@@ -312,45 +271,6 @@ def _policy_item(
         reasons = ", ".join(report.payload.next_session.reason_codes)
         value = f"next session · {reasons} · report {report.report_id[:12]}"
     return _item(f"day_agent.{prefix}.policy", label, state, value, now)
-
-
-def _trace_graph(
-    markets: tuple[WorkspaceItemV2, ...], research: tuple[WorkspaceItemV2, ...], now: dt.datetime
-) -> tuple[tuple[TraceNodeV2, ...], tuple[TraceEdgeV2, ...]]:
-    nodes: list[TraceNodeV2] = []
-    edges: list[TraceEdgeV2] = []
-    for item in (*markets, *research):
-        safe_ref = hashlib.sha256(f"{item.item_id}:{item.value}".encode()).hexdigest()
-        terminal = f"{item.trace_id}.terminal"
-        blocked = item.state in {"blocked", "unavailable", "corrupt", "error"}
-        nodes.extend(
-            (
-                TraceNodeV2(
-                    node_id=item.trace_id,
-                    kind="source_receipt",
-                    label=item.label,
-                    observed_at=now,
-                    safe_ref=safe_ref,
-                    state="unavailable" if blocked else "accepted",
-                    source_namespace="dashboard.day_agent",
-                ),
-                TraceNodeV2(
-                    node_id=terminal,
-                    kind="blocker_terminal" if blocked else "reviewer_decision",
-                    label=f"{item.label} projection",
-                    observed_at=now,
-                    safe_ref=safe_ref,
-                    state="blocked" if blocked else "accepted",
-                    source_namespace="dashboard.day_agent",
-                ),
-            )
-        )
-        edges.append(
-            TraceEdgeV2(
-                from_node_id=item.trace_id, to_node_id=terminal, kind="blocked_by" if blocked else "reviewed_by"
-            )
-        )
-    return tuple(nodes), tuple(edges)
 
 
 __all__ = ("DayAgentFacadeProjection", "merge_day_agent_facade", "project_day_agent_facade")

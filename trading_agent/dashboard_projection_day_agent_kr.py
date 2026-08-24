@@ -1,0 +1,211 @@
+from __future__ import annotations
+
+import datetime as dt
+import hashlib
+from dataclasses import dataclass
+from pathlib import Path
+
+from trading_agent.dashboard_models_v2 import TraceEdgeV2, TraceNodeV2, WorkspaceItemV2
+from trading_agent.dashboard_projection_day_agent_kr_render import project_kr_thesis
+from trading_agent.dashboard_projection_day_agent_support import (
+    FacadeState,
+    InvalidKrDayLifecycleProjectionError,
+    day_agent_item,
+)
+from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowEvent, KrDayCapsuleShadowStatus
+from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
+from trading_agent.kr_day_decision_delivery_identity import same_kr_day_thesis
+from trading_agent.kr_day_decision_delivery_record_builders import bound_kr_day_decision_id
+from trading_agent.kr_day_decision_models import KrDayDecisionEvent, KrDayDecisionStatus
+from trading_agent.kr_day_decision_store import KrDayDecisionStore
+
+
+@dataclass(frozen=True, slots=True)
+class KrDayLifecycleProjection:
+    items: tuple[WorkspaceItemV2, ...]
+    nodes: tuple[TraceNodeV2, ...]
+    edges: tuple[TraceEdgeV2, ...]
+    shadow_events: tuple[KrDayCapsuleShadowEvent, ...]
+    shadow_state: FacadeState
+
+
+def project_kr_day_lifecycle(root: Path, *, now: dt.datetime) -> KrDayLifecycleProjection:
+    decisions, decision_state = _read_decisions(root)
+    shadows, shadow_state = _read_shadows(root)
+    if decision_state == "corrupt":
+        item = _source_failure("decision", "decision ledger corrupt", now)
+        return KrDayLifecycleProjection((item,), *_trace_failure(item, now), shadows, shadow_state)
+    if shadow_state == "corrupt":
+        item = _source_failure("shadow", "shadow ledger corrupt", now)
+        return KrDayLifecycleProjection((item,), *_trace_failure(item, now), shadows, shadow_state)
+    if not decisions:
+        return _without_decisions(shadows, shadow_state, now)
+    try:
+        bound = _bound_histories(decisions, shadows)
+    except ValueError:
+        item = _source_failure("binding", "decision/shadow binding corrupt", now)
+        return KrDayLifecycleProjection((item,), *_trace_failure(item, now), shadows, shadow_state)
+    groups = _decision_groups(decisions)
+    items: list[WorkspaceItemV2] = []
+    nodes: list[TraceNodeV2] = []
+    edges: list[TraceEdgeV2] = []
+    for history in sorted(groups, key=lambda value: value[-1].observed_at, reverse=True)[:3]:
+        shadow_history = tuple(event for event in shadows if bound.get(event.event_id) in history)
+        try:
+            card_items, card_nodes, card_edges = project_kr_thesis(history, shadow_history, now)
+        except InvalidKrDayLifecycleProjectionError:
+            item = _source_failure("binding", "decision/shadow binding corrupt", now)
+            return KrDayLifecycleProjection((item,), *_trace_failure(item, now), shadows, shadow_state)
+        items.extend(card_items)
+        nodes.extend(card_nodes)
+        edges.extend(card_edges)
+    unbound = tuple(event for event in shadows if event.event_id not in bound)
+    if unbound:
+        item = day_agent_item(
+            "day_agent.kr.lifecycle.unbound",
+            "KR · Legacy shadow evidence",
+            "blocked",
+            "legacy shadow unbound · no recommendation claim · SHADOW/PAPER ONLY",
+            unbound[-1].occurred_at,
+        )
+        failure_nodes, failure_edges = _trace_failure(item, unbound[-1].occurred_at)
+        items.append(item)
+        nodes.extend(failure_nodes)
+        edges.extend(failure_edges)
+    return KrDayLifecycleProjection(tuple(items), tuple(nodes), tuple(edges), shadows, shadow_state)
+
+
+def _read_decisions(root: Path) -> tuple[tuple[KrDayDecisionEvent, ...], FacadeState]:
+    path = _first_existing(
+        root,
+        ("kr-day-decisions.sqlite3", "decisions.sqlite3", "decision/events.sqlite3"),
+    )
+    if path is None:
+        return (), "unavailable"
+    try:
+        events = KrDayDecisionStore(path).events()
+    except (OSError, ValueError):
+        return (), "corrupt"
+    return events, "populated" if events else "unavailable"
+
+
+def _read_shadows(root: Path) -> tuple[tuple[KrDayCapsuleShadowEvent, ...], FacadeState]:
+    path = _first_existing(
+        root,
+        (
+            "kr-day-capsule-shadow.sqlite3",
+            "shadow/events.sqlite3",
+            "capsule_shadow.sqlite3",
+            "shadow.sqlite3",
+        ),
+    )
+    if path is None:
+        return (), "unavailable"
+    try:
+        events = KrDayCapsuleShadowStore(path).events()
+    except (OSError, ValueError):
+        return (), "corrupt"
+    return events, "populated" if events else "unavailable"
+
+
+def _first_existing(root: Path, candidates: tuple[str, ...]) -> Path | None:
+    return next((root / candidate for candidate in candidates if (root / candidate).exists()), None)
+
+
+def _without_decisions(
+    shadows: tuple[KrDayCapsuleShadowEvent, ...], state: FacadeState, now: dt.datetime
+) -> KrDayLifecycleProjection:
+    if not shadows:
+        return KrDayLifecycleProjection((), (), (), (), state)
+    item = day_agent_item(
+        "day_agent.kr.lifecycle.unbound",
+        "KR · Legacy shadow evidence",
+        "blocked",
+        "legacy shadow unbound · no recommendation claim · SHADOW/PAPER ONLY",
+        shadows[-1].occurred_at,
+    )
+    return KrDayLifecycleProjection((item,), *_trace_failure(item, now), shadows, state)
+
+
+def _bound_histories(
+    decisions: tuple[KrDayDecisionEvent, ...], shadows: tuple[KrDayCapsuleShadowEvent, ...]
+) -> dict[str, KrDayDecisionEvent]:
+    by_id = {event.event_id: event for event in decisions}
+    bound: dict[str, KrDayDecisionEvent] = {}
+    previous: dict[tuple[str, dt.date], str] = {}
+    for shadow in shadows:
+        key = (shadow.capsule_id, shadow.session_date)
+        if shadow.previous_event_id != previous.get(key):
+            raise ValueError
+        previous[key] = shadow.event_id
+        decision_id = bound_kr_day_decision_id(shadow)
+        if decision_id is None:
+            continue
+        decision = by_id.get(decision_id)
+        if decision is None or not _same_shadow_identity(decision, shadow):
+            raise ValueError
+        if (
+            shadow.status is not KrDayCapsuleShadowStatus.REGISTERED
+            and decision.status is not KrDayDecisionStatus.ARMED
+        ):
+            raise ValueError
+        bound[shadow.event_id] = decision
+    return bound
+
+
+def _same_shadow_identity(decision: KrDayDecisionEvent, shadow: KrDayCapsuleShadowEvent) -> bool:
+    return (
+        decision.capsule_id == shadow.capsule_id
+        and decision.session_date == shadow.session_date
+        and decision.symbol == shadow.symbol
+    )
+
+
+def _decision_groups(decisions: tuple[KrDayDecisionEvent, ...]) -> tuple[tuple[KrDayDecisionEvent, ...], ...]:
+    groups: list[list[KrDayDecisionEvent]] = []
+    for decision in decisions:
+        group = next((value for value in groups if same_kr_day_thesis(value[0], decision)), None)
+        if group is None:
+            groups.append([decision])
+        else:
+            group.append(decision)
+    return tuple(tuple(group) for group in groups)
+
+
+def _source_failure(kind: str, value: str, observed_at: dt.datetime) -> WorkspaceItemV2:
+    return day_agent_item(
+        f"day_agent.kr.lifecycle.{kind}",
+        "KR · Decision lifecycle",
+        "corrupt",
+        f"{value} · SHADOW/PAPER ONLY · no recommendation authority",
+        observed_at,
+    )
+
+
+def _trace_failure(
+    item: WorkspaceItemV2, observed_at: dt.datetime
+) -> tuple[tuple[TraceNodeV2, ...], tuple[TraceEdgeV2, ...]]:
+    safe_ref = hashlib.sha256(f"{item.item_id}:{item.value}".encode()).hexdigest()
+    source = TraceNodeV2(
+        node_id=item.trace_id,
+        kind="source_receipt",
+        label=item.label,
+        observed_at=observed_at,
+        safe_ref=safe_ref,
+        state="unavailable",
+        source_namespace="dashboard.day_agent.kr",
+    )
+    terminal = TraceNodeV2(
+        node_id=f"{item.trace_id}.terminal",
+        kind="blocker_terminal",
+        label=f"{item.label} blocked",
+        observed_at=observed_at,
+        safe_ref=safe_ref,
+        state="blocked",
+        source_namespace="dashboard.day_agent.kr",
+    )
+    edge = TraceEdgeV2(from_node_id=source.node_id, to_node_id=terminal.node_id, kind="blocked_by")
+    return (source, terminal), (edge,)
+
+
+__all__ = ("KrDayLifecycleProjection", "project_kr_day_lifecycle")
