@@ -124,16 +124,16 @@ def _opportunity_is_current(request: KrDayCandidateAdmissionRequest) -> bool:
 def _completed_bar_chain_is_current(request: KrDayCandidateAdmissionRequest, symbol: str) -> bool:
     bars = request.bars
     local_now = request.evaluated_at.astimezone(_SEOUL)
-    latest_end = local_now.replace(second=0, microsecond=0)
-    session_date = local_now.date()
     return (
         bool(bars)
+        and _SESSION_OPEN <= local_now.time() < dt.time(15, 30)
         and bars[0].start_at.astimezone(_SEOUL).time() == _SESSION_OPEN
-        and bars[-1].end_at == latest_end
+        and bars[-1].end_at == local_now.replace(second=0, microsecond=0)
+        and dt.timedelta() <= request.evaluated_at - bars[-1].observed_at <= dt.timedelta(seconds=30)
         and all(
             bar.symbol == symbol
-            and bar.start_at.astimezone(_SEOUL).date() == session_date
-            and bar.end_at.astimezone(_SEOUL).date() == session_date
+            and bar.start_at.astimezone(_SEOUL).date() == local_now.date()
+            and bar.end_at.astimezone(_SEOUL).date() == local_now.date()
             and max(bar.end_at, bar.observed_at) <= request.evaluated_at
             for bar in bars
         )

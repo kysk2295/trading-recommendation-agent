@@ -93,7 +93,6 @@ def test_observed_005930_shape_cannot_claim_armed_or_active() -> None:
         KrDayDecisionReasonCode.THEME_BREADTH_MISSING,
         KrDayDecisionReasonCode.VOLUME_CONFIRMATION_MISSING,
     )
-    assert result.status not in {KrDayDecisionStatus.ARMED}
 
 
 def test_missing_or_malformed_features_remain_explicit_evidence() -> None:
@@ -142,6 +141,63 @@ def test_noncurrent_or_noncontiguous_completed_bar_chain_fails_closed(
     bars: Callable[[], tuple[KrCompletedMinuteBar, ...]],
 ) -> None:
     result = assess_kr_day_candidate_admission(_request(bars=bars()))
+
+    assert result.admitted is False
+    assert result.status is KrDayDecisionStatus.BLOCKED
+    assert KrDayDecisionReasonCode.STALE_EVIDENCE in result.reason_codes
+
+
+def test_completed_bar_observed_exactly_30_seconds_ago_can_admit() -> None:
+    evaluated_at = SESSION + dt.timedelta(minutes=3, seconds=30)
+
+    result = assess_kr_day_candidate_admission(
+        _request(market=_market(observed_at=evaluated_at), evaluated_at=evaluated_at)
+    )
+
+    assert result.admitted is True
+    assert result.status is KrDayDecisionStatus.INVESTIGATING
+
+
+def test_completed_bar_observed_31_seconds_ago_fails_closed() -> None:
+    evaluated_at = SESSION + dt.timedelta(minutes=3, seconds=31)
+
+    result = assess_kr_day_candidate_admission(
+        _request(market=_market(observed_at=evaluated_at), evaluated_at=evaluated_at)
+    )
+
+    assert result.admitted is False
+    assert result.status is KrDayDecisionStatus.BLOCKED
+    assert KrDayDecisionReasonCode.STALE_EVIDENCE in result.reason_codes
+
+
+def test_runtime_before_seoul_close_can_admit() -> None:
+    evaluated_at = SESSION + dt.timedelta(hours=6, minutes=29, seconds=30)
+
+    result = assess_kr_day_candidate_admission(
+        _request(
+            bars=_session_bars(389),
+            market=_market(observed_at=evaluated_at),
+            evaluated_at=evaluated_at,
+            valid_until=SESSION + dt.timedelta(hours=7),
+        )
+    )
+
+    assert result.admitted is True
+    assert result.status is KrDayDecisionStatus.INVESTIGATING
+
+
+@pytest.mark.parametrize("seconds", (0, 2))
+def test_runtime_at_or_after_seoul_close_blocks_despite_open_provider_state(seconds: int) -> None:
+    evaluated_at = SESSION + dt.timedelta(hours=6, minutes=30, seconds=seconds)
+
+    result = assess_kr_day_candidate_admission(
+        _request(
+            bars=_session_bars(390),
+            market=_market(observed_at=evaluated_at),
+            evaluated_at=evaluated_at,
+            valid_until=SESSION + dt.timedelta(hours=7),
+        )
+    )
 
     assert result.admitted is False
     assert result.status is KrDayDecisionStatus.BLOCKED
@@ -279,6 +335,7 @@ def _request(
     bars: tuple[KrCompletedMinuteBar, ...] | None = None,
     market: KrMarketConstraintSnapshot | None = None,
     active_thesis_keys: tuple[str, ...] = (),
+    evaluated_at: dt.datetime | None = None,
     valid_until: dt.datetime | None = None,
     opportunity_id: str = "KR-THEME-OPPORTUNITY",
 ) -> KrDayCandidateAdmissionRequest:
@@ -296,7 +353,7 @@ def _request(
             values.pop(name, None)
         else:
             values[name] = value
-    observed = SESSION + dt.timedelta(minutes=3, seconds=2)
+    observed = evaluated_at or SESSION + dt.timedelta(minutes=3, seconds=2)
     opportunity = OpportunitySnapshot(
         opportunity_id=opportunity_id,
         strategy_lane=KR_THEME_OPPORTUNITY_LANE,
@@ -372,6 +429,17 @@ def _bars(*, low_volume: bool = False, neutral: bool = False) -> tuple[KrComplet
         return (_bar(0, close="100", volume=100), _bar(1, close="100", volume=100), _bar(2, close="100", volume=200))
     volume = 100 if low_volume else 200
     return (_bar(0, close="100", volume=100), _bar(1, close="102", volume=100), _bar(2, close="103", volume=volume))
+
+
+def _session_bars(completed_minutes: int) -> tuple[KrCompletedMinuteBar, ...]:
+    return tuple(
+        _bar(
+            index,
+            close="103" if index == completed_minutes - 1 else "100",
+            volume=200 if index == completed_minutes - 1 else 100,
+        )
+        for index in range(completed_minutes)
+    )
 
 
 def _bar(
