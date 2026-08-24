@@ -11,8 +11,13 @@ from tests.test_day_learning_report_models import NOW, _payload, _report
 from tests.test_kr_day_decision_store import HEX_A, _plan
 from tests.test_kr_day_decision_store import _payload as _decision_payload
 from tests.test_us_day_signal_admission import _eligible_request
-from trading_agent.dashboard_models_v2 import WorkspaceItemV2
-from trading_agent.dashboard_projection_day_agent import project_day_agent_facade
+from trading_agent.dashboard_models_v2 import FreshnessV2, SourceStateV2, WorkspaceItemV2
+from trading_agent.dashboard_projection_common import WorkspaceProjection
+from trading_agent.dashboard_projection_day_agent import (
+    DayAgentFacadeProjection,
+    merge_day_agent_facade,
+    project_day_agent_facade,
+)
 from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
 from trading_agent.day_learning_report_models import MarketCloseReport
 from trading_agent.day_learning_report_store import publish_market_close_report
@@ -294,6 +299,47 @@ def test_full_snapshot_accepts_kr_immutable_timeline(tmp_path: Path) -> None:
     card = next(item for item in snapshot.workspaces.markets.items if item.item_id.startswith("day_agent.kr.lifecycle"))
     assert card.kind == "day_recommendation"
     assert {armed.event_id, active.event_id} <= {node.safe_ref for node in snapshot.traces.nodes}
+
+
+def test_research_merge_preserves_existing_truncation_without_learning_additions() -> None:
+    # Given: an already bounded research projection and no day-agent learning cards.
+    items = tuple(
+        WorkspaceItemV2(
+            item_id=f"research.chain.{index}",
+            kind="research",
+            label=f"Research {index}",
+            state="populated",
+            value="accepted",
+            observed_at=NOW,
+            trace_id=f"trace.research.{index}",
+        )
+        for index in range(24)
+    )
+    base = WorkspaceProjection(
+        SourceStateV2(
+            state="populated",
+            observed_at=NOW,
+            freshness=FreshnessV2(policy_id="research-ledger-v2", age_seconds=0, as_of=NOW),
+            blocker_code=None,
+            summary="research ledger projected",
+            total_count=52,
+            projected_count=24,
+            truncated=True,
+            trace_id="trace.research.ledger",
+            items=items,
+        ),
+        (),
+        (),
+    )
+    facade = DayAgentFacadeProjection((), (), (), (), None)
+
+    # When: the day-agent facade leaves the bounded research list unchanged.
+    merged = merge_day_agent_facade(base, facade, workspace="research")
+
+    # Then: the full count still determines that the public projection is truncated.
+    assert merged.workspace.total_count == 52
+    assert merged.workspace.projected_count == 24
+    assert merged.workspace.truncated is True
 
 
 def _publish(root: Path, report: MarketCloseReport) -> None:

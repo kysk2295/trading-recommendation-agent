@@ -117,11 +117,12 @@ def merge_day_agent_facade(
     additions = facade.markets if workspace == "markets" else facade.research
     items = (*additions, *base.workspace.items)
     kept = items[:24]
+    total_count = base.workspace.total_count + len(additions)
     workspace_value = base.workspace.model_copy(
         update={
-            "total_count": base.workspace.total_count + len(additions),
+            "total_count": total_count,
             "projected_count": len(kept),
-            "truncated": len(items) > len(kept),
+            "truncated": total_count > len(kept),
             "items": kept,
         }
     )
