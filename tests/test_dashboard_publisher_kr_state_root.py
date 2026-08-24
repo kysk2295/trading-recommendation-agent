@@ -205,17 +205,21 @@ async def test_event_watch_rebinds_to_created_kr_root_for_later_ledger_write(
     state_root = state_parent / "state"
     watched: list[tuple[Path, ...]] = []
     snapshots: list[Path | None] = []
+    closed: list[tuple[Path, ...]] = []
     socket = _Socket()
     snapshot = DashboardSnapshotV2.model_validate(snapshot_payload())
     monkeypatch.setattr(publisher_events, "current_code_sha", lambda: "a" * 40)
 
     async def changes_after_rebind(*paths: Path, **_settings: int) -> AsyncIterator[frozenset[Path]]:
         watched.append(paths)
-        if paths == (state_parent,):
-            state_root.mkdir()
-            yield frozenset({state_parent})
-        elif paths == (state_root,):
-            yield frozenset({state_root / "kr-day-decisions.sqlite3"})
+        try:
+            if paths == (state_parent,):
+                state_root.mkdir()
+                yield frozenset({state_parent})
+            elif paths == (state_root,):
+                yield frozenset({state_root / "kr-day-decisions.sqlite3"})
+        finally:
+            closed.append(paths)
 
     def observe(_outputs: Path, **settings: Path | None) -> DashboardSnapshotV2:
         snapshots.append(settings.get("kr_day_state_root"))
@@ -234,8 +238,79 @@ async def test_event_watch_rebinds_to_created_kr_root_for_later_ledger_write(
 
     # Then: native/custom watch ownership narrows from parent to root and emits both snapshots.
     assert watched == [(state_parent,), (state_root,)]
+    assert closed == [(state_parent,), (state_root,)]
     assert snapshots == [state_root, state_root]
     assert len(socket.messages) == 2
+
+
+@pytest.mark.anyio
+async def test_event_watch_closes_iterator_when_projection_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a watch iterator with a finally sentinel and a projection failure.
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    closed: list[bool] = []
+    socket = _Socket()
+    monkeypatch.setattr(publisher_events, "current_code_sha", lambda: "a" * 40)
+
+    async def failing_watch(*_paths: Path, **_settings: int) -> AsyncIterator[frozenset[Path]]:
+        try:
+            yield frozenset()
+        finally:
+            closed.append(True)
+
+    def fail_projection(*_args: object, **_kwargs: object) -> DashboardSnapshotV2:
+        raise RuntimeError("projection failed")
+
+    monkeypatch.setattr(publisher_events, "collect_dashboard_snapshot_v2", fail_projection)
+
+    # When: processing the first event raises.
+    with pytest.raises(RuntimeError, match="projection failed"):
+        await publisher_events.watch_output_events(socket, outputs, anyio.Lock(), failing_watch)
+
+    # Then: the failing iterator is closed before the exception escapes.
+    assert closed == [True]
+
+
+@pytest.mark.anyio
+async def test_event_watch_closes_iterator_when_cancelled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a watch iterator blocked waiting for its next event.
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    started = anyio.Event()
+    closed: list[bool] = []
+    socket = _Socket()
+    monkeypatch.setattr(publisher_events, "current_code_sha", lambda: "a" * 40)
+
+    class _BlockedWatch(AsyncIterator[frozenset[Path]]):
+        def __aiter__(self) -> _BlockedWatch:
+            return self
+
+        async def __anext__(self) -> frozenset[Path]:
+            started.set()
+            await anyio.sleep_forever()
+            raise AssertionError("watcher unexpectedly produced an event")
+
+        async def aclose(self) -> None:
+            await anyio.sleep(0)
+            closed.append(True)
+
+    def blocked_watch(*_paths: Path, **_settings: int) -> AsyncIterator[frozenset[Path]]:
+        return _BlockedWatch()
+
+    # When: the publisher task is cancelled while awaiting the watcher.
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(publisher_events.watch_output_events, socket, outputs, anyio.Lock(), blocked_watch)
+        await started.wait()
+        tasks.cancel_scope.cancel()
+
+    # Then: shielded cleanup closes the native-style iterator despite cancellation.
+    assert closed == [True]
 
 
 @pytest.mark.anyio
