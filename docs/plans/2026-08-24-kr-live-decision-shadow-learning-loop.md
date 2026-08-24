@@ -301,6 +301,7 @@ Commit: `feat: gate KR candidates with explicit evidence`
 - Create: `trading_agent/kr_day_decision_service.py`
 - Create: `trading_agent/kr_day_decision_projection.py`
 - Create: `trading_agent/kr_day_session_materializer.py`
+- Create: `trading_agent/kr_day_capsule_shadow_projection.py`
 - Modify: `trading_agent/day_session_service.py`
 - Modify: `trading_agent/kr_day_capsule_adapter.py`
 - Modify: `trading_agent/kr_day_capsule_shadow_service.py`
@@ -331,6 +332,9 @@ Keep per-capsule opportunity/receipt materialization in
 `kr_day_session_materializer.py`. Management requests must bind exactly to the prior
 `ACTIVE` capsule, session, symbol, collection cycle, and calendar lineage; mixed batches
 must not let a non-active sibling block an active sibling's management.
+
+Keep shadow event payload/identity projection in `kr_day_capsule_shadow_projection.py`
+so the state machine and its exact-lineage defense remain below the 250-pure-LOC limit.
 
 **Step 3: Wire it into `_run_kr`**
 
