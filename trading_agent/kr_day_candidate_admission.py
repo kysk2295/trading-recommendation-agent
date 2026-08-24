@@ -36,53 +36,44 @@ def assess_kr_day_candidate_admission(request: KrDayCandidateAdmissionRequest) -
     values = {item.name: item.value for item in candidate.features}
     reasons: set[KrDayDecisionReasonCode] = set()
     evidence = _feature_evidence(values)
-    theme_name = values.get("theme_name", "")
-    thesis_key = _thesis_key(current.evaluated_at, candidate.symbol, theme_name)
-    if current.evaluated_at >= current.opportunity.valid_until:
-        reasons.add(KrDayDecisionReasonCode.OPPORTUNITY_EXPIRED)
-    if current.opportunity.observed_at > current.evaluated_at:
-        reasons.add(KrDayDecisionReasonCode.STALE_EVIDENCE)
-    safe_bars = _safe_bars(current, candidate.symbol, reasons)
+    thesis_key = _thesis_key(current.evaluated_at, candidate.symbol, values.get("theme_name", ""))
+    reasons.update(
+        {KrDayDecisionReasonCode.OPPORTUNITY_EXPIRED} if current.evaluated_at >= current.opportunity.valid_until else ()
+    )
+    opportunity_current = _opportunity_is_current(current)
+    chain_valid = _completed_bar_chain_is_current(current, candidate.symbol)
+    reasons.update({KrDayDecisionReasonCode.STALE_EVIDENCE} if not opportunity_current or not chain_valid else ())
     _feature_reasons(values, current.policy, reasons)
-    _bar_reasons(safe_bars, current.policy, evidence, reasons)
+    _bar_reasons(current.bars, chain_valid, current.policy, evidence, reasons)
     _market_reasons(current, evidence, reasons)
     if thesis_key in current.active_thesis_keys:
         reasons.add(KrDayDecisionReasonCode.DUPLICATE_THESIS)
     evidence.extend(
         (
             KrDayDecisionEvidenceValue(name="thesis_key", value=thesis_key),
-            KrDayDecisionEvidenceValue(
-                name="opportunity_current",
-                value=str(
-                    not bool(
-                        {KrDayDecisionReasonCode.OPPORTUNITY_EXPIRED, KrDayDecisionReasonCode.STALE_EVIDENCE} & reasons
-                    )
-                ).lower(),
-            ),
+            KrDayDecisionEvidenceValue(name="opportunity_current", value=str(opportunity_current).lower()),
         )
     )
     ordered_reasons = tuple(sorted(reasons, key=lambda item: item.value))
-    blocked = {
+    if KrDayDecisionReasonCode.OPPORTUNITY_EXPIRED in reasons:
+        status = KrDayDecisionStatus.EXPIRED
+    elif reasons & {
         KrDayDecisionReasonCode.MARKET_GATE_BLOCKED,
         KrDayDecisionReasonCode.SPREAD_TOO_WIDE,
         KrDayDecisionReasonCode.STALE_EVIDENCE,
-    }
-    status = (
-        KrDayDecisionStatus.EXPIRED
-        if KrDayDecisionReasonCode.OPPORTUNITY_EXPIRED in ordered_reasons
-        else KrDayDecisionStatus.BLOCKED
-        if blocked & set(ordered_reasons)
-        else KrDayDecisionStatus.REJECTED
-        if ordered_reasons
-        else KrDayDecisionStatus.INVESTIGATING
-    )
+    }:
+        status = KrDayDecisionStatus.BLOCKED
+    elif reasons:
+        status = KrDayDecisionStatus.REJECTED
+    else:
+        status = KrDayDecisionStatus.INVESTIGATING
     return KrDayCandidateAdmissionResult(
         admitted=status is KrDayDecisionStatus.INVESTIGATING,
         status=status,
         reason_codes=ordered_reasons,
         thesis_key=thesis_key,
         observed_evidence=tuple(sorted(evidence, key=lambda item: item.name)),
-        source_evidence_refs=_source_refs(current, safe_bars),
+        source_evidence_refs=_source_refs(current),
     )
 
 
@@ -111,21 +102,31 @@ def _validated_request(request: KrDayCandidateAdmissionRequest) -> KrDayCandidat
 
 
 def _feature_evidence(values: dict[str, str]) -> list[KrDayDecisionEvidenceValue]:
-    names = ("is_leader", "theme_name", "theme_catalyst_count", "theme_publisher_count",
-             "theme_related_symbol_count", "trading_value_krw", "volume_ratio")
+    names = (  # noqa: SIM905 -- fixed evidence schema
+        "is_leader,theme_name,theme_catalyst_count,theme_publisher_count,"
+        "theme_related_symbol_count,trading_value_krw,volume_ratio"
+    ).split(",")
     return [
         KrDayDecisionEvidenceValue(name=name, value=_observed_feature_value(name, values.get(name))) for name in names
     ]
 
 
-def _safe_bars(
-    request: KrDayCandidateAdmissionRequest, symbol: str, reasons: set[KrDayDecisionReasonCode]
-) -> tuple[KrCompletedMinuteBar, ...]:
+def _opportunity_is_current(request: KrDayCandidateAdmissionRequest) -> bool:
+    observed = (
+        request.opportunity.observed_at,
+        *(item.observed_at for item in request.opportunity.evidence_refs),
+        *(item.observed_at for item in request.opportunity.source_coverage),
+    )
+    session_date = request.evaluated_at.astimezone(_SEOUL).date()
+    return all(item.astimezone(_SEOUL).date() == session_date and item <= request.evaluated_at for item in observed)
+
+
+def _completed_bar_chain_is_current(request: KrDayCandidateAdmissionRequest, symbol: str) -> bool:
     bars = request.bars
     local_now = request.evaluated_at.astimezone(_SEOUL)
     latest_end = local_now.replace(second=0, microsecond=0)
     session_date = local_now.date()
-    valid = (
+    return (
         bool(bars)
         and bars[0].start_at.astimezone(_SEOUL).time() == _SESSION_OPEN
         and bars[-1].end_at == latest_end
@@ -138,10 +139,6 @@ def _safe_bars(
         )
         and all(current.start_at == previous.end_at for previous, current in pairwise(bars))
     )
-    if not valid:
-        reasons.add(KrDayDecisionReasonCode.STALE_EVIDENCE)
-        return ()
-    return bars
 
 
 def _feature_reasons(
@@ -171,12 +168,14 @@ def _feature_reasons(
 
 def _bar_reasons(
     bars: tuple[KrCompletedMinuteBar, ...],
+    chain_valid: bool,
     policy: KrDayCandidateAdmissionPolicy,
     evidence: list[KrDayDecisionEvidenceValue],
     reasons: set[KrDayDecisionReasonCode],
 ) -> None:
     if len(bars) < 2:
-        evidence.extend(_bar_evidence("missing", "missing", "missing"))
+        value = "missing" if not bars else str(bars[-1].trading_value_krw)
+        evidence.extend(_bar_evidence(("missing", "missing", value), chain_valid))
         reasons.update(
             {KrDayDecisionReasonCode.VOLUME_CONFIRMATION_MISSING, KrDayDecisionReasonCode.FLOW_CONFIRMATION_MISSING}
         )
@@ -185,7 +184,9 @@ def _bar_reasons(
     average_volume = sum(Decimal(bar.volume) for bar in bars[:-1]) / Decimal(len(bars) - 1)
     volume_ratio = Decimal(latest.volume) / average_volume
     price_response = latest.close / previous.close - Decimal(1)
-    evidence.extend(_bar_evidence(str(volume_ratio), str(price_response), str(latest.trading_value_krw)))
+    evidence.extend(_bar_evidence((str(volume_ratio), str(price_response), str(latest.trading_value_krw)), chain_valid))
+    if not chain_valid:
+        return
     if volume_ratio < policy.min_completed_bar_volume_ratio:
         reasons.add(KrDayDecisionReasonCode.VOLUME_CONFIRMATION_MISSING)
     if (
@@ -226,20 +227,21 @@ def _market_reasons(
         reasons.add(KrDayDecisionReasonCode.SPREAD_TOO_WIDE)
 
 
-def _source_refs(request: KrDayCandidateAdmissionRequest, bars: tuple[KrCompletedMinuteBar, ...]) -> tuple[str, ...]:
+def _source_refs(request: KrDayCandidateAdmissionRequest) -> tuple[str, ...]:
     refs = [
         *(item.canonical_id for item in request.opportunity.evidence_refs),
         *(item.canonical_id for item in request.market.evidence_refs),
-        *(item.evidence_ref.canonical_id for item in bars),
+        *(item.evidence_ref.canonical_id for item in request.bars),
     ]
     return tuple(sorted(set(refs)))
 
 
-def _bar_evidence(volume_ratio: str, price_response: str, value: str) -> tuple[KrDayDecisionEvidenceValue, ...]:
+def _bar_evidence(values: tuple[str, str, str], chain_valid: bool) -> tuple[KrDayDecisionEvidenceValue, ...]:
     return (
-        KrDayDecisionEvidenceValue(name="completed_bar_volume_ratio", value=volume_ratio),
-        KrDayDecisionEvidenceValue(name="completed_bar_price_response", value=price_response),
-        KrDayDecisionEvidenceValue(name="completed_bar_trading_value_krw", value=value),
+        KrDayDecisionEvidenceValue(name="completed_bar_volume_ratio", value=values[0]),
+        KrDayDecisionEvidenceValue(name="completed_bar_price_response", value=values[1]),
+        KrDayDecisionEvidenceValue(name="completed_bar_trading_value_krw", value=values[2]),
+        KrDayDecisionEvidenceValue(name="completed_bar_chain_valid", value=str(chain_valid).lower()),
     )
 
 

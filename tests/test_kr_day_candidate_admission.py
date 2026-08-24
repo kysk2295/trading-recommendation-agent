@@ -148,6 +148,42 @@ def test_noncurrent_or_noncontiguous_completed_bar_chain_fails_closed(
     assert KrDayDecisionReasonCode.STALE_EVIDENCE in result.reason_codes
 
 
+def test_prior_session_opportunity_evidence_and_sources_cannot_be_admitted() -> None:
+    prior_observed = SESSION - dt.timedelta(days=1)
+    request = _request()
+    prior = request.opportunity.model_copy(
+        update={
+            "observed_at": prior_observed,
+            "evidence_refs": (EvidenceRef(namespace="kr/theme", record_id="theme-1", observed_at=prior_observed),),
+            "source_coverage": (
+                SourceCoverage(source_id="kr_theme", observed_at=prior_observed, record_count=1, complete=True),
+            ),
+        }
+    )
+
+    result = assess_kr_day_candidate_admission(request.model_copy(update={"opportunity": prior}))
+
+    assert result.admitted is False
+    assert result.status is KrDayDecisionStatus.BLOCKED
+    assert KrDayDecisionReasonCode.STALE_EVIDENCE in result.reason_codes
+    assert {item.name: item.value for item in result.observed_evidence}["opportunity_current"] == "false"
+
+
+def test_gapped_completed_bar_chain_preserves_submitted_audit_evidence() -> None:
+    bars = (_bar(0, close="100", volume=100), _bar(2, close="103", volume=200))
+
+    result = assess_kr_day_candidate_admission(_request(bars=bars))
+
+    values = {item.name: item.value for item in result.observed_evidence}
+    assert result.status is KrDayDecisionStatus.BLOCKED
+    assert KrDayDecisionReasonCode.STALE_EVIDENCE in result.reason_codes
+    assert values["completed_bar_chain_valid"] == "false"
+    assert values["completed_bar_volume_ratio"] == "2"
+    assert values["completed_bar_price_response"] == "0.03"
+    assert values["completed_bar_trading_value_krw"] == "20600"
+    assert {bar.evidence_ref.canonical_id for bar in bars}.issubset(result.source_evidence_refs)
+
+
 def test_order_book_imbalance_feature_cannot_satisfy_flow() -> None:
     result = assess_kr_day_candidate_admission(
         _request(features={"order_book_imbalance": "0.99"}, bars=_bars(neutral=True))
