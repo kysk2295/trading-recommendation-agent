@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import datetime as dt
 import stat
 import subprocess
 from decimal import Decimal
@@ -85,6 +86,32 @@ def test_cli_keeps_valid_sibling_when_private_artifact_is_invalid(tmp_path: Path
     assert payload.created_count == 1
     assert payload.mutation == 0
     assert len(KrDayCapsuleShadowStore(store).events()) == 1
+
+
+def test_expired_opportunity_manages_only_existing_active_store(tmp_path: Path) -> None:
+    entry = _entry_evaluation()
+    current = _advance(entry)
+    entry_path = _publish_request(tmp_path, "entry-active", _request_for(entry))
+    request = _request_for(current)
+    expired = request.model_copy(
+        update={
+            "opportunity": request.opportunity.model_copy(
+                update={"valid_until": current.evaluated_at - dt.timedelta(seconds=1)}
+            )
+        }
+    )
+    expired_path = _publish_request(tmp_path, "expired-management", expired)
+    active_store = tmp_path / "active" / "shadow.sqlite3"
+    empty_store = tmp_path / "empty" / "shadow.sqlite3"
+
+    assert _run(_command(entry_path, active_store)).returncode == 0
+    managed = _run(_command(expired_path, active_store))
+    blocked = _run(_command(expired_path, empty_store))
+
+    assert managed.returncode == 0
+    assert _json(managed).events[0].status == "active"
+    assert blocked.returncode == 2
+    assert _json(blocked).events == ()
 
 
 def test_cli_rejects_more_than_three_requests_before_store_mutation(tmp_path: Path) -> None:
@@ -188,10 +215,7 @@ def test_cli_import_closure_has_no_order_or_account_authority() -> None:
     # Given
     tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
     imports = tuple(
-        alias.name
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.Import, ast.ImportFrom))
-        for alias in node.names
+        alias.name for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names
     )
 
     # When

@@ -34,9 +34,7 @@ SEOUL: Final = ZoneInfo("Asia/Seoul")
 _SESSION_OPEN: Final = dt.time(9)
 _SESSION_CLOSE: Final = dt.time(15, 30)
 _LATEST_BAR_DELAY: Final = dt.timedelta(seconds=30)
-_REQUIRED_LEADER_FEATURES: Final = frozenset(
-    {"is_leader", "theme_name", "trading_value_krw", "volume_ratio"}
-)
+_REQUIRED_LEADER_FEATURES: Final = frozenset({"is_leader", "theme_name", "trading_value_krw", "volume_ratio"})
 
 
 class InvalidKrDayCapsuleEvaluationError(ValueError):
@@ -55,6 +53,48 @@ def adapt_kr_day_capsule_evaluation(
             request.capsule,
             request.opportunity,
             request.evaluated_at,
+            allow_expired=False,
+        )
+        bars = _require_completed_bar_chain(request, symbol, session_date)
+        _require_market(request, symbol, bars[-1])
+        setup_input = KrThemeDaySetupInput(
+            opportunity=request.opportunity,
+            bars=bars,
+            producer_strategy_version=request.capsule.capsule_id,
+            evaluated_at=request.evaluated_at,
+            max_slippage_bps=request.max_slippage_bps,
+        )
+        payload = {
+            "capsule_id": request.capsule.capsule_id,
+            "session_date": session_date,
+            "calendar_snapshot_id": request.calendar.snapshot_id,
+            "calendar_receipt_sha256": request.calendar.payload.receipt_sha256,
+            "collection_cycle_id": collection_cycle_id,
+            "opportunity_id": request.opportunity.opportunity_id,
+            "symbol": symbol,
+            "evaluated_at": request.evaluated_at,
+            "completed_bar_cursor": bars[-1].end_at,
+            "setup_input": setup_input,
+            "market": request.market,
+            "authority_ceiling": CapsuleAuthorityCeiling.RESEARCH_ONLY,
+            "trading_authority": False,
+        }
+        parsed = KrDayCapsuleEvaluationPayload.model_validate(payload)
+        return KrDayCapsuleEvaluation.model_validate(
+            payload | {"evaluation_id": KrDayCapsuleEvaluation.canonical_id_for(parsed)}
+        )
+    except (AttributeError, TypeError, ValidationError, ValueError):
+        raise InvalidKrDayCapsuleEvaluationError from None
+
+
+def adapt_kr_day_capsule_management_evaluation(
+    source: KrDayCapsuleEvaluationRequest,
+) -> KrDayCapsuleEvaluation:
+    try:
+        request = KrDayCapsuleEvaluationRequest.model_validate(source.model_dump(mode="python"))
+        session_date = _require_current_open_session(request.calendar, request.evaluated_at)
+        collection_cycle_id, symbol = _require_research_lineage(
+            request.capsule, request.opportunity, request.evaluated_at, allow_expired=True
         )
         bars = _require_completed_bar_chain(request, symbol, session_date)
         _require_market(request, symbol, bars[-1])
@@ -113,12 +153,12 @@ def _require_research_lineage(
     capsule: StrategyCapsule,
     opportunity: OpportunitySnapshot,
     evaluated_at: dt.datetime,
+    *,
+    allow_expired: bool,
 ) -> tuple[str, str]:
     leader = opportunity.candidates[0]
     features = {item.name: item.value for item in leader.features}
-    cycle_ids = tuple(
-        item.record_id for item in opportunity.evidence_refs if item.namespace == "kr/collection_cycle"
-    )
+    cycle_ids = tuple(item.record_id for item in opportunity.evidence_refs if item.namespace == "kr/collection_cycle")
     if (
         capsule.market_id is not MarketId.KR_EQUITIES
         or capsule.authority_ceiling is not CapsuleAuthorityCeiling.RESEARCH_ONLY
@@ -127,7 +167,8 @@ def _require_research_lineage(
         or capsule.published_at > evaluated_at.astimezone(dt.UTC)
         or opportunity.strategy_lane != KR_THEME_OPPORTUNITY_LANE
         or opportunity.observed_at > evaluated_at
-        or evaluated_at >= opportunity.valid_until
+        or (not allow_expired and evaluated_at >= opportunity.valid_until)
+        or (allow_expired and opportunity.observed_at >= opportunity.valid_until)
         or leader.rank != 1
         or not features.keys() >= _REQUIRED_LEADER_FEATURES
         or features["is_leader"] != "true"
@@ -154,9 +195,7 @@ def _require_completed_bar_chain(
     symbol: str,
     session_date: dt.date,
 ) -> tuple[KrCompletedMinuteBar, ...]:
-    checked = tuple(
-        KrCompletedMinuteBar.model_validate(item.model_dump(mode="python")) for item in request.bars
-    )
+    checked = tuple(KrCompletedMinuteBar.model_validate(item.model_dump(mode="python")) for item in request.bars)
     first_local = checked[0].start_at.astimezone(SEOUL)
     latest = checked[-1]
     if (
@@ -173,8 +212,7 @@ def _require_completed_bar_chain(
             for item in checked
         )
         or any(
-            current.start_at != previous.end_at
-            or current.observed_at < previous.observed_at
+            current.start_at != previous.end_at or current.observed_at < previous.observed_at
             for previous, current in pairwise(checked)
         )
     ):
@@ -202,4 +240,5 @@ def _require_market(
 __all__ = (
     "InvalidKrDayCapsuleEvaluationError",
     "adapt_kr_day_capsule_evaluation",
+    "adapt_kr_day_capsule_management_evaluation",
 )

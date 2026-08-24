@@ -227,6 +227,31 @@ def test_reclaim_uses_grid_normalized_quote_and_readiness_reason(tmp_path: Path)
     assert evidence["entry_trigger_normalized"] == "10160"
 
 
+def test_post_close_invalid_input_persists_terminal_audit(tmp_path: Path) -> None:
+    valid = _request_for(_plain_evaluation())
+    capsule = valid.capsule.model_copy()
+    object.__setattr__(capsule, "risk_policy_ref", "risk-policy://unsupported/v2")
+    closed = valid.model_copy(
+        update={
+            "evaluated_at": valid.evaluated_at.replace(hour=15, minute=31),
+            "opportunity": valid.opportunity.model_copy(
+                update={"valid_until": valid.evaluated_at.replace(hour=15, minute=40)}
+            ),
+        }
+    )
+    object.__setattr__(closed, "capsule", capsule)
+
+    event = run_kr_day_decision_tick((closed,), KrDayDecisionStore(tmp_path / "decisions.sqlite3"))[0]
+
+    assert event.status is KrDayDecisionStatus.EXPIRED
+    assert event.valid_until >= event.completed_bar_at
+    assert event.valid_until <= event.observed_at
+    assert event.reason_codes == (
+        KrDayDecisionReasonCode.MARKET_GATE_BLOCKED,
+        KrDayDecisionReasonCode.POLICY_INPUT_CONTRACT_MISMATCH,
+    )
+
+
 def test_active_shadow_management_survives_decision_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

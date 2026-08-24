@@ -12,11 +12,16 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
-from trading_agent.kr_day_capsule_adapter import adapt_kr_day_capsule_evaluation
+from trading_agent.kr_day_capsule_adapter import (
+    SEOUL,
+    adapt_kr_day_capsule_evaluation,
+    adapt_kr_day_capsule_management_evaluation,
+)
 from trading_agent.kr_day_capsule_models import (
     KrDayCapsuleEvaluation,
     KrDayCapsuleEvaluationRequest,
 )
+from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowStatus
 from trading_agent.kr_day_capsule_shadow_service import run_kr_day_capsule_shadow_tick
 from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
 from trading_agent.private_immutable_file import publish_private_immutable_text, read_private_text
@@ -50,9 +55,7 @@ class _CliResult(BaseModel):
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Run up to three local research-only KR capsule Shadow evaluations."
-    )
+    parser = argparse.ArgumentParser(description="Run up to three local research-only KR capsule Shadow evaluations.")
     parser.add_argument("--request", action="append", type=Path, default=[])
     parser.add_argument("--store", type=Path)
     parser.add_argument("--output", type=Path)
@@ -65,12 +68,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not request_paths or args.store is None or len(request_paths) > 3:
         _emit(_blocked_result(len(request_paths)))
         return 2
-    valid, invalid_count = _adapt_requests(request_paths)
+    store = KrDayCapsuleShadowStore(args.store)
+    valid, invalid_count = _adapt_requests(request_paths, store)
     if not valid:
         _emit(_blocked_result(invalid_count))
         return 2
     try:
-        batch = run_kr_day_capsule_shadow_tick(KrDayCapsuleShadowStore(args.store), valid)
+        batch = run_kr_day_capsule_shadow_tick(store, valid)
     except (OSError, TypeError, ValidationError, ValueError):
         _emit(_blocked_result(invalid_count))
         return 2
@@ -81,9 +85,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             session_date=item.event.session_date.isoformat(),
             attempted_bar_cursor=item.event.attempted_bar_cursor.isoformat(),
             accepted_bar_cursor=(
-                None
-                if item.event.accepted_bar_cursor is None
-                else item.event.accepted_bar_cursor.isoformat()
+                None if item.event.accepted_bar_cursor is None else item.event.accepted_bar_cursor.isoformat()
             ),
             status=item.event.status.value,
             created=item.created,
@@ -108,6 +110,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _adapt_requests(
     paths: tuple[Path, ...],
+    store: KrDayCapsuleShadowStore,
 ) -> tuple[tuple[KrDayCapsuleEvaluation, ...], int]:
     evaluations: list[KrDayCapsuleEvaluation] = []
     invalid_count = 0
@@ -119,7 +122,15 @@ def _adapt_requests(
             request = KrDayCapsuleEvaluationRequest.model_validate_json(payload)
             if canonical_experiment_ledger_json(request) + "\n" != payload:
                 raise ValueError
-            evaluations.append(adapt_kr_day_capsule_evaluation(request))
+            try:
+                evaluation = adapt_kr_day_capsule_evaluation(request)
+            except ValueError:
+                session_date = request.evaluated_at.astimezone(SEOUL).date().isoformat()
+                latest = store.latest(request.capsule.capsule_id, session_date)
+                if latest is None or latest.status is not KrDayCapsuleShadowStatus.ACTIVE:
+                    raise
+                evaluation = adapt_kr_day_capsule_management_evaluation(request)
+            evaluations.append(evaluation)
         except (OSError, TypeError, ValidationError, ValueError):
             invalid_count += 1
     return tuple(evaluations), invalid_count
@@ -140,19 +151,11 @@ def _require_private_output_root(output: Path) -> None:
         raise ValueError
     if not output.exists():
         parent = output.parent.lstat()
-        if (
-            not stat.S_ISDIR(parent.st_mode)
-            or parent.st_uid != os.getuid()
-            or stat.S_IMODE(parent.st_mode) != 0o700
-        ):
+        if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.getuid() or stat.S_IMODE(parent.st_mode) != 0o700:
             raise ValueError
         output.mkdir(mode=0o700)
     metadata = output.lstat()
-    if (
-        not stat.S_ISDIR(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o700
-    ):
+    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
         raise ValueError
 
 

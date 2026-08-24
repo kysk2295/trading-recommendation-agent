@@ -36,6 +36,8 @@ from trading_agent.kis_kr_market_projection import project_kis_kr_completed_minu
 from trading_agent.kis_kr_market_receipt_store import KisKrMarketReceiptStore
 from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStore
 from trading_agent.kr_day_capsule_models import KrDayCapsuleEvaluationRequest
+from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowStatus
+from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
 from trading_agent.kr_day_decision_models import KrDayDecisionEvent
 from trading_agent.kr_day_decision_service import run_kr_day_decision_tick
 from trading_agent.kr_day_decision_store import KrDayDecisionStore
@@ -156,9 +158,10 @@ def _run_kr(
             requests.append(KrDayCapsuleEvaluationRequest.model_validate_json(read_private_text(path)))
         except (OSError, TypeError, ValidationError, ValueError):
             decision_blocked = True
+    decision_requests = tuple(request for request in requests if request.evaluated_at < request.opportunity.valid_until)
     try:
         decisions = run_kr_day_decision_tick(
-            tuple(requests),
+            decision_requests,
             KrDayDecisionStore(config.state_root / "kr-day-decisions.sqlite3"),
         )
     except ValueError:
@@ -223,20 +226,28 @@ def _materialize_kr_requests(
         for path in sorted(config.source_root.iterdir())[-24:]
         if path.is_dir() and path.name.startswith(cycle_prefix)
     )
-    opportunities = tuple(
+    all_opportunities = tuple(
         opportunity
         for cycle in reversed(cycles)
         for opportunity in reversed(read_opportunity_snapshots(cycle / "projection" / "opportunities.v1.jsonl"))
-        if opportunity.observed_at <= evaluated_at < opportunity.valid_until
+        if opportunity.observed_at <= evaluated_at
     )
     calendars = tuple(
         item
         for item in KisKrSessionCalendarStore(config.calendar_store).snapshots()
         if item.payload.base_date == local_date and item.payload.observed_at <= evaluated_at
     )
-    if not opportunities or not calendars:
+    if not all_opportunities or not calendars:
         raise ValueError
-    opportunity = opportunities[0]
+    current = tuple(item for item in all_opportunities if evaluated_at < item.valid_until)
+    if current:
+        opportunity = current[0]
+    else:
+        shadow = KrDayCapsuleShadowStore(config.state_root / "kr-day-capsule-shadow.sqlite3")
+        active = tuple(shadow.latest(capsule_id, local_date.isoformat()) for capsule_id in capsule_ids[:3])
+        if not active or any(item is None or item.status is not KrDayCapsuleShadowStatus.ACTIVE for item in active):
+            raise ValueError
+        opportunity = all_opportunities[0]
     symbol = opportunity.candidates[0].symbol
     cycle_ids = tuple(item.record_id for item in opportunity.evidence_refs if item.namespace == "kr/collection_cycle")
     if len(cycle_ids) != 1:

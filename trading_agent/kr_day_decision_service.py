@@ -175,10 +175,11 @@ def _invalid_event(
     previous: KrDayDecisionEvent | None,
 ) -> KrDayDecisionEvent:
     raw = item.raw
-    expired = raw.opportunity.valid_until <= raw.evaluated_at
+    session_deadline = raw.evaluated_at.astimezone(_SEOUL).replace(hour=15, minute=30, second=0, microsecond=0)
+    expired = raw.opportunity.valid_until <= raw.evaluated_at or session_deadline <= raw.evaluated_at
     status = KrDayDecisionStatus.EXPIRED if expired else KrDayDecisionStatus.BLOCKED
     deadline = (
-        max(item.completed_bar_at, min(raw.opportunity.valid_until, raw.evaluated_at))
+        max(item.completed_bar_at, min(raw.opportunity.valid_until, session_deadline, raw.evaluated_at))
         if expired
         else min(
             raw.opportunity.valid_until,
@@ -196,7 +197,15 @@ def _invalid_event(
     )
     projection = KrDayDecisionProjection(
         status,
-        (KrDayDecisionReasonCode.POLICY_INPUT_CONTRACT_MISMATCH,),
+        tuple(
+            sorted(
+                {
+                    KrDayDecisionReasonCode.POLICY_INPUT_CONTRACT_MISMATCH,
+                    *((KrDayDecisionReasonCode.MARKET_GATE_BLOCKED,) if session_deadline <= raw.evaluated_at else ()),
+                },
+                key=lambda item: item.value,
+            )
+        ),
         None,
         refs,
         (KrDayDecisionEvidenceValue(name="input_valid", value="false"),),
