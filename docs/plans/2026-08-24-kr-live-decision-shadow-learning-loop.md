@@ -299,6 +299,7 @@ Commit: `feat: gate KR candidates with explicit evidence`
 **Files:**
 
 - Create: `trading_agent/kr_day_decision_service.py`
+- Create: `trading_agent/kr_day_decision_projection.py`
 - Modify: `trading_agent/day_session_service.py`
 - Modify: `tests/test_day_session_service.py`
 - Modify: `tests/test_kr_live_decision_contract.py`
@@ -317,6 +318,10 @@ The service must:
 4. append exactly one decision transition when state changes;
 5. return a projection for shadow evaluation, dashboard, and delivery.
 
+Keep policy/setup-to-decision projection in `kr_day_decision_projection.py` so request
+orchestration, replay binding, and append-only storage remain below the 250-pure-LOC
+module limit in `kr_day_decision_service.py`.
+
 **Step 3: Wire it into `_run_kr`**
 
 Use the existing active-capsule authority and state root. Do not add another daemon or another market scanner. Do not let a missing source opportunity stop management of an already-active shadow position.
@@ -327,8 +332,8 @@ Run:
 
 ```bash
 pytest -q tests/test_day_session_service.py tests/test_kr_live_decision_contract.py tests/test_kr_same_cycle_day_session_e2e.py
-ruff check trading_agent/day_session_service.py trading_agent/kr_day_decision_service.py tests/test_day_session_service.py
-basedpyright trading_agent/day_session_service.py trading_agent/kr_day_decision_service.py
+ruff check trading_agent/day_session_service.py trading_agent/kr_day_decision_service.py trading_agent/kr_day_decision_projection.py tests/test_day_session_service.py
+basedpyright trading_agent/day_session_service.py trading_agent/kr_day_decision_service.py trading_agent/kr_day_decision_projection.py
 ```
 
 Commit: `feat: integrate KR decisions into session service`
