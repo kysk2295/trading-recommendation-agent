@@ -47,6 +47,20 @@ _SESSION_OPEN: Final = dt.time(9)
 def project_kis_kr_completed_minutes(
     source: KisKrMinuteProjectionInput,
 ) -> tuple[KrCompletedMinuteBar, ...]:
+    return _project_completed_minutes(source, require_session_open=True)
+
+
+def project_kis_kr_recent_completed_minutes(
+    source: KisKrMinuteProjectionInput,
+) -> tuple[KrCompletedMinuteBar, ...]:
+    return _project_completed_minutes(source, require_session_open=False)
+
+
+def _project_completed_minutes(
+    source: KisKrMinuteProjectionInput,
+    *,
+    require_session_open: bool,
+) -> tuple[KrCompletedMinuteBar, ...]:
     request = _validated_minute_input(source)
     observed_rows: dict[dt.datetime, tuple[KisKrMinuteRow, KisKrMarketReceipt]] = {}
     for receipt in sorted(request.receipts, key=lambda item: item.received_at):
@@ -61,10 +75,18 @@ def project_kis_kr_completed_minutes(
             if existing is None:
                 observed_rows[started_at] = (row, receipt)
     ordered = tuple(sorted(observed_rows.items()))
-    if not ordered or ordered[0][0].astimezone(SEOUL).time() != _SESSION_OPEN:
+    if not ordered or (
+        require_session_open
+        and ordered[0][0].astimezone(SEOUL).time() != _SESSION_OPEN
+    ):
         raise KisKrMarketEvidenceError
     if any(current[0] - previous[0] != _ONE_MINUTE for previous, current in pairwise(ordered)):
         raise KisKrMarketEvidenceError
+    if not require_session_open and ordered[0][0].astimezone(SEOUL).time() != _SESSION_OPEN:
+        if len(ordered) < 2:
+            raise KisKrMarketEvidenceError
+        baseline = decimal_value(ordered[0][1][0].acml_tr_pbmn)
+        return _completed_bars(ordered[1:], prior_cumulative=baseline)
     return _completed_bars(ordered)
 
 
@@ -125,9 +147,10 @@ def project_kis_kr_market_snapshot(
 
 def _completed_bars(
     ordered: tuple[tuple[dt.datetime, tuple[KisKrMinuteRow, KisKrMarketReceipt]], ...],
+    *,
+    prior_cumulative: Decimal = Decimal(0),
 ) -> tuple[KrCompletedMinuteBar, ...]:
     bars: list[KrCompletedMinuteBar] = []
-    prior_cumulative = Decimal(0)
     try:
         for started_at, (row, receipt) in ordered:
             cumulative = decimal_value(row.acml_tr_pbmn)

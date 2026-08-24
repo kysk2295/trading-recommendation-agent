@@ -33,6 +33,11 @@ from trading_agent.alpaca_news_opportunity_evidence import (
 )
 from trading_agent.alpaca_news_store import AlpacaNewsStore, AlpacaNewsStoreError
 from trading_agent.contract_outbox import append_opportunity_snapshot
+from trading_agent.day_discovery_live_projection import (
+    DayDiscoveryLiveProjectionError,
+    project_us_live_discovery_evidence,
+    publish_live_discovery_evidence_once,
+)
 from trading_agent.private_immutable_file import publish_private_immutable_text
 from trading_agent.signal_contract_models import OpportunitySnapshot
 from trading_agent.strategy_research_forward_observations import (
@@ -123,6 +128,10 @@ def main(
         outbox = session / "opportunities.v1.jsonl"
         _prepare_outbox(outbox)
         _ = append_opportunity_snapshot(outbox, opportunity)
+        _, discovery_created = publish_live_discovery_evidence_once(
+            args.live_session_root,
+            project_us_live_discovery_evidence(day_input, published_at=now),
+        )
         forward_inserted = persist_forward_observations(
             session / "strategy-research-forward-observations.json",
             project_matured_intraday_observations(_opportunities(outbox), now),
@@ -149,6 +158,7 @@ def main(
         AlpacaNewsOpportunityEvidenceError,
         AlpacaNewsStoreError,
         AlpacaNewsTransportError,
+        DayDiscoveryLiveProjectionError,
         MissingAlpacaCredentialsError,
         OSError,
         TypeError,
@@ -160,7 +170,7 @@ def main(
         return 2
     print(
         f"status=ready opportunity={opportunity.opportunity_id} symbol={opportunity.candidates[0].symbol} "
-        f"forward_observations={forward_inserted} mutation=0"
+        f"discovery_created={int(discovery_created)} forward_observations={forward_inserted} mutation=0"
     )
     return 0
 

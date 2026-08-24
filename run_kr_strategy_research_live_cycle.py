@@ -17,6 +17,19 @@ import run_kis_kr_market_collect
 import run_kis_kr_session_calendar_collect
 import run_kr_same_cycle_opportunity
 from trading_agent.contract_outbox import append_opportunity_snapshot
+from trading_agent.day_discovery_live_projection import (
+    project_kr_live_discovery_evidence,
+    publish_live_discovery_evidence_once,
+)
+from trading_agent.kis_kr_market_models import (
+    KisKrMarketReceiptKind,
+    KisKrMinuteProjectionInput,
+    KisKrSnapshotProjectionInput,
+)
+from trading_agent.kis_kr_market_projection import (
+    project_kis_kr_market_snapshot,
+    project_kis_kr_recent_completed_minutes,
+)
 from trading_agent.kis_kr_market_receipt_store import KisKrMarketReceiptStore
 from trading_agent.kis_kr_session_calendar_models import KrSessionCalendarSnapshot
 from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStore
@@ -128,9 +141,10 @@ def main(
     if collected != 0:
         return collected
     evaluated_at = clock()
+    market_receipts = KisKrMarketReceiptStore(receipt_store).receipts()
     enriched, context = build_kr_strategy_research_sources(
         opportunity,
-        KisKrMarketReceiptStore(receipt_store).receipts(),
+        market_receipts,
         evaluated_at,
     )
     session = args.live_session_root.expanduser().absolute() / local.strftime("%Y%m%d")
@@ -139,6 +153,37 @@ def main(
     outbox = session / "opportunities.v1.jsonl"
     _prepare_outbox(outbox)
     _ = append_opportunity_snapshot(outbox, enriched)
+    minute_receipts = tuple(
+        item for item in market_receipts if item.kind is KisKrMarketReceiptKind.MINUTE_BARS
+    )
+    price_receipt = max(
+        (item for item in market_receipts if item.kind is KisKrMarketReceiptKind.PRICE_STATUS),
+        key=lambda item: item.received_at,
+    )
+    quote_receipt = max(
+        (item for item in market_receipts if item.kind is KisKrMarketReceiptKind.ORDER_BOOK),
+        key=lambda item: item.received_at,
+    )
+    completed_bars = project_kis_kr_recent_completed_minutes(
+        KisKrMinuteProjectionInput(receipts=minute_receipts, evaluated_at=evaluated_at)
+    )
+    market = project_kis_kr_market_snapshot(
+        KisKrSnapshotProjectionInput(
+            price_receipt=price_receipt,
+            quote_receipt=quote_receipt,
+            evaluated_at=evaluated_at,
+        )
+    )
+    _, discovery_created = publish_live_discovery_evidence_once(
+        args.live_session_root,
+        project_kr_live_discovery_evidence(
+            enriched,
+            market,
+            completed_bars,
+            calendar,
+            published_at=evaluated_at,
+        ),
+    )
     forward_inserted = persist_forward_observations(
         session / "strategy-research-forward-observations.json",
         project_matured_intraday_observations(_opportunities(outbox), evaluated_at),
@@ -152,7 +197,7 @@ def main(
     )
     print(
         f"status=ready cycle={cycle_id} opportunity={enriched.opportunity_id} symbol={symbol} "
-        f"forward_observations={forward_inserted} mutation=0"
+        f"discovery_created={int(discovery_created)} forward_observations={forward_inserted} mutation=0"
     )
     return 0
 

@@ -12,6 +12,7 @@ import pytest
 
 import run_us_strategy_research_live_cycle as live_cycle
 import run_us_strategy_research_service as service
+from trading_agent.day_discovery_loop import DayDiscoveryEvidenceView
 from trading_agent.us_day_source_projection import project_us_strategy_day_source
 from trading_agent.us_strategy_day_input import UsStrategyDayInput
 from trading_agent.us_strategy_research_service_config import (
@@ -170,7 +171,11 @@ def test_live_cycle_emits_producer_owned_day_input_from_get_only_responses(
     )
 
     artifact = next((tmp_path / "day-source/20260819").glob("*.day-input.json"))
+    discovery_artifact = (
+        tmp_path / "live/20260819/day-discovery-evidence.us_equities.v1.json"
+    )
     day_input = UsStrategyDayInput.model_validate_json(artifact.read_text())
+    discovery = DayDiscoveryEvidenceView.model_validate_json(discovery_artifact.read_text())
     source = project_us_strategy_day_source(day_input, now)
     article = day_input.articles[0]
     observation = day_input.news_evidence.snapshots[0].observations[0]
@@ -188,6 +193,8 @@ def test_live_cycle_emits_producer_owned_day_input_from_get_only_responses(
     assert (flow.bid_size, flow.ask_size) == (1_234, 567)
     assert flow.evidence_refs
     assert source.situation.themes[0].leaders[0].inferences[0].value > 0
+    assert discovery.completed_bar_at < discovery.first_eligible_completed_bar_at
+    assert discovery.replay_bars[0].symbol == "DIA"
     assert [request.method for request in requests] == ["GET", "GET", "GET"]
 
 

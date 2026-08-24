@@ -15,6 +15,7 @@ from trading_agent.kis_kr_market_models import (
 from trading_agent.kis_kr_market_projection import (
     project_kis_kr_completed_minutes,
     project_kis_kr_market_snapshot,
+    project_kis_kr_recent_completed_minutes,
 )
 from trading_agent.kr_intraday_market_gate import (
     KrIntradayGateReason,
@@ -81,6 +82,21 @@ def test_kis_raw_receipts_project_completed_bars_and_current_shadow_signal() -> 
     assert market.ask_price == Decimal("103")
     assert decision.signal is not None
     assert decision.signal.entry_price == Decimal("103")
+
+
+def test_recent_projection_accepts_a_contiguous_provider_window_after_the_open() -> None:
+    evaluated_at = SESSION + dt.timedelta(minutes=4, seconds=4)
+    body = _minute_body(excluded_hour="090000")
+
+    bars = project_kis_kr_recent_completed_minutes(
+        KisKrMinuteProjectionInput(
+            receipts=(_receipt(KisKrMarketReceiptKind.MINUTE_BARS, body, seconds=2),),
+            evaluated_at=evaluated_at,
+        )
+    )
+
+    assert bars[0].start_at == SESSION + dt.timedelta(minutes=2)
+    assert bars[-1].end_at == SESSION + dt.timedelta(minutes=4)
 
 
 def test_snapshot_uses_newer_quote_price_when_market_moves_between_gets() -> None:
