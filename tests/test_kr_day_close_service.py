@@ -80,7 +80,27 @@ def test_postclose_replay_completes_once_and_delivers_one_summary(tmp_path: Path
     assert first.mutation_count == 0
 
 
-@pytest.mark.parametrize("crash_stage", ("report", "policy", "summary", "completion"))
+def test_postclose_summary_reports_registered_challenger_result(tmp_path: Path) -> None:
+    # Given: a complete close whose deterministic slow-loop adapter registers one challenger.
+    fixture = close_fixture(tmp_path)
+
+    # When: the close service runs the loop before projecting the daily summary.
+    result = run_kr_day_close_service(
+        fixture.config,
+        KrDayCloseRuntime(
+            clock=lambda: fixture.post_close,
+            stage_observer=lambda _stage: None,
+            loop_engineer=lambda _publication, _policy: 1,
+        ),
+    )
+
+    # Then: completion and the durable public summary both report the observed one-challenger result.
+    event = HermesDeliveryStore(fixture.config.hermes_delivery_database).events()[0]
+    assert (result.complete, result.challenger_count) == (True, 1)
+    assert "신규 challenger 등록: 1" in event.rendered_text
+
+
+@pytest.mark.parametrize("crash_stage", ("report", "policy", "loop", "summary", "completion"))
 def test_partial_crash_recovers_without_duplicate_summary(
     crash_stage: str,
     tmp_path: Path,

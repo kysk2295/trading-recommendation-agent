@@ -17,6 +17,7 @@ type CloseStage = Literal[
     "request",
     "report",
     "policy",
+    "loop",
     "summary",
     "completion",
 ]
@@ -33,6 +34,7 @@ class KrDayCloseServiceResult(BaseModel):
     report_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     metrics_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     policy_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    challenger_count: Literal[0, 1] = 0
     summary_inserted: int
     mutation_count: Literal[0] = 0
     provider_read_only: Literal[True] = True
@@ -54,6 +56,7 @@ class KrDayCloseCompletionReceipt(BaseModel):
     report_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     metrics_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     policy_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    challenger_count: Literal[0, 1] = 0
     summary_source_event_id: str
     completed_at: AwareDatetime
     mutation_count: Literal[0] = 0

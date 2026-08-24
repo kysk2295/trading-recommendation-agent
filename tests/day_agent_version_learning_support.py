@@ -43,7 +43,11 @@ def diagnostics(*, leader_score: float = 0.1) -> tuple[DayDecisionDiagnostic, ..
     return tuple(
         DayDecisionDiagnostic(
             stage=stage,
-            outcome=DayDecisionOutcome.SUPPORTED,
+            outcome=(
+                DayDecisionOutcome.REFUTED
+                if stage is DayDecisionStage.LEADER_SELECTION
+                else DayDecisionOutcome.SUPPORTED
+            ),
             score=leader_score if stage is DayDecisionStage.LEADER_SELECTION else 0.8,
             evidence_ids=(SHA_A,),
             reason_codes=("leader_rank_late",) if stage is DayDecisionStage.LEADER_SELECTION else ("supported",),

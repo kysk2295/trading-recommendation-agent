@@ -75,7 +75,14 @@ def loop_evaluation(root: Path) -> LoopEvaluationFixture:
             calendar_snapshot_id="calendar://official/XNYS/2026-v1",
             effective_at=dt.datetime.combine(session_date, dt.time(13, 30), tzinfo=dt.UTC),
         )
-        for session_date in (dt.date(2026, 8, 21), dt.date(2026, 8, 24))
+        for session_date in (
+            dt.date(2026, 8, 21),
+            dt.date(2026, 8, 24),
+            dt.date(2026, 8, 25),
+            dt.date(2026, 8, 26),
+            dt.date(2026, 8, 27),
+            dt.date(2026, 8, 28),
+        )
     )
     proposal_record = run_loop_engineer(
         report,

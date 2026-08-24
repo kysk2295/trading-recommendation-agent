@@ -32,6 +32,7 @@ from trading_agent.day_agent_version_models import (
 )
 from trading_agent.day_agent_version_store import DayAgentVersionStore
 from trading_agent.day_learning_report_models import (
+    DayDecisionOutcome,
     DayDecisionStage,
     MarketCloseReport,
     MarketCloseReportPayload,
@@ -54,6 +55,15 @@ class DayAgentChallengerPublisher(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class FixedDayAgentChangeAuthor:
+    response: ProposedAgentChange
+
+    def propose(self, stage: DayDecisionStage, champion: AgentVersion) -> ProposedAgentChange:
+        del stage, champion
+        return self.response
+
+
+@dataclass(frozen=True, slots=True)
 class DayAgentLoopServices:
     store: DayAgentVersionStore
     author: DayAgentChangeAuthor
@@ -68,12 +78,26 @@ def run_loop_engineer(
     payload = report.payload
     if (
         champion.deployment_state is not AgentDeploymentState.CHAMPION
+        or services.store.reader().champion() != champion
         or payload.agent_version_id != champion.version_id
         or not payload.diagnostics
         or payload.finalized_at < payload.watermark.finalized_through
     ):
         raise DayAgentVersionStoreError("loop_engineer_input_invalid")
-    problem = min(payload.diagnostics, key=lambda item: (item.score, tuple(DayDecisionStage).index(item.stage)))
+    existing = services.store.reader().proposal_for_report(report.report_id)
+    if existing is not None:
+        if existing.parent_version_id != champion.version_id:
+            raise DayAgentVersionStoreError("source_report_proposal_conflict")
+        return existing
+    failures = tuple(
+        item for item in payload.diagnostics if item.outcome is DayDecisionOutcome.REFUTED
+    )
+    if not failures:
+        raise DayAgentVersionStoreError("loop_engineer_no_failing_stage")
+    problem = min(
+        failures,
+        key=lambda item: (item.score, tuple(DayDecisionStage).index(item.stage)),
+    )
     allowed = _change_for_stage(problem.stage)
     authored = services.author.propose(problem.stage, champion)
     if authored.patch.kind is not allowed:
@@ -99,6 +123,7 @@ def run_loop_engineer(
     )
     _require_only_allowed_change(champion, challenger, authored.patch)
     proposal_payload = {
+        "source_report_id": report.report_id,
         "version_id": challenger.version_id,
         "parent_version_id": champion.version_id,
         "problem_stage": problem.stage,
@@ -115,6 +140,8 @@ def run_loop_engineer(
     with services.store.writer() as writer:
         _ = writer.register_challenger(challenger)
         _ = writer.record_proposal(proposal)
+    if services.store.reader().champion() != champion:
+        raise DayAgentVersionStoreError("loop_engineer_champion_changed")
     return proposal
 
 
@@ -216,6 +243,7 @@ __all__ = (
     "DayAgentChallengerPublisher",
     "DayAgentChangeAuthor",
     "DayAgentLoopServices",
+    "FixedDayAgentChangeAuthor",
     "ProposedAgentChange",
     "run_loop_engineer",
 )

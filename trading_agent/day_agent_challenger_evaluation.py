@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from trading_agent.day_agent_evaluation_metrics import AgentScoreComparison
 from trading_agent.day_agent_forward_shadow_controller import (
@@ -33,6 +33,20 @@ class DayAgentChallengerEvaluationRequest(BaseModel):
     sessions: tuple[DayForwardShadowSessionRequest, ...] = Field(min_length=2, max_length=20)
     minimum_sessions: int = Field(ge=2, le=20)
     evaluated_at: AwareDatetime
+    safety_incident_ids: tuple[str, ...] = ()
+    risk_incident_ids: tuple[str, ...] = ()
+    data_incident_ids: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_incidents(self) -> DayAgentChallengerEvaluationRequest:
+        incidents = (
+            self.safety_incident_ids,
+            self.risk_incident_ids,
+            self.data_incident_ids,
+        )
+        if any(items != tuple(sorted(set(items))) for items in incidents):
+            raise DayAgentVersionStoreError("future_shadow_incidents_invalid")
+        return self
 
 
 def evaluate_day_agent_challenger(
@@ -60,7 +74,12 @@ def evaluate_day_agent_challenger(
         champion=aggregate_capsule_metrics(evidence, checked.sessions, capsule_ids[0]),
         challenger=aggregate_capsule_metrics(evidence, checked.sessions, capsule_ids[1]),
     )
-    decision, reasons = _promotion_decision(comparison.margin)
+    gate_reasons = _promotion_gate_reasons(checked, evidence, controller)
+    decision, reasons = (
+        (AgentPromotionDecision.REJECT, gate_reasons)
+        if gate_reasons
+        else _promotion_decision(comparison.margin)
+    )
     sessions = tuple(item.session_date for item in evidence)
     paired_ids = tuple(hashlib.sha256(":".join(item.completed_bar_ids).encode()).hexdigest() for item in evidence)
     controller_ids = tuple(
@@ -76,6 +95,9 @@ def evaluate_day_agent_challenger(
                 *(item.artifact_id for session in evidence for item in session.signals),
                 *(item.outcome_id for session in evidence for item in session.outcomes),
                 *(bar_id for session in evidence for bar_id in session.completed_bar_ids),
+                *checked.safety_incident_ids,
+                *checked.risk_incident_ids,
+                *checked.data_incident_ids,
             }
         )
     )
@@ -96,6 +118,55 @@ def evaluate_day_agent_challenger(
     with store.writer() as writer:
         _ = writer._record_controller_recommendation(recommendation)
     return recommendation
+
+
+def _promotion_gate_reasons(
+    request: DayAgentChallengerEvaluationRequest,
+    evidence: tuple[DayForwardShadowSessionEvidence, ...],
+    controller: UsForwardShadowControllerRunner,
+) -> tuple[str, ...]:
+    reader = controller.services.ledger.reader()
+    champion = reader.day_strategy_capsule(request.champion_capsule_id)
+    challenger = reader.day_strategy_capsule(request.challenger_capsule_id)
+    if champion is None or challenger is None:
+        raise DayAgentVersionStoreError("future_shadow_capsule_lineage_invalid")
+    capsule = challenger.capsule
+    attempts = reader.day_attempts_for_review(capsule.market_id, capsule.hypothesis_version_id)
+    attempt = next(
+        (item for item in attempts if item.binding.binding_id == capsule.attempt_binding_id),
+        None,
+    )
+    manifests = (
+        ()
+        if attempt is None
+        else tuple(
+            item
+            for item in reader.strategy_research_preregistrations()
+            if item.hypothesis.hypothesis_id == attempt.attempt.hypothesis_id
+        )
+    )
+    if attempt is None or len(manifests) != 1:
+        raise DayAgentVersionStoreError("future_shadow_capsule_lineage_invalid")
+    hypothesis = manifests[0].hypothesis
+    binding = attempt.binding
+    observations = sum(len(session.completed_bar_ids) for session in evidence)
+    reasons: list[str] = []
+    if observations < hypothesis.minimum_observations:
+        reasons.append("minimum_observations_not_met")
+    if (
+        capsule.resource_limits != champion.capsule.resource_limits
+        or capsule.risk_policy_ref != champion.capsule.risk_policy_ref
+    ):
+        reasons.append("risk_limits_changed")
+    if (
+        binding.multiple_testing_family != hypothesis.multiple_testing_family
+        or binding.search_budget_debit
+        > min(binding.multiple_testing_budget, hypothesis.max_attempts)
+    ):
+        reasons.append("multiple_testing_budget_invalid")
+    if request.safety_incident_ids or request.risk_incident_ids or request.data_incident_ids:
+        reasons.append("safety_risk_or_data_incident")
+    return tuple(sorted(reasons))
 
 
 def _validate_controller_evidence(

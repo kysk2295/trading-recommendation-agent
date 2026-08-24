@@ -16,7 +16,7 @@ from trading_agent.day_agent_challenger_publisher import (
     DayAgentChallengerPublicationRequest,
     PublishedDayAgentChallenger,
 )
-from trading_agent.day_agent_loop_engineer import DayAgentLoopServices, run_loop_engineer
+from trading_agent.day_agent_loop_engineer import DayAgentLoopServices
 from trading_agent.day_agent_version_models import (
     AgentDeploymentState,
     AgentModelRoleBinding,
@@ -31,6 +31,7 @@ from trading_agent.kr_day_learning_policy import (
     InvalidKrDayLearningPolicyError,
     publish_kr_day_learning_policy,
 )
+from trading_agent.kr_day_loop_engineer import run_kr_day_loop_engineer
 from trading_agent.kr_day_market_close_report import publish_kr_day_market_close_report
 from trading_agent.research_identity_models import MarketId
 
@@ -119,10 +120,15 @@ def test_kr_report_policy_drives_persisted_future_only_shadow_challenger(tmp_pat
     _ = run_kr_day_capsule_shadow_tick(shadow_store, (stopped,))
     events = shadow_store.events()
     champion = _champion(events[0].capsule_id)
-    request = _request(events, (_outcome(events),)).model_copy(
-        update={"agent_version_id": champion.version_id, "diagnostics": diagnostics()}
+    close_diagnostics = tuple(
+        item.model_copy(update={"evidence_ids": (events[-1].event_id,)})
+        for item in diagnostics()
     )
-    report = publish_kr_day_market_close_report(tmp_path / "reports", request).report
+    request = _request(events, (_outcome(events),)).model_copy(
+        update={"agent_version_id": champion.version_id, "diagnostics": close_diagnostics}
+    )
+    publication = publish_kr_day_market_close_report(tmp_path / "reports", request)
+    report = publication.report
     policy = publish_kr_day_learning_policy(
         tmp_path / "reports",
         tmp_path / "policies",
@@ -135,13 +141,25 @@ def test_kr_report_policy_drives_persisted_future_only_shadow_challenger(tmp_pat
         assert writer.register_initial_champion(champion)
 
     # When: the Loop Engineer persists its generated challenger from that KR policy.
-    proposal = run_loop_engineer(
+    result = run_kr_day_loop_engineer(
         report,
-        champion,
+        publication.metrics,
+        policy,
+        DayAgentLoopServices(version_store, LeaderAuthor(), _KrPublisher(policy)),
+    )
+    replay = run_kr_day_loop_engineer(
+        report,
+        publication.metrics,
+        policy,
         DayAgentLoopServices(version_store, LeaderAuthor(), _KrPublisher(policy)),
     )
 
     # Then: the stored version is SHADOW, authority-free, and begins only on the official future session.
+    assert result.proposal is not None
+    assert replay.proposal == result.proposal
+    assert (result.challenger_count, replay.challenger_count) == (1, 1)
+    assert len(version_store.reader().challengers()) == 1
+    proposal = result.proposal
     challenger = version_store.reader().challenger(proposal.version_id)
     assert challenger is not None
     assert challenger.deployment_state is AgentDeploymentState.SHADOW

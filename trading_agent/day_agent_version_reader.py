@@ -68,6 +68,18 @@ class DayAgentVersionReader:
         )
         return tuple(AgentChangeProposal.model_validate_json(row[0]) for row in rows)
 
+    def proposal_for_report(self, report_id: str) -> AgentChangeProposal | None:
+        rows = self._rows("SELECT payload_json FROM change_proposals ORDER BY rowid", ())
+        matches = tuple(
+            proposal
+            for row in rows
+            for proposal in (AgentChangeProposal.model_validate_json(row[0]),)
+            if proposal.source_report_id == report_id
+        )
+        if len(matches) > 1:
+            raise DayAgentVersionStoreError("source_report_proposal_duplicate")
+        return matches[0] if matches else None
+
     def _version(self, version_id: str) -> AgentVersion | None:
         rows = self._rows("SELECT payload_json FROM agent_versions WHERE version_id=?", (version_id,))
         return None if not rows else AgentVersion.model_validate_json(rows[0][0])

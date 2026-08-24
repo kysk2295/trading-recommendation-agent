@@ -173,6 +173,66 @@ def test_host_deployment_promotes_only_validated_multi_session_recommendation(
         assert writer.register_challenger(next_challenger)
 
 
+def test_predeclared_observation_threshold_blocks_two_good_sessions(tmp_path: Path) -> None:
+    # Given: a challenger with only eight of its twenty preregistered observations.
+    services, champion_capsule, challenger_capsule, policies = dual_capsule_runtime(tmp_path)
+    base = champion()
+    baseline = build_agent_version(
+        model_role_bindings=base.model_role_bindings,
+        prompt_sha256=base.prompt_sha256,
+        tool_policy_sha256=base.tool_policy_sha256,
+        memory_retrieval_policy_sha256=base.memory_retrieval_policy_sha256,
+        playbook_ids=(champion_capsule.capsule_id,),
+        parent_version_id=None,
+        creation_evidence_ids=base.payload.creation_evidence_ids,
+        deployment_state=AgentDeploymentState.CHAMPION,
+        task_id=base.task_id,
+        created_at=base.created_at,
+        created_session_date=base.created_session_date,
+    )
+    challenger = build_agent_version(
+        model_role_bindings=baseline.model_role_bindings,
+        prompt_sha256="5" * 64,
+        tool_policy_sha256=baseline.tool_policy_sha256,
+        memory_retrieval_policy_sha256=baseline.memory_retrieval_policy_sha256,
+        playbook_ids=(challenger_capsule.capsule_id,),
+        parent_version_id=baseline.version_id,
+        creation_evidence_ids=(SHA_A,),
+        deployment_state=AgentDeploymentState.SHADOW,
+        task_id=baseline.task_id,
+        created_at=NOW,
+        created_session_date=SESSION,
+    )
+    store = DayAgentVersionStore(tmp_path / "versions.sqlite3")
+    with store.writer() as writer:
+        assert writer.register_initial_champion(baseline)
+        assert writer.register_challenger(challenger)
+    sessions = tuple(
+        session_request(services, policy.policy_id, policy.payload.effective_session_date)
+        for policy in policies[:2]
+    )
+
+    # When: the deterministic evaluator sees a favorable but undersized sample.
+    recommendation = evaluate_day_agent_challenger(
+        DayAgentChallengerEvaluationRequest(
+            champion=baseline,
+            challenger=challenger,
+            champion_capsule_id=champion_capsule.capsule_id,
+            challenger_capsule_id=challenger_capsule.capsule_id,
+            sessions=sessions,
+            minimum_sessions=2,
+            evaluated_at=dt.datetime(2026, 8, 24, 20, 0, tzinfo=dt.UTC),
+        ),
+        store,
+        UsForwardShadowControllerRunner(services),
+    )
+
+    # Then: it durably rejects instead of promoting from a small sample.
+    assert recommendation.decision is AgentPromotionDecision.REJECT
+    assert recommendation.reason_codes == ("minimum_observations_not_met",)
+    assert store.reader().recommendations(challenger.version_id) == (recommendation,)
+
+
 class _DerivedController(UsForwardShadowControllerRunner):
     pass
 

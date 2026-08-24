@@ -24,7 +24,7 @@ def test_finalized_close_change_runs_as_the_exact_future_shadow_challenger(tmp_p
             policy.policy_id,
             policy.payload.effective_session_date,
         )
-        for policy in fixture.policies
+        for policy in fixture.policies[1:]
     )
 
     # When: two later sessions run both exact stored capsules through the production controller.
@@ -49,9 +49,9 @@ def test_finalized_close_change_runs_as_the_exact_future_shadow_challenger(tmp_p
     assert all(
         policy.payload.active_capsule_ids
         == tuple(sorted((fixture.champion_capsule.capsule_id, fixture.challenger_capsule.capsule_id)))
-        for policy in fixture.policies
+        for policy in fixture.policies[1:]
     )
-    assert len(fixture.policies) == len(sessions) == 2
+    assert (len(fixture.policies), len(sessions)) == (6, 5)
     assert recommendation.decision is AgentPromotionDecision.REJECT
     assert fixture.store.reader().recommendations(fixture.challenger.version_id) == (recommendation,)
     with pytest.raises(InvalidUsForwardShadowRuntimeError, match="policy_not_effective"):

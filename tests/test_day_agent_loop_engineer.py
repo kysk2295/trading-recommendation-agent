@@ -2,18 +2,24 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from tests.day_agent_loop_e2e_support import loop_evaluation
-from tests.day_agent_version_learning_support import champion
+from tests.day_agent_version_learning_support import LeaderAuthor, champion, diagnostics
 from tests.day_strategy_capsule_support import builtin_capsule
 from tests.test_day_learning_report_models import _payload
 from tests.us_forward_shadow_support import no_signal_source
 from trading_agent import day_agent_loop_engineer
 from trading_agent.day_agent_challenger_builders import DerivedSourceRequest, render_derived_source
+from trading_agent.day_agent_challenger_publisher import (
+    DayAgentChallengerPublicationRequest,
+    PublishedDayAgentChallenger,
+)
+from trading_agent.day_agent_loop_engineer import DayAgentLoopServices, run_loop_engineer
 from trading_agent.day_agent_version_models import (
     AgentChangeKind,
     AgentDeploymentState,
@@ -23,7 +29,8 @@ from trading_agent.day_agent_version_models import (
     LeaderRankingPatch,
 )
 from trading_agent.day_agent_version_store import DayAgentVersionStore
-from trading_agent.day_learning_report_models import DayDecisionStage
+from trading_agent.day_learning_report_models import DayDecisionOutcome, DayDecisionStage
+from trading_agent.day_learning_reports import seal_market_close_report
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 
 
@@ -51,6 +58,37 @@ def test_loop_engineer_turns_leader_error_into_shadow_challenger(tmp_path: Path)
     assert DayAgentVersionStore(fixture.store.path).reader().proposals(proposal.version_id) == (proposal,)
     views = DayAgentVersionStore(fixture.store.path).reader().versions()
     assert {view.deployment_state for view in views} == {"champion", "shadow"}
+
+
+def test_loop_engineer_rejects_diagnostics_without_refuted_stage(tmp_path: Path) -> None:
+    # Given: a complete finalized diagnostic set whose stages are all supported.
+    baseline = champion()
+    payload = _payload().model_copy(
+        update={
+            "agent_version_id": baseline.version_id,
+            "diagnostics": tuple(
+                item.model_copy(update={"outcome": DayDecisionOutcome.SUPPORTED})
+                for item in diagnostics()
+            ),
+        }
+    )
+    store = DayAgentVersionStore(tmp_path / "versions.sqlite3")
+    with store.writer() as writer:
+        assert writer.register_initial_champion(baseline)
+
+    # When / Then: no author or publisher can turn insufficient failure evidence into a challenger.
+    with pytest.raises(DayAgentVersionStoreError, match="loop_engineer_no_failing_stage"):
+        _ = run_loop_engineer(
+            seal_market_close_report(payload),
+            baseline,
+            DayAgentLoopServices(store, LeaderAuthor(), _UnexpectedPublisher()),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _UnexpectedPublisher:
+    def publish(self, request: DayAgentChallengerPublicationRequest) -> PublishedDayAgentChallenger:
+        raise AssertionError(request.report.report_id)
 
 
 @pytest.mark.parametrize(

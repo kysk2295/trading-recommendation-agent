@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import assert_never, override
+from typing import Literal, assert_never, override
 
 from trading_agent.day_learning_policy import ExplorationPolicyAction
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
@@ -35,11 +35,25 @@ from trading_agent.kr_day_decision_delivery import (
     KrDayDecisionDeliveryBatch,
     project_kr_day_decision_delivery,
 )
-from trading_agent.kr_day_learning_policy import publish_kr_day_learning_policy
-from trading_agent.kr_day_market_close_report import publish_kr_day_market_close_report
+from trading_agent.kr_day_learning_policy import (
+    KrDayLearningPolicyPublication,
+    publish_kr_day_learning_policy,
+)
+from trading_agent.kr_day_loop_engineer import (
+    KrDayLoopAuthorityPaths,
+    run_configured_kr_day_loop_engineer,
+)
+from trading_agent.kr_day_market_close_report import (
+    KrDayMarketClosePublication,
+    publish_kr_day_market_close_report,
+)
 
 type ServiceClock = Callable[[], dt.datetime]
 type StageObserver = Callable[[CloseStage], None]
+type CloseLoopEngineer = Callable[
+    [KrDayMarketClosePublication, KrDayLearningPolicyPublication],
+    Literal[0, 1],
+]
 
 
 class InvalidKrDayCloseServiceError(RuntimeError):
@@ -52,6 +66,7 @@ class InvalidKrDayCloseServiceError(RuntimeError):
 class KrDayCloseRuntime:
     clock: ServiceClock
     stage_observer: StageObserver
+    loop_engineer: CloseLoopEngineer | None = None
 
 
 def run_kr_day_close_service(
@@ -85,6 +100,18 @@ def run_kr_day_close_service(
                     ExplorationPolicyAction.KEEP,
                 )
                 active.stage_observer(stage)
+                stage = "loop"
+                challenger_count = (
+                    run_configured_kr_day_loop_engineer(
+                        publication.report,
+                        publication.metrics,
+                        policy.policy,
+                        KrDayLoopAuthorityPaths(config.state_root, config.experiment_ledger),
+                    ).challenger_count
+                    if active.loop_engineer is None
+                    else active.loop_engineer(publication, policy)
+                )
+                active.stage_observer(stage)
                 stage = "summary"
                 with HermesDeliveryStore(config.hermes_delivery_database).writer() as writer:
                     summary = project_kr_day_decision_delivery(
@@ -92,6 +119,7 @@ def run_kr_day_close_service(
                             decision_events=(),
                             shadow_events=(),
                             close_reports=(publication.report,),
+                            challenger_count=challenger_count,
                         ),
                         writer,
                     )
@@ -106,6 +134,7 @@ def run_kr_day_close_service(
                         report_id=publication.report.report_id,
                         metrics_id=publication.metrics.metrics_id,
                         policy_id=policy.policy.policy_id,
+                        challenger_count=challenger_count,
                         summary_source_event_id=f"kr-day:summary:{publication.report.report_id}",
                         completed_at=request.finalized_at,
                     ),
@@ -120,6 +149,7 @@ def run_kr_day_close_service(
                     report_id=publication.report.report_id,
                     metrics_id=publication.metrics.metrics_id,
                     policy_id=policy.policy.policy_id,
+                    challenger_count=challenger_count,
                     summary_inserted=summary.inserted,
                 )
     except (
@@ -182,6 +212,7 @@ def _result(
             "report_id": None,
             "metrics_id": None,
             "policy_id": None,
+            "challenger_count": 0,
             "summary_inserted": 0,
             "mutation_count": 0,
             "provider_read_only": True,

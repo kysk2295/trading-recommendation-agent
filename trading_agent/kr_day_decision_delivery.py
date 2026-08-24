@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
+from typing import Literal
 
 from pydantic import ValidationError
 
@@ -32,6 +33,7 @@ class KrDayDecisionDeliveryBatch:
     shadow_events: tuple[KrDayCapsuleShadowEvent, ...]
     incidents: tuple[KrDayDeliveryIncident, ...] = ()
     close_reports: tuple[MarketCloseReport, ...] = ()
+    challenger_count: Literal[0, 1] = 0
 
 
 def project_kr_day_decision_delivery(
@@ -58,7 +60,11 @@ def project_kr_day_decision_delivery(
         _require_decision_histories(decisions)
         _require_shadow_histories(shadows)
         records = build_kr_day_decision_records(decisions, shadows)
-        records += build_kr_day_supplement_records(incidents, reports)
+        records += build_kr_day_supplement_records(
+            incidents,
+            reports,
+            challenger_count=batch.challenger_count,
+        )
         return project_outcomes(records, writer)
     except InvalidKrDayDecisionDeliveryError:
         raise

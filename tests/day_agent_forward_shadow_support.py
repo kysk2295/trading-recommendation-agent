@@ -49,6 +49,7 @@ def dual_capsule_runtime(root: Path):
         update={
             "hypothesis_id": "hypothesis-catalyst-002",
             "code_sha256": source_sha256,
+            "minimum_observations": 20,
             "holdout_period_sealed_ref": hypothesis_fixture.holdout_period_sealed_ref.model_copy(
                 update={"seal_id": "sealed-holdout-catalyst-2026q3-challenger"}
             ),
@@ -118,6 +119,9 @@ def dual_capsule_runtime(root: Path):
         for session_date, report_id in (
             (dt.date(2026, 8, 21), "9" * 64),
             (dt.date(2026, 8, 24), "8" * 64),
+            (dt.date(2026, 8, 25), "7" * 64),
+            (dt.date(2026, 8, 26), "6" * 64),
+            (dt.date(2026, 8, 27), "5" * 64),
         )
     )
     with services.ledger.writer() as writer:

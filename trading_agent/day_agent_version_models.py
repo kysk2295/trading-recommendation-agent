@@ -158,6 +158,7 @@ class AgentVersion(DayAgentVersionModel):
 
 class AgentChangeProposal(DayAgentVersionModel):
     proposal_id: str = Field(pattern=_SHA256)
+    source_report_id: str = Field(pattern=_SHA256)
     version_id: str = Field(pattern=_SHA256)
     parent_version_id: str = Field(pattern=_SHA256)
     problem_stage: DayDecisionStage
