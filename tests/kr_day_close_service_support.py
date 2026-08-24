@@ -4,6 +4,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, replace
@@ -102,7 +103,7 @@ def close_fixture(
     config = KrDayCloseServiceConfig(
         project_root=ROOT,
         expected_commit=_head(),
-        executable_path=Path(sys.executable).resolve(),
+        executable_path=Path(shutil.which("uv") or "/bin/false").resolve(),
         state_root=state,
         calendar_store=state / "calendar/calendar.sqlite3",
         experiment_ledger=state / "ledger/experiment.sqlite3",

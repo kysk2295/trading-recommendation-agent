@@ -17,7 +17,9 @@ from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.kr_day_close_service import KrDayCloseRuntime, run_kr_day_close_service
 from trading_agent.kr_day_close_service_config import (
+    InvalidKrDayCloseServiceConfigError,
     KrDayCloseServiceConfig,
+    require_kr_day_close_service_authority,
     write_kr_day_close_service_config,
 )
 from trading_agent.kr_day_close_service_launchd import (
@@ -268,10 +270,17 @@ def test_concurrent_invocations_serialize_to_one_completion(tmp_path: Path) -> N
     assert len(HermesDeliveryStore(fixture.config.hermes_delivery_database).events()) == 1
 
 
-def test_config_and_launch_agent_pin_exact_recovery_schedule(tmp_path: Path) -> None:
+def test_config_and_launch_agent_pin_exact_recovery_schedule(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Given: a commit-versioned private service configuration.
     fixture = close_fixture(tmp_path)
     assert write_kr_day_close_service_config(fixture.config_path, fixture.config)
+    monkeypatch.setattr(
+        "trading_agent.kr_day_close_service_launchd.require_kr_day_close_service_authority",
+        lambda _config: None,
+    )
 
     # When: its LaunchAgent is provisioned and independently verified.
     plist_path = provision_kr_day_close_launch_agent(fixture.config, fixture.config_path)
@@ -281,9 +290,47 @@ def test_config_and_launch_agent_pin_exact_recovery_schedule(tmp_path: Path) -> 
     # Then: three post-close times bind exact inputs without weekdays or secret fields.
     assert verification.ready and verification.invocation_count == 3
     assert all("Weekday" not in interval for interval in payload["StartCalendarInterval"])
-    assert payload["ProgramArguments"][-1] == str(fixture.config_path)
+    assert payload["ProgramArguments"] == [
+        str(fixture.config.executable_path),
+        "run",
+        "--offline",
+        "python",
+        str(SCRIPT),
+        "--config",
+        str(fixture.config_path),
+    ]
     assert fixture.config.expected_commit in plist_path.name
     assert "EnvironmentVariables" not in payload
+
+
+@pytest.mark.parametrize(
+    ("branch", "tracked"),
+    (("codex/feature", ""), ("main", " M trading_agent/changed.py")),
+)
+def test_close_authority_requires_clean_exact_main(
+    branch: str,
+    tracked: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: the configured SHA is checked out on either a feature branch or a dirty main tree.
+    fixture = close_fixture(tmp_path)
+
+    def git_result(command: tuple[str, ...], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        arguments = command[3:]
+        value = {
+            ("rev-parse", "HEAD"): fixture.config.expected_commit,
+            ("rev-parse", "refs/heads/main"): fixture.config.expected_commit,
+            ("symbolic-ref", "--quiet", "--short", "HEAD"): branch,
+            ("status", "--porcelain=v1", "--untracked-files=no"): tracked,
+        }[arguments]
+        return subprocess.CompletedProcess(command, 0, f"{value}\n", "")
+
+    monkeypatch.setattr("trading_agent.kr_day_close_service_config.subprocess.run", git_result)
+
+    # When/Then: close authority rejects both cases before reading session evidence.
+    with pytest.raises(InvalidKrDayCloseServiceConfigError):
+        require_kr_day_close_service_authority(fixture.config)
 
 
 def test_close_config_accepts_external_read_only_experiment_ledger(tmp_path: Path) -> None:
@@ -363,7 +410,11 @@ def test_cli_bad_config_and_fixture_replay_are_compact(
 
 
 def _runtime(observed_at: dt.datetime) -> KrDayCloseRuntime:
-    return KrDayCloseRuntime(clock=lambda: observed_at, stage_observer=lambda _stage: None)
+    return KrDayCloseRuntime(
+        clock=lambda: observed_at,
+        stage_observer=lambda _stage: None,
+        authority_check=lambda _config: None,
+    )
 
 
 def _health(root: Path) -> KrDayCloseServiceHealth:

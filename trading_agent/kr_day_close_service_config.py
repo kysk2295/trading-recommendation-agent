@@ -124,14 +124,31 @@ def require_kr_day_close_service_authority(config: KrDayCloseServiceConfig) -> N
         or not os.access(config.executable_path, os.X_OK)
     ):
         raise InvalidKrDayCloseServiceConfigError
+    try:
+        branch = _git(config.project_root, "symbolic-ref", "--quiet", "--short", "HEAD")
+        head_commit = _git(config.project_root, "rev-parse", "HEAD")
+        main_commit = _git(config.project_root, "rev-parse", "refs/heads/main")
+        tracked = _git(config.project_root, "status", "--porcelain=v1", "--untracked-files=no")
+    except (OSError, subprocess.SubprocessError):
+        raise InvalidKrDayCloseServiceConfigError from None
+    if (
+        branch != "main"
+        or head_commit != main_commit
+        or head_commit != config.expected_commit
+        or tracked
+    ):
+        raise InvalidKrDayCloseServiceConfigError
+
+
+def _git(root: Path, *arguments: str) -> str:
     completed = subprocess.run(
-        ("git", "-C", str(config.project_root), "rev-parse", "HEAD"),
-        check=False,
+        ("git", "-C", str(root), *arguments),
+        check=True,
         capture_output=True,
         text=True,
+        timeout=10,
     )
-    if completed.returncode != 0 or completed.stdout.strip() != config.expected_commit:
-        raise InvalidKrDayCloseServiceConfigError
+    return completed.stdout.strip()
 
 
 __all__ = (

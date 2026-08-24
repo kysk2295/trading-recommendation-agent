@@ -50,6 +50,7 @@ from trading_agent.kr_day_market_close_report import (
 
 type ServiceClock = Callable[[], dt.datetime]
 type StageObserver = Callable[[CloseStage], None]
+type CloseAuthorityCheck = Callable[[KrDayCloseServiceConfig], None]
 type CloseLoopEngineer = Callable[
     [KrDayMarketClosePublication, KrDayLearningPolicyPublication],
     Literal[0, 1],
@@ -67,6 +68,7 @@ class KrDayCloseRuntime:
     clock: ServiceClock
     stage_observer: StageObserver
     loop_engineer: CloseLoopEngineer | None = None
+    authority_check: CloseAuthorityCheck = require_kr_day_close_service_authority
 
 
 def run_kr_day_close_service(
@@ -80,7 +82,7 @@ def run_kr_day_close_service(
     session_date: dt.date | None = None
     try:
         with _service_lease(config.state_root):
-            require_kr_day_close_service_authority(config)
+            active.authority_check(config)
             stage = "request"
             try:
                 request = build_kr_day_close_request(config, observed_at)

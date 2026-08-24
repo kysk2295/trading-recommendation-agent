@@ -47,6 +47,9 @@ def canonical_kr_day_close_launch_agent(
         "Label": KR_DAY_CLOSE_LABEL,
         "ProgramArguments": [
             str(config.executable_path),
+            "run",
+            "--offline",
+            "python",
             str(config.project_root / "run_kr_day_close_service.py"),
             "--config",
             str(config_path),
@@ -99,7 +102,7 @@ def verify_kr_day_close_launch_agent(
             payload != expected
             or len(intervals) < 2
             or any("Weekday" in interval for interval in intervals)
-            or parsed["ProgramArguments"][2:] != ["--config", str(config_path)]
+            or parsed["ProgramArguments"][-2:] != ["--config", str(config_path)]
         ):
             raise InvalidKrDayCloseLaunchAgentError
         return KrDayCloseLaunchAgentVerification(
