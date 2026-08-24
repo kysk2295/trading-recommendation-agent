@@ -4,6 +4,7 @@ import datetime as dt
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from tests.day_agent_forward_shadow_support import (
     dual_capsule_runtime,
@@ -28,6 +29,7 @@ from trading_agent.day_agent_version_models import (
     build_agent_version,
 )
 from trading_agent.day_agent_version_store import DayAgentVersionStore
+from trading_agent.day_forward_trial_identity import DayForwardTrialEventKind
 
 
 def test_real_forward_shadow_controller_runs_both_capsules_on_identical_snapshots(
@@ -231,6 +233,74 @@ def test_predeclared_observation_threshold_blocks_two_good_sessions(tmp_path: Pa
     assert recommendation.decision is AgentPromotionDecision.REJECT
     assert recommendation.reason_codes == ("minimum_observations_not_met",)
     assert store.reader().recommendations(challenger.version_id) == (recommendation,)
+
+
+def test_evaluation_request_rejects_caller_supplied_incident_claims(tmp_path: Path) -> None:
+    # Given: a valid evaluation request plus a caller-authored incident claim.
+    fixture = loop_evaluation(tmp_path)
+    sessions = tuple(
+        session_request(
+            fixture.controller.services,
+            policy.policy_id,
+            policy.payload.effective_session_date,
+        )
+        for policy in fixture.policies[:2]
+    )
+    payload = {
+        "champion": fixture.baseline,
+        "challenger": fixture.challenger,
+        "champion_capsule_id": fixture.champion_capsule.capsule_id,
+        "challenger_capsule_id": fixture.challenger_capsule.capsule_id,
+        "sessions": sessions,
+        "minimum_sessions": 2,
+        "evaluated_at": dt.datetime(2026, 8, 24, 20, 0, tzinfo=dt.UTC),
+        "data_incident_ids": ("caller-spoof",),
+    }
+
+    # When / Then: the public boundary refuses incident omission/spoofing fields entirely.
+    with pytest.raises(ValidationError):
+        _ = DayAgentChallengerEvaluationRequest.model_validate(payload)
+
+
+def test_controller_ledger_censor_rejects_promotion_without_caller_incidents(
+    tmp_path: Path,
+) -> None:
+    # Given: one future controller session with an authoritative completed-bar gap.
+    fixture = loop_evaluation(tmp_path)
+    sessions = tuple(
+        session_request(
+            fixture.controller.services,
+            policy.policy_id,
+            policy.payload.effective_session_date,
+        )
+        for policy in fixture.policies[1:]
+    )
+    sessions = (sessions[0].model_copy(update={"ticks": (sessions[0].ticks[0], sessions[0].ticks[-1])}), *sessions[1:])
+    request = DayAgentChallengerEvaluationRequest(
+        champion=fixture.baseline,
+        challenger=fixture.challenger,
+        champion_capsule_id=fixture.champion_capsule.capsule_id,
+        challenger_capsule_id=fixture.challenger_capsule.capsule_id,
+        sessions=sessions,
+        minimum_sessions=2,
+        evaluated_at=dt.datetime(2026, 8, 28, 20, 0, tzinfo=dt.UTC),
+    )
+
+    # When: the exact controller evaluates its own persisted session ledger.
+    recommendation = evaluate_day_agent_challenger(request, fixture.store, fixture.controller)
+
+    # Then: canonical censor event IDs durably reject promotion without caller annotations.
+    incident_ids = {
+        event.event_id
+        for state in fixture.controller.services.ledger.reader().day_forward_trials()
+        for event in state.events
+        if event.event_kind is DayForwardTrialEventKind.CENSORED
+    }
+    assert recommendation.decision is AgentPromotionDecision.REJECT
+    assert "safety_risk_or_data_incident" in recommendation.reason_codes
+    assert incident_ids
+    assert incident_ids <= set(recommendation.controller_evidence_ids)
+    assert fixture.store.reader().recommendations(fixture.challenger.version_id) == (recommendation,)
 
 
 class _DerivedController(UsForwardShadowControllerRunner):

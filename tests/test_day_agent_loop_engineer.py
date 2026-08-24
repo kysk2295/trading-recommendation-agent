@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +24,7 @@ from trading_agent.day_agent_challenger_publisher import (
 from trading_agent.day_agent_loop_engineer import DayAgentLoopServices, run_loop_engineer
 from trading_agent.day_agent_version_models import (
     AgentChangeKind,
+    AgentChangeProposal,
     AgentDeploymentState,
     AgentVersionPatch,
     DayAgentVersionStoreError,
@@ -58,6 +61,41 @@ def test_loop_engineer_turns_leader_error_into_shadow_challenger(tmp_path: Path)
     assert DayAgentVersionStore(fixture.store.path).reader().proposals(proposal.version_id) == (proposal,)
     views = DayAgentVersionStore(fixture.store.path).reader().versions()
     assert {view.deployment_state for view in views} == {"champion", "shadow"}
+
+
+def test_version_reader_preserves_legacy_proposals_without_report_identity(tmp_path: Path) -> None:
+    # Given: an append-only proposal row persisted before source_report_id existed.
+    fixture = loop_evaluation(tmp_path)
+    legacy_payload = fixture.proposal.model_dump(mode="json")
+    legacy_payload.pop("source_report_id")
+    legacy_payload["proposal_id"] = "f" * 64
+    with sqlite3.connect(fixture.store.path) as connection:
+        _ = connection.execute(
+            "INSERT INTO change_proposals VALUES (?,?,?)",
+            (legacy_payload["proposal_id"], fixture.proposal.version_id, json.dumps(legacy_payload)),
+        )
+
+    # When: the public reader queries immutable proposal history and report identity.
+    proposals = fixture.store.reader().proposals(fixture.proposal.version_id)
+    report_proposal = fixture.store.reader().proposal_for_report(fixture.proposal.source_report_id)
+
+    # Then: the legacy row remains readable but cannot impersonate report-bound lineage.
+    assert tuple(item.source_report_id for item in proposals) == (
+        fixture.proposal.source_report_id,
+        None,
+    )
+    assert report_proposal == fixture.proposal
+
+
+def test_new_change_proposal_requires_source_report_identity(tmp_path: Path) -> None:
+    # Given: the payload for a newly authored proposal without its source report identity.
+    fixture = loop_evaluation(tmp_path)
+    payload = fixture.proposal.model_dump(mode="python")
+    payload.pop("source_report_id")
+
+    # When / Then: the public proposal model refuses new unbound records.
+    with pytest.raises(ValidationError):
+        _ = AgentChangeProposal.model_validate(payload)
 
 
 def test_loop_engineer_rejects_diagnostics_without_refuted_stage(tmp_path: Path) -> None:

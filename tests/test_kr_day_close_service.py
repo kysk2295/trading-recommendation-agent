@@ -120,6 +120,26 @@ def test_configured_calendar_mismatch_blocks_before_summary_and_completion(tmp_p
     assert not fixture.config.completion_root.exists()
 
 
+def test_us_loop_bundle_blocks_before_challenger_summary_and_completion(tmp_path: Path) -> None:
+    # Given: a configured KR close whose loop authority contains a US template and AAPL replay source.
+    fixture = close_fixture(tmp_path, configured_loop=True, us_loop_inputs=True)
+
+    # When: the default close path validates market-bound loop authority.
+    result = run_kr_day_close_service(fixture.config, _runtime(fixture.post_close))
+
+    # Then: publication is blocked with no challenger, summary, or completion receipt.
+    versions = DayAgentVersionStore(fixture.config.state_root / "day-agent-versions.sqlite3")
+    assert (result.status, result.stage, result.complete, result.challenger_count) == (
+        "blocked",
+        "loop",
+        False,
+        0,
+    )
+    assert versions.reader().challengers() == ()
+    assert HermesDeliveryStore(fixture.config.hermes_delivery_database).events() == ()
+    assert not fixture.config.completion_root.exists()
+
+
 @pytest.mark.parametrize("crash_stage", ("report", "policy", "loop", "summary", "completion"))
 def test_partial_crash_recovers_without_duplicate_summary(
     crash_stage: str,

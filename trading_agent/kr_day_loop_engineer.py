@@ -25,10 +25,10 @@ from trading_agent.day_learning_report_models import (
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.generated_strategy_artifact import GeneratedStrategyArtifactStore
 from trading_agent.generated_strategy_runtime import require_generated_strategy_runtime
+from trading_agent.kr_day_loop_inputs import KrDayLoopInputBundle
 from trading_agent.kr_day_market_close_metrics import KrDayMarketCloseMetrics
 from trading_agent.private_immutable_file import read_private_text
 from trading_agent.research_identity_models import MarketId
-from trading_agent.us_day_agent_cli_bindings import LoopInputBundle
 from trading_agent.us_forward_shadow_artifacts import UsForwardShadowArtifactStore
 from trading_agent.us_forward_shadow_services import UsForwardShadowServices
 
@@ -87,13 +87,13 @@ def run_configured_kr_day_loop_engineer(
     if preliminary is not None:
         return preliminary
     try:
-        inputs = LoopInputBundle.model_validate_json(read_private_text(paths.loop_inputs))
+        inputs = KrDayLoopInputBundle.model_validate_json(read_private_text(paths.loop_inputs))
         first_session = inputs.future_sessions[0]
         if (
             first_session.session_date != checked_policy.payload.effective_session_date
             or first_session.calendar_snapshot_id != checked_policy.payload.calendar_snapshot_id
             or any(
-                not item.calendar_snapshot_id.startswith("calendar://official/XKRX/")
+                item.calendar_snapshot_id != checked_policy.payload.calendar_snapshot_id
                 for item in inputs.future_sessions
             )
         ):

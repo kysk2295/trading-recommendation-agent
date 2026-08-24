@@ -5,14 +5,18 @@ from contextlib import closing
 from pathlib import Path
 from typing import Literal, final
 
+from pydantic import ValidationError
+
 from trading_agent.dashboard_us_day_versions import DayAgentVersionView
 from trading_agent.day_agent_version_models import (
     AgentChangeProposal,
+    AgentChangeProposalRecord,
     AgentDeploymentState,
     AgentDeploymentTransition,
     AgentPromotionRecommendation,
     AgentVersion,
     DayAgentVersionStoreError,
+    LegacyAgentChangeProposalRecord,
 )
 from trading_agent.day_agent_version_store_support import require_persisted_version_store
 
@@ -61,20 +65,20 @@ class DayAgentVersionReader:
         )
         return tuple(AgentPromotionRecommendation.model_validate_json(row[0]) for row in rows)
 
-    def proposals(self, challenger_id: str) -> tuple[AgentChangeProposal, ...]:
+    def proposals(self, challenger_id: str) -> tuple[AgentChangeProposalRecord, ...]:
         rows = self._rows(
             "SELECT payload_json FROM change_proposals WHERE version_id=? ORDER BY rowid",
             (challenger_id,),
         )
-        return tuple(AgentChangeProposal.model_validate_json(row[0]) for row in rows)
+        return tuple(_proposal_record(row[0]) for row in rows)
 
     def proposal_for_report(self, report_id: str) -> AgentChangeProposal | None:
         rows = self._rows("SELECT payload_json FROM change_proposals ORDER BY rowid", ())
         matches = tuple(
             proposal
             for row in rows
-            for proposal in (AgentChangeProposal.model_validate_json(row[0]),)
-            if proposal.source_report_id == report_id
+            for proposal in (_current_proposal(row[0]),)
+            if proposal is not None and proposal.source_report_id == report_id
         )
         if len(matches) > 1:
             raise DayAgentVersionStoreError("source_report_proposal_duplicate")
@@ -110,6 +114,20 @@ class DayAgentVersionReader:
             raise
         except sqlite3.Error as error:
             raise DayAgentVersionStoreError("version_store_read_failed") from error
+
+
+def _proposal_record(payload: str) -> AgentChangeProposalRecord:
+    try:
+        return AgentChangeProposal.model_validate_json(payload)
+    except ValidationError:
+        return LegacyAgentChangeProposalRecord.model_validate_json(payload)
+
+
+def _current_proposal(payload: str) -> AgentChangeProposal | None:
+    try:
+        return AgentChangeProposal.model_validate_json(payload)
+    except ValidationError:
+        return None
 
 
 __all__ = ("DayAgentVersionReader",)

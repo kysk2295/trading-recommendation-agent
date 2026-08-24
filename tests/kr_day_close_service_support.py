@@ -10,7 +10,7 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path
 
-from tests.day_strategy_capsule_support import bar, builtin_request, proposal
+from tests.day_strategy_capsule_support import PUBLISHED_AT, bar, builtin_request, proposal
 from tests.kr_day_shadow_support import run_authorized_kr_shadow_tick
 from tests.strategy_research_contract_fixtures import hypothesis
 from tests.test_day_research_attempt_binding import _attempt, _binding, _family, _manifest, _version
@@ -36,8 +36,15 @@ from trading_agent.day_strategy_capsule import (
     publish_day_strategy_capsule,
 )
 from trading_agent.day_strategy_capsule_models import CapsuleArtifactKind, CapsuleAuthorityCeiling
-from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
+from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json, research_source_key
+from trading_agent.experiment_ledger_models import (
+    HypothesisRegistration,
+    ResearchHypothesisCard,
+    ResearchSource,
+    ResearchSourceKind,
+)
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
+from trading_agent.experiment_scope_models import ExperimentScope, ExperimentScopeKind
 from trading_agent.generated_strategy_artifact import GeneratedStrategyArtifactStore
 from trading_agent.generated_strategy_runtime import (
     GeneratedStrategyRuntimeIdentity,
@@ -51,8 +58,16 @@ from trading_agent.kr_day_capsule_models import KrDayCapsuleEvaluation, KrDayCap
 from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
 from trading_agent.kr_day_close_service_config import KrDayCloseServiceConfig
 from trading_agent.kr_day_decision_store import KrDayDecisionStore
+from trading_agent.kr_day_loop_inputs import (
+    KrDayLoopInputBundle,
+    build_kr_day_loop_research_binding,
+)
+from trading_agent.lane_contract_keys import experiment_scope_key
+from trading_agent.lane_identity_models import LaneId
+from trading_agent.models import BarInput
 from trading_agent.private_immutable_file import publish_private_immutable_text
 from trading_agent.research_identity_models import MarketId
+from trading_agent.researcher_agent import CandidateStrategyDraft, LlmCallReceipt, ProposedHypothesis
 from trading_agent.strategy_research_models import PreregistrationManifest
 from trading_agent.strategy_research_types import AttemptStatus
 from trading_agent.us_day_agent_cli_bindings import LoopInputBundle
@@ -79,6 +94,7 @@ def close_fixture(
     shadow_snapshot_id: str | None = None,
     configured_loop: bool = False,
     loop_calendar_snapshot_id: str | None = None,
+    us_loop_inputs: bool = False,
 ) -> CloseFixture:
     state = root / "state"
     state.mkdir(mode=0o700, parents=True)
@@ -110,6 +126,7 @@ def close_fixture(
             shadow_snapshot_id=shadow_snapshot_id,
             configured_loop=configured_loop,
             loop_calendar_snapshot_id=loop_calendar_snapshot_id,
+            us_loop_inputs=us_loop_inputs,
         )
     return CloseFixture(
         config=config,
@@ -158,12 +175,19 @@ def _seed_session(
     shadow_snapshot_id: str | None,
     configured_loop: bool,
     loop_calendar_snapshot_id: str | None,
+    us_loop_inputs: bool,
 ) -> None:
     ledger = ExperimentLedgerStore(config.experiment_ledger)
     family = _family()
     runtime = resolve_generated_strategy_runtime(Path(sys.executable))
     generated = GeneratedStrategyArtifactStore(config.state_root / "generated-strategies", runtime)
-    published = generated.publish(proposal(signal_source())) if configured_loop else None
+    loop_proposal = (
+        proposal(signal_source())
+        if us_loop_inputs
+        else kr_proposal(kr_signal_source())
+    )
+    loop_bars = (bar(),) if us_loop_inputs else (kr_bar(),)
+    published = generated.publish(loop_proposal) if configured_loop else None
     source_sha = "a" * 64 if published is None else published.artifact.payload.source_sha256
     base_version = _version(family, market_id=MarketId.KR_EQUITIES, code_sha256=source_sha)
     version_payload = base_version.model_dump(mode="python") | {
@@ -173,7 +197,15 @@ def _seed_session(
     version = base_version.model_validate(
         version_payload | {"hypothesis_version_id": base_version.canonical_id_for(version_payload)}
     )
-    registered = hypothesis().model_copy(update={"code_sha256": source_sha})
+    registered_fixture = hypothesis()
+    registered = registered_fixture.model_copy(
+        update={
+            "hypothesis_id": (
+                "KR-DAY-005930-PARENT-001" if configured_loop else registered_fixture.hypothesis_id
+            ),
+            "code_sha256": source_sha,
+        }
+    )
     manifest = PreregistrationManifest.from_hypothesis(registered, preregistered_at=registered.created_at)
     attempt = _attempt(0, AttemptStatus.SUCCEEDED).model_copy(
         update={
@@ -214,7 +246,7 @@ def _seed_session(
             generated_verification=GeneratedCapsuleVerification(
                 generated,
                 GeneratedStrategySandbox(runtime, config.state_root / "parent-preflight", limits.to_generated_limits()),
-                (bar(),),
+                loop_bars,
             ),
         )
     capsule, _ = publish_day_strategy_capsule(ledger, request)
@@ -222,8 +254,10 @@ def _seed_session(
         _seed_loop_authority(
             config,
             capsule.capsule_id,
-            snapshot_id if loop_calendar_snapshot_id is None else loop_calendar_snapshot_id,
+            snapshot_id,
             runtime,
+            foreign_future_snapshot_id=loop_calendar_snapshot_id,
+            us_loop_inputs=us_loop_inputs,
         )
     eligible = dt.datetime(2026, 8, 24, 10, 1, tzinfo=KST).astimezone(dt.UTC)
     trial_payload = {
@@ -283,6 +317,9 @@ def _seed_loop_authority(
     capsule_id: str,
     snapshot_id: str,
     runtime: GeneratedStrategyRuntimeIdentity,
+    *,
+    foreign_future_snapshot_id: str | None,
+    us_loop_inputs: bool,
 ) -> None:
     champion = build_agent_version(
         model_role_bindings=(AgentModelRoleBinding(role="reasoning", model_id="reasoner-v1"),),
@@ -299,23 +336,38 @@ def _seed_loop_authority(
     )
     with DayAgentVersionStore(config.state_root / "day-agent-versions.sqlite3").writer() as writer:
         assert writer.register_initial_champion(champion)
-    calendar = f"calendar://official/XKRX/{snapshot_id}"
     future = tuple(
         DayAgentFutureShadowSession(
             session_date=session_date,
-            calendar_snapshot_id=calendar,
+            calendar_snapshot_id=(
+                f"calendar://official/XKRX/{foreign_future_snapshot_id}"
+                if index == 1 and foreign_future_snapshot_id is not None
+                else f"calendar://official/XKRX/{snapshot_id}"
+            ),
             effective_at=dt.datetime.combine(session_date, dt.time(0), tzinfo=dt.UTC),
         )
-        for session_date in (dt.date(2026, 8, 26), dt.date(2026, 8, 27))
+        for index, session_date in enumerate((dt.date(2026, 8, 26), dt.date(2026, 8, 27)))
     )
-    assert publish_private_immutable_text(
-        config.state_root / "kr-day-loop-inputs.json",
-        LoopInputBundle(
+    if us_loop_inputs:
+        inputs = LoopInputBundle(
             runtime=runtime,
             proposal_template=proposal(signal_source()),
             replay_bars=(bar(),),
             future_sessions=future,
-        ).model_dump_json(),
+        )
+    else:
+        template = kr_proposal(kr_signal_source())
+        replay_bars = (kr_bar(),)
+        inputs = KrDayLoopInputBundle(
+            binding=build_kr_day_loop_research_binding(template, replay_bars, "005930"),
+            runtime=runtime,
+            proposal_template=template,
+            replay_bars=replay_bars,
+            future_sessions=future,
+        )
+    assert publish_private_immutable_text(
+        config.state_root / "kr-day-loop-inputs.json",
+        inputs.model_dump_json(),
     )
     assert publish_private_immutable_text(
         config.state_root / "kr-day-loop-patch.json",
@@ -331,6 +383,84 @@ def _seed_loop_authority(
 
 def _authorized_evaluation(capsule_id: str, hypothesis_id: str, snapshot_id: str) -> KrDayCapsuleEvaluation:
     return _bind_evaluation(_entry_evaluation(), capsule_id, hypothesis_id, snapshot_id)
+
+
+def kr_proposal(source: str) -> ProposedHypothesis:
+    registered_at = PUBLISHED_AT - dt.timedelta(days=1)
+    research_source = ResearchSource(
+        source_id="kr-krx-005930-market-data",
+        source_kind=ResearchSourceKind.OFFICIAL_MARKET_RULE,
+        title="KRX 005930 completed-bar market data contract",
+        source_url="https://data.krx.co.kr/contents/MDC/MAIN/main/index.cmd",
+        published_on=dt.date(2026, 8, 1),
+        claim="KRX identifies 005930 as a Korean listed-equity instrument for bounded research.",
+        limitations="The official instrument source does not establish profitability.",
+        retrieved_at=registered_at,
+        ledger_recorded_at=registered_at,
+    )
+    scope = ExperimentScope(
+        scope_kind=ExperimentScopeKind.SINGLE_LANE,
+        hypothesis_id="KR-DAY-005930-LOOP-001",
+        primary_lane=LaneId.INTRADAY_MOMENTUM,
+        lanes=(LaneId.INTRADAY_MOMENTUM,),
+        registered_at=registered_at,
+    )
+    registration = HypothesisRegistration(
+        hypothesis_id=scope.hypothesis_id,
+        experiment_scope=scope,
+        experiment_scope_key=experiment_scope_key(scope),
+        primary_lane=scope.primary_lane,
+        hypothesis="KR equity 005930 may exhibit bounded completed-bar continuation after host validation.",
+        falsification_rule="Reject when exact KR replay and future shadow evidence fail registered thresholds.",
+        source_registered_at=registered_at,
+        ledger_recorded_at=registered_at,
+    )
+    card = ResearchHypothesisCard(
+        hypothesis=registration,
+        research_source_keys=(str(research_source_key(research_source)),),
+        economic_mechanism="KRX order-flow persistence is tested only as a research hypothesis.",
+        counterfactual_baseline="Matched 005930 completed bars without the registered continuation setup.",
+    )
+    return ProposedHypothesis(
+        card=card,
+        cited_sources=(research_source,),
+        llm_receipt=LlmCallReceipt(
+            model_id="fixture-kr-researcher-v1",
+            prompt_sha256="c" * 64,
+            response_sha256="d" * 64,
+            seed=11,
+            temperature=0.0,
+            called_at=registered_at,
+        ),
+        strategy_draft=CandidateStrategyDraft(source, ()),
+    )
+
+
+def kr_signal_source() -> str:
+    return (
+        "def create_strategy(context):\n"
+        "    class Strategy:\n"
+        "        def observe(self, bar, candidate):\n"
+        "            if bar['symbol'] != '005930':\n"
+        "                return None\n"
+        "            return None\n"
+        "    return Strategy()\n"
+    )
+
+
+def kr_bar() -> BarInput:
+    return BarInput(
+        "005930",
+        PUBLISHED_AT - dt.timedelta(minutes=5),
+        70_000.0,
+        70_500.0,
+        69_500.0,
+        70_100.0,
+        1_000_000,
+        69_800.0,
+        15_000_000,
+        8.0,
+    )
 
 
 def _bind_evaluation(

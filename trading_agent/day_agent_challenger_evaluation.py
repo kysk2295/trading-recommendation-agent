@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from trading_agent.day_agent_evaluation_metrics import AgentScoreComparison
 from trading_agent.day_agent_forward_shadow_controller import (
@@ -10,6 +10,7 @@ from trading_agent.day_agent_forward_shadow_controller import (
     DayForwardShadowSessionRequest,
     DayForwardShadowTickRequest,
     UsForwardShadowControllerRunner,
+    controller_incidents,
 )
 from trading_agent.day_agent_shadow_scoring import aggregate_capsule_metrics
 from trading_agent.day_agent_version_models import (
@@ -33,20 +34,6 @@ class DayAgentChallengerEvaluationRequest(BaseModel):
     sessions: tuple[DayForwardShadowSessionRequest, ...] = Field(min_length=2, max_length=20)
     minimum_sessions: int = Field(ge=2, le=20)
     evaluated_at: AwareDatetime
-    safety_incident_ids: tuple[str, ...] = ()
-    risk_incident_ids: tuple[str, ...] = ()
-    data_incident_ids: tuple[str, ...] = ()
-
-    @model_validator(mode="after")
-    def validate_incidents(self) -> DayAgentChallengerEvaluationRequest:
-        incidents = (
-            self.safety_incident_ids,
-            self.risk_incident_ids,
-            self.data_incident_ids,
-        )
-        if any(items != tuple(sorted(set(items))) for items in incidents):
-            raise DayAgentVersionStoreError("future_shadow_incidents_invalid")
-        return self
 
 
 def evaluate_day_agent_challenger(
@@ -69,7 +56,7 @@ def evaluate_day_agent_challenger(
     ):
         raise DayAgentVersionStoreError("future_shadow_version_invalid")
     evidence = tuple(controller.run_session(item, capsule_ids) for item in checked.sessions)
-    _validate_controller_evidence(checked, evidence, capsule_ids)
+    _validate_controller_evidence(checked, evidence, capsule_ids, controller)
     comparison = AgentScoreComparison(
         champion=aggregate_capsule_metrics(evidence, checked.sessions, capsule_ids[0]),
         challenger=aggregate_capsule_metrics(evidence, checked.sessions, capsule_ids[1]),
@@ -95,9 +82,7 @@ def evaluate_day_agent_challenger(
                 *(item.artifact_id for session in evidence for item in session.signals),
                 *(item.outcome_id for session in evidence for item in session.outcomes),
                 *(bar_id for session in evidence for bar_id in session.completed_bar_ids),
-                *checked.safety_incident_ids,
-                *checked.risk_incident_ids,
-                *checked.data_incident_ids,
+                *(event_id for session in evidence for item in session.incidents for event_id in item.event_ids),
             }
         )
     )
@@ -164,7 +149,7 @@ def _promotion_gate_reasons(
         > min(binding.multiple_testing_budget, hypothesis.max_attempts)
     ):
         reasons.append("multiple_testing_budget_invalid")
-    if request.safety_incident_ids or request.risk_incident_ids or request.data_incident_ids:
+    if any(session.incidents for session in evidence):
         reasons.append("safety_risk_or_data_incident")
     return tuple(sorted(reasons))
 
@@ -173,6 +158,7 @@ def _validate_controller_evidence(
     request: DayAgentChallengerEvaluationRequest,
     evidence: tuple[DayForwardShadowSessionEvidence, ...],
     capsule_ids: tuple[str, str],
+    controller: UsForwardShadowControllerRunner,
 ) -> None:
     session_dates = tuple(item.session_date for item in evidence)
     if (
@@ -199,6 +185,7 @@ def _validate_controller_evidence(
             or result.session_date != source.ticks[0].tick.session_date
             or result.completed_bar_ids != expected_ids
             or len(result.tick_results) != len(source.ticks)
+            or result.incidents != controller_incidents(result.tick_results)
             or not set(capsule_ids) <= observed_capsules
             or not artifact_trials <= result_trials
             or result_outcomes != stored_outcomes
@@ -215,6 +202,18 @@ def _validate_controller_evidence(
             )
         ):
             raise DayAgentVersionStoreError("future_shadow_controller_evidence_invalid")
+    persisted_events = {
+        event.event_id: (state.trial.trial_id, event.reason_codes)
+        for state in controller.services.ledger.reader().day_forward_trials()
+        for event in state.events
+    }
+    if any(
+        persisted_events.get(event_id) != (incident.trial_id, incident.reason_codes)
+        for session in evidence
+        for incident in session.incidents
+        for event_id in incident.event_ids
+    ):
+        raise DayAgentVersionStoreError("future_shadow_incident_unresolved")
 
 
 def _promotion_decision(margin: float) -> tuple[AgentPromotionDecision, tuple[str, ...]]:

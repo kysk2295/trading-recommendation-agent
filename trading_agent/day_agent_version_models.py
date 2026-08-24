@@ -156,9 +156,8 @@ class AgentVersion(DayAgentVersionModel):
         return self
 
 
-class AgentChangeProposal(DayAgentVersionModel):
+class _AgentChangeProposalRecord(DayAgentVersionModel):
     proposal_id: str = Field(pattern=_SHA256)
-    source_report_id: str = Field(pattern=_SHA256)
     version_id: str = Field(pattern=_SHA256)
     parent_version_id: str = Field(pattern=_SHA256)
     problem_stage: DayDecisionStage
@@ -176,6 +175,17 @@ class AgentChangeProposal(DayAgentVersionModel):
         ).hexdigest() != self.patch_sha256 or self.evidence_ids != tuple(sorted(set(self.evidence_ids))):
             raise DayAgentVersionStoreError("agent_change_proposal_invalid")
         return self
+
+
+class AgentChangeProposal(_AgentChangeProposalRecord):
+    source_report_id: str = Field(pattern=_SHA256)
+
+
+class LegacyAgentChangeProposalRecord(_AgentChangeProposalRecord):
+    source_report_id: None = None
+
+
+type AgentChangeProposalRecord = AgentChangeProposal | LegacyAgentChangeProposalRecord
 
 
 class AgentPromotionRecommendation(DayAgentVersionModel):
@@ -260,6 +270,7 @@ __all__ = (
     "AgentAuthorityBoundary",
     "AgentChangeKind",
     "AgentChangeProposal",
+    "AgentChangeProposalRecord",
     "AgentDeploymentState",
     "AgentDeploymentTransition",
     "AgentEvaluationMetrics",
@@ -273,5 +284,6 @@ __all__ = (
     "DayAgentVersionStoreError",
     "LeaderRankingFeature",
     "LeaderRankingPatch",
+    "LegacyAgentChangeProposalRecord",
     "build_agent_version",
 )
