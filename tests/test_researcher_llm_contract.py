@@ -148,3 +148,40 @@ def test_day_llm_plan_invokes_raw_completion_before_parse(tmp_path) -> None:
     assert completion.response_sha256 == "0c21a879c732a67910d80988df4919d794f6a070aab610ef865032a28046b021"
     with pytest.raises(researcher_llm.ResearcherLlmError):
         generator.parse_raw(plan, completion, context)
+
+
+def test_claude_schema_flattens_top_level_discriminated_unions() -> None:
+    # Given: Pydantic's top-level discriminated-union schema used by the Day reasoner.
+    prompt = json.dumps(
+        {
+            "response_schema": {
+                "$defs": {
+                    "Defer": {
+                        "type": "object",
+                        "properties": {"kind": {"const": "defer"}},
+                    },
+                    "Submit": {
+                        "type": "object",
+                        "properties": {"kind": {"const": "submit"}},
+                    },
+                },
+                "discriminator": {"propertyName": "kind"},
+                "oneOf": [
+                    {"$ref": "#/$defs/Defer"},
+                    {"$ref": "#/$defs/Submit"},
+                ]
+            }
+        }
+    )
+
+    # When: the schema is adapted to Claude's structured-output tool contract.
+    schema = researcher_llm._claude_response_schema(prompt)
+
+    # Then: the forbidden top-level union is flattened while discriminator choices stay explicit.
+    assert schema["type"] == "object"
+    assert "oneOf" not in schema
+    properties = schema["properties"]
+    assert isinstance(properties, dict)
+    kind = properties["kind"]
+    assert isinstance(kind, dict)
+    assert kind["enum"] == ["defer", "submit"]

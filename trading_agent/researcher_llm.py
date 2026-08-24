@@ -202,7 +202,7 @@ def _complete_with_claude(
     timeout_seconds: float,
 ) -> bytes:
     schema = json.dumps(
-        LlmHypothesisDraft.model_json_schema(),
+        _claude_response_schema(prompt),
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,
@@ -249,6 +249,72 @@ def _complete_with_claude(
         ).encode()
     except (KeyError, TypeError, ValueError) as error:
         raise ResearcherLlmError from error
+
+
+def _claude_response_schema(prompt: str) -> dict[str, object]:
+    try:
+        payload = json.loads(prompt)
+    except (TypeError, ValueError):
+        return LlmHypothesisDraft.model_json_schema()
+    if isinstance(payload, dict) and isinstance(payload.get("response_schema"), dict):
+        raw_schema = payload["response_schema"]
+        discriminator = raw_schema.get("discriminator")
+        discriminator_property = (
+            discriminator.get("propertyName") if isinstance(discriminator, dict) else None
+        )
+        schema = {str(key): value for key, value in raw_schema.items() if key != "discriminator"}
+        if isinstance(discriminator_property, str):
+            return _claude_discriminated_object_schema(schema, discriminator_property)
+        return schema
+    return LlmHypothesisDraft.model_json_schema()
+
+
+def _claude_discriminated_object_schema(
+    schema: dict[str, object],
+    discriminator_property: str,
+) -> dict[str, object]:
+    variants = schema.get("oneOf")
+    definitions = schema.get("$defs")
+    if not isinstance(variants, list) or not isinstance(definitions, dict):
+        return schema
+    properties: dict[str, object] = {}
+    discriminator_values: set[str] = set()
+    required_sets: list[set[str]] = []
+    for item in variants:
+        if not isinstance(item, dict):
+            continue
+        reference = item.get("$ref")
+        if not isinstance(reference, str) or not reference.startswith("#/$defs/"):
+            continue
+        variant = definitions.get(reference.removeprefix("#/$defs/"))
+        if not isinstance(variant, dict) or not isinstance(variant.get("properties"), dict):
+            continue
+        for name, value in variant["properties"].items():
+            if not isinstance(name, str) or not isinstance(value, dict):
+                continue
+            properties.setdefault(name, value)
+            if name == discriminator_property and isinstance(value.get("const"), str):
+                discriminator_values.add(value["const"])
+        required = variant.get("required")
+        required_sets.append(
+            {value for value in required if isinstance(value, str)}
+            if isinstance(required, list)
+            else set()
+        )
+    if discriminator_values:
+        properties[discriminator_property] = {
+            "enum": sorted(discriminator_values),
+            "type": "string",
+        }
+    required = set.intersection(*required_sets) if required_sets else set()
+    required.add(discriminator_property)
+    return {
+        "$defs": definitions,
+        "additionalProperties": False,
+        "properties": properties,
+        "required": sorted(required),
+        "type": "object",
+    }
 
 
 def _claude_environment(executable: Path) -> dict[str, str]:

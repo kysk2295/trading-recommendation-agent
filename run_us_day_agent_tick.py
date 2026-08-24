@@ -8,7 +8,7 @@ import stat
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Annotated, Literal, override
+from typing import Annotated, Final, Literal, override
 
 import typer
 from pydantic import AwareDatetime, BaseModel, ConfigDict, TypeAdapter, ValidationError
@@ -60,6 +60,7 @@ from trading_agent.us_equity_calendar import NEW_YORK
 
 _APP = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
 _DAY_RESPONSES = TypeAdapter(tuple[DayAgentReasoningResponse, ...])
+_CLAUDE_EXECUTABLE: Final = Path.home() / ".local" / "lib" / "trading-agent" / "claude-code-2.1.222"
 
 
 class _SourceHeader(BaseModel):
@@ -164,7 +165,7 @@ def _model_bindings(
             raise _CliError("champion_reasoning_model_binding_invalid")
         try:
             client = HermesCliProposalClient(
-                Path.home() / ".local" / "bin" / "hermes",
+                _CLAUDE_EXECUTABLE,
                 reasoning[0].model_id,
                 live_model_provider,
             )

@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import run_us_day_agent_tick
 from tests.test_day_agent_runtime import _thesis_call
 from tests.test_us_day_situation_projection import EVALUATED_AT, _inputs, _project
 from tests.test_us_day_thesis_runtime import _markets
@@ -18,8 +19,10 @@ from trading_agent.day_agent_version_models import (
 from trading_agent.day_agent_version_store import DayAgentVersionStore
 from trading_agent.private_immutable_file import publish_private_immutable_text
 from trading_agent.research_identity_models import AgentFamily, MarketId, StrategyLaneRef
+from trading_agent.researcher_llm import HermesCliProposalClient
 from trading_agent.us_day_agent_cli_bindings import ReviewedUsDayStrategyManifest
 from trading_agent.us_day_agent_service import CanonicalUsDaySource
+from trading_agent.us_day_live_models import UsDayStructuredReasoner
 from trading_agent.us_day_thesis_models import UsDayPlaybook, situation_id_for
 
 ROOT = Path(__file__).parents[1]
@@ -80,6 +83,25 @@ def test_help_has_no_broker_endpoint_option() -> None:
     assert "--day-model-responses" in completed.stdout
     assert "--thesis-model-respo" in completed.stdout
     assert "--live-model-provider" in completed.stdout
+
+
+def test_live_claude_binding_uses_pinned_claude_executable_not_hermes_launcher(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    # Given: the US Day Champion selects the Claude Code provider.
+    version, _, _, _ = _strategy_runtime(tmp_path)
+    expected = tmp_path / "claude-code-pinned"
+    monkeypatch.setattr(run_us_day_agent_tick, "_CLAUDE_EXECUTABLE", expected, raising=False)
+
+    # When: the production live-model binding is assembled.
+    bindings = run_us_day_agent_tick._model_bindings(None, None, "claude-code", version, EVALUATED_AT)
+
+    # Then: Claude is invoked directly instead of receiving Claude flags through Hermes.
+    reasoner = bindings.day_reasoner
+    assert isinstance(reasoner, UsDayStructuredReasoner)
+    assert isinstance(reasoner.client, HermesCliProposalClient)
+    assert reasoner.client.executable == expected
 
 
 def test_stale_situation_blocks_with_compact_json_before_runtime(tmp_path: Path) -> None:

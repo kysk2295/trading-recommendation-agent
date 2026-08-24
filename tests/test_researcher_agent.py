@@ -196,6 +196,46 @@ def test_hermes_client_uses_claude_cli_without_provider_fallback_when_provider_i
     assert response == b'{"schema_version":1}'
 
 
+def test_claude_client_uses_the_callers_embedded_response_schema(tmp_path: Path) -> None:
+    # Given: a Day-agent prompt carrying a response schema distinct from the research hypothesis schema.
+    executable = tmp_path / "claude-schema-fixture"
+    executable.write_text(
+        "#!/bin/sh\n"
+        "previous=''\n"
+        "schema_match=0\n"
+        "for argument in \"$@\"; do\n"
+        "  if [ \"$previous\" = \"--json-schema\" ]; then\n"
+        "    case \"$argument\" in *discriminator*) exit 45 ;; esac\n"
+        "    case \"$argument\" in *day_decision*) schema_match=1 ;; esac\n"
+        "  fi\n"
+        "  previous=\"$argument\"\n"
+        "done\n"
+        "[ \"$schema_match\" = 1 ] || exit 44\n"
+        "printf '{\"is_error\":false,\"structured_output\":{\"day_decision\":\"defer\"}}'\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o700)
+    client = HermesCliProposalClient(executable, "haiku", "claude-code")
+    prompt = json.dumps(
+        {
+            "instruction": "Return one object.",
+            "request": {},
+            "response_schema": {
+                "type": "object",
+                "discriminator": {"propertyName": "kind"},
+                "properties": {"day_decision": {"type": "string"}},
+                "required": ["day_decision"],
+            },
+        }
+    )
+
+    # When: the caller-specific structured completion is requested.
+    response = client.complete(prompt)
+
+    # Then: Claude receives and satisfies the Day schema instead of the research-only default.
+    assert response == b'{"day_decision":"defer"}'
+
+
 def test_researcher_prompt_carries_the_machine_output_schema() -> None:
     # Given: the typed response boundary used to parse a model completion.
     expected_schema = LlmHypothesisDraft.model_json_schema()
