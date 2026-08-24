@@ -65,6 +65,51 @@ def run_kr_day_decision_tick(
     return tuple(results)
 
 
+def expire_due_kr_day_decisions(
+    store: KrDayDecisionStore,
+    observed_at: dt.datetime,
+    settled_decision_ids: frozenset[str] = frozenset(),
+) -> tuple[KrDayDecisionEvent, ...]:
+    if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+        raise InvalidKrDayDecisionServiceError
+    latest: dict[tuple[str, str, dt.date], KrDayDecisionEvent] = {}
+    for event in store.events():
+        latest[(event.capsule_id, event.opportunity_id, event.session_date)] = event
+    session_date = observed_at.astimezone(_SEOUL).date()
+    expired: list[KrDayDecisionEvent] = []
+    for previous in sorted(latest.values(), key=lambda item: (item.capsule_id, item.opportunity_id)):
+        if (
+            previous.session_date != session_date
+            or previous.status is not KrDayDecisionStatus.ARMED
+            or previous.event_id in settled_decision_ids
+            or observed_at < previous.valid_until
+        ):
+            continue
+        payload = KrDayDecisionEventPayload(
+            capsule_id=previous.capsule_id,
+            hypothesis_version_id=previous.hypothesis_version_id,
+            opportunity_id=previous.opportunity_id,
+            session_date=previous.session_date,
+            symbol=previous.symbol,
+            completed_bar_at=previous.completed_bar_at,
+            observed_at=observed_at,
+            valid_until=previous.valid_until,
+            status=KrDayDecisionStatus.EXPIRED,
+            reason_codes=(KrDayDecisionReasonCode.PRICE_SETUP_EXPIRED,),
+            conditional_plan=None,
+            evidence_refs=previous.evidence_refs,
+            observed_evidence=previous.observed_evidence,
+            previous_event_id=previous.event_id,
+        )
+        event = KrDayDecisionEvent.model_validate(
+            payload.model_dump(mode="python")
+            | {"event_id": KrDayDecisionEvent.canonical_id_for(payload)}
+        )
+        _ = store.append(event)
+        expired.append(event)
+    return tuple(expired)
+
+
 def _batch_item(raw: KrDayCapsuleEvaluationRequest) -> _BatchItem:
     try:
         capsule_id = raw.capsule.capsule_id
@@ -225,4 +270,8 @@ def _evidence_value(event: KrDayDecisionEvent, name: str) -> str | None:
     return next((item.value for item in event.observed_evidence if item.name == name), None)
 
 
-__all__ = ("InvalidKrDayDecisionServiceError", "run_kr_day_decision_tick")
+__all__ = (
+    "InvalidKrDayDecisionServiceError",
+    "expire_due_kr_day_decisions",
+    "run_kr_day_decision_tick",
+)

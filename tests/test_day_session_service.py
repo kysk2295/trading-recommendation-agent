@@ -31,6 +31,7 @@ from tests.test_kis_kr_session_calendar import _payload as calendar_payload
 from tests.test_kis_kr_session_calendar import _row as calendar_row
 from tests.test_kr_day_capsule_adapter import EVALUATED as KR_EVALUATED
 from tests.test_kr_day_capsule_adapter import _request as kr_request
+from tests.test_kr_day_decision_store import _event as kr_decision_event
 from tests.test_us_day_situation_projection import EVALUATED_AT as US_EVALUATED
 from tests.test_us_day_situation_projection import _inputs as us_inputs
 from trading_agent.alpaca_models import AlpacaBar
@@ -55,6 +56,8 @@ from trading_agent.day_session_service_config import (
 from trading_agent.day_strategy_capsule import build_strategy_capsule, publish_day_strategy_capsule
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
+from trading_agent.hermes_delivery_models import HermesDeliveryKind
+from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.kis_kr_market_models import KisKrMarketReceiptKind
 from trading_agent.kis_kr_market_receipt_store import KisKrMarketReceiptStore
 from trading_agent.kis_kr_session_calendar import project_kis_kr_session_calendar
@@ -68,6 +71,7 @@ from trading_agent.kr_day_capsule_shadow_models import (
     KrDayCapsuleShadowStatus,
 )
 from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
+from trading_agent.kr_day_decision_models import KrDayDecisionReasonCode, KrDayDecisionStatus
 from trading_agent.kr_day_decision_store import KrDayDecisionStore
 from trading_agent.private_immutable_file import publish_private_immutable_text
 from trading_agent.research_identity_models import MarketId
@@ -496,6 +500,45 @@ def test_public_kr_tick_audits_distinct_opportunities_for_active_and_current_sib
     assert child_commands[0][decision_option + 1] == str(
         config.state_root / "kr-day-decisions.sqlite3"
     )
+
+
+def test_public_kr_tick_expires_visible_plan_without_new_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: one user-visible ARMED plan whose deadline has elapsed without a new source cycle.
+    config = _config("kr", tmp_path)
+    assert isinstance(config, KrDaySessionServiceConfig)
+    config.state_root.mkdir(mode=0o700)
+    armed = kr_decision_event(
+        status=KrDayDecisionStatus.ARMED,
+        reason_codes=(KrDayDecisionReasonCode.CONDITIONAL_TRIGGER_PENDING,),
+    )
+    decisions = KrDayDecisionStore(config.state_root / "kr-day-decisions.sqlite3")
+    assert decisions.append(armed)
+    monkeypatch.setattr("trading_agent.day_session_service._authority_reason", lambda _: None)
+    monkeypatch.setattr("trading_agent.day_session_service._kr_active_capsule_ids", lambda *_: ())
+    observed_at = dt.datetime(2026, 8, 24, 15, 30, 30, tzinfo=dt.timezone(dt.timedelta(hours=9)))
+
+    # When: the public 120-second service path runs and then replays after the deadline.
+    first = run_day_session_service_tick(config, clock=lambda: observed_at)
+    replay = run_day_session_service_tick(config, clock=lambda: observed_at + dt.timedelta(seconds=1))
+
+    # Then: EXPIRED closes the decision and Hermes thread exactly once without source materialization.
+    history = decisions.events()
+    deliveries = HermesDeliveryStore(config.hermes_delivery_database).events()
+    assert tuple(event.status for event in history) == (
+        KrDayDecisionStatus.ARMED,
+        KrDayDecisionStatus.EXPIRED,
+    )
+    assert first.decisions == (history[-1],)
+    assert replay.decisions == ()
+    assert tuple(event.kind for event in deliveries) == (
+        HermesDeliveryKind.ACTIONABLE,
+        HermesDeliveryKind.INVALIDATION,
+    )
+    assert deliveries[1].root_delivery_id == deliveries[0].delivery_id
+    assert "PRICE_SETUP_EXPIRED" in deliveries[1].rendered_text
 
 
 def _append_active_shadow(

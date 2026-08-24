@@ -25,8 +25,11 @@ from trading_agent.day_session_service_config import (
 )
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.kr_day_capsule_models import KrDayCapsuleEvaluationRequest
+from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowStatus
+from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
+from trading_agent.kr_day_decision_delivery_record_builders import bound_kr_day_decision_id
 from trading_agent.kr_day_decision_models import KrDayDecisionEvent
-from trading_agent.kr_day_decision_service import run_kr_day_decision_tick
+from trading_agent.kr_day_decision_service import expire_due_kr_day_decisions, run_kr_day_decision_tick
 from trading_agent.kr_day_decision_store import KrDayDecisionStore
 from trading_agent.kr_day_session_delivery import project_kr_day_session_delivery
 from trading_agent.kr_day_session_materializer import (
@@ -84,7 +87,7 @@ def _session_is_closed(config: DaySessionServiceConfig, now: dt.datetime) -> boo
             return bounds is None or not bounds[0] <= now < bounds[1]
         case KrDaySessionServiceConfig():
             local = now.astimezone(_KST)
-            return local.weekday() >= 5 or not dt.time(9) <= local.time() < dt.time(15, 30)
+            return local.weekday() >= 5 or not dt.time(9) <= local.time() < dt.time(15, 32)
 
 
 def _authority_reason(config: DaySessionServiceConfig) -> str | None:
@@ -135,13 +138,37 @@ def _run_kr(
     config: KrDaySessionServiceConfig,
     now: dt.datetime,
 ) -> tuple[int, str, tuple[KrDayDecisionEvent, ...]]:
+    decision_store = KrDayDecisionStore(config.state_root / "kr-day-decisions.sqlite3")
+    try:
+        expired = expire_due_kr_day_decisions(
+            decision_store,
+            now,
+            _settled_kr_decision_ids(config.state_root, now),
+        )
+    except ValueError:
+        return 2, "decision_store_invalid", ()
+    if now.astimezone(_KST).time() >= dt.time(15, 30):
+        try:
+            _ = project_kr_day_session_delivery(config.state_root, config.hermes_delivery_database)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return 2, "decision_delivery_failed", expired
+        reason = "decision_expired" if expired else "session_close_no_action"
+        return 0, reason, expired
     try:
         capsule_ids = _kr_active_capsule_ids(config.experiment_ledger, now)
         if not capsule_ids:
+            if expired:
+                _ = project_kr_day_session_delivery(config.state_root, config.hermes_delivery_database)
+                return 0, "decision_expired", expired
             return 2, "capsule_authority_missing", ()
         paths = _materialize_kr_requests(config, now, capsule_ids)
-    except (OSError, TypeError, ValidationError, ValueError):
-        return 2, "source_invalid", ()
+    except (OSError, RuntimeError, TypeError, ValidationError, ValueError):
+        if expired:
+            try:
+                _ = project_kr_day_session_delivery(config.state_root, config.hermes_delivery_database)
+            except (OSError, RuntimeError, TypeError, ValueError):
+                return 2, "decision_delivery_failed", expired
+        return 2, "source_invalid", expired
     requests: list[KrDayCapsuleEvaluationRequest] = []
     decision_blocked = False
     for path in paths:
@@ -149,14 +176,10 @@ def _run_kr(
             requests.append(KrDayCapsuleEvaluationRequest.model_validate_json(read_private_text(path)))
         except (OSError, TypeError, ValidationError, ValueError):
             decision_blocked = True
-    decision_requests = tuple(request for request in requests if request.evaluated_at < request.opportunity.valid_until)
     try:
-        decisions = run_kr_day_decision_tick(
-            decision_requests,
-            KrDayDecisionStore(config.state_root / "kr-day-decisions.sqlite3"),
-        )
+        decisions = (*expired, *run_kr_day_decision_tick(tuple(requests), decision_store))
     except ValueError:
-        decisions = ()
+        decisions = expired
         decision_blocked = True
     command = (
         sys.executable,
@@ -182,6 +205,24 @@ def _run_kr(
     if completed.returncode == 0 and decision_blocked:
         reason = "shadow_managed_decision_blocked"
     return completed.returncode, reason, decisions
+
+
+def _settled_kr_decision_ids(state_root: Path, now: dt.datetime) -> frozenset[str]:
+    session_date = now.astimezone(_KST).date().isoformat()
+    events = KrDayCapsuleShadowStore(state_root / "kr-day-capsule-shadow.sqlite3").events()
+    settled = {
+        KrDayCapsuleShadowStatus.ACTIVE,
+        KrDayCapsuleShadowStatus.STOPPED,
+        KrDayCapsuleShadowStatus.TARGETED,
+        KrDayCapsuleShadowStatus.CENSORED,
+        KrDayCapsuleShadowStatus.BLOCKED,
+    }
+    return frozenset(
+        decision_id
+        for event in events
+        if event.session_date.isoformat() == session_date and event.status in settled
+        if (decision_id := bound_kr_day_decision_id(event)) is not None
+    )
 
 
 def _kr_active_capsule_ids(ledger_path: Path, now: dt.datetime) -> tuple[str, ...]:
