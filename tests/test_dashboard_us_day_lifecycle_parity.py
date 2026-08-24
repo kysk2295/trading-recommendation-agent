@@ -111,8 +111,12 @@ def test_dashboards_isolate_parseable_first_active_history_per_us_thesis(tmp_pat
     assert corrupt and all("ACTIVE" not in item.label for item in corrupt)
     assert unaffected_items and all(item.state == "populated" for item in unaffected_items)
     assert next(item for item in facade.markets if item.item_id == "day_agent.kr.shadow").state == "populated"
-    assert live.markets[0].item_id == "day.source"
-    assert live.markets[0].state == "corrupt"
+    live_corrupt = tuple(item for item in live.markets if item.state == "corrupt")
+    live_unaffected = tuple(item for item in live.markets if "REJECTED" in item.label)
+    assert live_corrupt and all("ACTIVE" not in item.label for item in live_corrupt)
+    assert all(item.value == "paper lifecycle corrupt · no recommendation authority" for item in live_corrupt)
+    assert live_unaffected and all(item.state == "populated" for item in live_unaffected)
+    assert all(item.item_id != "day.source" for item in live.markets)
     assert snapshot.workspaces.paper.state != "corrupt"
 
 

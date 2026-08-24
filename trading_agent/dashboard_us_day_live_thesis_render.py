@@ -1,14 +1,25 @@
 from __future__ import annotations
 
+import datetime as dt
+import hashlib
+from dataclasses import dataclass
 from typing import assert_never
 
-from trading_agent.dashboard_models_v2 import WorkspaceItemV2
-from trading_agent.dashboard_us_day_live_primitives import day_live_item
+from trading_agent.dashboard_models_v2 import TraceEdgeV2, TraceNodeV2, WorkspaceItemV2
+from trading_agent.dashboard_outbound_redaction import redact_outbound_text
+from trading_agent.dashboard_us_day_live_primitives import day_live_item, day_live_node
 from trading_agent.dashboard_us_day_paper import FinalizedPaperProjectionBundle, canonical_day_exit_event
 from trading_agent.models import RecommendationEvent
 from trading_agent.paper_execution_models import IntentId
 from trading_agent.us_day_lifecycle import derive_us_day_lifecycle
 from trading_agent.us_day_thesis_models import DayTradeDecision, UsDayThesisChange, UsDayTradeThesis
+
+
+@dataclass(frozen=True, slots=True)
+class CorruptDayThesisProjection:
+    item: WorkspaceItemV2
+    nodes: tuple[TraceNodeV2, ...]
+    edges: tuple[TraceEdgeV2, ...]
 
 
 def render_us_day_thesis_items(
@@ -93,6 +104,33 @@ def render_us_day_paper_items(
     )
 
 
+def render_us_day_corrupt_thesis_item(
+    thesis: UsDayTradeThesis, now: dt.datetime
+) -> CorruptDayThesisProjection:
+    digest = hashlib.sha256(thesis.thesis_id.encode()).hexdigest()
+    trace_id = f"trace.day.lifecycle.{digest[:32]}.corrupt"
+    item = WorkspaceItemV2(
+        item_id=f"day.lifecycle.{digest[:32]}.corrupt",
+        kind="day_recommendation",
+        label=redact_outbound_text(
+            f"{thesis.symbol or thesis.theme_name} lifecycle corrupt", max_chars=80
+        ),
+        state="corrupt",
+        value="paper lifecycle corrupt · no recommendation authority",
+        observed_at=now,
+        trace_id=trace_id,
+    )
+    blocker_id = f"{trace_id}.blocker"
+    return CorruptDayThesisProjection(
+        item,
+        (
+            day_live_node(trace_id, "source_receipt", "Day thesis lifecycle", now, digest, "unavailable"),
+            day_live_node(blocker_id, "blocker_terminal", "Day thesis lifecycle blocked", now, digest, "blocked"),
+        ),
+        (TraceEdgeV2(from_node_id=trace_id, to_node_id=blocker_id, kind="blocked_by"),),
+    )
+
+
 def _terminal_thesis_item(
     thesis: UsDayTradeThesis,
     status: str,
@@ -121,4 +159,9 @@ def _terminal_thesis_item(
     )
 
 
-__all__ = ("render_us_day_paper_items", "render_us_day_thesis_items")
+__all__ = (
+    "CorruptDayThesisProjection",
+    "render_us_day_corrupt_thesis_item",
+    "render_us_day_paper_items",
+    "render_us_day_thesis_items",
+)

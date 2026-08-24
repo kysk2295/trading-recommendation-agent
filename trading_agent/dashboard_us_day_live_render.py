@@ -7,13 +7,18 @@ from dataclasses import dataclass
 
 from trading_agent.dashboard_models_v2 import TraceEdgeV2, TraceNodeV2, WorkspaceItemV2
 from trading_agent.dashboard_us_day_live_primitives import day_live_item, day_live_node
-from trading_agent.dashboard_us_day_live_thesis_render import render_us_day_paper_items, render_us_day_thesis_items
+from trading_agent.dashboard_us_day_live_thesis_render import (
+    render_us_day_corrupt_thesis_item,
+    render_us_day_paper_items,
+    render_us_day_thesis_items,
+)
 from trading_agent.dashboard_us_day_paper import FinalizedPaperProjectionBundle
 from trading_agent.dashboard_us_day_versions import DayAgentVersionReader, DayAgentVersionView, read_day_versions
 from trading_agent.day_agent_task_models import DayAgentResearchTask
 from trading_agent.day_agent_task_store import DayAgentTaskReader
 from trading_agent.day_learning_report_models import MarketCloseReport
 from trading_agent.models import RecommendationEvent
+from trading_agent.us_day_lifecycle import InvalidUsDayLifecycleError
 from trading_agent.us_day_thesis_models import DayTradeDecision, UsDayThesisChange, UsDayTradeThesis
 
 
@@ -47,26 +52,40 @@ def render_us_day_live(
     actionable = tuple(item for item in ordered if item.decision is DayTradeDecision.RECOMMEND)
     market_items.extend(_lead_market_items(actionable, source))
     paper_items: list[WorkspaceItemV2] = []
+    lifecycle_nodes: list[TraceNodeV2] = []
+    lifecycle_edges: list[TraceEdgeV2] = []
     terminal_index = 0
     for thesis in actionable + tuple(item for item in ordered if item.decision is not DayTradeDecision.RECOMMEND):
         if thesis.decision is not DayTradeDecision.RECOMMEND:
             terminal_index += 1
-        market_items.extend(
-            render_us_day_thesis_items(
-                thesis,
-                readers.changes[thesis.thesis_id],
-                readers.paper_events.get(thesis.thesis_id, ()),
-                terminal_index,
-                source,
+        try:
+            market_items.extend(
+                render_us_day_thesis_items(
+                    thesis,
+                    readers.changes[thesis.thesis_id],
+                    readers.paper_events.get(thesis.thesis_id, ()),
+                    terminal_index,
+                    source,
+                )
             )
-        )
+        except InvalidUsDayLifecycleError:
+            corrupt = render_us_day_corrupt_thesis_item(thesis, now)
+            market_items.append(corrupt.item)
+            lifecycle_nodes.extend(corrupt.nodes)
+            lifecycle_edges.extend(corrupt.edges)
+            continue
         if thesis.decision is DayTradeDecision.RECOMMEND and paper_ledger is not None:
             paper_items.extend(render_us_day_paper_items(thesis, paper_ledger, source))
     paper_items.extend(_close_report_items(reports, source))
     safe_ref = hashlib.sha256(":".join(item.thesis_id for item in ordered).encode()).hexdigest()
     observed_at = max((item.observed_at for item in (*ordered, *version_read.records)), default=now)
     nodes, edges = _trace_graph(source, observed_at, safe_ref, version_read.blocker_code, now)
-    return DayLiveProjection(tuple(market_items), tuple(paper_items), nodes, edges)
+    return DayLiveProjection(
+        tuple(market_items),
+        tuple(paper_items),
+        (*nodes, *lifecycle_nodes),
+        (*edges, *lifecycle_edges),
+    )
 
 
 def _version_market_items(
