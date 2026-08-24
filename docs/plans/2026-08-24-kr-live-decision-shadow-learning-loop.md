@@ -413,6 +413,9 @@ Commit: `feat: execute admitted KR plans in shadow`
 **Files:**
 
 - Create: `trading_agent/kr_day_decision_delivery.py`
+- Create: `trading_agent/kr_day_decision_delivery_records.py`
+- Create: `trading_agent/kr_day_decision_delivery_rendering.py`
+- Create: `trading_agent/kr_day_delivery_supplements.py`
 - Modify: `trading_agent/hermes_delivery_projection.py`
 - Modify: `tests/test_hermes_delivery_e2e.py`
 - Modify: `tests/test_hermes_plugin_delivery.py`

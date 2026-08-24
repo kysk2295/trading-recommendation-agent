@@ -8,8 +8,16 @@ from pathlib import Path
 
 import pytest
 
+from tests.test_hermes_delivery_e2e import _shadow_event
+from tests.test_kr_day_decision_store import _event as _decision_event
 from trading_agent.hermes_delivery_models import HermesDeliveryKind, build_hermes_delivery_event
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
+from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowStatus
+from trading_agent.kr_day_decision_delivery import (
+    KrDayDecisionDeliveryBatch,
+    project_kr_day_decision_delivery,
+)
+from trading_agent.kr_day_decision_models import KrDayDecisionReasonCode, KrDayDecisionStatus
 
 AT = dt.datetime(2026, 7, 22, 14, 0, tzinfo=dt.UTC)
 
@@ -81,6 +89,42 @@ def test_worker_acknowledges_telegram_message_and_replies_to_root(tmp_path: Path
     assert second.status is worker_module.HermesDeliveryTickStatus.ACKNOWLEDGED
     assert sender.calls[1].reply_to_message_id == "100"
     assert store.acknowledgements()[-1].platform_message_id == "101"
+
+
+def test_worker_replies_to_projected_kr_armed_root_after_ack(tmp_path: Path) -> None:
+    # Given: the real KR projector persisted an ARMED root and its bound ACTIVE reply.
+    worker_module = _worker_module()
+    armed = _decision_event(
+        status=KrDayDecisionStatus.ARMED,
+        reason_codes=(KrDayDecisionReasonCode.ENTRY_CONFIRMATION_READY,),
+    )
+    active = _shadow_event(
+        armed.event_id,
+        KrDayCapsuleShadowStatus.ACTIVE,
+        occurred_at=armed.observed_at,
+    )
+    store = HermesDeliveryStore(tmp_path / "delivery.sqlite3")
+    with store.writer() as writer:
+        _ = project_kr_day_decision_delivery(
+            KrDayDecisionDeliveryBatch((armed,), (active,)),
+            writer,
+        )
+    sender = FakeTelegramSender(message_ids=["kr-root-100", "kr-reply-101"])
+    worker = worker_module.HermesDeliveryWorker(
+        store=store,
+        sender=sender,
+        settings=worker_module.HermesDeliveryWorkerSettings(clock=ManualClock(armed.observed_at)),
+    )
+
+    # When: the worker acknowledges the root before claiming the reply.
+    first = worker.tick()
+    second = worker.tick()
+
+    # Then: existing ACK and reply semantics address the ACTIVE message to the root platform ID.
+    assert first.status is worker_module.HermesDeliveryTickStatus.ACKNOWLEDGED
+    assert second.status is worker_module.HermesDeliveryTickStatus.ACKNOWLEDGED
+    assert sender.calls[0].reply_to_message_id is None
+    assert sender.calls[1].reply_to_message_id == "kr-root-100"
 
 
 def test_timeout_retry_keeps_same_delivery_identity(tmp_path: Path) -> None:
