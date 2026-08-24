@@ -361,10 +361,17 @@ Commit: `feat: integrate KR decisions into session service`
 
 **Files:**
 
+- Modify: `run_kr_day_capsule_shadow.py`
+- Modify: `trading_agent/day_session_service.py`
+- Modify: `trading_agent/kr_day_capsule_adapter.py`
+- Modify: `trading_agent/kr_day_capsule_models.py`
 - Modify: `trading_agent/kr_day_capsule_shadow_service.py`
+- Create: `trading_agent/kr_day_shadow_decision_bridge.py`
 - Modify: `trading_agent/kr_theme_day_signal.py`
 - Modify: `tests/test_kr_day_capsule_shadow.py`
 - Modify: `tests/test_kr_day_capsule_shadow_safety.py`
+- Modify: `tests/test_kr_day_capsule_shadow_cli.py`
+- Modify: `tests/test_day_session_service.py`
 
 **Step 1: Add transition tests**
 
@@ -378,7 +385,13 @@ Test:
 
 **Step 2: Implement the narrow bridge**
 
-The shadow service consumes the current admitted plan but remains the sole owner of actual shadow fill, slippage, stop, target, censor, and position lifecycle events.
+The day-session subprocess receives the private decision-store path and resolves the exact latest immutable
+decision for each request. A focused bridge binds capsule, hypothesis, opportunity, symbol, completed bar,
+request-input SHA, plan validity, trigger readiness, and granular decision/market-gate reasons. The shadow
+service remains the sole owner of actual shadow fill, slippage, stop, target, censor, and position lifecycle
+events. Existing ACTIVE management uses only its exact stored symbol/cycle/calendar lineage and does not
+require a new decision. Preserve shadow event schema v1 identities; expose the immutable decision+shadow
+join through the service/CLI result instead of mutating historical event payloads.
 
 **Step 3: Verify and commit**
 
