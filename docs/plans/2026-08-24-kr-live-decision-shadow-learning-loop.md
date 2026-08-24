@@ -301,8 +301,11 @@ Commit: `feat: gate KR candidates with explicit evidence`
 - Create: `trading_agent/kr_day_decision_service.py`
 - Create: `trading_agent/kr_day_decision_projection.py`
 - Modify: `trading_agent/day_session_service.py`
+- Modify: `trading_agent/kr_day_capsule_adapter.py`
+- Modify: `run_kr_day_capsule_shadow.py`
 - Modify: `tests/test_day_session_service.py`
 - Modify: `tests/test_kr_live_decision_contract.py`
+- Modify: `tests/test_kr_day_capsule_shadow_cli.py`
 
 **Step 1: Write integration tests**
 
@@ -325,6 +328,11 @@ module limit in `kr_day_decision_service.py`.
 **Step 3: Wire it into `_run_kr`**
 
 Use the existing active-capsule authority and state root. Do not add another daemon or another market scanner. Do not let a missing source opportunity stop management of an already-active shadow position.
+
+An expired opportunity may be reused only as immutable lineage for a management-only
+evaluation when the shadow store already has the same capsule/session in `ACTIVE`.
+It must never admit a new decision or open a new shadow position. Current completed bars,
+market constraints, and the normal risk/stop-first lifecycle remain mandatory.
 
 **Step 4: Verify and commit**
 
