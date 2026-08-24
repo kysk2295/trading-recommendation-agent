@@ -20,8 +20,9 @@ from trading_agent.private_directory_identity import (
 from trading_agent.sqlite_uri import sqlite_read_only_uri
 
 _SCHEMA_VERSION: Final = 1
+_WRITE_TIMEOUT_SECONDS: Final = 2.0
 _SCHEMA: Final = """
-CREATE TABLE kr_day_decision_events (
+CREATE TABLE IF NOT EXISTS kr_day_decision_events (
   event_id TEXT PRIMARY KEY,
   session_date TEXT NOT NULL,
   capsule_id TEXT NOT NULL,
@@ -34,11 +35,11 @@ CREATE TABLE kr_day_decision_events (
   payload_json TEXT NOT NULL,
   UNIQUE(session_date, capsule_id, opportunity_id, completed_bar_at, status)
 );
-CREATE INDEX kr_day_decision_events_by_identity
+CREATE INDEX IF NOT EXISTS kr_day_decision_events_by_identity
 ON kr_day_decision_events(capsule_id, opportunity_id, session_date, completed_bar_at);
-CREATE TRIGGER kr_day_decision_events_no_update
+CREATE TRIGGER IF NOT EXISTS kr_day_decision_events_no_update
 BEFORE UPDATE ON kr_day_decision_events BEGIN SELECT RAISE(ABORT, 'append-only'); END;
-CREATE TRIGGER kr_day_decision_events_no_delete
+CREATE TRIGGER IF NOT EXISTS kr_day_decision_events_no_delete
 BEFORE DELETE ON kr_day_decision_events BEGIN SELECT RAISE(ABORT, 'append-only'); END;
 """
 type _EventRow = tuple[str, str, str, str, str, str, str, str, str, str]
@@ -70,12 +71,7 @@ class KrDayDecisionStore:
             with closing(sqlite3.connect(sqlite_read_only_uri(self.path), uri=True)) as connection:
                 _ = connection.execute("PRAGMA query_only = ON")
                 _require_schema(connection)
-                rows: list[_EventRow] = connection.execute(
-                    "SELECT event_id,session_date,capsule_id,hypothesis_version_id,"
-                    "opportunity_id,symbol,completed_bar_at,status,payload_sha256,payload_json "
-                    "FROM kr_day_decision_events ORDER BY rowid"
-                ).fetchall()
-            return tuple(_event_from_row(row) for row in rows)
+                return _read_events(connection)
         except (OSError, sqlite3.Error, TypeError, ValueError):
             raise InvalidKrDayDecisionStoreError from None
 
@@ -104,16 +100,17 @@ class KrDayDecisionStore:
         parent = -1
         try:
             event = KrDayDecisionEvent.model_validate(event.model_dump(mode="python"))
-            _ = self.events()
             if self.path.is_symlink():
                 raise InvalidKrDayDecisionStoreError
             parent = open_private_parent(self.path.parent, create=True)
             require_private_directory_query_only(parent)
             require_open_directory_path(self.path.parent, parent)
-            with closing(sqlite3.connect(self.path, timeout=0.0)) as connection:
+            _ensure_private_database_file(self.path)
+            with closing(sqlite3.connect(self.path, timeout=_WRITE_TIMEOUT_SECONDS)) as connection:
                 _prepare(connection)
                 os.chmod(self.path, 0o600)
                 connection.execute("BEGIN IMMEDIATE")
+                _ = _read_events(connection)
                 row = _row(event)
                 existing: _EventRow | None = connection.execute(
                     "SELECT event_id,session_date,capsule_id,hypothesis_version_id,"
@@ -171,6 +168,26 @@ def _event_from_row(row: _EventRow) -> KrDayDecisionEvent:
     return event
 
 
+def _read_events(connection: sqlite3.Connection) -> tuple[KrDayDecisionEvent, ...]:
+    rows: list[_EventRow] = connection.execute(
+        "SELECT event_id,session_date,capsule_id,hypothesis_version_id,"
+        "opportunity_id,symbol,completed_bar_at,status,payload_sha256,payload_json "
+        "FROM kr_day_decision_events ORDER BY rowid"
+    ).fetchall()
+    events = tuple(_event_from_row(row) for row in rows)
+    _require_history(events)
+    return events
+
+
+def _require_history(events: tuple[KrDayDecisionEvent, ...]) -> None:
+    latest: dict[tuple[str, str, dt.date], str] = {}
+    for event in events:
+        identity = (event.capsule_id, event.opportunity_id, event.session_date)
+        if event.previous_event_id != latest.get(identity):
+            raise InvalidKrDayDecisionStoreError
+        latest[identity] = event.event_id
+
+
 def _require_lineage(connection: sqlite3.Connection, event: KrDayDecisionEvent) -> None:
     latest: tuple[str] | None = connection.execute(
         "SELECT event_id FROM kr_day_decision_events WHERE capsule_id=? AND opportunity_id=? "
@@ -217,6 +234,22 @@ def _require_private_file(path: Path) -> None:
         or metadata.st_nlink != 1
     ):
         raise InvalidKrDayDecisionStoreError
+
+
+def _ensure_private_database_file(path: Path) -> None:
+    try:
+        descriptor = os.open(
+            path,
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+            0o600,
+        )
+    except FileExistsError:
+        _require_private_file(path)
+        return
+    try:
+        os.fchmod(descriptor, 0o600)
+    finally:
+        os.close(descriptor)
 
 
 __all__ = ("InvalidKrDayDecisionStoreError", "KrDayDecisionStore")

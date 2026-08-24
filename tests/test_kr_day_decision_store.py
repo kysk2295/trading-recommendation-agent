@@ -4,11 +4,14 @@ import datetime as dt
 import hashlib
 import sqlite3
 import stat
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal, assert_never
 
 import pytest
-from pydantic import ConfigDict, ValidationError
+from pydantic import ValidationError
 
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.kr_day_decision_models import (
@@ -129,17 +132,47 @@ def _event_from_payload(payload: KrDayDecisionEventPayload, event_id: str) -> Kr
 def test_model_requires_canonical_identity_and_frozen_plan_shape() -> None:
     # Given: a fully specified conditional pre-entry decision.
     event = _event()
-    expected_config = ConfigDict(frozen=True, extra="forbid", revalidate_instances="always")
 
     # When: its canonical payload identity is calculated.
     payload = _payload(status=KrDayDecisionStatus.ARMED, plan=_plan())
 
-    # Then: identity and strict immutable configuration are enforced.
+    # Then: its identity is enforced.
     expected = hashlib.sha256(canonical_experiment_ledger_json(payload).encode()).hexdigest()
     assert event.event_id == expected
-    assert event.model_config == expected_config
     with pytest.raises(ValidationError):
         _event(event_id=HEX_C)
+
+
+def test_model_is_observably_frozen_and_forbids_extra_fields() -> None:
+    # Given: one validated immutable event.
+    event = _event()
+
+    # When/Then: assignment and an unrecognized boundary field are rejected.
+    with pytest.raises(ValidationError):
+        event.__setattr__("symbol", "000000")
+    with pytest.raises(ValidationError):
+        KrDayDecisionEvent.model_validate(event.model_dump(mode="python") | {"unexpected": True})
+
+
+def test_payload_revalidates_nested_plan_instances() -> None:
+    # Given: an invalid plan instance built without boundary validation.
+    invalid = KrDayConditionalPlan.model_construct(
+        trigger_rule="Close above the completed-bar resistance",
+        trigger_price=Decimal("71000"),
+        stop_price=Decimal("72000"),
+        target_prices=(Decimal("72500"),),
+        invalidation_rule="Cancel below the stop",
+        valid_until=dt.datetime(2026, 8, 24, 1, 10, tzinfo=UTC),
+        rationale="Completed-bar setup",
+        evidence_refs=EVIDENCE,
+        capsule_id=HEX_A,
+        hypothesis_version_id=HEX_B,
+        paper_only=True,
+    )
+
+    # When/Then: embedding it revalidates and rejects the illegal ladder.
+    with pytest.raises(ValidationError):
+        _payload(status=KrDayDecisionStatus.ARMED, plan=invalid)
 
 
 @pytest.mark.parametrize(
@@ -160,13 +193,22 @@ def test_non_armed_status_rejects_conditional_plan(status: KrDayDecisionStatus) 
         _payload(status=status, plan=plan)
 
 
-def test_plan_rejects_illegal_prices_and_noncanonical_evidence() -> None:
-    # Given: an invalid price ladder and duplicate unsorted evidence.
+def test_plan_rejects_illegal_price_ladder() -> None:
+    # Given: a stop above the trigger price.
+    stop = Decimal("72000")
+
+    # When/Then: the conditional plan rejects the illegal ladder.
+    with pytest.raises(ValidationError):
+        _plan(stop_price=stop)
+
+
+def test_plan_rejects_noncanonical_evidence() -> None:
+    # Given: duplicate unsorted evidence references.
     evidence = ("source://z", "source://a", "source://a")
 
-    # When/Then: the conditional plan rejects both illegal shapes.
+    # When/Then: the conditional plan rejects the noncanonical sequence.
     with pytest.raises(ValidationError):
-        _plan(stop_price=Decimal("72000"), evidence_refs=evidence)
+        _plan(evidence_refs=evidence)
 
 
 def test_expired_status_requires_elapsed_deadline() -> None:
@@ -206,6 +248,34 @@ def test_append_replay_and_restart_are_deterministic(tmp_path: Path) -> None:
     assert (first, replay, persisted) == (True, False, (event,))
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+
+
+def test_concurrent_identical_initial_appends_converge(tmp_path: Path) -> None:
+    # Given: two writers released together against one new database.
+    path = tmp_path / "private" / "decisions.sqlite3"
+    path.parent.mkdir(mode=0o700)
+    barrier = threading.Barrier(2)
+    event = _event()
+    errors: list[InvalidKrDayDecisionStoreError] = []
+    error_lock = threading.Lock()
+
+    def append_once(_worker: int) -> bool | None:
+        _ = barrier.wait()
+        try:
+            return KrDayDecisionStore(path).append(event)
+        except InvalidKrDayDecisionStoreError as error:
+            with error_lock:
+                errors.append(error)
+            return None
+
+    # When: both real threads perform the initial append.
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = tuple(executor.map(append_once, range(2)))
+
+    # Then: one append wins, one is an exact replay, and neither errors.
+    assert errors == []
+    assert tuple(sorted(outcome for outcome in outcomes if outcome is not None)) == (False, True)
+    assert KrDayDecisionStore(path).events() == (event,)
 
 
 def test_idempotency_key_conflict_fails_closed(tmp_path: Path) -> None:
@@ -264,6 +334,48 @@ def test_same_named_permissive_trigger_fails_closed(tmp_path: Path) -> None:
     # When/Then: exact schema identity rejects the replacement.
     with pytest.raises(InvalidKrDayDecisionStoreError):
         store.events()
+
+
+@pytest.mark.parametrize("reader", ["events", "latest", "event"])
+def test_readers_reject_canonical_row_with_broken_lineage(
+    tmp_path: Path,
+    reader: Literal["events", "latest", "event"],
+) -> None:
+    # Given: a canonical second row whose previous ID is not the first event.
+    path = tmp_path / "private" / "decisions.sqlite3"
+    store = KrDayDecisionStore(path)
+    first = _event(status=KrDayDecisionStatus.INVESTIGATING)
+    assert store.append(first) is True
+    corrupt = _event(status=KrDayDecisionStatus.REJECTED, previous_event_id=HEX_B)
+    payload = canonical_experiment_ledger_json(corrupt)
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "INSERT INTO kr_day_decision_events VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                corrupt.event_id,
+                corrupt.session_date.isoformat(),
+                corrupt.capsule_id,
+                corrupt.hypothesis_version_id,
+                corrupt.opportunity_id,
+                corrupt.symbol,
+                corrupt.completed_bar_at.isoformat(),
+                corrupt.status.value,
+                hashlib.sha256(payload.encode()).hexdigest(),
+                payload,
+            ),
+        )
+
+    # When/Then: every read projection rejects the incoherent history.
+    with pytest.raises(InvalidKrDayDecisionStoreError):
+        match reader:
+            case "events":
+                store.events()
+            case "latest":
+                store.latest(HEX_A, HEX_C, dt.date(2026, 8, 24))
+            case "event":
+                store.event(first.event_id)
+            case unreachable:
+                assert_never(unreachable)
 
 
 @pytest.mark.parametrize("corruption", ["payload", "schema"])
