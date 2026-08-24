@@ -143,6 +143,35 @@ def test_missing_decision_ledger_fails_visible_without_completion(tmp_path: Path
     assert not fixture.config.completion_root.exists()
 
 
+def test_foreign_snapshot_shadow_history_cannot_finalize_selected_trial(tmp_path: Path) -> None:
+    # Given: the trial binds the official snapshot but every same-day Shadow event binds another.
+    fixture = close_fixture(tmp_path, shadow_snapshot_id="f" * 64)
+
+    # When: post-close finalization reads the otherwise coherent local ledgers.
+    result = run_kr_day_close_service(fixture.config, _runtime(fixture.post_close))
+
+    # Then: it blocks before publishing a report or immutable completion.
+    assert (result.status, result.complete) == ("blocked", False)
+    assert not fixture.config.report_root.exists()
+    assert not fixture.config.completion_root.exists()
+
+
+def test_historical_calendar_snapshot_cannot_authorize_current_close(tmp_path: Path) -> None:
+    # Given: a prior-date official snapshot happens to include the selected session in its horizon.
+    fixture = close_fixture(
+        tmp_path,
+        calendar_base_date=dt.date(2026, 8, 23),
+    )
+
+    # When: the close runtime selects calendar authority for the current local session.
+    result = run_kr_day_close_service(fixture.config, _runtime(fixture.post_close))
+
+    # Then: historical calendar authority is stale and cannot create report or completion state.
+    assert (result.status, result.complete) == ("blocked", False)
+    assert not fixture.config.report_root.exists()
+    assert not fixture.config.completion_root.exists()
+
+
 def test_active_without_exact_close_evidence_remains_incomplete(tmp_path: Path) -> None:
     # Given: persisted capsule/trial authority whose latest Shadow event remains ACTIVE.
     fixture = close_fixture(tmp_path, terminal=False)

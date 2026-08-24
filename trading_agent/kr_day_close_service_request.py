@@ -78,7 +78,12 @@ def build_kr_day_close_request(
         trial.capsule_id: capsule_by_id[trial.capsule_id]
         for trial in trials
     }
-    shadows = _session_shadows(config.shadow_store, local.date(), tuple(selected_capsules))
+    shadows = _session_shadows(
+        config.shadow_store,
+        local.date(),
+        tuple(selected_capsules),
+        snapshot.snapshot_id,
+    )
     decisions = _session_decisions(config.decision_store, local.date(), tuple(selected_capsules))
     _require_decision_shadow_authority(decisions, shadows, selected_capsules)
     outcomes = tuple(
@@ -122,7 +127,9 @@ def _latest_calendar(
         (snapshot, day)
         for snapshot in snapshots
         for day in snapshot.payload.days
-        if day.session_date == session_date and snapshot.payload.observed_at <= observed_at
+        if day.session_date == session_date
+        and snapshot.payload.base_date == session_date
+        and snapshot.payload.observed_at <= observed_at
     )
     if not candidates:
         raise InvalidKrDayCloseRequestSourceError
@@ -133,11 +140,16 @@ def _session_shadows(
     path: Path,
     session_date: dt.date,
     known_capsules: tuple[str, ...],
+    calendar_snapshot_id: str,
 ) -> tuple[KrDayCapsuleShadowEvent, ...]:
     if not path.is_file():
         raise InvalidKrDayCloseRequestSourceError
     events = tuple(event for event in KrDayCapsuleShadowStore(path).events() if event.session_date == session_date)
-    if not events or any(event.capsule_id not in known_capsules for event in events):
+    if not events or any(
+        event.capsule_id not in known_capsules
+        or event.calendar_snapshot_id != calendar_snapshot_id
+        for event in events
+    ):
         raise InvalidKrDayCloseRequestSourceError
     return events
 

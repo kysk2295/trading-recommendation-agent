@@ -44,7 +44,14 @@ class CloseFixture:
     post_close: dt.datetime
 
 
-def close_fixture(root: Path, *, open_day: bool = True, terminal: bool = True) -> CloseFixture:
+def close_fixture(
+    root: Path,
+    *,
+    open_day: bool = True,
+    terminal: bool = True,
+    calendar_base_date: dt.date = SESSION_DATE,
+    shadow_snapshot_id: str | None = None,
+) -> CloseFixture:
     state = root / "state"
     state.mkdir(mode=0o700, parents=True)
     os.chmod(state, 0o700)
@@ -62,9 +69,18 @@ def close_fixture(root: Path, *, open_day: bool = True, terminal: bool = True) -
         completion_root=state / "completion",
         launch_agents_directory=root / "LaunchAgents",
     )
-    snapshot = _seed_calendar(config.calendar_store, open_day=open_day)
+    snapshot = _seed_calendar(
+        config.calendar_store,
+        open_day=open_day,
+        base_date=calendar_base_date,
+    )
     if open_day:
-        _seed_session(config, snapshot.snapshot_id, terminal=terminal)
+        _seed_session(
+            config,
+            snapshot.snapshot_id,
+            terminal=terminal,
+            shadow_snapshot_id=shadow_snapshot_id,
+        )
     return CloseFixture(
         config=config,
         config_path=root / f"kr-day-close-{config.expected_commit}.json",
@@ -73,15 +89,26 @@ def close_fixture(root: Path, *, open_day: bool = True, terminal: bool = True) -
     )
 
 
-def _seed_calendar(path: Path, *, open_day: bool) -> KrSessionCalendarSnapshot:
+def _seed_calendar(
+    path: Path,
+    *,
+    open_day: bool,
+    base_date: dt.date,
+) -> KrSessionCalendarSnapshot:
     flag = "Y" if open_day else "N"
+    leading = (
+        ()
+        if base_date == SESSION_DATE
+        else (calendar_row(base_date.strftime("%Y%m%d"), "Y", "Y", "Y", "Y"),)
+    )
     receipt = KisKrSessionCalendarReceipt(
-        base_date=SESSION_DATE,
-        received_at=dt.datetime(2026, 8, 24, 8, tzinfo=KST),
+        base_date=base_date,
+        received_at=dt.datetime.combine(base_date, dt.time(8), tzinfo=KST),
         status_code=200,
         content_type="application/json",
         raw_payload=calendar_payload(
             rows=(
+                *leading,
                 calendar_row("20260824", flag, flag, flag, flag),
                 calendar_row("20260825", "N", "N", "N", "N"),
                 calendar_row("20260826", "Y", "Y", "Y", "Y"),
@@ -93,7 +120,13 @@ def _seed_calendar(path: Path, *, open_day: bool) -> KrSessionCalendarSnapshot:
     return snapshot
 
 
-def _seed_session(config: KrDayCloseServiceConfig, snapshot_id: str, *, terminal: bool) -> None:
+def _seed_session(
+    config: KrDayCloseServiceConfig,
+    snapshot_id: str,
+    *,
+    terminal: bool,
+    shadow_snapshot_id: str | None,
+) -> None:
     ledger = ExperimentLedgerStore(config.experiment_ledger)
     family = _family()
     version = _version(family, market_id=MarketId.KR_EQUITIES)
@@ -146,7 +179,12 @@ def _seed_session(config: KrDayCloseServiceConfig, snapshot_id: str, *, terminal
     )
     with ledger.writer() as writer:
         assert writer.register_day_forward_trial(trial)
-    entry = _authorized_evaluation(capsule.capsule_id, capsule.hypothesis_version_id, snapshot_id)
+    event_snapshot_id = snapshot_id if shadow_snapshot_id is None else shadow_snapshot_id
+    entry = _authorized_evaluation(
+        capsule.capsule_id,
+        capsule.hypothesis_version_id,
+        event_snapshot_id,
+    )
     shadow = KrDayCapsuleShadowStore(config.shadow_store)
     _ = run_authorized_kr_shadow_tick(shadow, (entry,))
     if terminal:
@@ -157,7 +195,7 @@ def _seed_session(config: KrDayCloseServiceConfig, snapshot_id: str, *, terminal
                     _advance(entry, low=Decimal("9900"), high=Decimal("10400")),
                     capsule.capsule_id,
                     capsule.hypothesis_version_id,
-                    snapshot_id,
+                    event_snapshot_id,
                 ),
             ),
         )
