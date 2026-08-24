@@ -202,6 +202,7 @@ git commit -m "feat: add immutable KR pre-entry decisions"
 
 - Modify: `trading_agent/kr_theme_day_setup.py`
 - Create: `trading_agent/kr_price_grid.py`
+- Create: `trading_agent/kr_theme_day_setup_progress.py`
 - Create: `tests/test_kr_theme_day_setup_progress.py`
 - Create: `tests/test_kr_price_grid.py`
 
@@ -215,7 +216,7 @@ Write tests for every price-unit bracket boundary and for upward/downward normal
 
 **Step 3: Add setup assessment without breaking the final setup API**
 
-Introduce `assess_kr_theme_day_setup(...)` that returns a phase and evidence even when reclaim is incomplete:
+Introduce `assess_kr_theme_day_setup(...)` that returns a phase and evidence even when reclaim is incomplete. Keep the reusable scan state in `kr_theme_day_setup_progress.py` so the existing setup module remains below the 250-pure-LOC limit:
 
 ```text
 NO_IMPULSE -> INVESTIGATING
@@ -241,14 +242,14 @@ Run:
 
 ```bash
 pytest -q tests/test_kr_theme_day_setup.py tests/test_kr_theme_day_setup_progress.py tests/test_kr_price_grid.py
-ruff check trading_agent/kr_theme_day_setup.py trading_agent/kr_price_grid.py tests/test_kr_theme_day_setup_progress.py tests/test_kr_price_grid.py
-basedpyright trading_agent/kr_theme_day_setup.py trading_agent/kr_price_grid.py
+ruff check trading_agent/kr_theme_day_setup.py trading_agent/kr_theme_day_setup_progress.py trading_agent/kr_price_grid.py tests/test_kr_theme_day_setup_progress.py tests/test_kr_price_grid.py
+basedpyright trading_agent/kr_theme_day_setup.py trading_agent/kr_theme_day_setup_progress.py trading_agent/kr_price_grid.py tests/test_kr_theme_day_setup_progress.py tests/test_kr_price_grid.py
 ```
 
 **Step 6: Commit**
 
 ```bash
-git add trading_agent/kr_theme_day_setup.py trading_agent/kr_price_grid.py tests/test_kr_theme_day_setup_progress.py tests/test_kr_price_grid.py
+git add trading_agent/kr_theme_day_setup.py trading_agent/kr_theme_day_setup_progress.py trading_agent/kr_price_grid.py tests/test_kr_theme_day_setup_progress.py tests/test_kr_price_grid.py
 git commit -m "feat: expose KR setup progression"
 ```
 
