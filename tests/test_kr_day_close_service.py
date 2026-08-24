@@ -310,6 +310,25 @@ def test_close_config_accepts_external_read_only_experiment_ledger(tmp_path: Pat
     )
 
 
+def test_close_config_accepts_external_shared_hermes_delivery_database(tmp_path: Path) -> None:
+    # Given: the installed Hermes worker consumes one shared delivery database outside session state.
+    fixture = close_fixture(tmp_path / "fixture")
+    shared_delivery = tmp_path / "outputs" / "hermes" / "delivery.sqlite3"
+
+    # When: the close service binds the same delivery database used by the intraday service.
+    config = KrDayCloseServiceConfig.model_validate(
+        fixture.config.model_dump(mode="python")
+        | {"hermes_delivery_database": shared_delivery}
+    )
+
+    # Then: the shared delivery dependency is accepted without widening any service-owned output root.
+    assert config.hermes_delivery_database == shared_delivery
+    assert all(
+        path.is_relative_to(config.state_root)
+        for path in (config.report_root, config.policy_root, config.health_root, config.completion_root)
+    )
+
+
 def test_cli_bad_config_and_fixture_replay_are_compact(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

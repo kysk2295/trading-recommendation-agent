@@ -28,6 +28,7 @@ from trading_agent.kr_day_capsule_models import KrDayCapsuleEvaluationRequest
 from trading_agent.kr_day_decision_models import KrDayDecisionEvent
 from trading_agent.kr_day_decision_service import run_kr_day_decision_tick
 from trading_agent.kr_day_decision_store import KrDayDecisionStore
+from trading_agent.kr_day_session_delivery import project_kr_day_session_delivery
 from trading_agent.kr_day_session_materializer import (
     materialize_kr_requests as _materialize_kr_requests,
 )
@@ -169,6 +170,10 @@ def _run_kr(
         str(config.state_root / "receipts"),
     )
     completed = _run_child(command)
+    try:
+        _ = project_kr_day_session_delivery(config.state_root, config.hermes_delivery_database)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return 2, "decision_delivery_failed", decisions
     try:
         payload = json.loads(completed.stdout)
         reason = str(payload.get("result", "kr_capsule_blocked"))

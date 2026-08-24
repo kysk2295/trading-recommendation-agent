@@ -57,7 +57,7 @@ class KrDayCloseServiceConfig(BaseModel):
             self.completion_root,
             self.launch_agents_directory,
         )
-        service_owned_paths = paths[5:-1]
+        service_owned_paths = (self.report_root, self.policy_root, self.health_root, self.completion_root)
         if (
             any(not path.is_absolute() or path.is_symlink() for path in paths)
             or _SHA.fullmatch(self.expected_commit) is None

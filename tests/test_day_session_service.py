@@ -557,6 +557,7 @@ def _config(
         **common,
         calendar_store=root / "calendar/calendar.sqlite3",
         experiment_ledger=root / "ledger/experiment.sqlite3",
+        hermes_delivery_database=root / "hermes/delivery.sqlite3",
     )
 
 
@@ -594,6 +595,8 @@ def _provision(
             str(root / "calendar/calendar.sqlite3"),
             "--experiment-ledger",
             str(root / "ledger/experiment.sqlite3"),
+            "--hermes-delivery-database",
+            str(root / "hermes/delivery.sqlite3"),
         )
     return arguments
 
@@ -604,6 +607,7 @@ def _source_contracts(root: Path) -> None:
         root / "capsule_requests",
         root.parent / "calendar",
         root.parent / "ledger",
+        root.parent / "hermes",
     ):
         path.mkdir(parents=True, exist_ok=True, mode=0o700)
 

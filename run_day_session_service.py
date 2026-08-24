@@ -36,6 +36,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         provision.add_argument(f"--{name}", type=Path, required=True)
     provision.add_argument("--calendar-store", type=Path)
     provision.add_argument("--experiment-ledger", type=Path)
+    provision.add_argument("--hermes-delivery-database", type=Path)
     provision.add_argument("--expected-commit", required=True)
     for name in ("verify",):
         command = commands.add_parser(name)
@@ -91,11 +92,16 @@ def _config(args: argparse.Namespace) -> UsDaySessionServiceConfig | KrDaySessio
     }
     if args.market == "us":
         return UsDaySessionServiceConfig.model_validate(values)
-    if args.calendar_store is None or args.experiment_ledger is None:
+    if (
+        args.calendar_store is None
+        or args.experiment_ledger is None
+        or args.hermes_delivery_database is None
+    ):
         raise ValueError
     values |= {
         "calendar_store": args.calendar_store.expanduser().absolute(),
         "experiment_ledger": args.experiment_ledger.expanduser().absolute(),
+        "hermes_delivery_database": args.hermes_delivery_database.expanduser().absolute(),
     }
     return KrDaySessionServiceConfig.model_validate(values)
 

@@ -63,10 +63,15 @@ class KrDaySessionServiceConfig(_CommonConfig):
     label: Literal["ai.trading-agent.kr-day-session"] = KR_DAY_SESSION_LABEL
     calendar_store: Path
     experiment_ledger: Path
+    hermes_delivery_database: Path
 
     @model_validator(mode="after")
     def require_kr_absolute_bindings(self) -> Self:
-        if not self.calendar_store.is_absolute() or not self.experiment_ledger.is_absolute():
+        if (
+            not self.calendar_store.is_absolute()
+            or not self.experiment_ledger.is_absolute()
+            or not self.hermes_delivery_database.is_absolute()
+        ):
             raise InvalidDaySessionServiceError(reason="service_binding_invalid")
         return self
 
@@ -232,7 +237,12 @@ def _source_contract_paths(config: DaySessionServiceConfig) -> tuple[Path, ...]:
         case UsDaySessionServiceConfig():
             return (config.source_root,)
         case KrDaySessionServiceConfig():
-            return (config.source_root, config.calendar_store.parent, config.experiment_ledger.parent)
+            return (
+                config.source_root,
+                config.calendar_store.parent,
+                config.experiment_ledger.parent,
+                config.hermes_delivery_database.parent,
+            )
 
 
 def _launchctl(command: tuple[str, ...]) -> int:
