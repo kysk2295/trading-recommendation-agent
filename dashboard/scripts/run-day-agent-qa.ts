@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import AxeBuilder from "@axe-core/playwright";
 import { websocket } from "hono/bun";
@@ -55,6 +55,7 @@ if (widths.length !== 3 || widths.some((width) => ![375, 768, 1280].includes(wid
 }
 const output = values.output;
 const screenshots = join(dirname(output), "screenshots-day-agent");
+const screenshotPrefix = basename(dirname(output)).replaceAll(/[^a-zA-Z0-9._-]/g, "-");
 await mkdir(screenshots, { recursive: true });
 
 const app = createApp(
@@ -200,13 +201,13 @@ async function verifyHappy(target: Page, width: number): Promise<Finding> {
       () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
     );
     if (pageOverflow) throw new DayAgentQaError(`overflow:${width}`);
-    const screenshot = join(screenshots, `day-agent-${width}.png`);
+    const screenshot = join(screenshots, `${screenshotPrefix}-day-agent-${width}.png`);
     await target.screenshot({ path: screenshot, fullPage: true });
     const workspaceMain = target.locator("#workspace-main");
     await workspaceMain.evaluate((element) => {
       element.scrollTop = element.scrollHeight;
     });
-    const lowerScreenshot = join(screenshots, `day-agent-${width}-lower.png`);
+    const lowerScreenshot = join(screenshots, `${screenshotPrefix}-day-agent-${width}-lower.png`);
     await target.screenshot({ path: lowerScreenshot });
     await target.goto(`${baseUrl}/#research`, { waitUntil: "networkidle" });
     await target.getByRole("heading", { name: "Day Agent · 종가 학습과 다음 세션 정책" }).waitFor();
@@ -240,30 +241,95 @@ async function verifyHappy(target: Page, width: number): Promise<Finding> {
       () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
     );
     if (researchOverflow) throw new DayAgentQaError(`research overflow:${width}`);
-    const researchScreenshot = join(screenshots, `day-agent-research-${width}.png`);
+    const researchScreenshot = join(
+      screenshots,
+      `${screenshotPrefix}-day-agent-research-${width}.png`,
+    );
     await target.screenshot({ path: researchScreenshot, fullPage: true });
     const researchCardScreenshots: string[] = [];
     if (width <= 768) {
-      for (let index = 0; index < researchCycleCount; index += 1) {
-        const cardScreenshot = join(
-          screenshots,
-          `day-agent-research-${width}-card-${index + 1}.png`,
-        );
-        const row = researchRows.nth(index);
-        await target.locator(".research-board").scrollIntoViewIfNeeded();
-        await row.evaluate((element) => {
-          const viewport = element.closest(".table-viewport");
-          if (!(viewport instanceof HTMLElement) || !(element instanceof HTMLElement))
-            throw new Error("research card viewport missing");
-          viewport.scrollTop =
-            element.offsetTop - Math.max(0, (viewport.clientHeight - element.clientHeight) / 2);
-        });
-        await row.screenshot({ path: cardScreenshot });
-        researchCardScreenshots.push(artifactPath(cardScreenshot));
+      const originalBodyStyle = await target.locator("body").getAttribute("style");
+      await target.locator("body").evaluate((element) => {
+        element.style.paddingBottom = `${window.innerHeight}px`;
+      });
+      try {
+        for (let index = 0; index < researchCycleCount; index += 1) {
+          const cardScreenshot = join(
+            screenshots,
+            `${screenshotPrefix}-day-agent-research-${width}-card-${index + 1}.jpg`,
+          );
+          const row = researchRows.nth(index);
+          await row.evaluate(async (element) => {
+            element.scrollIntoView({ block: "center", inline: "nearest" });
+            await new Promise<void>((resolveFrame) => {
+              requestAnimationFrame(() => requestAnimationFrame(() => resolveFrame()));
+            });
+          });
+          const rowFinding = await row.evaluate(async (element) => {
+            const rowBox = element.getBoundingClientRect();
+            if (rowBox.top < 0 || rowBox.bottom > window.innerHeight)
+              throw new Error("research card is outside the browser viewport");
+            const cells = [...element.children];
+            const cellBoxes = cells.map((cell) => cell.getBoundingClientRect());
+            if (
+              cellBoxes.length !== 6 ||
+              cellBoxes.some(
+                (cellBox) => cellBox.top < rowBox.top || cellBox.bottom > rowBox.bottom,
+              )
+            )
+              throw new Error("research card cells are clipped");
+            for (const [cellIndex, cell] of cells.entries()) {
+              const cellBox = cellBoxes[cellIndex];
+              if (cellBox === undefined) throw new Error("research card cell bounds missing");
+              const paintedElement = document.elementFromPoint(cellBox.left + 4, cellBox.top + 4);
+              if (paintedElement !== cell && !cell.contains(paintedElement))
+                throw new Error("research card cell is not painted");
+              if (getComputedStyle(cell).display !== "grid" || cell.textContent === null)
+                throw new Error("research card cell style missing");
+            }
+            await new Promise<void>((resolveFrame) => {
+              requestAnimationFrame(() => requestAnimationFrame(() => resolveFrame()));
+            });
+            return {
+              rowBox: rowBox.toJSON(),
+              cells: cells.map((cell, cellIndex) => ({
+                box: cellBoxes[cellIndex]?.toJSON(),
+                display: getComputedStyle(cell).display,
+                paintedTag: document.elementFromPoint(
+                  cellBoxes[cellIndex]?.left ?? 0,
+                  cellBoxes[cellIndex]?.top ?? 0,
+                )?.tagName,
+                text: cell.textContent,
+              })),
+            };
+          });
+          if (
+            rowFinding.rowBox.height < 200 ||
+            rowFinding.cells.length !== 6 ||
+            rowFinding.cells.some(
+              (cell) => cell.box === undefined || cell.display !== "grid" || cell.text === null,
+            )
+          )
+            throw new DayAgentQaError(`research card clipped:${width}:${index}`);
+          console.log(
+            `DAY_AGENT_RESEARCH_CARD_LAYOUT_OK:${width}:${index + 1}:${JSON.stringify(rowFinding)}`,
+          );
+          await target.waitForTimeout(100);
+          await row.screenshot({ path: cardScreenshot, type: "jpeg", quality: 95 });
+          researchCardScreenshots.push(artifactPath(cardScreenshot));
+        }
+      } finally {
+        await target.locator("body").evaluate((element, originalStyle) => {
+          if (originalStyle === null) element.removeAttribute("style");
+          else element.setAttribute("style", originalStyle);
+        }, originalBodyStyle);
       }
     }
     await target.locator(".day-agent-learning").scrollIntoViewIfNeeded();
-    const researchLowerScreenshot = join(screenshots, `day-agent-research-${width}-lower.png`);
+    const researchLowerScreenshot = join(
+      screenshots,
+      `${screenshotPrefix}-day-agent-research-${width}-lower.png`,
+    );
     await target.screenshot({ path: researchLowerScreenshot });
     const mutationRequestCount = methods.filter(
       (method) => !["GET", "OPTIONS"].includes(method),
@@ -316,7 +382,7 @@ async function verifyIsolation(
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
   );
   if (pageOverflow) throw new DayAgentQaError(`isolation overflow:${lane}`);
-  const screenshot = join(screenshots, `day-agent-${lane}.png`);
+  const screenshot = join(screenshots, `${screenshotPrefix}-day-agent-${lane}.png`);
   await target.screenshot({ path: screenshot, fullPage: true });
   return {
     lane,
