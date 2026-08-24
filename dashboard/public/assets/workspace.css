@@ -197,6 +197,11 @@
   contain-intrinsic-size: auto 220px;
 }
 
+.research-board {
+  content-visibility: visible;
+  contain-intrinsic-size: none;
+}
+
 .research-board-heading {
   display: flex;
   align-items: baseline;

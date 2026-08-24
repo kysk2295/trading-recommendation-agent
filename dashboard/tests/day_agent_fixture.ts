@@ -11,7 +11,7 @@ export function dayAgentFixture(lane: Lane): unknown {
       "day_agent.us.paper",
       "US · Alpaca Paper",
       usState,
-      "NVDA · entry 200.05 · stop 199.50 · targets 200.60/201.15 · rationale theme and flow evidence · outcome targeted · immutable paper history",
+      `observed ${generatedAt.slice(0, 16)}Z · NVDA · entry 200.05 · stop 199.50 · targets 200.60/201.15 · rationale theme+flow · outcome targeted · immutable history`,
       generatedAt,
     ),
     item(

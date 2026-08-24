@@ -315,7 +315,7 @@ async function verifyHappy(target: Page, width: number): Promise<Finding> {
             `DAY_AGENT_RESEARCH_CARD_LAYOUT_OK:${width}:${index + 1}:${JSON.stringify(rowFinding)}`,
           );
           await target.waitForTimeout(100);
-          await row.screenshot({ path: cardScreenshot, type: "jpeg", quality: 95 });
+          await target.screenshot({ path: cardScreenshot, type: "jpeg", quality: 95 });
           researchCardScreenshots.push(artifactPath(cardScreenshot));
         }
       } finally {
