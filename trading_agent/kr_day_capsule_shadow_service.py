@@ -110,7 +110,9 @@ def _process_one(
     if previous is not None and previous.terminal:
         return KrDayCapsuleShadowResult(False, previous)
     identity = (evaluation.session_date, evaluation.calendar_snapshot_id, evaluation.completed_bar_cursor)
-    if identity != shared:
+    if identity != shared and (
+        previous is None or previous.status is not KrDayCapsuleShadowStatus.ACTIVE
+    ):
         return _append(
             store,
             project_kr_day_capsule_shadow_event(

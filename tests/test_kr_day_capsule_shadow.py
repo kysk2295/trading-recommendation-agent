@@ -134,6 +134,29 @@ def test_batch_orders_capsules_and_isolates_failed_sibling(tmp_path: Path) -> No
     assert len(store.events()) == 2
 
 
+def test_active_management_ignores_divergent_nonactive_batch_anchor(tmp_path: Path) -> None:
+    # Given: a lower-sorting non-ACTIVE sibling with a different calendar snapshot.
+    store = KrDayCapsuleShadowStore(tmp_path / "shadow.sqlite3")
+    active_capsule_id = "f" * 64
+    sibling_capsule_id = "0" * 64
+    active_entry = _reidentify(_entry_evaluation(), active_capsule_id)
+    _ = run_kr_day_capsule_shadow_tick(store, (active_entry,))
+    active_next = _reidentify(_advance(_entry_evaluation()), active_capsule_id)
+    sibling_next = _rebuild(
+        _reidentify(_advance(_plain_evaluation()), sibling_capsule_id),
+        calendar_snapshot_id="e" * 64,
+    )
+
+    # When: both evaluations share the session and completed bar but not the calendar.
+    batch = run_kr_day_capsule_shadow_tick(store, (active_next, sibling_next))
+
+    # Then: sibling divergence cannot terminate or block exact-lineage ACTIVE management.
+    managed = next(item.event for item in batch.results if item.event.capsule_id == active_capsule_id)
+    assert managed.status is KrDayCapsuleShadowStatus.ACTIVE
+    assert managed.reason is KrDayCapsuleShadowReason.ACTIVE
+    assert store.latest(active_capsule_id, managed.session_date.isoformat()) == managed
+
+
 def test_divergent_and_stale_evaluation_block_without_cursor_advance(tmp_path: Path) -> None:
     stale_store = KrDayCapsuleShadowStore(tmp_path / "stale.sqlite3")
     batch_store = KrDayCapsuleShadowStore(tmp_path / "batch.sqlite3")
