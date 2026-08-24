@@ -52,7 +52,7 @@ def run_kr_day_decision_tick(
     items = tuple(sorted((_batch_item(item) for item in requests), key=lambda item: item.capsule_id))
     if len({item.capsule_id for item in items}) != len(items):
         raise InvalidKrDayDecisionServiceError
-    if len({(item.opportunity_id, item.completed_bar_at, item.evaluated_at) for item in items}) > 1:
+    if len({(item.completed_bar_at, item.evaluated_at) for item in items}) > 1:
         raise InvalidKrDayDecisionServiceError
     working = list(store.events())
     results: list[KrDayDecisionEvent] = []

@@ -52,7 +52,7 @@ from trading_agent.day_session_service_config import (
     replace_day_session_launch_agent,
     verify_day_session_launch_agent,
 )
-from trading_agent.day_strategy_capsule import publish_day_strategy_capsule
+from trading_agent.day_strategy_capsule import build_strategy_capsule, publish_day_strategy_capsule
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.kis_kr_market_models import KisKrMarketReceiptKind
@@ -68,6 +68,7 @@ from trading_agent.kr_day_capsule_shadow_models import (
     KrDayCapsuleShadowStatus,
 )
 from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
+from trading_agent.kr_day_decision_store import KrDayDecisionStore
 from trading_agent.private_immutable_file import publish_private_immutable_text
 from trading_agent.research_identity_models import MarketId
 from trading_agent.strategy_research_types import AttemptStatus
@@ -420,6 +421,68 @@ def test_kr_materializer_reads_cycle_calendar_market_and_ledger_stores(tmp_path:
     assert child.returncode == 0
     assert child_payload["events"][0]["status"] == "active"
     assert len(KrDayCapsuleShadowStore(config.state_root / "kr-day-capsule-shadow.sqlite3").events()) == 2
+
+
+def test_public_kr_tick_audits_distinct_opportunities_for_active_and_current_siblings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: one historical ACTIVE lineage and one distinct current sibling on the same tick.
+    config = _config("kr", tmp_path)
+    assert isinstance(config, KrDaySessionServiceConfig)
+    config.state_root.mkdir(mode=0o700)
+    active_request = kr_request()
+    sibling_capsule = build_strategy_capsule(
+        replace(
+            builtin_request(market_id=MarketId.KR_EQUITIES),
+            risk_policy_ref="risk-policy://day-research/current-sibling-v1",
+        )
+    )
+    sibling_request = active_request.model_copy(
+        update={
+            "capsule": sibling_capsule,
+            "opportunity": active_request.opportunity.model_copy(
+                update={"opportunity_id": "KR-THEME-OPPORTUNITY-CURRENT-SIBLING"}
+            ),
+        }
+    )
+    _append_active_shadow(config, active_request)
+    request_root = tmp_path / "requests"
+    request_root.mkdir(mode=0o700)
+    paths = tuple(request_root / name for name in ("active.json", "sibling.json"))
+    for path, request in zip(paths, (active_request, sibling_request), strict=True):
+        assert publish_private_immutable_text(
+            path,
+            canonical_experiment_ledger_json(request) + "\n",
+        )
+    monkeypatch.setattr("trading_agent.day_session_service._authority_reason", lambda _: None)
+    monkeypatch.setattr(
+        "trading_agent.day_session_service._kr_active_capsule_ids",
+        lambda *_: (active_request.capsule.capsule_id, sibling_capsule.capsule_id),
+    )
+    monkeypatch.setattr(
+        "trading_agent.day_session_service._materialize_kr_requests",
+        lambda *_: paths,
+    )
+    monkeypatch.setattr(
+        "trading_agent.day_session_service._run_child",
+        lambda command: subprocess.CompletedProcess(command, 0, '{"result":"processed"}', ""),
+    )
+
+    # When: the public KR day-session tick processes both immutable request artifacts.
+    result = run_day_session_service_tick(
+        config,
+        clock=lambda: active_request.evaluated_at.astimezone(dt.UTC),
+    )
+
+    # Then: both capsule-specific opportunity decisions remain auditable instead of being dropped.
+    stored = KrDayDecisionStore(config.state_root / "kr-day-decisions.sqlite3").events()
+    assert len(result.decisions) == 2
+    assert len(stored) == 2
+    assert {event.opportunity_id for event in stored} == {
+        active_request.opportunity.opportunity_id,
+        sibling_request.opportunity.opportunity_id,
+    }
 
 
 def _append_active_shadow(
