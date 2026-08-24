@@ -300,8 +300,10 @@ Commit: `feat: gate KR candidates with explicit evidence`
 
 - Create: `trading_agent/kr_day_decision_service.py`
 - Create: `trading_agent/kr_day_decision_projection.py`
+- Create: `trading_agent/kr_day_session_materializer.py`
 - Modify: `trading_agent/day_session_service.py`
 - Modify: `trading_agent/kr_day_capsule_adapter.py`
+- Modify: `trading_agent/kr_day_capsule_shadow_service.py`
 - Modify: `run_kr_day_capsule_shadow.py`
 - Modify: `tests/test_day_session_service.py`
 - Modify: `tests/test_kr_live_decision_contract.py`
@@ -324,6 +326,11 @@ The service must:
 Keep policy/setup-to-decision projection in `kr_day_decision_projection.py` so request
 orchestration, replay binding, and append-only storage remain below the 250-pure-LOC
 module limit in `kr_day_decision_service.py`.
+
+Keep per-capsule opportunity/receipt materialization in
+`kr_day_session_materializer.py`. Management requests must bind exactly to the prior
+`ACTIVE` capsule, session, symbol, collection cycle, and calendar lineage; mixed batches
+must not let a non-active sibling block an active sibling's management.
 
 **Step 3: Wire it into `_run_kr`**
 
