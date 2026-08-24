@@ -373,6 +373,7 @@ Commit: `feat: integrate KR decisions into session service`
 - Modify: `tests/test_kr_day_capsule_shadow.py`
 - Modify: `tests/test_kr_day_capsule_shadow_safety.py`
 - Modify: `tests/test_kr_day_capsule_shadow_cli.py`
+- Modify: `tests/kr_day_shadow_support.py`
 - Modify: `tests/test_day_session_service.py`
 
 **Step 1: Add transition tests**

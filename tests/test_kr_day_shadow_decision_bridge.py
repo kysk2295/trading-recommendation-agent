@@ -17,7 +17,10 @@ from trading_agent.kr_day_capsule_shadow_models import (
     KrDayCapsuleShadowReason,
     KrDayCapsuleShadowStatus,
 )
-from trading_agent.kr_day_capsule_shadow_service import run_kr_day_capsule_shadow_tick
+from trading_agent.kr_day_capsule_shadow_service import (
+    InvalidKrDayCapsuleShadowServiceError,
+    run_kr_day_capsule_shadow_tick,
+)
 from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
 from trading_agent.kr_day_decision_models import (
     KrDayDecisionEvent,
@@ -177,6 +180,15 @@ def test_mismatched_request_sha_never_fills(tmp_path: Path) -> None:
     assert result.event.reason is KrDayCapsuleShadowReason.DECISION_MISMATCH
     assert result.event.entry_price is None
     assert result.decision_event_id == decision.event_id
+    replay = run_kr_day_capsule_shadow_tick(
+        KrDayCapsuleShadowStore(tmp_path / "shadow.sqlite3"),
+        (mismatched,),
+        decisions,
+    ).results[0]
+    assert replay.created is False
+    assert replay.decision_event_id == result.decision_event_id
+    assert replay.decision_reason_codes == result.decision_reason_codes
+    assert replay.market_gate_reasons == result.market_gate_reasons
 
 
 def test_old_evaluation_replay_keeps_exact_decision_metadata_after_later_decision(
@@ -199,6 +211,84 @@ def test_old_evaluation_replay_keeps_exact_decision_metadata_after_later_decisio
     assert replay.decision_event_id == first_decision.event_id
     assert replay.decision_reason_codes == first.decision_reason_codes
     assert replay.market_gate_reasons == first.market_gate_reasons
+
+
+@pytest.mark.parametrize("decision_kind", ("active", "pending", "nonarmed"))
+def test_bound_decision_replay_fails_closed_when_original_store_is_missing(
+    decision_kind: Literal["active", "pending", "nonarmed"],
+    tmp_path: Path,
+) -> None:
+    match decision_kind:
+        case "active":
+            request = _with_admission_features(_request_for(_entry_evaluation()))
+        case "pending":
+            request = _admitted_pullback_request()
+        case "nonarmed":
+            request = _request_for(_entry_evaluation())
+        case unreachable:
+            assert_never(unreachable)
+    evaluation = adapt_kr_day_capsule_evaluation(request)
+    decisions = KrDayDecisionStore(tmp_path / "decisions.sqlite3")
+    original = run_kr_day_decision_tick((request,), decisions)[0]
+    shadows = KrDayCapsuleShadowStore(tmp_path / "shadow.sqlite3")
+    first = run_kr_day_capsule_shadow_tick(shadows, (evaluation,), decisions).results[0]
+
+    with pytest.raises(InvalidKrDayCapsuleShadowServiceError):
+        _ = run_kr_day_capsule_shadow_tick(
+            shadows,
+            (evaluation,),
+            KrDayDecisionStore(tmp_path / "empty-decisions.sqlite3"),
+        )
+
+    assert first.decision_event_id == original.event_id
+    assert len(shadows.events()) == 1
+
+
+def test_decision_missing_replay_is_deterministic_without_fabricated_provenance(
+    tmp_path: Path,
+) -> None:
+    evaluation = _entry_evaluation()
+    decisions = KrDayDecisionStore(tmp_path / "empty-decisions.sqlite3")
+    shadows = KrDayCapsuleShadowStore(tmp_path / "shadow.sqlite3")
+    first = run_kr_day_capsule_shadow_tick(shadows, (evaluation,), decisions).results[0]
+    changed_decisions = KrDayDecisionStore(tmp_path / "changed-decisions.sqlite3")
+    _ = run_kr_day_decision_tick((_request_for(evaluation),), changed_decisions)
+
+    replay = run_kr_day_capsule_shadow_tick(shadows, (evaluation,), changed_decisions).results[0]
+
+    assert first.event.reason is KrDayCapsuleShadowReason.DECISION_MISSING
+    assert replay.event.event_id == first.event.event_id
+    assert replay.decision_event_id is None
+    assert replay.decision_reason_codes == first.decision_reason_codes == ()
+    assert replay.market_gate_reasons == first.market_gate_reasons
+
+
+def test_active_management_replay_does_not_require_entry_decision(
+    tmp_path: Path,
+) -> None:
+    request = _with_admission_features(_request_for(_entry_evaluation()))
+    entry = adapt_kr_day_capsule_evaluation(request)
+    collision = _advance(entry, low=Decimal("9900"), high=Decimal("10400"))
+    decisions = KrDayDecisionStore(tmp_path / "decisions.sqlite3")
+    _ = run_kr_day_decision_tick((request,), decisions)
+    shadows = KrDayCapsuleShadowStore(tmp_path / "shadow.sqlite3")
+    _ = run_kr_day_capsule_shadow_tick(shadows, (entry,), decisions)
+    terminal = run_kr_day_capsule_shadow_tick(
+        shadows,
+        (collision,),
+        KrDayDecisionStore(tmp_path / "empty-decisions.sqlite3"),
+    ).results[0]
+
+    replay = run_kr_day_capsule_shadow_tick(
+        shadows,
+        (collision,),
+        KrDayDecisionStore(tmp_path / "empty-decisions.sqlite3"),
+    ).results[0]
+
+    assert terminal.event.status is KrDayCapsuleShadowStatus.STOPPED
+    assert replay.created is False
+    assert replay.event.event_id == terminal.event.event_id
+    assert replay.decision_event_id is None
 
 
 @pytest.mark.parametrize(

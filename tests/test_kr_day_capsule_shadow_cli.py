@@ -75,6 +75,27 @@ def test_cli_persists_active_shadow_and_replays_without_new_event(tmp_path: Path
     assert len(KrDayCapsuleShadowStore(store).events()) == 1
 
 
+def test_cli_bound_replay_fails_closed_when_original_decision_store_is_missing(
+    tmp_path: Path,
+) -> None:
+    request_path = _publish_request(
+        tmp_path,
+        "entry-bound-replay",
+        _request_for(_entry_evaluation()),
+    )
+    store = tmp_path / "store" / "shadow.sqlite3"
+    command = list(_command(request_path, store))
+    assert _run(tuple(command)).returncode == 0
+    decision_index = command.index("--decision-store") + 1
+    command[decision_index] = str(tmp_path / "empty" / "decisions.sqlite3")
+
+    replay = _run(tuple(command))
+
+    assert replay.returncode == 2
+    assert _json(replay).result == "blocked"
+    assert len(KrDayCapsuleShadowStore(store).events()) == 1
+
+
 def test_cli_keeps_valid_sibling_when_private_artifact_is_invalid(tmp_path: Path) -> None:
     # Given
     valid = _publish_request(tmp_path, "valid", _request_for(_entry_evaluation()))

@@ -22,8 +22,11 @@ from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
 from trading_agent.kr_day_decision_models import KrDayDecisionReasonCode
 from trading_agent.kr_day_decision_store import KrDayDecisionStore
 from trading_agent.kr_day_shadow_decision_bridge import (
+    InvalidKrDayShadowDecisionBridgeError,
     KrDayShadowAdmission,
     assess_kr_day_shadow_admission,
+    kr_day_decision_signal_id,
+    replay_kr_day_shadow_admission,
 )
 from trading_agent.kr_intraday_market_gate import KrIntradayGateReason
 from trading_agent.kr_theme_day_shadow_entry_models import SHADOW_ENTRY_SLIPPAGE_BPS
@@ -110,7 +113,10 @@ def _process_one(
 ) -> KrDayCapsuleShadowResult:
     replay = store.event_for_evaluation(evaluation.evaluation_id)
     if replay is not None:
-        admission = assess_kr_day_shadow_admission(evaluation, decision_store)
+        try:
+            admission = replay_kr_day_shadow_admission(evaluation, replay, decision_store)
+        except InvalidKrDayShadowDecisionBridgeError:
+            raise InvalidKrDayCapsuleShadowServiceError from None
         return _result(False, replay, admission)
     previous = store.latest(evaluation.capsule_id, evaluation.session_date.isoformat())
     if previous is not None and previous.terminal:
@@ -167,6 +173,7 @@ def _process_one(
                 KrDayCapsuleShadowStatus.REGISTERED,
                 KrDayCapsuleShadowReason.INVALID_ENTRY_LADDER,
                 accepted_cursor=evaluation.completed_bar_cursor,
+                signal_id=kr_day_decision_signal_id(admission.decision_event_id),
             )
         else:
             projected = project_kr_day_capsule_shadow_event(
@@ -175,7 +182,7 @@ def _process_one(
                 KrDayCapsuleShadowStatus.ACTIVE,
                 KrDayCapsuleShadowReason.ENTRY,
                 accepted_cursor=evaluation.completed_bar_cursor,
-                signal_id=f"kr-day-decision-{admission.decision_event_id}",
+                signal_id=kr_day_decision_signal_id(admission.decision_event_id),
                 entry_price=fill,
                 stop_price=admission.stop_price,
                 target_prices=admission.target_prices,
@@ -187,6 +194,7 @@ def _process_one(
             KrDayCapsuleShadowStatus.REGISTERED,
             admission.reason,
             accepted_cursor=evaluation.completed_bar_cursor,
+            signal_id=kr_day_decision_signal_id(admission.decision_event_id),
         )
     return _append(store, projected, admission)
 
@@ -255,11 +263,7 @@ def _result(
     if admission is None:
         return KrDayCapsuleShadowResult(created, event)
     return KrDayCapsuleShadowResult(
-        created,
-        event,
-        admission.decision_event_id,
-        admission.decision_reason_codes,
-        admission.market_gate_reasons,
+        created, event, admission.decision_event_id, admission.decision_reason_codes, admission.market_gate_reasons
     )
 
 

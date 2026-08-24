@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import stat
 
 from pydantic import ValidationError
 
+from tests.test_kr_day_capsule_adapter import _request
+from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.kr_day_capsule_models import KrDayCapsuleEvaluation
 from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowStatus
 from trading_agent.kr_day_capsule_shadow_service import (
@@ -21,6 +24,7 @@ from trading_agent.kr_day_decision_models import (
     KrDayDecisionReasonCode,
     KrDayDecisionStatus,
 )
+from trading_agent.kr_day_decision_service import run_kr_day_decision_tick
 from trading_agent.kr_day_decision_store import KrDayDecisionStore
 from trading_agent.kr_theme_day_setup import derive_kr_theme_day_setup
 
@@ -35,6 +39,26 @@ def run_authorized_kr_shadow_tick(
     for evaluation in evaluations:
         previous_shadow = store.latest(evaluation.capsule_id, evaluation.session_date.isoformat())
         if previous_shadow is not None and previous_shadow.status is KrDayCapsuleShadowStatus.ACTIVE:
+            continue
+        base = _request()
+        standard_lineage = (
+            evaluation.capsule_id == base.capsule.capsule_id
+            and evaluation.hypothesis_version_id == base.capsule.hypothesis_version_id
+            and evaluation.calendar_snapshot_id == base.calendar.snapshot_id
+        )
+        if standard_lineage:
+            request = base.model_copy(
+                update={
+                    "opportunity": evaluation.setup_input.opportunity,
+                    "bars": evaluation.setup_input.bars,
+                    "market": evaluation.market,
+                    "evaluated_at": evaluation.evaluated_at,
+                    "max_slippage_bps": evaluation.setup_input.max_slippage_bps,
+                }
+            )
+            input_sha = hashlib.sha256(canonical_experiment_ledger_json(request).encode()).hexdigest()
+            if input_sha == evaluation.decision_input_sha256:
+                _ = run_kr_day_decision_tick((request,), decisions)
             continue
         setup = derive_kr_theme_day_setup(evaluation.setup_input)
         ask = evaluation.market.ask_price

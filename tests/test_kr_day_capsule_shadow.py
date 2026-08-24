@@ -28,7 +28,7 @@ from trading_agent.kr_day_capsule_shadow_store import (
 )
 from trading_agent.kr_intraday_market_gate import KrMarketConstraintSnapshot
 from trading_agent.kr_theme_day_setup import KrCompletedMinuteBar, KrThemeDaySetupInput
-from trading_agent.signal_contract_models import EvidenceRef
+from trading_agent.signal_contract_models import EvidenceRef, FeatureValue
 
 
 def test_entry_restart_and_same_bar_stop_first_are_append_only(tmp_path: Path) -> None:
@@ -206,6 +206,23 @@ def _plain_evaluation() -> KrDayCapsuleEvaluation:
 
 def _entry_evaluation() -> KrDayCapsuleEvaluation:
     request = _request()
+    features = {item.name: item.value for item in request.opportunity.candidates[0].features}
+    features.update(
+        theme_catalyst_count="2",
+        theme_publisher_count="2",
+        theme_related_symbol_count="3",
+    )
+    candidate = request.opportunity.candidates[0].model_copy(
+        update={
+            "features": tuple(
+                FeatureValue(name=name, value=value)
+                for name, value in sorted(features.items())
+            )
+        }
+    )
+    request = request.model_copy(
+        update={"opportunity": request.opportunity.model_copy(update={"candidates": (candidate,)})}
+    )
     bars = list(request.bars)
     replacements = {
         50: ("10050", "10120", "10040", "10110", 100, "1008000"),
@@ -270,7 +287,12 @@ def _advance(
     return adapt_kr_day_capsule_evaluation(
         KrDayCapsuleEvaluationRequest.model_validate(
             request.model_dump(mode="python")
-            | {"bars": tuple(bars), "evaluated_at": evaluated_at, "market": market}
+            | {
+                "opportunity": evaluation.setup_input.opportunity,
+                "bars": tuple(bars),
+                "evaluated_at": evaluated_at,
+                "market": market,
+            }
         )
     )
 
