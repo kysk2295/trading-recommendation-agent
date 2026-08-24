@@ -45,6 +45,7 @@ _KST: Final = ZoneInfo("Asia/Seoul")
 _DISCOVERY_LEAD: Final = dt.timedelta(minutes=10)
 _ONE_MINUTE: Final = dt.timedelta(minutes=1)
 _LIVE_SOURCE_DELAY: Final = dt.timedelta(seconds=30)
+_LIVE_SEARCH_BUDGET: Final = 2**4
 _KR_OPEN: Final = dt.time(9)
 _KR_CLOSE: Final = dt.time(15, 30)
 
@@ -121,7 +122,7 @@ def project_us_live_discovery_evidence(
             data_manifest_sha256=_sha(canonical_experiment_ledger_json(checked)),
             replay_bars=(replay,),
             budget_epoch_ref=f"us-equities-{local_date.isoformat()}",
-            search_budget=3,
+            search_budget=_LIVE_SEARCH_BUDGET,
         )
     except DayDiscoveryLiveProjectionError:
         raise
@@ -233,7 +234,7 @@ def project_kr_live_discovery_evidence(
             data_manifest_sha256=_sha(manifest),
             replay_bars=replay,
             budget_epoch_ref=f"kr-equities-{local_date.isoformat()}",
-            search_budget=3,
+            search_budget=_LIVE_SEARCH_BUDGET,
         )
     except DayDiscoveryLiveProjectionError:
         raise

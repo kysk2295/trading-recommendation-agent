@@ -31,6 +31,7 @@ def test_us_live_input_projects_latest_completed_bar_to_future_only_discovery() 
     assert view.first_eligible_completed_bar_at >= published_at + dt.timedelta(minutes=10)
     assert view.replay_bars[0].timestamp == source.candidates[0].bars[-1].timestamp
     assert view.replay_bars[0].spread_bps > 0
+    assert view.search_budget == 16
     assert view.universe_snapshot_at <= view.completed_bar_at < view.first_eligible_completed_bar_at
 
 
@@ -51,6 +52,7 @@ def test_kr_live_input_uses_read_only_market_lineage_and_next_future_bar() -> No
     assert view.first_eligible_completed_bar_at >= request.evaluated_at + dt.timedelta(minutes=10)
     assert view.replay_bars[-1].prior_close == float(request.market.previous_close)
     assert view.replay_bars[-1].average_daily_volume > 0
+    assert view.search_budget == 16
     assert "kr_read_only_market_v1" in view.evidence_schema
 
 
