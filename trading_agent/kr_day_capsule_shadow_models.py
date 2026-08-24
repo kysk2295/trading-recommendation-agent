@@ -35,6 +35,13 @@ class KrDayCapsuleShadowReason(StrEnum):
     DIVERGENT_BATCH = "divergent_batch"
     INVALID_EVALUATION = "invalid_evaluation"
     SIGNAL_BLOCKED = "signal_blocked"
+    CONDITIONAL_TRIGGER_PENDING = "conditional_trigger_pending"
+    DECISION_MISSING = "decision_missing"
+    DECISION_MISMATCH = "decision_mismatch"
+    DECISION_NOT_ARMED = "decision_not_armed"
+    MARKET_GATE_BLOCKED = "market_gate_blocked"
+    SPREAD_TOO_WIDE = "spread_too_wide"
+    INVALID_ENTRY_LADDER = "invalid_entry_ladder"
 
 
 class InvalidKrDayCapsuleShadowError(ValueError):

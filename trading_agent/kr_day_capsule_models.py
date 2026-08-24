@@ -41,6 +41,8 @@ class KrDayCapsuleEvaluationRequest(KrDayCapsuleModel):
 class KrDayCapsuleEvaluationPayload(KrDayCapsuleModel):
     schema_version: Literal[1] = 1
     capsule_id: str
+    hypothesis_version_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    decision_input_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     session_date: dt.date
     calendar_snapshot_id: str
     calendar_receipt_sha256: str

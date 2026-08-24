@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
+from tests.kr_day_shadow_support import run_authorized_kr_shadow_tick as run_kr_day_capsule_shadow_tick
 from tests.test_kr_day_capsule_shadow import _entry_evaluation, _rebuild
 from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowStatus
-from trading_agent.kr_day_capsule_shadow_service import run_kr_day_capsule_shadow_tick
 from trading_agent.kr_day_capsule_shadow_store import (
     InvalidKrDayCapsuleShadowStoreError,
     KrDayCapsuleShadowStore,

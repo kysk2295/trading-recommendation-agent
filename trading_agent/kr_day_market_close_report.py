@@ -22,7 +22,6 @@ from trading_agent.kr_day_capsule_outcomes import (
 )
 from trading_agent.kr_day_capsule_shadow_models import (
     KrDayCapsuleShadowEvent,
-    KrDayCapsuleShadowReason,
     KrDayCapsuleShadowStatus,
 )
 from trading_agent.kr_day_market_close_metrics import (
@@ -251,10 +250,7 @@ def _require_attempt_lineage(request: KrDayMarketCloseRequest) -> None:
 
 
 def _event_is_close_finalizable(event: KrDayCapsuleShadowEvent) -> bool:
-    return event.terminal or (
-        event.status is KrDayCapsuleShadowStatus.REGISTERED
-        and event.reason is KrDayCapsuleShadowReason.NO_SIGNAL
-    )
+    return event.terminal or event.status is KrDayCapsuleShadowStatus.REGISTERED
 
 
 def _same_revision_content(left: MarketCloseReport, right: MarketCloseReport) -> bool:

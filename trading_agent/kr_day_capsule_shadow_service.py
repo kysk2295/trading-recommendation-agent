@@ -19,18 +19,18 @@ from trading_agent.kr_day_capsule_shadow_models import (
 )
 from trading_agent.kr_day_capsule_shadow_projection import project_kr_day_capsule_shadow_event
 from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
-from trading_agent.kr_intraday_market_gate import KrIntradayGateStatus, assess_kr_shadow_entry
-from trading_agent.kr_theme_day_setup import InvalidKrThemeDaySetupError, derive_kr_theme_day_setup
-from trading_agent.kr_theme_day_shadow_entry_models import SHADOW_ENTRY_SLIPPAGE_BPS
-from trading_agent.kr_theme_day_signal import (
-    InvalidKrThemeDaySignalError,
-    project_kr_theme_day_shadow_signal,
+from trading_agent.kr_day_decision_models import KrDayDecisionReasonCode
+from trading_agent.kr_day_decision_store import KrDayDecisionStore
+from trading_agent.kr_day_shadow_decision_bridge import (
+    KrDayShadowAdmission,
+    assess_kr_day_shadow_admission,
 )
+from trading_agent.kr_intraday_market_gate import KrIntradayGateReason
+from trading_agent.kr_theme_day_shadow_entry_models import SHADOW_ENTRY_SLIPPAGE_BPS
 
 _KST: Final = ZoneInfo("Asia/Seoul")
 _ONE_MINUTE: Final = dt.timedelta(minutes=1)
 _MAX_BAR_DELAY: Final = dt.timedelta(seconds=30)
-_MAX_MARKET_DELAY: Final = dt.timedelta(seconds=5)
 _MAX_CAPSULES: Final = 3
 
 
@@ -44,6 +44,9 @@ class InvalidKrDayCapsuleShadowServiceError(ValueError):
 class KrDayCapsuleShadowResult:
     created: bool
     event: KrDayCapsuleShadowEvent
+    decision_event_id: str | None = None
+    decision_reason_codes: tuple[KrDayDecisionReasonCode, ...] = ()
+    market_gate_reasons: tuple[KrIntradayGateReason, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +57,7 @@ class KrDayCapsuleShadowBatchResult:
 def run_kr_day_capsule_shadow_tick(
     store: KrDayCapsuleShadowStore,
     evaluations: tuple[KrDayCapsuleEvaluation, ...],
+    decision_store: KrDayDecisionStore,
 ) -> KrDayCapsuleShadowBatchResult:
     if not evaluations or len(evaluations) > _MAX_CAPSULES:
         raise InvalidKrDayCapsuleShadowServiceError
@@ -70,7 +74,7 @@ def run_kr_day_capsule_shadow_tick(
     anchor = ordered[0]
     shared = (anchor.session_date, anchor.calendar_snapshot_id, anchor.completed_bar_cursor)
     results = tuple(
-        _process_one(store, item, shared)
+        _process_one(store, decision_store, item, shared)
         for item in ordered
     )
     return KrDayCapsuleShadowBatchResult(results)
@@ -100,12 +104,14 @@ def _require_active_lineages(
 
 def _process_one(
     store: KrDayCapsuleShadowStore,
+    decision_store: KrDayDecisionStore,
     evaluation: KrDayCapsuleEvaluation,
     shared: tuple[dt.date, str, dt.datetime],
 ) -> KrDayCapsuleShadowResult:
     replay = store.event_for_evaluation(evaluation.evaluation_id)
     if replay is not None:
-        return KrDayCapsuleShadowResult(False, replay)
+        admission = assess_kr_day_shadow_admission(evaluation, decision_store)
+        return _result(False, replay, admission)
     previous = store.latest(evaluation.capsule_id, evaluation.session_date.isoformat())
     if previous is not None and previous.terminal:
         return KrDayCapsuleShadowResult(False, previous)
@@ -147,54 +153,42 @@ def _process_one(
         )
     if previous is not None and previous.status is KrDayCapsuleShadowStatus.ACTIVE:
         return _append(store, _active_event(evaluation, previous))
-    try:
-        setup = derive_kr_theme_day_setup(evaluation.setup_input)
-        if setup is None:
+    admission = assess_kr_day_shadow_admission(evaluation, decision_store)
+    if admission.ready:
+        if admission.trigger_price is None or admission.stop_price is None:
+            raise InvalidKrDayCapsuleShadowServiceError
+        fill = admission.trigger_price * (
+            Decimal(1) + SHADOW_ENTRY_SLIPPAGE_BPS / Decimal(10_000)
+        )
+        if not admission.stop_price < fill < admission.target_prices[0]:
             projected = project_kr_day_capsule_shadow_event(
                 evaluation,
                 previous,
                 KrDayCapsuleShadowStatus.REGISTERED,
-                KrDayCapsuleShadowReason.NO_SIGNAL,
+                KrDayCapsuleShadowReason.INVALID_ENTRY_LADDER,
                 accepted_cursor=evaluation.completed_bar_cursor,
             )
         else:
-            decision = project_kr_theme_day_shadow_signal(
-                evaluation.setup_input.opportunity,
-                evaluation.market,
-                setup,
-                evaluated_at=evaluation.evaluated_at,
+            projected = project_kr_day_capsule_shadow_event(
+                evaluation,
+                previous,
+                KrDayCapsuleShadowStatus.ACTIVE,
+                KrDayCapsuleShadowReason.ENTRY,
+                accepted_cursor=evaluation.completed_bar_cursor,
+                signal_id=f"kr-day-decision-{admission.decision_event_id}",
+                entry_price=fill,
+                stop_price=admission.stop_price,
+                target_prices=admission.target_prices,
             )
-            if decision.signal is None:
-                projected = project_kr_day_capsule_shadow_event(
-                    evaluation,
-                    previous,
-                    KrDayCapsuleShadowStatus.BLOCKED,
-                    KrDayCapsuleShadowReason.SIGNAL_BLOCKED,
-                )
-            else:
-                signal = decision.signal
-                fill = signal.entry_price * (
-                    Decimal(1) + SHADOW_ENTRY_SLIPPAGE_BPS / Decimal(10_000)
-                )
-                projected = project_kr_day_capsule_shadow_event(
-                    evaluation,
-                    previous,
-                    KrDayCapsuleShadowStatus.ACTIVE,
-                    KrDayCapsuleShadowReason.ENTRY,
-                    accepted_cursor=evaluation.completed_bar_cursor,
-                    signal_id=signal.signal_id,
-                    entry_price=fill,
-                    stop_price=signal.stop_price,
-                    target_prices=tuple(target.price for target in signal.targets),
-                )
-    except (InvalidKrThemeDaySetupError, InvalidKrThemeDaySignalError):
+    else:
         projected = project_kr_day_capsule_shadow_event(
             evaluation,
             previous,
-            KrDayCapsuleShadowStatus.FAILED,
-            KrDayCapsuleShadowReason.INVALID_EVALUATION,
+            KrDayCapsuleShadowStatus.REGISTERED,
+            admission.reason,
+            accepted_cursor=evaluation.completed_bar_cursor,
         )
-    return _append(store, projected)
+    return _append(store, projected, admission)
 
 
 def _active_event(
@@ -229,7 +223,6 @@ def _active_event(
 def _require_evaluation(evaluation: KrDayCapsuleEvaluation) -> None:
     bars = evaluation.setup_input.bars
     latest = bars[-1]
-    gate = assess_kr_shadow_entry(evaluation.market, evaluation.evaluated_at)
     if (
         evaluation.authority_ceiling is not CapsuleAuthorityCeiling.RESEARCH_ONLY
         or evaluation.trading_authority is not False
@@ -241,9 +234,6 @@ def _require_evaluation(evaluation: KrDayCapsuleEvaluation) -> None:
         or latest.end_at > evaluation.evaluated_at
         or latest.observed_at > evaluation.evaluated_at
         or evaluation.evaluated_at - latest.observed_at > _MAX_BAR_DELAY
-        or evaluation.market.observed_at > evaluation.evaluated_at
-        or evaluation.evaluated_at - evaluation.market.observed_at > _MAX_MARKET_DELAY
-        or gate.status is not KrIntradayGateStatus.ELIGIBLE
         or any(current.start_at != previous.end_at for previous, current in pairwise(bars))
     ):
         raise InvalidKrDayCapsuleShadowServiceError
@@ -252,8 +242,25 @@ def _require_evaluation(evaluation: KrDayCapsuleEvaluation) -> None:
 def _append(
     store: KrDayCapsuleShadowStore,
     event: KrDayCapsuleShadowEvent,
+    admission: KrDayShadowAdmission | None = None,
 ) -> KrDayCapsuleShadowResult:
-    return KrDayCapsuleShadowResult(store.append(event), event)
+    return _result(store.append(event), event, admission)
+
+
+def _result(
+    created: bool,
+    event: KrDayCapsuleShadowEvent,
+    admission: KrDayShadowAdmission | None,
+) -> KrDayCapsuleShadowResult:
+    if admission is None:
+        return KrDayCapsuleShadowResult(created, event)
+    return KrDayCapsuleShadowResult(
+        created,
+        event,
+        admission.decision_event_id,
+        admission.decision_reason_codes,
+        admission.market_gate_reasons,
+    )
 
 
 __all__ = (

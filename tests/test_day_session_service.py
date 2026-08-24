@@ -409,9 +409,11 @@ def test_kr_materializer_reads_cycle_calendar_market_and_ledger_stores(tmp_path:
             str(ROOT / "run_kr_day_capsule_shadow.py"),
             "--request",
             str(mixed_paths[0]),
-            "--store",
-            str(config.state_root / "kr-day-capsule-shadow.sqlite3"),
-        ),
+                "--store",
+                str(config.state_root / "kr-day-capsule-shadow.sqlite3"),
+                "--decision-store",
+                str(config.state_root / "kr-day-decisions.sqlite3"),
+            ),
         cwd=ROOT,
         check=False,
         capture_output=True,
@@ -464,9 +466,15 @@ def test_public_kr_tick_audits_distinct_opportunities_for_active_and_current_sib
         "trading_agent.day_session_service._materialize_kr_requests",
         lambda *_: paths,
     )
+    child_commands: list[tuple[str, ...]] = []
+
+    def run_child(command: tuple[str, ...]) -> subprocess.CompletedProcess[str]:
+        child_commands.append(command)
+        return subprocess.CompletedProcess(command, 0, '{"result":"processed"}', "")
+
     monkeypatch.setattr(
         "trading_agent.day_session_service._run_child",
-        lambda command: subprocess.CompletedProcess(command, 0, '{"result":"processed"}', ""),
+        run_child,
     )
 
     # When: the public KR day-session tick processes both immutable request artifacts.
@@ -483,6 +491,11 @@ def test_public_kr_tick_audits_distinct_opportunities_for_active_and_current_sib
         active_request.opportunity.opportunity_id,
         sibling_request.opportunity.opportunity_id,
     }
+    assert child_commands
+    decision_option = child_commands[0].index("--decision-store")
+    assert child_commands[0][decision_option + 1] == str(
+        config.state_root / "kr-day-decisions.sqlite3"
+    )
 
 
 def _append_active_shadow(

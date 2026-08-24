@@ -365,6 +365,8 @@ Commit: `feat: integrate KR decisions into session service`
 - Modify: `trading_agent/day_session_service.py`
 - Modify: `trading_agent/kr_day_capsule_adapter.py`
 - Modify: `trading_agent/kr_day_capsule_models.py`
+- Modify: `trading_agent/kr_day_capsule_outcomes.py`
+- Modify: `trading_agent/kr_day_market_close_report.py`
 - Modify: `trading_agent/kr_day_capsule_shadow_service.py`
 - Create: `trading_agent/kr_day_shadow_decision_bridge.py`
 - Modify: `trading_agent/kr_theme_day_signal.py`

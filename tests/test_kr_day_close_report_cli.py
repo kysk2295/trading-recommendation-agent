@@ -6,11 +6,11 @@ from decimal import Decimal
 from pathlib import Path
 
 import run_kr_day_close_report as cli
+from tests.kr_day_shadow_support import run_authorized_kr_shadow_tick as run_kr_day_capsule_shadow_tick
 from tests.test_kr_day_capsule_shadow import _advance, _entry_evaluation, _plain_evaluation, _rebuild
 from tests.test_kr_day_market_close_report import _outcome, _request
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.kr_day_capsule_models import KrDayCapsuleEvaluation
-from trading_agent.kr_day_capsule_shadow_service import run_kr_day_capsule_shadow_tick
 from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
 from trading_agent.private_immutable_file import publish_private_immutable_text
 

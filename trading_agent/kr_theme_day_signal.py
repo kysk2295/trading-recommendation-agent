@@ -106,8 +106,9 @@ def project_kr_theme_day_shadow_signal(
         return KrThemeDaySignalDecision(None, gate.reasons, None, False)
     if market.bid_price is None or market.ask_price is None:
         raise InvalidKrThemeDaySignalError
-    midpoint = (market.bid_price + market.ask_price) / Decimal(2)
-    spread_bps = (market.ask_price - market.bid_price) / midpoint * Decimal(10_000)
+    spread_bps = kr_theme_day_spread_bps(market)
+    if spread_bps is None:
+        raise InvalidKrThemeDaySignalError
     if spread_bps > setup.max_slippage_bps:
         return KrThemeDaySignalDecision(None, (), spread_bps, False)
     valid_until = min(
@@ -149,6 +150,13 @@ def project_kr_theme_day_shadow_signal(
         opportunity_id=opportunity.opportunity_id,
     )
     return KrThemeDaySignalDecision(signal, (), spread_bps, True)
+
+
+def kr_theme_day_spread_bps(market: KrMarketConstraintSnapshot) -> Decimal | None:
+    if market.bid_price is None or market.ask_price is None:
+        return None
+    midpoint = (market.bid_price + market.ask_price) / Decimal(2)
+    return (market.ask_price - market.bid_price) / midpoint * Decimal(10_000)
 
 
 def _validated_inputs(

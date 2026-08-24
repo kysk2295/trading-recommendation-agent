@@ -163,6 +163,8 @@ def _run_kr(
         *(value for path in paths[-3:] for value in ("--request", str(path))),
         "--store",
         str(config.state_root / "kr-day-capsule-shadow.sqlite3"),
+        "--decision-store",
+        str(config.state_root / "kr-day-decisions.sqlite3"),
         "--output",
         str(config.state_root / "receipts"),
     )

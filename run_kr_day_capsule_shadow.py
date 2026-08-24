@@ -24,6 +24,7 @@ from trading_agent.kr_day_capsule_models import (
 from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowStatus
 from trading_agent.kr_day_capsule_shadow_service import run_kr_day_capsule_shadow_tick
 from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
+from trading_agent.kr_day_decision_store import KrDayDecisionStore
 from trading_agent.private_immutable_file import publish_private_immutable_text, read_private_text
 
 
@@ -36,7 +37,11 @@ class _EventResult(BaseModel):
     attempted_bar_cursor: str
     accepted_bar_cursor: str | None
     status: str
+    reason: str
     created: bool
+    decision_event_id: str | None
+    decision_reason_codes: tuple[str, ...]
+    market_gate_reasons: tuple[str, ...]
 
 
 class _CliResult(BaseModel):
@@ -58,6 +63,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run up to three local research-only KR capsule Shadow evaluations.")
     parser.add_argument("--request", action="append", type=Path, default=[])
     parser.add_argument("--store", type=Path)
+    parser.add_argument("--decision-store", type=Path)
     parser.add_argument("--output", type=Path)
     return parser.parse_args(argv)
 
@@ -65,7 +71,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     request_paths = tuple(args.request)
-    if not request_paths or args.store is None or len(request_paths) > 3:
+    if not request_paths or args.store is None or args.decision_store is None or len(request_paths) > 3:
         _emit(_blocked_result(len(request_paths)))
         return 2
     store = KrDayCapsuleShadowStore(args.store)
@@ -74,7 +80,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         _emit(_blocked_result(invalid_count))
         return 2
     try:
-        batch = run_kr_day_capsule_shadow_tick(store, valid)
+        batch = run_kr_day_capsule_shadow_tick(
+            store,
+            valid,
+            KrDayDecisionStore(args.decision_store),
+        )
     except (OSError, TypeError, ValidationError, ValueError):
         _emit(_blocked_result(invalid_count))
         return 2
@@ -88,7 +98,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 None if item.event.accepted_bar_cursor is None else item.event.accepted_bar_cursor.isoformat()
             ),
             status=item.event.status.value,
+            reason=item.event.reason.value,
             created=item.created,
+            decision_event_id=item.decision_event_id,
+            decision_reason_codes=tuple(reason.value for reason in item.decision_reason_codes),
+            market_gate_reasons=tuple(reason.value for reason in item.market_gate_reasons),
         )
         for item in batch.results
     )
@@ -125,11 +139,14 @@ def _adapt_requests(
             session_date = request.evaluated_at.astimezone(SEOUL).date().isoformat()
             latest = store.latest(request.capsule.capsule_id, session_date)
             try:
-                evaluation = adapt_kr_day_capsule_evaluation(request)
+                evaluation = adapt_kr_day_capsule_evaluation(request, allow_market_blocked=True)
             except ValueError:
                 if latest is None or latest.status is not KrDayCapsuleShadowStatus.ACTIVE:
                     raise
-                evaluation = adapt_kr_day_capsule_management_evaluation(request)
+                evaluation = adapt_kr_day_capsule_management_evaluation(
+                    request,
+                    allow_market_blocked=True,
+                )
             if latest is not None and latest.status is KrDayCapsuleShadowStatus.ACTIVE and (
                 latest.capsule_id,
                 latest.session_date,

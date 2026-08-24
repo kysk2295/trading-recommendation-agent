@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import datetime as dt
 import stat
 import subprocess
@@ -19,7 +20,11 @@ from trading_agent.kr_day_capsule_models import (
     KrDayCapsuleEvaluationRequest,
 )
 from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
+from trading_agent.kr_day_decision_service import run_kr_day_decision_tick
+from trading_agent.kr_day_decision_store import KrDayDecisionStore
+from trading_agent.kr_intraday_market_gate import KrViState
 from trading_agent.private_immutable_file import publish_private_immutable_text
+from trading_agent.signal_contract_models import FeatureValue
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "run_kr_day_capsule_shadow.py"
@@ -266,6 +271,29 @@ def test_cli_writes_only_content_addressed_private_local_receipt(tmp_path: Path)
     assert str(output) not in completed.stdout
 
 
+def test_cli_receipt_durably_preserves_decision_and_market_gate_reasons(tmp_path: Path) -> None:
+    request = _request_for(_entry_evaluation())
+    constrained = request.model_copy(
+        update={"market": request.market.model_copy(update={"vi_state": KrViState.DYNAMIC_ACTIVE})}
+    )
+    request_path = _publish_request(tmp_path, "vi-blocked", constrained)
+    store = tmp_path / "store" / "shadow.sqlite3"
+    output = tmp_path / "output"
+
+    completed = _run((*_command(request_path, store), "--output", str(output)))
+
+    payload = _json(completed)
+    event = payload.events[0]
+    receipt = next(output.glob("kr_day_capsule_shadow_*.json"))
+    receipt_payload = cli._CliResult.model_validate_json(receipt.read_text())
+    assert completed.returncode == 0
+    assert event.status == "registered"
+    assert event.decision_event_id is not None
+    assert "MARKET_GATE_BLOCKED" in event.decision_reason_codes
+    assert "vi_active" in event.market_gate_reasons
+    assert receipt_payload.events[0] == event
+
+
 def test_cli_import_closure_has_no_order_or_account_authority() -> None:
     # Given
     tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
@@ -300,12 +328,23 @@ def _publish_request(tmp_path: Path, name: str, request: KrDayCapsuleEvaluationR
     root = tmp_path / "requests"
     root.mkdir(mode=0o700, exist_ok=True)
     target = root / f"{name}.json"
+    request = _with_admission_features(request)
     assert publish_private_immutable_text(target, canonical_experiment_ledger_json(request) + "\n") is True
     return target
 
 
 def _command(first: Path, store: Path, *others: Path) -> tuple[str, ...]:
     requests = (first, *others)
+    decision_store = store.with_name("decisions.sqlite3")
+    parsed = []
+    for request in requests:
+        try:
+            parsed.append(KrDayCapsuleEvaluationRequest.model_validate_json(request.read_text()))
+        except (OSError, ValueError):
+            continue
+    if parsed:
+        with contextlib.suppress(ValueError):
+            _ = run_kr_day_decision_tick(tuple(parsed), KrDayDecisionStore(decision_store))
     return (
         "uv",
         "run",
@@ -314,6 +353,23 @@ def _command(first: Path, store: Path, *others: Path) -> tuple[str, ...]:
         *(part for request in requests for part in ("--request", str(request))),
         "--store",
         str(store),
+        "--decision-store",
+        str(decision_store),
+    )
+
+
+def _with_admission_features(request: KrDayCapsuleEvaluationRequest) -> KrDayCapsuleEvaluationRequest:
+    features = {item.name: item.value for item in request.opportunity.candidates[0].features}
+    features.update(
+        theme_catalyst_count="2",
+        theme_publisher_count="2",
+        theme_related_symbol_count="3",
+    )
+    candidate = request.opportunity.candidates[0].model_copy(
+        update={"features": tuple(FeatureValue(name=name, value=value) for name, value in sorted(features.items()))}
+    )
+    return request.model_copy(
+        update={"opportunity": request.opportunity.model_copy(update={"candidates": (candidate,)})}
     )
 
 

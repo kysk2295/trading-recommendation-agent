@@ -192,8 +192,6 @@ def _project_terminal(
             trigger = event.target_prices[0] if event.target_prices else None
             return _exit_metrics(event, trigger, "targeted")
         case KrDayCapsuleShadowStatus.REGISTERED:
-            if event.reason is not KrDayCapsuleShadowReason.NO_SIGNAL:
-                raise InvalidKrDayCapsuleOutcomeError
             return KrDayCapsuleTerminalKind.NO_SIGNAL, event.reason.value, None, None
         case KrDayCapsuleShadowStatus.BLOCKED:
             return KrDayCapsuleTerminalKind.BLOCKED, event.reason.value, None, None

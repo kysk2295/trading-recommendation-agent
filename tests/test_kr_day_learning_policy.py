@@ -9,6 +9,7 @@ import pytest
 
 from tests.day_agent_version_learning_support import LeaderAuthor, diagnostics
 from tests.day_strategy_capsule_support import PUBLISHED_AT, builtin_request
+from tests.kr_day_shadow_support import run_authorized_kr_shadow_tick as run_kr_day_capsule_shadow_tick
 from tests.test_kr_day_capsule_shadow import _advance, _entry_evaluation
 from tests.test_kr_day_market_close_report import _outcome, _request
 from trading_agent.day_agent_challenger_publisher import (
@@ -25,7 +26,6 @@ from trading_agent.day_agent_version_models import (
 from trading_agent.day_agent_version_store import DayAgentVersionStore
 from trading_agent.day_learning_policy import ExplorationPolicy, ExplorationPolicyAction
 from trading_agent.day_strategy_capsule import build_strategy_capsule
-from trading_agent.kr_day_capsule_shadow_service import run_kr_day_capsule_shadow_tick
 from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
 from trading_agent.kr_day_learning_policy import (
     InvalidKrDayLearningPolicyError,

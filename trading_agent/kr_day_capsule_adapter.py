@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 from decimal import Decimal, InvalidOperation
 from itertools import pairwise
 from typing import Final, override
@@ -12,6 +13,7 @@ from trading_agent.day_strategy_capsule_models import (
     CapsuleAuthorityCeiling,
     StrategyCapsule,
 )
+from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
 from trading_agent.kis_kr_session_calendar_models import KrSessionCalendarSnapshot
 from trading_agent.kr_day_capsule_models import (
     KrDayCapsuleEvaluation,
@@ -45,6 +47,8 @@ class InvalidKrDayCapsuleEvaluationError(ValueError):
 
 def adapt_kr_day_capsule_evaluation(
     source: KrDayCapsuleEvaluationRequest,
+    *,
+    allow_market_blocked: bool = False,
 ) -> KrDayCapsuleEvaluation:
     try:
         request = KrDayCapsuleEvaluationRequest.model_validate(source.model_dump(mode="python"))
@@ -56,7 +60,7 @@ def adapt_kr_day_capsule_evaluation(
             allow_expired=False,
         )
         bars = _require_completed_bar_chain(request, symbol, session_date)
-        _require_market(request, symbol, bars[-1])
+        _require_market(request, symbol, bars[-1], allow_market_blocked=allow_market_blocked)
         setup_input = KrThemeDaySetupInput(
             opportunity=request.opportunity,
             bars=bars,
@@ -66,6 +70,10 @@ def adapt_kr_day_capsule_evaluation(
         )
         payload = {
             "capsule_id": request.capsule.capsule_id,
+            "hypothesis_version_id": request.capsule.hypothesis_version_id,
+            "decision_input_sha256": hashlib.sha256(
+                canonical_experiment_ledger_json(request).encode()
+            ).hexdigest(),
             "session_date": session_date,
             "calendar_snapshot_id": request.calendar.snapshot_id,
             "calendar_receipt_sha256": request.calendar.payload.receipt_sha256,
@@ -89,6 +97,8 @@ def adapt_kr_day_capsule_evaluation(
 
 def adapt_kr_day_capsule_management_evaluation(
     source: KrDayCapsuleEvaluationRequest,
+    *,
+    allow_market_blocked: bool = False,
 ) -> KrDayCapsuleEvaluation:
     try:
         request = KrDayCapsuleEvaluationRequest.model_validate(source.model_dump(mode="python"))
@@ -97,7 +107,7 @@ def adapt_kr_day_capsule_management_evaluation(
             request.capsule, request.opportunity, request.evaluated_at, allow_expired=True
         )
         bars = _require_completed_bar_chain(request, symbol, session_date)
-        _require_market(request, symbol, bars[-1])
+        _require_market(request, symbol, bars[-1], allow_market_blocked=allow_market_blocked)
         setup_input = KrThemeDaySetupInput(
             opportunity=request.opportunity,
             bars=bars,
@@ -107,6 +117,10 @@ def adapt_kr_day_capsule_management_evaluation(
         )
         payload = {
             "capsule_id": request.capsule.capsule_id,
+            "hypothesis_version_id": request.capsule.hypothesis_version_id,
+            "decision_input_sha256": hashlib.sha256(
+                canonical_experiment_ledger_json(request).encode()
+            ).hexdigest(),
             "session_date": session_date,
             "calendar_snapshot_id": request.calendar.snapshot_id,
             "calendar_receipt_sha256": request.calendar.payload.receipt_sha256,
@@ -224,6 +238,8 @@ def _require_market(
     request: KrDayCapsuleEvaluationRequest,
     symbol: str,
     latest: KrCompletedMinuteBar,
+    *,
+    allow_market_blocked: bool,
 ) -> None:
     gate = assess_kr_shadow_entry(request.market, request.evaluated_at)
     if (
@@ -232,7 +248,7 @@ def _require_market(
         <= latest.observed_at
         <= request.market.observed_at
         <= request.evaluated_at
-        or gate.status is not KrIntradayGateStatus.ELIGIBLE
+        or (not allow_market_blocked and gate.status is not KrIntradayGateStatus.ELIGIBLE)
     ):
         raise InvalidKrDayCapsuleEvaluationError
 

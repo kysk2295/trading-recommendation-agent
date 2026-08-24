@@ -7,6 +7,7 @@ from typing import Literal, assert_never
 
 import pytest
 
+from tests.kr_day_shadow_support import run_authorized_kr_shadow_tick as run_kr_day_capsule_shadow_tick
 from tests.test_kr_day_capsule_adapter import _request
 from trading_agent.kr_day_capsule_adapter import adapt_kr_day_capsule_evaluation
 from trading_agent.kr_day_capsule_models import (
@@ -20,10 +21,7 @@ from trading_agent.kr_day_capsule_shadow_models import (
     KrDayCapsuleShadowReason,
     KrDayCapsuleShadowStatus,
 )
-from trading_agent.kr_day_capsule_shadow_service import (
-    InvalidKrDayCapsuleShadowServiceError,
-    run_kr_day_capsule_shadow_tick,
-)
+from trading_agent.kr_day_capsule_shadow_service import InvalidKrDayCapsuleShadowServiceError
 from trading_agent.kr_day_capsule_shadow_store import (
     InvalidKrDayCapsuleShadowStoreError,
     KrDayCapsuleShadowStore,
@@ -130,7 +128,7 @@ def test_batch_orders_capsules_and_isolates_failed_sibling(tmp_path: Path) -> No
         sorted((valid.capsule_id, failed.capsule_id))
     )
     assert result.results[0].event.status is KrDayCapsuleShadowStatus.ACTIVE
-    assert result.results[1].event.status is KrDayCapsuleShadowStatus.FAILED
+    assert result.results[1].event.status is KrDayCapsuleShadowStatus.REGISTERED
     assert len(store.events()) == 2
 
 

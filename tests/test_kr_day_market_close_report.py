@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from tests.kr_day_shadow_support import run_authorized_kr_shadow_tick as run_kr_day_capsule_shadow_tick
 from tests.test_kr_day_capsule_shadow import _advance, _entry_evaluation, _plain_evaluation, _rebuild
 from trading_agent import kr_day_market_close_report as report_module
 from trading_agent.kis_kr_session_calendar_models import (
@@ -22,7 +23,6 @@ from trading_agent.kr_day_capsule_outcomes import (
     project_kr_day_capsule_outcome,
 )
 from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowEvent
-from trading_agent.kr_day_capsule_shadow_service import run_kr_day_capsule_shadow_tick
 from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
 from trading_agent.kr_day_market_close_metrics import (
     KrDayMarketCloseMetrics,
