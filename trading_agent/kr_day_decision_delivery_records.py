@@ -56,7 +56,12 @@ def _thread_records(
         (
             event
             for event in decisions
-            if event.status in {KrDayDecisionStatus.REJECTED, KrDayDecisionStatus.BLOCKED}
+            if event.status
+            in {
+                KrDayDecisionStatus.REJECTED,
+                KrDayDecisionStatus.BLOCKED,
+                KrDayDecisionStatus.EXPIRED,
+            }
             and event.observed_at >= root.observed_at
         ),
         None,

@@ -314,6 +314,45 @@ def test_kr_visible_plan_invalidation_and_standalone_supplements_map_once(tmp_pa
     assert "challenger 결정 active/queued: 1/1" in events[3].rendered_text
 
 
+def test_kr_expired_armed_plan_projects_one_invalidation_reply(tmp_path: Path) -> None:
+    # Given: a visible ARMED plan reaches its immutable deadline without an entry.
+    armed = _decision_event(
+        status=KrDayDecisionStatus.ARMED,
+        reason_codes=(KrDayDecisionReasonCode.CONDITIONAL_TRIGGER_PENDING,),
+    )
+    expired_at = armed.valid_until + dt.timedelta(seconds=1)
+    expired_payload = _decision_payload(
+        status=KrDayDecisionStatus.EXPIRED,
+        reason_codes=(KrDayDecisionReasonCode.PRICE_SETUP_EXPIRED,),
+        previous_event_id=armed.event_id,
+        completed_bar_at=armed.completed_bar_at,
+        observed_at=expired_at,
+        valid_until=armed.valid_until,
+    )
+    expired = _decision_from_payload(
+        expired_payload,
+        KrDayDecisionEvent.canonical_id_for(expired_payload),
+    )
+    store = HermesDeliveryStore(tmp_path / "kr-delivery.sqlite3")
+
+    # When: the complete decision history is projected and then replayed.
+    batch = KrDayDecisionDeliveryBatch((armed, expired), ())
+    with store.writer() as writer:
+        first = project_kr_day_decision_delivery(batch, writer)
+        replay = project_kr_day_decision_delivery(batch, writer)
+
+    # Then: EXPIRED closes the actionable thread once with its exact reason.
+    events = store.events()
+    assert (first.inserted, replay.inserted) == (2, 0)
+    assert tuple(event.kind for event in events) == (
+        HermesDeliveryKind.ACTIONABLE,
+        HermesDeliveryKind.INVALIDATION,
+    )
+    assert events[1].root_delivery_id == events[0].delivery_id
+    assert events[1].status == "expired"
+    assert "PRICE_SETUP_EXPIRED" in events[1].rendered_text
+
+
 def test_kr_registered_nonarmed_binding_remains_silent(tmp_path: Path) -> None:
     # Given: Task 6 retained a REGISTERED event bound to an exact rejected decision.
     rejected = _decision_event(
