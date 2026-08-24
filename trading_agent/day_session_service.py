@@ -147,13 +147,23 @@ def _run_kr(
         if not capsule_ids:
             return 2, "capsule_authority_missing", ()
         paths = _materialize_kr_requests(config, now, capsule_ids)
-        requests = tuple(KrDayCapsuleEvaluationRequest.model_validate_json(read_private_text(path)) for path in paths)
-        decisions = run_kr_day_decision_tick(
-            requests,
-            KrDayDecisionStore(config.state_root / "kr-day-decisions.sqlite3"),
-        )
     except (OSError, TypeError, ValidationError, ValueError):
         return 2, "source_invalid", ()
+    requests: list[KrDayCapsuleEvaluationRequest] = []
+    decision_blocked = False
+    for path in paths:
+        try:
+            requests.append(KrDayCapsuleEvaluationRequest.model_validate_json(read_private_text(path)))
+        except (OSError, TypeError, ValidationError, ValueError):
+            decision_blocked = True
+    try:
+        decisions = run_kr_day_decision_tick(
+            tuple(requests),
+            KrDayDecisionStore(config.state_root / "kr-day-decisions.sqlite3"),
+        )
+    except ValueError:
+        decisions = ()
+        decision_blocked = True
     command = (
         sys.executable,
         str(config.project_root / "run_kr_day_capsule_shadow.py"),
@@ -169,6 +179,8 @@ def _run_kr(
         reason = str(payload.get("result", "kr_capsule_blocked"))
     except (json.JSONDecodeError, AttributeError):
         reason = "kr_capsule_child_invalid"
+    if completed.returncode == 0 and decision_blocked:
+        reason = "shadow_managed_decision_blocked"
     return completed.returncode, reason, decisions
 
 
