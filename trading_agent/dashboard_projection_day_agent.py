@@ -31,11 +31,17 @@ class DayAgentFacadeProjection:
     daily_learning_report: DailyLearningReport | None
 
 
-def project_day_agent_facade(outputs: Path, *, now: dt.datetime) -> DayAgentFacadeProjection:
+def project_day_agent_facade(
+    outputs: Path,
+    *,
+    now: dt.datetime,
+    kr_day_state_root: Path | None = None,
+) -> DayAgentFacadeProjection:
     us_reports, us_state = _read_reports(outputs / "us_day" / "close_reports", MarketId.US_EQUITIES)
     kr_reports, kr_state = _read_reports(outputs / "kr_day" / "close_reports", MarketId.KR_EQUITIES)
     us_theses, thesis_state = _read_us_theses(outputs / "us_day" / "theses")
-    kr_lifecycle = project_kr_day_lifecycle(outputs / "kr_day", now=now)
+    lifecycle_root = outputs / "kr_day" if kr_day_state_root is None else kr_day_state_root
+    kr_lifecycle = project_kr_day_lifecycle(lifecycle_root, now=now)
     us_report = _latest(us_reports)
     kr_report = _latest(kr_reports)
     if (

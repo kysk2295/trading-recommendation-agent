@@ -46,6 +46,7 @@ class PublisherRelayRequest:
     pair_browser: bool
     system_authority_verifier: SystemAuthorityVerifierInput
     cycle_database: Path | None
+    kr_day_state_root: Path
 
 
 async def run_publisher_relay(
@@ -64,9 +65,11 @@ async def run_publisher_relay(
             _run_event_connection,
             binding=binding,
             cycle_database=request.cycle_database,
+            kr_day_state_root=request.kr_day_state_root,
         ),
         pair_browser_once=_pair_browser_once,
         cycle_database=request.cycle_database,
+        kr_day_state_root=request.kr_day_state_root,
     )
 
 
@@ -79,6 +82,7 @@ async def _run_event_connection(
     *,
     binding: PublisherRuntimeBinding,
     cycle_database: Path | None,
+    kr_day_state_root: Path,
 ) -> None:
     send_lock = anyio.Lock()
     limiter = anyio.CapacityLimiter(1)
@@ -106,6 +110,7 @@ async def _run_event_connection(
                 None,
                 system_authority_verifier,
                 cycle_database,
+                kr_day_state_root,
             )
             tasks.start_soon(receive_events, socket, receiver)
             tasks.start_soon(watch_pairing_signal, pairing_runtime)

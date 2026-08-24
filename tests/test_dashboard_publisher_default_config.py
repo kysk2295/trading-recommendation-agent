@@ -39,6 +39,7 @@ def test_dashboard_publisher_cli_default_targets_schema_v2_runtime_config(
         *,
         system_authority_verifier: SystemAuthorityVerifierInput = None,
         cycle_database: Path | None = None,
+        kr_day_state_root: Path | None = None,
     ) -> DashboardSnapshotV2:
         return snapshot
 

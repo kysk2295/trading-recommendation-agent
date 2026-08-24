@@ -80,11 +80,12 @@ async def watch_output_events(
     watcher: WatchFactory | None = None,
     system_authority_verifier: SystemAuthorityVerifierInput = None,
     cycle_database: Path | None = None,
+    kr_day_state_root: Path | None = None,
 ) -> None:
     event_source = watch_native_changes if watcher is None else watcher
     code_sha = current_code_sha()
     async for changes in event_source(
-        *watch_roots(outputs),
+        *watch_roots(outputs, kr_day_state_root=kr_day_state_root),
         debounce=WATCH_DEBOUNCE_MS,
         step=WATCH_STEP_MS,
     ):
@@ -107,12 +108,14 @@ async def watch_output_events(
             snapshot = collect_dashboard_snapshot_v2(
                 outputs,
                 system_authority_verifier=system_authority_verifier,
+                kr_day_state_root=kr_day_state_root,
             )
         else:
             snapshot = collect_dashboard_snapshot_v2(
                 outputs,
                 system_authority_verifier=system_authority_verifier,
                 cycle_database=cycle_database,
+                kr_day_state_root=kr_day_state_root,
             )
         async with send_lock:
             await send_snapshot(socket, snapshot)
@@ -124,7 +127,7 @@ def publisher_url(dashboard_url: str) -> str:
     return urlunsplit((scheme, parsed.netloc, "/api/realtime/publish", "", ""))
 
 
-def watch_roots(outputs: Path) -> tuple[Path, ...]:
+def watch_roots(outputs: Path, *, kr_day_state_root: Path | None = None) -> tuple[Path, ...]:
     root = outputs.resolve()
     candidates = (
         root / "live_sessions",
@@ -137,7 +140,8 @@ def watch_roots(outputs: Path) -> tuple[Path, ...]:
         root / "hermes",
         root / "system",
     )
-    existing = tuple(path for path in candidates if path.is_dir())
+    operational = () if kr_day_state_root is None else (kr_day_state_root.resolve(),)
+    existing = tuple(path for path in (*candidates, *operational) if path.is_dir())
     return existing or (root,)
 
 

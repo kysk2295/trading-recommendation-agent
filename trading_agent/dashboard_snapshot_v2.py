@@ -74,6 +74,7 @@ def collect_dashboard_snapshot_v2(
     system_authority_verifier: SystemAuthorityVerifierInput = None,
     cycle_database: Path | None = None,
     day_version_reader: DayAgentVersionReader | None = None,
+    kr_day_state_root: Path | None = None,
 ) -> DashboardSnapshotV2:
     generated_at = dt.datetime.now(dt.UTC) if now is None else now
     if generated_at.tzinfo is None or generated_at.utcoffset() is None:
@@ -121,7 +122,7 @@ def collect_dashboard_snapshot_v2(
     )
     projections["markets"] = merge_us_day_live(projections["markets"], day_live, workspace="markets")
     projections["paper"] = merge_us_day_live(projections["paper"], day_live, workspace="paper")
-    day_agent = project_day_agent_facade(outputs, now=generated_at)
+    day_agent = project_day_agent_facade(outputs, now=generated_at, kr_day_state_root=kr_day_state_root)
     projections["markets"] = merge_day_agent_facade(projections["markets"], day_agent, workspace="markets")
     projections["research"] = merge_day_agent_facade(projections["research"], day_agent, workspace="research")
     projections["system"] = project_system_evidence(

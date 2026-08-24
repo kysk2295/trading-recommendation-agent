@@ -69,6 +69,7 @@ DEFAULT_CREDENTIALS = Path.home() / ".config" / "trading-agent" / "dashboard.env
 DEFAULT_SYSTEM_AUTHORITY_CONFIG = Path.home() / ".config" / "trading-agent" / "system-authority.json"
 DEFAULT_INTERACTIVE_STATE = Path.home() / ".local" / "state" / "trading-agent" / "dashboard-interactive"
 DEFAULT_RESEARCH_AGENT_CONFIG = Path.home() / ".config" / "trading-agent" / "research-agent-runtime-v2.json"
+DEFAULT_KR_DAY_STATE_ROOT = Path.home() / ".local" / "state" / "trading-agent" / "kr-day-session"
 HERMES_EXECUTABLE = Path(shutil.which("hermes") or Path.home() / ".local/bin/hermes")
 WORKTREE = Path(__file__).resolve().parent
 register_execution_commands(app, DEFAULT_INTERACTIVE_STATE)
@@ -89,6 +90,7 @@ def publisher_default(
     dry_run: Annotated[bool, typer.Option(help="외부 전송 없이 snapshot 경계만 검증")] = False,
     pair_browser: Annotated[bool, typer.Option(help="일회용 운영자 브라우저 연결")] = False,
     research_agent_config: Annotated[Path, typer.Option()] = DEFAULT_RESEARCH_AGENT_CONFIG,
+    kr_day_state_root: Annotated[Path, typer.Option(file_okay=False)] = DEFAULT_KR_DAY_STATE_ROOT,
 ) -> None:
     if context.invoked_subcommand == "publish" and any(
         (source := context.get_parameter_source(parameter)) is not None and source.name == "COMMANDLINE"
@@ -100,6 +102,7 @@ def publisher_default(
             "dry_run",
             "pair_browser",
             "research_agent_config",
+            "kr_day_state_root",
         )
     ):
         raise typer.BadParameter("publish_options_must_follow_subcommand")
@@ -112,6 +115,7 @@ def publisher_default(
             dry_run,
             pair_browser,
             research_agent_config,
+            kr_day_state_root,
         )
 
 
@@ -129,6 +133,7 @@ def publish(
     dry_run: Annotated[bool, typer.Option(help="외부 전송 없이 snapshot 경계만 검증")] = False,
     pair_browser: Annotated[bool, typer.Option(help="일회용 운영자 브라우저 연결")] = False,
     research_agent_config: Annotated[Path, typer.Option()] = DEFAULT_RESEARCH_AGENT_CONFIG,
+    kr_day_state_root: Annotated[Path, typer.Option(file_okay=False)] = DEFAULT_KR_DAY_STATE_ROOT,
 ) -> None:
     try:
         require_current_main_authority()
@@ -152,6 +157,7 @@ def publish(
         outputs,
         system_authority_verifier=system_authority_verifier,
         cycle_database=cycle_database,
+        kr_day_state_root=kr_day_state_root,
     )
     if dry_run:
         typer.echo(snapshot.model_dump_json())
@@ -167,6 +173,7 @@ def publish(
             pair_browser,
             system_authority_verifier,
             cycle_database,
+            kr_day_state_root,
         )
         if once:
             rprint("[green]dashboard snapshot published by event relay[/green]")
@@ -184,6 +191,7 @@ async def _run_relay(
     pair_browser: bool,
     system_authority_verifier: SystemAuthorityVerifierInput = None,
     cycle_database: Path | None = None,
+    kr_day_state_root: Path = DEFAULT_KR_DAY_STATE_ROOT,
 ) -> None:
     await run_publisher_relay(
         PublisherRelayRequest(
@@ -195,6 +203,7 @@ async def _run_relay(
             pair_browser,
             system_authority_verifier,
             cycle_database,
+            kr_day_state_root,
         ),
         PublisherRuntimeBinding(HERMES_EXECUTABLE, WORKTREE, DEFAULT_INTERACTIVE_STATE),
     )

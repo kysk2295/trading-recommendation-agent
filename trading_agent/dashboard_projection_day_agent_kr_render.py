@@ -10,6 +10,7 @@ from trading_agent.dashboard_projection_day_agent_support import (
     day_agent_item,
 )
 from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowEvent, KrDayCapsuleShadowStatus
+from trading_agent.kr_day_decision_delivery_record_builders import bound_kr_day_decision_id
 from trading_agent.kr_day_decision_models import KrDayDecisionEvent, KrDayDecisionStatus
 
 
@@ -18,32 +19,34 @@ def project_kr_thesis(
     shadows: tuple[KrDayCapsuleShadowEvent, ...],
     now: dt.datetime,
 ) -> tuple[tuple[WorkspaceItemV2, ...], tuple[TraceNodeV2, ...], tuple[TraceEdgeV2, ...]]:
-    decision = decisions[-1]
+    root = decisions[0]
     latest_shadow = shadows[-1] if shadows else None
-    if latest_shadow is not None and latest_shadow.status in {
-        KrDayCapsuleShadowStatus.ACTIVE,
-        KrDayCapsuleShadowStatus.STOPPED,
-        KrDayCapsuleShadowStatus.TARGETED,
-        KrDayCapsuleShadowStatus.CENSORED,
-    }:
-        if decision.status in {KrDayDecisionStatus.REJECTED, KrDayDecisionStatus.BLOCKED}:
-            raise InvalidKrDayLifecycleProjectionError
+    decision = _display_decision(decisions, latest_shadow)
+    if latest_shadow is not None and latest_shadow.status is not KrDayCapsuleShadowStatus.REGISTERED:
         observed_at = latest_shadow.occurred_at
         status = latest_shadow.status.value.upper()
     else:
         observed_at = decision.observed_at
         status = decision.status.value
     digest = hashlib.sha256(
-        f"{decision.capsule_id}:{decision.hypothesis_version_id}:{decision.opportunity_id}:{decision.session_date}".encode()
+        f"{root.capsule_id}:{root.hypothesis_version_id}:{root.opportunity_id}:{root.session_date}".encode()
     ).hexdigest()
     trace_id = f"trace.kr.lifecycle.{digest}"
     main = day_agent_item(
         f"day_agent.kr.lifecycle.{digest}",
         f"KR · {decision.symbol} · {status}",
-        "populated",
+        "blocked"
+        if latest_shadow is not None
+        and latest_shadow.status in {KrDayCapsuleShadowStatus.BLOCKED, KrDayCapsuleShadowStatus.FAILED}
+        else "populated",
         _card_value(decision, latest_shadow, observed_at, now, status),
         observed_at,
-        kind="day_recommendation",
+        kind=(
+            "day_theme"
+            if latest_shadow is not None
+            and latest_shadow.status in {KrDayCapsuleShadowStatus.BLOCKED, KrDayCapsuleShadowStatus.FAILED}
+            else "day_recommendation"
+        ),
         trace_id=trace_id,
     )
     details = _detail_items(digest, trace_id, decision, latest_shadow, observed_at)
@@ -64,10 +67,17 @@ def _card_value(
         f"SHADOW/PAPER ONLY · KRX {stamp} · cap {decision.capsule_id[:8]}/"
         f"hyp {decision.hypothesis_version_id[:8]} · evidence age {age}s · {status}"
     )
-    if shadow is not None and shadow.entry_price is not None and shadow.stop_price is not None:
-        targets = "/".join(str(value) for value in shadow.target_prices)
-        return f"{meta} · fill {shadow.entry_price} stop {shadow.stop_price} targets {targets}"
+    if shadow is not None and shadow.status in {
+        KrDayCapsuleShadowStatus.BLOCKED,
+        KrDayCapsuleShadowStatus.FAILED,
+    }:
+        return f"{meta} · reason {shadow.reason.value} · immutable evidence"
     plan = decision.conditional_plan
+    if shadow is not None and shadow.entry_price is not None and shadow.stop_price is not None:
+        stop = shadow.stop_price if plan is None else plan.stop_price
+        target_prices = shadow.target_prices if plan is None else plan.target_prices
+        targets = "/".join(str(value) for value in target_prices)
+        return f"{meta} · fill {shadow.entry_price} stop {stop} targets {targets}"
     if plan is not None:
         targets = "/".join(str(value) for value in plan.target_prices)
         return f"{meta} · entry {plan.trigger_price} stop {plan.stop_price} targets {targets}"
@@ -106,7 +116,8 @@ def _detail_values(decision: KrDayDecisionEvent, shadow: KrDayCapsuleShadowEvent
                 case KrDayCapsuleShadowStatus.ACTIVE:
                     return [
                         f"fill time {shadow.occurred_at.isoformat()} · "
-                        "unrealized unavailable (no current-price evidence)"
+                        "unrealized unavailable (no current-price evidence)",
+                        *_decision_details(decision),
                     ]
                 case (
                     KrDayCapsuleShadowStatus.STOPPED
@@ -114,14 +125,32 @@ def _detail_values(decision: KrDayDecisionEvent, shadow: KrDayCapsuleShadowEvent
                     | KrDayCapsuleShadowStatus.CENSORED
                 ):
                     return [
-                        f"outcome {shadow.status.value.upper()} · reason {shadow.reason.value} · immutable timeline"
+                        f"outcome {shadow.status.value.upper()} · reason {shadow.reason.value} · immutable timeline",
+                        *_decision_details(decision),
                     ]
                 case KrDayCapsuleShadowStatus.BLOCKED | KrDayCapsuleShadowStatus.FAILED:
-                    return [f"shadow {shadow.status.value.upper()} · reason {shadow.reason.value} · immutable evidence"]
+                    return [
+                        f"shadow {shadow.status.value.upper()} · reason {shadow.reason.value} · "
+                        f"evaluation evidence {shadow.evaluation_payload_sha256}",
+                        f"bar evidence {shadow.bar_payload_sha256} · event {shadow.event_id}",
+                    ]
                 case KrDayCapsuleShadowStatus.REGISTERED:
                     return _decision_details(decision)
                 case unreachable:
                     assert_never(unreachable)
+
+
+def _display_decision(
+    decisions: tuple[KrDayDecisionEvent, ...],
+    shadow: KrDayCapsuleShadowEvent | None,
+) -> KrDayDecisionEvent:
+    if shadow is None or shadow.status is KrDayCapsuleShadowStatus.REGISTERED:
+        return decisions[-1]
+    decision_id = bound_kr_day_decision_id(shadow)
+    matches = tuple(event for event in decisions if event.event_id == decision_id)
+    if len(matches) != 1 or matches[0].status is not KrDayDecisionStatus.ARMED:
+        raise InvalidKrDayLifecycleProjectionError
+    return matches[0]
 
 
 def _decision_details(decision: KrDayDecisionEvent) -> list[str]:

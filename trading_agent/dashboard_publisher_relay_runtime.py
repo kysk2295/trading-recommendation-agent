@@ -43,6 +43,7 @@ async def relay_snapshots(
     event_connection: EventConnection,
     pair_browser_once: PairBrowserOnce,
     cycle_database: Path | None = None,
+    kr_day_state_root: Path | None = None,
 ) -> None:
     attempt = 0
     snapshot = initial_snapshot
@@ -81,15 +82,23 @@ async def relay_snapshots(
             await anyio.sleep(reconnect_delay_seconds(attempt))
             attempt += 1
             if cycle_database is None:
-                snapshot = collect_dashboard_snapshot_v2(
-                    outputs,
-                    system_authority_verifier=system_authority_verifier,
-                )
+                if kr_day_state_root is None:
+                    snapshot = collect_dashboard_snapshot_v2(
+                        outputs,
+                        system_authority_verifier=system_authority_verifier,
+                    )
+                else:
+                    snapshot = collect_dashboard_snapshot_v2(
+                        outputs,
+                        system_authority_verifier=system_authority_verifier,
+                        kr_day_state_root=kr_day_state_root,
+                    )
             else:
                 snapshot = collect_dashboard_snapshot_v2(
                     outputs,
                     system_authority_verifier=system_authority_verifier,
                     cycle_database=cycle_database,
+                    kr_day_state_root=kr_day_state_root,
                 )
 
 
