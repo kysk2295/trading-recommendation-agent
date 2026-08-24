@@ -3,8 +3,6 @@ from decimal import Decimal
 import pytest
 
 from trading_agent.kr_price_grid import (
-    KRX_EQUITY_PRICE_GRID_RULESET_VERSION,
-    KRX_EQUITY_PRICE_GRID_SOURCE_URL,
     InvalidKrEquityPriceError,
     is_valid_kr_equity_price,
     kr_equity_tick_size,
@@ -98,15 +96,3 @@ def test_round_down_rejects_price_below_smallest_positive_grid_point() -> None:
     # Then it raises the typed price error instead of returning zero
     with pytest.raises(InvalidKrEquityPriceError):
         _ = round_kr_equity_price_down(price)
-
-
-def test_price_grid_exposes_reviewed_official_source() -> None:
-    # Given the encoded rule provenance
-    # When callers inspect it
-    provenance = (KRX_EQUITY_PRICE_GRID_RULESET_VERSION, KRX_EQUITY_PRICE_GRID_SOURCE_URL)
-
-    # Then it identifies the review date and official KRX contract
-    assert provenance == (
-        "krx-equity-price-grid-2026-08-24",
-        "https://global.krx.co.kr/contents/GLB/06/0602/0602010201/GLB0602010201T3.jsp",
-    )

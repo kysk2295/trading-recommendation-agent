@@ -88,6 +88,12 @@ def assess_kr_theme_day_setup(source: KrThemeDaySetupInput) -> KrThemeDaySetupAs
             pullback, trigger = _scan_bars(request, scan)
             if trigger is None:
                 raise InvalidKrThemeDaySetupError
+            if _setup_valid_until(request, trigger) <= trigger.observed_at:
+                return KrThemeDaySetupAssessment(
+                    phase=KrThemeDaySetupPhase.SETUP_EXPIRED,
+                    reason="The latest completed-bar reclaim occurred at or after session close.",
+                    evidence_refs=evidence,
+                )
             return KrThemeDaySetupAssessment(
                 phase=KrThemeDaySetupPhase.RECLAIM_CONFIRMED,
                 reason="The latest completed bar confirmed the reclaim.",
@@ -198,7 +204,7 @@ def _build_setup(
         raise InvalidKrThemeDaySetupError
     evidence = _bar_evidence(request)
     observed_at = trigger.observed_at
-    valid_until = min(request.opportunity.valid_until, observed_at + _SETUP_VALIDITY)
+    valid_until = _setup_valid_until(request, trigger)
     return KrThemeDaySetup(
         setup_id=_setup_id(request, trigger),
         opportunity_id=request.opportunity.opportunity_id,
@@ -215,6 +221,14 @@ def _build_setup(
         invalidation_rule="Invalidate below the first completed-bar VWAP pullback low or when a KR market gate blocks.",
         rationale="Fresh rank-one theme leader reclaimed completed-bar session VWAP with volume confirmation.",
         evidence_refs=evidence,
+    )
+
+
+def _setup_valid_until(request: KrThemeDaySetupInput, trigger: KrCompletedMinuteBar) -> dt.datetime:
+    return min(
+        request.opportunity.valid_until,
+        trigger.observed_at + _SETUP_VALIDITY,
+        trigger.end_at.astimezone(SEOUL).replace(hour=15, minute=30, second=0, microsecond=0),
     )
 
 

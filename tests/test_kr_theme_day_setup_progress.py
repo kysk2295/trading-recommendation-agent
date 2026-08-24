@@ -165,6 +165,25 @@ def test_near_close_pullback_condition_ends_at_same_session_close() -> None:
     assert assessment.conditional.valid_until == SESSION.replace(hour=15, minute=30)
 
 
+def test_close_bar_reclaim_cannot_confirm_setup_after_session_close() -> None:
+    # Given a valid reclaim on the 15:29-15:30 completed bar
+    pullback_source = _near_close_pullback_input()
+    reclaim = _bar(389, "244000", "245500", "244000", "245000", 180, "44100000")
+    source = pullback_source.model_copy(
+        update={
+            "bars": (*pullback_source.bars, reclaim),
+            "evaluated_at": reclaim.observed_at + dt.timedelta(seconds=1),
+        }
+    )
+
+    # When setup progression is assessed after that completed bar
+    assessment = assess_kr_theme_day_setup(source)
+
+    # Then the closed-session setup is expired rather than valid after 15:30
+    assert assessment.phase is KrThemeDaySetupPhase.SETUP_EXPIRED
+    assert assessment.setup is None
+
+
 def _input(bars: tuple[KrCompletedMinuteBar, ...]) -> KrThemeDaySetupInput:
     return KrThemeDaySetupInput(
         opportunity=_opportunity(),
