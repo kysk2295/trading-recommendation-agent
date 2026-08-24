@@ -293,3 +293,84 @@
     overflow-y: auto;
   }
 }
+
+@media (min-width: 768px) and (max-width: 900px) {
+  .research-board .table-viewport {
+    overflow-x: visible;
+  }
+
+  .research-board table,
+  .research-board tbody,
+  .research-board tr,
+  .research-board td {
+    display: block;
+    inline-size: 100%;
+  }
+
+  .research-board thead {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .research-board tbody {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .research-board tr {
+    padding: var(--space-3);
+    border: 1px solid var(--border-subtle);
+  }
+
+  .research-board td {
+    display: grid;
+    grid-template-columns: minmax(6rem, 0.3fr) minmax(0, 1fr);
+    gap: var(--space-3);
+    padding: var(--space-2) 0;
+    border-block-end: 1px solid var(--border-subtle);
+  }
+
+  .research-board td:last-child {
+    border-block-end: 0;
+  }
+
+  .research-board td::before {
+    color: var(--text-tertiary);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: var(--type-small);
+  }
+
+  .research-board td:nth-child(1)::before {
+    content: "Agent";
+  }
+
+  .research-board td:nth-child(2)::before {
+    content: "Input";
+  }
+
+  .research-board td:nth-child(3)::before {
+    content: "Decision";
+  }
+
+  .research-board td:nth-child(4)::before {
+    content: "Result";
+  }
+
+  .research-board td:nth-child(5)::before {
+    content: "Next wake";
+  }
+
+  .research-board td:nth-child(6)::before {
+    content: "Evidence Trace";
+  }
+}
+
+@media (max-width: 900px) {
+  .research-board table {
+    min-inline-size: 0;
+  }
+}

@@ -163,13 +163,21 @@ async function verifyHappy(target: Page, width: number): Promise<Finding> {
         throw new DayAgentQaError(`missing lane:${label}`);
     }
     const visible = await target.locator(".day-agent-lanes").innerText();
-    if (
-      !visible.includes("entry") ||
-      !visible.includes("stop") ||
-      !visible.includes("targets") ||
-      !visible.includes("outcome")
-    ) {
-      throw new DayAgentQaError(`day agent detail missing:${width}`);
+    for (const label of [
+      "US · Alpaca Paper",
+      "US · Shadow · NVDA",
+      "KR · Shadow · provider read-only",
+    ]) {
+      const values = await target
+        .locator(".day-agent-row", { hasText: label })
+        .locator(".day-agent-value")
+        .allInnerTexts();
+      const hasPlan = values.some((value) =>
+        ["entry", "stop", "targets", "rationale", "outcome"].every((token) =>
+          value.includes(token),
+        ),
+      );
+      if (!hasPlan) throw new DayAgentQaError(`day agent detail missing:${width}:${label}`);
     }
     const forbidden = await target
       .getByRole("button", { name: /buy|sell|order|cancel|submit|promotion/i })
@@ -234,43 +242,29 @@ async function verifyHappy(target: Page, width: number): Promise<Finding> {
     if (researchOverflow) throw new DayAgentQaError(`research overflow:${width}`);
     const researchScreenshot = join(screenshots, `day-agent-research-${width}.png`);
     await target.screenshot({ path: researchScreenshot, fullPage: true });
+    const researchCardScreenshots: string[] = [];
+    if (width <= 768) {
+      for (let index = 0; index < researchCycleCount; index += 1) {
+        const cardScreenshot = join(
+          screenshots,
+          `day-agent-research-${width}-card-${index + 1}.png`,
+        );
+        const row = researchRows.nth(index);
+        await target.locator(".research-board").scrollIntoViewIfNeeded();
+        await row.evaluate((element) => {
+          const viewport = element.closest(".table-viewport");
+          if (!(viewport instanceof HTMLElement) || !(element instanceof HTMLElement))
+            throw new Error("research card viewport missing");
+          viewport.scrollTop =
+            element.offsetTop - Math.max(0, (viewport.clientHeight - element.clientHeight) / 2);
+        });
+        await row.screenshot({ path: cardScreenshot });
+        researchCardScreenshots.push(artifactPath(cardScreenshot));
+      }
+    }
     await target.locator(".day-agent-learning").scrollIntoViewIfNeeded();
     const researchLowerScreenshot = join(screenshots, `day-agent-research-${width}-lower.png`);
     await target.screenshot({ path: researchLowerScreenshot });
-    const researchCardScreenshots: string[] = [];
-    if (width === 375) {
-      const cardScreenshot = join(screenshots, `day-agent-research-${width}-cards.png`);
-      const cardPage = await target.context().newPage();
-      try {
-        await cardPage.setViewportSize({ width, height: 2200 });
-        await cardPage.goto(`${baseUrl}/#research`, { waitUntil: "networkidle" });
-        await cardPage.getByRole("heading", { name: "6-Agent Research Board" }).waitFor();
-        await cardPage.evaluate(() => {
-          const sourceRows = Array.from(document.querySelectorAll(".research-board tbody tr"));
-          if (sourceRows.length !== 6) throw new Error("research cards missing");
-          const shell = document.querySelector(".workstation-shell");
-          if (!(shell instanceof HTMLElement)) throw new Error("workstation shell missing");
-          shell.style.display = "none";
-          document.documentElement.style.cssText = "height:auto;overflow:visible";
-          document.body.style.cssText =
-            "height:auto;overflow:visible;background:var(--surface-canvas)";
-          const preview = document.createElement("main");
-          preview.id = "day-agent-qa-card-preview";
-          preview.className = "research-board";
-          preview.style.cssText = "box-sizing:border-box;width:375px;padding:8px";
-          const table = document.createElement("table");
-          const body = document.createElement("tbody");
-          for (const source of sourceRows) body.append(source.cloneNode(true));
-          table.append(body);
-          preview.append(table);
-          document.body.append(preview);
-        });
-        await cardPage.locator("#day-agent-qa-card-preview").screenshot({ path: cardScreenshot });
-        researchCardScreenshots.push(artifactPath(cardScreenshot));
-      } finally {
-        await cardPage.close();
-      }
-    }
     const mutationRequestCount = methods.filter(
       (method) => !["GET", "OPTIONS"].includes(method),
     ).length;
