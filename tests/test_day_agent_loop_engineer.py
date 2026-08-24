@@ -98,6 +98,62 @@ def test_new_change_proposal_requires_source_report_identity(tmp_path: Path) -> 
         _ = AgentChangeProposal.model_validate(payload)
 
 
+@pytest.mark.parametrize("source_report_id", (None, "invalid-report-id"))
+def test_version_reader_rejects_present_invalid_report_identity(
+    source_report_id: str | None,
+    tmp_path: Path,
+) -> None:
+    # Given: a persisted proposal whose report key is present but not a valid current identity.
+    fixture = loop_evaluation(tmp_path)
+    malformed = fixture.proposal.model_dump(mode="json")
+    malformed["proposal_id"] = "e" * 64
+    malformed["source_report_id"] = source_report_id
+    with sqlite3.connect(fixture.store.path) as connection:
+        _ = connection.execute(
+            "INSERT INTO change_proposals VALUES (?,?,?)",
+            (malformed["proposal_id"], fixture.proposal.version_id, json.dumps(malformed)),
+        )
+
+    # When / Then: the public history reader refuses null and invalid identities as non-legacy.
+    with pytest.raises(ValidationError):
+        _ = fixture.store.reader().proposals(fixture.proposal.version_id)
+
+
+def test_version_reader_rejects_unrelated_malformed_legacy_candidate(tmp_path: Path) -> None:
+    # Given: a persisted row missing both the legacy report key and an unrelated required field.
+    fixture = loop_evaluation(tmp_path)
+    malformed = fixture.proposal.model_dump(mode="json")
+    malformed["proposal_id"] = "d" * 64
+    malformed.pop("source_report_id")
+    malformed.pop("patch")
+    with sqlite3.connect(fixture.store.path) as connection:
+        _ = connection.execute(
+            "INSERT INTO change_proposals VALUES (?,?,?)",
+            (malformed["proposal_id"], fixture.proposal.version_id, json.dumps(malformed)),
+        )
+
+    # When / Then: absence of the report key does not forgive unrelated schema corruption.
+    with pytest.raises(ValidationError):
+        _ = fixture.store.reader().proposals(fixture.proposal.version_id)
+
+
+def test_proposal_for_report_fails_closed_on_malformed_history(tmp_path: Path) -> None:
+    # Given: a malformed persisted row preceding a valid report-bound proposal.
+    fixture = loop_evaluation(tmp_path)
+    malformed = fixture.proposal.model_dump(mode="json")
+    malformed["proposal_id"] = "c" * 64
+    malformed["source_report_id"] = None
+    with sqlite3.connect(fixture.store.path) as connection:
+        _ = connection.execute(
+            "INSERT INTO change_proposals VALUES (?,?,?)",
+            (malformed["proposal_id"], fixture.proposal.version_id, json.dumps(malformed)),
+        )
+
+    # When / Then: report lookup exposes malformed history instead of silently skipping it.
+    with pytest.raises(ValidationError):
+        _ = fixture.store.reader().proposal_for_report(fixture.proposal.source_report_id)
+
+
 def test_loop_engineer_rejects_diagnostics_without_refuted_stage(tmp_path: Path) -> None:
     # Given: a complete finalized diagnostic set whose stages are all supported.
     baseline = champion()

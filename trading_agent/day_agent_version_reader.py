@@ -3,9 +3,9 @@ from __future__ import annotations
 import sqlite3
 from contextlib import closing
 from pathlib import Path
-from typing import Literal, final
+from typing import Literal, assert_never, final
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from trading_agent.dashboard_us_day_versions import DayAgentVersionView
 from trading_agent.day_agent_version_models import (
@@ -19,6 +19,12 @@ from trading_agent.day_agent_version_models import (
     LegacyAgentChangeProposalRecord,
 )
 from trading_agent.day_agent_version_store_support import require_persisted_version_store
+
+
+class _ProposalSourceReportPresence(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    source_report_id: str | None = None
 
 
 @final
@@ -119,15 +125,24 @@ class DayAgentVersionReader:
 def _proposal_record(payload: str) -> AgentChangeProposalRecord:
     try:
         return AgentChangeProposal.model_validate_json(payload)
-    except ValidationError:
+    except ValidationError as current_error:
+        try:
+            presence = _ProposalSourceReportPresence.model_validate_json(payload)
+        except ValidationError:
+            raise current_error from None
+        if "source_report_id" in presence.model_fields_set:
+            raise current_error from None
         return LegacyAgentChangeProposalRecord.model_validate_json(payload)
 
 
 def _current_proposal(payload: str) -> AgentChangeProposal | None:
-    try:
-        return AgentChangeProposal.model_validate_json(payload)
-    except ValidationError:
-        return None
+    match _proposal_record(payload):
+        case AgentChangeProposal() as proposal:
+            return proposal
+        case LegacyAgentChangeProposalRecord():
+            return None
+        case unreachable:
+            assert_never(unreachable)
 
 
 __all__ = ("DayAgentVersionReader",)
