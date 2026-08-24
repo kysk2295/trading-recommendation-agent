@@ -132,9 +132,44 @@ def test_safe_novel_non_enum_python_publishes_one_future_only_primary(tmp_path: 
     assert reviewed.binding.bound_at < capsule.published_at
     assert capsule.published_at < result.first_eligible_completed_bar_at
     assert trial.capsule_id == capsule.capsule_id
-    assert trial.registration_completed_bar_at == _view().completed_bar_at
+    assert trial.registration_completed_bar_at == version.registration_completed_bar_at
     assert trial.first_eligible_completed_bar_at == result.first_eligible_completed_bar_at
     assert trial.trading_authority is False
+
+
+def test_post_close_discovery_trial_uses_registration_time_not_historical_bar(
+    tmp_path: Path,
+) -> None:
+    runtime = resolve_generated_strategy_runtime(Path(sys.executable))
+    base = _view()
+    observed_at = base.completed_bar_at + dt.timedelta(hours=4)
+    view = base.model_copy(
+        update={
+            "observed_at": observed_at,
+            "first_eligible_completed_bar_at": observed_at + dt.timedelta(hours=16),
+            "budget_epoch_ref": "us-equities-2026-08-20-post-close",
+        }
+    )
+    candidate = replace(
+        _proposal(no_signal_source()),
+        llm_receipt=replace(_proposal(no_signal_source()).llm_receipt, called_at=observed_at),
+    )
+
+    result = DayDiscoveryLoop(
+        DayDiscoveryLoopConfig(
+            pipeline=_pipeline(tmp_path, FixedHypothesisGenerator(candidate), runtime),
+            sandbox=GeneratedStrategySandbox(runtime, tmp_path / "sandbox", view.resource_limits),
+            max_drafts=1,
+        )
+    ).run(view)
+
+    assert result.accepted is True
+    reader = ExperimentLedgerStore(tmp_path / "ledger.sqlite3").reader()
+    version = reader.day_hypothesis_versions(market_id=view.market_id)[0].version
+    trial = reader.day_forward_trials(view.market_id)[0].trial
+    assert trial.registration_completed_bar_at == version.registration_completed_bar_at
+    assert trial.registration_completed_bar_at > view.completed_bar_at
+    assert trial.registration_completed_bar_at < trial.first_eligible_completed_bar_at
 
 
 def test_completed_cycle_is_authoritatively_finalized_in_v11_ledger(tmp_path: Path) -> None:

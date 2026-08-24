@@ -366,7 +366,7 @@ def _forward_trial(
             json.dumps(capsule.evidence_schema, ensure_ascii=True, separators=(",", ":"))
         ),
         "preregistered_at": capsule.published_at,
-        "registration_completed_bar_at": view.completed_bar_at,
+        "registration_completed_bar_at": version.registration_completed_bar_at,
         "first_eligible_completed_bar_at": view.first_eligible_completed_bar_at,
         "trading_authority": False,
         "profitability_claim": False,
