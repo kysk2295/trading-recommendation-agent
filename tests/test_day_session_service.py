@@ -17,6 +17,7 @@ from tests.day_strategy_capsule_support import builtin_request
 from tests.test_day_research_attempt_binding import _attempt, _binding, _family, _manifest, _version
 from tests.test_kis_kr_market_projection import (
     _minute_body,
+    _minute_row,
     _price_body,
     _quote_body,
 )
@@ -307,8 +308,31 @@ def test_kr_materializer_reads_cycle_calendar_market_and_ledger_stores(tmp_path:
     )
 
     paths = _materialize_kr_requests(config, evaluated_at.astimezone(dt.UTC), (capsule.capsule_id,))
+    replay_paths = _materialize_kr_requests(config, evaluated_at.astimezone(dt.UTC), (capsule.capsule_id,))
+    next_evaluated_at = evaluated_at + dt.timedelta(minutes=1)
+    minute_payload = json.loads(_minute_body())
+    minute_payload["output2"].insert(0, _minute_row("090500", "103", "105", "102", "104", "100", "59970"))
+    next_bodies = (
+        (KisKrMarketReceiptKind.MINUTE_BARS, json.dumps(minute_payload).encode(), 2),
+        (KisKrMarketReceiptKind.PRICE_STATUS, _price_body(), 2),
+        (KisKrMarketReceiptKind.ORDER_BOOK, _quote_body(accepted_hour="090503"), 3),
+    )
+    for kind, body, seconds in next_bodies:
+        receipt = replace(
+            market_receipt(kind, body, seconds=seconds),
+            received_at=next_evaluated_at.replace(second=seconds),
+        )
+        assert market_store.append(receipt)
+    next_paths = _materialize_kr_requests(
+        config,
+        next_evaluated_at.astimezone(dt.UTC),
+        (capsule.capsule_id,),
+    )
 
     materialized = kr_request().model_validate_json(paths[0].read_text())
+    assert replay_paths == paths
+    assert next_paths != paths
+    assert paths[0].is_file() and next_paths[0].is_file()
     assert materialized.capsule.capsule_id == capsule.capsule_id
     assert materialized.opportunity.opportunity_id == opportunity.opportunity_id
     assert materialized.market.symbol == "005930"

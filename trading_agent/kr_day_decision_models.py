@@ -15,6 +15,7 @@ from trading_agent.kr_theme_day_setup import KrCompletedMinuteBar
 from trading_agent.signal_contract_models import OpportunitySnapshot
 
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
+_SIGNAL_IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
 
 
 @unique
@@ -178,7 +179,7 @@ class KrDayDecisionEventPayload(KrDayDecisionModel):
     schema_version: Literal[1] = 1
     capsule_id: str = Field(pattern=_SHA256_PATTERN)
     hypothesis_version_id: str = Field(pattern=_SHA256_PATTERN)
-    opportunity_id: str = Field(pattern=_SHA256_PATTERN)
+    opportunity_id: str = Field(pattern=_SIGNAL_IDENTIFIER_PATTERN)
     session_date: dt.date
     symbol: str
     completed_bar_at: dt.datetime

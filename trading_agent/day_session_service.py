@@ -36,6 +36,9 @@ from trading_agent.kis_kr_market_projection import project_kis_kr_completed_minu
 from trading_agent.kis_kr_market_receipt_store import KisKrMarketReceiptStore
 from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStore
 from trading_agent.kr_day_capsule_models import KrDayCapsuleEvaluationRequest
+from trading_agent.kr_day_decision_models import KrDayDecisionEvent
+from trading_agent.kr_day_decision_service import run_kr_day_decision_tick
+from trading_agent.kr_day_decision_store import KrDayDecisionStore
 from trading_agent.private_immutable_file import publish_private_immutable_text, read_private_text
 from trading_agent.private_stable_report import write_private_stable_report
 from trading_agent.research_identity_models import MarketId
@@ -53,6 +56,7 @@ class DaySessionServiceResult:
     status: Literal["processed", "no_action"]
     reason: str
     mutation: Literal[0] = 0
+    decisions: tuple[KrDayDecisionEvent, ...] = ()
 
 
 def run_day_session_service_tick(
@@ -71,13 +75,11 @@ def run_day_session_service_tick(
             match config:
                 case UsDaySessionServiceConfig():
                     code, reason = _run_us(config, now)
+                    decisions = ()
                 case KrDaySessionServiceConfig():
-                    code, reason = _run_kr(config, now)
-            result = DaySessionServiceResult(
-                config.market,
-                "processed" if code == 0 else "no_action",
-                reason,
-            )
+                    code, reason, decisions = _run_kr(config, now)
+            status = "processed" if code == 0 else "no_action"
+            result = DaySessionServiceResult(config.market, status, reason, 0, decisions)
     _persist_health(config, now, result)
     return result
 
@@ -136,18 +138,26 @@ def _run_us(config: UsDaySessionServiceConfig, now: dt.datetime) -> tuple[int, s
     return code, result.reason or result.tick_status or result.status
 
 
-def _run_kr(config: KrDaySessionServiceConfig, now: dt.datetime) -> tuple[int, str]:
+def _run_kr(
+    config: KrDaySessionServiceConfig,
+    now: dt.datetime,
+) -> tuple[int, str, tuple[KrDayDecisionEvent, ...]]:
     try:
         capsule_ids = _kr_active_capsule_ids(config.experiment_ledger, now)
         if not capsule_ids:
-            return 2, "capsule_authority_missing"
-        requests = _materialize_kr_requests(config, now, capsule_ids)
+            return 2, "capsule_authority_missing", ()
+        paths = _materialize_kr_requests(config, now, capsule_ids)
+        requests = tuple(KrDayCapsuleEvaluationRequest.model_validate_json(read_private_text(path)) for path in paths)
+        decisions = run_kr_day_decision_tick(
+            requests,
+            KrDayDecisionStore(config.state_root / "kr-day-decisions.sqlite3"),
+        )
     except (OSError, TypeError, ValidationError, ValueError):
-        return 2, "source_invalid"
+        return 2, "source_invalid", ()
     command = (
         sys.executable,
         str(config.project_root / "run_kr_day_capsule_shadow.py"),
-        *(value for path in requests[-3:] for value in ("--request", str(path))),
+        *(value for path in paths[-3:] for value in ("--request", str(path))),
         "--store",
         str(config.state_root / "kr-day-capsule-shadow.sqlite3"),
         "--output",
@@ -159,7 +169,7 @@ def _run_kr(config: KrDaySessionServiceConfig, now: dt.datetime) -> tuple[int, s
         reason = str(payload.get("result", "kr_capsule_blocked"))
     except (json.JSONDecodeError, AttributeError):
         reason = "kr_capsule_child_invalid"
-    return completed.returncode, reason
+    return completed.returncode, reason, decisions
 
 
 def _kr_active_capsule_ids(ledger_path: Path, now: dt.datetime) -> tuple[str, ...]:
@@ -186,10 +196,7 @@ def _kr_active_capsule_ids(ledger_path: Path, now: dt.datetime) -> tuple[str, ..
             active_capsule_ids=(),
         )
     )
-    return tuple(
-        item.trial.capsule_id
-        for item in selection.selected
-    )
+    return tuple(item.trial.capsule_id for item in selection.selected)
 
 
 def _materialize_kr_requests(
@@ -263,8 +270,11 @@ def _materialize_kr_requests(
             evaluated_at=evaluated_at,
             max_slippage_bps=Decimal("20"),
         )
-        path = root / f"{stored.capsule.capsule_id}.json"
-        _ = publish_private_immutable_text(path, canonical_experiment_ledger_json(request) + "\n")
+        canonical = canonical_experiment_ledger_json(request)
+        digest = hashlib.sha256(canonical.encode()).hexdigest()[:16]
+        bar = request.bars[-1].end_at.astimezone(_KST).strftime("%H%M%S")
+        path = root / f"{stored.capsule.capsule_id}-{bar}-{digest}.json"
+        _ = publish_private_immutable_text(path, canonical + "\n")
         paths.append(path)
     return tuple(paths)
 
@@ -274,22 +284,6 @@ def _run_child(command: tuple[str, ...]) -> subprocess.CompletedProcess[str]:
         return subprocess.run(command, check=False, capture_output=True, text=True, timeout=180)
     except (OSError, subprocess.SubprocessError):
         return subprocess.CompletedProcess(command, 2, "", "")
-
-
-_TypedArtifact = type[KrDayCapsuleEvaluationRequest]
-
-
-def _typed_files(root: Path, model: _TypedArtifact) -> tuple[Path, ...]:
-    if not root.is_dir():
-        return ()
-    accepted: list[Path] = []
-    for path in sorted(root.glob("*.json"))[-12:]:
-        try:
-            _ = model.model_validate_json(read_private_text(path))
-        except (OSError, TypeError, ValidationError, ValueError):
-            continue
-        accepted.append(path)
-    return tuple(accepted[-3:])
 
 
 def _latest_day_input(root: Path) -> Path | None:
