@@ -140,7 +140,14 @@ def watch_roots(outputs: Path, *, kr_day_state_root: Path | None = None) -> tupl
         root / "hermes",
         root / "system",
     )
-    operational = () if kr_day_state_root is None else (kr_day_state_root.resolve(),)
+    operational = ()
+    if kr_day_state_root is not None:
+        requested = kr_day_state_root.resolve()
+        parent = requested.parent
+        if requested.is_dir():
+            operational = (requested,)
+        elif parent.is_dir() and parent not in {Path.home().resolve(), Path(requested.anchor)}:
+            operational = (parent,)
     existing = tuple(path for path in (*candidates, *operational) if path.is_dir())
     return existing or (root,)
 

@@ -40,20 +40,20 @@ def project_kr_day_lifecycle(root: Path, *, now: dt.datetime) -> KrDayLifecycleP
         return KrDayLifecycleProjection((item,), *_trace_failure(item, now), shadows, shadow_state)
     if not decisions:
         return _without_decisions(shadows, shadow_state, now)
-    groups = _decision_groups(decisions)
+    decision_ids = frozenset(event.event_id for event in decisions)
+    groups = tuple(
+        (
+            history,
+            tuple(event for event in shadows if _belongs_to_history(event, history, decision_ids)),
+        )
+        for history in sorted(_decision_groups(decisions), key=lambda value: value[-1].observed_at, reverse=True)
+    )
     items: list[WorkspaceItemV2] = []
     nodes: list[TraceNodeV2] = []
     edges: list[TraceEdgeV2] = []
-    claimed_shadow_ids: set[str] = set()
-    decision_ids = frozenset(event.event_id for event in decisions)
-    for history in sorted(groups, key=lambda value: value[-1].observed_at, reverse=True)[:3]:
+    claimed_shadow_ids = {event.event_id for _, shadow_history in groups for event in shadow_history}
+    for history, shadow_history in groups[:3]:
         thesis_root = history[0]
-        shadow_history = tuple(
-            event
-            for event in shadows
-            if _belongs_to_history(event, history, decision_ids)
-        )
-        claimed_shadow_ids.update(event.event_id for event in shadow_history)
         try:
             _require_bound_history(history, shadow_history)
             card_items, card_nodes, card_edges = project_kr_thesis(history, shadow_history, now)

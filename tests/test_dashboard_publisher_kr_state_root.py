@@ -150,6 +150,49 @@ async def test_native_watch_emits_snapshot_when_explicit_kr_ledger_changes(
 
 
 @pytest.mark.anyio
+async def test_native_watch_emits_snapshot_when_explicit_kr_root_is_created_later(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: only the narrow parent of an explicit service root exists at publisher startup.
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    state_parent = tmp_path / "kr-service"
+    state_parent.mkdir()
+    state_root = state_parent / "state"
+    assert publisher_events.watch_roots(outputs, kr_day_state_root=state_root) == (state_parent,)
+    socket = _Socket()
+    snapshot = DashboardSnapshotV2.model_validate(snapshot_payload())
+    monkeypatch.setattr(publisher_events, "collect_dashboard_snapshot_v2", lambda *_args, **_kwargs: snapshot)
+    monkeypatch.setattr(publisher_events, "current_code_sha", lambda: "a" * 40)
+
+    async def create_ledger_root() -> None:
+        await anyio.sleep(0.1)
+        state_root.mkdir()
+        (state_root / "kr-day-decisions.sqlite3").write_text("mutation", encoding="utf-8")
+
+    # When: the service creates its root and first immutable ledger after startup.
+    with anyio.fail_after(8):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(
+                publisher_events.watch_output_events,
+                socket,
+                outputs,
+                anyio.Lock(),
+                None,
+                None,
+                None,
+                state_root,
+            )
+            tasks.start_soon(create_ledger_root)
+            await socket.sent.wait()
+            tasks.cancel_scope.cancel()
+
+    # Then: the parent creation event rebuilds exactly one snapshot without a broad ancestor watch.
+    assert len(socket.messages) == 1
+
+
+@pytest.mark.anyio
 async def test_reconnect_rebuild_uses_explicit_kr_state_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -106,6 +106,52 @@ def test_corrupt_thesis_history_does_not_hide_valid_sibling(tmp_path: Path) -> N
     assert "decision/shadow binding corrupt" in (corrupt[0].value or "")
 
 
+def test_hidden_fourth_thesis_shadows_are_classified_before_display_cap(tmp_path: Path) -> None:
+    # Given: four theses, with only the oldest carrying a valid registration and malformed follow-up.
+    root = tmp_path / "state"
+    first_bar = dt.datetime(2026, 8, 24, 1, 2, tzinfo=dt.UTC)
+    decisions = tuple(
+        _with_identity(
+            _decision(
+                KrDayDecisionStatus.ARMED,
+                completed_bar_at=first_bar + dt.timedelta(minutes=index),
+                reasons=(KrDayDecisionReasonCode.ENTRY_CONFIRMATION_READY,),
+            ),
+            capsule_id=f"{index + 1}" * 64,
+            opportunity_id=f"thesis-{index}",
+        )
+        for index in range(4)
+    )
+    decision_store = KrDayDecisionStore(root / "kr-day-decisions.sqlite3")
+    assert all(decision_store.append(decision) for decision in decisions)
+    hidden = decisions[0]
+    registered = _shadow(
+        KrDayCapsuleShadowStatus.REGISTERED,
+        hidden.event_id,
+        hidden.observed_at + dt.timedelta(minutes=1),
+        capsule_id=hidden.capsule_id,
+    )
+    malformed = _shadow(
+        KrDayCapsuleShadowStatus.ACTIVE,
+        hidden.event_id,
+        registered.occurred_at + dt.timedelta(minutes=1),
+        previous_event_id=registered.event_id,
+        capsule_id="f" * 64,
+    )
+    shadow_store = KrDayCapsuleShadowStore(root / "kr-day-capsule-shadow.sqlite3")
+    assert shadow_store.append(registered) and shadow_store.append(malformed)
+
+    # When: the dashboard limits its recommendation display to the three latest thesis groups.
+    projection = project_kr_day_lifecycle(root, now=malformed.occurred_at + dt.timedelta(seconds=1))
+
+    # Then: all hidden shadows are classified, while none can borrow into a visible thesis card.
+    recommendations = tuple(item for item in projection.items if item.kind == "day_recommendation")
+    rendered = _rendered(projection.items)
+    assert len(recommendations) == 3
+    assert "day_agent.kr.lifecycle.unbound" not in {item.item_id for item in projection.items}
+    assert "ACTIVE" not in rendered and "71100" not in rendered
+
+
 @pytest.mark.parametrize(
     ("status", "reason"),
     [
@@ -178,9 +224,11 @@ def test_active_uses_exact_bound_armed_plan_and_preserves_root_identity(tmp_path
 
 
 def _with_identity(event: KrDayDecisionEvent, *, capsule_id: str, opportunity_id: str) -> KrDayDecisionEvent:
+    values = event.model_dump(mode="python", exclude={"event_id"})
+    if event.conditional_plan is not None:
+        values["conditional_plan"] = event.conditional_plan.model_copy(update={"capsule_id": capsule_id})
     payload = KrDayDecisionEventPayload.model_validate(
-        event.model_dump(mode="python", exclude={"event_id"})
-        | {"capsule_id": capsule_id, "opportunity_id": opportunity_id}
+        values | {"capsule_id": capsule_id, "opportunity_id": opportunity_id}
     )
     return KrDayDecisionEvent.model_validate(
         payload.model_dump(mode="python") | {"event_id": KrDayDecisionEvent.canonical_id_for(payload)}
