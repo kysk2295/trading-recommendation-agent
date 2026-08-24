@@ -37,6 +37,15 @@ def render_active_shadow(event: KrDayCapsuleShadowEvent) -> str:
     )
 
 
+def render_censored_shadow(event: KrDayCapsuleShadowEvent) -> str:
+    return (
+        "KR Day shadow 미체결 계획 종료 (실계좌 주문 없음)\n"
+        f"- 종목/종료시각: {event.symbol} / {event.occurred_at.isoformat()}\n"
+        f"- 결과: {event.status.value} / {event.reason.value}\n"
+        "- shadow 포지션 생성 전 계획이 종료되었습니다."
+    )
+
+
 def render_shadow_exit(event: KrDayCapsuleShadowEvent) -> str:
     return (
         "KR Day shadow 종료 (실계좌 주문 없음)\n"
@@ -58,4 +67,9 @@ def decimal_text(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
 
-__all__ = ("render_active_shadow", "render_armed_decision", "render_shadow_exit")
+__all__ = (
+    "render_active_shadow",
+    "render_armed_decision",
+    "render_censored_shadow",
+    "render_shadow_exit",
+)

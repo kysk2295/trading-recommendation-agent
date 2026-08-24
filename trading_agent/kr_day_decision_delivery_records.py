@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-import json
 from typing import Final, override
 
 from trading_agent.experiment_ledger_keys import canonical_experiment_ledger_json
@@ -12,9 +11,14 @@ from trading_agent.kr_day_capsule_shadow_models import (
     KrDayCapsuleShadowEvent,
     KrDayCapsuleShadowStatus,
 )
+from trading_agent.kr_day_decision_delivery_identity import (
+    kr_day_delivery_source_id,
+    same_kr_day_thesis,
+)
 from trading_agent.kr_day_decision_delivery_rendering import (
     render_active_shadow,
     render_armed_decision,
+    render_censored_shadow,
     render_shadow_exit,
 )
 from trading_agent.kr_day_decision_models import KrDayDecisionEvent, KrDayDecisionStatus
@@ -40,13 +44,13 @@ def build_kr_day_decision_records(
         for index, event in enumerate(decisions)
         if event.status is KrDayDecisionStatus.ARMED
         and not any(
-            _same_thesis(prior, event) and prior.status is KrDayDecisionStatus.ARMED
+            same_kr_day_thesis(prior, event) and prior.status is KrDayDecisionStatus.ARMED
             for prior in decisions[:index]
         )
     )
     records: list[HermesProjectionRecord] = []
     for root in roots:
-        thesis_decisions = tuple(event for event in decisions if _same_thesis(event, root))
+        thesis_decisions = tuple(event for event in decisions if same_kr_day_thesis(event, root))
         armed_ids = frozenset(
             event.event_id for event in thesis_decisions if event.status is KrDayDecisionStatus.ARMED
         )
@@ -98,6 +102,8 @@ def _thread_records(
         ),
         None,
     )
+    if active is not None and (invalidation is not None or blocked is not None):
+        raise InvalidKrDayDecisionDeliveryError
     if invalidation is not None:
         records.append(_decision_reply(root, invalidation))
     elif blocked is not None:
@@ -109,7 +115,18 @@ def _thread_records(
         if terminal is not None:
             records.append(_exit_record(root, active, terminal))
     elif terminal is not None:
-        raise InvalidKrDayDecisionDeliveryError
+        preceding = shadows[: shadows.index(terminal)]
+        no_fill = (
+            terminal.status is KrDayCapsuleShadowStatus.CENSORED
+            and terminal.entry_price is None
+            and terminal.stop_price is None
+            and not terminal.target_prices
+            and bool(preceding)
+            and all(event.status is KrDayCapsuleShadowStatus.REGISTERED for event in preceding)
+        )
+        if not no_fill:
+            raise InvalidKrDayDecisionDeliveryError
+        records.append(_censored_exit_record(root, preceding, terminal))
     return tuple(records)
 
 
@@ -170,6 +187,22 @@ def _exit_record(
         HermesDeliveryKind.EXIT,
         render_shadow_exit(terminal),
         (f"shadow:{active.event_id}",),
+    )
+
+
+def _censored_exit_record(
+    decision: KrDayDecisionEvent,
+    preceding: tuple[KrDayCapsuleShadowEvent, ...],
+    terminal: KrDayCapsuleShadowEvent,
+) -> HermesProjectionRecord:
+    evidence = tuple(f"shadow:{event.event_id}" for event in preceding)
+    return _shadow_record(
+        decision,
+        terminal,
+        "exit:censored",
+        HermesDeliveryKind.EXIT,
+        render_censored_shadow(terminal),
+        evidence,
     )
 
 
@@ -243,8 +276,8 @@ def _record(
 ) -> HermesProjectionRecord:
     lane = KR_THEME_LEADER_VWAP_RECLAIM_LANE
     return HermesProjectionRecord(
-        source_event_id=_source_id(decision, state),
-        root_source_event_id=_source_id(decision, "armed") if reply else None,
+        source_event_id=kr_day_delivery_source_id(decision, state),
+        root_source_event_id=kr_day_delivery_source_id(decision, "armed") if reply else None,
         kind=kind,
         market_id=lane.market_id.value,
         agent_family=lane.agent_family.value,
@@ -257,27 +290,6 @@ def _record(
         rendered_text=text,
         payload_sha256=hashlib.sha256(canonical_experiment_ledger_json(payload).encode()).hexdigest(),
     )
-
-
-def _source_id(decision: KrDayDecisionEvent, state: str) -> str:
-    material = (
-        decision.capsule_id,
-        decision.hypothesis_version_id,
-        decision.opportunity_id,
-        decision.session_date.isoformat(),
-        decision.symbol,
-        state,
-    )
-    digest = hashlib.sha256(json.dumps(material, separators=(",", ":")).encode()).hexdigest()
-    return f"kr-day:{state.split(':')[0]}:{digest}"
-
-
-def _same_thesis(left: KrDayDecisionEvent, right: KrDayDecisionEvent) -> bool:
-    return _thesis(left) == _thesis(right)
-
-
-def _thesis(event: KrDayDecisionEvent) -> tuple[str, str, str, dt.date, str]:
-    return (event.capsule_id, event.hypothesis_version_id, event.opportunity_id, event.session_date, event.symbol)
 
 
 __all__ = ("InvalidKrDayDecisionDeliveryError", "bound_kr_day_decision_id", "build_kr_day_decision_records")

@@ -413,6 +413,7 @@ Commit: `feat: execute admitted KR plans in shadow`
 **Files:**
 
 - Create: `trading_agent/kr_day_decision_delivery.py`
+- Create: `trading_agent/kr_day_decision_delivery_identity.py`
 - Create: `trading_agent/kr_day_decision_delivery_records.py`
 - Create: `trading_agent/kr_day_decision_delivery_rendering.py`
 - Create: `trading_agent/kr_day_delivery_supplements.py`

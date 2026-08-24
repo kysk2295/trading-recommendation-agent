@@ -14,6 +14,7 @@ from trading_agent.hermes_delivery_store import HermesDeliveryWriter
 from trading_agent.kr_day_capsule_shadow_models import (
     KrDayCapsuleShadowEvent,
 )
+from trading_agent.kr_day_decision_delivery_identity import same_kr_day_thesis
 from trading_agent.kr_day_decision_delivery_records import (
     InvalidKrDayDecisionDeliveryError,
     build_kr_day_decision_records,
@@ -73,7 +74,7 @@ def _require_decision_histories(events: tuple[KrDayDecisionEvent, ...]) -> None:
         prior = latest.get(key)
         if event.event_id in seen or event.previous_event_id != (None if prior is None else prior.event_id):
             raise InvalidKrDayDecisionDeliveryError
-        if prior is not None and not _same_thesis(prior, event):
+        if prior is not None and not same_kr_day_thesis(prior, event):
             raise InvalidKrDayDecisionDeliveryError
         seen.add(event.event_id)
         latest[key] = event
@@ -101,24 +102,6 @@ def _require_shadow_histories(events: tuple[KrDayCapsuleShadowEvent, ...]) -> No
             active_signals[key] = event.signal_id
         seen.add(event.event_id)
         latest[key] = event
-
-
-def _same_thesis(left: KrDayDecisionEvent, right: KrDayDecisionEvent) -> bool:
-    return (
-        left.capsule_id,
-        left.hypothesis_version_id,
-        left.opportunity_id,
-        left.session_date,
-        left.symbol,
-    ) == (
-        right.capsule_id,
-        right.hypothesis_version_id,
-        right.opportunity_id,
-        right.session_date,
-        right.symbol,
-    )
-
-
 
 
 __all__ = (

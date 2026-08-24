@@ -359,6 +359,92 @@ def test_kr_legacy_unbound_active_is_not_announced(tmp_path: Path) -> None:
     assert tuple(event.kind for event in store.events()) == (HermesDeliveryKind.ACTIONABLE,)
 
 
+def test_kr_preentry_censored_plan_projects_truthful_no_fill_exit(tmp_path: Path) -> None:
+    # Given: an ARMED plan was REGISTERED but censored before any shadow fill.
+    armed = _decision_event(
+        status=KrDayDecisionStatus.ARMED,
+        reason_codes=(KrDayDecisionReasonCode.CONDITIONAL_TRIGGER_PENDING,),
+    )
+    registered = _shadow_event(
+        armed.event_id,
+        KrDayCapsuleShadowStatus.REGISTERED,
+        occurred_at=armed.observed_at,
+    )
+    censored = _shadow_event(
+        armed.event_id,
+        KrDayCapsuleShadowStatus.CENSORED,
+        previous_event_id=registered.event_id,
+        occurred_at=registered.occurred_at + dt.timedelta(minutes=1),
+    )
+    store = HermesDeliveryStore(tmp_path / "kr-delivery.sqlite3")
+
+    # When: the complete no-fill lifecycle is projected.
+    with store.writer() as writer:
+        result = project_kr_day_decision_delivery(
+            KrDayDecisionDeliveryBatch((armed,), (registered, censored)),
+            writer,
+        )
+
+    # Then: one EXIT reply closes the visible plan without inventing a fill or position prices.
+    events = store.events()
+    assert result.inserted == 2
+    assert tuple(event.kind for event in events) == (
+        HermesDeliveryKind.ACTIONABLE,
+        HermesDeliveryKind.EXIT,
+    )
+    assert events[1].root_delivery_id == events[0].delivery_id
+    assert "미체결" in events[1].rendered_text
+    assert "계획 종료" in events[1].rendered_text
+    assert "체결가" not in events[1].rendered_text
+    assert events[1].evidence_refs == tuple(
+        sorted(
+            (
+                f"decision:{armed.event_id}",
+                f"shadow:{registered.event_id}",
+                f"shadow:{censored.event_id}",
+            )
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    (
+        (KrDayDecisionStatus.REJECTED, KrDayDecisionReasonCode.SPREAD_TOO_WIDE),
+        (KrDayDecisionStatus.BLOCKED, KrDayDecisionReasonCode.MARKET_GATE_BLOCKED),
+    ),
+)
+def test_kr_invalidation_or_blocked_plus_bound_active_rejects_before_insert(
+    tmp_path: Path,
+    status: KrDayDecisionStatus,
+    reason: KrDayDecisionReasonCode,
+) -> None:
+    # Given: one thesis contains mutually exclusive pre-entry invalidation and bound ACTIVE facts.
+    armed = _decision_event(
+        status=KrDayDecisionStatus.ARMED,
+        reason_codes=(KrDayDecisionReasonCode.CONDITIONAL_TRIGGER_PENDING,),
+    )
+    invalidation = _decision_event(
+        status=status,
+        reason_codes=(reason,),
+        previous_event_id=armed.event_id,
+    )
+    active = _shadow_event(
+        armed.event_id,
+        KrDayCapsuleShadowStatus.ACTIVE,
+        occurred_at=invalidation.observed_at + dt.timedelta(seconds=1),
+    )
+    store = HermesDeliveryStore(tmp_path / "kr-delivery.sqlite3")
+
+    # When/Then: semantic validation fails before the ARMED root can be inserted.
+    with store.writer() as writer, pytest.raises(InvalidKrDayDecisionDeliveryError):
+        _ = project_kr_day_decision_delivery(
+            KrDayDecisionDeliveryBatch((armed, invalidation), (active,)),
+            writer,
+        )
+    assert store.events() == ()
+
+
 def _outcome(kind: HermesDeliveryKind, index: int) -> HermesProjectionRecord:
     return HermesProjectionRecord(
         source_event_id=f"outcome-{index}",
@@ -395,11 +481,17 @@ def _shadow_event(
             reason = KrDayCapsuleShadowReason.STOP_FIRST
         case KrDayCapsuleShadowStatus.TARGETED:
             reason = KrDayCapsuleShadowReason.TARGET
+        case KrDayCapsuleShadowStatus.CENSORED:
+            reason = KrDayCapsuleShadowReason.BAR_GAP
         case _:
             raise AssertionError
     if reason_override is not None:
         reason = reason_override
-    has_position = status is not KrDayCapsuleShadowStatus.REGISTERED
+    has_position = status in {
+        KrDayCapsuleShadowStatus.ACTIVE,
+        KrDayCapsuleShadowStatus.STOPPED,
+        KrDayCapsuleShadowStatus.TARGETED,
+    }
     payload = KrDayCapsuleShadowEventPayload(
         capsule_id="a" * 64,
         evaluation_id=("d" if previous_event_id is None else "e") * 64,
@@ -408,7 +500,7 @@ def _shadow_event(
         collection_cycle_id="cycle-1",
         symbol="005930",
         attempted_bar_cursor=occurred_at,
-        accepted_bar_cursor=occurred_at,
+        accepted_bar_cursor=None if status is KrDayCapsuleShadowStatus.CENSORED else occurred_at,
         previous_event_id=previous_event_id,
         status=status,
         reason=reason,
