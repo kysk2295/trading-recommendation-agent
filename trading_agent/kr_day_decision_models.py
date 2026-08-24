@@ -104,6 +104,7 @@ class KrDayDecisionEventPayload(KrDayDecisionModel):
             and _aware(self.valid_until)
             and self.completed_bar_at.date() == self.session_date
             and self.completed_bar_at <= self.observed_at
+            and self.completed_bar_at <= self.valid_until
         )
         reasons = tuple(reason.value for reason in self.reason_codes)
         if (

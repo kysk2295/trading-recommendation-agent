@@ -41,15 +41,8 @@ BEFORE UPDATE ON kr_day_decision_events BEGIN SELECT RAISE(ABORT, 'append-only')
 CREATE TRIGGER kr_day_decision_events_no_delete
 BEFORE DELETE ON kr_day_decision_events BEGIN SELECT RAISE(ABORT, 'append-only'); END;
 """
-_OBJECTS: Final = frozenset(
-    {
-        "kr_day_decision_events",
-        "kr_day_decision_events_by_identity",
-        "kr_day_decision_events_no_update",
-        "kr_day_decision_events_no_delete",
-    }
-)
 type _EventRow = tuple[str, str, str, str, str, str, str, str, str, str]
+type _SchemaDefinition = tuple[str, str]
 
 
 class InvalidKrDayDecisionStoreError(ValueError):
@@ -198,14 +191,21 @@ def _prepare(connection: sqlite3.Connection) -> None:
 def _require_schema(connection: sqlite3.Connection) -> None:
     if connection.execute("PRAGMA user_version").fetchone() != (_SCHEMA_VERSION,):
         raise InvalidKrDayDecisionStoreError
-    objects = frozenset(
-        row[0]
-        for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
-        ).fetchall()
-    )
-    if objects != _OBJECTS:
+    with closing(sqlite3.connect(":memory:")) as expected_connection:
+        expected_connection.executescript(_SCHEMA)
+        expected = _schema_definitions(expected_connection)
+    if _schema_definitions(connection) != expected:
         raise InvalidKrDayDecisionStoreError
+
+
+def _schema_definitions(connection: sqlite3.Connection) -> dict[str, _SchemaDefinition]:
+    rows: list[tuple[str, str, str | None]] = connection.execute(
+        "SELECT name,type,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name"
+    ).fetchall()
+    return {
+        name: (object_type, "" if sql is None else " ".join(sql.split()))
+        for name, object_type, sql in rows
+    }
 
 
 def _require_private_file(path: Path) -> None:
