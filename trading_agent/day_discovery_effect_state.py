@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from typing import assert_never
 
 from trading_agent.day_discovery_ledger import DayDiscoveryCycleState
 from trading_agent.day_discovery_ledger_models import (
@@ -22,6 +23,8 @@ from trading_agent.day_discovery_loop import (
     _sha,
 )
 from trading_agent.day_discovery_state_machine import _event_after, _prepared_from_state
+from trading_agent.day_forward_trial_identity import ForwardExecutionLane, market_clock
+from trading_agent.day_forward_trial_models import DayForwardTrial
 from trading_agent.day_hypothesis_models import HypothesisFamily, HypothesisVersion
 from trading_agent.day_research_attempt_binding import preregistered_attempted_artifact_ref
 from trading_agent.day_strategy_capsule import build_strategy_capsule
@@ -34,6 +37,7 @@ from trading_agent.generated_strategy_artifact import (
     GeneratedStrategyArtifactStore,
 )
 from trading_agent.generated_strategy_execution import GeneratedStrategyExecutionError
+from trading_agent.research_identity_models import MarketId
 from trading_agent.researcher_agent import (
     ProposedHypothesis,
 )
@@ -279,6 +283,7 @@ def _finalize_science_and_branch(
         view.search_budget,
     )
     admission_id = None
+    trial = None
     if capsule is not None:
         admission_payload = {
             "admission_id": "",
@@ -289,6 +294,7 @@ def _finalize_science_and_branch(
             "trading_authority": False,
         }
         admission_id = ForwardProbeAdmissionRequest.canonical_id_for(admission_payload)
+        trial = _forward_trial(capsule, version, view)
     branch_payload = {
         "accepted": capsule is not None,
         "attempt_id": attempt.attempt_id,
@@ -296,6 +302,7 @@ def _finalize_science_and_branch(
         "hypothesis_version_id": version.hypothesis_version_id,
         "capsule_id": None if capsule is None else capsule.capsule_id,
         "admission_id": admission_id,
+        "trial_id": None if trial is None else trial.trial_id,
         "terminal_reason": reason,
         "search_budget_debit": prepared.search_budget_debit,
     }
@@ -315,7 +322,58 @@ def _finalize_science_and_branch(
         writer.register_day_research_attempt_binding(binding)
         if capsule is not None:
             writer._register_day_strategy_capsule(capsule)
+        if trial is not None:
+            writer.register_day_forward_trial(trial)
         writer.finalize_day_discovery_branch(event)
+
+
+def _forward_trial(
+    capsule: StrategyCapsule,
+    version: HypothesisVersion,
+    view: DayDiscoveryEvidenceView,
+) -> DayForwardTrial:
+    exchange, timezone = market_clock(view.market_id)
+    session_date = view.first_eligible_completed_bar_at.astimezone(timezone).date()
+    match view.market_id:
+        case MarketId.KR_EQUITIES:
+            calendar_refs = tuple(
+                item.removeprefix("calendar:")
+                for item in view.source_refs
+                if item.startswith("calendar:")
+            )
+            if len(calendar_refs) != 1:
+                raise DayDiscoveryError("forward_probe_calendar_unresolved")
+            calendar_version = calendar_refs[0]
+        case MarketId.US_EQUITIES:
+            calendar_version = "us-equity-calendar-v1"
+        case unreachable:
+            assert_never(unreachable)
+    payload = {
+        "schema_version": 1,
+        "trial_id": "",
+        "capsule_id": capsule.capsule_id,
+        "hypothesis_version_id": version.hypothesis_version_id,
+        "market_id": view.market_id,
+        "execution_lane": ForwardExecutionLane.FORWARD_PROBE,
+        "session_id": f"{exchange}-{session_date.isoformat()}",
+        "session_date": session_date,
+        "calendar_snapshot_id": f"calendar://official/{exchange}/{calendar_version}",
+        "cost_model_sha256": _sha(canonical_experiment_ledger_json(capsule.cost_model)),
+        "source_refs_sha256": _sha(
+            json.dumps(version.source_refs, ensure_ascii=True, separators=(",", ":"))
+        ),
+        "evidence_schema_sha256": _sha(
+            json.dumps(capsule.evidence_schema, ensure_ascii=True, separators=(",", ":"))
+        ),
+        "preregistered_at": capsule.published_at,
+        "registration_completed_bar_at": view.completed_bar_at,
+        "first_eligible_completed_bar_at": view.first_eligible_completed_bar_at,
+        "trading_authority": False,
+        "profitability_claim": False,
+    }
+    return DayForwardTrial.model_validate(
+        payload | {"trial_id": DayForwardTrial.canonical_id_for(payload)}
+    )
 
 
 def _existing_semantic_parent(

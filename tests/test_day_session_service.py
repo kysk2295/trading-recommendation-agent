@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
 import os
 import plistlib
 import shutil
@@ -29,8 +31,11 @@ from tests.test_us_day_situation_projection import EVALUATED_AT as US_EVALUATED
 from tests.test_us_day_situation_projection import _inputs as us_inputs
 from trading_agent.alpaca_models import AlpacaBar
 from trading_agent.contract_outbox import append_opportunity_snapshot
+from trading_agent.day_forward_trial_identity import ForwardExecutionLane
+from trading_agent.day_forward_trial_models import DayForwardTrial
 from trading_agent.day_session_service import (
     DaySessionServiceResult,
+    _kr_active_capsule_ids,
     _materialize_kr_requests,
     run_day_session_service_tick,
 )
@@ -264,6 +269,42 @@ def test_kr_materializer_reads_cycle_calendar_market_and_ledger_stores(tmp_path:
         published_at=binding.bound_at + dt.timedelta(minutes=1),
     )
     capsule, _ = publish_day_strategy_capsule(ledger, capsule_request)
+    eligible_at = evaluated_at.astimezone(dt.UTC) - dt.timedelta(minutes=1)
+    trial_payload = {
+        "schema_version": 1,
+        "trial_id": "",
+        "capsule_id": capsule.capsule_id,
+        "hypothesis_version_id": capsule.hypothesis_version_id,
+        "market_id": MarketId.KR_EQUITIES,
+        "execution_lane": ForwardExecutionLane.FORWARD_PROBE,
+        "session_id": f"XKRX-{evaluated_at.date().isoformat()}",
+        "session_date": evaluated_at.date(),
+        "calendar_snapshot_id": f"calendar://official/XKRX/{calendar_snapshot.snapshot_id}",
+        "cost_model_sha256": hashlib.sha256(
+            canonical_experiment_ledger_json(capsule.cost_model).encode()
+        ).hexdigest(),
+        "source_refs_sha256": hashlib.sha256(
+            json.dumps(version.source_refs, ensure_ascii=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "evidence_schema_sha256": hashlib.sha256(
+            json.dumps(capsule.evidence_schema, ensure_ascii=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "preregistered_at": eligible_at - dt.timedelta(seconds=30),
+        "registration_completed_bar_at": eligible_at - dt.timedelta(minutes=1),
+        "first_eligible_completed_bar_at": eligible_at,
+        "trading_authority": False,
+        "profitability_claim": False,
+    }
+    trial = DayForwardTrial.model_validate(
+        trial_payload | {"trial_id": DayForwardTrial.canonical_id_for(trial_payload)}
+    )
+    with ledger.writer() as writer:
+        assert writer.register_day_forward_trial(trial)
+
+    assert _kr_active_capsule_ids(config.experiment_ledger, eligible_at - dt.timedelta(microseconds=1)) == ()
+    assert _kr_active_capsule_ids(config.experiment_ledger, evaluated_at.astimezone(dt.UTC)) == (
+        capsule.capsule_id,
+    )
 
     paths = _materialize_kr_requests(config, evaluated_at.astimezone(dt.UTC), (capsule.capsule_id,))
 

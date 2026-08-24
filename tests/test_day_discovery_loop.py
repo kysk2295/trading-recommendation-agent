@@ -121,6 +121,7 @@ def test_safe_novel_non_enum_python_publishes_one_future_only_primary(tmp_path: 
     version = reader.day_hypothesis_versions(market_id=MarketId.US_EQUITIES)[0].version
     assert "novel_liquidity_echo" in version.methodology_tags
     capsule = reader.day_strategy_capsules(MarketId.US_EQUITIES)[0].capsule
+    trial = reader.day_forward_trials(MarketId.US_EQUITIES)[0].trial
     reviewed = reader.day_attempts_for_review(MarketId.US_EQUITIES, version.hypothesis_version_id)[0]
     assert _view().completed_bar_at <= version.created_at
     assert version.created_at <= version.registration_completed_bar_at
@@ -130,6 +131,10 @@ def test_safe_novel_non_enum_python_publishes_one_future_only_primary(tmp_path: 
     assert reviewed.attempt.finished_at < reviewed.binding.bound_at
     assert reviewed.binding.bound_at < capsule.published_at
     assert capsule.published_at < result.first_eligible_completed_bar_at
+    assert trial.capsule_id == capsule.capsule_id
+    assert trial.registration_completed_bar_at == _view().completed_bar_at
+    assert trial.first_eligible_completed_bar_at == result.first_eligible_completed_bar_at
+    assert trial.trading_authority is False
 
 
 def test_completed_cycle_is_authoritatively_finalized_in_v11_ledger(tmp_path: Path) -> None:

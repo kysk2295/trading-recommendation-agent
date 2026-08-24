@@ -14,6 +14,11 @@ from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
+from trading_agent.day_forward_probe_admission import (
+    ForwardProbeQueueItem,
+    ForwardProbeSlotRequest,
+    select_active_probe_slots,
+)
 from trading_agent.day_session_service_config import (
     DaySessionServiceConfig,
     KrDaySessionServiceConfig,
@@ -133,14 +138,10 @@ def _run_us(config: UsDaySessionServiceConfig, now: dt.datetime) -> tuple[int, s
 
 def _run_kr(config: KrDaySessionServiceConfig, now: dt.datetime) -> tuple[int, str]:
     try:
-        policies = tuple(
-            item
-            for item in ExperimentLedgerStore(config.experiment_ledger).day_exploration_policies(MarketId.KR_EQUITIES)
-            if item.payload.effective_session_date == now.astimezone(_KST).date()
-        )
-        if not policies or not policies[-1].payload.active_capsule_ids:
+        capsule_ids = _kr_active_capsule_ids(config.experiment_ledger, now)
+        if not capsule_ids:
             return 2, "capsule_authority_missing"
-        requests = _materialize_kr_requests(config, now, policies[-1].payload.active_capsule_ids)
+        requests = _materialize_kr_requests(config, now, capsule_ids)
     except (OSError, TypeError, ValidationError, ValueError):
         return 2, "source_invalid"
     command = (
@@ -159,6 +160,36 @@ def _run_kr(config: KrDaySessionServiceConfig, now: dt.datetime) -> tuple[int, s
     except (json.JSONDecodeError, AttributeError):
         reason = "kr_capsule_child_invalid"
     return completed.returncode, reason
+
+
+def _kr_active_capsule_ids(ledger_path: Path, now: dt.datetime) -> tuple[str, ...]:
+    ledger = ExperimentLedgerStore(ledger_path)
+    local_date = now.astimezone(_KST).date()
+    policies = tuple(
+        item
+        for item in ledger.day_exploration_policies(MarketId.KR_EQUITIES)
+        if item.payload.effective_session_date == local_date
+    )
+    if policies:
+        return policies[-1].payload.active_capsule_ids
+    candidates = tuple(
+        ForwardProbeQueueItem(trial=state.trial, policy_priority=50, queued_at=state.trial.preregistered_at)
+        for state in ledger.day_forward_trials(MarketId.KR_EQUITIES)
+        if not state.terminal
+        and state.trial.session_date == local_date
+        and state.trial.first_eligible_completed_bar_at <= now
+    )
+    selection = select_active_probe_slots(
+        ForwardProbeSlotRequest(
+            market_id=MarketId.KR_EQUITIES,
+            candidates=candidates,
+            active_capsule_ids=(),
+        )
+    )
+    return tuple(
+        item.trial.capsule_id
+        for item in selection.selected
+    )
 
 
 def _materialize_kr_requests(
