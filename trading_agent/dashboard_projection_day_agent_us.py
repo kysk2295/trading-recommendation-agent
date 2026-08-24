@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from trading_agent.dashboard_models_v2 import TraceEdgeV2, TraceNodeV2, WorkspaceItemV2
-from trading_agent.dashboard_projection_day_agent_support import FacadeState, day_agent_item
+from trading_agent.dashboard_projection_day_agent_support import FacadeState, day_agent_item, day_agent_trace_graph
 from trading_agent.models import RecommendationEvent, RecommendationState
 from trading_agent.us_day_lifecycle import (
     InvalidUsDayLifecycleError,
@@ -90,12 +90,30 @@ def project_us_day_lifecycle_cards(
     edges: list[TraceEdgeV2] = []
     ordered = sorted(theses, key=lambda item: (item.observed_at, item.thesis_id), reverse=True)[:3]
     for thesis in ordered:
-        lifecycle = derive_us_day_lifecycle(thesis, events_by_thesis.get(thesis.thesis_id, ()))
-        thesis_items, timeline_nodes, timeline_edges = _project_thesis(thesis, lifecycle, state, now)
+        try:
+            lifecycle = derive_us_day_lifecycle(thesis, events_by_thesis.get(thesis.thesis_id, ()))
+            thesis_items, timeline_nodes, timeline_edges = _project_thesis(thesis, lifecycle, state, now)
+        except InvalidUsDayLifecycleError:
+            corrupt = _corrupt_thesis_item(thesis, now)
+            thesis_items = (corrupt,)
+            timeline_nodes, timeline_edges = day_agent_trace_graph(thesis_items, now)
         items.extend(thesis_items)
         nodes.extend(timeline_nodes)
         edges.extend(timeline_edges)
     return UsDayLifecycleProjection(tuple(items), tuple(nodes), tuple(edges))
+
+
+def _corrupt_thesis_item(thesis: UsDayTradeThesis, now: dt.datetime) -> WorkspaceItemV2:
+    digest = hashlib.sha256(thesis.thesis_id.encode()).hexdigest()
+    return day_agent_item(
+        f"day_agent.us.lifecycle.{digest[:32]}.corrupt",
+        f"US · Alpaca Paper · {thesis.symbol or thesis.theme_name} · lifecycle corrupt",
+        "corrupt",
+        "paper lifecycle corrupt · no recommendation authority",
+        now,
+        kind="day_theme",
+        trace_id=f"trace.us.lifecycle.{digest[:32]}.corrupt",
+    )
 
 
 def _project_thesis(

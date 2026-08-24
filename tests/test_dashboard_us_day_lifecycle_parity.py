@@ -6,12 +6,16 @@ from pathlib import Path
 
 import pytest
 
+from tests.test_day_learning_report_models import _payload, _report
 from tests.test_us_day_lifecycle import _terminal_thesis
 from tests.test_us_day_signal_admission import _eligible_request
 from trading_agent.dashboard_projection_day_agent import project_day_agent_facade
 from trading_agent.dashboard_projection_day_agent_us import read_us_day_paper_events
 from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
+from trading_agent.dashboard_us_day_live import project_us_day_live
+from trading_agent.day_learning_report_store import publish_market_close_report
 from trading_agent.models import Recommendation, RecommendationState
+from trading_agent.research_identity_models import MarketId
 from trading_agent.store import PaperStore
 from trading_agent.us_day_lifecycle import InvalidUsDayLifecycleError
 from trading_agent.us_day_thesis_models import DayTradeDecision
@@ -72,6 +76,44 @@ def test_dashboard_projects_us_investigating_and_rejected_reasons(tmp_path: Path
     )
     assert all(value in rendered for value in ("INVESTIGATING", "price_setup_incomplete"))
     assert all(value in rendered for value in ("REJECTED", "spread_too_wide"))
+
+
+def test_dashboards_isolate_parseable_first_active_history_per_us_thesis(tmp_path: Path) -> None:
+    # Given: one valid terminal thesis and one paper ledger whose first event is illegally ACTIVE.
+    outputs = tmp_path / "outputs"
+    (outputs / "us_day").mkdir(parents=True, mode=0o700)
+    malformed = _eligible_request().thesis
+    unaffected = _terminal_thesis(
+        malformed,
+        decision=DayTradeDecision.NO_TRADE,
+        reason_code="spread_too_wide",
+    )
+    thesis_store = UsDayThesisStore(outputs / "us_day" / "theses")
+    assert thesis_store.publish_thesis(malformed) and thesis_store.publish_thesis(unaffected)
+    paper_path = outputs / "us_day" / "paper.sqlite3"
+    PaperStore(paper_path).save(_recommendation(malformed.thesis_id))
+    with sqlite3.connect(paper_path) as connection:
+        _ = connection.execute("UPDATE events SET state = ?", (RecommendationState.ACTIVE.value,))
+    _, created = publish_market_close_report(
+        outputs / "kr_day" / "close_reports", _report(_payload(MarketId.KR_EQUITIES))
+    )
+    assert created
+
+    # When: both public dashboard projections consume the same parseable ledger.
+    facade = project_day_agent_facade(outputs, now=malformed.observed_at + dt.timedelta(seconds=4))
+    live = project_us_day_live(outputs, now=malformed.observed_at + dt.timedelta(seconds=4))
+    snapshot = collect_dashboard_snapshot_v2(outputs, now=malformed.observed_at + dt.timedelta(seconds=4))
+
+    # Then: the malformed thesis is fail-closed, its valid sibling and non-US workspace remain available.
+    lifecycle = tuple(item for item in facade.markets if item.item_id.startswith("day_agent.us.lifecycle"))
+    corrupt = tuple(item for item in lifecycle if item.state == "corrupt")
+    unaffected_items = tuple(item for item in lifecycle if "REJECTED" in item.label)
+    assert corrupt and all("ACTIVE" not in item.label for item in corrupt)
+    assert unaffected_items and all(item.state == "populated" for item in unaffected_items)
+    assert next(item for item in facade.markets if item.item_id == "day_agent.kr.shadow").state == "populated"
+    assert live.markets[0].item_id == "day.source"
+    assert live.markets[0].state == "corrupt"
+    assert snapshot.workspaces.paper.state != "corrupt"
 
 
 def test_query_only_paper_reader_does_not_create_or_mutate_files(tmp_path: Path) -> None:
