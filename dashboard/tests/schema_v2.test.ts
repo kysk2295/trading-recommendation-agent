@@ -56,6 +56,43 @@ describe("snapshot v2 compatibility boundary", () => {
     );
   });
 
+  test("accepts the Day agent item kinds emitted by the Python projection", () => {
+    // Given: the live Python projector adds its three Day-agent item families.
+    const kinds = ["day_theme", "day_recommendation", "day_agent_version"] as const;
+    const additions = kinds.map((kind, index) => ({
+      item_id: `day-agent-${index}`,
+      kind,
+      label: `Day agent item ${index}`,
+      state: "populated" as const,
+      value: "Research-only evidence",
+      observed_at: snapshotV2.generated_at,
+      trace_id: snapshotV2.workspaces.markets.trace_id,
+    }));
+    const fixture = {
+      ...snapshotV2,
+      workspaces: {
+        ...snapshotV2.workspaces,
+        markets: {
+          ...snapshotV2.workspaces.markets,
+          items: [...snapshotV2.workspaces.markets.items, ...additions],
+          total_count: snapshotV2.workspaces.markets.total_count + kinds.length,
+          projected_count: snapshotV2.workspaces.markets.projected_count + kinds.length,
+        },
+      },
+      projection: {
+        ...snapshotV2.projection,
+        total_count: snapshotV2.projection.total_count + kinds.length,
+        projected_count: snapshotV2.projection.projected_count + kinds.length,
+      },
+    };
+
+    // When: the dashboard parses the exact cross-language item contract.
+    const parsed = dashboardSnapshotV2Schema.safeParse(fixture);
+
+    // Then: the ingest boundary accepts every Day-agent kind without weakening strict parsing.
+    expect(parsed.success).toBe(true);
+  });
+
   test("round-trips a near-maximum populated fixture below 256 KiB", () => {
     const parsed = dashboardSnapshotV2Schema.parse(nearMaximumSnapshotV2);
     const bytes = new TextEncoder().encode(JSON.stringify(parsed)).byteLength;

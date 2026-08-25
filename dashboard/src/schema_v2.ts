@@ -32,7 +32,17 @@ const freshnessSchema = z.strictObject({
 const workspaceItemSchema = z
   .strictObject({
     item_id: boundedIdSchema,
-    kind: z.enum(["metric", "research", "strategy", "derivative", "paper", "system"]),
+    kind: z.enum([
+      "metric",
+      "research",
+      "strategy",
+      "derivative",
+      "paper",
+      "system",
+      "day_theme",
+      "day_recommendation",
+      "day_agent_version",
+    ]),
     label: z.string().min(1).max(80),
     state: sourceStateNameSchema,
     value: z.string().max(160).nullable(),
