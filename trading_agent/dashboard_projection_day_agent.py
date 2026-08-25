@@ -45,7 +45,12 @@ def project_day_agent_facade(
     kr_day_state_root: Path | None = None,
 ) -> DayAgentFacadeProjection:
     us_reports, us_state = _read_reports(outputs / "us_day" / "close_reports", MarketId.US_EQUITIES)
-    kr_reports, kr_state = _read_reports(outputs / "kr_day" / "close_reports", MarketId.KR_EQUITIES)
+    kr_report_root = (
+        outputs / "kr_day" / "close_reports"
+        if kr_day_state_root is None
+        else kr_day_state_root / "close" / "reports"
+    )
+    kr_reports, kr_state = _read_reports(kr_report_root, MarketId.KR_EQUITIES)
     us_theses, thesis_state = _read_us_theses(outputs / "us_day" / "theses")
     us_paper_events, paper_state = _read_us_paper_events(outputs / "us_day" / "paper.sqlite3", us_theses)
     lifecycle_root = outputs / "kr_day" if kr_day_state_root is None else kr_day_state_root

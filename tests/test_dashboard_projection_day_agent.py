@@ -68,6 +68,27 @@ def test_projects_independent_us_paper_us_shadow_and_kr_read_only_lanes(tmp_path
     assert all("return" not in field for field in type(projection.daily_learning_report).model_fields)
 
 
+def test_explicit_kr_state_root_supplies_close_reports(tmp_path: Path) -> None:
+    # Given: the operational KR service wrote its report outside the dashboard outputs tree.
+    outputs = tmp_path / "outputs"
+    state_root = tmp_path / "kr-service-state"
+    _publish(state_root / "close" / "reports", _report(_payload(MarketId.KR_EQUITIES)))
+
+    # When: the facade reads the explicitly bound KR service state root.
+    projection = project_day_agent_facade(
+        outputs,
+        now=NOW + dt.timedelta(minutes=1),
+        kr_day_state_root=state_root,
+    )
+
+    # Then: the close summary and next-session research cards are populated from that authority.
+    summary = next(item for item in projection.markets if item.item_id == "day_agent.kr.shadow")
+    research = {item.item_id: item for item in projection.research}
+    assert summary.state == "populated" and "close learning" in (summary.value or "")
+    assert research["day_agent.kr.learning"].state == "populated"
+    assert research["day_agent.kr.policy"].state == "populated"
+
+
 def test_corrupt_kr_evidence_does_not_hide_valid_us_lanes(tmp_path: Path) -> None:
     # Given: a verified US report and a corrupt KR source file.
     outputs = tmp_path / "outputs"
