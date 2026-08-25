@@ -286,12 +286,13 @@ def test_kr_materializer_reads_cycle_calendar_market_and_ledger_stores(tmp_path:
         )
         assert market_store.append(receipt)
     calendar_receipt = KisKrSessionCalendarReceipt(
-        base_date=evaluated_at.date(),
-        received_at=evaluated_at - dt.timedelta(hours=1),
+        base_date=evaluated_at.date() - dt.timedelta(days=5),
+        received_at=evaluated_at - dt.timedelta(days=5, hours=1),
         status_code=200,
         content_type="application/json",
         raw_payload=calendar_payload(
             rows=(
+                calendar_row("20260819", "Y", "Y", "Y", "Y"),
                 calendar_row("20260824", "Y", "Y", "Y", "Y"),
                 calendar_row("20260825", "Y", "Y", "Y", "Y"),
             )

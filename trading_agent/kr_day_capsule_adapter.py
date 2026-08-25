@@ -151,8 +151,7 @@ def _require_current_open_session(
     local = evaluated_at.astimezone(SEOUL)
     matches = tuple(day for day in calendar.payload.days if day.session_date == local.date())
     if (
-        calendar.payload.base_date != local.date()
-        or calendar.payload.observed_at > evaluated_at
+        calendar.payload.observed_at > evaluated_at
         or len(matches) != 1
         or not matches[0].business_day
         or not matches[0].trading_day

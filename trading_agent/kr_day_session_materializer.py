@@ -76,7 +76,14 @@ def materialize_kr_requests(
     calendars = tuple(
         item
         for item in KisKrSessionCalendarStore(config.calendar_store).snapshots()
-        if item.payload.base_date == local_date and item.payload.observed_at <= evaluated_at
+        if item.payload.observed_at <= evaluated_at
+        and any(
+            day.session_date == local_date
+            and day.business_day
+            and day.trading_day
+            and day.open_day
+            for day in item.payload.days
+        )
     )
     if not calendars:
         raise ValueError
