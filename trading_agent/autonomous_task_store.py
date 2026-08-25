@@ -11,7 +11,7 @@ from collections.abc import Callable, Collection, Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, override
+from typing import Final, assert_never, override
 
 from trading_agent.autonomous_task_models import (
     AutonomousResearchTask,
@@ -72,9 +72,6 @@ _SCHEMA_OBJECTS: Final = frozenset(
     }
 )
 _TERMINAL_STATES: Final = frozenset({AutonomousTaskState.COMPLETED, AutonomousTaskState.ABANDONED})
-_WAITING_STATES: Final = frozenset(
-    {AutonomousTaskState.WAITING_TIME, AutonomousTaskState.WAITING_EVENT, AutonomousTaskState.BLOCKED}
-)
 
 
 def _expected_schema_rows() -> tuple[tuple[str, str, str, str], ...]:
@@ -373,13 +370,29 @@ def _project_task(task: AutonomousResearchTask, steps: tuple[AutonomousTaskStep,
 
 
 def _is_runnable(task: AutonomousResearchTask, now: dt.datetime, events: Collection[str]) -> bool:
-    if task.state in _TERMINAL_STATES:
-        return False
-    if task.state not in _WAITING_STATES:
-        return True
-    if task.state is AutonomousTaskState.WAITING_EVENT:
-        return task.next_wake_event in events
-    return task.next_wake_at is not None and task.next_wake_at <= now
+    match task.state:
+        case AutonomousTaskState.COMPLETED | AutonomousTaskState.ABANDONED:
+            return False
+        case AutonomousTaskState.WAITING_EVENT:
+            return task.next_wake_event in events
+        case AutonomousTaskState.WAITING_TIME:
+            return task.next_wake_at is not None and task.next_wake_at <= now
+        case AutonomousTaskState.BLOCKED:
+            if task.next_wake_event is not None:
+                return task.next_wake_event in events
+            return task.next_wake_at is not None and task.next_wake_at <= now
+        case (
+            AutonomousTaskState.QUEUED
+            | AutonomousTaskState.OBSERVING
+            | AutonomousTaskState.RESEARCHING
+            | AutonomousTaskState.DELIBERATING
+            | AutonomousTaskState.ACTING
+            | AutonomousTaskState.EVALUATING
+            | AutonomousTaskState.LEARNING
+        ):
+            return True
+        case unreachable:
+            assert_never(unreachable)
 
 
 def _wake_or_created(task: AutonomousResearchTask) -> dt.datetime:

@@ -241,6 +241,27 @@ def test_runnable_filters_wakes_events_and_terminal_tasks_in_priority_order(tmp_
         AutonomousTaskStore(path).reader().runnable(dt.datetime(2026, 8, 26, 14, 30), events=())
 
 
+def test_runnable_wakes_blocked_task_only_for_matching_event(tmp_path: Path) -> None:
+    # Given
+    blocked = task_for(
+        EvidenceId(hashlib.sha256(b"blocked-event").hexdigest()),
+        state=AutonomousTaskState.BLOCKED,
+        next_wake_event="source_restored",
+        blocked_reason="awaiting a restored current-session source",
+    )
+    path = tmp_path / "autonomous.sqlite3"
+    with AutonomousTaskStore(path).writer() as writer:
+        assert writer.create_task(blocked)
+
+    # When
+    reader = AutonomousTaskStore(path).reader()
+
+    # Then
+    assert reader.runnable(NOW, events={"source_restored"}) == (blocked,)
+    assert reader.runnable(NOW, events={"different_event"}) == ()
+    assert reader.runnable(NOW, events=()) == ()
+
+
 def test_matching_open_tasks_uses_family_market_and_subject_intersection(tmp_path: Path) -> None:
     # Given
     matching = task_for(
