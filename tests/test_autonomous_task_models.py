@@ -239,6 +239,11 @@ def test_tick_result_covers_statuses_identity_and_wake_rules() -> None:
         AutonomousSupervisorTickResult(status="completed", **identity, next_wake_event="later")
     with pytest.raises(ValidationError, match="idle_result_fields_invalid"):
         AutonomousSupervisorTickResult(status="idle", **identity)
-    for field, value in (("model_calls", -1), ("model_calls", 13), ("tool_calls", -1), ("tool_calls", 25)):
-        with pytest.raises(ValidationError):
-            AutonomousSupervisorTickResult(status="failed", **identity, **{field: value})
+    with pytest.raises(ValidationError):
+        AutonomousSupervisorTickResult(status="failed", **identity, model_calls=-1)
+    with pytest.raises(ValidationError):
+        AutonomousSupervisorTickResult(status="failed", **identity, model_calls=13)
+    with pytest.raises(ValidationError):
+        AutonomousSupervisorTickResult(status="failed", **identity, tool_calls=-1)
+    with pytest.raises(ValidationError):
+        AutonomousSupervisorTickResult(status="failed", **identity, tool_calls=25)
