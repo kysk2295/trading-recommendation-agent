@@ -56,20 +56,29 @@ def materialize_kr_requests(
         for path in sorted(config.source_root.iterdir())[-24:]
         if path.is_dir() and path.name.startswith(cycle_prefix)
     )
+    outboxes = tuple(
+        cycle / "projection" / "opportunities.v1.jsonl"
+        for cycle in cycles
+        if (cycle / "projection" / "opportunities.v1.jsonl").is_file()
+    )
+    if not outboxes:
+        raise ValueError
     opportunities = tuple(
         opportunity
-        for cycle in reversed(cycles)
+        for outbox in reversed(outboxes)
         for opportunity in reversed(
-            read_opportunity_snapshots(cycle / "projection" / "opportunities.v1.jsonl")
+            read_opportunity_snapshots(outbox)
         )
         if opportunity.observed_at <= evaluated_at
     )
+    if not opportunities:
+        return ()
     calendars = tuple(
         item
         for item in KisKrSessionCalendarStore(config.calendar_store).snapshots()
         if item.payload.base_date == local_date and item.payload.observed_at <= evaluated_at
     )
-    if not opportunities or not calendars:
+    if not calendars:
         raise ValueError
     ledger = ExperimentLedgerStore(config.experiment_ledger)
     capsules = tuple(

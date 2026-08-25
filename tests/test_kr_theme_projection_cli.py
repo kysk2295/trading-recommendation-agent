@@ -299,10 +299,8 @@ def test_projection_cli_handles_outbox_privacy_with_zero_projections(
         str(output),
     )
 
-    if seed_outbox:
-        assert stat.S_IMODE(outbox.stat().st_mode) == 0o600
-    else:
-        assert not outbox.exists()
+    assert outbox.read_text(encoding="utf-8") == ""
+    assert stat.S_IMODE(outbox.stat().st_mode) == 0o600
 
 
 @pytest.mark.parametrize("fault", ["incomplete", "ambiguous", "missing_metric"])

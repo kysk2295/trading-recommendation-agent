@@ -160,6 +160,44 @@ def test_missing_inputs_and_authority_mismatch_are_retryable_service_success(
     assert moved.reason == "commit_mismatch"
 
 
+def test_open_kr_session_with_empty_projection_is_explicit_no_opportunity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: an authorized open-session service and a completed empty projection.
+    config = _config("kr", tmp_path)
+    assert isinstance(config, KrDaySessionServiceConfig)
+    cycle = config.source_root / "kr-research-20260824-090400" / "projection"
+    cycle.mkdir(parents=True, mode=0o700)
+    outbox = cycle / "opportunities.v1.jsonl"
+    outbox.write_text("", encoding="utf-8")
+    outbox.chmod(0o600)
+    monkeypatch.setattr("trading_agent.day_session_service._authority_reason", lambda _: None)
+    monkeypatch.setattr(
+        "trading_agent.day_session_service._kr_active_capsule_ids",
+        lambda *_: ("authorized-capsule",),
+    )
+    child_calls: list[tuple[str, ...]] = []
+
+    def unexpected_child(command: tuple[str, ...]) -> subprocess.CompletedProcess[str]:
+        child_calls.append(command)
+        return subprocess.CompletedProcess(command, 0, '{"result":"processed"}', "")
+
+    monkeypatch.setattr("trading_agent.day_session_service._run_child", unexpected_child)
+
+    # When: the public day-session service consumes the empty projection.
+    result = run_day_session_service_tick(
+        config,
+        clock=lambda: KR_EVALUATED.astimezone(dt.UTC),
+    )
+
+    # Then: it is a healthy no-op and no child decision process is started.
+    assert result.status == "no_action"
+    assert result.reason == "no_opportunity"
+    assert result.decisions == ()
+    assert child_calls == []
+
+
 def test_open_session_real_collector_shaped_artifacts_reach_both_children(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

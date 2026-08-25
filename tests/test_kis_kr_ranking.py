@@ -460,6 +460,28 @@ def test_parse_excludes_observed_seven_character_etn_code_without_dropping_equit
     assert tuple(item.symbol for item in page.items) == ("005930",)
 
 
+def test_parse_fluctuation_excludes_seven_character_etn_without_failing_page() -> None:
+    document = json.loads(_fluctuation_body())
+    valid = document["output"][0]
+    document["output"].append(
+        {
+            **valid,
+            "data_rank": "2",
+            "hts_kor_isnm": "Observed ETN product",
+            "stck_shrn_iscd": "Q510027",
+        }
+    )
+
+    page = parse_kis_kr_ranking_page(
+        _raw(
+            KisKrRankingKind.FLUCTUATION,
+            json.dumps(document, ensure_ascii=False).encode(),
+        )
+    )
+
+    assert tuple(item.symbol for item in page.items) == ("005930",)
+
+
 def test_parse_zero_row_success() -> None:
     page = parse_kis_kr_ranking_page(
         _raw(

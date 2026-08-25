@@ -195,7 +195,7 @@ def read_opportunity_snapshots(path: Path) -> tuple[OpportunitySnapshot, ...]:
         lines = source.read_bytes().splitlines()
         snapshots = tuple(OpportunitySnapshot.model_validate_json(line) for line in lines)
         identities = tuple(item.opportunity_id for item in snapshots)
-        if not lines or len(identities) != len(set(identities)):
+        if len(identities) != len(set(identities)):
             raise InvalidHermesProjectionSourceError
         return snapshots
     except (OSError, TypeError, ValidationError, ValueError):

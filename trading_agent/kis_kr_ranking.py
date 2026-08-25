@@ -424,6 +424,8 @@ def _project_item(
 ) -> KisKrRankingItem | None:
     if kind is KisKrRankingKind.FLUCTUATION:
         parsed = _FluctuationRow.model_validate(row)
+        if _INELIGIBLE_ETN_SYMBOL.fullmatch(parsed.stck_shrn_iscd) is not None:
+            return None
         return KisKrRankingItem(
             market="KRX",
             ranking_kind=kind,

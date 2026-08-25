@@ -131,8 +131,7 @@ def main(
 
         outbox = output / "opportunities.v1.jsonl"
         new_opportunities = 0
-        if projections or outbox.exists():
-            _prepare_private_outbox(outbox)
+        _prepare_private_outbox(outbox)
         if projections:
             new_opportunities = sum(append_opportunity_snapshot(outbox, item.opportunity) for item in projections)
         report = _report(

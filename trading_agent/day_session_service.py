@@ -162,6 +162,8 @@ def _run_kr(
                 return 0, "decision_expired", expired
             return 2, "capsule_authority_missing", ()
         paths = _materialize_kr_requests(config, now, capsule_ids)
+        if not paths:
+            return 2, "no_opportunity", expired
     except (OSError, RuntimeError, TypeError, ValidationError, ValueError):
         if expired:
             try:
