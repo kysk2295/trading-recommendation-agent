@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import json
 
 import pytest
 from pydantic import ValidationError
@@ -189,21 +188,7 @@ def test_terminal_reason_and_wake_invariants() -> None:
 
 
 def test_step_payload_is_canonical_and_step_id_deterministic() -> None:
-    step = AutonomousTaskStep(
-        task_id=autonomous_task_id("day_trading", "kr_equities", ROOT),
-        sequence=1,
-        role=AutonomousAgentRole.MARKET_OBSERVER,
-        agent_family_id="day_trading",
-        market_scope="kr_equities",
-        root_source_evidence_id=ROOT,
-        agent_version="supervisor-v1",
-        state=AutonomousTaskState.OBSERVING,
-        payload_json=json.dumps({"symbol": "005930", "price": 70000}, separators=(",", ":"), sort_keys=True),
-        source_evidence_ids=(ROOT,),
-        evidence_refs=("evidence:a",),
-        budget=budget(),
-        occurred_at=NOW,
-    )
+    step = step_fixture()
     assert step.step_id == autonomous_step_id(step)
     with pytest.raises(ValidationError, match="step_payload_json_not_canonical"):
         step_fixture(payload_json='{"symbol":"005930","price":70000}')
@@ -237,6 +222,26 @@ def test_step_rejects_terminal_reason_for_every_nonterminal_state() -> None:
     ):
         with pytest.raises(ValidationError, match="nonterminal_step_terminal_reason_invalid"):
             step_fixture(state=state, terminal_reason="premature", **wake)
+
+
+def test_step_blocked_reason_is_required_only_for_blocked_state() -> None:
+    blocked = step_fixture(
+        state=AutonomousTaskState.BLOCKED,
+        blocked_reason="source unavailable",
+        next_wake_event="new_evidence",
+    )
+    assert blocked.blocked_reason == "source unavailable"
+    with pytest.raises(ValidationError, match="blocked_step_reason_required"):
+        step_fixture(state=AutonomousTaskState.BLOCKED, next_wake_event="new_evidence")
+    for state, wake in (
+        (AutonomousTaskState.OBSERVING, {}),
+        (AutonomousTaskState.WAITING_TIME, {"next_wake_at": NOW + dt.timedelta(minutes=5)}),
+        (AutonomousTaskState.WAITING_EVENT, {"next_wake_event": "new_evidence"}),
+        (AutonomousTaskState.COMPLETED, {"terminal_reason": "done"}),
+        (AutonomousTaskState.ABANDONED, {"terminal_reason": "retired"}),
+    ):
+        with pytest.raises(ValidationError, match="blocked_step_reason_invalid"):
+            step_fixture(state=state, blocked_reason="should not be here", **wake)
 
 
 def test_tick_result_covers_statuses_identity_and_wake_rules() -> None:

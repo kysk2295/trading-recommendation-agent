@@ -149,6 +149,7 @@ class AutonomousTaskStep(BaseModel):
     occurred_at: AwareDatetime
     next_wake_at: AwareDatetime | None = None
     next_wake_event: str | None = Field(default=None, min_length=1, max_length=160)
+    blocked_reason: str | None = Field(default=None, min_length=1, max_length=160)
     terminal_reason: str | None = Field(default=None, min_length=1, max_length=160)
 
     @field_validator("occurred_at", "next_wake_at", mode="after")
@@ -171,19 +172,38 @@ class AutonomousTaskStep(BaseModel):
             and self.terminal_reason is not None
         ):
             raise InvalidAutonomousTaskFieldError(reason="nonterminal_step_terminal_reason_invalid")
-        if self.state in {AutonomousTaskState.WAITING_TIME, AutonomousTaskState.BLOCKED}:
-            _require_wake(self.occurred_at, self.next_wake_at, self.next_wake_event)
-        elif self.state is AutonomousTaskState.WAITING_EVENT:
-            if (
-                self.next_wake_at is not None
-                or self.next_wake_event is None
+        if self.state is not AutonomousTaskState.BLOCKED and self.blocked_reason is not None:
+            raise InvalidAutonomousTaskFieldError(reason="blocked_step_reason_invalid")
+        match self.state:
+            case AutonomousTaskState.BLOCKED:
+                if self.blocked_reason is None:
+                    raise InvalidAutonomousTaskFieldError(reason="blocked_step_reason_required")
+                _require_wake(self.occurred_at, self.next_wake_at, self.next_wake_event)
+            case AutonomousTaskState.WAITING_TIME:
+                _require_wake(self.occurred_at, self.next_wake_at, self.next_wake_event)
+            case AutonomousTaskState.WAITING_EVENT:
+                if self.next_wake_at is not None or self.next_wake_event is None:
+                    raise InvalidAutonomousTaskFieldError(reason="waiting_event_wake_invalid")
+            case AutonomousTaskState.COMPLETED | AutonomousTaskState.ABANDONED:
+                if self.next_wake_at is not None or self.next_wake_event is not None or self.terminal_reason is None:
+                    raise InvalidAutonomousTaskFieldError(reason="terminal_step_fields_invalid")
+            case (
+                AutonomousTaskState.QUEUED
+                | AutonomousTaskState.OBSERVING
+                | AutonomousTaskState.RESEARCHING
+                | AutonomousTaskState.DELIBERATING
+                | AutonomousTaskState.ACTING
+                | AutonomousTaskState.EVALUATING
+                | AutonomousTaskState.LEARNING
             ):
-                raise InvalidAutonomousTaskFieldError(reason="waiting_event_wake_invalid")
-        elif self.state in {AutonomousTaskState.COMPLETED, AutonomousTaskState.ABANDONED}:
-            if self.next_wake_at is not None or self.next_wake_event is not None or self.terminal_reason is None:
-                raise InvalidAutonomousTaskFieldError(reason="terminal_step_fields_invalid")
-        elif self.next_wake_at is not None or self.next_wake_event is not None or self.terminal_reason is not None:
-            raise InvalidAutonomousTaskFieldError(reason="active_step_terminal_fields_invalid")
+                if (
+                    self.next_wake_at is not None
+                    or self.next_wake_event is not None
+                    or self.terminal_reason is not None
+                ):
+                    raise InvalidAutonomousTaskFieldError(reason="active_step_terminal_fields_invalid")
+            case unreachable:
+                assert_never(unreachable)
         if self.step_id:
             expected = autonomous_step_id(self)
             if self.step_id != expected:
