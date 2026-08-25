@@ -62,10 +62,13 @@ def _project_completed_minutes(
     require_session_open: bool,
 ) -> tuple[KrCompletedMinuteBar, ...]:
     request = _validated_minute_input(source)
+    session_date = request.evaluated_at.astimezone(SEOUL).strftime("%Y%m%d")
     observed_rows: dict[dt.datetime, tuple[KisKrMinuteRow, KisKrMarketReceipt]] = {}
     for receipt in sorted(request.receipts, key=lambda item: item.received_at):
         envelope = parse_minute_envelope(receipt)
         for row in envelope.output2:
+            if row.stck_bsop_date != session_date:
+                continue
             started_at = parse_bar_start(row)
             if started_at + _ONE_MINUTE > receipt.received_at:
                 continue

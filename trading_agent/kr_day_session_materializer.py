@@ -109,8 +109,6 @@ def materialize_kr_requests(
             shadow.latest(stored.capsule.capsule_id, local_date.isoformat()),
         )
     )
-    if not paths:
-        raise ValueError
     return paths
 
 

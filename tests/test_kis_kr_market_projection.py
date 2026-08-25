@@ -99,6 +99,33 @@ def test_recent_projection_accepts_a_contiguous_provider_window_after_the_open()
     assert bars[-1].end_at == SESSION + dt.timedelta(minutes=4)
 
 
+def test_completed_projection_ignores_prior_session_rows_in_provider_window() -> None:
+    # Given: the live provider window includes yesterday's closing row after today's rows.
+    document = json.loads(_minute_body())
+    prior_close = _minute_row("153000", "99", "100", "98", "99", "100", "50000")
+    prior_close["stck_bsop_date"] = "20260717"
+    document["output2"].append(prior_close)
+
+    # When: completed bars are projected for the current evaluated session.
+    bars = project_kis_kr_completed_minutes(
+        KisKrMinuteProjectionInput(
+            receipts=(
+                _receipt(
+                    KisKrMarketReceiptKind.MINUTE_BARS,
+                    json.dumps(document, separators=(",", ":")).encode(),
+                    seconds=2,
+                ),
+            ),
+            evaluated_at=SESSION + dt.timedelta(minutes=4, seconds=4),
+        )
+    )
+
+    # Then: only today's contiguous completed bars remain.
+    assert len(bars) == 4
+    assert bars[0].start_at == SESSION
+    assert bars[-1].end_at == SESSION + dt.timedelta(minutes=4)
+
+
 def test_snapshot_uses_newer_quote_price_when_market_moves_between_gets() -> None:
     price = json.loads(_price_body())
     price["output"]["stck_prpr"] = "103.1"

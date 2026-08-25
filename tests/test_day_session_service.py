@@ -364,6 +364,11 @@ def test_kr_materializer_reads_cycle_calendar_market_and_ledger_stores(tmp_path:
 
     paths = _materialize_kr_requests(config, evaluated_at.astimezone(dt.UTC), (capsule.capsule_id,))
     replay_paths = _materialize_kr_requests(config, evaluated_at.astimezone(dt.UTC), (capsule.capsule_id,))
+    expired_paths = _materialize_kr_requests(
+        config,
+        (evaluated_at + dt.timedelta(minutes=1)).astimezone(dt.UTC),
+        (capsule.capsule_id,),
+    )
     materialized = kr_request().model_validate_json(paths[0].read_text())
     _append_active_shadow(config, materialized)
     next_evaluated_at = evaluated_at + dt.timedelta(minutes=1)
@@ -420,6 +425,7 @@ def test_kr_materializer_reads_cycle_calendar_market_and_ledger_stores(tmp_path:
 
     managed = kr_request().model_validate_json(next_paths[0].read_text())
     assert replay_paths == paths
+    assert expired_paths == ()
     assert next_paths != paths
     assert paths[0].is_file() and next_paths[0].is_file()
     assert materialized.capsule.capsule_id == capsule.capsule_id
