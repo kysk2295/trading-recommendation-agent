@@ -10,11 +10,14 @@ from trading_agent.autonomous_task_models import (
     AutonomousAgentRole,
     AutonomousResearchTask,
     AutonomousRunBudget,
+    AutonomousSupervisorTickResult,
     AutonomousTaskState,
     AutonomousTaskStep,
+    InvalidAutonomousTaskFieldError,
     autonomous_step_id,
     autonomous_step_payload,
     autonomous_task_id,
+    validate_autonomous_step_projection,
 )
 from trading_agent.research_agent_cycle_models import EvidenceId
 
@@ -50,6 +53,50 @@ def task_fixture(**updates: object) -> AutonomousResearchTask:
     }
     payload.update(updates)
     return AutonomousResearchTask.model_validate(payload)
+
+
+def step_fixture(**updates: object) -> AutonomousTaskStep:
+    payload: dict[str, object] = {
+        "task_id": autonomous_task_id("day_trading", "kr_equities", ROOT),
+        "sequence": 1,
+        "role": AutonomousAgentRole.MARKET_OBSERVER,
+        "agent_family_id": "day_trading",
+        "market_scope": "kr_equities",
+        "root_source_evidence_id": ROOT,
+        "agent_version": "supervisor-v1",
+        "state": AutonomousTaskState.OBSERVING,
+        "source_evidence_ids": (ROOT,),
+        "evidence_refs": ("evidence:a",),
+        "budget": budget(),
+        "occurred_at": NOW,
+    }
+    payload.update(updates)
+    return AutonomousTaskStep.model_validate(payload)
+
+
+def test_run_budget_accepts_bounds_and_rejects_outside_bounds() -> None:
+    assert budget().remaining_model_calls == 12
+    assert AutonomousRunBudget(
+        remaining_model_calls=0,
+        remaining_tool_calls=0,
+        remaining_runtime_seconds=0,
+    ).remaining_runtime_seconds == 0
+    for field, value in (
+        ("remaining_model_calls", -1),
+        ("remaining_model_calls", 13),
+        ("remaining_tool_calls", -1),
+        ("remaining_tool_calls", 25),
+        ("remaining_runtime_seconds", -1),
+        ("remaining_runtime_seconds", 301),
+    ):
+        values = {
+            "remaining_model_calls": 12,
+            "remaining_tool_calls": 24,
+            "remaining_runtime_seconds": 300,
+        }
+        values[field] = value
+        with pytest.raises(ValidationError):
+            AutonomousRunBudget(**values)
 
 
 def test_waiting_time_and_blocked_require_one_wake_selector() -> None:
@@ -150,3 +197,48 @@ def test_step_payload_is_canonical_and_step_id_deterministic() -> None:
     tampered["step_id"] = "0" * 64
     with pytest.raises(ValidationError, match="step_id_mismatch"):
         AutonomousTaskStep.model_validate(tampered)
+
+
+def test_step_projection_rejects_immutable_authority_rewrites() -> None:
+    task = task_fixture()
+    step = step_fixture()
+    validate_autonomous_step_projection(task, step)
+    for field, value in (
+        ("agent_version", "supervisor-v2"),
+        ("root_source_evidence_id", OTHER),
+        ("agent_family_id", "swing_trading"),
+        ("market_scope", "us_equities"),
+    ):
+        altered = step.model_copy(update={field: value})
+        with pytest.raises(InvalidAutonomousTaskFieldError, match="step_projection_authority_mismatch"):
+            validate_autonomous_step_projection(task, altered)
+
+
+def test_tick_result_covers_statuses_identity_and_wake_rules() -> None:
+    task_id = autonomous_task_id("day_trading", "kr_equities", ROOT)
+    identity = {"task_id": task_id, "agent_family_id": "day_trading", "market_scope": "kr_equities"}
+    assert AutonomousSupervisorTickResult(status="idle").status == "idle"
+    assert AutonomousSupervisorTickResult(
+        status="waiting", **identity, next_wake_event="new_evidence"
+    ).status == "waiting"
+    assert AutonomousSupervisorTickResult(
+        status="completed", **identity
+    ).status == "completed"
+    assert AutonomousSupervisorTickResult(
+        status="blocked", **identity, next_wake_at=NOW + dt.timedelta(minutes=5)
+    ).status == "blocked"
+    assert AutonomousSupervisorTickResult(status="failed", **identity).status == "failed"
+    for status in ("waiting", "completed", "blocked", "failed"):
+        with pytest.raises(ValidationError, match="tick_identity_required"):
+            AutonomousSupervisorTickResult(status=status)
+    with pytest.raises(ValidationError, match="tick_identity_incomplete"):
+        AutonomousSupervisorTickResult(status="waiting", task_id=task_id, next_wake_event="event")
+    with pytest.raises(ValidationError, match="waiting_result_wake_required"):
+        AutonomousSupervisorTickResult(status="waiting", **identity)
+    with pytest.raises(ValidationError, match="terminal_result_wake_invalid"):
+        AutonomousSupervisorTickResult(status="completed", **identity, next_wake_event="later")
+    with pytest.raises(ValidationError, match="idle_result_fields_invalid"):
+        AutonomousSupervisorTickResult(status="idle", **identity)
+    for field, value in (("model_calls", -1), ("model_calls", 13), ("tool_calls", -1), ("tool_calls", 25)):
+        with pytest.raises(ValidationError):
+            AutonomousSupervisorTickResult(status="failed", **identity, **{field: value})

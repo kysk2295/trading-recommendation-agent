@@ -250,6 +250,20 @@ def autonomous_step_payload(step: AutonomousTaskStep) -> str:
     )
 
 
+def validate_autonomous_step_projection(
+    task: AutonomousResearchTask,
+    step: AutonomousTaskStep,
+) -> None:
+    if (
+        step.task_id != task.task_id
+        or step.agent_family_id != task.agent_family_id
+        or step.market_scope != task.market_scope
+        or step.root_source_evidence_id != task.root_source_evidence_id
+        or step.agent_version != task.agent_version
+    ):
+        raise InvalidAutonomousTaskFieldError(reason="step_projection_authority_mismatch")
+
+
 def _require_sorted_unique(values: tuple[str, ...], *, reason: str) -> None:
     if values != tuple(sorted(set(values))) or any(not value for value in values):
         raise InvalidAutonomousTaskFieldError(reason=reason)
@@ -333,4 +347,5 @@ __all__ = (
     "autonomous_step_id",
     "autonomous_step_payload",
     "autonomous_task_id",
+    "validate_autonomous_step_projection",
 )
