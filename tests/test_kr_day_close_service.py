@@ -221,8 +221,8 @@ def test_foreign_snapshot_shadow_history_cannot_finalize_selected_trial(tmp_path
     assert not fixture.config.completion_root.exists()
 
 
-def test_historical_calendar_snapshot_cannot_authorize_current_close(tmp_path: Path) -> None:
-    # Given: a prior-date official snapshot happens to include the selected session in its horizon.
+def test_covering_calendar_horizon_authorizes_current_close(tmp_path: Path) -> None:
+    # Given: the selected official session is covered by a prior-date calendar horizon.
     fixture = close_fixture(
         tmp_path,
         calendar_base_date=dt.date(2026, 8, 23),
@@ -231,10 +231,23 @@ def test_historical_calendar_snapshot_cannot_authorize_current_close(tmp_path: P
     # When: the close runtime selects calendar authority for the current local session.
     result = run_kr_day_close_service(fixture.config, _runtime(fixture.post_close))
 
-    # Then: historical calendar authority is stale and cannot create report or completion state.
-    assert (result.status, result.complete) == ("blocked", False)
-    assert not fixture.config.report_root.exists()
-    assert not fixture.config.completion_root.exists()
+    # Then: the exact snapshot bound by the trial finalizes the covered session.
+    assert (result.status, result.complete) == ("completed", True)
+    assert len(tuple(fixture.config.completion_root.glob("*.json"))) == 1
+
+
+def test_all_blocked_decisions_finalize_a_no_entry_session(tmp_path: Path) -> None:
+    # Given: one selected capsule has a durable BLOCKED decision and no Shadow entry history.
+    fixture = close_fixture(tmp_path, no_entry=True)
+
+    # When: the official post-close service finalizes the session.
+    result = run_kr_day_close_service(fixture.config, _runtime(fixture.post_close))
+
+    # Then: the legitimate no-entry day still produces one report, summary, and completion.
+    assert (result.status, result.complete, result.summary_inserted) == ("completed", True, 1)
+    assert len(tuple(fixture.config.report_root.glob("market_close_report_*.json"))) == 1
+    assert len(tuple(fixture.config.completion_root.glob("*.json"))) == 1
+    assert result.mutation_count == 0
 
 
 def test_active_without_exact_close_evidence_remains_incomplete(tmp_path: Path) -> None:

@@ -50,7 +50,7 @@ class KrDayMarketCloseMetricsPayload(BaseModel):
     risk_incident_ids: tuple[str, ...]
     data_incident_ids: tuple[str, ...]
     outcome_ids: tuple[str, ...] = Field(min_length=1)
-    shadow_event_ids: tuple[str, ...] = Field(min_length=1)
+    shadow_event_ids: tuple[str, ...] = ()
     next_review_date: dt.date
     provider_read_only: Literal[True] = True
     actual_return: None = None

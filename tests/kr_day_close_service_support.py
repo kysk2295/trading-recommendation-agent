@@ -58,6 +58,13 @@ from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStor
 from trading_agent.kr_day_capsule_models import KrDayCapsuleEvaluation, KrDayCapsuleEvaluationPayload
 from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
 from trading_agent.kr_day_close_service_config import KrDayCloseServiceConfig
+from trading_agent.kr_day_decision_models import (
+    KrDayDecisionEvent,
+    KrDayDecisionEventPayload,
+    KrDayDecisionEvidenceValue,
+    KrDayDecisionReasonCode,
+    KrDayDecisionStatus,
+)
 from trading_agent.kr_day_decision_store import KrDayDecisionStore
 from trading_agent.kr_day_loop_inputs import (
     KrDayLoopInputBundle,
@@ -91,6 +98,7 @@ def close_fixture(
     *,
     open_day: bool = True,
     terminal: bool = True,
+    no_entry: bool = False,
     calendar_base_date: dt.date = SESSION_DATE,
     shadow_snapshot_id: str | None = None,
     configured_loop: bool = False,
@@ -124,6 +132,7 @@ def close_fixture(
             config,
             snapshot.snapshot_id,
             terminal=terminal,
+            no_entry=no_entry,
             shadow_snapshot_id=shadow_snapshot_id,
             configured_loop=configured_loop,
             loop_calendar_snapshot_id=loop_calendar_snapshot_id,
@@ -173,6 +182,7 @@ def _seed_session(
     snapshot_id: str,
     *,
     terminal: bool,
+    no_entry: bool,
     shadow_snapshot_id: str | None,
     configured_loop: bool,
     loop_calendar_snapshot_id: str | None,
@@ -292,6 +302,34 @@ def _seed_session(
         event_snapshot_id,
     )
     shadow = KrDayCapsuleShadowStore(config.shadow_store)
+    if no_entry:
+        opportunity = entry.setup_input.opportunity
+        payload = KrDayDecisionEventPayload(
+            capsule_id=entry.capsule_id,
+            hypothesis_version_id=entry.hypothesis_version_id,
+            opportunity_id=entry.opportunity_id,
+            session_date=entry.session_date,
+            symbol=entry.symbol,
+            completed_bar_at=entry.completed_bar_cursor,
+            observed_at=entry.evaluated_at,
+            valid_until=opportunity.valid_until,
+            status=KrDayDecisionStatus.BLOCKED,
+            reason_codes=(KrDayDecisionReasonCode.MARKET_GATE_BLOCKED,),
+            conditional_plan=None,
+            evidence_refs=tuple(reference.canonical_id for reference in opportunity.evidence_refs),
+            observed_evidence=(
+                KrDayDecisionEvidenceValue(
+                    name="decision_input_sha256",
+                    value=entry.decision_input_sha256,
+                ),
+            ),
+        )
+        decision = KrDayDecisionEvent.model_validate(
+            payload.model_dump(mode="python")
+            | {"event_id": KrDayDecisionEvent.canonical_id_for(payload)}
+        )
+        assert KrDayDecisionStore(config.decision_store).append(decision)
+        return
     _ = run_authorized_kr_shadow_tick(shadow, (entry,))
     if terminal:
         _ = run_authorized_kr_shadow_tick(

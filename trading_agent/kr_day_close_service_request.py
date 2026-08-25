@@ -19,12 +19,13 @@ from trading_agent.kis_kr_session_calendar_store import KisKrSessionCalendarStor
 from trading_agent.kr_day_capsule_outcomes import (
     KrDayCapsuleOutcome,
     KrDayCapsuleOutcomeAttempt,
+    KrDayCapsuleTerminalKind,
     project_kr_day_capsule_outcome,
 )
 from trading_agent.kr_day_capsule_shadow_models import KrDayCapsuleShadowEvent
 from trading_agent.kr_day_capsule_shadow_store import KrDayCapsuleShadowStore
 from trading_agent.kr_day_close_service_config import KrDayCloseServiceConfig
-from trading_agent.kr_day_decision_models import KrDayDecisionEvent
+from trading_agent.kr_day_decision_models import KrDayDecisionEvent, KrDayDecisionStatus
 from trading_agent.kr_day_decision_store import KrDayDecisionStore
 from trading_agent.kr_day_market_close_report import KrDayMarketCloseRequest
 from trading_agent.research_identity_models import MarketId
@@ -94,15 +95,14 @@ def build_kr_day_close_request(
     decisions = _session_decisions(config.decision_store, local.date(), tuple(selected_capsules))
     _require_decision_shadow_authority(decisions, shadows, selected_capsules)
     outcomes = tuple(
-        project_kr_day_capsule_outcome(
-            KrDayCapsuleOutcomeAttempt(
-                attempt_id=capsule_by_id[trial.capsule_id].attempt_binding_id,
-                capsule_id=trial.capsule_id,
-                hypothesis_version_id=trial.hypothesis_version_id,
-                trial_id=trial.trial_id,
-                session_date=local.date(),
-                events=tuple(event for event in shadows if event.capsule_id == trial.capsule_id),
-            )
+        _project_outcome(
+            capsule_by_id[trial.capsule_id].attempt_binding_id,
+            trial.trial_id,
+            trial.capsule_id,
+            trial.hypothesis_version_id,
+            local.date(),
+            tuple(event for event in shadows if event.capsule_id == trial.capsule_id),
+            tuple(event for event in decisions if event.capsule_id == trial.capsule_id),
         )
         for trial in sorted(trials, key=lambda item: item.capsule_id)
     )
@@ -172,9 +172,7 @@ def _latest_calendar(
         (snapshot, day)
         for snapshot in snapshots
         for day in snapshot.payload.days
-        if day.session_date == session_date
-        and snapshot.payload.base_date == session_date
-        and snapshot.payload.observed_at <= observed_at
+        if day.session_date == session_date and snapshot.payload.observed_at <= observed_at
     )
     if not candidates:
         raise InvalidKrDayCloseRequestSourceError
@@ -187,10 +185,12 @@ def _session_shadows(
     known_capsules: tuple[str, ...],
     calendar_snapshot_id: str,
 ) -> tuple[KrDayCapsuleShadowEvent, ...]:
+    if not path.exists():
+        return ()
     if not path.is_file():
         raise InvalidKrDayCloseRequestSourceError
     events = tuple(event for event in KrDayCapsuleShadowStore(path).events() if event.session_date == session_date)
-    if not events or any(
+    if any(
         event.capsule_id not in known_capsules
         or event.calendar_snapshot_id != calendar_snapshot_id
         for event in events
@@ -221,11 +221,22 @@ def _require_decision_shadow_authority(
     for decision in decisions:
         decisions_by_capsule[decision.capsule_id].append(decision)
     shadow_capsules = {event.capsule_id for event in shadows}
-    if shadow_capsules != set(capsules) or set(decisions_by_capsule) != set(capsules):
+    if not shadow_capsules <= set(capsules) or set(decisions_by_capsule) != set(capsules):
         raise InvalidKrDayCloseRequestSourceError
     for capsule_id, events in decisions_by_capsule.items():
         hypothesis = capsules[capsule_id].hypothesis_version_id
-        if any(event.hypothesis_version_id != hypothesis for event in events):
+        if any(event.hypothesis_version_id != hypothesis for event in events) or (
+            capsule_id not in shadow_capsules
+            and any(
+                event.status
+                not in {
+                    KrDayDecisionStatus.REJECTED,
+                    KrDayDecisionStatus.BLOCKED,
+                    KrDayDecisionStatus.EXPIRED,
+                }
+                for event in events
+            )
+        ):
             raise InvalidKrDayCloseRequestSourceError
     decision_ids = {event.event_id for event in decisions}
     for event in shadows:
@@ -236,6 +247,49 @@ def _require_decision_shadow_authority(
             and signal.removeprefix(_SIGNAL_PREFIX) not in decision_ids
         ):
             raise InvalidKrDayCloseRequestSourceError
+
+
+def _project_outcome(
+    attempt_id: str,
+    trial_id: str,
+    capsule_id: str,
+    hypothesis_version_id: str,
+    session_date: dt.date,
+    shadows: tuple[KrDayCapsuleShadowEvent, ...],
+    decisions: tuple[KrDayDecisionEvent, ...],
+) -> KrDayCapsuleOutcome:
+    if shadows:
+        return project_kr_day_capsule_outcome(
+            KrDayCapsuleOutcomeAttempt(
+                attempt_id=attempt_id,
+                capsule_id=capsule_id,
+                hypothesis_version_id=hypothesis_version_id,
+                trial_id=trial_id,
+                session_date=session_date,
+                events=shadows,
+            )
+        )
+    terminal = max(decisions, key=lambda event: (event.observed_at, event.event_id))
+    kind = (
+        KrDayCapsuleTerminalKind.BLOCKED
+        if terminal.status is KrDayDecisionStatus.BLOCKED
+        else KrDayCapsuleTerminalKind.NO_SIGNAL
+    )
+    reason_codes = ",".join(reason.value.lower() for reason in terminal.reason_codes)
+    return KrDayCapsuleOutcome.seal(
+        {
+            "attempt_id": attempt_id,
+            "capsule_id": capsule_id,
+            "hypothesis_version_id": hypothesis_version_id,
+            "trial_id": trial_id,
+            "session_date": session_date,
+            "kind": kind,
+            "reason": f"decision_{terminal.status.value.lower()}:{reason_codes}",
+            "terminal_event_id": terminal.event_id,
+            "net_return": None,
+            "realized_r": None,
+        }
+    )
 
 
 def _existing_authority(

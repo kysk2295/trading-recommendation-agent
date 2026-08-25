@@ -19,6 +19,7 @@ from trading_agent.kis_kr_session_calendar import (
 from trading_agent.kis_kr_session_calendar_models import KrSessionCalendarSnapshot
 from trading_agent.kr_day_capsule_outcomes import (
     KrDayCapsuleOutcome,
+    KrDayCapsuleTerminalKind,
 )
 from trading_agent.kr_day_capsule_shadow_models import (
     KrDayCapsuleShadowEvent,
@@ -61,7 +62,7 @@ class KrDayMarketCloseRequest(BaseModel):
     finalized_at: dt.datetime
     calendar_snapshot: KrSessionCalendarSnapshot
     expected_capsule_ids: tuple[str, ...] = Field(min_length=1, max_length=3)
-    shadow_events: tuple[KrDayCapsuleShadowEvent, ...] = Field(min_length=1)
+    shadow_events: tuple[KrDayCapsuleShadowEvent, ...] = ()
     decision_event_ids: tuple[str, ...] = Field(min_length=1)
     outcomes: tuple[KrDayCapsuleOutcome, ...] = Field(min_length=1, max_length=3)
     active_capsule_ids: tuple[str, ...] = Field(max_length=3)
@@ -232,7 +233,7 @@ def _require_attempt_lineage(request: KrDayMarketCloseRequest) -> None:
     }
     outcomes_by_capsule = {outcome.capsule_id: outcome for outcome in request.outcomes}
     if (
-        set(event.capsule_id for event in request.shadow_events) != expected
+        not set(event.capsule_id for event in request.shadow_events) <= expected
         or set(outcomes_by_capsule) != expected
         or len(outcomes_by_capsule) != len(request.outcomes)
         or set(request.active_capsule_ids) & set(request.queued_capsule_ids)
@@ -241,13 +242,20 @@ def _require_attempt_lineage(request: KrDayMarketCloseRequest) -> None:
         raise InvalidKrDayMarketCloseReportError
     for capsule_id, events in events_by_capsule.items():
         outcome = outcomes_by_capsule[capsule_id]
+        shadow_finalized = bool(events) and (
+            all(event.session_date == request.session_date for event in events)
+            and outcome.terminal_event_id == events[-1].event_id
+            and _event_is_close_finalizable(events[-1])
+        )
+        decision_finalized = not events and (
+            outcome.kind
+            in {KrDayCapsuleTerminalKind.BLOCKED, KrDayCapsuleTerminalKind.NO_SIGNAL}
+            and outcome.terminal_event_id in request.decision_event_ids
+        )
         if (
-            not events
-            or any(event.session_date != request.session_date for event in events)
+            not (shadow_finalized or decision_finalized)
             or outcome.session_date != request.session_date
             or outcome.market_id != MarketId.KR_EQUITIES.value
-            or outcome.terminal_event_id != events[-1].event_id
-            or not _event_is_close_finalizable(events[-1])
         ):
             raise InvalidKrDayMarketCloseReportError
 
