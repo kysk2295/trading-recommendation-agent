@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 KST = dt.timezone(dt.timedelta(hours=9))
 
 
-def test_provision_writes_private_secret_free_two_minute_launch_agent(tmp_path: Path) -> None:
+def test_provision_writes_private_secret_free_freshness_bounded_launch_agent(tmp_path: Path) -> None:
     config_path = tmp_path / "private" / "service.json"
     plist_path = tmp_path / "private" / "service.plist"
 
@@ -43,7 +43,7 @@ def test_provision_writes_private_secret_free_two_minute_launch_agent(tmp_path: 
     payload = plistlib.loads(plist_path.read_bytes())
     assert result == 0
     assert config.label == KR_STRATEGY_RESEARCH_SERVICE_LABEL
-    assert payload["StartInterval"] == 120
+    assert payload["StartInterval"] == 15
     assert payload["RunAtLoad"] is True
     assert "KeepAlive" not in payload
     assert "EnvironmentVariables" not in payload

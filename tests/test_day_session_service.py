@@ -97,16 +97,16 @@ def test_provision_writes_exact_bounded_launch_agents(tmp_path: Path) -> None:
     us = cli.main(_provision("us", uv, us_config, us_plist, tmp_path))
     kr = cli.main(_provision("kr", uv, kr_config, kr_plist, tmp_path))
 
-    # Then: RunAtLoad and the bounded 120-second cadence are exact and secret-free.
+    # Then: RunAtLoad and each market's bounded cadence are exact and secret-free.
     assert us == kr == 0
-    for config_path, plist_path, label in (
-        (us_config, us_plist, US_DAY_SESSION_LABEL),
-        (kr_config, kr_plist, KR_DAY_SESSION_LABEL),
+    for config_path, plist_path, label, interval_seconds in (
+        (us_config, us_plist, US_DAY_SESSION_LABEL, 120),
+        (kr_config, kr_plist, KR_DAY_SESSION_LABEL, 15),
     ):
         payload = plistlib.loads(plist_path.read_bytes())
         assert load_day_session_service_config(config_path).label == label
         assert payload["RunAtLoad"] is True
-        assert payload["StartInterval"] == 120
+        assert payload["StartInterval"] == interval_seconds
         assert "KeepAlive" not in payload
         assert "EnvironmentVariables" not in payload
         assert verify_day_session_launch_agent(config_path, plist_path).ready
@@ -261,7 +261,7 @@ def test_kr_materializer_reads_cycle_calendar_market_and_ledger_stores(tmp_path:
     opportunity = source.opportunity.model_copy(
         update={
             "observed_at": observed_at,
-            "valid_until": evaluated_at + dt.timedelta(seconds=30),
+            "valid_until": evaluated_at + dt.timedelta(seconds=50),
             "evidence_refs": (
                 source.opportunity.evidence_refs[0].model_copy(
                     update={"record_id": cycle_id, "observed_at": observed_at}
@@ -364,9 +364,14 @@ def test_kr_materializer_reads_cycle_calendar_market_and_ledger_stores(tmp_path:
 
     paths = _materialize_kr_requests(config, evaluated_at.astimezone(dt.UTC), (capsule.capsule_id,))
     replay_paths = _materialize_kr_requests(config, evaluated_at.astimezone(dt.UTC), (capsule.capsule_id,))
+    stale_paths = _materialize_kr_requests(
+        config,
+        (evaluated_at + dt.timedelta(seconds=40)).astimezone(dt.UTC),
+        (capsule.capsule_id,),
+    )
     expired_paths = _materialize_kr_requests(
         config,
-        (evaluated_at + dt.timedelta(minutes=1)).astimezone(dt.UTC),
+        (evaluated_at + dt.timedelta(minutes=3)).astimezone(dt.UTC),
         (capsule.capsule_id,),
     )
     materialized = kr_request().model_validate_json(paths[0].read_text())
@@ -425,6 +430,7 @@ def test_kr_materializer_reads_cycle_calendar_market_and_ledger_stores(tmp_path:
 
     managed = kr_request().model_validate_json(next_paths[0].read_text())
     assert replay_paths == paths
+    assert stale_paths == ()
     assert expired_paths == ()
     assert next_paths != paths
     assert paths[0].is_file() and next_paths[0].is_file()

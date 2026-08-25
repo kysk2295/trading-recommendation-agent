@@ -21,7 +21,8 @@ from trading_agent.private_immutable_file import (
 
 US_DAY_SESSION_LABEL: Final = "ai.trading-agent.us-day-session"
 KR_DAY_SESSION_LABEL: Final = "ai.trading-agent.kr-day-session"
-DAY_SESSION_INTERVAL_SECONDS: Final = 120
+US_DAY_SESSION_INTERVAL_SECONDS: Final = 120
+KR_DAY_SESSION_INTERVAL_SECONDS: Final = 15
 _SCRIPT: Final = "run_day_session_service.py"
 _SHA: Final = re.compile(r"[a-f0-9]{40}")
 
@@ -158,7 +159,7 @@ def verify_day_session_launch_agent(
             raise InvalidDaySessionServiceError(reason="service_executable_binding_invalid")
         return DaySessionLaunchAgentVerification(
             ready=True,
-            interval_seconds=DAY_SESSION_INTERVAL_SECONDS,
+            interval_seconds=_launch_cadence(config)[0],
             config_sha256=hashlib.sha256(config_text.encode()).hexdigest(),
             plist_sha256=hashlib.sha256(plist_text.encode()).hexdigest(),
         )
@@ -260,6 +261,7 @@ def _config_text(config: DaySessionServiceConfig) -> str:
 
 
 def _plist_text(config: DaySessionServiceConfig, config_path: Path) -> str:
+    interval_seconds, throttle_seconds = _launch_cadence(config)
     payload = {
         "Label": config.label,
         "ProgramArguments": [
@@ -274,8 +276,8 @@ def _plist_text(config: DaySessionServiceConfig, config_path: Path) -> str:
         ],
         "WorkingDirectory": str(config.project_root),
         "RunAtLoad": True,
-        "StartInterval": DAY_SESSION_INTERVAL_SECONDS,
-        "ThrottleInterval": 30,
+        "StartInterval": interval_seconds,
+        "ThrottleInterval": throttle_seconds,
         "ProcessType": "Background",
         "LowPriorityIO": True,
         "Umask": 0o077,
@@ -285,9 +287,18 @@ def _plist_text(config: DaySessionServiceConfig, config_path: Path) -> str:
     return plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=True).decode()
 
 
+def _launch_cadence(config: DaySessionServiceConfig) -> tuple[int, int]:
+    match config:
+        case UsDaySessionServiceConfig():
+            return US_DAY_SESSION_INTERVAL_SECONDS, 30
+        case KrDaySessionServiceConfig():
+            return KR_DAY_SESSION_INTERVAL_SECONDS, 10
+
+
 __all__ = (
-    "DAY_SESSION_INTERVAL_SECONDS",
+    "KR_DAY_SESSION_INTERVAL_SECONDS",
     "KR_DAY_SESSION_LABEL",
+    "US_DAY_SESSION_INTERVAL_SECONDS",
     "US_DAY_SESSION_LABEL",
     "DaySessionServiceConfig",
     "DaySessionVersionedPaths",

@@ -138,6 +138,8 @@ def _materialize_capsule(
     bars = project_kis_kr_completed_minutes(
         KisKrMinuteProjectionInput(receipts=minute_receipts, evaluated_at=evaluated_at)
     )
+    if evaluated_at - bars[-1].observed_at > dt.timedelta(seconds=30):
+        return ()
     market = project_kis_kr_market_snapshot(
         KisKrSnapshotProjectionInput(
             price_receipt=prices[-1],

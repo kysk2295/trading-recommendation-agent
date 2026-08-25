@@ -17,7 +17,7 @@ from trading_agent.private_immutable_file import (
 )
 
 KR_STRATEGY_RESEARCH_SERVICE_LABEL: Final = "ai.trading-agent.kr-strategy-research-source"
-KR_STRATEGY_RESEARCH_SERVICE_INTERVAL_SECONDS: Final = 120
+KR_STRATEGY_RESEARCH_SERVICE_INTERVAL_SECONDS: Final = 15
 _SERVICE_SCRIPT: Final = "run_kr_strategy_research_service.py"
 _CYCLE_SCRIPT: Final = "run_kr_strategy_research_live_cycle.py"
 
@@ -179,7 +179,7 @@ def _launch_agent_text(config: KrStrategyResearchServiceConfig, config_path: Pat
         "WorkingDirectory": str(config.project_root),
         "RunAtLoad": True,
         "StartInterval": KR_STRATEGY_RESEARCH_SERVICE_INTERVAL_SECONDS,
-        "ThrottleInterval": 30,
+        "ThrottleInterval": 10,
         "ProcessType": "Background",
         "LowPriorityIO": True,
         "Umask": 0o077,
