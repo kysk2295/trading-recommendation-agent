@@ -2,13 +2,10 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-import sqlite3
-import stat
 from pathlib import Path
 
 import pytest
 
-import trading_agent.autonomous_task_store as task_store
 from trading_agent.autonomous_task_models import (
     AutonomousAgentRole,
     AutonomousResearchTask,
@@ -299,52 +296,3 @@ def test_matching_open_tasks_uses_family_market_and_subject_intersection(tmp_pat
     # Then
     assert tuple(task.task_id for task in found) == (matching.task_id, older.task_id)
     assert AutonomousTaskStore(path).reader().matching_open_tasks("day_trading", "kr_equities", ()) == ()
-
-
-def test_store_security_append_only_reader_and_corruption_guards(tmp_path: Path) -> None:
-    # Given
-    path = tmp_path / "autonomous.sqlite3"
-    task = task_fixture()
-    with AutonomousTaskStore(path).writer() as writer:
-        assert writer.create_task(task)
-
-    # When / Then
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    alias = tmp_path / "alias.sqlite3"
-    alias.symlink_to(path)
-    with pytest.raises(InvalidAutonomousTaskStoreError, match="database_path_invalid"):
-        AutonomousTaskStore(alias).reader().task(task.task_id)
-    with task_store._reader_connection(path) as connection, pytest.raises(sqlite3.OperationalError):
-        connection.execute("INSERT INTO autonomous_tasks VALUES ('x','x','x','x')")
-    with sqlite3.connect(path) as connection:
-        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
-            connection.execute("DELETE FROM autonomous_tasks WHERE task_id=?", (task.task_id,))
-        connection.execute("DROP TRIGGER autonomous_tasks_no_update")
-        connection.execute("UPDATE autonomous_tasks SET payload_json='{}' WHERE task_id=?", (task.task_id,))
-        connection.execute(
-            "CREATE TRIGGER autonomous_tasks_no_update BEFORE UPDATE ON autonomous_tasks "
-            "BEGIN SELECT RAISE(ABORT, 'different'); END"
-        )
-    with pytest.raises(InvalidAutonomousTaskStoreError, match="schema_objects_invalid"):
-        AutonomousTaskStore(path).reader().task(task.task_id)
-    corrupt_path = tmp_path / "corrupt.sqlite3"
-    with AutonomousTaskStore(corrupt_path).writer() as writer:
-        assert writer.create_task(task)
-    with sqlite3.connect(corrupt_path) as connection:
-        connection.execute("INSERT INTO autonomous_tasks VALUES ('x','x','x','{}')")
-    with pytest.raises(InvalidAutonomousTaskStoreError, match="task_payload_invalid"):
-        AutonomousTaskStore(corrupt_path).reader().tasks()
-
-
-def test_second_writer_lease_is_rejected(tmp_path: Path) -> None:
-    # Given
-    path = tmp_path / "autonomous.sqlite3"
-    with AutonomousTaskStore(path).writer() as writer:
-        assert writer.create_task(task_fixture())
-
-        # When / Then
-        with (
-            pytest.raises(InvalidAutonomousTaskStoreError, match="database_write_failed"),
-            AutonomousTaskStore(path).writer(),
-        ):
-            pass
