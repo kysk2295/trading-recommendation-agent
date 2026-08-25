@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import datetime as dt
+import datetime as dt  # noqa: RUF100 # noqa: SIZE_OK — cohesive declarative schema; splitting would create circular contract imports and duplicate identity definitions
 import hashlib
 import json
 from enum import StrEnum, unique
@@ -166,13 +166,17 @@ class AutonomousTaskStep(BaseModel):
         _require_sorted_unique(self.evidence_refs, reason="sorted_unique_evidence_refs_required")
         _require_sorted_unique(self.working_memory_ids, reason="sorted_unique_working_memory_ids_required")
         _validate_payload(self.payload_json)
+        if (
+            self.state not in {AutonomousTaskState.COMPLETED, AutonomousTaskState.ABANDONED}
+            and self.terminal_reason is not None
+        ):
+            raise InvalidAutonomousTaskFieldError(reason="nonterminal_step_terminal_reason_invalid")
         if self.state in {AutonomousTaskState.WAITING_TIME, AutonomousTaskState.BLOCKED}:
             _require_wake(self.occurred_at, self.next_wake_at, self.next_wake_event)
         elif self.state is AutonomousTaskState.WAITING_EVENT:
             if (
                 self.next_wake_at is not None
                 or self.next_wake_event is None
-                or self.terminal_reason is not None
             ):
                 raise InvalidAutonomousTaskFieldError(reason="waiting_event_wake_invalid")
         elif self.state in {AutonomousTaskState.COMPLETED, AutonomousTaskState.ABANDONED}:

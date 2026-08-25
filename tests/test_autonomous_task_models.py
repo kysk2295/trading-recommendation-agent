@@ -11,11 +11,11 @@ from trading_agent.autonomous_task_models import (
     AutonomousResearchTask,
     AutonomousRunBudget,
     AutonomousSupervisorTickResult,
+    AutonomousTaskId,
     AutonomousTaskState,
     AutonomousTaskStep,
     InvalidAutonomousTaskFieldError,
     autonomous_step_id,
-    autonomous_step_payload,
     autonomous_task_id,
     validate_autonomous_step_projection,
 )
@@ -24,6 +24,19 @@ from trading_agent.research_agent_cycle_models import EvidenceId
 NOW = dt.datetime(2026, 8, 26, 12, 0, tzinfo=dt.UTC)
 ROOT = EvidenceId("a" * 64)
 OTHER = EvidenceId("b" * 64)
+type FixtureValue = (
+    AutonomousAgentRole
+    | AutonomousTaskState
+    | AutonomousTaskId
+    | AutonomousRunBudget
+    | EvidenceId
+    | dt.datetime
+    | str
+    | int
+    | tuple[str, ...]
+    | tuple[EvidenceId, ...]
+    | None
+)
 
 
 def budget() -> AutonomousRunBudget:
@@ -34,8 +47,8 @@ def budget() -> AutonomousRunBudget:
     )
 
 
-def task_fixture(**updates: object) -> AutonomousResearchTask:
-    payload: dict[str, object] = {
+def task_fixture(**updates: FixtureValue) -> AutonomousResearchTask:
+    payload: dict[str, FixtureValue] = {
         "task_id": autonomous_task_id("day_trading", "kr_equities", ROOT),
         "goal": "Observe the market and preserve a bounded research plan.",
         "owner_role": AutonomousAgentRole.SUPERVISOR,
@@ -55,8 +68,8 @@ def task_fixture(**updates: object) -> AutonomousResearchTask:
     return AutonomousResearchTask.model_validate(payload)
 
 
-def step_fixture(**updates: object) -> AutonomousTaskStep:
-    payload: dict[str, object] = {
+def step_fixture(**updates: FixtureValue) -> AutonomousTaskStep:
+    payload: dict[str, FixtureValue] = {
         "task_id": autonomous_task_id("day_trading", "kr_equities", ROOT),
         "sequence": 1,
         "role": AutonomousAgentRole.MARKET_OBSERVER,
@@ -192,7 +205,8 @@ def test_step_payload_is_canonical_and_step_id_deterministic() -> None:
         occurred_at=NOW,
     )
     assert step.step_id == autonomous_step_id(step)
-    assert autonomous_step_payload(step) == autonomous_step_payload(step)
+    with pytest.raises(ValidationError, match="step_payload_json_not_canonical"):
+        step_fixture(payload_json='{"symbol":"005930","price":70000}')
     tampered = step.model_dump()
     tampered["step_id"] = "0" * 64
     with pytest.raises(ValidationError, match="step_id_mismatch"):
@@ -212,6 +226,17 @@ def test_step_projection_rejects_immutable_authority_rewrites() -> None:
         altered = step.model_copy(update={field: value})
         with pytest.raises(InvalidAutonomousTaskFieldError, match="step_projection_authority_mismatch"):
             validate_autonomous_step_projection(task, altered)
+
+
+def test_step_rejects_terminal_reason_for_every_nonterminal_state() -> None:
+    for state, wake in (
+        (AutonomousTaskState.OBSERVING, {}),
+        (AutonomousTaskState.WAITING_TIME, {"next_wake_at": NOW + dt.timedelta(minutes=5)}),
+        (AutonomousTaskState.BLOCKED, {"next_wake_event": "new_evidence"}),
+        (AutonomousTaskState.WAITING_EVENT, {"next_wake_event": "new_evidence"}),
+    ):
+        with pytest.raises(ValidationError, match="nonterminal_step_terminal_reason_invalid"):
+            step_fixture(state=state, terminal_reason="premature", **wake)
 
 
 def test_tick_result_covers_statuses_identity_and_wake_rules() -> None:
