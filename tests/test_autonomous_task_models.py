@@ -1,0 +1,152 @@
+from __future__ import annotations
+
+import datetime as dt
+import json
+
+import pytest
+from pydantic import ValidationError
+
+from trading_agent.autonomous_task_models import (
+    AutonomousAgentRole,
+    AutonomousResearchTask,
+    AutonomousRunBudget,
+    AutonomousTaskState,
+    AutonomousTaskStep,
+    autonomous_step_id,
+    autonomous_step_payload,
+    autonomous_task_id,
+)
+from trading_agent.research_agent_cycle_models import EvidenceId
+
+NOW = dt.datetime(2026, 8, 26, 12, 0, tzinfo=dt.UTC)
+ROOT = EvidenceId("a" * 64)
+OTHER = EvidenceId("b" * 64)
+
+
+def budget() -> AutonomousRunBudget:
+    return AutonomousRunBudget(
+        remaining_model_calls=12,
+        remaining_tool_calls=24,
+        remaining_runtime_seconds=300,
+    )
+
+
+def task_fixture(**updates: object) -> AutonomousResearchTask:
+    payload: dict[str, object] = {
+        "task_id": autonomous_task_id("day_trading", "kr_equities", ROOT),
+        "goal": "Observe the market and preserve a bounded research plan.",
+        "owner_role": AutonomousAgentRole.SUPERVISOR,
+        "agent_family_id": "day_trading",
+        "market_scope": "kr_equities",
+        "state": AutonomousTaskState.QUEUED,
+        "priority": 50,
+        "root_source_evidence_id": ROOT,
+        "source_evidence_ids": (ROOT,),
+        "evidence_refs": ("evidence:a",),
+        "current_plan": ("observe_market",),
+        "agent_version": "supervisor-v1",
+        "created_at": NOW,
+        "updated_at": NOW,
+    }
+    payload.update(updates)
+    return AutonomousResearchTask.model_validate(payload)
+
+
+def test_waiting_time_and_blocked_require_one_wake_selector() -> None:
+    for state in (AutonomousTaskState.WAITING_TIME, AutonomousTaskState.BLOCKED):
+        with pytest.raises(ValidationError, match="future_wake_selector_required"):
+            task_fixture(state=state, blocked_reason="source unavailable")
+        with pytest.raises(ValidationError, match="future_wake_selector_required"):
+            task_fixture(
+                state=state,
+                next_wake_at=NOW + dt.timedelta(minutes=5),
+                next_wake_event="new_evidence",
+                blocked_reason="source unavailable",
+            )
+
+
+def test_waiting_event_is_nonterminal_and_no_action_needs_a_wake() -> None:
+    task = task_fixture(state=AutonomousTaskState.WAITING_EVENT, next_wake_event="market_evidence")
+    assert task.terminal_reason is None
+    assert task.state not in {AutonomousTaskState.COMPLETED, AutonomousTaskState.ABANDONED}
+    with pytest.raises(ValidationError, match="terminal_fields_invalid"):
+        task_fixture(
+            state=AutonomousTaskState.COMPLETED,
+            completed_actions=("no_action",),
+            terminal_reason="nothing to do",
+        )
+
+
+def test_task_identity_binds_family_market_and_root_evidence() -> None:
+    first = autonomous_task_id("day_trading", "kr_equities", ROOT)
+    assert first == autonomous_task_id("day_trading", "kr_equities", ROOT)
+    assert first != autonomous_task_id("day_trading", "kr_equities", OTHER)
+    assert first != autonomous_task_id("swing_trading", "kr_equities", ROOT)
+    with pytest.raises(ValidationError, match="task_id_identity_mismatch"):
+        task_fixture(task_id=first, root_source_evidence_id=OTHER, source_evidence_ids=(OTHER,))
+
+
+def test_refs_are_sorted_unique_and_root_is_immutable() -> None:
+    with pytest.raises(ValidationError, match="sorted_unique_evidence_refs_required"):
+        task_fixture(evidence_refs=("z", "a"))
+    with pytest.raises(ValidationError, match="sorted_unique_subject_refs_required"):
+        task_fixture(subject_refs=("same", "same"))
+    with pytest.raises(ValidationError, match="root_source_evidence_required"):
+        task_fixture(source_evidence_ids=(OTHER,))
+    task = task_fixture(
+        source_evidence_ids=(ROOT, OTHER),
+        evidence_refs=("evidence:a", "evidence:b"),
+        subject_refs=("symbol:005930",),
+        working_memory_ids=("memory:a",),
+        completed_actions=("observe_market",),
+        pending_actions=("wait_for_event",),
+    )
+    assert task.source_evidence_ids == (ROOT, OTHER)
+
+
+def test_timestamps_are_aware_and_normalized_to_utc() -> None:
+    offset = dt.timezone(dt.timedelta(hours=9))
+    task = task_fixture(
+        created_at=dt.datetime(2026, 8, 26, 21, tzinfo=offset),
+        updated_at=dt.datetime(2026, 8, 26, 21, 1, tzinfo=offset),
+    )
+    assert task.created_at.tzinfo is dt.UTC
+    assert task.updated_at.tzinfo is dt.UTC
+    with pytest.raises(ValidationError):
+        task_fixture(created_at=dt.datetime(2026, 8, 26, 12))
+
+
+def test_terminal_reason_and_wake_invariants() -> None:
+    for state in (AutonomousTaskState.COMPLETED, AutonomousTaskState.ABANDONED):
+        with pytest.raises(ValidationError, match="terminal_fields_invalid"):
+            task_fixture(state=state)
+        with pytest.raises(ValidationError, match="terminal_fields_invalid"):
+            task_fixture(state=state, terminal_reason="done", next_wake_event="later")
+        task = task_fixture(state=state, terminal_reason="done")
+        assert task.next_wake_at is None
+    with pytest.raises(ValidationError, match="active_fields_invalid"):
+        task_fixture(state=AutonomousTaskState.OBSERVING, terminal_reason="not terminal")
+
+
+def test_step_payload_is_canonical_and_step_id_deterministic() -> None:
+    step = AutonomousTaskStep(
+        task_id=autonomous_task_id("day_trading", "kr_equities", ROOT),
+        sequence=1,
+        role=AutonomousAgentRole.MARKET_OBSERVER,
+        agent_family_id="day_trading",
+        market_scope="kr_equities",
+        root_source_evidence_id=ROOT,
+        agent_version="supervisor-v1",
+        state=AutonomousTaskState.OBSERVING,
+        payload_json=json.dumps({"symbol": "005930", "price": 70000}, separators=(",", ":"), sort_keys=True),
+        source_evidence_ids=(ROOT,),
+        evidence_refs=("evidence:a",),
+        budget=budget(),
+        occurred_at=NOW,
+    )
+    assert step.step_id == autonomous_step_id(step)
+    assert autonomous_step_payload(step) == autonomous_step_payload(step)
+    tampered = step.model_dump()
+    tampered["step_id"] = "0" * 64
+    with pytest.raises(ValidationError, match="step_id_mismatch"):
+        AutonomousTaskStep.model_validate(tampered)
