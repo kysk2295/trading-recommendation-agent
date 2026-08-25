@@ -313,6 +313,8 @@ def _require_state_invariants(
     actions: tuple[str, ...],
 ) -> None:
     no_action = {action.lower().replace("-", "_") for action in actions} & {"no_action", "no_trade"}
+    if state is not AutonomousTaskState.BLOCKED and blocked_reason is not None:
+        raise InvalidAutonomousTaskFieldError(reason="blocked_reason_invalid")
     match state:
         case AutonomousTaskState.WAITING_EVENT:
             if next_wake_at is not None or next_wake_event is None or terminal_reason is not None:

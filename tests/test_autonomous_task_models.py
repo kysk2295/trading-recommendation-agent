@@ -23,27 +23,11 @@ from trading_agent.research_agent_cycle_models import EvidenceId
 NOW = dt.datetime(2026, 8, 26, 12, 0, tzinfo=dt.UTC)
 ROOT = EvidenceId("a" * 64)
 OTHER = EvidenceId("b" * 64)
-type FixtureValue = (
-    AutonomousAgentRole
-    | AutonomousTaskState
-    | AutonomousTaskId
-    | AutonomousRunBudget
-    | EvidenceId
-    | dt.datetime
-    | str
-    | int
-    | tuple[str, ...]
-    | tuple[EvidenceId, ...]
-    | None
-)
+type FixtureValue = AutonomousAgentRole | AutonomousTaskState | AutonomousTaskId | AutonomousRunBudget | EvidenceId | dt.datetime | str | int | tuple[str, ...] | tuple[EvidenceId, ...] | None  # noqa: E501
 
 
 def budget() -> AutonomousRunBudget:
-    return AutonomousRunBudget(
-        remaining_model_calls=12,
-        remaining_tool_calls=24,
-        remaining_runtime_seconds=300,
-    )
+    return AutonomousRunBudget(remaining_model_calls=12, remaining_tool_calls=24, remaining_runtime_seconds=300)
 
 
 def task_fixture(**updates: FixtureValue) -> AutonomousResearchTask:
@@ -89,9 +73,7 @@ def step_fixture(**updates: FixtureValue) -> AutonomousTaskStep:
 def test_run_budget_accepts_bounds_and_rejects_outside_bounds() -> None:
     assert budget().remaining_model_calls == 12
     assert AutonomousRunBudget(
-        remaining_model_calls=0,
-        remaining_tool_calls=0,
-        remaining_runtime_seconds=0,
+        remaining_model_calls=0, remaining_tool_calls=0, remaining_runtime_seconds=0
     ).remaining_runtime_seconds == 0
     for field, value in (
         ("remaining_model_calls", -1),
@@ -112,16 +94,23 @@ def test_run_budget_accepts_bounds_and_rejects_outside_bounds() -> None:
 
 
 def test_waiting_time_and_blocked_require_one_wake_selector() -> None:
-    for state in (AutonomousTaskState.WAITING_TIME, AutonomousTaskState.BLOCKED):
-        with pytest.raises(ValidationError, match="future_wake_selector_required"):
-            task_fixture(state=state, blocked_reason="source unavailable")
-        with pytest.raises(ValidationError, match="future_wake_selector_required"):
-            task_fixture(
-                state=state,
-                next_wake_at=NOW + dt.timedelta(minutes=5),
-                next_wake_event="new_evidence",
-                blocked_reason="source unavailable",
-            )
+    with pytest.raises(ValidationError, match="future_wake_selector_required"):
+        task_fixture(state=AutonomousTaskState.WAITING_TIME)
+    with pytest.raises(ValidationError, match="future_wake_selector_required"):
+        task_fixture(state=AutonomousTaskState.BLOCKED, blocked_reason="source unavailable")
+    with pytest.raises(ValidationError, match="future_wake_selector_required"):
+        task_fixture(
+            state=AutonomousTaskState.WAITING_TIME,
+            next_wake_at=NOW + dt.timedelta(minutes=5),
+            next_wake_event="new_evidence",
+        )
+    with pytest.raises(ValidationError, match="future_wake_selector_required"):
+        task_fixture(
+            state=AutonomousTaskState.BLOCKED,
+            next_wake_at=NOW + dt.timedelta(minutes=5),
+            next_wake_event="new_evidence",
+            blocked_reason="source unavailable",
+        )
 
 
 def test_waiting_event_is_nonterminal_and_no_action_needs_a_wake() -> None:
@@ -129,11 +118,7 @@ def test_waiting_event_is_nonterminal_and_no_action_needs_a_wake() -> None:
     assert task.terminal_reason is None
     assert task.state not in {AutonomousTaskState.COMPLETED, AutonomousTaskState.ABANDONED}
     with pytest.raises(ValidationError, match="terminal_fields_invalid"):
-        task_fixture(
-            state=AutonomousTaskState.COMPLETED,
-            completed_actions=("no_action",),
-            terminal_reason="nothing to do",
-        )
+        task_fixture(state=AutonomousTaskState.COMPLETED, completed_actions=("no_action",), terminal_reason="nothing to do")  # noqa: E501
 
 
 def test_task_identity_binds_family_market_and_root_evidence() -> None:
@@ -169,8 +154,7 @@ def test_timestamps_are_aware_and_normalized_to_utc() -> None:
         created_at=dt.datetime(2026, 8, 26, 21, tzinfo=offset),
         updated_at=dt.datetime(2026, 8, 26, 21, 1, tzinfo=offset),
     )
-    assert task.created_at.tzinfo is dt.UTC
-    assert task.updated_at.tzinfo is dt.UTC
+    assert task.created_at.tzinfo is dt.UTC and task.updated_at.tzinfo is dt.UTC
     with pytest.raises(ValidationError):
         task_fixture(created_at=dt.datetime(2026, 8, 26, 12))
 
@@ -244,6 +228,28 @@ def test_step_blocked_reason_is_required_only_for_blocked_state() -> None:
             step_fixture(state=state, blocked_reason="should not be here", **wake)
 
 
+def test_task_blocked_reason_is_rejected_for_every_nonblocked_state() -> None:
+    active_states = (
+        AutonomousTaskState.QUEUED,
+        AutonomousTaskState.OBSERVING,
+        AutonomousTaskState.RESEARCHING,
+        AutonomousTaskState.DELIBERATING,
+        AutonomousTaskState.ACTING,
+        AutonomousTaskState.EVALUATING,
+        AutonomousTaskState.LEARNING,
+    )
+    cases = (
+        (AutonomousTaskState.WAITING_EVENT, {"next_wake_event": "new_evidence"}),
+        (AutonomousTaskState.WAITING_TIME, {"next_wake_at": NOW + dt.timedelta(minutes=5)}),
+        (AutonomousTaskState.COMPLETED, {"terminal_reason": "done"}),
+        (AutonomousTaskState.ABANDONED, {"terminal_reason": "retired"}),
+        *tuple((state, {}) for state in active_states),
+    )
+    for state, wake in cases:
+        with pytest.raises(ValidationError, match="blocked_reason_invalid"):
+            task_fixture(state=state, blocked_reason="only blocked tasks may carry this", **wake)
+
+
 def test_tick_result_covers_statuses_identity_and_wake_rules() -> None:
     task_id = autonomous_task_id("day_trading", "kr_equities", ROOT)
     identity = {"task_id": task_id, "agent_family_id": "day_trading", "market_scope": "kr_equities"}
@@ -251,9 +257,7 @@ def test_tick_result_covers_statuses_identity_and_wake_rules() -> None:
     assert AutonomousSupervisorTickResult(
         status="waiting", **identity, next_wake_event="new_evidence"
     ).status == "waiting"
-    assert AutonomousSupervisorTickResult(
-        status="completed", **identity
-    ).status == "completed"
+    assert AutonomousSupervisorTickResult(status="completed", **identity).status == "completed"
     assert AutonomousSupervisorTickResult(
         status="blocked", **identity, next_wake_at=NOW + dt.timedelta(minutes=5)
     ).status == "blocked"
