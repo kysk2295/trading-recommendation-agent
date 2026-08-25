@@ -18,8 +18,8 @@ from trading_agent.kis_kr_market_models import (
     KisKrSnapshotProjectionInput,
 )
 from trading_agent.kis_kr_market_projection import (
-    project_kis_kr_completed_minutes,
     project_kis_kr_market_snapshot,
+    project_kis_kr_recent_completed_minutes,
 )
 from trading_agent.kis_kr_market_receipt_store import KisKrMarketReceiptStore
 from trading_agent.kis_kr_session_calendar_models import KrSessionCalendarSnapshot
@@ -135,7 +135,7 @@ def _materialize_capsule(
     quotes = tuple(item for item in receipts if item.kind is KisKrMarketReceiptKind.ORDER_BOOK)
     if not minute_receipts or not prices or not quotes:
         raise ValueError
-    bars = project_kis_kr_completed_minutes(
+    bars = project_kis_kr_recent_completed_minutes(
         KisKrMinuteProjectionInput(receipts=minute_receipts, evaluated_at=evaluated_at)
     )
     if evaluated_at - bars[-1].observed_at > dt.timedelta(seconds=30):

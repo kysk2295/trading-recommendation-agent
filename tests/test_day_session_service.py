@@ -59,6 +59,7 @@ from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.kis_kr_market_models import KisKrMarketReceiptKind
+from trading_agent.kis_kr_market_projection import project_kis_kr_recent_completed_minutes
 from trading_agent.kis_kr_market_receipt_store import KisKrMarketReceiptStore
 from trading_agent.kis_kr_session_calendar import project_kis_kr_session_calendar
 from trading_agent.kis_kr_session_calendar_models import KisKrSessionCalendarReceipt
@@ -251,7 +252,21 @@ def test_failed_candidate_cutover_restores_current_launch_agent(tmp_path: Path) 
     assert str(current_plist) in calls[-2]
 
 
-def test_kr_materializer_reads_cycle_calendar_market_and_ledger_stores(tmp_path: Path) -> None:
+def test_kr_materializer_reads_cycle_calendar_market_and_ledger_stores(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recent_projection_calls = 0
+
+    def project_recent(source):
+        nonlocal recent_projection_calls
+        recent_projection_calls += 1
+        return project_kis_kr_recent_completed_minutes(source)
+
+    monkeypatch.setattr(
+        "trading_agent.kr_day_session_materializer.project_kis_kr_recent_completed_minutes",
+        project_recent,
+    )
     evaluated_at = dt.datetime(2026, 8, 24, 9, 4, 4, tzinfo=dt.timezone(dt.timedelta(hours=9)))
     config = _config("kr", tmp_path)
     assert isinstance(config, KrDaySessionServiceConfig)
@@ -441,6 +456,7 @@ def test_kr_materializer_reads_cycle_calendar_market_and_ledger_stores(tmp_path:
     assert managed.opportunity.evidence_refs[0].record_id == cycle_id
     assert managed.calendar.snapshot_id == materialized.calendar.snapshot_id
     assert managed.opportunity.candidates[0].symbol == materialized.opportunity.candidates[0].symbol
+    assert recent_projection_calls >= 1
 
     sibling, _ = publish_day_strategy_capsule(
         ledger,
