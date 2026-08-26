@@ -5,6 +5,7 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from trading_agent.browser_observation_redaction import redact_browser_observation_text
 from trading_agent.chrome_devtools_types import InvalidChromeDevToolsError
 from trading_agent.local_browser_protocol import (
     BrowserPageObservation,
@@ -89,14 +90,15 @@ def parse_visible_page(target_id: str, value: str, captured_at: datetime) -> Bro
                 normalized = require_public_https_url(candidate.url)
             except InvalidLocalBrowserProtocolError:
                 continue
-            links.append(BrowserVisibleLink(label=candidate.label.strip()[:200], url=normalized))
+            label = redact_browser_observation_text(candidate.label.strip())[:200]
+            links.append(BrowserVisibleLink(label=label, url=normalized))
             if len(links) == 40:
                 break
         return BrowserPageObservation(
             target_id=target_id,
             url=url,
-            title=payload.title[:500],
-            visible_text=payload.text[:12_000],
+            title=redact_browser_observation_text(payload.title)[:500],
+            visible_text=redact_browser_observation_text(payload.text)[:12_000],
             links=tuple(links),
             captured_at=captured_at,
         )

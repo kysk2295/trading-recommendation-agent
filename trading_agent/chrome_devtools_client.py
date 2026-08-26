@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from trading_agent.browser_observation_redaction import redact_browser_observation_text
 from trading_agent.chrome_devtools_types import (
     CdpCommand,
     CdpMethod,
@@ -183,7 +184,7 @@ class ChromeDevToolsClient:
             return BrowserPageObservation(
                 target_id=target_id,
                 url=require_public_https_url(payload.url),
-                title=payload.title[:500],
+                title=redact_browser_observation_text(payload.title)[:500],
                 captured_at=captured_at,
             )
         except (InvalidLocalBrowserProtocolError, ValidationError):

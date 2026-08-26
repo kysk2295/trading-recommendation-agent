@@ -123,6 +123,19 @@ def test_open_revalidates_url_and_waits_for_ready_state() -> None:
     )
 
 
+def test_open_redacts_sensitive_metadata_title() -> None:
+    # Given: Chrome metadata contains a credential/account sentinel and an ordinary public handle.
+    title = "Bearer SECRET-TOKEN account_number: 12345 @victim market update"
+    page = json.dumps({"title": title, "url": "https://example.com/final", "text": "", "links": []})
+    transport = FixtureCdpTransport([_navigation_response(), _response("complete"), _response(page)])
+    # When: navigation returns the metadata-only observation.
+    observation = ChromeDevToolsClient(transport).open("https://example.com/start", captured_at=NOW)
+    # Then: the metadata path applies the same redaction boundary without erasing public prose.
+    assert "SECRET-TOKEN" not in observation.title
+    assert "12345" not in observation.title
+    assert "@victim market update" in observation.title
+
+
 def test_open_rejects_private_url_before_creating_target() -> None:
     # Given: a transport that records browser mutations.
     transport = FixtureCdpTransport([])
