@@ -8,6 +8,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from trading_agent.local_browser_atomic_rename import (
+    AtomicRenameConflictError,
+    AtomicRenameUnavailableError,
+    rename_entry_exclusively,
+)
 from trading_agent.private_directory_identity import (
     InvalidPrivateDirectoryIdentityError,
     open_private_parent,
@@ -173,9 +178,18 @@ def _open_quarantine(directory: PrivateBrowserDirectory) -> tuple[str, int]:
 
 def _quarantined_metadata(directory_descriptor: int, name: str) -> os.stat_result:
     try:
-        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_descriptor)
+        metadata = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
     except OSError:
         raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_replaced") from None
+    if not stat.S_ISREG(metadata.st_mode):
+        return metadata
+    try:
+        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_descriptor)
+    except OSError:
+        try:
+            return os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+        except OSError:
+            raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_replaced") from None
     try:
         return os.fstat(descriptor)
     finally:
@@ -184,14 +198,10 @@ def _quarantined_metadata(directory_descriptor: int, name: str) -> os.stat_resul
 
 def _restore_quarantined_file(directory: PrivateBrowserDirectory, quarantine_descriptor: int, name: str) -> None:
     try:
-        os.link(name, name, src_dir_fd=quarantine_descriptor, dst_dir_fd=directory.descriptor, follow_symlinks=False)
-    except FileExistsError:
+        rename_entry_exclusively(quarantine_descriptor, name, directory.descriptor, name)
+    except AtomicRenameConflictError:
         raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_replaced") from None
-    except OSError:
-        raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_invalid") from None
-    try:
-        os.unlink(name, dir_fd=quarantine_descriptor)
-    except OSError:
+    except AtomicRenameUnavailableError:
         raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_invalid") from None
 
 
