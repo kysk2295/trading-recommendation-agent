@@ -17,6 +17,8 @@ from pydantic import (
 )
 from pydantic_core import PydanticCustomError
 
+from trading_agent.browser_url_privacy import has_sensitive_browser_query_metadata
+
 MAX_RESPONSE_BYTES: Final = 16 * 1024
 _REQUEST_ID: Final = StringConstraints(pattern=r"[0-9a-f]{64}", min_length=64, max_length=64)
 _TARGET_ID: Final = StringConstraints(min_length=1, max_length=256)
@@ -125,7 +127,7 @@ def require_public_https_url(value: str) -> str:
     if hostname_without_dot == "localhost" or hostname_without_dot.endswith(".localhost"):
         raise _protocol_error() from None
 
-    if _fragment_contains_credentials(parsed.fragment):
+    if _fragment_contains_credentials(parsed.fragment) or has_sensitive_browser_query_metadata(parsed.query):
         raise _protocol_error()
 
     address = _literal_address(hostname)

@@ -88,6 +88,49 @@ def test_public_https_url_strips_ordinary_colon_fragments() -> None:
     assert require_public_https_url("https://example.com/#https://example.net/story") == "https://example.com/"
 
 
+@pytest.mark.parametrize(
+    "url",
+    (
+        "https://example.com/?authorization=withheld",
+        "https://example.com/?ACCESS%2DTOKEN=withheld",
+        "https://example.com/?refresh_key=withheld",
+        "https://example.com/?api%5fsecret=withheld",
+        "https://example.com/?Session-ID=withheld",
+        "https://example.com/?client%20secret=withheld",
+        "https://example.com/?account%2Fnumber=withheld",
+        "https://example.com/?token=withheld",
+        "https://example.com/?auth%2Dtoken=withheld",
+        "https://example.com/?q=Bearer%20withheld",
+        "https://example.com/?q=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJjYW5hcnkifQ.notarealsecret",
+        "https://example.com/?q=api_key%3Dwithheld",
+    ),
+)
+def test_public_https_url_rejects_sensitive_query_metadata(url: str) -> None:
+    with pytest.raises(InvalidLocalBrowserProtocolError) as error:
+        require_public_https_url(url)
+    assert error.value.reason == "browser_url_not_public_https"
+
+
+def test_public_https_url_preserves_normal_search_and_market_queries() -> None:
+    assert require_public_https_url("https://www.google.com/search?q=TSLA+stock+news&oq=TSLA+stock+news") == (
+        "https://www.google.com/search?q=TSLA+stock+news&oq=TSLA+stock+news"
+    )
+    assert require_public_https_url("https://finance.yahoo.com/quote/TSLA?p=TSLA") == (
+        "https://finance.yahoo.com/quote/TSLA?p=TSLA"
+    )
+
+
+def test_browser_models_reject_sensitive_query_urls() -> None:
+    with pytest.raises(ValidationError):
+        BrowserPageObservation(
+            target_id="target-1",
+            url="https://example.com/?api_key=withheld",
+            captured_at=datetime.now(UTC),
+        )
+    with pytest.raises(ValidationError):
+        BrowserVisibleLink(label="sensitive", url="https://example.com/?token=withheld")
+
+
 def test_page_observation_rejects_extra_raw_html_and_is_utc() -> None:
     with pytest.raises(ValidationError):
         BrowserPageObservation.model_validate(

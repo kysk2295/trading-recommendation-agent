@@ -9,7 +9,7 @@ import pytest
 
 from trading_agent.chrome_devtools_client import ChromeDevToolsClient
 from trading_agent.chrome_devtools_transport import LoopbackChromeDevToolsTransport, LoopbackChromeHealthProbe
-from trading_agent.chrome_devtools_types import CdpCommand, CdpMethod
+from trading_agent.chrome_devtools_types import CdpCommand, CdpMethod, InvalidChromeDevToolsError
 from trading_agent.chrome_visible_dom import parse_visible_page
 from trading_agent.local_browser_gateway_config import LocalBrowserGatewayConfig
 from trading_agent.local_chrome_controller import LocalChromeController
@@ -28,6 +28,7 @@ def test_visible_page_parser_revalidates_and_bounds_candidates() -> None:
             "links": [
                 {"label": "public", "url": "https://example.org/article"},
                 {"label": "local", "url": "https://127.0.0.1/private"},
+                {"label": "sensitive", "url": "https://example.net/?auth%2Dtoken=withheld"},
             ],
         }
     )
@@ -36,6 +37,18 @@ def test_visible_page_parser_revalidates_and_bounds_candidates() -> None:
     # Then: it keeps only the revalidated public HTTPS candidate.
     assert observation.visible_text == "visible"
     assert tuple(link.url for link in observation.links) == ("https://example.org/article",)
+
+
+def test_visible_page_parser_rejects_sensitive_page_query() -> None:
+    # Given: Chrome reports a page URL whose decoded query holds credential metadata.
+    payload = json.dumps(
+        {"title": "Story", "url": "https://example.com/?q=api_key%3Dwithheld", "text": "visible", "links": []}
+    )
+    # When: the page observation crosses the Python boundary.
+    with pytest.raises(InvalidChromeDevToolsError) as error:
+        parse_visible_page("target-1", payload, _NOW)
+    # Then: no page observation can carry the sensitive URL into receipts.
+    assert error.value.reason == "browser_navigation_blocked"
 
 
 def test_visible_page_parser_redacts_credentials_and_account_identifiers() -> None:
