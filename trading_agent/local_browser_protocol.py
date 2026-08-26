@@ -111,6 +111,14 @@ def require_public_https_url(value: str) -> str:
 
     if hostname is None or not hostname or any(character.isspace() or ord(character) < 32 for character in hostname):
         raise _protocol_error()
+    try:
+        hostname.encode("ascii")
+    except UnicodeEncodeError:
+        raise _protocol_error() from None
+    normalized_hostname = hostname.lower()
+    hostname_without_dot = normalized_hostname.rstrip(".")
+    if hostname_without_dot == "localhost" or hostname_without_dot.endswith(".localhost"):
+        raise _protocol_error() from None
 
     if _fragment_contains_credentials(parsed.fragment):
         raise _protocol_error()
@@ -121,7 +129,13 @@ def require_public_https_url(value: str) -> str:
         if not _is_valid_hostname(hostname) or all(label.isdigit() for label in labels):
             raise _protocol_error() from None
     if address is not None and (
-        address.is_loopback
+        not address.is_global
+        or (
+            isinstance(address, IPv6Address)
+            and address.ipv4_mapped is not None
+            and not address.ipv4_mapped.is_global
+        )
+        or address.is_loopback
         or address.is_link_local
         or address.is_private
         or address.is_reserved
@@ -132,8 +146,7 @@ def require_public_https_url(value: str) -> str:
 
     if port not in (None, 443):
         raise _protocol_error()
-    normalized_host = hostname.lower()
-    netloc = f"[{normalized_host}]" if ":" in normalized_host else normalized_host
+    netloc = f"[{normalized_hostname}]" if ":" in normalized_hostname else normalized_hostname
     return urlunsplit(("https", netloc, parsed.path, parsed.query, ""))
 
 
@@ -250,32 +263,43 @@ class BrowserResponse(_StrictModel):
     def enforce_payload_contract(self) -> "BrowserResponse":
         payload_fields = {"status_payload", "observation", "search_results", "screenshot"}
         supplied_payload_fields = payload_fields & self.model_fields_set
-        if self.status == "error":
-            if self.failure is None or supplied_payload_fields:
-                raise PydanticCustomError("browser_response_error_payload", "error response payload is invalid")
-            return self._enforce_canonical_size()
-        if self.failure is not None:
-            raise PydanticCustomError("browser_response_ok_failure", "ok response cannot contain failure")
-        match self.action:
-            case BrowserAction.STATUS:
-                if self.status_payload is None or supplied_payload_fields != {"status_payload"}:
-                    raise PydanticCustomError("browser_response_status_payload", "status response payload is invalid")
-            case BrowserAction.SEARCH:
-                if "search_results" not in supplied_payload_fields or supplied_payload_fields != {"search_results"}:
-                    raise PydanticCustomError("browser_response_search_payload", "search response payload is invalid")
-            case BrowserAction.OPEN | BrowserAction.READ | BrowserAction.FOLLOW:
-                if self.observation is None or supplied_payload_fields != {"observation"}:
-                    raise PydanticCustomError(
-                        "browser_response_observation_payload", "observation response payload is invalid"
-                    )
-            case BrowserAction.CAPTURE:
-                if self.screenshot is None or supplied_payload_fields != {"screenshot"}:
-                    raise PydanticCustomError(
-                        "browser_response_screenshot_payload", "screenshot response payload is invalid"
-                    )
+        match self.status:
+            case "error":
+                if self.failure is None or supplied_payload_fields:
+                    raise PydanticCustomError("browser_response_error_payload", "error response payload is invalid")
+                return self._enforce_canonical_size()
+            case "ok":
+                if self.failure is not None:
+                    raise PydanticCustomError("browser_response_ok_failure", "ok response cannot contain failure")
+                match self.action:
+                    case BrowserAction.STATUS:
+                        if self.status_payload is None or supplied_payload_fields != {"status_payload"}:
+                            raise PydanticCustomError(
+                                "browser_response_status_payload", "status response payload is invalid"
+                            )
+                    case BrowserAction.SEARCH:
+                        if (
+                            "search_results" not in supplied_payload_fields
+                            or supplied_payload_fields != {"search_results"}
+                        ):
+                            raise PydanticCustomError(
+                                "browser_response_search_payload", "search response payload is invalid"
+                            )
+                    case BrowserAction.OPEN | BrowserAction.READ | BrowserAction.FOLLOW:
+                        if self.observation is None or supplied_payload_fields != {"observation"}:
+                            raise PydanticCustomError(
+                                "browser_response_observation_payload", "observation response payload is invalid"
+                            )
+                    case BrowserAction.CAPTURE:
+                        if self.screenshot is None or supplied_payload_fields != {"screenshot"}:
+                            raise PydanticCustomError(
+                                "browser_response_screenshot_payload", "screenshot response payload is invalid"
+                            )
+                    case unreachable:
+                        assert_never(unreachable)
+                return self._enforce_canonical_size()
             case unreachable:
                 assert_never(unreachable)
-        return self._enforce_canonical_size()
 
     def _enforce_canonical_size(self) -> "BrowserResponse":
         if len(self.model_dump_json().encode("utf-8")) > MAX_RESPONSE_BYTES:

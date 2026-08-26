@@ -49,6 +49,11 @@ def test_browser_action_is_closed_read_only_set() -> None:
         "https://0177.0.0.1/admin",
         "https://127.1/admin",
         "https://2130706433/admin",
+        "https://100.64.0.1/admin",
+        "https://[::ffff:100.64.0.1]/admin",
+        "https://localhost./admin",
+        "https://service.localhost/admin",
+        "https://bücher.example/admin",
         "https://-invalid.example",
         "https://invalid-.example",
     ),
@@ -62,6 +67,7 @@ def test_navigation_rejects_non_public_https_urls(url: str) -> None:
 def test_public_https_url_is_normalized_without_fragment() -> None:
     assert require_public_https_url("HTTPS://Example.COM/story?q=one#fragment") == "https://example.com/story?q=one"
     assert require_public_https_url("https://Example.COM:443/story") == "https://example.com/story"
+    assert require_public_https_url("https://xn--bcher-kva.example/story") == "https://xn--bcher-kva.example/story"
 
 
 def test_public_https_url_rejects_credential_syntax_in_fragment() -> None:
