@@ -86,15 +86,15 @@ def _literal_address(hostname: str) -> IPv4Address | IPv6Address | None:
 def _fragment_contains_credentials(fragment: str) -> bool:
     if fragment == "user:password":
         return True
-    authority = fragment[2:] if fragment.startswith("//") else fragment
-    authority = authority.split("/", 1)[0]
-    if "@" not in authority:
-        return False
-    userinfo, _separator, _host = authority.rpartition("@")
-    if ":" not in userinfo:
-        return False
-    username, password = userinfo.split(":", 1)
-    return bool(username and password)
+    candidates = (fragment, fragment if fragment.startswith("//") else f"//{fragment}")
+    for candidate in candidates:
+        try:
+            parsed = urlsplit(candidate)
+        except ValueError:
+            continue
+        if parsed.username is not None or parsed.password is not None:
+            return True
+    return False
 
 
 def require_public_https_url(value: str) -> str:

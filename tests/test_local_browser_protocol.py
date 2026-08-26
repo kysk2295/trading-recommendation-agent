@@ -70,11 +70,14 @@ def test_public_https_url_rejects_credential_syntax_in_fragment() -> None:
     assert error.value.reason == "browser_url_not_public_https"
     with pytest.raises(InvalidLocalBrowserProtocolError):
         require_public_https_url("https://example.com/#user:password@example.net")
+    with pytest.raises(InvalidLocalBrowserProtocolError):
+        require_public_https_url("https://example.com/#https://user:password@example.net")
 
 
 def test_public_https_url_strips_ordinary_colon_fragments() -> None:
     assert require_public_https_url("https://example.com/#section:2") == "https://example.com/"
     assert require_public_https_url("https://example.com/#t=00:12") == "https://example.com/"
+    assert require_public_https_url("https://example.com/#https://example.net/story") == "https://example.com/"
 
 
 def test_page_observation_rejects_extra_raw_html_and_is_utc() -> None:
