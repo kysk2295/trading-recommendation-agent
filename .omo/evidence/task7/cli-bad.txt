@@ -1,1 +1,4 @@
-exit=2; missing private config/plist rejected without traceback or output
+usage: run_research_agent_runtime.py [-h]
+                                     {provision,verify,status,activate,replace,tick,cycle,run}
+                                     ...
+run_research_agent_runtime.py: error: argument command: invalid choice: 'invalid' (choose from provision, verify, status, activate, replace, tick, cycle, run)
