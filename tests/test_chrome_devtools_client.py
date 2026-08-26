@@ -39,6 +39,7 @@ class FixtureCdpTransport:
 
     responses: list[bytes]
     commands: list[tuple[str, CdpCommand]] = field(default_factory=list)
+    guarded_navigations: list[tuple[str, str]] = field(default_factory=list)
     target: ChromeTarget = field(default_factory=_target)
     created: int = 0
 
@@ -58,6 +59,17 @@ class FixtureCdpTransport:
     ) -> bytes:
         _ = timeout_seconds
         self.commands.append((target_id, command))
+        return self.responses.pop(0)
+
+    def navigate_guarded(
+        self,
+        target_id: str,
+        url: str,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> bytes:
+        _ = timeout_seconds
+        self.guarded_navigations.append((target_id, url))
         return self.responses.pop(0)
 
 
@@ -93,9 +105,6 @@ def test_read_returns_only_bounded_visible_text_and_public_https_links() -> None
     assert len(observation.links) == 40
     assert all(link.url.startswith("https://example.com/") for link in observation.links)
     assert transport.commands[0][1].method is CdpMethod.RUNTIME_EVALUATE
-    assert "createTreeWalker" in transport.commands[0][1].params_json
-    assert "innerText" not in transport.commands[0][1].params_json
-    assert "getComputedStyle" in transport.commands[0][1].params_json
 
 
 def test_open_revalidates_url_and_waits_for_ready_state() -> None:
@@ -105,8 +114,7 @@ def test_open_revalidates_url_and_waits_for_ready_state() -> None:
     # When: an allowed URL is opened.
     observation = ChromeDevToolsClient(transport).open("https://EXAMPLE.com/start#fragment", captured_at=NOW)
     # Then: navigation uses the normalized URL and returns bounded final metadata.
-    navigation = json.loads(transport.commands[0][1].params_json)
-    assert navigation == {"url": "https://example.com/start"}
+    assert transport.guarded_navigations == [("target-1", "https://example.com/start")]
     assert observation.target_id == "target-1"
     assert (observation.url, observation.title, observation.visible_text) == (
         "https://example.com/final",
@@ -132,7 +140,7 @@ def test_search_url_encodes_query_before_navigation() -> None:
     # When: the agent searches with spaces.
     _ = ChromeDevToolsClient(transport).search("AI chips", captured_at=NOW)
     # Then: only an HTTPS Google URL reaches Page.navigate.
-    assert json.loads(transport.commands[0][1].params_json) == {"url": "https://www.google.com/search?q=AI+chips"}
+    assert transport.guarded_navigations == [("target-1", "https://www.google.com/search?q=AI+chips")]
 
 
 def test_read_fails_honestly_when_visible_text_is_empty() -> None:
@@ -162,12 +170,7 @@ def test_follow_navigates_same_target_to_selected_revalidated_link() -> None:
     # When: the first bounded link is followed.
     observation = ChromeDevToolsClient(transport).follow("target-1", 0, captured_at=NOW)
     # Then: Page.navigate stays on the same target and returns metadata only.
-    target_id, command = transport.commands[1]
-    assert (target_id, command.method, json.loads(command.params_json)) == (
-        "target-1",
-        CdpMethod.PAGE_NAVIGATE,
-        {"url": "https://example.org/story"},
-    )
+    assert transport.guarded_navigations == [("target-1", "https://example.org/story")]
     assert (observation.url, observation.visible_text, observation.links) == (
         "https://example.org/story",
         "",

@@ -33,6 +33,7 @@ class _Clock:
 class _LateReadyTransport:
     clock: _Clock
     commands: list[tuple[CdpMethod, float | None]] = field(default_factory=list)
+    guarded_navigations: list[tuple[str, str, float | None]] = field(default_factory=list)
 
     def status(self) -> ChromeDevToolsStatus:
         return ChromeDevToolsStatus(True, 1)
@@ -59,6 +60,16 @@ class _LateReadyTransport:
             value = json.dumps({"title": "late", "url": "https://example.com"})
         return json.dumps({"id": 1, "result": {"result": {"type": "string", "value": value}}}).encode()
 
+    def navigate_guarded(
+        self,
+        target_id: str,
+        url: str,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> bytes:
+        self.guarded_navigations.append((target_id, url, timeout_seconds))
+        return b'{"id":1,"result":{"frameId":"frame-1"}}'
+
 
 def test_ready_state_arriving_after_deadline_is_not_accepted() -> None:
     # Given: the CDP command returns interactive only after consuming its entire remaining budget.
@@ -70,4 +81,5 @@ def test_ready_state_arriving_after_deadline_is_not_accepted() -> None:
         _ = client.open("https://example.com", captured_at=_NOW)
     # Then: the late success is rejected and the bounded remaining budget crossed the typed boundary.
     assert raised.value.reason == "browser_cdp_timeout"
-    assert transport.commands[1] == (CdpMethod.RUNTIME_EVALUATE, pytest.approx(1.0))
+    assert transport.guarded_navigations == [("page-1", "https://example.com", None)]
+    assert transport.commands[0] == (CdpMethod.RUNTIME_EVALUATE, pytest.approx(1.0))

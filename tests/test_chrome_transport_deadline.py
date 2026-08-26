@@ -10,9 +10,10 @@ from typing import ClassVar
 
 import pytest
 
-import trading_agent.chrome_devtools_transport as cdp_transport
+import trading_agent.chrome_devtools_websocket as cdp_websocket
 from trading_agent.chrome_devtools_transport import ChromeDebugPort, LoopbackChromeDevToolsTransport
 from trading_agent.chrome_devtools_types import CdpCommand, CdpMethod, InvalidChromeDevToolsError
+from trading_agent.chrome_devtools_websocket import SerializedChromeWebSocket
 
 
 @dataclass(slots=True)
@@ -145,7 +146,7 @@ def test_command_shares_one_deadline_across_http_and_websocket(
         options.update(kwargs)
         return socket
 
-    monkeypatch.setattr(cdp_transport, "connect", connector)
+    monkeypatch.setattr(cdp_websocket, "connect", connector)
     transport = LoopbackChromeDevToolsTransport(ChromeDebugPort(port), timeout_seconds=2.0, clock=clock)
     command = CdpCommand(CdpMethod.RUNTIME_EVALUATE, '{"expression":"document.readyState"}')
     # When: the two stages exceed a one-second command override despite a matching response.
@@ -167,11 +168,12 @@ def test_exchange_rejects_match_when_close_finishes_at_elapsed_1_05(
         socket.close_timeout = kwargs["close_timeout"]
         return socket
 
-    monkeypatch.setattr(cdp_transport, "connect", connector)
-    transport = LoopbackChromeDevToolsTransport(ChromeDebugPort(9222), timeout_seconds=2.0, clock=clock)
+    monkeypatch.setattr(cdp_websocket, "connect", connector)
+    websocket = SerializedChromeWebSocket(clock)
+    command = CdpCommand(CdpMethod.RUNTIME_EVALUATE, "{}")
     # When: a matching response arrives before the deadline but close ends at elapsed 1.05s.
     with pytest.raises(InvalidChromeDevToolsError) as raised:
-        _ = transport._exchange("ws://127.0.0.1:9222/devtools/page/page-1", 1, "{}", clock.now + 1.0)
+        _ = websocket.command("ws://127.0.0.1:9222/devtools/page/page-1", command, clock.now + 1.0)
     # Then: cleanup completed, consumed the remaining budget, and success is rejected stably.
     assert raised.value.reason == "browser_cdp_timeout"
     assert socket.closed is True and clock.now == pytest.approx(21.05)
@@ -189,10 +191,11 @@ def test_exchange_returns_match_after_close_within_shared_budget(
         socket.close_timeout = kwargs["close_timeout"]
         return socket
 
-    monkeypatch.setattr(cdp_transport, "connect", connector)
-    transport = LoopbackChromeDevToolsTransport(ChromeDebugPort(9222), timeout_seconds=2.0, clock=clock)
+    monkeypatch.setattr(cdp_websocket, "connect", connector)
+    websocket = SerializedChromeWebSocket(clock)
+    command = CdpCommand(CdpMethod.RUNTIME_EVALUATE, "{}")
     # When: a matching response and mandatory close both finish before the deadline.
-    response = transport._exchange("ws://127.0.0.1:9222/devtools/page/page-1", 1, "{}", clock.now + 1.0)
+    response = websocket.command("ws://127.0.0.1:9222/devtools/page/page-1", command, clock.now + 1.0)
     # Then: success is returned only after close and close receives the remaining 0.25s.
     assert response == b'{"id":1,"result":{}}'
     assert socket.closed is True and clock.now == pytest.approx(20.85)

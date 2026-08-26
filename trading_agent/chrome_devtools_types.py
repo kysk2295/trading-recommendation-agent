@@ -14,6 +14,11 @@ class InvalidChromeDevToolsError(RuntimeError):
 
 
 class CdpMethod(StrEnum):
+    FETCH_ENABLE = "Fetch.enable"
+    FETCH_DISABLE = "Fetch.disable"
+    FETCH_CONTINUE_REQUEST = "Fetch.continueRequest"
+    FETCH_FAIL_REQUEST = "Fetch.failRequest"
+    FETCH_REQUEST_PAUSED = "Fetch.requestPaused"
     PAGE_NAVIGATE = "Page.navigate"
     RUNTIME_EVALUATE = "Runtime.evaluate"
     PAGE_CAPTURE_SCREENSHOT = "Page.captureScreenshot"
@@ -48,6 +53,14 @@ class ChromeDevToolsTransport(Protocol):
         self,
         target_id: str,
         command: CdpCommand,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> bytes: ...
+
+    def navigate_guarded(
+        self,
+        target_id: str,
+        url: str,
         *,
         timeout_seconds: float | None = None,
     ) -> bytes: ...

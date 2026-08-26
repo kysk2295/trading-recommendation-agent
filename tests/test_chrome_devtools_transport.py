@@ -10,7 +10,7 @@ from typing import ClassVar
 
 import pytest
 
-import trading_agent.chrome_devtools_transport as cdp_transport
+import trading_agent.chrome_devtools_websocket as cdp_websocket
 from trading_agent.chrome_devtools_transport import (
     ChromeDebugPort,
     LoopbackChromeDevToolsTransport,
@@ -215,7 +215,7 @@ def test_websocket_skips_events_and_requires_monotonic_matching_id(
         options.append(kwargs)
         return sockets.pop(0)
 
-    monkeypatch.setattr(cdp_transport, "connect", connector)
+    monkeypatch.setattr(cdp_websocket, "connect", connector)
     transport = LoopbackChromeDevToolsTransport(ChromeDebugPort(port), timeout_seconds=1.0)
     command = CdpCommand(CdpMethod.RUNTIME_EVALUATE, '{"expression":"document.readyState"}')
     # When: two serialized commands receive response identifiers 1 and 1.

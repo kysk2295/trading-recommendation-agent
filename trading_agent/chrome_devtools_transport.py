@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-import json
 import re
 import socket
-import threading
 import time
 from typing import Final, Literal, Protocol
 from urllib.parse import urlsplit
 
 import httpx2 as httpx
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
-from websockets.exceptions import WebSocketException
-from websockets.sync.client import connect
 
 from trading_agent.chrome_devtools_types import (
     CdpCommand,
@@ -19,10 +15,10 @@ from trading_agent.chrome_devtools_types import (
     ChromeTarget,
     InvalidChromeDevToolsError,
 )
+from trading_agent.chrome_devtools_websocket import SerializedChromeWebSocket
 from trading_agent.local_chrome_endpoint import ChromeDebugPort
 
 _HTTP_BODY_LIMIT: Final = 64 * 1024
-_WS_MESSAGE_LIMIT: Final = 1024 * 1024
 _TARGET_LIMIT: Final = 100
 _PATH_TOKEN: Final = re.compile(r"[A-Za-z0-9_-]{1,256}")
 _HttpMethod = Literal["GET", "PUT"]
@@ -50,16 +46,10 @@ class _TargetPayload(_BoundaryModel):
     websocket_url: str = Field(alias="webSocketDebuggerUrl", min_length=1, max_length=2_048)
 
 
-class _CdpEnvelope(_BoundaryModel):
-    request_id: int | None = Field(default=None, alias="id", ge=1)
-
-
 _TARGETS = TypeAdapter(tuple[_TargetPayload, ...])
 
 
 class LoopbackChromeDevToolsTransport:
-    """Mutable serialized CDP transport owns monotonic command identifiers."""
-
     def __init__(
         self,
         port: ChromeDebugPort,
@@ -72,8 +62,7 @@ class LoopbackChromeDevToolsTransport:
         self._port = port
         self._timeout = timeout_seconds
         self._clock = clock or time
-        self._request_id = 0
-        self._lock = threading.Lock()
+        self._websocket = SerializedChromeWebSocket(self._clock)
 
     def status(self) -> ChromeDevToolsStatus:
         deadline = self._deadline()
@@ -104,15 +93,23 @@ class LoopbackChromeDevToolsTransport:
         )
         if target is None:
             raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
-        with self._lock:
-            self._request_id += 1
-            request_id = self._request_id
-            payload = (
-                f'{{"id":{request_id},"method":{json.dumps(command.method.value)},"params":{command.params_json}}}'
-            )
-            if len(payload.encode()) > 16 * 1024:
-                raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
-            return self._exchange(target.websocket_url, request_id, payload, deadline)
+        return self._websocket.command(target.websocket_url, command, deadline)
+
+    def navigate_guarded(
+        self,
+        target_id: str,
+        url: str,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> bytes:
+        deadline = self._deadline(timeout_seconds)
+        target = next(
+            (candidate for candidate in self._targets(deadline) if candidate.target_id == target_id),
+            None,
+        )
+        if target is None:
+            raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
+        return self._websocket.navigate_guarded(target.websocket_url, url, deadline)
 
     def _version(self, deadline: float | None = None) -> _VersionPayload:
         try:
@@ -177,51 +174,6 @@ class LoopbackChromeDevToolsTransport:
         except httpx.TimeoutException:
             raise InvalidChromeDevToolsError(reason="browser_cdp_timeout") from None
         except httpx.HTTPError:
-            raise InvalidChromeDevToolsError(reason="browser_navigation_blocked") from None
-
-    def _exchange(self, websocket_url: str, request_id: int, payload: str, deadline: float) -> bytes:
-        try:
-            remaining = self._remaining(deadline)
-            matched: bytes | None = None
-            with connect(
-                websocket_url,
-                open_timeout=remaining,
-                close_timeout=remaining,
-                ping_interval=None,
-                compression=None,
-                proxy=None,
-                max_size=_WS_MESSAGE_LIMIT,
-                max_queue=1,
-            ) as connection:
-                try:
-                    connection.send(payload)
-                    while True:
-                        remaining = self._remaining(deadline)
-                        message = connection.recv(timeout=remaining, decode=False)
-                        _ = self._remaining(deadline)
-                        match message:
-                            case bytes() as body:
-                                pass
-                            case str() as text:
-                                body = text.encode()
-                        if len(body) > _WS_MESSAGE_LIMIT:
-                            raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
-                        envelope = _CdpEnvelope.model_validate_json(body)
-                        if envelope.request_id is None:
-                            continue
-                        if envelope.request_id != request_id:
-                            raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
-                        matched = body
-                        break
-                finally:
-                    connection.close_timeout = max(0.0, deadline - self._clock.monotonic())
-            _ = self._remaining(deadline)
-            if matched is None:
-                raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
-            return matched
-        except TimeoutError:
-            raise InvalidChromeDevToolsError(reason="browser_cdp_timeout") from None
-        except (OSError, ValidationError, WebSocketException):
             raise InvalidChromeDevToolsError(reason="browser_navigation_blocked") from None
 
     def _deadline(self, timeout_seconds: float | None = None) -> float:

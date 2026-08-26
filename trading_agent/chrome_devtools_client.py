@@ -149,8 +149,7 @@ class ChromeDevToolsClient:
 
     def _navigate(self, target_id: str, url: str, captured_at: datetime) -> BrowserPageObservation:
         _require_target_id(target_id)
-        command = CdpCommand(CdpMethod.PAGE_NAVIGATE, json.dumps({"url": url}, separators=(",", ":")))
-        response = self._command(target_id, command)
+        response = self._transport.navigate_guarded(target_id, url)
         try:
             result = _NavigationResponse.model_validate_json(response).result
         except ValidationError:
