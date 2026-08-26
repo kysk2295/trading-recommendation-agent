@@ -10,6 +10,7 @@ import pytest
 
 import trading_agent.local_browser_private_fs as private_fs
 import trading_agent.local_chrome_controller as chrome
+import trading_agent.local_chrome_process as chrome_process
 from trading_agent.local_browser_gateway_config import LocalBrowserGatewayConfig
 
 
@@ -136,7 +137,7 @@ def test_subprocess_launcher_uses_exact_command_and_safe_popen_flags(
         calls.append((command, stdin, stdout, stderr, start_new_session, shell, umask))
         return FakeProcess(31337)
 
-    monkeypatch.setattr(chrome.subprocess, "Popen", popen)
+    monkeypatch.setattr(chrome_process.subprocess, "Popen", popen)
     command = chrome.chrome_launch_command(config)
     # When: Chrome is launched.
     process = chrome.SubprocessChromeLauncher().launch(command)

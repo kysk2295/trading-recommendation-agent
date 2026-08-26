@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import pytest
 
 import trading_agent.local_chrome_controller as chrome
+import trading_agent.local_chrome_process as chrome_process
 
 
 @dataclass(slots=True)
@@ -45,8 +46,8 @@ def test_subprocess_launcher_signals_only_its_new_chrome_process_group(
         assert start_new_session is True
         return process
 
-    monkeypatch.setattr(chrome.subprocess, "Popen", popen)
-    monkeypatch.setattr(chrome.os, "killpg", lambda process_group, sig: signals.append((process_group, sig)))
+    monkeypatch.setattr(chrome_process.subprocess, "Popen", popen)
+    monkeypatch.setattr(chrome_process.os, "killpg", lambda process_group, sig: signals.append((process_group, sig)))
 
     owned = chrome.SubprocessChromeLauncher().launch(("Chrome",))
     owned.terminate()

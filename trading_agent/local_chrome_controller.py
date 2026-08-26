@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import signal
 import subprocess
 import time
 from dataclasses import dataclass
@@ -32,6 +31,7 @@ from trading_agent.local_chrome_endpoint import (
 from trading_agent.local_chrome_endpoint import (
     parse_port_file as _parse_port_file,
 )
+from trading_agent.local_chrome_process import ChromeLauncher, ChromeProcess, SubprocessChromeLauncher
 
 _PORT_FILE = "DevToolsActivePort"
 _PORT_FILE_MAX_BYTES = 256
@@ -45,19 +45,6 @@ class InvalidLocalChromeControllerError(RuntimeError):
         return self.reason
 
 
-class ChromeProcess(Protocol):
-    pid: int
-
-    def poll(self) -> int | None: ...
-    def terminate(self) -> None: ...
-    def kill(self) -> None: ...
-    def wait(self, timeout: float) -> int: ...
-
-
-class ChromeLauncher(Protocol):
-    def launch(self, command: tuple[str, ...]) -> ChromeProcess: ...
-
-
 class ChromeHealthProbe(Protocol):
     def probe(self, port: ChromeDebugPort, path: str) -> bool: ...
 
@@ -65,39 +52,6 @@ class ChromeHealthProbe(Protocol):
 class Clock(Protocol):
     def monotonic(self) -> float: ...
     def sleep(self, seconds: float) -> None: ...
-
-
-class _ProcessGroupChromeProcess:
-    def __init__(self, process: ChromeProcess) -> None:
-        self._process = process
-        self.pid = process.pid
-
-    def poll(self) -> int | None:
-        return self._process.poll()
-
-    def terminate(self) -> None:
-        os.killpg(self.pid, signal.SIGTERM)
-
-    def kill(self) -> None:
-        os.killpg(self.pid, signal.SIGKILL)
-
-    def wait(self, timeout: float) -> int:
-        return self._process.wait(timeout)
-
-
-class SubprocessChromeLauncher:
-    def launch(self, command: tuple[str, ...]) -> ChromeProcess:
-        return _ProcessGroupChromeProcess(
-            subprocess.Popen(
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-                shell=False,
-                umask=0o077,
-            )
-        )
 
 
 def chrome_launch_command(config: LocalBrowserGatewayConfig) -> tuple[str, ...]:
