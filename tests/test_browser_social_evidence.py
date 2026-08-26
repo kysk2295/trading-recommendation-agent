@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime, timedelta
 
 import pytest
@@ -27,7 +28,35 @@ def test_capture_builds_deterministic_lineage_and_provisional_clusters() -> None
     assert first.content_sha256 == hashlib.sha256(first.excerpt.encode()).hexdigest()
     assert first.repost_cluster_id == first.content_sha256
     assert first.independent_source_cluster_id == first.source_identity_sha256
-    assert hashlib.sha256(canonical_browser_social_evidence_json(first).encode()).hexdigest()
+    canonical = canonical_browser_social_evidence_json(first)
+    expected = json.dumps(
+        {
+            "author_label": "Example Markets",
+            "browser_receipt_id": "a" * 64,
+            "captured_at": "2026-08-26T03:30:00Z",
+            "content_sha256": "397cab1bc3f610adf36998364d4392f485e4bc18cb0916b3ce76ea7d7def9730",
+            "evidence_id": "3b738364da650c6ba445eefea17b4fc99c6795a9b78520045b9de0c98b6cc693",
+            "excerpt": "Semiconductor demand accelerated during the current session.",
+            "first_observed_at": "2026-08-26T03:25:00Z",
+            "independent_source_cluster_id": "6492806b16c3cd598e714681760f064d6e604bb894060e2f9c3c0897f6b7dc9d",
+            "normalized_url": "https://example.com/semiconductor/story",
+            "published_at": "2026-08-26T03:20:00Z",
+            "repost_cluster_id": "397cab1bc3f610adf36998364d4392f485e4bc18cb0916b3ce76ea7d7def9730",
+            "schema_version": 1,
+            "screenshot_sha256": "4441146b0fe1d5c6845af126ba5ce6003ea77d6b4cb04d14114f86a925c5dbca",
+            "source_identity_sha256": "6492806b16c3cd598e714681760f064d6e604bb894060e2f9c3c0897f6b7dc9d",
+            "source_kind": "news",
+            "title": "Semiconductor capacity expands",
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    assert canonical == expected
+    assert (
+        hashlib.sha256(canonical.encode()).hexdigest()
+        == "b08db85e914494f0257b96eb7491139a3c14f4e0ffd9fcc823f14aa59df9f606"
+    )
 
 
 @pytest.mark.parametrize("source_kind", ("social", "community", "news", "search", "web"))
