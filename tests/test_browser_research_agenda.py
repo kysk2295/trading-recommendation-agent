@@ -186,9 +186,45 @@ def test_agenda_does_not_encode_a_required_browser_tool_order(tmp_path: Path) ->
 
     # When: its supervisor-visible plan is inspected.
     # Then: it leaves browser action choice and order to the agent.
-    assert "browser.search" not in task.current_plan
-    assert "browser.open" not in task.current_plan
-    assert "browser.read" not in task.current_plan
+    plan_content = "\n".join(task.current_plan)
+    assert "browser.search" not in plan_content
+    assert "browser.open" not in plan_content
+    assert "browser.read" not in plan_content
+
+
+def test_close_releases_cycle_store_lease_and_is_idempotent(tmp_path: Path) -> None:
+    # Given: a wrapper that owns the active cycle-store writer lease.
+    services = agenda_services_fixture(tmp_path)
+    cycle_path = services.cycles.path
+
+    # When: close is called twice during normal shutdown.
+    services.close()
+    services.close()
+
+    # Then: a fresh cycle store can acquire the exact same writer lease.
+    with ResearchAgentCycleStore(cycle_path):
+        pass
+
+
+def test_close_releases_cycle_store_when_supervisor_close_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: a supervisor whose close boundary raises unexpectedly.
+    services = agenda_services_fixture(tmp_path)
+    cycle_path = services.cycles.path
+
+    def failing_close(_self: AutonomousSupervisorAdapter) -> None:
+        raise RuntimeError("supervisor_close_failed")
+
+    monkeypatch.setattr(AutonomousSupervisorAdapter, "close", failing_close)
+
+    # When: wrapper shutdown propagates that failure.
+    with pytest.raises(RuntimeError, match="supervisor_close_failed"):
+        services.close()
+
+    # Then: its owned cycle-store lease is nevertheless released.
+    with ResearchAgentCycleStore(cycle_path):
+        pass
 
 
 def test_run_due_keeps_the_agenda_task_durable_at_a_timed_wait(tmp_path: Path) -> None:

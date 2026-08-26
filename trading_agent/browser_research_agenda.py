@@ -97,7 +97,10 @@ class ContinuousBrowserResearchSupervisor:
         return BrowserResearchAgendaEpisodeStore(self.cycles)
 
     def close(self) -> None:
-        self.supervisor.close()
+        try:
+            self.supervisor.close()
+        finally:
+            self.cycles.close()
 
     def tick(self, evidence: ResearchAgentEvidenceV1, now: dt.datetime) -> AutonomousSupervisorTickResult:
         return self.supervisor.tick(evidence, now)
