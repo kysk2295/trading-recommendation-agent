@@ -9,7 +9,7 @@ import trading_agent.local_chrome_controller as chrome
 import trading_agent.local_chrome_process as chrome_process
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: MUTABLE_OK — fake process records direct signal attempts
 class RecordingPopen:
     pid: int = 31337
     direct_signals: list[str] = field(default_factory=list)

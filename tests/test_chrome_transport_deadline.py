@@ -16,7 +16,7 @@ from trading_agent.chrome_devtools_types import CdpCommand, CdpMethod, InvalidCh
 from trading_agent.chrome_devtools_websocket import SerializedChromeWebSocket
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: MUTABLE_OK — monotonic fixture clock advances during transport stages
 class _Clock:
     now: float = 20.0
 
@@ -76,7 +76,7 @@ def staged_http() -> Iterator[tuple[int, _Clock]]:
         server.server_close()
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: MUTABLE_OK — fixture consumes response FIFO and records close timeout
 class _WebSocket:
     clock: _Clock
     responses: list[bytes] = field(default_factory=lambda: [b'{"id":1,"result":{}}'])
@@ -102,7 +102,7 @@ class _WebSocket:
         return self.responses.pop(0)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: MUTABLE_OK — fixture advances close state and shared test clock
 class _ClosingWebSocket:
     clock: _Clock
     receive_seconds: float

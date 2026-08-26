@@ -11,13 +11,13 @@ from trading_agent.chrome_devtools_types import InvalidChromeDevToolsError
 from trading_agent.chrome_devtools_websocket import SerializedChromeWebSocket
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class _Clock:
     def monotonic(self) -> float:
         return 10.0
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: MUTABLE_OK — response FIFO, sent log, and close state are asserted
 class _FixtureWebSocket:
     responses: list[bytes]
     sent: list[str] = field(default_factory=list)

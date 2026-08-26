@@ -33,7 +33,7 @@ def _target() -> ChromeTarget:
     )
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: MUTABLE_OK — transport fixture consumes responses and records calls
 class FixtureCdpTransport:
     """Mutable fixture replays boundary-realistic CDP response bytes."""
 

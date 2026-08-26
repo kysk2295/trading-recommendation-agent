@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,14 @@ from trading_agent.browser_research_agenda import ContinuousBrowserResearchSuper
 from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
 
 NOW = dt.datetime(2026, 8, 26, 12, 0, tzinfo=dt.UTC)
+
+
+@dataclass(frozen=True, slots=True)
+class _SupervisorCloseError(Exception):
+    reason: str = "supervisor_close_failed"
+
+    def __str__(self) -> str:
+        return self.reason
 
 
 def agenda_services_fixture(tmp_path: Path) -> ContinuousBrowserResearchSupervisor:
@@ -214,12 +223,12 @@ def test_close_releases_cycle_store_when_supervisor_close_fails(
     cycle_path = services.cycles.path
 
     def failing_close(_self: AutonomousSupervisorAdapter) -> None:
-        raise RuntimeError("supervisor_close_failed")
+        raise _SupervisorCloseError()
 
     monkeypatch.setattr(AutonomousSupervisorAdapter, "close", failing_close)
 
     # When: wrapper shutdown propagates that failure.
-    with pytest.raises(RuntimeError, match="supervisor_close_failed"):
+    with pytest.raises(_SupervisorCloseError, match="supervisor_close_failed"):
         services.close()
 
     # Then: its owned cycle-store lease is nevertheless released.

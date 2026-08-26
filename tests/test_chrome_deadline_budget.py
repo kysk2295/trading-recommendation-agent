@@ -18,7 +18,7 @@ from trading_agent.chrome_devtools_types import (
 _NOW = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: MUTABLE_OK — monotonic fixture clock advances during waits
 class _Clock:
     now: float = 10.0
 
@@ -29,7 +29,7 @@ class _Clock:
         self.now += seconds
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: MUTABLE_OK — fixture records commands and consumes scripted responses
 class _LateReadyTransport:
     clock: _Clock
     commands: list[tuple[CdpMethod, float | None]] = field(default_factory=list)

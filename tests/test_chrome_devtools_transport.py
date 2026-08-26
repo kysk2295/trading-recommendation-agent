@@ -36,13 +36,13 @@ class _ChromeHandler(BaseHTTPRequestHandler):
     def _reply(self) -> None:
         type(self).requests.append((self.command, self.path))
         port = type(self).debug_port
-        if self.path == "/json/version":
+        if self.path == "/json/version":  # noqa: IF_VARIANT_OK — HTTP paths are open input, not a closed variant
             payload = {
                 "Browser": "Chrome/140" if type(self).version_valid else "",
                 "webSocketDebuggerUrl": f"ws://127.0.0.1:{port}/devtools/browser/token",
                 "padding": type(self).version_padding,
             }
-        elif self.path == "/json/list":
+        elif self.path == "/json/list":  # noqa: IF_VARIANT_OK — HTTP paths are open input, not a closed variant
             payload = [
                 {
                     "id": "page-1" if type(self).listed_target_valid else "",
@@ -173,7 +173,7 @@ def test_status_converts_invalid_chrome_json_to_stable_reason(
     assert raised.value.reason == "browser_navigation_blocked"
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: MUTABLE_OK — fixture consumes response FIFO and appends sent payloads
 class _FixtureWebSocket:
     """Mutable fixture records the bounded WebSocket contract."""
 

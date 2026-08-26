@@ -11,7 +11,7 @@ from trading_agent.chrome_devtools_types import InvalidChromeDevToolsError
 from trading_agent.chrome_devtools_websocket import SerializedChromeWebSocket
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: MUTABLE_OK — monotonic fixture clock advances across receives
 class _Clock:
     now: float = 10.0
 
@@ -19,7 +19,7 @@ class _Clock:
         return self.now
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: MUTABLE_OK — fixture consumes responses and records send/close state
 class _FixtureWebSocket:
     responses: list[bytes]
     sent: list[str] = field(default_factory=list)
@@ -47,7 +47,7 @@ class _FixtureWebSocket:
         return self.responses.pop(0)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: MUTABLE_OK — fixture advances time while consuming scripted frames
 class _TimedWebSocket:
     clock: _Clock
     responses: list[bytes]
@@ -93,7 +93,7 @@ def _paused(url: str) -> bytes:
     ).encode()
 
 
-def _sent_commands(socket: _FixtureWebSocket | _TimedWebSocket) -> list[dict[str, object]]:
+def _sent_commands(socket: _FixtureWebSocket | _TimedWebSocket) -> list[dict[str, object]]:  # noqa: OBJECT_OK — CDP JSON command objects have heterogeneous values
     return [json.loads(payload) for payload in socket.sent]
 
 
