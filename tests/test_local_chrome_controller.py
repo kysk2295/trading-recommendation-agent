@@ -89,15 +89,13 @@ class FakeClock:
 
 @pytest.fixture
 def config(tmp_path: Path) -> LocalBrowserGatewayConfig:
+    private = (tmp_path / "private").absolute()
     return LocalBrowserGatewayConfig(
         project_root=(tmp_path / "project").absolute(),
         uv_path=(tmp_path / "uv").absolute(),
         chrome_executable=(tmp_path / "Chrome").absolute(),
-        state_root=(tmp_path / "private" / "state").absolute(),
-        profile_root=(tmp_path / "private" / "profile").absolute(),
-        socket_path=(tmp_path / "private" / "state" / "gateway.sock").absolute(),
-        receipt_database=(tmp_path / "private" / "state" / "receipts.sqlite3").absolute(),
-        screenshot_root=(tmp_path / "private" / "state" / "screenshots").absolute(),
+        state_root=private / "state", profile_root=private / "profile", socket_path=private / "state" / "gateway.sock",
+        receipt_database=private / "state" / "receipts.sqlite3", screenshot_root=private / "state" / "screenshots",
         startup_timeout_seconds=1.0,
     )
 
@@ -106,32 +104,20 @@ def _payload(port: int = 9222, path: str = "/devtools/browser/token") -> bytes:
     return f"{port}\n{path}\n".encode()
 
 
-def _controller(
-    config: LocalBrowserGatewayConfig, launcher: FakeLauncher, probe: FakeProbe, clock: FakeClock | None = None
-) -> chrome.LocalChromeController:
+def _controller(config: LocalBrowserGatewayConfig, launcher: FakeLauncher, probe: FakeProbe,
+                clock: FakeClock | None = None) -> chrome.LocalChromeController:
     return chrome.LocalChromeController(config, launcher=launcher, probe=probe, clock=clock or FakeClock())
 
 
-@dataclass(frozen=True, slots=True)
-class PopenCall:
-    command: tuple[str, ...]
-    stdin: int
-    stdout: int
-    stderr: int
-    start_new_session: bool
-    shell: bool
-
-
-def test_subprocess_launcher_uses_exact_command_and_safe_popen_flags(
-    monkeypatch: pytest.MonkeyPatch, config: LocalBrowserGatewayConfig
-) -> None:
+def test_subprocess_launcher_uses_exact_command_and_safe_popen_flags(monkeypatch: pytest.MonkeyPatch,
+                                                                      config: LocalBrowserGatewayConfig) -> None:
     # Given: the production launcher and a Popen recorder.
-    calls: list[PopenCall] = []
+    calls: list[tuple[tuple[str, ...], int, int, int, bool, bool]] = []
 
     def popen(
         command: tuple[str, ...], *, stdin: int, stdout: int, stderr: int, start_new_session: bool, shell: bool
     ) -> FakeProcess:
-        calls.append(PopenCall(command, stdin, stdout, stderr, start_new_session, shell))
+        calls.append((command, stdin, stdout, stderr, start_new_session, shell))
         return FakeProcess(31337)
 
     monkeypatch.setattr(chrome.subprocess, "Popen", popen)
@@ -144,7 +130,7 @@ def test_subprocess_launcher_uses_exact_command_and_safe_popen_flags(
         str(config.chrome_executable), f"--user-data-dir={config.profile_root}", "--remote-debugging-address=127.0.0.1",
         "--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check", "about:blank",
     )
-    assert calls == [PopenCall(command, subprocess.DEVNULL, subprocess.DEVNULL, subprocess.DEVNULL, True, False)]
+    assert calls == [(command, subprocess.DEVNULL, subprocess.DEVNULL, subprocess.DEVNULL, True, False)]
 
 
 def test_ready_creates_exact_private_directories_and_reuses_owned_process(config: LocalBrowserGatewayConfig) -> None:
@@ -187,9 +173,7 @@ def test_ready_rejects_invalid_port_file(config: LocalBrowserGatewayConfig, payl
     assert launcher.commands == []
 
 
-def test_ready_attaches_healthy_existing_endpoint_and_close_does_not_terminate(
-    config: LocalBrowserGatewayConfig,
-) -> None:
+def test_close_leaves_healthy_attached_endpoint(config: LocalBrowserGatewayConfig) -> None:
     # Given: a valid endpoint belonging to another controller.
     config.state_root.mkdir(parents=True, mode=0o700)
     config.profile_root.mkdir(mode=0o700)
@@ -236,9 +220,8 @@ def test_malformed_owned_port_file_reaps_owned_process_without_replacement(confi
     assert (process.terminated, process.waits, len(launcher.commands), port_file.exists()) == (1, 1, 1, False)
 
 
-def test_ready_rejects_profile_component_swap_before_launch(
-    config: LocalBrowserGatewayConfig, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ready_rejects_profile_component_swap_before_launch(config: LocalBrowserGatewayConfig,
+                                                            monkeypatch: pytest.MonkeyPatch) -> None:
     # Given: path verification that swaps the freshly pinned profile directory.
     original = private_fs.require_open_directory_path
 
@@ -256,9 +239,8 @@ def test_ready_rejects_profile_component_swap_before_launch(
     assert raised.value.reason == "local_chrome_private_directory_invalid" and launcher.commands == []
 
 
-def test_owned_cleanup_preserves_replaced_port_file(
-    config: LocalBrowserGatewayConfig, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_owned_cleanup_preserves_replaced_port_file(config: LocalBrowserGatewayConfig,
+                                                    monkeypatch: pytest.MonkeyPatch) -> None:
     # Given: an owned endpoint whose name is replaced immediately before cleanup.
     process = FakeProcess(101)
     launcher = FakeLauncher(config.profile_root, [process], [_payload()])
@@ -287,13 +269,8 @@ def test_owned_cleanup_preserves_replaced_port_file(
         _ = controller.ensure_ready()
     # Then: the replacement remains and no second Chrome starts.
     assert raised.value.reason == "local_chrome_port_file_invalid"
-    observed = (
-        process.terminated,
-        process.waits,
-        len(launcher.commands),
-        (config.profile_root / "DevToolsActivePort").read_bytes(),
-    )
-    assert observed == (1, 1, 1, replacement)
+    assert (process.terminated, process.waits, len(launcher.commands),
+            (config.profile_root / "DevToolsActivePort").read_bytes()) == (1, 1, 1, replacement)
 
 
 def test_unhealthy_attached_endpoint_remains_unowned_and_unmodified(config: LocalBrowserGatewayConfig) -> None:
@@ -314,9 +291,8 @@ def test_unhealthy_attached_endpoint_remains_unowned_and_unmodified(config: Loca
 
 @pytest.mark.parametrize("process,payload,reason", ((FakeProcess(101, exit_code=1), None, "local_chrome_early_exit"),
                                                       (FakeProcess(102), None, "local_chrome_startup_timeout")))
-def test_failed_startup_reaps_only_launched_process(
-    config: LocalBrowserGatewayConfig, process: FakeProcess, payload: bytes | None, reason: str
-) -> None:
+def test_failed_startup_reaps_only_launched_process(config: LocalBrowserGatewayConfig, process: FakeProcess,
+                                                    payload: bytes | None, reason: str) -> None:
     # Given: a launch that exits immediately or never publishes an endpoint.
     launcher = FakeLauncher(config.profile_root, [process], [payload])
     # When: bounded readiness fails.
@@ -338,3 +314,36 @@ def test_close_terminates_then_kills_only_owned_process_and_is_idempotent(config
     controller.close()
     # Then: termination escalates only for the process this controller launched.
     assert (process.terminated, process.killed, process.waits) == (1, 1, 2)
+
+
+def test_close_guards_owned_snapshot_and_ready_restarts(config: LocalBrowserGatewayConfig) -> None:
+    # Given: a ready owned endpoint, followed by a distinct launchable replacement.
+    first, restarted = FakeProcess(101), FakeProcess(202)
+    launcher = FakeLauncher(config.profile_root, [first, restarted], [_payload(), _payload(9223)])
+    probe = FakeProbe({(9222, "/devtools/browser/token"), (9223, "/devtools/browser/token")})
+    controller = _controller(config, launcher, probe)
+    assert controller.ensure_ready().process_id == 101
+    # When: close removes its observed port file and readiness is requested again.
+    controller.close()
+    endpoint = controller.ensure_ready()
+    # Then: the owned process is reaped and a fresh owned Chrome is launched.
+    assert (first.terminated, first.waits, endpoint.process_id, len(launcher.commands)) == (1, 1, 202, 2)
+
+
+def test_close_preserves_replacement_of_owned_port_snapshot(config: LocalBrowserGatewayConfig) -> None:
+    # Given: a ready owned Chrome whose endpoint name is replaced before close.
+    process = FakeProcess(101)
+    launcher = FakeLauncher(config.profile_root, [process], [_payload()])
+    controller = _controller(config, launcher, FakeProbe({(9222, "/devtools/browser/token")}))
+    assert controller.ensure_ready().process_id == 101
+    replacement = _payload(9223)
+    port_file = config.profile_root / "DevToolsActivePort"
+    port_file.unlink()
+    port_file.write_bytes(replacement)
+    port_file.chmod(0o600)
+    # When: close performs guarded cleanup using its last owned snapshot.
+    with pytest.raises(chrome.InvalidLocalChromeControllerError) as raised:
+        controller.close()
+    # Then: it reaps its process but leaves the unowned replacement untouched.
+    assert raised.value.reason == "local_chrome_port_file_invalid"
+    assert (process.terminated, process.waits, port_file.read_bytes()) == (1, 1, replacement)

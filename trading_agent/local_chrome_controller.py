@@ -126,6 +126,7 @@ class LocalChromeController:
         self._clock = clock or time
         self._owner_id = os.getuid() if owner_id is None else owner_id
         self._process: ChromeProcess | None = None
+        self._owned_file: PrivateBrowserFile | None = None
 
     def ensure_ready(self) -> LocalChromeEndpoint:
         try:
@@ -141,7 +142,15 @@ class LocalChromeController:
             raise InvalidLocalChromeControllerError(reason=reason) from None
 
     def close(self) -> None:
+        file, self._owned_file = self._owned_file, None
         self._stop_owned_process()
+        if file is None:
+            return
+        try:
+            with open_private_browser_directory(self._config.profile_root, self._owner_id) as profile:
+                unlink_private_browser_file(profile, _PORT_FILE, file, self._owner_id)
+        except InvalidLocalBrowserPrivateFsError:
+            raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid") from None
 
     def _ensure(self, profile: PrivateBrowserDirectory) -> LocalChromeEndpoint:
         raw = read_private_browser_file(profile, _PORT_FILE, self._owner_id, _PORT_FILE_MAX_BYTES)
@@ -153,7 +162,7 @@ class LocalChromeController:
             raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid")
         if process is not None:
             if record is not None and process.poll() is None and self._probe.probe(record.port, record.browser_path):
-                return _endpoint(record, "owned", process.pid)
+                return self._remember_owned_endpoint(record, process)
             self._stop_and_unlink(profile, raw)
             return self._launch_and_wait(profile)
         if record is not None:
@@ -181,7 +190,7 @@ class LocalChromeController:
                 self._stop_and_unlink(profile, raw)
                 raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid")
             if record is not None and self._probe.probe(record.port, record.browser_path):
-                return _endpoint(record, "owned", process.pid)
+                return self._remember_owned_endpoint(record, process)
             remaining = deadline - self._clock.monotonic()
             if remaining <= 0:
                 self._stop_and_unlink(profile, raw)
@@ -189,9 +198,16 @@ class LocalChromeController:
             self._clock.sleep(min(0.1, remaining))
 
     def _stop_and_unlink(self, profile: PrivateBrowserDirectory, file: PrivateBrowserFile | None) -> None:
+        owned_file, self._owned_file = self._owned_file, None
         self._stop_owned_process()
-        if file is not None:
+        if owned_file is not None:
+            unlink_private_browser_file(profile, _PORT_FILE, owned_file, self._owner_id)
+        elif file is not None:
             unlink_private_browser_file(profile, _PORT_FILE, file, self._owner_id)
+
+    def _remember_owned_endpoint(self, record: _PortRecord, process: ChromeProcess) -> LocalChromeEndpoint:
+        self._owned_file = record.file
+        return _endpoint(record, "owned", process.pid)
 
     def _stop_owned_process(self) -> None:
         process, self._process = self._process, None

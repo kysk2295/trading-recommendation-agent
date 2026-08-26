@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 import stat
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -13,6 +14,8 @@ from trading_agent.private_directory_identity import (
     require_open_directory_path,
     require_private_directory,
 )
+
+_QUARANTINE_PREFIX = ".browser-cleanup-"
 
 
 @dataclass(slots=True)
@@ -46,6 +49,10 @@ def open_private_browser_directory(path: Path, owner_id: int) -> Iterator[Privat
             raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_directory_invalid")
         require_private_directory(descriptor)
         require_open_directory_path(path, descriptor)
+    except InvalidLocalBrowserPrivateFsError:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise
     except (InvalidPrivateDirectoryIdentityError, OSError, TypeError, ValueError):
         if descriptor is not None:
             os.close(descriptor)
@@ -95,15 +102,28 @@ def unlink_private_browser_file(
         metadata = os.stat(name, dir_fd=directory.descriptor, follow_symlinks=False)
     except OSError:
         raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_replaced") from None
-    if not _private_regular_file(metadata, owner_id) or (metadata.st_dev, metadata.st_ino) != (
-        expected.device,
-        expected.inode,
-    ):
+    if not _matches_expected_file(metadata, expected, owner_id):
         raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_replaced")
+    quarantine_name, quarantine_descriptor = _open_quarantine(directory)
+    moved, emptied = False, False
     try:
-        os.unlink(name, dir_fd=directory.descriptor)
+        os.rename(name, name, src_dir_fd=directory.descriptor, dst_dir_fd=quarantine_descriptor)
+        moved = True
+        quarantined = _quarantined_metadata(quarantine_descriptor, name)
+        if not _matches_expected_file(quarantined, expected, owner_id):
+            _restore_quarantined_file(directory, quarantine_descriptor, name)
+            emptied = True
+            raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_replaced")
+        os.unlink(name, dir_fd=quarantine_descriptor)
+        emptied = True
+    except InvalidLocalBrowserPrivateFsError:
+        raise
     except OSError:
-        raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_invalid") from None
+        raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_replaced") from None
+    finally:
+        os.close(quarantine_descriptor)
+        if not moved or emptied:
+            _remove_quarantine(directory, quarantine_name)
 
 
 def _require_directory_identity(directory: PrivateBrowserDirectory) -> None:
@@ -120,3 +140,63 @@ def _private_regular_file(metadata: os.stat_result, owner_id: int) -> bool:
         and metadata.st_nlink == 1
         and stat.S_IMODE(metadata.st_mode) == 0o600
     )
+
+
+def _matches_expected_file(metadata: os.stat_result, expected: PrivateBrowserFile, owner_id: int) -> bool:
+    return _private_regular_file(metadata, owner_id) and (metadata.st_dev, metadata.st_ino) == (
+        expected.device,
+        expected.inode,
+    )
+
+
+def _open_quarantine(directory: PrivateBrowserDirectory) -> tuple[str, int]:
+    name = f"{_QUARANTINE_PREFIX}{secrets.token_hex(16)}"
+    try:
+        os.mkdir(name, 0o700, dir_fd=directory.descriptor)
+    except FileExistsError:
+        raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_invalid") from None
+    except OSError:
+        raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_invalid") from None
+    try:
+        descriptor = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory.descriptor)
+    except OSError:
+        _remove_quarantine(directory, name)
+        raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_invalid") from None
+    try:
+        os.fchmod(descriptor, 0o700)
+    except OSError:
+        os.close(descriptor)
+        _remove_quarantine(directory, name)
+        raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_invalid") from None
+    return name, descriptor
+
+
+def _quarantined_metadata(directory_descriptor: int, name: str) -> os.stat_result:
+    try:
+        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_descriptor)
+    except OSError:
+        raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_replaced") from None
+    try:
+        return os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _restore_quarantined_file(directory: PrivateBrowserDirectory, quarantine_descriptor: int, name: str) -> None:
+    try:
+        os.link(name, name, src_dir_fd=quarantine_descriptor, dst_dir_fd=directory.descriptor, follow_symlinks=False)
+    except FileExistsError:
+        raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_replaced") from None
+    except OSError:
+        raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_invalid") from None
+    try:
+        os.unlink(name, dir_fd=quarantine_descriptor)
+    except OSError:
+        raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_invalid") from None
+
+
+def _remove_quarantine(directory: PrivateBrowserDirectory, name: str) -> None:
+    try:
+        os.rmdir(name, dir_fd=directory.descriptor)
+    except OSError:
+        raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_invalid") from None
