@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-import trading_agent.autonomous_task_store as task_store
 from tests.test_autonomous_task_store import step_fixture, task_fixture, task_for
+from trading_agent._autonomous_task_store_sqlite import _reader_connection
 from trading_agent.autonomous_task_models import autonomous_step_payload
 from trading_agent.autonomous_task_store import AutonomousTaskStore, InvalidAutonomousTaskStoreError
 from trading_agent.research_agent_cycle_models import EvidenceId
@@ -48,7 +48,7 @@ def test_reader_connection_is_query_only(tmp_path: Path) -> None:
         assert writer.create_task(task_fixture())
 
     # When / Then
-    with task_store._reader_connection(path) as connection, pytest.raises(sqlite3.OperationalError):
+    with _reader_connection(path) as connection, pytest.raises(sqlite3.OperationalError):
         connection.execute("INSERT INTO autonomous_tasks VALUES ('x','x','x','x')")
 
 
