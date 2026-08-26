@@ -44,6 +44,11 @@ def test_browser_action_is_closed_read_only_set() -> None:
         "https://239.0.0.1/multicast",
         "https://169.254.1.1/link-local",
         "https://[fe80::1]/link-local",
+        "https://0x7f000001/admin",
+        "https://0x7f.0.0.1/admin",
+        "https://0177.0.0.1/admin",
+        "https://127.1/admin",
+        "https://2130706433/admin",
         "https://-invalid.example",
         "https://invalid-.example",
     ),
@@ -57,6 +62,12 @@ def test_navigation_rejects_non_public_https_urls(url: str) -> None:
 def test_public_https_url_is_normalized_without_fragment() -> None:
     assert require_public_https_url("HTTPS://Example.COM/story?q=one#fragment") == "https://example.com/story?q=one"
     assert require_public_https_url("https://Example.COM:443/story") == "https://example.com/story"
+
+
+def test_public_https_url_rejects_credential_syntax_in_fragment() -> None:
+    with pytest.raises(InvalidLocalBrowserProtocolError) as error:
+        require_public_https_url("https://example.com/#user:password")
+    assert error.value.reason == "browser_url_not_public_https"
 
 
 def test_page_observation_rejects_extra_raw_html_and_is_utc() -> None:
@@ -129,4 +140,58 @@ def test_response_rejects_canonical_json_over_16_kib() -> None:
     with pytest.raises(ValidationError):
         BrowserResponse.model_validate(
             {"request_id": "a" * 64, "action": BrowserAction.SEARCH, "search_results": results}
+        )
+
+
+def test_response_error_requires_failure_and_forbids_success_payload() -> None:
+    with pytest.raises(ValidationError):
+        BrowserResponse.model_validate(
+            {"request_id": "a" * 64, "action": BrowserAction.OPEN, "status": "error"}
+        )
+    with pytest.raises(ValidationError):
+        BrowserResponse.model_validate(
+            {
+                "request_id": "a" * 64,
+                "action": BrowserAction.OPEN,
+                "status": "error",
+                "failure": {"reason": "browser_navigation_blocked"},
+                "observation": {
+                    "target_id": "target",
+                    "url": "https://example.com",
+                    "captured_at": datetime.now(UTC),
+                },
+            }
+        )
+
+
+def test_response_ok_requires_action_specific_payload_and_forbids_failure() -> None:
+    with pytest.raises(ValidationError):
+        BrowserResponse.model_validate(
+            {"request_id": "a" * 64, "action": BrowserAction.OPEN, "status": "ok"}
+        )
+    with pytest.raises(ValidationError):
+        BrowserResponse.model_validate(
+            {
+                "request_id": "a" * 64,
+                "action": BrowserAction.OPEN,
+                "status": "ok",
+                "failure": {"reason": "browser_navigation_blocked"},
+                "observation": {
+                    "target_id": "target",
+                    "url": "https://example.com",
+                    "captured_at": datetime.now(UTC),
+                },
+            }
+        )
+
+
+def test_response_rejects_action_payload_mismatch() -> None:
+    with pytest.raises(ValidationError):
+        BrowserResponse.model_validate(
+            {
+                "request_id": "a" * 64,
+                "action": BrowserAction.STATUS,
+                "status": "ok",
+                "search_results": (),
+            }
         )

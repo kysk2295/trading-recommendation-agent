@@ -1,8 +1,9 @@
+import socket
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from ipaddress import ip_address
-from typing import Annotated, Final, Literal
+from ipaddress import IPv4Address, IPv6Address, ip_address
+from typing import Annotated, Final, Literal, assert_never
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import (
@@ -68,6 +69,20 @@ def _is_valid_hostname(hostname: str) -> bool:
     ))
 
 
+def _literal_address(hostname: str) -> IPv4Address | IPv6Address | None:
+    try:
+        canonical = ip_address(hostname)
+    except ValueError:
+        canonical = None
+    try:
+        legacy = ip_address(socket.inet_aton(hostname))
+    except (OSError, ValueError):
+        legacy = None
+    if legacy is not None and (canonical is None or str(canonical) != hostname):
+        raise _protocol_error() from None
+    return canonical or legacy
+
+
 def require_public_https_url(value: str) -> str:
     try:
         parsed = urlsplit(value)
@@ -83,22 +98,25 @@ def require_public_https_url(value: str) -> str:
     if hostname is None or not hostname or any(character.isspace() or ord(character) < 32 for character in hostname):
         raise _protocol_error()
 
-    try:
-        address = ip_address(hostname)
-    except ValueError:
+    if parsed.fragment and ":" in parsed.fragment:
+        fragment_user, fragment_secret = parsed.fragment.split(":", 1)
+        if fragment_user and fragment_secret and not any(character in "/?#@" for character in parsed.fragment):
+            raise _protocol_error()
+
+    address = _literal_address(hostname)
+    if address is None:
         labels = hostname.rstrip(".").split(".")
         if not _is_valid_hostname(hostname) or all(label.isdigit() for label in labels):
             raise _protocol_error() from None
-    else:
-        if (
-            address.is_loopback
-            or address.is_link_local
-            or address.is_private
-            or address.is_reserved
-            or address.is_multicast
-            or address.is_unspecified
-        ):
-            raise _protocol_error() from None
+    if address is not None and (
+        address.is_loopback
+        or address.is_link_local
+        or address.is_private
+        or address.is_reserved
+        or address.is_multicast
+        or address.is_unspecified
+    ):
+        raise _protocol_error() from None
 
     if port not in (None, 443):
         raise _protocol_error()
@@ -202,17 +220,52 @@ class BrowserFailure(_StrictModel):
     reason: BrowserFailureReason
 
 
+class BrowserStatusPayload(_StrictModel):
+    ready: bool
+
+
 class BrowserResponse(_StrictModel):
     request_id: RequestId
     action: BrowserAction
     status: Literal["ok", "error"] = "ok"
+    status_payload: BrowserStatusPayload | None = None
     observation: BrowserPageObservation | None = None
     search_results: tuple[BrowserSearchResult, ...] = Field(default=(), max_length=40)
     screenshot: BrowserScreenshotReceipt | None = None
     failure: BrowserFailure | None = None
 
     @model_validator(mode="after")
-    def enforce_canonical_size(self) -> "BrowserResponse":
+    def enforce_payload_contract(self) -> "BrowserResponse":
+        payload_fields = {"status_payload", "observation", "search_results", "screenshot"}
+        supplied_payload_fields = payload_fields & self.model_fields_set
+        if self.status == "error":
+            if self.failure is None or supplied_payload_fields:
+                raise PydanticCustomError("browser_response_error_payload", "error response payload is invalid")
+            return self._enforce_canonical_size()
+        if self.failure is not None:
+            raise PydanticCustomError("browser_response_ok_failure", "ok response cannot contain failure")
+        match self.action:
+            case BrowserAction.STATUS:
+                if self.status_payload is None or supplied_payload_fields != {"status_payload"}:
+                    raise PydanticCustomError("browser_response_status_payload", "status response payload is invalid")
+            case BrowserAction.SEARCH:
+                if "search_results" not in supplied_payload_fields or supplied_payload_fields != {"search_results"}:
+                    raise PydanticCustomError("browser_response_search_payload", "search response payload is invalid")
+            case BrowserAction.OPEN | BrowserAction.READ | BrowserAction.FOLLOW:
+                if self.observation is None or supplied_payload_fields != {"observation"}:
+                    raise PydanticCustomError(
+                        "browser_response_observation_payload", "observation response payload is invalid"
+                    )
+            case BrowserAction.CAPTURE:
+                if self.screenshot is None or supplied_payload_fields != {"screenshot"}:
+                    raise PydanticCustomError(
+                        "browser_response_screenshot_payload", "screenshot response payload is invalid"
+                    )
+            case unreachable:
+                assert_never(unreachable)
+        return self._enforce_canonical_size()
+
+    def _enforce_canonical_size(self) -> "BrowserResponse":
         if len(self.model_dump_json().encode("utf-8")) > MAX_RESPONSE_BYTES:
             raise PydanticCustomError("browser_response_too_large", "browser response exceeds 16 KiB")
         return self
