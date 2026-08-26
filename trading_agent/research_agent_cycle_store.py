@@ -6,6 +6,7 @@ from types import TracebackType
 from typing import Self, assert_never, final
 
 from trading_agent.dashboard_agent_family import AgentFamilyId
+from trading_agent.research_agent_cycle_evidence_store import append_evidence
 from trading_agent.research_agent_cycle_models import (
     CycleId,
     EvidenceId,
@@ -24,7 +25,6 @@ from trading_agent.research_agent_cycle_store_codec import (
     append_cycle_event,
     canonical_cycle_json,
     cycle_from_payload,
-    cycle_state_for_result,
     insert_cycle,
     latest_cycles_from_rows,
     open_work_from_payload,
@@ -40,6 +40,7 @@ from trading_agent.research_agent_cycle_store_support import (
     ResearchAgentCycleDatabaseLease,
     ResearchAgentCycleWriterLeaseUnavailableError,
 )
+from trading_agent.research_agent_cycle_terminal_store import CycleTerminalization, terminalize_cycle
 
 
 @final
@@ -60,40 +61,7 @@ class ResearchAgentCycleStore:
         self._database.close()
 
     def append_evidence(self, evidence: ResearchAgentEvidenceV1) -> bool:
-        payload = canonical_cycle_json(evidence)
-        with self._database.writer() as connection:
-            existing = connection.execute(
-                "SELECT sequence,evidence_id,agent_family_id,payload_json FROM evidence WHERE evidence_id=?",
-                (evidence.evidence_id,),
-            ).fetchone()
-            if existing is not None:
-                stored = stored_evidence(existing).evidence
-                shipped_projection = evidence.model_copy(
-                    update={
-                        "bounded_payload_json": None,
-                        "payload_truncated": False,
-                        "subject_refs": (),
-                    }
-                )
-                if stored == evidence or (
-                    stored.bounded_payload_json is None
-                    and not stored.payload_truncated
-                    and not stored.subject_refs
-                    and stored == shipped_projection
-                ):
-                    return False
-                raise InvalidResearchAgentCycleStoreError(reason="evidence_identity_conflict")
-            with connection:
-                _ = connection.execute(
-                    "INSERT INTO evidence(evidence_id,agent_family_id,available_at,payload_json) VALUES(?,?,?,?)",
-                    (
-                        evidence.evidence_id,
-                        evidence.agent_family_id,
-                        evidence.available_at.astimezone(dt.UTC).isoformat(),
-                        payload,
-                    ),
-                )
-        return True
+        return append_evidence(self._database, evidence)
 
     def runnable_evidence(
         self,
@@ -175,7 +143,7 @@ class ResearchAgentCycleStore:
     def finish_cycle(self, cycle: ResearchAgentCycleV1, result: ResearchAgentResultV1) -> None:
         match result.status:
             case ResearchAgentResultStatus.COMPLETED | ResearchAgentResultStatus.NO_ACTION:
-                self._terminalize(cycle, result)
+                terminalize_cycle(self._database, CycleTerminalization(cycle, result))
             case ResearchAgentResultStatus.FAILED | ResearchAgentResultStatus.BLOCKED:
                 raise InvalidResearchAgentCycleStoreError(reason="finish_result_status_invalid")
             case unreachable:
@@ -184,11 +152,14 @@ class ResearchAgentCycleStore:
     def fail_cycle(self, cycle: ResearchAgentCycleV1, result: ResearchAgentResultV1) -> None:
         match result.status:
             case ResearchAgentResultStatus.FAILED | ResearchAgentResultStatus.BLOCKED:
-                self._terminalize(cycle, result)
+                terminalize_cycle(self._database, CycleTerminalization(cycle, result))
             case ResearchAgentResultStatus.COMPLETED | ResearchAgentResultStatus.NO_ACTION:
                 raise InvalidResearchAgentCycleStoreError(reason="failure_result_status_invalid")
             case unreachable:
                 assert_never(unreachable)
+
+    def terminalize_supervisor_cycle(self, mutation: CycleTerminalization) -> None:
+        terminalize_cycle(self._database, mutation)
 
     def recover_interrupted(self, recovered_at: dt.datetime) -> tuple[CycleId, ...]:
         recovered: list[CycleId] = []
@@ -288,56 +259,6 @@ class ResearchAgentCycleStore:
                 (family,),
             ).fetchall()
         return tuple(open_work_from_payload(row[0]) for row in rows)
-
-    def _terminalize(self, cycle: ResearchAgentCycleV1, result: ResearchAgentResultV1) -> None:
-        if result.cycle_id != cycle.cycle_id or result.agent_family_id != cycle.agent_family_id:
-            raise InvalidResearchAgentCycleStoreError(reason="result_cycle_identity_mismatch")
-        terminal = ResearchAgentCycleV1.model_validate(
-            cycle.model_dump(mode="python")
-            | {
-                "state": cycle_state_for_result(result.status),
-                "terminal_at": result.occurred_at,
-                "result_id": result.result_id,
-            }
-        )
-        result_payload = canonical_cycle_json(result)
-        with self._database.writer() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute("SELECT payload_json FROM cycles WHERE cycle_id=?", (cycle.cycle_id,)).fetchone()
-            existing = connection.execute(
-                "SELECT payload_json FROM results WHERE cycle_id=?",
-                (cycle.cycle_id,),
-            ).fetchone()
-            if existing is not None:
-                connection.rollback()
-                if row is not None and existing[0] == result_payload and cycle_from_payload(row[0]) == terminal:
-                    return
-                raise InvalidResearchAgentCycleStoreError(reason="result_identity_conflict")
-            if row is None or cycle_from_payload(row[0]) != cycle:
-                connection.rollback()
-                raise InvalidResearchAgentCycleStoreError(reason="started_cycle_missing")
-            _ = connection.execute(
-                "INSERT INTO results(result_id,cycle_id,payload_json) VALUES(?,?,?)",
-                (result.result_id, cycle.cycle_id, result_payload),
-            )
-            update_cycle(connection, terminal)
-            append_cycle_event(connection, terminal, result.occurred_at)
-            if cycle.agent_family_id == "day_trading":
-                _ = connection.execute(
-                    """INSERT INTO day_cursors(agent_family_id,market_id,evidence_sequence)
-                    VALUES(?,?,?) ON CONFLICT(agent_family_id,market_id) DO UPDATE
-                    SET evidence_sequence=MAX(evidence_sequence,excluded.evidence_sequence)""",
-                    (cycle.agent_family_id, cycle.market_id, cycle.evidence_sequence),
-                )
-            else:
-                _ = connection.execute(
-                    """INSERT INTO cursors(agent_family_id,evidence_sequence) VALUES(?,?)
-                    ON CONFLICT(agent_family_id) DO UPDATE
-                    SET evidence_sequence=MAX(evidence_sequence,excluded.evidence_sequence)""",
-                    (cycle.agent_family_id, cycle.evidence_sequence),
-                )
-            connection.commit()
-
 
 __all__ = (
     "InactiveResearchAgentCycleStoreError",

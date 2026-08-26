@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 from trading_agent._autonomous_task_store_projection import (
     AutonomousTaskReader,
+    _matching_open_tasks,
     _require_appendable,
     _step_row,
     _steps_for_task,
+    _task_for_connection,
     _task_from_row,
     _task_row,
 )
@@ -46,13 +48,23 @@ class AutonomousTaskStore:
 
     @contextmanager
     def writer(self) -> Iterator[AutonomousTaskWriter]:
+        with self._writer(blocking=False) as writer:
+            yield writer
+
+    @contextmanager
+    def admission_writer(self) -> Iterator[AutonomousTaskWriter]:
+        with self._writer(blocking=True) as writer:
+            yield writer
+
+    @contextmanager
+    def _writer(self, *, blocking: bool) -> Iterator[AutonomousTaskWriter]:
         parent = -1
         descriptor = -1
         try:
             parent = _open_private_parent(self.path.parent, create=True)
             _require_private_directory(parent)
             _require_open_directory_path(self.path.parent, parent)
-            with _writer_lease(self.path, parent):
+            with _writer_lease(self.path, parent, blocking=blocking):
                 descriptor = _open_private_database(parent, self.path.name, create=True, write=True)
                 identity = _DatabaseIdentity(parent, self.path.name, descriptor, self.path)
                 descriptor = -1
@@ -125,6 +137,23 @@ class AutonomousTaskWriter:
         except sqlite3.Error as error:
             self._connection.rollback()
             raise InvalidAutonomousTaskStoreError(reason="task_insert_failed") from error
+
+    def task(self, task_id: str) -> AutonomousResearchTask | None:
+        self._require_active()
+        return _task_for_connection(self._connection, task_id)
+
+    def steps(self, task_id: str) -> tuple[AutonomousTaskStep, ...]:
+        self._require_active()
+        return _steps_for_task(self._connection, task_id)
+
+    def matching_open_tasks(
+        self,
+        family: str,
+        market: str,
+        subject_refs: Collection[str],
+    ) -> tuple[AutonomousResearchTask, ...]:
+        self._require_active()
+        return _matching_open_tasks(self._connection, family, market, subject_refs)
 
     def create_task_with_initial_step(
         self,

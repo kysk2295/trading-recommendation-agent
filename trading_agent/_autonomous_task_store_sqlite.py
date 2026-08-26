@@ -84,8 +84,10 @@ class InvalidAutonomousTaskStoreError(AutonomousTaskStoreError):
     pass
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
 class _DatabaseIdentity:
+    """Track the descriptor adopted after each atomic database generation replacement."""
+
     parent: int
     name: str
     descriptor: int
@@ -95,11 +97,10 @@ class _DatabaseIdentity:
 def _expected_schema_rows() -> tuple[tuple[str, str, str, str], ...]:
     with closing(sqlite3.connect(":memory:")) as connection:
         connection.executescript(_SCHEMA)
-        return tuple(
-            connection.execute(
-                "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name"
-            ).fetchall()
+        rows = connection.execute(
+            "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name"
         )
+        return tuple(rows.fetchall())
 
 
 _SCHEMA_ROWS: Final = _expected_schema_rows()
@@ -159,15 +160,17 @@ def _open_private_database(parent: int, name: str, *, create: bool, write: bool)
 
 
 @contextmanager
-def _writer_lease(path: Path, parent: int) -> Iterator[None]:
-    descriptor = _open_private_database(parent, f"{path.name}.writer.lock", create=True, write=True)
+def _writer_lease(path: Path, parent: int, *, blocking: bool = False) -> Iterator[None]:
+    descriptor = -1
     parent_locked = False
     locked = False
     try:
         require_open_directory_path(path.parent, parent)
-        fcntl.flock(parent, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+        fcntl.flock(parent, flags)
         parent_locked = True
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        descriptor = _open_private_database(parent, f"{path.name}.writer.lock", create=True, write=True)
+        fcntl.flock(descriptor, flags)
         locked = True
         yield
     finally:
@@ -175,7 +178,8 @@ def _writer_lease(path: Path, parent: int) -> Iterator[None]:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
         if parent_locked:
             fcntl.flock(parent, fcntl.LOCK_UN)
-        os.close(descriptor)
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 @contextmanager

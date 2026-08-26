@@ -2,21 +2,21 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
-from typing import Final, Literal, assert_never
+from typing import Literal, assert_never
 
 from trading_agent._autonomous_supervisor_steps import (
     ArtifactPayload,
     CompletionPayload,
     FailurePayload,
-    SourceAdmissionPayload,
-    canonical_json,
-    payload_json,
-    plain_step,
     safe_payload,
+)
+from trading_agent.autonomous_evidence_admission import (
+    AutonomousEvidenceAdmission,
+    admit_evidence_with_writer,
+    create_root_evidence_task,
 )
 from trading_agent.autonomous_supervisor_runtime import AutonomousSupervisorRuntime
 from trading_agent.autonomous_task_models import (
-    AutonomousAgentRole,
     AutonomousResearchTask,
     AutonomousSupervisorTickResult,
     AutonomousTaskState,
@@ -29,14 +29,6 @@ from trading_agent.research_agent_cycle_models import (
     ResearchAgentResultV1,
     ResearchAgentWakeKind,
     research_agent_result_id,
-)
-
-_AGENT_VERSION: Final = "autonomous-supervisor-adapter-v1"
-_PLAN: Final = (
-    "ask critic",
-    "delegate specialist analysis",
-    "inspect root evidence",
-    "schedule continuation",
 )
 
 
@@ -57,19 +49,9 @@ class AutonomousSupervisorAdapter:
         evidence: ResearchAgentEvidenceV1,
         now: dt.datetime,
     ) -> AutonomousSupervisorTickResult:
-        reader = self.runtime.tasks.reader()
         exact_id = autonomous_task_id(evidence.agent_family_id, evidence.market_id, evidence.evidence_id)
-        exact = reader.task(exact_id)
-        matching = reader.matching_open_tasks(
-            evidence.agent_family_id,
-            evidence.market_id,
-            evidence.subject_refs,
-        )
-        task = exact or (matching[0] if matching else _task_from_evidence(evidence, now))
-        if exact is None and not matching:
-            _create_with_root_admission(self.runtime, task, evidence, now)
-        else:
-            _ = self.runtime.admit_evidence(task.task_id, evidence, now)
+        task = self.admit_evidence(evidence, now)
+        exact = task if task.task_id == exact_id else None
         if exact is not None:
             match exact.state:
                 case AutonomousTaskState.COMPLETED:
@@ -92,6 +74,29 @@ class AutonomousSupervisorAdapter:
                 case unreachable:
                     assert_never(unreachable)
         return self.runtime.tick(task, now)
+
+    def admit_evidence(
+        self,
+        evidence: ResearchAgentEvidenceV1,
+        now: dt.datetime,
+    ) -> AutonomousResearchTask:
+        exact_id = autonomous_task_id(evidence.agent_family_id, evidence.market_id, evidence.evidence_id)
+        with self.runtime.tasks.admission_writer() as writer:
+            exact = writer.task(exact_id)
+            matching = writer.matching_open_tasks(
+                evidence.agent_family_id,
+                evidence.market_id,
+                evidence.subject_refs,
+            )
+            if exact is None and not matching:
+                task = create_root_evidence_task(writer, evidence, now)
+            else:
+                task = exact or matching[0]
+                _ = admit_evidence_with_writer(writer, AutonomousEvidenceAdmission(task, evidence, now))
+            durable = writer.task(task.task_id)
+            if durable is None:
+                raise InvalidAutonomousSupervisorProjectionError(reason="autonomous_admission_task_missing")
+            return durable
 
     def project_tick(
         self,
@@ -214,53 +219,6 @@ def _terminal_replay(
         agent_family_id=task.agent_family_id,
         market_scope=task.market_scope,
     )
-
-
-def _task_from_evidence(
-    evidence: ResearchAgentEvidenceV1,
-    now: dt.datetime,
-) -> AutonomousResearchTask:
-    references = tuple(sorted(set(evidence.evidence_refs) | {evidence.payload_sha256}))
-    return AutonomousResearchTask(
-        task_id=autonomous_task_id(evidence.agent_family_id, evidence.market_id, evidence.evidence_id),
-        goal=f"Investigate durable {evidence.agent_family_id} evidence for {evidence.market_id}.",
-        owner_role=AutonomousAgentRole.SUPERVISOR,
-        agent_family_id=evidence.agent_family_id,
-        market_scope=evidence.market_id,
-        state=AutonomousTaskState.QUEUED,
-        priority=50,
-        root_source_evidence_id=evidence.evidence_id,
-        source_evidence_ids=(evidence.evidence_id,),
-        evidence_refs=references,
-        subject_refs=tuple(sorted(set(evidence.subject_refs))),
-        current_plan=_PLAN,
-        agent_version=_AGENT_VERSION,
-        created_at=now,
-        updated_at=now,
-    )
-
-
-def _create_with_root_admission(
-    runtime: AutonomousSupervisorRuntime,
-    task: AutonomousResearchTask,
-    evidence: ResearchAgentEvidenceV1,
-    now: dt.datetime,
-) -> None:
-    admission = SourceAdmissionPayload(
-        evidence_id=evidence.evidence_id,
-        evidence_json=canonical_json(evidence.model_dump(mode="json")),
-    )
-    step = plain_step(
-        task,
-        1,
-        now,
-        AutonomousTaskState.QUEUED,
-        payload_json(admission),
-        task.source_evidence_ids,
-        task.evidence_refs,
-    )
-    with runtime.tasks.writer() as writer:
-        _ = writer.create_task_with_initial_step(task, step)
 
 
 __all__ = ("AutonomousSupervisorAdapter", "InvalidAutonomousSupervisorProjectionError")

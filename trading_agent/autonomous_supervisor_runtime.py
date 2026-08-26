@@ -20,19 +20,17 @@ from trading_agent._autonomous_supervisor_reducer import (
 from trading_agent._autonomous_supervisor_steps import (
     DecisionPayload,
     InvalidAutonomousSupervisorError,
-    SourceAdmissionPayload,
-    canonical_json,
     decision_payload,
     parsed_response,
     payload_json,
     plain_step,
     reasoning_request,
     run_budget,
-    safe_payload,
     tick_result,
     unapplied_decision,
     utc_time,
 )
+from trading_agent.autonomous_evidence_admission import AutonomousEvidenceAdmission, admit_evidence_with_writer
 from trading_agent.autonomous_memory_store import AutonomousMemoryStore, AutonomousMemoryStoreError
 from trading_agent.autonomous_reasoning import (
     AutonomousReasoningClient,
@@ -190,46 +188,11 @@ class AutonomousSupervisorRuntime:
     def admit_evidence(
         self, task_id: AutonomousTaskId | str, evidence: ResearchAgentEvidenceV1, now: dt.datetime
     ) -> bool:
-        current_now = utc_time(now)
-        task = self._task(task_id)
-        if evidence.agent_family_id != task.agent_family_id:
-            raise InvalidAutonomousSupervisorError(reason="autonomous_evidence_family_mismatch")
-        if evidence.market_id != task.market_scope:
-            raise InvalidAutonomousSupervisorError(reason="autonomous_evidence_market_mismatch")
-        evidence_json = canonical_json(evidence.model_dump(mode="json"))
-        if evidence.evidence_id in task.source_evidence_ids:
-            admissions = tuple(
-                payload.evidence_json
-                for step in self.tasks.reader().steps(task.task_id)
-                if isinstance(payload := safe_payload(step), SourceAdmissionPayload)
-                and payload.evidence_id == evidence.evidence_id
-            )
-            if admissions == (evidence_json,):
-                return False
-            raise InvalidAutonomousSupervisorError(reason="autonomous_evidence_replay_conflict")
-        payload = SourceAdmissionPayload(
-            evidence_id=evidence.evidence_id,
-            evidence_json=evidence_json,
-        )
-        refs = tuple(
-            sorted(
-                set(task.evidence_refs)
-                | set(evidence.evidence_refs)
-                | set(evidence.subject_refs)
-                | {evidence.payload_sha256}
-            )
-        )
-        step = plain_step(
-            task,
-            len(self.tasks.reader().steps(task.task_id)) + 1,
-            current_now,
-            AutonomousTaskState.QUEUED,
-            payload_json(payload),
-            tuple(sorted(set(task.source_evidence_ids) | {evidence.evidence_id})),
-            refs,
-        )
-        with self.tasks.writer() as writer:
-            return writer.append_step(step)
+        with self.tasks.admission_writer() as writer:
+            task = writer.task(str(task_id))
+            if task is None:
+                raise InvalidAutonomousSupervisorError(reason="autonomous_supervisor_task_missing")
+            return admit_evidence_with_writer(writer, AutonomousEvidenceAdmission(task, evidence, now))
 
     def _persist_decision(
         self, task: Task, response: AutonomousReasoningResponse, now: dt.datetime, budget: AutonomousRunBudget

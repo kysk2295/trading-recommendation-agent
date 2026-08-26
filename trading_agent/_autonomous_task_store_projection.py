@@ -35,15 +35,7 @@ class AutonomousTaskReader:
     def task(self, task_id: str) -> AutonomousResearchTask | None:
         try:
             with _reader_connection(self._path) as connection:
-                row = connection.execute(
-                    "SELECT task_id,root_source_evidence_id,payload_sha256,payload_json "
-                    "FROM autonomous_tasks WHERE task_id=?",
-                    (task_id,),
-                ).fetchone()
-                if row is None:
-                    return None
-                task = _task_from_row(row)
-                return _project_task(task, _steps_for_task(connection, task.task_id))
+                return _task_for_connection(connection, task_id)
         except FileNotFoundError:
             return None
 
@@ -57,28 +49,18 @@ class AutonomousTaskReader:
     def tasks(self) -> tuple[AutonomousResearchTask, ...]:
         try:
             with _reader_connection(self._path) as connection:
-                rows = connection.execute(
-                    "SELECT task_id,root_source_evidence_id,payload_sha256,payload_json "
-                    "FROM autonomous_tasks ORDER BY task_id"
-                ).fetchall()
-                return tuple(_project_task(_task_from_row(row), _steps_for_task(connection, row[0])) for row in rows)
+                return _tasks_for_connection(connection)
         except FileNotFoundError:
             return ()
 
     def matching_open_tasks(
         self, family: str, market: str, subject_refs: Collection[str]
     ) -> tuple[AutonomousResearchTask, ...]:
-        if not subject_refs:
+        try:
+            with _reader_connection(self._path) as connection:
+                return _matching_open_tasks(connection, family, market, subject_refs)
+        except FileNotFoundError:
             return ()
-        matches = tuple(
-            task
-            for task in self.tasks()
-            if task.agent_family_id == family
-            and task.market_scope == market
-            and task.state not in _TERMINAL_STATES
-            and bool(set(task.subject_refs).intersection(subject_refs))
-        )
-        return tuple(sorted(matches, key=lambda task: (-task.updated_at.timestamp(), task.task_id)))
 
     def runnable(self, now: dt.datetime, *, events: Collection[str]) -> tuple[AutonomousResearchTask, ...]:
         if now.tzinfo is None or now.utcoffset() is None:
@@ -123,6 +105,45 @@ def _project_task(task: AutonomousResearchTask, steps: tuple[AutonomousTaskStep,
             }
         )
     return projected
+
+
+def _task_for_connection(connection: sqlite3.Connection, task_id: str) -> AutonomousResearchTask | None:
+    row = connection.execute(
+        "SELECT task_id,root_source_evidence_id,payload_sha256,payload_json "
+        "FROM autonomous_tasks WHERE task_id=?",
+        (task_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    task = _task_from_row(row)
+    return _project_task(task, _steps_for_task(connection, task.task_id))
+
+
+def _tasks_for_connection(connection: sqlite3.Connection) -> tuple[AutonomousResearchTask, ...]:
+    rows = connection.execute(
+        "SELECT task_id,root_source_evidence_id,payload_sha256,payload_json "
+        "FROM autonomous_tasks ORDER BY task_id"
+    ).fetchall()
+    return tuple(_project_task(_task_from_row(row), _steps_for_task(connection, row[0])) for row in rows)
+
+
+def _matching_open_tasks(
+    connection: sqlite3.Connection,
+    family: str,
+    market: str,
+    subject_refs: Collection[str],
+) -> tuple[AutonomousResearchTask, ...]:
+    if not subject_refs:
+        return ()
+    matches = tuple(
+        task
+        for task in _tasks_for_connection(connection)
+        if task.agent_family_id == family
+        and task.market_scope == market
+        and task.state not in _TERMINAL_STATES
+        and bool(set(task.subject_refs).intersection(subject_refs))
+    )
+    return tuple(sorted(matches, key=lambda task: (-task.updated_at.timestamp(), task.task_id)))
 
 
 def _is_runnable(task: AutonomousResearchTask, now: dt.datetime, events: Collection[str]) -> bool:

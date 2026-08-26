@@ -45,17 +45,15 @@ class ResearchCycleEvidenceResolver:
         stored = next(item for item in reversed(candidates) if item.evidence.evidence_id == evidence.evidence_id)
         return ResolvedCycleEvidence(stored, None)
 
-    def close_legacy_work(self, work: ResearchAgentOpenWorkV1) -> None:
-        self.store.upsert_open_work(
-            work.model_copy(
-                update={
-                    "state": ResearchAgentOpenWorkState.TERMINAL,
-                    "next_wake_at": None,
-                    "updated_at": self.now,
-                    "source_evidence_id": None,
-                    "failure_count": 0,
-                }
-            )
+    def terminal_legacy_work(self, work: ResearchAgentOpenWorkV1) -> ResearchAgentOpenWorkV1:
+        return work.model_copy(
+            update={
+                "state": ResearchAgentOpenWorkState.TERMINAL,
+                "next_wake_at": None,
+                "updated_at": self.now,
+                "source_evidence_id": None,
+                "failure_count": 0,
+            }
         )
 
     def _original(self, work: ResearchAgentOpenWorkV1) -> StoredResearchAgentEvidence:
