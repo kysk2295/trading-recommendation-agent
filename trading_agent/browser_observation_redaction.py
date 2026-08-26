@@ -4,11 +4,11 @@ import re
 from typing import Final
 
 _REDACTED: Final = "[REDACTED]"
-_LABEL: Final = (
-    r"(?:authorization|access[\s_.-]*(?:key|token)|refresh[\s_.-]*(?:key|token)|"
-    r"api[\s_.-]*(?:key|secret|token)|session(?:[\s_.-]*(?:cookie|id|key|token))?|"
-    r"cookie|password|client[\s_.-]*secret|account[\s_.-]*(?:id|number)|"
-    r"auth[\s_.-]*(?:secret|token)|token|secret|jwt)"
+_SEPARATOR: Final = r"[^A-Za-z0-9]*"
+_LABEL: Final = rf"(?:authorization|access{_SEPARATOR}(?:key|token)|refresh{_SEPARATOR}(?:key|token)|" + (
+    rf"api{_SEPARATOR}(?:key|secret|token)|session(?:{_SEPARATOR}(?:cookie|id|key|token))?|"
+    rf"cookie|password|client{_SEPARATOR}secret|account{_SEPARATOR}(?:id|number)|"
+    rf"auth{_SEPARATOR}(?:secret|token)|token|secret|jwt)"
 )
 _ASSIGNED_SECRET: Final = re.compile(
     rf"(?P<label>\b{_LABEL}\b\s*[:=]\s*)"
