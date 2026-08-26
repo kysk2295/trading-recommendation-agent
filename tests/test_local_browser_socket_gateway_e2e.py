@@ -170,7 +170,6 @@ def test_raw_hostile_open_is_redacted_and_gateway_keeps_serving_without_chrome(
         client.settimeout(1.0)
         client.connect(str(socket_path))
         client.sendall(b'{"action":"open","request_id":"' + b"a" * 64 + b'","url":"' + hostile_url + b'"}\n')
-        client.shutdown(socket.SHUT_WR)
         assert client.recv(1) == b""
 
     # Then: the frame is rejected before dispatch or a receipt write, and the gateway serves again.
