@@ -20,8 +20,10 @@ from trading_agent.hermes_delivery_reader import HermesDeliveryReader
 from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
 from trading_agent.research_agent_service_config import (
     ResearchAgentServiceConfig,
+    canonical_research_agent_service_config_sha256,
     write_research_agent_service_config,
 )
+from trading_agent.research_agent_service_health import read_persisted_research_agent_service_health
 from trading_agent.research_os_runtime import (
     run_research_os_forever,
     run_research_os_tick,
@@ -179,6 +181,43 @@ def test_combined_forever_loop_keeps_the_thirty_second_outer_wait(
 
     # Then: the retained outer cadence is exactly thirty seconds.
     assert waits == [30.0]
+
+
+def test_combined_forever_publishes_readiness_before_first_business_tick(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+
+    class ReadyRuntime:
+        def close(self) -> None:
+            pass
+
+    class StopBeforeBusinessWork(RuntimeError):
+        pass
+
+    def blocked_tick(
+        candidate: ResearchAgentServiceConfig,
+        _now: dt.datetime,
+        *,
+        operation: str,
+    ) -> Never:
+        health = read_persisted_research_agent_service_health(candidate.output_root)
+        assert health.config_sha256 == canonical_research_agent_service_config_sha256(candidate)
+        assert health.state == "ready"
+        assert health.reason == "runtime_ready"
+        assert operation == "run"
+        raise StopBeforeBusinessWork
+
+    monkeypatch.setattr(
+        "trading_agent.research_os_runtime.build_service_runtime",
+        lambda _: ReadyRuntime(),
+        raising=False,
+    )
+    monkeypatch.setattr("trading_agent.research_os_runtime.run_research_os_tick", blocked_tick)
+
+    with pytest.raises(StopBeforeBusinessWork):
+        anyio.run(run_research_os_forever, config)
 
 
 def test_tick_cli_subprocess_is_healthy_and_idempotent_across_restart(tmp_path: Path) -> None:

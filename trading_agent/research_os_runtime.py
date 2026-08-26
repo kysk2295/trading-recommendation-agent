@@ -17,7 +17,15 @@ from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.private_directory_identity import open_private_parent, require_private_directory
 from trading_agent.private_stable_report import write_private_stable_report
 from trading_agent.research_agent_runtime_lease import research_agent_runtime_lease
-from trading_agent.research_agent_service_config import ResearchAgentServiceConfig
+from trading_agent.research_agent_service_builder import build_service_runtime
+from trading_agent.research_agent_service_config import (
+    ResearchAgentServiceConfig,
+    canonical_research_agent_service_config_sha256,
+)
+from trading_agent.research_agent_service_health import (
+    health_for_service_report,
+    write_persisted_research_agent_service_health,
+)
 from trading_agent.research_agent_service_runtime import (
     DayDiscoveryMarketRuntimeReport,
     InvalidResearchAgentServiceRuntimeError,
@@ -102,6 +110,7 @@ async def run_research_os_forever(
         raise InvalidResearchAgentServiceRuntimeError
     _prepare_private_paths(config)
     with research_agent_runtime_lease(config.output_root / "research-agent-runtime.lock"):
+        _publish_runtime_readiness(config)
         while True:
             _ = run_research_os_tick(config, dt.datetime.now(dt.UTC), operation="run")
             await anyio.sleep(tick_seconds)
@@ -119,6 +128,22 @@ def _prepare_private_paths(config: ResearchAgentServiceConfig) -> None:
             require_private_directory(descriptor)
         finally:
             os.close(descriptor)
+
+
+def _publish_runtime_readiness(config: ResearchAgentServiceConfig) -> None:
+    runtime = build_service_runtime(config)
+    try:
+        observed_at = dt.datetime.now(dt.UTC)
+        write_persisted_research_agent_service_health(
+            config.output_root,
+            health_for_service_report(
+                canonical_research_agent_service_config_sha256(config),
+                observed_at,
+                failed=False,
+            ),
+        )
+    finally:
+        runtime.close()
 
 
 __all__ = (
