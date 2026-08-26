@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import os
 import re
-import stat
 import subprocess
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal, NewType, Protocol
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from trading_agent.local_browser_gateway_config import LocalBrowserGatewayConfig
+from trading_agent.local_browser_private_fs import (
+    InvalidLocalBrowserPrivateFsError,
+    PrivateBrowserDirectory,
+    PrivateBrowserFile,
+    open_private_browser_directory,
+    read_private_browser_file,
+    unlink_private_browser_file,
+)
 
 ChromeDebugPort = NewType("ChromeDebugPort", int)
 _PORT_FILE = "DevToolsActivePort"
@@ -19,9 +25,17 @@ _PORT_FILE_MAX_BYTES = 256
 _PORT_FILE_TEXT = re.compile(r"([1-9][0-9]{0,4})\n(/devtools/browser/[A-Za-z0-9_-]{1,128})\n?\Z")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class InvalidLocalChromeControllerError(RuntimeError):
     reason: str
+
+    def __str__(self) -> str:
+        return self.reason
+
+
+@dataclass(slots=True)
+class InvalidLocalChromeEndpointInvariantError(ValueError):
+    reason: str = "local_chrome_endpoint_ownership_invalid"
 
     def __str__(self) -> str:
         return self.reason
@@ -39,7 +53,7 @@ class LocalChromeEndpoint(BaseModel):
     @model_validator(mode="after")
     def require_honest_ownership(self) -> LocalChromeEndpoint:
         if (self.ownership == "owned") != (self.process_id is not None):
-            raise ValueError("local_chrome_endpoint_ownership_invalid")
+            raise InvalidLocalChromeEndpointInvariantError()
         return self
 
 
@@ -77,7 +91,11 @@ class SubprocessChromeLauncher:
         )
 
 
-type _PortFile = tuple[ChromeDebugPort, str]
+@dataclass(frozen=True, slots=True)
+class _PortRecord:
+    file: PrivateBrowserFile
+    port: ChromeDebugPort
+    browser_path: str
 
 
 def chrome_launch_command(config: LocalBrowserGatewayConfig) -> tuple[str, ...]:
@@ -97,46 +115,54 @@ class LocalChromeController:
         self,
         config: LocalBrowserGatewayConfig,
         *,
-        launcher: ChromeLauncher | None = None,
         probe: ChromeHealthProbe,
+        launcher: ChromeLauncher | None = None,
         clock: Clock | None = None,
         owner_id: int | None = None,
     ) -> None:
         self._config = config
-        self._launcher = launcher or SubprocessChromeLauncher()
         self._probe = probe
+        self._launcher = launcher or SubprocessChromeLauncher()
         self._clock = clock or time
         self._owner_id = os.getuid() if owner_id is None else owner_id
         self._process: ChromeProcess | None = None
 
     def ensure_ready(self) -> LocalChromeEndpoint:
-        _prepare_private_directory(self._config.state_root, self._owner_id)
-        _prepare_private_directory(self._config.profile_root, self._owner_id)
-        process = self._process
-        if process is not None:
-            try:
-                port_file = _read_port_file(self._config.profile_root, self._owner_id)
-            except InvalidLocalChromeControllerError:
-                self._stop_and_clear_port_file()
-                raise
-            if (
-                process.poll() is None
-                and port_file is not None
-                and self._probe.probe(port_file[0], port_file[1])
+        try:
+            with (
+                open_private_browser_directory(self._config.state_root, self._owner_id),
+                open_private_browser_directory(self._config.profile_root, self._owner_id) as profile,
             ):
-                return _endpoint(port_file, "owned", process.pid)
-            self._stop_and_clear_port_file()
-        port_file = _read_port_file(self._config.profile_root, self._owner_id)
-        if port_file is not None:
-            if self._probe.probe(port_file[0], port_file[1]):
-                return _endpoint(port_file, "attached", None)
-            _remove_stale_port_file(self._config.profile_root, self._owner_id)
-        return self._launch_and_wait()
+                return self._ensure(profile)
+        except InvalidLocalBrowserPrivateFsError as error:
+            reason = "local_chrome_private_directory_invalid"
+            if "directory" not in error.reason:
+                reason = "local_chrome_port_file_invalid"
+            raise InvalidLocalChromeControllerError(reason=reason) from None
 
     def close(self) -> None:
         self._stop_owned_process()
 
-    def _launch_and_wait(self) -> LocalChromeEndpoint:
+    def _ensure(self, profile: PrivateBrowserDirectory) -> LocalChromeEndpoint:
+        raw = read_private_browser_file(profile, _PORT_FILE, self._owner_id, _PORT_FILE_MAX_BYTES)
+        record = _parse_port_file(raw)
+        process = self._process
+        if raw is not None and record is None:
+            if process is not None:
+                self._stop_and_unlink(profile, raw)
+            raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid")
+        if process is not None:
+            if record is not None and process.poll() is None and self._probe.probe(record.port, record.browser_path):
+                return _endpoint(record, "owned", process.pid)
+            self._stop_and_unlink(profile, raw)
+            return self._launch_and_wait(profile)
+        if record is not None:
+            if self._probe.probe(record.port, record.browser_path):
+                return _endpoint(record, "attached", None)
+            raise InvalidLocalChromeControllerError(reason="local_chrome_endpoint_unavailable")
+        return self._launch_and_wait(profile)
+
+    def _launch_and_wait(self, profile: PrivateBrowserDirectory) -> LocalChromeEndpoint:
         try:
             self._process = self._launcher.launch(chrome_launch_command(self._config))
         except OSError:
@@ -146,25 +172,26 @@ class LocalChromeController:
             process = self._process
             if process is None:
                 raise InvalidLocalChromeControllerError(reason="local_chrome_launch_failed")
+            raw = read_private_browser_file(profile, _PORT_FILE, self._owner_id, _PORT_FILE_MAX_BYTES)
+            record = _parse_port_file(raw)
             if process.poll() is not None:
-                self._stop_and_clear_port_file()
+                self._stop_and_unlink(profile, raw)
                 raise InvalidLocalChromeControllerError(reason="local_chrome_early_exit")
-            try:
-                port_file = _read_port_file(self._config.profile_root, self._owner_id)
-            except InvalidLocalChromeControllerError:
-                self._stop_and_clear_port_file()
-                raise
-            if port_file is not None and self._probe.probe(port_file[0], port_file[1]):
-                return _endpoint(port_file, "owned", process.pid)
+            if raw is not None and record is None:
+                self._stop_and_unlink(profile, raw)
+                raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid")
+            if record is not None and self._probe.probe(record.port, record.browser_path):
+                return _endpoint(record, "owned", process.pid)
             remaining = deadline - self._clock.monotonic()
             if remaining <= 0:
-                self._stop_and_clear_port_file()
+                self._stop_and_unlink(profile, raw)
                 raise InvalidLocalChromeControllerError(reason="local_chrome_startup_timeout")
             self._clock.sleep(min(0.1, remaining))
 
-    def _stop_and_clear_port_file(self) -> None:
+    def _stop_and_unlink(self, profile: PrivateBrowserDirectory, file: PrivateBrowserFile | None) -> None:
         self._stop_owned_process()
-        _remove_stale_port_file(self._config.profile_root, self._owner_id)
+        if file is not None:
+            unlink_private_browser_file(profile, _PORT_FILE, file, self._owner_id)
 
     def _stop_owned_process(self) -> None:
         process, self._process = self._process, None
@@ -182,116 +209,25 @@ class LocalChromeController:
             process.wait(timeout=5.0)
 
 
+def _parse_port_file(file: PrivateBrowserFile | None) -> _PortRecord | None:
+    if file is None:
+        return None
+    try:
+        match = _PORT_FILE_TEXT.fullmatch(file.payload.decode("utf-8"))
+    except UnicodeDecodeError:
+        return None
+    if match is None or int(match.group(1)) > 65535:
+        return None
+    return _PortRecord(file, ChromeDebugPort(int(match.group(1))), match.group(2))
+
+
 def _endpoint(
-    port_file: _PortFile, ownership: Literal["owned", "attached"], process_id: int | None
+    record: _PortRecord, ownership: Literal["owned", "attached"], process_id: int | None
 ) -> LocalChromeEndpoint:
     return LocalChromeEndpoint(
-        port=port_file[0],
-        browser_path=port_file[1],
-        browser_websocket_url=f"ws://127.0.0.1:{port_file[0]}{port_file[1]}",
+        port=record.port,
+        browser_path=record.browser_path,
+        browser_websocket_url=f"ws://127.0.0.1:{record.port}{record.browser_path}",
         ownership=ownership,
         process_id=process_id,
     )
-
-
-def _prepare_private_directory(path: Path, owner_id: int) -> None:
-    if _has_symlink_component(path):
-        raise InvalidLocalChromeControllerError(reason="local_chrome_private_directory_invalid")
-    current = Path(path.anchor)
-    for component in path.parts[1:]:
-        current /= component
-        try:
-            metadata = os.lstat(current)
-        except FileNotFoundError:
-            current.mkdir(mode=0o700)
-            current.chmod(0o700)
-        else:
-            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
-                raise InvalidLocalChromeControllerError(reason="local_chrome_private_directory_invalid")
-    try:
-        metadata = os.lstat(path)
-    except OSError:
-        raise InvalidLocalChromeControllerError(reason="local_chrome_private_directory_invalid") from None
-    if _has_symlink_component(path) or not stat.S_ISDIR(metadata.st_mode):
-        raise InvalidLocalChromeControllerError(reason="local_chrome_private_directory_invalid")
-    if metadata.st_uid != owner_id or stat.S_IMODE(metadata.st_mode) != 0o700:
-        raise InvalidLocalChromeControllerError(reason="local_chrome_private_directory_invalid")
-
-
-def _read_port_file(profile_root: Path, owner_id: int) -> _PortFile | None:
-    path = profile_root / _PORT_FILE
-    metadata = _private_port_metadata(path, owner_id)
-    if metadata is None:
-        return None
-    if metadata.st_size > _PORT_FILE_MAX_BYTES:
-        raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid")
-    try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    except OSError:
-        raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid") from None
-    try:
-        checked = os.fstat(descriptor)
-        if not _is_private_regular_file(checked, owner_id) or checked.st_size > _PORT_FILE_MAX_BYTES:
-            raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid")
-        payload = os.read(descriptor, _PORT_FILE_MAX_BYTES + 1)
-    except OSError:
-        raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid") from None
-    finally:
-        os.close(descriptor)
-    if len(payload) > _PORT_FILE_MAX_BYTES:
-        raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid")
-    try:
-        match = _PORT_FILE_TEXT.fullmatch(payload.decode("utf-8"))
-    except UnicodeDecodeError:
-        raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid") from None
-    if match is None:
-        raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid")
-    port_text, browser_path = match.groups()
-    if int(port_text) > 65535:
-        raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid")
-    return ChromeDebugPort(int(port_text)), browser_path
-
-
-def _remove_stale_port_file(profile_root: Path, owner_id: int) -> None:
-    path = profile_root / _PORT_FILE
-    if _private_port_metadata(path, owner_id) is None:
-        return
-    try:
-        path.unlink()
-    except OSError:
-        raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid") from None
-
-
-def _private_port_metadata(path: Path, owner_id: int) -> os.stat_result | None:
-    try:
-        metadata = os.lstat(path)
-    except FileNotFoundError:
-        return None
-    except OSError:
-        raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid") from None
-    if not _is_private_regular_file(metadata, owner_id):
-        raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid")
-    return metadata
-
-
-def _is_private_regular_file(metadata: os.stat_result, owner_id: int) -> bool:
-    return (
-        metadata.st_uid == owner_id
-        and stat.S_ISREG(metadata.st_mode)
-        and metadata.st_nlink == 1
-        and stat.S_IMODE(metadata.st_mode) == 0o600
-    )
-
-
-def _has_symlink_component(path: Path) -> bool:
-    current = Path(path.anchor)
-    for component in path.parts[1:]:
-        current /= component
-        try:
-            if stat.S_ISLNK(os.lstat(current).st_mode):
-                return True
-        except FileNotFoundError:
-            return False
-        except OSError:
-            return True
-    return False

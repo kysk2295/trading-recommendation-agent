@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import trading_agent.local_browser_private_fs as private_fs
 import trading_agent.local_chrome_controller as chrome
 from trading_agent.local_browser_gateway_config import LocalBrowserGatewayConfig
 
@@ -161,30 +162,6 @@ def test_ready_creates_exact_private_directories_and_reuses_owned_process(config
     assert first.ownership == "owned" and first.process_id == 101
 
 
-@pytest.mark.parametrize("weakening", ("symlink", "mode", "owner"))
-def test_ready_rejects_nonprivate_directory(config: LocalBrowserGatewayConfig, weakening: str) -> None:
-    # Given: one unsafe configured private directory.
-    config.state_root.parent.mkdir(mode=0o700)
-    if weakening == "symlink":
-        target = config.state_root.parent / "target"
-        target.mkdir(mode=0o700)
-        config.state_root.symlink_to(target, target_is_directory=True)
-    else:
-        config.state_root.mkdir(mode=0o755 if weakening == "mode" else 0o700)
-    launcher = FakeLauncher(config.profile_root, [], [])
-    controller = _controller(config, launcher, FakeProbe(set()))
-    if weakening == "owner":
-        controller = chrome.LocalChromeController(
-            config, launcher=launcher, probe=FakeProbe(set()), clock=FakeClock(), owner_id=-1
-        )
-    # When: the private filesystem boundary is prepared.
-    with pytest.raises(chrome.InvalidLocalChromeControllerError) as raised:
-        _ = controller.ensure_ready()
-    # Then: it fails closed before Chrome launch.
-    assert raised.value.reason == "local_chrome_private_directory_invalid"
-    assert launcher.commands == []
-
-
 @pytest.mark.parametrize(
     "payload,mode",
     (
@@ -208,46 +185,6 @@ def test_ready_rejects_invalid_port_file(config: LocalBrowserGatewayConfig, payl
     # Then: malformed, weak, or oversized input cannot trigger a launch.
     assert raised.value.reason == "local_chrome_port_file_invalid"
     assert launcher.commands == []
-
-
-def test_ready_rejects_file_that_grows_after_open(
-    config: LocalBrowserGatewayConfig, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # Given: an initially small valid port file and a post-open oversized fstat result.
-    config.state_root.mkdir(parents=True, mode=0o700)
-    config.profile_root.mkdir(mode=0o700)
-    port_file = config.profile_root / "DevToolsActivePort"
-    port_file.write_bytes(_payload())
-    port_file.chmod(0o600)
-    original = os.stat(port_file)
-
-    def oversized_fstat(descriptor: int) -> os.stat_result:
-        return os.stat_result((original.st_mode, original.st_ino, original.st_dev, original.st_nlink, original.st_uid,
-                               original.st_gid, 257, original.st_atime, original.st_mtime, original.st_ctime))
-
-    monkeypatch.setattr(chrome.os, "fstat", oversized_fstat)
-    launcher = FakeLauncher(config.profile_root, [], [])
-    # When: the file changes between lstat and the no-follow open validation.
-    with pytest.raises(chrome.InvalidLocalChromeControllerError) as raised:
-        _ = _controller(config, launcher, FakeProbe(set())).ensure_ready()
-    # Then: the post-open bound rejects it before probing or launching.
-    assert raised.value.reason == "local_chrome_port_file_invalid" and launcher.commands == []
-
-
-def test_ready_rejects_symlinked_port_file(config: LocalBrowserGatewayConfig) -> None:
-    # Given: an exact private profile whose endpoint file is a symlink.
-    config.state_root.mkdir(parents=True, mode=0o700)
-    config.profile_root.mkdir(mode=0o700)
-    target = config.profile_root / "target"
-    target.write_bytes(_payload())
-    target.chmod(0o600)
-    (config.profile_root / "DevToolsActivePort").symlink_to(target)
-    launcher = FakeLauncher(config.profile_root, [], [])
-    # When: readiness crosses the port-file boundary.
-    with pytest.raises(chrome.InvalidLocalChromeControllerError) as raised:
-        _ = _controller(config, launcher, FakeProbe(set())).ensure_ready()
-    # Then: it fails closed without following or launching.
-    assert raised.value.reason == "local_chrome_port_file_invalid" and launcher.commands == []
 
 
 def test_ready_attaches_healthy_existing_endpoint_and_close_does_not_terminate(
@@ -299,18 +236,80 @@ def test_malformed_owned_port_file_reaps_owned_process_without_replacement(confi
     assert (process.terminated, process.waits, len(launcher.commands), port_file.exists()) == (1, 1, 1, False)
 
 
-def test_unhealthy_attached_endpoint_is_removed_then_replaced(config: LocalBrowserGatewayConfig) -> None:
+def test_ready_rejects_profile_component_swap_before_launch(
+    config: LocalBrowserGatewayConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: path verification that swaps the freshly pinned profile directory.
+    original = private_fs.require_open_directory_path
+
+    def replace_profile(path: Path, descriptor: int) -> None:
+        path.rename(path.with_name("profile-original"))
+        path.mkdir(mode=0o700)
+        original(path, descriptor)
+
+    monkeypatch.setattr(private_fs, "require_open_directory_path", replace_profile)
+    launcher = FakeLauncher(config.profile_root, [FakeProcess(101)], [_payload()])
+    # When: readiness creates and verifies private roots.
+    with pytest.raises(chrome.InvalidLocalChromeControllerError) as raised:
+        _ = _controller(config, launcher, FakeProbe(set())).ensure_ready()
+    # Then: descriptor identity rejects the replacement before launch.
+    assert raised.value.reason == "local_chrome_private_directory_invalid" and launcher.commands == []
+
+
+def test_owned_cleanup_preserves_replaced_port_file(
+    config: LocalBrowserGatewayConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: an owned endpoint whose name is replaced immediately before cleanup.
+    process = FakeProcess(101)
+    launcher = FakeLauncher(config.profile_root, [process], [_payload()])
+    probe = FakeProbe({(9222, "/devtools/browser/token")})
+    controller = _controller(config, launcher, probe)
+    assert controller.ensure_ready().process_id == 101
+    replacement = _payload(9223)
+    original = chrome.unlink_private_browser_file
+
+    def replace_file(
+        directory: private_fs.PrivateBrowserDirectory,
+        name: str,
+        expected: private_fs.PrivateBrowserFile,
+        owner_id: int,
+    ) -> None:
+        path = config.profile_root / name
+        path.unlink()
+        path.write_bytes(replacement)
+        path.chmod(0o600)
+        original(directory, name, expected, owner_id)
+
+    probe.healthy.clear()
+    monkeypatch.setattr(chrome, "unlink_private_browser_file", replace_file)
+    # When: unhealthy owned cleanup reaches the exact-inode unlink boundary.
+    with pytest.raises(chrome.InvalidLocalChromeControllerError) as raised:
+        _ = controller.ensure_ready()
+    # Then: the replacement remains and no second Chrome starts.
+    assert raised.value.reason == "local_chrome_port_file_invalid"
+    observed = (
+        process.terminated,
+        process.waits,
+        len(launcher.commands),
+        (config.profile_root / "DevToolsActivePort").read_bytes(),
+    )
+    assert observed == (1, 1, 1, replacement)
+
+
+def test_unhealthy_attached_endpoint_remains_unowned_and_unmodified(config: LocalBrowserGatewayConfig) -> None:
     # Given: a valid-but-unhealthy port file from an unowned Chrome.
     config.state_root.mkdir(parents=True, mode=0o700)
     config.profile_root.mkdir(mode=0o700)
     port_file = config.profile_root / "DevToolsActivePort"
     port_file.write_bytes(_payload(9222))
     port_file.chmod(0o600)
-    launcher = FakeLauncher(config.profile_root, [FakeProcess(202)], [_payload(9223)])
+    launcher = FakeLauncher(config.profile_root, [], [])
     # When: readiness cannot health-check the attached endpoint.
-    endpoint = _controller(config, launcher, FakeProbe({(9223, "/devtools/browser/token")})).ensure_ready()
-    # Then: only the exact stale file is cleared and one owned Chrome starts.
-    assert (endpoint.process_id, len(launcher.commands), port_file.exists()) == (202, 1, True)
+    with pytest.raises(chrome.InvalidLocalChromeControllerError) as raised:
+        _ = _controller(config, launcher, FakeProbe(set())).ensure_ready()
+    # Then: unavailable attachment is neither removed nor replaced.
+    assert raised.value.reason == "local_chrome_endpoint_unavailable"
+    assert launcher.commands == [] and port_file.read_bytes() == _payload(9222)
 
 
 @pytest.mark.parametrize("process,payload,reason", ((FakeProcess(101, exit_code=1), None, "local_chrome_early_exit"),
