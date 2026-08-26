@@ -9,6 +9,7 @@ import pytest
 import run_local_browser_gateway as cli
 from run_local_browser_gateway import main
 from tests.test_local_browser_gateway_cli import _fixture_config, _provision_args
+from trading_agent.repository_current_main import CurrentMainAuthorityError
 
 
 @pytest.mark.parametrize("failure", (OSError(), subprocess.SubprocessError(), RuntimeError()))
@@ -93,3 +94,53 @@ def test_activate_does_not_bootout_when_bootstrap_runner_raises(
     # Then: no cleanup is attempted for an unbootstrapped service.
     assert result == 2
     assert calls == [("/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist_path))]
+
+
+def test_activate_stops_before_launchctl_when_authority_guard_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: a verified contract and an authority guard that records then rejects its repository.
+    config, config_path, plist_path = _fixture_config(tmp_path)
+    assert main(_provision_args(config, config_path, plist_path)) == 0
+    authority_repositories: list[Path] = []
+    launchctl_calls: list[tuple[str, ...]] = []
+
+    def reject_authority(repository: Path) -> str:
+        authority_repositories.append(repository)
+        raise CurrentMainAuthorityError
+
+    monkeypatch.setattr(cli, "current_main_commit", reject_authority)
+    # When: activation reaches its authority boundary.
+    result = main(
+        ("activate", "--config", str(config_path), "--plist", str(plist_path)),
+        runner=lambda command: launchctl_calls.append(command) or 0,
+    )
+    # Then: the guard saw the configured repository and no launchctl command ran.
+    assert result == 2
+    assert authority_repositories == [config.project_root]
+    assert launchctl_calls == []
+
+
+def test_activate_observes_successful_authority_before_bootstrap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: a verified contract with independently recorded authority and runner events.
+    config, config_path, plist_path = _fixture_config(tmp_path)
+    assert main(_provision_args(config, config_path, plist_path)) == 0
+    events: list[str] = []
+
+    def accept_authority(repository: Path) -> str:
+        assert repository == config.project_root
+        events.append("authority")
+        return "b" * 40
+
+    def runner(command: tuple[str, ...]) -> int:
+        events.append(command[1])
+        return 0
+
+    monkeypatch.setattr(cli, "current_main_commit", accept_authority)
+    # When: activation succeeds.
+    result = main(("activate", "--config", str(config_path), "--plist", str(plist_path)), runner=runner)
+    # Then: authority completion is observed before the first launchctl operation.
+    assert result == 0
+    assert events == ["authority", "bootstrap", "kickstart"]
