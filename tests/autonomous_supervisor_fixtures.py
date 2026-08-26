@@ -1,36 +1,106 @@
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
+import hashlib
+import json
+import subprocess
+import sys
+import time
+from functools import partial
+from pathlib import Path
 
 from tests.test_autonomous_task_models import NOW
-from trading_agent._autonomous_supervisor_steps import parse_payload
 from trading_agent.autonomous_reasoning import (
-    AUTONOMOUS_REASONING_RESPONSE_ADAPTER,
-    AutonomousReasoningRequest,
     AutonomousReasoningResponse,
     AutonomousToolArguments,
 )
+from trading_agent.autonomous_reasoning_codec import AutonomousStructuredReasoner
+from trading_agent.autonomous_tool_runtime import AutonomousToolInvocationError
+from trading_agent.researcher_llm import FixtureLlmProposalClient, HermesCliProposalClient
+
+_EXECUTABLE = Path(__file__).parent / "fixtures" / "autonomous_reasoner"
 
 
-@dataclass(frozen=True, slots=True, init=False)
-class FakeReasoner:
-    response_jsons: tuple[str, ...]
-    priority_routes: bool
+class FixtureCrash(BaseException):
+    pass
 
-    def __init__(self, responses: tuple[AutonomousReasoningResponse, ...], priority_routes: bool = False) -> None:
-        object.__setattr__(self, "response_jsons", tuple(response.model_dump_json() for response in responses))
-        object.__setattr__(self, "priority_routes", priority_routes)
 
-    def next_step(self, request: AutonomousReasoningRequest) -> AutonomousReasoningResponse:
-        index = sum(parse_payload(step.payload_json).kind == "decision" for step in request.prior_steps)
-        if self.priority_routes and request.task.priority != 90:
-            index += 2
-        return AUTONOMOUS_REASONING_RESPONSE_ADAPTER.validate_json(self.response_jsons[index])
+def fixture_reasoner(
+    tmp_path: Path,
+    responses: tuple[AutonomousReasoningResponse, ...],
+    *,
+    behavior: str = "responses",
+    marker: Path | None = None,
+    delay: float = 0.0,
+    priority_routes: bool = False,
+    timeout_seconds: float = 120.0,
+) -> AutonomousStructuredReasoner:
+    payload = json.dumps(
+        {
+            "behavior": behavior,
+            "delay": delay,
+            "marker": None if marker is None else str(marker),
+            "priority_routes": priority_routes,
+            "responses": tuple(response.model_dump_json() for response in responses),
+        },
+        sort_keys=True,
+    )
+    digest = hashlib.sha256(payload.encode()).hexdigest()
+    config = tmp_path / f"reasoner-{digest}.json"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(payload, encoding="utf-8")
+    return AutonomousStructuredReasoner(
+        HermesCliProposalClient(_EXECUTABLE, str(config), "fixture-provider", timeout_seconds=timeout_seconds)
+    )
+
+
+def fixture_client_reasoner(response: AutonomousReasoningResponse) -> AutonomousStructuredReasoner:
+    return AutonomousStructuredReasoner(FixtureLlmProposalClient(response.model_dump_json().encode()))
 
 
 def observed_tool(_args: AutonomousToolArguments) -> str:
     return '{"status":"observed"}'
+
+
+def tool_operation(
+    _args: AutonomousToolArguments,
+    *,
+    behavior: str,
+    primary: str = "",
+    secondary: str = "",
+) -> str:
+    if behavior == "empty":
+        return "{}"
+    if behavior == "fail":
+        raise AutonomousToolInvocationError(reason="fixture_tool_failure")
+    if behavior == "crash":
+        raise FixtureCrash
+    if behavior == "hung":
+        while not Path(primary).exists():
+            time.sleep(0.005)
+        Path(secondary).touch()
+        return '{"status":"late"}'
+    if behavior == "record":
+        with Path(primary).open("a", encoding="utf-8") as stream:
+            stream.write("invoked\n")
+        time.sleep(0.1)
+        return '{"status":"observed"}'
+    if behavior == "descendant":
+        program = "import sys,time;from pathlib import Path;time.sleep(1);Path(sys.argv[1]).touch()"
+        child = subprocess.Popen((sys.executable, "-c", program, secondary))
+        Path(primary).write_text(str(child.pid), encoding="ascii")
+        while True:
+            time.sleep(0.005)
+    return observed_tool(_args)
+
+
+def fixture_tool(behavior: str, *, primary: Path | None = None, secondary: Path | None = None):
+    return partial(
+        tool_operation,
+        behavior=behavior,
+        primary="" if primary is None else str(primary),
+        secondary="" if secondary is None else str(secondary),
+    )
 
 
 def now_clock() -> dt.datetime:
@@ -41,4 +111,11 @@ def zero_clock() -> float:
     return 0.0
 
 
-__all__ = ("FakeReasoner", "now_clock", "observed_tool", "zero_clock")
+__all__ = (
+    "fixture_client_reasoner",
+    "fixture_reasoner",
+    "fixture_tool",
+    "now_clock",
+    "observed_tool",
+    "zero_clock",
+)

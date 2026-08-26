@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import signal
+import sys
+import time
+from pathlib import Path
+
+
+def main() -> int:
+    model_id = sys.argv[sys.argv.index("-m") + 1]
+    config = json.loads(Path(model_id).read_text(encoding="utf-8"))
+    behavior = config.get("behavior", "responses")
+    if behavior == "hang":
+        while True:
+            time.sleep(0.01)
+    if behavior == "stubborn":
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        while True:
+            time.sleep(0.01)
+    marker = config.get("marker")
+    if marker:
+        with Path(marker).open("a", encoding="utf-8") as stream:
+            stream.write("called\n")
+    delay = config.get("delay", 0.0)
+    time.sleep(delay)
+    prompt = json.loads(sys.argv[-1])
+    index = sum(json.loads(step["payload_json"])["kind"] == "decision" for step in prompt["prior_steps"])
+    if config.get("priority_routes") and prompt["task"]["priority"] != 90:
+        index += 2
+    sys.stdout.write(config["responses"][index])
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -66,14 +66,21 @@ class AutonomousToolBinding:
 
 @final
 class AutonomousToolRuntime:
-    __slots__ = ("_bindings", "_clock")
+    __slots__ = ("_bindings", "_clock", "_worker_modules")
 
-    def __init__(self, bindings: tuple[AutonomousToolBinding, ...], clock: Callable[[], dt.datetime]) -> None:
+    def __init__(
+        self,
+        bindings: tuple[AutonomousToolBinding, ...],
+        clock: Callable[[], dt.datetime],
+        *,
+        worker_modules: frozenset[str] = frozenset(),
+    ) -> None:
         names = tuple(binding.name for binding in bindings)
-        if len(names) != len(set(names)):
+        if len(names) != len(set(names)) or any(not module or module.startswith("_") for module in worker_modules):
             raise AutonomousToolRuntimeError(reason="autonomous_tool_binding_duplicate")
         self._bindings = {binding.name: binding for binding in bindings}
         self._clock = clock
+        self._worker_modules = worker_modules
 
     @property
     def allowed_tool_names(self) -> tuple[str, ...]:

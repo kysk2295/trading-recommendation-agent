@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from tests.autonomous_supervisor_fixtures import FakeReasoner
+from tests.autonomous_supervisor_fixtures import fixture_reasoner, fixture_tool
 from tests.test_autonomous_task_models import NOW, task_fixture
 from trading_agent._autonomous_supervisor_execution import AutonomousExecutionCrash
 from trading_agent._autonomous_supervisor_steps import parse_payload
@@ -20,11 +20,9 @@ from trading_agent.autonomous_memory_store import (
 from trading_agent.autonomous_reasoning import (
     AutonomousDefer,
     AutonomousDelegate,
-    AutonomousReasoningRequest,
     AutonomousRecordMemory,
     AutonomousToolArguments,
     AutonomousToolCall,
-    InvalidAutonomousReasoningError,
 )
 from trading_agent.autonomous_supervisor_runtime import (
     AutonomousSupervisorRuntime,
@@ -72,15 +70,6 @@ def _fail_tool(_args: AutonomousToolArguments) -> str:
     raise AutonomousToolInvocationError(reason="fixture_tool_failure")
 
 
-@dataclass(frozen=True, slots=True)
-class FailingReasoner:
-    requests: list[AutonomousReasoningRequest] = field(default_factory=list, compare=False)
-
-    def next_step(self, request: AutonomousReasoningRequest):
-        self.requests.append(request)
-        raise InvalidAutonomousReasoningError(reason="fixture_reasoning_failed")
-
-
 def _runtime(
     tmp_path: Path,
     reasoner,
@@ -99,7 +88,13 @@ def _runtime(
         tasks=AutonomousTaskStore(tmp_path / "tasks.sqlite3"),
         memories=AutonomousMemoryStore(tmp_path / "memories.sqlite3"),
         reasoner=reasoner,
-        tools=AutonomousToolRuntime((binding,), _now),
+        tools=AutonomousToolRuntime(
+            (binding,),
+            _now,
+            worker_modules=frozenset(
+                {"test_autonomous_supervisor_recovery", "tests.autonomous_supervisor_fixtures"}
+            ),
+        ),
         wall_clock=_now,
         monotonic=_zero,
         max_steps=max_steps,
@@ -117,7 +112,7 @@ def _call():
 def test_restart_replays_unapplied_tool_decision_once(tmp_path: Path) -> None:
     # Given: tool dispatch crashes the process after its model decision is durable.
     task = task_fixture()
-    first_reasoner = FakeReasoner((_call(),))
+    first_reasoner = fixture_reasoner(tmp_path, (_call(),))
     crashed = _runtime(tmp_path, first_reasoner, _crash_tool, max_steps=1)
     with crashed.tasks.writer() as writer:
         assert writer.create_task(task)
@@ -125,7 +120,7 @@ def test_restart_replays_unapplied_tool_decision_once(tmp_path: Path) -> None:
     # When: a new runtime resumes from the same stores.
     with pytest.raises(AutonomousExecutionCrash):
         crashed.tick(task, NOW)
-    restarted_reasoner = FakeReasoner(())
+    restarted_reasoner = fixture_reasoner(tmp_path, ())
     restarted = _runtime(tmp_path, restarted_reasoner, _observed_tool, max_steps=1)
     result = restarted.tick(task, NOW)
 
@@ -143,14 +138,14 @@ def test_restart_replays_decision_deferred_by_runtime_deadline(tmp_path: Path) -
         objective="Resume the durable research handoff during the next fresh runtime slice.",
         reason="The expired slice must preserve this decision without applying it early.",
     )
-    first_reasoner = FakeReasoner((decision,))
+    first_reasoner = fixture_reasoner(tmp_path, (decision,))
     runtime = _runtime(tmp_path, first_reasoner, _empty_tool, max_steps=1)
     runtime = replace(runtime, monotonic=iter((0.0, 0.0, 121.0)).__next__)
     task = task_fixture()
     with runtime.tasks.writer() as writer:
         assert writer.create_task(task)
     assert runtime.tick(task, NOW).status == "waiting"
-    restarted_reasoner = FakeReasoner(())
+    restarted_reasoner = fixture_reasoner(tmp_path, ())
     restarted = replace(runtime, reasoner=restarted_reasoner, monotonic=_zero)
 
     # When: the one-minute wait becomes due in a fresh process-style runtime.
@@ -172,7 +167,7 @@ def test_restart_reuses_memory_written_before_application_step(tmp_path: Path, m
         evidence_refs=("evidence:root",),
         reason="The task reducer must link the already committed memory without a new version.",
     )
-    reasoner = FakeReasoner((request,))
+    reasoner = fixture_reasoner(tmp_path, (request,))
     runtime = _runtime(tmp_path, reasoner, _empty_tool, max_steps=1)
     task = task_fixture()
     with runtime.tasks.writer() as writer:
@@ -193,7 +188,7 @@ def test_restart_reuses_memory_written_before_application_step(tmp_path: Path, m
     # When: the runtime restarts and applies the durable decision.
     with pytest.raises(CrashSentinel):
         runtime.tick(task, NOW)
-    restarted_reasoner = FakeReasoner(())
+    restarted_reasoner = fixture_reasoner(tmp_path, ())
     restarted = _runtime(tmp_path, restarted_reasoner, _empty_tool, max_steps=1)
     result = restarted.tick(task, NOW)
 
@@ -207,7 +202,7 @@ def test_restart_reuses_memory_written_before_application_step(tmp_path: Path, m
 
 def test_five_reasoning_failures_back_off_without_abandoning(tmp_path: Path) -> None:
     # Given: a typed reasoner fails on every due retry.
-    reasoner = FailingReasoner()
+    reasoner = fixture_reasoner(tmp_path, ())
     runtime = _runtime(tmp_path, reasoner, _empty_tool)
     task = task_fixture()
     with runtime.tasks.writer() as writer:
@@ -239,7 +234,7 @@ def test_tool_and_memory_failures_persist_stable_blocked_retries(
     # Given: authorized tool invocation and memory persistence each fail through typed boundaries.
     tool_task = task_fixture()
 
-    tool_runtime = _runtime(tmp_path / "tool", FakeReasoner((_call(),)), _fail_tool)
+    tool_runtime = _runtime(tmp_path / "tool", fixture_reasoner(tmp_path, (_call(),)), fixture_tool("fail"))
     with tool_runtime.tasks.writer() as writer:
         assert writer.create_task(tool_task)
     memory_request = AutonomousRecordMemory(
@@ -250,7 +245,9 @@ def test_tool_and_memory_failures_persist_stable_blocked_retries(
         evidence_refs=("evidence:root",),
         reason="Persist the work memory or retain a deterministic retry wake for recovery.",
     )
-    memory_runtime = _runtime(tmp_path / "memory", FakeReasoner((memory_request,)), _empty_tool)
+    memory_runtime = _runtime(
+        tmp_path / "memory", fixture_reasoner(tmp_path, (memory_request,)), fixture_tool("empty")
+    )
     with memory_runtime.tasks.writer() as writer:
         assert writer.create_task(tool_task)
 
@@ -281,7 +278,7 @@ def test_evidence_admission_replays_and_wakes_without_changing_root(tmp_path: Pa
         resume_condition="New source evidence is admitted to the durable task lineage.",
         next_wake_event="new_evidence",
     )
-    runtime = _runtime(tmp_path, FakeReasoner((defer,)), _empty_tool)
+    runtime = _runtime(tmp_path, fixture_reasoner(tmp_path, (defer,)), fixture_tool("empty"))
     task = task_fixture()
     with runtime.tasks.writer() as writer:
         assert writer.create_task(task)

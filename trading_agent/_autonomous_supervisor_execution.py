@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import fcntl
 import os
-import pickle
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -15,6 +14,14 @@ from typing import Final, Literal, Protocol
 from pydantic import ValidationError
 
 from trading_agent._autonomous_supervisor_process import AutonomousExecutionError, reap_direct, reap_group
+from trading_agent._autonomous_supervisor_wire import (
+    ReasonerWire,
+    ToolRuntimeWire,
+    build_reasoner,
+    build_tools,
+    reasoner_wire,
+    tools_wire,
+)
 from trading_agent.autonomous_reasoning import (
     AUTONOMOUS_REASONING_RESPONSE_ADAPTER,
     AutonomousReasoningClient,
@@ -90,22 +97,18 @@ def _call_in_worker(
     callback_timeout: float,
     total_timeout: float,
 ) -> bytes:
+    total_deadline = monotonic() + total_timeout
     context = get_context("spawn")
     receive, send = context.Pipe(duplex=False)
     if operation == "reason" and request is not None:
         target = _reason_worker
-        arguments = (send, reasoner, request.model_dump_json())
+        arguments = (send, reasoner_wire(reasoner), request.model_dump_json())
     elif operation == "tool" and role is not None and call is not None:
         target = _tool_worker
-        arguments = (send, tools, role.value, call.model_dump_json())
+        arguments = (send, tools_wire(tools), role.value, call.model_dump_json())
     else:
         raise AutonomousExecutionError(reason="autonomous_execution_request_invalid")
-    try:
-        _ = pickle.dumps(arguments)
-    except (AttributeError, pickle.PickleError, TypeError):
-        raise AutonomousExecutionError(reason="autonomous_execution_boundary_unpickleable") from None
     process = context.Process(target=target, args=arguments)
-    total_deadline = monotonic() + total_timeout
     startup_deadline = min(total_deadline, monotonic() + _STARTUP_SECONDS)
     started = False
     reaped = False
@@ -151,12 +154,13 @@ def _call_in_worker(
 
 def _reason_worker(
     send: Connection,
-    reasoner: AutonomousReasoningClient,
+    reasoner_wire_spec: ReasonerWire,
     request_json: str,
 ) -> None:
     try:
         os.setsid()
         send.send_bytes(_READY)
+        reasoner = build_reasoner(reasoner_wire_spec)
         request = AutonomousReasoningRequest.model_validate_json(request_json)
         send.send_bytes(_ENTERED)
         response = reasoner.next_step(request)
@@ -173,13 +177,14 @@ def _reason_worker(
 
 def _tool_worker(
     send: Connection,
-    tools: AutonomousToolRuntime,
+    tools_wire_spec: ToolRuntimeWire,
     role_value: str,
     call_json: str,
 ) -> None:
     try:
         os.setsid()
         send.send_bytes(_READY)
+        tools = build_tools(tools_wire_spec)
         role = AutonomousAgentRole(role_value)
         call = AutonomousToolCall.model_validate_json(call_json)
         send.send_bytes(_ENTERED)

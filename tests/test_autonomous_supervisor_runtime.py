@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.autonomous_supervisor_fixtures import FakeReasoner, now_clock, observed_tool, zero_clock
+from tests.autonomous_supervisor_fixtures import fixture_reasoner, now_clock, observed_tool, zero_clock
 from tests.test_autonomous_task_models import NOW, OTHER, task_fixture
 from tests.test_autonomous_task_store import task_for
 from trading_agent._autonomous_supervisor_steps import parse_payload
@@ -22,6 +22,7 @@ from trading_agent.autonomous_reasoning import (
     AutonomousToolArguments,
     AutonomousToolCall,
 )
+from trading_agent.autonomous_reasoning_codec import AutonomousStructuredReasoner
 from trading_agent.autonomous_supervisor_runtime import AutonomousSupervisorRuntime
 from trading_agent.autonomous_task_models import AutonomousAgentRole, AutonomousTaskState
 from trading_agent.autonomous_task_store import AutonomousTaskStore
@@ -31,7 +32,7 @@ from trading_agent.research_agent_cycle_models import EvidenceId
 type SlowResponse = AutonomousToolCall | AutonomousDelegate | AutonomousRecordMemory | AutonomousSubmitArtifact
 
 
-def _runtime(tmp_path: Path, reasoner: FakeReasoner) -> AutonomousSupervisorRuntime:
+def _runtime(tmp_path: Path, reasoner: AutonomousStructuredReasoner) -> AutonomousSupervisorRuntime:
     tools = AutonomousToolRuntime(
         (
             AutonomousToolBinding(
@@ -43,6 +44,7 @@ def _runtime(tmp_path: Path, reasoner: FakeReasoner) -> AutonomousSupervisorRunt
             ),
         ),
         now_clock,
+        worker_modules=frozenset({"tests.autonomous_supervisor_fixtures"}),
     )
     return AutonomousSupervisorRuntime(
         tasks=AutonomousTaskStore(tmp_path / "tasks.sqlite3"),
@@ -63,7 +65,8 @@ def test_tick_persists_multistep_workflow_and_wake(tmp_path: Path) -> None:
         reason="Inspect the root evidence before delegating the bounded research task.",
     )
     wake = NOW + dt.timedelta(hours=1)
-    reasoner = FakeReasoner(
+    reasoner = fixture_reasoner(
+        tmp_path,
         (
             call,
             AutonomousDelegate(
@@ -118,7 +121,7 @@ def test_budget_exhaustion_waits_without_terminalizing(tmp_path: Path) -> None:
         )
         for index in range(16)
     )
-    reasoner = FakeReasoner(responses)
+    reasoner = fixture_reasoner(tmp_path, responses)
     runtime = _runtime(tmp_path, reasoner)
     task = task_fixture()
     with runtime.tasks.writer() as writer:
@@ -141,7 +144,8 @@ def test_budget_exhaustion_waits_without_terminalizing(tmp_path: Path) -> None:
 def test_artifact_no_trade_and_completion_keep_explicit_lifecycle(tmp_path: Path) -> None:
     # Given: an evaluating artifact precedes a nonterminal no-trade outcome and explicit completion.
     wake = NOW + dt.timedelta(minutes=5)
-    reasoner = FakeReasoner(
+    reasoner = fixture_reasoner(
+        tmp_path,
         (
             AutonomousSubmitArtifact(
                 artifact_kind="context",
@@ -188,7 +192,8 @@ def test_run_due_orders_event_and_time_tasks_and_excludes_terminal(tmp_path: Pat
     low = task_for(low_root, priority=10)
     started_at = high.created_at
     due_at = started_at + dt.timedelta(minutes=2)
-    reasoner = FakeReasoner(
+    reasoner = fixture_reasoner(
+        tmp_path,
         (
             AutonomousDefer(
                 reason="Wait for a named evidence event before resuming the high-priority task.",
@@ -264,7 +269,7 @@ def test_run_due_orders_event_and_time_tasks_and_excludes_terminal(tmp_path: Pat
 )
 def test_slow_reasoning_persists_decision_without_applying_response(tmp_path: Path, response: SlowResponse) -> None:
     # Given: monotonic time crosses the 120-second boundary during one model call.
-    runtime = _runtime(tmp_path, FakeReasoner((response,)))
+    runtime = _runtime(tmp_path, fixture_reasoner(tmp_path, (response,)))
     runtime = replace(runtime, monotonic=iter((0.0, 0.0, 121.0)).__next__)
     task = task_fixture()
     with runtime.tasks.writer() as writer:

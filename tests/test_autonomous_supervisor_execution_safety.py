@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import datetime as dt
 import os
-import signal
-import subprocess
-import sys
 import threading
 import time
 from collections.abc import Callable
@@ -15,14 +12,8 @@ from pathlib import Path
 import pytest
 
 import trading_agent._autonomous_supervisor_execution as execution
-from tests.test_autonomous_supervisor_execution import (
-    ConstantReasoner,
-    MarkingReasoner,
-    _completion,
-    _runtime,
-    now_clock,
-    observed_tool,
-)
+from tests.autonomous_supervisor_fixtures import fixture_reasoner, fixture_tool
+from tests.test_autonomous_supervisor_execution import _completion, _runtime, now_clock, observed_tool
 from tests.test_autonomous_task_models import NOW, task_fixture
 from trading_agent._autonomous_supervisor_execution import task_execution_lease
 from trading_agent.autonomous_reasoning import (
@@ -33,47 +24,6 @@ from trading_agent.autonomous_reasoning import (
 )
 from trading_agent.autonomous_task_models import AutonomousAgentRole
 from trading_agent.autonomous_tool_runtime import AutonomousToolBinding, AutonomousToolRuntime
-
-_RACE_RELEASE = threading.Event()
-_RACE_THREADS: list[threading.Thread] = []
-
-
-@dataclass(frozen=True, slots=True)
-class StubbornReasoner:
-    def next_step(self, request: AutonomousReasoningRequest) -> AutonomousReasoningResponse:
-        del request
-        _ = signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        while True:
-            time.sleep(0.005)
-
-
-@dataclass(frozen=True, slots=True)
-class LaunchRaceReasoner:
-    callback: Path
-
-    def __reduce__(self) -> tuple[type[LaunchRaceReasoner], tuple[Path]]:
-        thread = threading.Thread(target=_RACE_RELEASE.wait)
-        _RACE_THREADS.append(thread)
-        thread.start()
-        return LaunchRaceReasoner, (self.callback,)
-
-    def next_step(self, request: AutonomousReasoningRequest) -> AutonomousReasoningResponse:
-        del request
-        self.callback.touch()
-        return _completion()
-
-
-@dataclass(frozen=True, slots=True)
-class DescendantTool:
-    pid_path: Path
-    side_effect_path: Path
-
-    def __call__(self, _args: AutonomousToolArguments) -> str:
-        program = "import sys,time;from pathlib import Path;time.sleep(1);Path(sys.argv[1]).touch()"
-        child = subprocess.Popen((sys.executable, "-c", program, str(self.side_effect_path)))
-        self.pid_path.write_text(str(child.pid), encoding="ascii")
-        while True:
-            time.sleep(0.005)
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,29 +36,24 @@ class CallbackReasoner:
         return _completion()
 
 
-def _delayed_reasoner(callback: Path, delay_seconds: float) -> MarkingReasoner:
-    time.sleep(delay_seconds)
-    return MarkingReasoner(callback)
-
-
 @dataclass(frozen=True, slots=True)
-class DelayedReadyReasoner:
-    callback: Path
-    delay_seconds: float
+class ExplosiveReduceReasoner:
+    side_effect: Path
 
     def next_step(self, request: AutonomousReasoningRequest) -> AutonomousReasoningResponse:
         del request
-        self.callback.touch()
         return _completion()
 
-    def __reduce__(
-        self,
-    ) -> tuple[Callable[[Path, float], MarkingReasoner], tuple[Path, float]]:
-        return _delayed_reasoner, (self.callback, self.delay_seconds)
+    def __reduce__(self) -> tuple[type[ExplosiveReduceReasoner], tuple[Path]]:
+        self.side_effect.touch()
+        time.sleep(5)
+        return ExplosiveReduceReasoner, (self.side_effect,)
 
 
 def test_sigterm_ignoring_reasoner_is_killed_and_reaped(tmp_path: Path) -> None:
-    runtime = _runtime(tmp_path, StubbornReasoner(), timeout=1.0)
+    runtime = _runtime(
+        tmp_path, fixture_reasoner(tmp_path, (), behavior="stubborn", timeout_seconds=10.0), timeout=1.0
+    )
     task = task_fixture()
     with runtime.tasks.writer() as writer:
         assert writer.create_task(task)
@@ -129,7 +74,7 @@ def test_spawn_completes_while_background_thread_is_live(tmp_path: Path) -> None
     background.start()
 
     try:
-        runtime = _runtime(tmp_path, MarkingReasoner(callback))
+        runtime = _runtime(tmp_path, fixture_reasoner(tmp_path, (_completion(),), marker=callback))
         task = task_fixture()
         with runtime.tasks.writer() as writer:
             assert writer.create_task(task)
@@ -146,7 +91,7 @@ def test_spawn_completes_while_background_thread_is_live(tmp_path: Path) -> None
 
 
 def test_lease_contention_returns_nonterminal_retry_projection(tmp_path: Path) -> None:
-    runtime = _runtime(tmp_path, ConstantReasoner(_completion()))
+    runtime = _runtime(tmp_path, fixture_reasoner(tmp_path, (_completion(),)))
     task = task_fixture()
     with runtime.tasks.writer() as writer:
         assert writer.create_task(task)
@@ -162,24 +107,16 @@ def test_lease_contention_returns_nonterminal_retry_projection(tmp_path: Path) -
     assert runtime.tasks.reader().steps(task.task_id) == ()
 
 
-def test_spawn_launch_is_race_free_when_pickle_starts_threads(tmp_path: Path, recwarn: pytest.WarningsRecorder) -> None:
+def test_spawn_launch_is_safe_while_background_thread_is_live(tmp_path: Path) -> None:
     callback = tmp_path / "race-callback"
-    runtime = _runtime(tmp_path, LaunchRaceReasoner(callback))
+    runtime = _runtime(tmp_path, fixture_reasoner(tmp_path, (_completion(),), marker=callback))
     task = task_fixture()
     with runtime.tasks.writer() as writer:
         assert writer.create_task(task)
-    try:
-        result = runtime.tick(task, NOW)
-    finally:
-        _RACE_RELEASE.set()
-        for thread in _RACE_THREADS:
-            thread.join()
-        _RACE_THREADS.clear()
-        _RACE_RELEASE.clear()
+    result = runtime.tick(task, NOW)
 
     assert result.status == "completed"
     assert callback.exists()
-    assert not any(item.category is DeprecationWarning for item in recwarn)
 
 
 def test_timeout_kills_callback_descendant_before_late_side_effect(tmp_path: Path) -> None:
@@ -190,7 +127,12 @@ def test_timeout_kills_callback_descendant_before_late_side_effect(tmp_path: Pat
         args=AutonomousToolArguments({"evidence_id": "a" * 64}),
         reason="Read evidence through a bounded process-group-contained tool callback.",
     )
-    runtime = _runtime(tmp_path, ConstantReasoner(call), DescendantTool(pid_path, side_effect), timeout=0.3)
+    runtime = _runtime(
+        tmp_path,
+        fixture_reasoner(tmp_path, (call,)),
+        fixture_tool("descendant", primary=pid_path, secondary=side_effect),
+        timeout=0.8,
+    )
     task = task_fixture()
     with runtime.tasks.writer() as writer:
         assert writer.create_task(task)
@@ -214,6 +156,7 @@ def test_timeout_kills_callback_descendant_before_late_side_effect(tmp_path: Pat
             ),
         ),
         now_clock,
+        worker_modules=frozenset({"tests.test_autonomous_supervisor_execution"}),
     )
     restarted = runtime.__class__(
         tasks=runtime.tasks,
@@ -234,23 +177,43 @@ def test_unpickleable_reasoner_boundary_is_rejected_stably(tmp_path: Path) -> No
     task = task_fixture()
     with runtime.tasks.writer() as writer:
         assert writer.create_task(task)
+    started = time.monotonic()
 
     result = runtime.tick(task, NOW)
 
+    assert time.monotonic() - started < 0.5
     assert result.status == "blocked"
     assert not active_children()
+
+
+def test_parent_rejects_reduce_hook_without_executing_it(tmp_path: Path) -> None:
+    side_effect = tmp_path / "parent-reduce-hook-called"
+    runtime = _runtime(tmp_path, ExplosiveReduceReasoner(side_effect))
+    task = task_fixture()
+    with runtime.tasks.writer() as writer:
+        assert writer.create_task(task)
+    started = time.monotonic()
+
+    result = runtime.tick(task, NOW)
+
+    assert time.monotonic() - started < 0.5
+    assert result.status == "blocked"
+    assert not side_effect.exists()
+    assert not active_children()
+    durable = runtime.tasks.reader().task(task.task_id)
+    assert durable is not None and durable.blocked_reason == "autonomous_reasoning_failed"
 
 
 def test_pre_ready_timeout_reaps_direct_child_without_late_callback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     callback = tmp_path / "late-reasoner-callback"
-    runtime = _runtime(tmp_path, DelayedReadyReasoner(callback, 0.3))
+    runtime = _runtime(tmp_path, fixture_reasoner(tmp_path, (_completion(),), marker=callback))
     task = task_fixture()
     with runtime.tasks.writer() as writer:
         assert writer.create_task(task)
     before = {child.pid for child in active_children()}
-    monkeypatch.setattr(execution, "_STARTUP_SECONDS", 0.05)
+    monkeypatch.setattr(execution, "_STARTUP_SECONDS", 0.0)
 
     result = runtime.tick(task, NOW)
     time.sleep(0.4)
