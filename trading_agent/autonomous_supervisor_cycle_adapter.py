@@ -62,6 +62,12 @@ class ResearchCycleEvidenceResolver:
         stored = self.store.evidence(work.source_evidence_id)
         if stored is None or stored.evidence.agent_family_id != work.agent_family_id:
             raise InvalidSupervisorCycleResolutionError(reason="supervisor_open_work_evidence_missing")
+        market_id = stored.evidence.market_id
+        day_work_matches = work.work_id == f"actor-state.day_trading.{market_id}" or (
+            market_id == "us_equities" and work.work_id == "actor-state.day_trading"
+        )
+        if work.agent_family_id == "day_trading" and not day_work_matches:
+            raise InvalidSupervisorCycleResolutionError(reason="supervisor_open_work_market_mismatch")
         return stored
 
     def _synthetic(self, actor: RunnableResearchActor) -> ResearchAgentEvidenceV1:
