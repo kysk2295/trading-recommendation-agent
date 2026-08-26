@@ -159,8 +159,9 @@ class AutonomousSupervisorReducer:
                 assert_never(unreachable)
 
     def _append(self, context: ApplyContext, projection: StepProjection) -> None:
+        sequence = len(self.tasks.reader().steps(context.task.task_id)) + 1
         with self.tasks.writer() as writer:
-            _ = writer.append_step(_step(context, projection))
+            _ = writer.append_step(_step(context, projection, sequence))
 
     def _memory(self, context: ApplyContext, request: AutonomousRecordMemory) -> AutonomousMemoryRecord:
         history = self.memories.reader().history(request.memory_key)
@@ -187,11 +188,11 @@ class AutonomousSupervisorReducer:
         return record
 
 
-def _step(context: ApplyContext, projection: StepProjection) -> AutonomousTaskStep:
+def _step(context: ApplyContext, projection: StepProjection, sequence: int) -> AutonomousTaskStep:
     task = context.task
     return AutonomousTaskStep(
         task_id=task.task_id,
-        sequence=context.decision_step.sequence + 1,
+        sequence=sequence,
         role=projection.role,
         agent_family_id=task.agent_family_id,
         market_scope=task.market_scope,

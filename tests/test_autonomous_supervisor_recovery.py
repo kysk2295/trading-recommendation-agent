@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pytest
@@ -18,6 +18,7 @@ from trading_agent.autonomous_memory_store import (
 )
 from trading_agent.autonomous_reasoning import (
     AutonomousDefer,
+    AutonomousDelegate,
     AutonomousReasoningRequest,
     AutonomousRecordMemory,
     AutonomousToolArguments,
@@ -110,6 +111,33 @@ def test_restart_replays_unapplied_tool_decision_once(tmp_path: Path) -> None:
     assert restarted_reasoner.requests == []
     assert kinds.count("decision") == 1
     assert kinds.count("observation") == 1
+
+
+def test_restart_replays_decision_deferred_by_runtime_deadline(tmp_path: Path) -> None:
+    # Given: a slow model decision is durable behind a one-minute budget wait.
+    decision = AutonomousDelegate(
+        role=AutonomousAgentRole.RESEARCH,
+        objective="Resume the durable research handoff during the next fresh runtime slice.",
+        reason="The expired slice must preserve this decision without applying it early.",
+    )
+    first_reasoner = FakeReasoner((decision,))
+    runtime = _runtime(tmp_path, first_reasoner, lambda _args: "{}", max_steps=1)
+    runtime = replace(runtime, monotonic=iter((0.0, 0.0, 121.0)).__next__)
+    task = task_fixture()
+    with runtime.tasks.writer() as writer:
+        assert writer.create_task(task)
+    assert runtime.tick(task, NOW).status == "waiting"
+    restarted_reasoner = FakeReasoner(())
+    restarted = replace(runtime, reasoner=restarted_reasoner, monotonic=lambda: 0.0)
+
+    # When: the one-minute wait becomes due in a fresh process-style runtime.
+    result = restarted.tick(task, NOW + dt.timedelta(minutes=1))
+
+    # Then: the durable decision applies without another model decision.
+    kinds = tuple(parse_payload(step.payload_json).kind for step in restarted.tasks.reader().steps(task.task_id))
+    assert result.status == "waiting"
+    assert kinds == ("decision", "wait", "delegate", "wait")
+    assert restarted_reasoner.requests == []
 
 
 def test_restart_reuses_memory_written_before_application_step(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -258,6 +286,9 @@ def test_evidence_admission_replays_and_wakes_without_changing_root(tmp_path: Pa
     # When: the evidence is admitted twice exactly.
     assert runtime.admit_evidence(task.task_id, evidence, NOW + dt.timedelta(seconds=1)) is True
     assert runtime.admit_evidence(task.task_id, evidence, NOW + dt.timedelta(seconds=2)) is False
+    conflict = evidence.model_copy(update={"source_key": "fixture.conflicting-evidence"})
+    with pytest.raises(InvalidAutonomousSupervisorError, match="autonomous_evidence_replay_conflict"):
+        runtime.admit_evidence(task.task_id, conflict, NOW + dt.timedelta(seconds=2))
 
     # Then: admission wakes the task and preserves its original root authority.
     projected = runtime.tasks.reader().task(task.task_id)

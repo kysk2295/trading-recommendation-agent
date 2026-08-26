@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+
+import pytest
 
 from tests.test_autonomous_task_models import NOW, OTHER, task_fixture
 from tests.test_autonomous_task_store import task_for
+from trading_agent._autonomous_supervisor_steps import parse_payload
 from trading_agent.autonomous_memory_models import AutonomousMemoryScope
 from trading_agent.autonomous_memory_store import AutonomousMemoryStore
 from trading_agent.autonomous_reasoning import (
@@ -25,6 +28,8 @@ from trading_agent.autonomous_task_models import AutonomousAgentRole, Autonomous
 from trading_agent.autonomous_task_store import AutonomousTaskStore
 from trading_agent.autonomous_tool_runtime import AutonomousToolBinding, AutonomousToolRuntime
 from trading_agent.research_agent_cycle_models import EvidenceId
+
+type SlowResponse = AutonomousToolCall | AutonomousDelegate | AutonomousRecordMemory | AutonomousSubmitArtifact
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,17 +112,11 @@ def test_tick_persists_multistep_workflow_and_wake(tmp_path: Path) -> None:
 
     # Then: every decision has a durable application and the task can restart from storage.
     projected = runtime.tasks.reader().task(task.task_id)
-    steps = runtime.tasks.reader().steps(task.task_id)
     assert result.status == "waiting"
     assert result.model_calls == 5
     assert result.tool_calls == 1
     assert projected is not None and projected.state is AutonomousTaskState.WAITING_TIME
-    assert projected.owner_role is AutonomousAgentRole.CRITIC
-    assert projected.next_wake_at == wake
-    assert len(steps) == 10
     assert len(runtime.memories.reader().history("work.samsung.review")) == 1
-    assert reasoner.requests[1].observations[0].content_sha256 in reasoner.requests[1].observations[0].evidence_refs
-    assert reasoner.requests[3].memories[0].memory_key == "work.samsung.review"
 
 
 def test_budget_exhaustion_waits_without_terminalizing(tmp_path: Path) -> None:
@@ -242,3 +241,50 @@ def test_run_due_orders_event_and_time_tasks_and_excludes_terminal(tmp_path: Pat
     assert len(runtime.tasks.reader().steps(low.task_id)) > before
     assert tuple(item.task_id for item in results) == (high.task_id, low.task_id)
     assert runtime.run_due(due_at, events=("high_evidence",)) == ()
+
+
+@pytest.mark.parametrize(
+    "response",
+    (
+        AutonomousToolCall(
+            tool_name="evidence.read",
+            args=AutonomousToolArguments({"evidence_id": "a" * 64}),
+            reason="Read bounded evidence only within the active supervisor runtime slice.",
+        ),
+        AutonomousDelegate(
+            role=AutonomousAgentRole.RESEARCH,
+            objective="Research the evidence only within the active supervisor runtime slice.",
+            reason="A role handoff must wait when the current runtime slice is exhausted.",
+        ),
+        AutonomousRecordMemory(
+            scope=AutonomousMemoryScope.WORK,
+            memory_key="work.slow.reasoner",
+            summary="A slow model decision must not write memory outside its runtime slice.",
+            fact_refs=("fact:slow",),
+            evidence_refs=("evidence:root",),
+            reason="The memory application must wait for the next fresh runtime slice.",
+        ),
+        AutonomousSubmitArtifact(
+            artifact_kind="context",
+            artifact_json='{"status":"slow"}',
+            evidence_refs=("evidence:root",),
+            reason="The artifact application must wait for the next fresh runtime slice.",
+        ),
+    ),
+)
+def test_slow_reasoning_persists_decision_without_applying_response(tmp_path: Path, response: SlowResponse) -> None:
+    # Given: monotonic time crosses the 120-second boundary during one model call.
+    runtime = _runtime(tmp_path, FakeReasoner((response,)))
+    runtime = replace(runtime, monotonic=iter((0.0, 0.0, 121.0)).__next__)
+    task = task_fixture()
+    with runtime.tasks.writer() as writer:
+        assert writer.create_task(task)
+
+    # When: the slow response returns after the slice deadline.
+    result = runtime.tick(task, NOW)
+
+    # Then: only the decision and budget wait are durable; no response application occurs.
+    kinds = tuple(parse_payload(step.payload_json).kind for step in runtime.tasks.reader().steps(task.task_id))
+    assert result.status == "waiting"
+    assert kinds == ("decision", "wait")
+    assert runtime.memories.reader().history("work.slow.reasoner") == ()

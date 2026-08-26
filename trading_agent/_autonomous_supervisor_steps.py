@@ -23,11 +23,9 @@ from trading_agent.autonomous_task_models import (
     AutonomousTaskState,
     AutonomousTaskStep,
 )
+from trading_agent.research_agent_cycle_models import EvidenceId, ResearchAgentEvidenceV1
 
 _HASH: Final = r"^[a-f0-9]{64}$"
-_MODEL_CALLS: Final = 8
-_TOOL_CALLS: Final = 16
-_RUNTIME_SECONDS: Final = 120
 type JsonValue = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
 type TickStatus = Literal["waiting", "completed", "blocked"]
 
@@ -115,11 +113,18 @@ class FailurePayload(_Payload):
 
 class SourceAdmissionPayload(_Payload):
     kind: Literal["source_admission"] = "source_admission"
-    evidence_id: str = Field(pattern=_HASH)
-    source_key: str
-    payload_sha256: str = Field(pattern=_HASH)
-    bounded_payload_json: str | None
-    subject_refs: tuple[str, ...]
+    evidence_id: EvidenceId = Field(pattern=_HASH)
+    evidence_json: str = Field(min_length=2, max_length=16_000)
+
+    @model_validator(mode="after")
+    def require_exact_evidence(self) -> SourceAdmissionPayload:
+        evidence = ResearchAgentEvidenceV1.model_validate_json(self.evidence_json)
+        if (
+            evidence.evidence_id != self.evidence_id
+            or canonical_json(evidence.model_dump(mode="json")) != self.evidence_json
+        ):
+            raise InvalidSupervisorPayloadError(reason="source_admission_payload_invalid")
+        return self
 
 
 SupervisorStepPayload = Annotated[
@@ -137,15 +142,8 @@ SupervisorStepPayload = Annotated[
 PAYLOAD_ADAPTER: Final = TypeAdapter(SupervisorStepPayload)
 
 
-class InvalidSupervisorPayloadError(ValueError):
-    __slots__ = ("reason",)
-
-    def __init__(self, *, reason: str) -> None:
-        self.reason = reason
-        super().__init__(reason)
-
-    def __str__(self) -> str:
-        return self.reason
+class InvalidSupervisorPayloadError(InvalidAutonomousSupervisorError, ValueError):
+    __slots__ = ()
 
 
 def canonical_json(value: JsonValue) -> str:
@@ -173,23 +171,18 @@ def parsed_response(payload: DecisionPayload) -> AutonomousReasoningResponse:
     return AUTONOMOUS_REASONING_RESPONSE_ADAPTER.validate_json(payload.response_json)
 
 
-def applied_decision_hash(payload: SupervisorStepPayload) -> str | None:
-    match payload:
-        case DecisionPayload() | SourceAdmissionPayload():
-            return None
-        case ObservationPayload(decision_hash=value) | DelegatePayload(decision_hash=value):
-            return value
-        case MemoryPayload(decision_hash=value) | ArtifactPayload(decision_hash=value):
-            return value
-        case CompletionPayload(decision_hash=value):
-            return value
-        case WaitPayload(decision_hash=value) | FailurePayload(decision_hash=value):
-            return value
-        case unreachable:
-            assert_never(unreachable)
-
-
-def plain_step(task, sequence, now, state, data, sources, refs, budget=None, wake=None, blocked=None):
+def plain_step(
+    task: AutonomousResearchTask,
+    sequence: int,
+    now: dt.datetime,
+    state: AutonomousTaskState,
+    data: str,
+    sources: tuple[EvidenceId, ...],
+    refs: tuple[str, ...],
+    budget: AutonomousRunBudget | None = None,
+    wake: dt.datetime | None = None,
+    blocked: str | None = None,
+) -> AutonomousTaskStep:
     return AutonomousTaskStep(
         task_id=task.task_id,
         sequence=sequence,
@@ -212,24 +205,48 @@ def plain_step(task, sequence, now, state, data, sources, refs, budget=None, wak
 
 def run_budget(models: int, tools: int, elapsed: float) -> AutonomousRunBudget:
     return AutonomousRunBudget(
-        remaining_model_calls=max(0, _MODEL_CALLS - models),
-        remaining_tool_calls=max(0, _TOOL_CALLS - tools),
-        remaining_runtime_seconds=max(0, _RUNTIME_SECONDS - int(elapsed)),
+        remaining_model_calls=max(0, 8 - models),
+        remaining_tool_calls=max(0, 16 - tools),
+        remaining_runtime_seconds=max(0, 120 - int(elapsed)),
     )
 
 
-def safe_payload(step: AutonomousTaskStep):
+def safe_payload(step: AutonomousTaskStep) -> SupervisorStepPayload | None:
     try:
         return parse_payload(step.payload_json)
     except (ValidationError, ValueError):
         return None
 
 
-def unapplied_decision(steps):
-    if not steps:
-        return None
-    payload = safe_payload(steps[-1])
-    return (steps[-1], payload) if isinstance(payload, DecisionPayload) else None
+def unapplied_decision(
+    steps: tuple[AutonomousTaskStep, ...],
+) -> tuple[AutonomousTaskStep, DecisionPayload] | None:
+    applied: set[str | None] = set()
+    decisions: list[tuple[AutonomousTaskStep, DecisionPayload]] = []
+    for step in steps:
+        match safe_payload(step):
+            case DecisionPayload() as decision:
+                decisions.append((step, decision))
+            case SourceAdmissionPayload() | None:
+                continue
+            case WaitPayload(decision_hash=None) | FailurePayload(decision_hash=None):
+                continue
+            case (
+                ObservationPayload()
+                | DelegatePayload()
+                | MemoryPayload()
+                | ArtifactPayload()
+                | CompletionPayload()
+                | WaitPayload()
+                | FailurePayload()
+            ) as payload:
+                applied.add(payload.decision_hash)
+            case unreachable:
+                assert_never(unreachable)
+    for step, decision in reversed(decisions):
+        if decision.decision_hash not in applied:
+            return step, decision
+    return None
 
 
 def linked_memories(store: AutonomousMemoryStore, task: AutonomousResearchTask) -> tuple[AutonomousMemoryRecord, ...]:
@@ -268,14 +285,6 @@ def reasoning_request(
         allowed_tool_names=allowed_tools,
         remaining_budget=budget,
         current_role=task.owner_role,
-    )
-
-
-def future_wait(task: AutonomousResearchTask, now: dt.datetime) -> bool:
-    return (
-        task.state in {AutonomousTaskState.WAITING_TIME, AutonomousTaskState.BLOCKED}
-        and task.next_wake_at is not None
-        and task.next_wake_at > now
     )
 
 
