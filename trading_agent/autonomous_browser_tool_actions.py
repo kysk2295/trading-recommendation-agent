@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from trading_agent.autonomous_browser_tool_results import (
+    blocked_read_failure,
+    blocked_read_page,
     canonical,
     evidence_excerpt,
     evidence_limit,
@@ -121,14 +123,14 @@ def browser_read_tool(
         return gateway_unavailable(request.request_id)
     match response.status:
         case "error":
-            return _failed(response)
+            return _blocked_failure(response, target_id)
         case "ok":
             observation = response.observation
             if response.action is not BrowserAction.READ or observation is None:
                 return gateway_unavailable(request.request_id)
             excerpt = evidence_excerpt(observation.visible_text)
             if not excerpt:
-                return canonical({"reason": "browser_visible_text_unavailable", "status": "error"})
+                return blocked_read_page(observation, response.request_id)
             evidence = browser_social_evidence(
                 BrowserSocialEvidenceCapture(
                     browser_receipt_id=response.request_id,
@@ -229,5 +231,12 @@ def social_evidence_search_tool(
 def _failed(response: BrowserResponse) -> str:
     try:
         return failed_response(response)
+    except ValueError:
+        raise AutonomousToolInvocationError(reason="browser_response_invalid") from None
+
+
+def _blocked_failure(response: BrowserResponse, target_id: str) -> str:
+    try:
+        return blocked_read_failure(response, target_id)
     except ValueError:
         raise AutonomousToolInvocationError(reason="browser_response_invalid") from None

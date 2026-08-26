@@ -122,6 +122,123 @@ def test_browser_read_appends_evidence_before_returning_observation(
     memories.close()
 
 
+def test_browser_read_empty_visible_text_returns_a_durable_blocked_receipt_without_evidence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    # Given: a visual-only browser page has a receipt but no visible text.
+    from trading_agent import autonomous_browser_tool_results as browser_results
+    from trading_agent.browser_social_evidence_store import BrowserSocialEvidenceStore
+    from trading_agent.local_browser_protocol import BrowserAction, BrowserPageObservation, BrowserResponse
+
+    class VisualOnlyGatewayClient:
+        def __init__(self, _path: Path, *, timeout_seconds: float) -> None:
+            assert timeout_seconds == 20.0
+
+        def request(self, request):
+            return BrowserResponse(
+                request_id=request.request_id,
+                action=BrowserAction.READ,
+                observation=BrowserPageObservation(
+                    target_id="visual-target",
+                    url="https://example.com/visual-only",
+                    title="Visual-only page",
+                    visible_text="",
+                    captured_at=NOW,
+                ),
+            )
+
+    monkeypatch.setattr(browser_results, "LocalBrowserGatewayClient", VisualOnlyGatewayClient)
+    tasks = AutonomousTaskStore(tmp_path / "tasks.sqlite3")
+    memories = AutonomousMemoryStore(tmp_path / "memory.sqlite3")
+    browser = BrowserToolServices(tmp_path / "gateway.sock", tmp_path / "browser-evidence.sqlite3")
+    runtime = build_foundation_tool_runtime(tasks, memories, browser=browser)
+    context = AutonomousToolExecutionContext(
+        task_id=AutonomousTaskId("c" * 64),
+        agent_family_id="market_context",
+        market_scope="kr_equities",
+    )
+
+    # When: the current page is read through the authorized browser binding.
+    observation = runtime.dispatch(
+        AutonomousAgentRole.MARKET_OBSERVER,
+        AutonomousToolCall(
+            tool_name="browser.read",
+            args=AutonomousToolArguments({"target_id": "visual-target"}),
+            reason="Record a blocked visual-only browser observation without inventing text.",
+        ),
+        context,
+    )
+
+    # Then: the durable tool observation retains receipt lineage and does not create social evidence.
+    payload = json.loads(observation.bounded_json)
+    assert payload["captured_at"] == NOW.isoformat()
+    assert payload["normalized_url"] == "https://example.com/visual-only"
+    assert payload["reason"] == "browser_visible_text_unavailable"
+    assert payload["status"] == "blocked"
+    assert payload["target_id"] == "visual-target"
+    assert payload["title"] == "Visual-only page"
+    assert "evidence_id" not in payload
+    assert len(payload["browser_receipt_id"]) == 64
+    assert BrowserSocialEvidenceStore(browser.evidence_database).search("visual-only") == ()
+    tasks.close()
+    memories.close()
+
+
+def test_browser_read_gateway_block_returns_a_blocked_receipt(tmp_path: Path, monkeypatch) -> None:
+    # Given: the gateway reports a stable bot/navigation block for a read request.
+    from trading_agent import autonomous_browser_tool_results as browser_results
+    from trading_agent.local_browser_protocol import (
+        BrowserAction,
+        BrowserFailure,
+        BrowserFailureReason,
+        BrowserResponse,
+    )
+
+    class BlockedGatewayClient:
+        def __init__(self, _path: Path, *, timeout_seconds: float) -> None:
+            assert timeout_seconds == 20.0
+
+        def request(self, request):
+            return BrowserResponse(
+                request_id=request.request_id,
+                action=BrowserAction.READ,
+                status="error",
+                failure=BrowserFailure(reason=BrowserFailureReason.NAVIGATION_BLOCKED),
+            )
+
+    monkeypatch.setattr(browser_results, "LocalBrowserGatewayClient", BlockedGatewayClient)
+    tasks = AutonomousTaskStore(tmp_path / "tasks.sqlite3")
+    memories = AutonomousMemoryStore(tmp_path / "memory.sqlite3")
+    browser = BrowserToolServices(tmp_path / "gateway.sock", tmp_path / "browser-evidence.sqlite3")
+    runtime = build_foundation_tool_runtime(tasks, memories, browser=browser)
+    context = AutonomousToolExecutionContext(
+        task_id=AutonomousTaskId("d" * 64),
+        agent_family_id="market_context",
+        market_scope="kr_equities",
+    )
+
+    # When: the Market Observer receives the blocked read receipt.
+    observation = runtime.dispatch(
+        AutonomousAgentRole.MARKET_OBSERVER,
+        AutonomousToolCall(
+            tool_name="browser.read",
+            args=AutonomousToolArguments({"target_id": "blocked-target"}),
+            reason="Record the bounded blocked browser receipt without bypassing the source.",
+        ),
+        context,
+    )
+
+    # Then: it remains an attributable blocked observation instead of a tool failure.
+    payload = json.loads(observation.bounded_json)
+    assert payload["reason"] == "browser_navigation_blocked"
+    assert payload["status"] == "blocked"
+    assert payload["target_id"] == "blocked-target"
+    assert len(payload["browser_receipt_id"]) == 64
+    tasks.close()
+    memories.close()
+
+
 def test_social_evidence_search_reads_prior_browser_evidence_without_gateway(tmp_path: Path) -> None:
     # Given: an existing browser-evidence record and a missing gateway socket.
     from trading_agent.browser_social_evidence_store import BrowserSocialEvidenceStore

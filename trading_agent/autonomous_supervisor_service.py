@@ -7,11 +7,8 @@ import json
 import os
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal
-
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from typing import Final
 
 from trading_agent._autonomous_supervisor_steps import SourceAdmissionPayload, safe_payload
 from trading_agent.autonomous_browser_tools import BrowserToolServices, browser_bindings
@@ -20,11 +17,14 @@ from trading_agent.autonomous_reasoning import AutonomousToolArguments
 from trading_agent.autonomous_reasoning_codec import AutonomousStructuredReasoner
 from trading_agent.autonomous_supervisor_adapter import AutonomousSupervisorAdapter
 from trading_agent.autonomous_supervisor_runtime import AutonomousSupervisorRuntime
-from trading_agent.autonomous_task_models import (
-    AutonomousAgentRole,
-    AutonomousTaskId,
-    AutonomousTaskState,
+from trading_agent.autonomous_supervisor_status import (
+    AutonomousSupervisorPaths,
+    AutonomousSupervisorStatus,
+    autonomous_supervisor_paths,
+    autonomous_supervisor_status,
+    autonomous_supervisor_status_for_config,
 )
+from trading_agent.autonomous_task_models import AutonomousAgentRole
 from trading_agent.autonomous_task_store import AutonomousTaskStore
 from trading_agent.autonomous_tool_runtime import (
     AutonomousToolBinding,
@@ -43,9 +43,6 @@ from trading_agent.researcher_llm import (
 )
 
 _WORKER_MODULE: Final = "trading_agent.autonomous_supervisor_service"
-_NONTERMINAL: Final = frozenset(AutonomousTaskState) - frozenset(
-    {AutonomousTaskState.COMPLETED, AutonomousTaskState.ABANDONED}
-)
 _ALL_ROLES: Final = frozenset(AutonomousAgentRole)
 
 
@@ -57,30 +54,8 @@ class InvalidAutonomousSupervisorServiceError(RuntimeError):
         super().__init__(reason)
 
 
-@dataclass(frozen=True, slots=True)
-class AutonomousSupervisorPaths:
-    task_database: Path
-    memory_database: Path
-
-
-class AutonomousSupervisorStatus(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    enabled: Literal[True] = True
-    total_tasks: int = Field(ge=0)
-    nonterminal_tasks: int = Field(ge=0)
-    blocked_tasks: int = Field(ge=0)
-    next_wake_at: AwareDatetime | None
-    last_task_id: AutonomousTaskId | None
-
-
 def utc_clock() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
-
-
-def autonomous_supervisor_paths(config: ResearchAgentServiceConfig) -> AutonomousSupervisorPaths:
-    root = config.output_root / "autonomous-supervisor"
-    return AutonomousSupervisorPaths(root / "tasks.sqlite3", root / "memory.sqlite3")
 
 
 def configured_proposal_client(config: SystematicResearchActionConfig) -> LlmProposalClient:
@@ -224,35 +199,6 @@ def build_autonomous_supervisor(
         time.monotonic,
     )
     return AutonomousSupervisorAdapter(runtime)
-
-
-def autonomous_supervisor_status(
-    tasks: AutonomousTaskStore,
-    now: dt.datetime,
-) -> AutonomousSupervisorStatus:
-    _ = now.astimezone(dt.UTC)
-    durable = tasks.reader().tasks()
-    open_tasks = tuple(task for task in durable if task.state in _NONTERMINAL)
-    wakes = tuple(task.next_wake_at for task in open_tasks if task.next_wake_at is not None)
-    latest = max(durable, key=lambda task: (task.updated_at, task.task_id), default=None)
-    return AutonomousSupervisorStatus(
-        total_tasks=len(durable),
-        nonterminal_tasks=len(open_tasks),
-        blocked_tasks=sum(task.state is AutonomousTaskState.BLOCKED for task in open_tasks),
-        next_wake_at=min(wakes, default=None),
-        last_task_id=None if latest is None else latest.task_id,
-    )
-
-
-def autonomous_supervisor_status_for_config(
-    config: ResearchAgentServiceConfig,
-    now: dt.datetime,
-) -> AutonomousSupervisorStatus:
-    tasks = AutonomousTaskStore(autonomous_supervisor_paths(config).task_database)
-    try:
-        return autonomous_supervisor_status(tasks, now)
-    finally:
-        tasks.close()
 
 
 def _binding(

@@ -48,6 +48,33 @@ def failed_response(response: BrowserResponse) -> str:
     )
 
 
+def blocked_read_failure(response: BrowserResponse, target_id: str) -> str:
+    if response.failure is None:
+        raise ValueError("browser response failure missing")
+    return canonical(
+        {
+            "browser_receipt_id": response.request_id,
+            "reason": response.failure.reason.value,
+            "status": "blocked",
+            "target_id": target_id,
+        }
+    )
+
+
+def blocked_read_page(observation: BrowserPageObservation, request_id: str) -> str:
+    return canonical(
+        {
+            "browser_receipt_id": request_id,
+            "captured_at": observation.captured_at.isoformat(),
+            "normalized_url": observation.url,
+            "reason": "browser_visible_text_unavailable",
+            "status": "blocked",
+            "target_id": observation.target_id,
+            "title": _bounded_text(observation.title, 600),
+        }
+    )
+
+
 def page_payload(observation: BrowserPageObservation) -> dict[str, JsonValue]:
     payload: dict[str, JsonValue] = {
         "captured_at": observation.captured_at.isoformat(),
@@ -181,6 +208,8 @@ def _bounded_text(value: str, maximum_json_bytes: int) -> str:
 
 
 __all__ = (
+    "blocked_read_failure",
+    "blocked_read_page",
     "canonical",
     "evidence_excerpt",
     "evidence_limit",
