@@ -5,9 +5,10 @@ from typing import Final
 
 _REDACTED: Final = "[REDACTED]"
 _LABEL: Final = (
-    r"(?:authorization|access[\s_-]*(?:key|token)|refresh[\s_-]*token|"
-    r"api[\s_-]*(?:key|secret|token)|session(?:[\s_-]*(?:cookie|id|key|token))?|"
-    r"cookie|password|client[\s_-]*secret|account[\s_-]*(?:id|number))"
+    r"(?:authorization|access[\s_.-]*(?:key|token)|refresh[\s_.-]*(?:key|token)|"
+    r"api[\s_.-]*(?:key|secret|token)|session(?:[\s_.-]*(?:cookie|id|key|token))?|"
+    r"cookie|password|client[\s_.-]*secret|account[\s_.-]*(?:id|number)|"
+    r"auth[\s_.-]*(?:secret|token)|token|secret|jwt)"
 )
 _ASSIGNED_SECRET: Final = re.compile(
     rf"(?P<label>\b{_LABEL}\b\s*[:=]\s*)"
@@ -27,4 +28,8 @@ def redact_browser_observation_text(value: str) -> str:
     return _JWT_SECRET.sub(_REDACTED, bearer)
 
 
-__all__ = ["redact_browser_observation_text"]
+def contains_browser_secret_text(value: str) -> bool:
+    return bool(_ASSIGNED_SECRET.search(value) or _BEARER_SECRET.search(value) or _JWT_SECRET.search(value))
+
+
+__all__ = ["contains_browser_secret_text", "redact_browser_observation_text"]

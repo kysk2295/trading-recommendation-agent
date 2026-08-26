@@ -53,7 +53,11 @@ def test_visible_page_parser_rejects_sensitive_page_query() -> None:
 
 def test_visible_page_parser_redacts_credentials_and_account_identifiers() -> None:
     # Given: every Chrome-derived prose field contains a sensitive sentinel and ordinary public prose.
-    sentinel = "Bearer SECRET-TOKEN account_id=12345 @victim"
+    sentinel = (
+        "Bearer SECRET-TOKEN account_id=12345 auth-token=auth-canary "
+        "token=token-canary secret=secret-canary jwt=jwt-canary "
+        "refresh_key=refresh-canary @victim"
+    )
     payload = json.dumps(
         {
             "title": f"Market update {sentinel}",
@@ -66,7 +70,18 @@ def test_visible_page_parser_redacts_credentials_and_account_identifiers() -> No
     observation = parse_visible_page("target-1", payload, _NOW)
     projected = " ".join((observation.title, observation.visible_text, *(link.label for link in observation.links)))
     # Then: secret/token/account values are absent while public prose and handles remain usable.
-    assert all(value not in projected for value in ("SECRET-TOKEN", "12345"))
+    assert all(
+        value not in projected
+        for value in (
+            "SECRET-TOKEN",
+            "12345",
+            "auth-canary",
+            "token-canary",
+            "secret-canary",
+            "jwt-canary",
+            "refresh-canary",
+        )
+    )
     assert "@victim" in projected
     assert "Public author @analyst says chips rallied." in projected
 
@@ -77,7 +92,12 @@ def test_visible_page_parser_redacts_credentials_and_account_identifiers() -> No
         ("Authorization: Basic basic-canary", "basic-canary"),
         ("ACCESS-TOKEN=access-canary", "access-canary"),
         ("Refresh_Token: refresh-canary", "refresh-canary"),
+        ("refresh_key=refresh-key-canary", "refresh-key-canary"),
         ("API Key = api-canary", "api-canary"),
+        ("AUTH_TOKEN: auth-canary", "auth-canary"),
+        ("token=token-canary", "token-canary"),
+        ("secret=secret-canary", "secret-canary"),
+        ("jwt=jwt-canary", "jwt-canary"),
         ("sessionId=session-canary", "session-canary"),
         ("Cookie: cookie-canary", "cookie-canary"),
         ("PASSWORD = password-canary", "password-canary"),
