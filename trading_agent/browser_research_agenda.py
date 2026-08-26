@@ -91,6 +91,7 @@ class BrowserResearchAgendaEpisodeStore:
 class ContinuousBrowserResearchSupervisor:
     supervisor: AutonomousSupervisorAdapter
     cycles: ResearchAgentCycleStore
+    owns_cycles: bool = True
 
     @property
     def episodes(self) -> BrowserResearchAgendaEpisodeStore:
@@ -100,7 +101,8 @@ class ContinuousBrowserResearchSupervisor:
         try:
             self.supervisor.close()
         finally:
-            self.cycles.close()
+            if self.owns_cycles:
+                self.cycles.close()
 
     def tick(self, evidence: ResearchAgentEvidenceV1, now: dt.datetime) -> AutonomousSupervisorTickResult:
         return self.supervisor.tick(evidence, now)

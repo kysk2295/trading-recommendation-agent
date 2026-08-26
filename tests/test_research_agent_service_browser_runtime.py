@@ -6,11 +6,16 @@ from pathlib import Path
 import pytest
 
 from tests.research_agent_browser_service_fixtures import browser_service_config
+from trading_agent.autonomous_supervisor_adapter import AutonomousSupervisorAdapter
 from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
 from trading_agent.research_agent_service_builder import build_service_runtime
 from trading_agent.research_agent_service_models import InvalidResearchAgentServiceRuntimeError
 
 NOW = dt.datetime(2026, 8, 27, 1, 0, tzinfo=dt.UTC)
+
+
+class _FixtureCycleCloseError(RuntimeError):
+    pass
 
 
 def test_v3_builder_runs_continuous_browser_agenda_and_reopens(tmp_path: Path) -> None:
@@ -50,3 +55,38 @@ def test_v3_builder_releases_cycle_writer_when_gateway_verification_fails(tmp_pa
     # Then: a new cycle writer can open immediately without a leaked lease.
     reopened = ResearchAgentCycleStore(config.cycle_database)
     reopened.close()
+
+
+def test_v3_service_runtime_closes_cycle_owner_once_when_close_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: the service-owned cycle close releases its lease and then reports a failure.
+    config = browser_service_config(tmp_path)
+    runtime = build_service_runtime(config)
+    cycle_closes: list[Path] = []
+    supervisor_closes: list[bool] = []
+    close_cycle = ResearchAgentCycleStore.close
+    close_supervisor = AutonomousSupervisorAdapter.close
+
+    def release_cycle_then_fail(store: ResearchAgentCycleStore) -> None:
+        cycle_closes.append(store.path)
+        close_cycle(store)
+        raise _FixtureCycleCloseError("cycle_close_failed")
+
+    def record_supervisor_close(supervisor: AutonomousSupervisorAdapter) -> None:
+        supervisor_closes.append(True)
+        close_supervisor(supervisor)
+
+    # When: aggregate runtime shutdown crosses that failing owner boundary.
+    with monkeypatch.context() as patch:
+        patch.setattr(ResearchAgentCycleStore, "close", release_cycle_then_fail)
+        patch.setattr(AutonomousSupervisorAdapter, "close", record_supervisor_close)
+        with pytest.raises(_FixtureCycleCloseError, match="cycle_close_failed"):
+            runtime.close()
+
+    # Then: the sole owner closed once, the supervisor cleaned up, and the writer reopens.
+    assert cycle_closes == [config.cycle_database]
+    assert supervisor_closes == [True]
+    with ResearchAgentCycleStore(config.cycle_database):
+        pass

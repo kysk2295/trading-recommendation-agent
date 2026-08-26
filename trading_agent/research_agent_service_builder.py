@@ -115,7 +115,9 @@ def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRu
         if browser_path is None:
             ownership.callback(supervisor.close)
         installed_supervisor = (
-            supervisor if browser_path is None else ContinuousBrowserResearchSupervisor(supervisor, cycle_store)
+            supervisor
+            if browser_path is None
+            else ContinuousBrowserResearchSupervisor(supervisor, cycle_store, owns_cycles=False)
         )
         runtime = ResearchAgentRuntime(
             ResearchAgentRuntimeServices(
