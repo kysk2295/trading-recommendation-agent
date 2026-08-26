@@ -112,7 +112,7 @@ def unlink_private_browser_file(
     quarantine_name, quarantine_descriptor = _open_quarantine(directory)
     moved, emptied = False, False
     try:
-        os.rename(name, name, src_dir_fd=directory.descriptor, dst_dir_fd=quarantine_descriptor)
+        rename_entry_exclusively(directory.descriptor, name, quarantine_descriptor, name)
         moved = True
         quarantined = _quarantined_metadata(quarantine_descriptor, name)
         if not _matches_expected_file(quarantined, expected, owner_id):
@@ -121,14 +121,20 @@ def unlink_private_browser_file(
             raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_replaced")
         os.unlink(name, dir_fd=quarantine_descriptor)
         emptied = True
+    except AtomicRenameConflictError:
+        raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_replaced") from None
+    except AtomicRenameUnavailableError:
+        raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_invalid") from None
     except InvalidLocalBrowserPrivateFsError:
         raise
     except OSError:
         raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_replaced") from None
     finally:
         os.close(quarantine_descriptor)
-        if not moved or emptied:
+        if emptied:
             _remove_quarantine(directory, quarantine_name)
+        elif not moved:
+            _remove_quarantine_if_empty(directory, quarantine_name)
 
 
 def _require_directory_identity(directory: PrivateBrowserDirectory) -> None:
@@ -210,3 +216,10 @@ def _remove_quarantine(directory: PrivateBrowserDirectory, name: str) -> None:
         os.rmdir(name, dir_fd=directory.descriptor)
     except OSError:
         raise InvalidLocalBrowserPrivateFsError(reason="local_browser_private_file_invalid") from None
+
+
+def _remove_quarantine_if_empty(directory: PrivateBrowserDirectory, name: str) -> None:
+    try:
+        os.rmdir(name, dir_fd=directory.descriptor)
+    except OSError:
+        return

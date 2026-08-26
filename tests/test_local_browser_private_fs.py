@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import stat
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,37 @@ import trading_agent.local_browser_private_fs as private_fs
 
 def _payload() -> bytes:
     return b"9222\n/devtools/browser/token\n"
+
+
+def _observed_endpoint(
+    directory: private_fs.PrivateBrowserDirectory, path: Path
+) -> private_fs.PrivateBrowserFile:
+    path.write_bytes(_payload())
+    path.chmod(0o600)
+    observed = private_fs.read_private_browser_file(directory, path.name, os.getuid(), 256)
+    assert observed is not None
+    return observed
+
+
+def _interpose_initial_move(
+    monkeypatch: pytest.MonkeyPatch, before: Callable[[], None] | None = None, after: Callable[[], None] | None = None
+) -> None:
+    original = private_fs.rename_entry_exclusively
+    first = True
+
+    def move(source_directory: int, source: str, destination_directory: int, destination: str) -> None:
+        nonlocal first
+        if first:
+            first = False
+            if before is not None:
+                before()
+            original(source_directory, source, destination_directory, destination)
+            if after is not None:
+                after()
+            return
+        original(source_directory, source, destination_directory, destination)
+
+    monkeypatch.setattr(private_fs, "rename_entry_exclusively", move)
 
 
 @pytest.mark.parametrize("mode,owner", ((0o755, None), (0o700, -1)))
@@ -81,20 +113,15 @@ def test_private_file_restores_replacement_interposed_before_quarantine(
     root = tmp_path / "profile"
     with private_fs.open_private_browser_directory(root, os.getuid()) as directory:
         path = root / "DevToolsActivePort"
-        path.write_bytes(_payload())
-        path.chmod(0o600)
-        observed = private_fs.read_private_browser_file(directory, path.name, os.getuid(), 256)
-        assert observed is not None
+        observed = _observed_endpoint(directory, path)
         replacement = b"9223\n/devtools/browser/interposed\n"
-        original = private_fs.os.rename
 
-        def interpose(source: str, destination: str, *, src_dir_fd: int, dst_dir_fd: int) -> None:
+        def replace() -> None:
             path.unlink()
             path.write_bytes(replacement)
             path.chmod(0o600)
-            original(source, destination, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
 
-        monkeypatch.setattr(private_fs.os, "rename", interpose)
+        _interpose_initial_move(monkeypatch, replace)
         # When: guarded cleanup encounters the interposed replacement.
         with pytest.raises(private_fs.InvalidLocalBrowserPrivateFsError) as raised:
             private_fs.unlink_private_browser_file(directory, path.name, observed, os.getuid())
@@ -109,18 +136,13 @@ def test_private_file_restores_directory_interposed_before_quarantine(
     root = tmp_path / "profile"
     with private_fs.open_private_browser_directory(root, os.getuid()) as directory:
         path = root / "DevToolsActivePort"
-        path.write_bytes(_payload())
-        path.chmod(0o600)
-        observed = private_fs.read_private_browser_file(directory, path.name, os.getuid(), 256)
-        assert observed is not None
-        original = private_fs.os.rename
+        observed = _observed_endpoint(directory, path)
 
-        def interpose(source: str, destination: str, *, src_dir_fd: int, dst_dir_fd: int) -> None:
+        def replace() -> None:
             path.unlink()
             path.mkdir(mode=0o700)
-            original(source, destination, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
 
-        monkeypatch.setattr(private_fs.os, "rename", interpose)
+        _interpose_initial_move(monkeypatch, replace)
         # When: cleanup finds the directory in its private quarantine.
         with pytest.raises(private_fs.InvalidLocalBrowserPrivateFsError) as raised:
             private_fs.unlink_private_browser_file(directory, path.name, observed, os.getuid())
@@ -135,19 +157,14 @@ def test_private_file_restores_symlink_interposed_before_quarantine(
     root = tmp_path / "profile"
     with private_fs.open_private_browser_directory(root, os.getuid()) as directory:
         path, target = root / "DevToolsActivePort", root / "target"
-        path.write_bytes(_payload())
-        path.chmod(0o600)
+        observed = _observed_endpoint(directory, path)
         target.write_bytes(b"target")
-        observed = private_fs.read_private_browser_file(directory, path.name, os.getuid(), 256)
-        assert observed is not None
-        original = private_fs.os.rename
 
-        def interpose(source: str, destination: str, *, src_dir_fd: int, dst_dir_fd: int) -> None:
+        def replace() -> None:
             path.unlink()
             path.symlink_to(target)
-            original(source, destination, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
 
-        monkeypatch.setattr(private_fs.os, "rename", interpose)
+        _interpose_initial_move(monkeypatch, replace)
         # When: cleanup finds the symlink in its private quarantine.
         with pytest.raises(private_fs.InvalidLocalBrowserPrivateFsError) as raised:
             private_fs.unlink_private_browser_file(directory, path.name, observed, os.getuid())
@@ -162,21 +179,18 @@ def test_private_file_preserves_new_public_entry_before_directory_restore(
     root = tmp_path / "profile"
     with private_fs.open_private_browser_directory(root, os.getuid()) as directory:
         path = root / "DevToolsActivePort"
-        path.write_bytes(_payload())
-        path.chmod(0o600)
-        observed = private_fs.read_private_browser_file(directory, path.name, os.getuid(), 256)
-        assert observed is not None
+        observed = _observed_endpoint(directory, path)
         replacement = b"9223\n/devtools/browser/new-public\n"
-        original = private_fs.os.rename
 
-        def interpose(source: str, destination: str, *, src_dir_fd: int, dst_dir_fd: int) -> None:
+        def replace() -> None:
             path.unlink()
             path.mkdir(mode=0o700)
-            original(source, destination, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+
+        def publish() -> None:
             path.write_bytes(replacement)
             path.chmod(0o600)
 
-        monkeypatch.setattr(private_fs.os, "rename", interpose)
+        _interpose_initial_move(monkeypatch, replace, publish)
         # When: no-replace restoration finds a new public entry.
         with pytest.raises(private_fs.InvalidLocalBrowserPrivateFsError) as raised:
             private_fs.unlink_private_browser_file(directory, path.name, observed, os.getuid())
@@ -193,24 +207,23 @@ def test_private_file_preserves_quarantine_when_exclusive_restore_is_unavailable
     root = tmp_path / "profile"
     with private_fs.open_private_browser_directory(root, os.getuid()) as directory:
         path = root / "DevToolsActivePort"
-        path.write_bytes(_payload())
-        path.chmod(0o600)
-        observed = private_fs.read_private_browser_file(directory, path.name, os.getuid(), 256)
-        assert observed is not None
+        observed = _observed_endpoint(directory, path)
         replacement = b"9223\n/devtools/browser/unavailable\n"
-        original = private_fs.os.rename
-
-        def interpose(source: str, destination: str, *, src_dir_fd: int, dst_dir_fd: int) -> None:
-            path.unlink()
-            path.mkdir(mode=0o700)
-            original(source, destination, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
-            path.write_bytes(replacement)
-            path.chmod(0o600)
+        original = private_fs.rename_entry_exclusively
+        first = True
 
         def unavailable(source_directory: int, source: str, destination_directory: int, destination: str) -> None:
+            nonlocal first
+            if first:
+                first = False
+                path.unlink()
+                path.mkdir(mode=0o700)
+                original(source_directory, source, destination_directory, destination)
+                path.write_bytes(replacement)
+                path.chmod(0o600)
+                return
             raise private_fs.AtomicRenameUnavailableError()
 
-        monkeypatch.setattr(private_fs.os, "rename", interpose)
         monkeypatch.setattr(private_fs, "rename_entry_exclusively", unavailable)
         # When: restoration cannot access the Darwin no-replace primitive.
         with pytest.raises(private_fs.InvalidLocalBrowserPrivateFsError) as raised:
@@ -226,19 +239,14 @@ def test_private_file_preserves_new_entry_after_quarantine(tmp_path: Path, monke
     root = tmp_path / "profile"
     with private_fs.open_private_browser_directory(root, os.getuid()) as directory:
         path = root / "DevToolsActivePort"
-        path.write_bytes(_payload())
-        path.chmod(0o600)
-        observed = private_fs.read_private_browser_file(directory, path.name, os.getuid(), 256)
-        assert observed is not None
+        observed = _observed_endpoint(directory, path)
         replacement = b"9223\n/devtools/browser/after-quarantine\n"
-        original = private_fs.os.rename
 
-        def replace_after(source: str, destination: str, *, src_dir_fd: int, dst_dir_fd: int) -> None:
-            original(source, destination, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+        def publish() -> None:
             path.write_bytes(replacement)
             path.chmod(0o600)
 
-        monkeypatch.setattr(private_fs.os, "rename", replace_after)
+        _interpose_initial_move(monkeypatch, after=publish)
         # When: cleanup removes its quarantined inode.
         private_fs.unlink_private_browser_file(directory, path.name, observed, os.getuid())
         # Then: the post-quarantine entry remains at the public endpoint name.
@@ -250,10 +258,7 @@ def test_private_file_rejects_preexisting_quarantine_name(tmp_path: Path, monkey
     root = tmp_path / "profile"
     with private_fs.open_private_browser_directory(root, os.getuid()) as directory:
         path = root / "DevToolsActivePort"
-        path.write_bytes(_payload())
-        path.chmod(0o600)
-        observed = private_fs.read_private_browser_file(directory, path.name, os.getuid(), 256)
-        assert observed is not None
+        observed = _observed_endpoint(directory, path)
         token = "collision"
         (root / f"{private_fs._QUARANTINE_PREFIX}{token}").mkdir(mode=0o700)
         monkeypatch.setattr(private_fs.secrets, "token_hex", lambda _size: token)
@@ -262,6 +267,34 @@ def test_private_file_rejects_preexisting_quarantine_name(tmp_path: Path, monkey
             private_fs.unlink_private_browser_file(directory, path.name, observed, os.getuid())
         # Then: it fails closed and leaves the observed endpoint unchanged.
         assert raised.value.reason == "local_browser_private_file_invalid" and path.read_bytes() == _payload()
+
+
+def test_private_file_preserves_source_when_quarantine_destination_is_injected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: an injected endpoint appears in the fresh quarantine before the initial move.
+    root = tmp_path / "profile"
+    with private_fs.open_private_browser_directory(root, os.getuid()) as directory:
+        path = root / "DevToolsActivePort"
+        observed = _observed_endpoint(directory, path)
+        injected = b"9223\n/devtools/browser/quarantine-injected\n"
+        original = private_fs.rename_entry_exclusively
+
+        def inject(source_directory: int, source: str, destination_directory: int, destination: str) -> None:
+            quarantine = next(root.glob(f"{private_fs._QUARANTINE_PREFIX}*"))
+            injected_path = quarantine / destination
+            injected_path.write_bytes(injected)
+            injected_path.chmod(0o600)
+            original(source_directory, source, destination_directory, destination)
+
+        monkeypatch.setattr(private_fs, "rename_entry_exclusively", inject)
+        # When: the initial source-to-quarantine move sees the injected destination.
+        with pytest.raises(private_fs.InvalidLocalBrowserPrivateFsError) as raised:
+            private_fs.unlink_private_browser_file(directory, path.name, observed, os.getuid())
+        # Then: exclusive rename preserves both the public source and injected quarantine entry.
+        quarantine = next(root.glob(f"{private_fs._QUARANTINE_PREFIX}*"))
+        assert raised.value.reason == "local_browser_private_file_replaced"
+        assert path.read_bytes() == _payload() and (quarantine / path.name).read_bytes() == injected
 
 
 def test_private_directory_closes_descriptor_for_its_own_validation_error(
