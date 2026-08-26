@@ -8,6 +8,10 @@ from typing import Literal
 import anyio
 from pydantic import BaseModel, ConfigDict, Field
 
+from trading_agent.autonomous_supervisor_service import (
+    AutonomousSupervisorStatus,
+    autonomous_supervisor_status_for_config,
+)
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.private_directory_identity import open_private_parent, require_private_directory
@@ -36,6 +40,7 @@ class ResearchOsRuntimeReport(BaseModel):
     schema_version: Literal[2] = 2
     operation: Literal["tick", "run"]
     role_agents: ResearchAgentServiceReport
+    autonomous_supervisor: AutonomousSupervisorStatus
     strategy_research: StrategyResearchRuntimeStatus
     day_discovery_markets: tuple[DayDiscoveryMarketRuntimeReport, ...] = ()
     daily_reports_projected: int = Field(default=0, ge=0)
@@ -69,9 +74,12 @@ def run_research_os_tick(
             now,
             forward_observations=load_forward_observations(config.source_paths.day_session_root),
         )
+    role_agents = run_service_tick(config, now)
+    supervisor = autonomous_supervisor_status_for_config(config, now)
     report = ResearchOsRuntimeReport(
         operation=operation,
-        role_agents=run_service_tick(config, now),
+        role_agents=role_agents,
+        autonomous_supervisor=supervisor,
         strategy_research=research,
         day_discovery_markets=day_discovery_market_runtime(ledger),
         daily_reports_projected=daily.inserted,

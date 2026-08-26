@@ -44,6 +44,12 @@ class InvalidAutonomousSupervisorProjectionError(RuntimeError):
 class AutonomousSupervisorAdapter:
     runtime: AutonomousSupervisorRuntime
 
+    def close(self) -> None:
+        try:
+            self.runtime.tasks.close()
+        finally:
+            self.runtime.memories.close()
+
     def tick(
         self,
         evidence: ResearchAgentEvidenceV1,

@@ -1,0 +1,4 @@
+help_exit=0
+bad_exit=2
+setup_exit=0
+happy_exit=0

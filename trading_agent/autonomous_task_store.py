@@ -95,6 +95,9 @@ class AutonomousTaskStore:
     def reader(self) -> AutonomousTaskReader:
         return AutonomousTaskReader(self.path)
 
+    def close(self) -> None:
+        return
+
 
 class AutonomousTaskWriter:
     __slots__ = ("_active", "_connection", "_flush", "_reconcile")

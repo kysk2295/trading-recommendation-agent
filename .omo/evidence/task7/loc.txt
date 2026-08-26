@@ -1,0 +1,16 @@
+188 tests/test_autonomous_supervisor_service.py
+66 tests/test_research_agent_service_boundaries.py
+242 tests/test_research_agent_service_cli.py
+249 tests/test_research_agent_service_runtime.py
+220 trading_agent/autonomous_memory_store.py
+213 trading_agent/autonomous_supervisor_adapter.py
+223 trading_agent/autonomous_supervisor_service.py
+245 trading_agent/autonomous_task_store.py
+240 trading_agent/research_agent_runtime.py
+93 trading_agent/research_agent_runtime_models.py
+150 trading_agent/research_agent_service_builder.py
+81 trading_agent/research_agent_service_models.py
+246 trading_agent/research_agent_service_operations.py
+153 trading_agent/research_agent_service_reporting.py
+36 trading_agent/research_agent_service_runtime.py
+113 trading_agent/research_os_runtime.py

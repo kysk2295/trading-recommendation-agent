@@ -1,0 +1,12 @@
+usage: run_research_agent_runtime.py [-h]
+                                     {provision,verify,status,activate,replace,tick,cycle,run}
+                                     ...
+
+Persistent runtime with six independent strategy research agents
+
+positional arguments:
+  {provision,verify,status,activate,replace,tick,cycle,run}
+    provision           private config와 단일 LaunchAgent 생성
+
+options:
+  -h, --help            show this help message and exit

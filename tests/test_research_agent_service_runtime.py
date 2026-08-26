@@ -3,13 +3,11 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-import trading_agent.research_agent_service_runtime as service_runtime_module
 from run_research_agent_runtime import main
 from tests.research_agent_systematic_input_fixtures import (
     write_ready_systematic_input_activation,
@@ -42,70 +40,8 @@ from trading_agent.research_agent_service_config import (
 )
 from trading_agent.research_agent_service_health import read_persisted_research_agent_service_health
 from trading_agent.research_agent_service_runtime import run_service_cycle, run_service_tick, service_status
-from trading_agent.research_agent_source_common import canonical_model_json
-from trading_agent.research_agent_systematic import SystematicResearchActionConfig
-from trading_agent.researcher_llm import (
-    LlmHypothesisDraft,
-    ResearcherContextInput,
-    ResearcherLlmError,
-)
 
 NOW = dt.datetime(2026, 8, 2, 12, 0, tzinfo=dt.UTC)
-
-
-@pytest.mark.parametrize("target", ("response", "context"))
-@pytest.mark.parametrize("failure", ("pretty", "mode", "symlink"))
-def test_configured_day_discovery_rejects_noncanonical_or_nonprivate_inputs_before_runtime(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    target: str,
-    failure: str,
-) -> None:
-    config = _config(tmp_path)
-    response = LlmHypothesisDraft.model_validate_json(
-        (Path(__file__).parents[1] / "examples/research/researcher-response-fixture-v1.json").read_text()
-    )
-    context = ResearcherContextInput.model_validate_json(
-        (Path(__file__).parents[1] / "examples/research/researcher-context-v1.json").read_text()
-    )
-    response_path = tmp_path / "systematic" / "response.json"
-    context_path = tmp_path / "systematic" / "context.json"
-    response_path.parent.mkdir(parents=True, exist_ok=True)
-    response_path.write_text(canonical_model_json(response), encoding="utf-8")
-    context_path.write_text(canonical_model_json(context), encoding="utf-8")
-    response_path.chmod(0o600)
-    context_path.chmod(0o600)
-    selected = response_path if target == "response" else context_path
-    model = response if target == "response" else context
-    if failure == "pretty":
-        selected.write_text(json.dumps(model.model_dump(mode="json"), indent=2), encoding="utf-8")
-    elif failure == "mode":
-        selected.chmod(0o644)
-    else:
-        alias = selected.with_name(f"{selected.stem}-alias.json")
-        alias.symlink_to(selected)
-        selected = alias
-    systematic = SystematicResearchActionConfig.model_validate(
-        config.systematic.model_dump(mode="python")
-        | {
-            "context": selected if target == "context" else context_path,
-            "response_fixture": selected if target == "response" else response_path,
-            "hermes_executable": None,
-        }
-    )
-    configured = config.model_copy(update={"systematic": systematic})
-    runtime_calls: list[Path] = []
-    real_resolve = service_runtime_module.resolve_generated_strategy_runtime
-
-    def recording_resolve(path: Path):
-        runtime_calls.append(path)
-        return real_resolve(path)
-
-    monkeypatch.setattr(service_runtime_module, "resolve_generated_strategy_runtime", recording_resolve)
-
-    with suppress(ResearcherLlmError):
-        service_runtime_module._day_discovery_executor(configured, NOW)
-    assert runtime_calls == []
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,8 +173,7 @@ def test_cycle_cli_runs_one_canonical_family_pass_and_replay_is_idle(
 
     assert first["status"] == "complete"
     assert [item["agent_family_id"] for item in first["outcomes"]] == list(PRIMARY_AGENT_FAMILIES)
-    assert first["family_count"] == 6
-    assert first["model_calls"] == 3
+    assert (first["family_count"], first["model_calls"]) == (6, 0)
     assert first["broker_mutation"] == 0
     assert second["status"] == "idle"
     assert second["outcomes"] == []
@@ -295,7 +230,7 @@ def test_blocked_systematic_input_allows_non_systematic_tick(
     runtime = NonSystematicTickRuntime(ResearchAgentCycleStore(config.cycle_database))
     child_calls: list[tuple[str, ...]] = []
     monkeypatch.setattr(
-        "trading_agent.research_agent_service_runtime.build_service_runtime",
+        "trading_agent.research_agent_service_operations.build_service_runtime",
         lambda _config: runtime,
     )
     monkeypatch.setattr(

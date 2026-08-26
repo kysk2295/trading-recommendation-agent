@@ -109,6 +109,12 @@ def test_plist_contains_one_keepalive_service_and_no_secrets(tmp_path: Path) -> 
     assert payload["Label"] == RESEARCH_AGENT_SERVICE_LABEL
     assert payload["KeepAlive"] is True
     assert payload["RunAtLoad"] is True
+    assert payload["ProgramArguments"][-4:] == [
+        str(WORKTREE / "run_research_agent_runtime.py"),
+        "run",
+        "--config",
+        str(config_path),
+    ]
     assert payload["StandardOutPath"] == payload["StandardErrorPath"] == "/dev/null"
     assert stat.S_IMODE(config_path.stat().st_mode) == 0o600
     assert stat.S_IMODE(plist_path.stat().st_mode) == 0o600
@@ -116,6 +122,7 @@ def test_plist_contains_one_keepalive_service_and_no_secrets(tmp_path: Path) -> 
     assert "API_KEY" not in text
     assert "TOKEN" not in text
     assert "account" not in text.lower()
+    assert not any(word in text.lower() for word in ("codex", "thread", "browser", "chat", "task_id"))
 
 
 def test_service_config_uses_strict_schema_v2_and_rejects_v1(tmp_path: Path) -> None:

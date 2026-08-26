@@ -1,0 +1,25 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ test_repeated_status_and_tools_close_owned_handles_and_reopen _________
+
+tmp_path = PosixPath('/private/var/folders/6k/q8mw1z2n2l32r1fy0d895tr80000gn/T/pytest-of-goyunseo/pytest-2560/test_repeated_status_and_tools0')
+
+    def test_repeated_status_and_tools_close_owned_handles_and_reopen(tmp_path: Path) -> None:
+        # Given: one durable task and a baseline process descriptor count.
+        config = _config(tmp_path)
+        adapter = build_autonomous_supervisor(config, client=_defer_client(), clock=lambda: NOW)
+        result = adapter.tick(_evidence("day_trading", "a"), NOW)
+        assert result.task_id is not None
+        descriptors = Path("/dev/fd")
+        before = len(tuple(descriptors.iterdir()))
+
+        # When: query-owned stores and callback-owned stores are repeatedly opened and closed.
+        for _ in range(20):
+>           status = service_module.autonomous_supervisor_status_for_config(config, NOW)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: module 'trading_agent.autonomous_supervisor_service' has no attribute 'autonomous_supervisor_status_for_config'. Did you mean: 'autonomous_supervisor_status'?
+
+tests/test_autonomous_supervisor_service.py:102: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_autonomous_supervisor_service.py::test_repeated_status_and_tools_close_owned_handles_and_reopen
+1 failed in 1.01s

@@ -1,0 +1,60 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______________ test_research_os_report_persists_supervisor_status ______________
+
+tmp_path = PosixPath('/private/var/folders/6k/q8mw1z2n2l32r1fy0d895tr80000gn/T/pytest-of-goyunseo/pytest-2555/test_research_os_report_persis0')
+
+    def test_research_os_report_persists_supervisor_status(tmp_path: Path) -> None:
+        # Given: a production-shaped combined Research OS configuration.
+        config = _config(tmp_path)
+
+        # When: one real combined service tick is completed and persisted.
+        report = run_research_os_tick(config, NOW)
+        persisted = ResearchOsRuntimeReport.model_validate_json(
+            (config.output_root / "research-os-runtime-status.json").read_text(encoding="utf-8")
+        )
+
+        # Then: durable supervisor status is part of both report surfaces.
+>       assert report.autonomous_supervisor.enabled is True
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_autonomous_supervisor_service.py:135:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = ResearchOsRuntimeReport(schema_version=2, operation='tick', role_agents=ResearchAgentServiceReport(schema_version=2, c...observed_at=datetime.datetime(2026, 8, 26, 12, 0, tzinfo=datetime.timezone.utc), broker_mutation=0, trading_mutation=0)
+item = 'autonomous_supervisor'
+
+    def __getattr__(self, item: str) -> Any:
+        private_attributes = object.__getattribute__(self, '__private_attributes__')
+        if item in private_attributes:
+            attribute = private_attributes[item]
+            if hasattr(attribute, '__get__'):
+                return attribute.__get__(self, type(self))  # type: ignore
+
+            try:
+                # Note: self.__pydantic_private__ cannot be None if self.__private_attributes__ has items
+                return self.__pydantic_private__[item]  # type: ignore
+            except KeyError as exc:
+                raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}') from exc
+        else:
+            # `__pydantic_extra__` can fail to be set if the model is not yet fully initialized.
+            # See `BaseModel.__repr_args__` for more details
+            try:
+                pydantic_extra = object.__getattribute__(self, '__pydantic_extra__')
+            except AttributeError:
+                pydantic_extra = None
+
+            if pydantic_extra and item in pydantic_extra:
+                return pydantic_extra[item]
+            else:
+                if hasattr(self.__class__, item):
+                    return super().__getattribute__(item)  # Raises AttributeError if appropriate
+                else:
+                    # this is the current error
+>                   raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+E                   AttributeError: 'ResearchOsRuntimeReport' object has no attribute 'autonomous_supervisor'
+
+.venv/lib/python3.12/site-packages/pydantic/main.py:1042: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_autonomous_supervisor_service.py::test_research_os_report_persists_supervisor_status
+1 failed in 0.98s

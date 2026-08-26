@@ -63,7 +63,15 @@ class ResearchAgentRuntime:
         self._supervisor_runtime = services.supervisor_runtime
 
     def close(self) -> None:
-        self.store.close()
+        try:
+            self.store.close()
+        finally:
+            if isinstance(self._supervisor_runtime, PersistentResearchSupervisor):
+                self._supervisor_runtime.close()
+
+    @property
+    def supervisor_enabled(self) -> bool:
+        return self._supervisor_runtime is not None
 
     def ingest(self, evidence: tuple[ResearchAgentEvidenceV1, ...]) -> int:
         return sum(self.store.append_evidence(item) for item in evidence)

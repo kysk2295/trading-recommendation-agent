@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
-from typing import Literal, Protocol, Self
+from typing import Literal, Protocol, Self, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -24,7 +24,10 @@ class ResearchAgentEvidenceCollector(Protocol):
     def collect(self, now: dt.datetime) -> ResearchAgentSourceCollectionBatch: ...
 
 
+@runtime_checkable
 class PersistentResearchSupervisor(Protocol):
+    def close(self) -> None: ...
+
     def tick(
         self,
         evidence: ResearchAgentEvidenceV1,

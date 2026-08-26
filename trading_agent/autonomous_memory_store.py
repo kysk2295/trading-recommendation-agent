@@ -42,6 +42,9 @@ class AutonomousMemoryStore:
         absolute = Path(os.path.abspath(path.expanduser()))
         self.path = absolute.parent.resolve(strict=False) / absolute.name
 
+    def close(self) -> None:
+        return
+
     @contextmanager
     def writer(self) -> Iterator[AutonomousMemoryWriter]:
         parent = -1
