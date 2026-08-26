@@ -220,6 +220,6 @@ def require_snapshot(identity: DatabaseIdentity) -> None:
         not stat.S_ISREG(metadata.st_mode)
         or metadata.st_uid != os.getuid()
         or stat.S_IMODE(metadata.st_mode) != 0o600
-        or metadata.st_nlink != 1
+        or metadata.st_nlink not in {0, 1}
     ):
         raise OSError

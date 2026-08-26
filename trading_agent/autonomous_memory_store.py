@@ -141,8 +141,12 @@ class AutonomousMemoryReader:
         return self._records("WHERE memory_key=? ORDER BY version", (memory_key,))
 
     def search(
-        self, scope: AutonomousMemoryScope, subject_refs: tuple[str, ...], *, limit: int
+        self, scope: AutonomousMemoryScope | str, subject_refs: tuple[str, ...], *, limit: int
     ) -> tuple[AutonomousMemoryRecord, ...]:
+        try:
+            parsed_scope = AutonomousMemoryScope(scope)
+        except ValueError as error:
+            raise InvalidAutonomousMemoryStoreError(reason="search_scope_invalid") from error
         if type(limit) is not int or not 1 <= limit <= 32:
             raise InvalidAutonomousMemoryStoreError(reason="search_limit_invalid")
         if (
@@ -154,7 +158,7 @@ class AutonomousMemoryReader:
             raise InvalidAutonomousMemoryStoreError(reason="search_subject_refs_invalid")
         matches = tuple(
             record
-            for record in self._records("WHERE scope=?", (scope.value,))
+            for record in self._records("WHERE scope=?", (parsed_scope.value,))
             if set(record.subject_refs) & set(subject_refs)
         )
         return tuple(

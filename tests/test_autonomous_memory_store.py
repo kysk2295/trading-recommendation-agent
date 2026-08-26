@@ -141,3 +141,42 @@ def test_reader_returns_empty_for_absent_database(tmp_path: Path) -> None:
     # Then
     assert reader.latest("market.005930.catalyst") is None
     assert reader.history("market.005930.catalyst") == ()
+
+
+def test_search_rejects_invalid_scope_without_leaking_raw_input(tmp_path: Path) -> None:
+    # Given
+    reader = AutonomousMemoryStore(tmp_path / "missing.sqlite3").reader()
+
+    # When / Then
+    with pytest.raises(InvalidAutonomousMemoryStoreError, match="search_scope_invalid"):
+        reader.search("untrusted-scope", ("symbol:005930",), limit=1)
+
+
+@pytest.mark.parametrize("subject_refs", [(), ("symbol:005930", "symbol:005930"), ("symbol:z", "symbol:a")])
+def test_search_rejects_empty_duplicate_or_unsorted_subject_refs(tmp_path: Path, subject_refs: tuple[str, ...]) -> None:
+    reader = AutonomousMemoryStore(tmp_path / "missing.sqlite3").reader()
+    with pytest.raises(InvalidAutonomousMemoryStoreError, match="search_subject_refs_invalid"):
+        reader.search(AutonomousMemoryScope.MARKET, subject_refs, limit=1)
+
+
+@pytest.mark.parametrize("limit", [0, 33])
+def test_search_rejects_out_of_range_limits(tmp_path: Path, limit: int) -> None:
+    reader = AutonomousMemoryStore(tmp_path / "missing.sqlite3").reader()
+    with pytest.raises(InvalidAutonomousMemoryStoreError, match="search_limit_invalid"):
+        reader.search(AutonomousMemoryScope.MARKET, ("symbol:005930",), limit=limit)
+
+
+def test_search_isolates_scope_and_breaks_equal_time_version_ties_by_memory_id(tmp_path: Path) -> None:
+    path = tmp_path / "memory.sqlite3"
+    first = record_fixture(memory_key="market.005930.alpha", subject_refs=("symbol:005930",))
+    second = record_fixture(memory_key="market.005930.beta", subject_refs=("symbol:005930",))
+    other_scope = record_fixture(
+        memory_key="strategy.005930.alpha",
+        scope=AutonomousMemoryScope.STRATEGY,
+        subject_refs=("symbol:005930",),
+    )
+    with AutonomousMemoryStore(path).writer() as writer:
+        for record in (first, second, other_scope):
+            assert writer.append(record)
+    found = AutonomousMemoryStore(path).reader().search(AutonomousMemoryScope.MARKET, ("symbol:005930",), limit=2)
+    assert found == tuple(sorted((first, second), key=lambda record: record.memory_id))
