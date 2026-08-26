@@ -19,10 +19,14 @@ from trading_agent.autonomous_reasoning import (
 from trading_agent.autonomous_supervisor_runtime import AutonomousSupervisorRuntime
 from trading_agent.autonomous_task_models import AutonomousAgentRole, AutonomousSupervisorTickResult
 from trading_agent.autonomous_task_store import AutonomousTaskStore
-from trading_agent.autonomous_tool_runtime import AutonomousToolBinding, AutonomousToolRuntime
+from trading_agent.autonomous_tool_runtime import (
+    AutonomousToolBinding,
+    AutonomousToolExecutionContext,
+    AutonomousToolRuntime,
+)
 
 
-def observed_tool(_args: AutonomousToolArguments) -> str:
+def observed_tool(_args: AutonomousToolArguments, _context: AutonomousToolExecutionContext) -> str:
     return '{"status":"observed"}'
 
 
@@ -204,6 +208,28 @@ def test_concurrent_ticks_invoke_and_apply_tool_once(tmp_path: Path) -> None:
     }
     assert invocations.read_text(encoding="utf-8").splitlines() == ["invoked"]
     assert kinds == ("decision", "observation", "wait")
+
+
+def test_tool_child_receives_trusted_current_task_context(tmp_path: Path) -> None:
+    marker = tmp_path / "trusted-task-id"
+    call = AutonomousToolCall(
+        tool_name="evidence.read",
+        args=AutonomousToolArguments({"evidence_id": "a" * 64}),
+        reason="Read through the child worker using only trusted task context.",
+    )
+    runtime = _runtime(
+        tmp_path,
+        fixture_reasoner(tmp_path, (call,)),
+        fixture_tool("context", primary=marker),
+    )
+    task = task_fixture()
+    with runtime.tasks.writer() as writer:
+        assert writer.create_task(task)
+
+    result = runtime.tick(task, NOW)
+
+    assert result.status == "waiting"
+    assert marker.read_text(encoding="ascii") == task.task_id
 
 
 def test_secondary_thread_tick_returns_without_forking_callback(tmp_path: Path) -> None:

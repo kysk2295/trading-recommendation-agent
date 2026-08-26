@@ -34,6 +34,7 @@ from trading_agent.autonomous_task_models import (
     AutonomousTaskStep,
 )
 from trading_agent.autonomous_task_store import AutonomousTaskStore
+from trading_agent.autonomous_tool_runtime import trusted_tool_context
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +84,7 @@ class AutonomousSupervisorReducer:
         decision_hash = context.decision.decision_hash
         match response:
             case AutonomousToolCall() as call:
-                observation = self.tools.dispatch(task.owner_role, call)
+                observation = self.tools.dispatch(task.owner_role, call, trusted_tool_context(task))
                 projection = StepProjection(
                     role=task.owner_role,
                     state=_active_state(task.owner_role),

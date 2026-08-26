@@ -12,9 +12,14 @@ from trading_agent.autonomous_reasoning import AutonomousToolArguments, Autonomo
 from trading_agent.autonomous_task_models import AutonomousAgentRole
 from trading_agent.autonomous_tool_runtime import (
     AutonomousToolBinding,
+    AutonomousToolExecutionContext,
     AutonomousToolInvocationError,
     AutonomousToolRuntime,
     AutonomousToolRuntimeError,
+)
+
+CONTEXT = AutonomousToolExecutionContext.model_validate(
+    {"task_id": "b" * 64, "agent_family_id": "day_trading", "market_scope": "us_equities"}
 )
 
 
@@ -28,10 +33,11 @@ def _call(**arguments: str) -> AutonomousToolCall:
 
 def _binding(
     *,
-    invoke: Callable[[AutonomousToolArguments], str] | None = None,
+    invoke: Callable[[AutonomousToolArguments, AutonomousToolExecutionContext], str] | None = None,
     name: str = "evidence.read",
 ) -> AutonomousToolBinding:
-    def read(arguments: AutonomousToolArguments) -> str:
+    def read(arguments: AutonomousToolArguments, context: AutonomousToolExecutionContext) -> str:
+        del arguments, context
         return '{"symbol":"NVDA","source":"fixture"}'
 
     return AutonomousToolBinding(
@@ -52,7 +58,7 @@ def test_dispatch_canonicalizes_hashes_and_normalizes_clock() -> None:
     call = _call()
 
     # When: an authorized role invokes its registered tool.
-    observation = runtime.dispatch(AutonomousAgentRole.MARKET_OBSERVER, call)
+    observation = runtime.dispatch(AutonomousAgentRole.MARKET_OBSERVER, call, CONTEXT)
 
     # Then: output is canonical, content-addressed, and timestamped in UTC.
     assert runtime.allowed_tool_names == ("evidence.read",)
@@ -77,7 +83,8 @@ def test_dispatch_denies_authority_before_binding_invocation(
     # Given: a binding records whether it was invoked.
     invoked: list[bool] = []
 
-    def forbidden(arguments: AutonomousToolArguments) -> str:
+    def forbidden(arguments: AutonomousToolArguments, context: AutonomousToolExecutionContext) -> str:
+        del arguments, context
         invoked.append(True)
         return "{}"
 
@@ -85,7 +92,7 @@ def test_dispatch_denies_authority_before_binding_invocation(
 
     # When / Then: denied authority never crosses into host code.
     with pytest.raises(AutonomousToolRuntimeError, match="autonomous_tool_authority_denied"):
-        runtime.dispatch(role, call)
+        runtime.dispatch(role, call, CONTEXT)
     assert invoked == []
 
 
@@ -95,22 +102,30 @@ def test_runtime_rejects_duplicate_unknown_failure_invalid_output_and_invalid_cl
         AutonomousToolRuntime(bindings=(_binding(), _binding()), clock=lambda: NOW)
     runtime = AutonomousToolRuntime(bindings=(_binding(),), clock=lambda: dt.datetime(2026, 8, 26, 12, 0))
     with pytest.raises(AutonomousToolRuntimeError, match="autonomous_tool_authority_denied"):
-        runtime.dispatch(AutonomousAgentRole.MARKET_OBSERVER, _call().model_copy(update={"tool_name": "missing.tool"}))
+        runtime.dispatch(
+            AutonomousAgentRole.MARKET_OBSERVER,
+            _call().model_copy(update={"tool_name": "missing.tool"}),
+            CONTEXT,
+        )
     with pytest.raises(AutonomousToolRuntimeError, match="autonomous_tool_clock_invalid"):
-        runtime.dispatch(AutonomousAgentRole.MARKET_OBSERVER, _call())
+        runtime.dispatch(AutonomousAgentRole.MARKET_OBSERVER, _call(), CONTEXT)
 
-    def failed(arguments: AutonomousToolArguments) -> str:
+    def failed(arguments: AutonomousToolArguments, context: AutonomousToolExecutionContext) -> str:
+        del arguments, context
         raise AutonomousToolInvocationError(reason="fixture_failed")
 
     with pytest.raises(AutonomousToolRuntimeError, match="autonomous_tool_invocation_failed"):
         AutonomousToolRuntime(bindings=(_binding(invoke=failed),), clock=lambda: NOW).dispatch(
-            AutonomousAgentRole.MARKET_OBSERVER, _call()
+            AutonomousAgentRole.MARKET_OBSERVER, _call(), CONTEXT
         )
     with pytest.raises(AutonomousToolRuntimeError, match="autonomous_tool_result_invalid"):
-        AutonomousToolRuntime(bindings=(_binding(invoke=lambda arguments: "not-json"),), clock=lambda: NOW).dispatch(
-            AutonomousAgentRole.MARKET_OBSERVER, _call()
+        AutonomousToolRuntime(
+            bindings=(_binding(invoke=lambda arguments, context: "not-json"),),
+            clock=lambda: NOW,
+        ).dispatch(
+            AutonomousAgentRole.MARKET_OBSERVER, _call(), CONTEXT
         )
     with pytest.raises(AutonomousToolRuntimeError, match="autonomous_tool_result_too_large"):
         AutonomousToolRuntime(
-            bindings=(_binding(invoke=lambda arguments: '"' + "x" * 16_384 + '"'),), clock=lambda: NOW
-        ).dispatch(AutonomousAgentRole.MARKET_OBSERVER, _call())
+            bindings=(_binding(invoke=lambda arguments, context: '"' + "x" * 16_384 + '"'),), clock=lambda: NOW
+        ).dispatch(AutonomousAgentRole.MARKET_OBSERVER, _call(), CONTEXT)

@@ -10,8 +10,13 @@ from trading_agent.autonomous_reasoning import AutonomousToolArguments, Autonomo
 from trading_agent.autonomous_task_models import AutonomousAgentRole
 from trading_agent.autonomous_tool_runtime import (
     AutonomousToolBinding,
+    AutonomousToolExecutionContext,
     AutonomousToolRuntime,
     AutonomousToolRuntimeError,
+)
+
+CONTEXT = AutonomousToolExecutionContext.model_validate(
+    {"task_id": "b" * 64, "agent_family_id": "day_trading", "market_scope": "us_equities"}
 )
 
 _ROLES = frozenset({AutonomousAgentRole.MARKET_OBSERVER})
@@ -26,7 +31,9 @@ def _call(**values: str) -> AutonomousToolCall:
     )
 
 
-def _binding(invoke: Callable[[AutonomousToolArguments], str]) -> AutonomousToolBinding:
+def _binding(
+    invoke: Callable[[AutonomousToolArguments, AutonomousToolExecutionContext], str],
+) -> AutonomousToolBinding:
     return AutonomousToolBinding(
         name="evidence.read",
         allowed_roles=_ROLES,
@@ -59,7 +66,7 @@ def test_binding_rejects_exact_invalid_authority(
             name=name,
             allowed_roles=roles,
             allowed_arguments=arguments,
-            invoke=lambda arguments: "{}",
+            invoke=lambda arguments, context: "{}",
             evidence_refs=refs,
         )
 
@@ -69,7 +76,8 @@ def test_secret_argument_names_are_denied_before_invocation(argument_name: str) 
     # Given: an authorized tool would expose whether host code ran.
     invoked: list[str] = []
 
-    def invoke(arguments: AutonomousToolArguments) -> str:
+    def invoke(arguments: AutonomousToolArguments, context: AutonomousToolExecutionContext) -> str:
+        del arguments, context
         invoked.append("called")
         return "{}"
 
@@ -77,7 +85,7 @@ def test_secret_argument_names_are_denied_before_invocation(argument_name: str) 
 
     # When / Then: case-insensitive secret names cannot cross the host boundary.
     with pytest.raises(AutonomousToolRuntimeError, match=r"^autonomous_tool_authority_denied$"):
-        runtime.dispatch(AutonomousAgentRole.MARKET_OBSERVER, _call(**{argument_name: "denied"}))
+        runtime.dispatch(AutonomousAgentRole.MARKET_OBSERVER, _call(**{argument_name: "denied"}), CONTEXT)
     assert invoked == []
 
 
@@ -88,7 +96,8 @@ def test_dispatch_cannot_observe_post_validation_argument_changes() -> None:
     raw["evidence_id"] = "changed-after-validation"
     observed: list[dict[str, str]] = []
 
-    def invoke(values: AutonomousToolArguments) -> str:
+    def invoke(values: AutonomousToolArguments, context: AutonomousToolExecutionContext) -> str:
+        del context
         observed.append(dict(values.root))
         return "{}"
 
@@ -100,31 +109,38 @@ def test_dispatch_cannot_observe_post_validation_argument_changes() -> None:
     )
 
     # When / Then: host code sees only the frozen validation-time values.
-    runtime.dispatch(AutonomousAgentRole.MARKET_OBSERVER, call)
+    runtime.dispatch(AutonomousAgentRole.MARKET_OBSERVER, call, CONTEXT)
     assert observed == [{"evidence_id": "a" * 64}]
 
 
 def test_callback_exception_is_stable_and_does_not_leak_detail() -> None:
     # Given: a plugin violates its typed error contract with sensitive exception text.
-    def invoke(arguments: AutonomousToolArguments) -> str:
+    def invoke(arguments: AutonomousToolArguments, context: AutonomousToolExecutionContext) -> str:
+        del arguments, context
         raise ValueError("sensitive detail")  # noqa: RUF100 # noqa: GENERIC_ERR_OK: deliberate untyped plugin-boundary fixture validates stable host redaction
 
     runtime = AutonomousToolRuntime((_binding(invoke),), clock=lambda: NOW)
 
     # When / Then: the host callback boundary emits only its stable failure reason.
     with pytest.raises(AutonomousToolRuntimeError, match=r"^autonomous_tool_invocation_failed$") as raised:
-        runtime.dispatch(AutonomousAgentRole.MARKET_OBSERVER, _call())
+        runtime.dispatch(AutonomousAgentRole.MARKET_OBSERVER, _call(), CONTEXT)
     assert "sensitive detail" not in str(raised.value)
 
 
 def test_runtime_maps_invalid_output_size_and_clock_failures() -> None:
     # Given / When / Then: output and clock boundaries report exact stable reasons.
-    invalid = AutonomousToolRuntime((_binding(lambda arguments: "not-json"),), clock=lambda: NOW)
+    invalid = AutonomousToolRuntime((_binding(lambda arguments, context: "not-json"),), clock=lambda: NOW)
     with pytest.raises(AutonomousToolRuntimeError, match=r"^autonomous_tool_result_invalid$"):
-        invalid.dispatch(AutonomousAgentRole.MARKET_OBSERVER, _call())
-    oversized = AutonomousToolRuntime((_binding(lambda arguments: '"' + "x" * 16_384 + '"'),), clock=lambda: NOW)
+        invalid.dispatch(AutonomousAgentRole.MARKET_OBSERVER, _call(), CONTEXT)
+    oversized = AutonomousToolRuntime(
+        (_binding(lambda arguments, context: '"' + "x" * 16_384 + '"'),),
+        clock=lambda: NOW,
+    )
     with pytest.raises(AutonomousToolRuntimeError, match=r"^autonomous_tool_result_too_large$"):
-        oversized.dispatch(AutonomousAgentRole.MARKET_OBSERVER, _call())
-    clock = AutonomousToolRuntime((_binding(lambda arguments: "{}"),), clock=lambda: dt.datetime(2026, 8, 26, 12, 0))
+        oversized.dispatch(AutonomousAgentRole.MARKET_OBSERVER, _call(), CONTEXT)
+    clock = AutonomousToolRuntime(
+        (_binding(lambda arguments, context: "{}"),),
+        clock=lambda: dt.datetime(2026, 8, 26, 12, 0),
+    )
     with pytest.raises(AutonomousToolRuntimeError, match=r"^autonomous_tool_clock_invalid$"):
-        clock.dispatch(AutonomousAgentRole.MARKET_OBSERVER, _call())
+        clock.dispatch(AutonomousAgentRole.MARKET_OBSERVER, _call(), CONTEXT)

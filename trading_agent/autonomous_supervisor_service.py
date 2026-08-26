@@ -27,6 +27,7 @@ from trading_agent.autonomous_task_models import (
 from trading_agent.autonomous_task_store import AutonomousTaskStore
 from trading_agent.autonomous_tool_runtime import (
     AutonomousToolBinding,
+    AutonomousToolExecutionContext,
     AutonomousToolInvocationError,
     AutonomousToolRuntime,
 )
@@ -89,15 +90,17 @@ def configured_proposal_client(config: SystematicResearchActionConfig) -> LlmPro
     return HermesCliProposalClient(config.hermes_executable, config.model_id, config.provider_id)
 
 
-def evidence_read_tool(args: AutonomousToolArguments, *, task_database: str) -> str:
-    task_id = args.root.get("task_id")
-    if task_id is None:
-        raise AutonomousToolInvocationError(reason="evidence_task_id_missing")
+def evidence_read_tool(
+    _args: AutonomousToolArguments,
+    context: AutonomousToolExecutionContext,
+    *,
+    task_database: str,
+) -> str:
     store = AutonomousTaskStore(Path(task_database))
     try:
         admissions = tuple(
             payload.evidence_json
-            for step in store.reader().steps(task_id)
+            for step in store.reader().steps(context.task_id)
             if isinstance(payload := safe_payload(step), SourceAdmissionPayload)
         )
     finally:
@@ -106,7 +109,12 @@ def evidence_read_tool(args: AutonomousToolArguments, *, task_database: str) -> 
     return _canonical({"evidence": evidence})
 
 
-def memory_search_tool(args: AutonomousToolArguments, *, memory_database: str) -> str:
+def memory_search_tool(
+    args: AutonomousToolArguments,
+    _context: AutonomousToolExecutionContext,
+    *,
+    memory_database: str,
+) -> str:
     scope = args.root.get("scope")
     subject_ref = args.root.get("subject_ref")
     if scope is None or subject_ref is None:
@@ -131,13 +139,15 @@ def memory_search_tool(args: AutonomousToolArguments, *, memory_database: str) -
     return _canonical({"memories": projected})
 
 
-def task_history_tool(args: AutonomousToolArguments, *, task_database: str) -> str:
-    task_id = args.root.get("task_id")
-    if task_id is None:
-        raise AutonomousToolInvocationError(reason="history_task_id_missing")
+def task_history_tool(
+    _args: AutonomousToolArguments,
+    context: AutonomousToolExecutionContext,
+    *,
+    task_database: str,
+) -> str:
     store = AutonomousTaskStore(Path(task_database))
     try:
-        steps = store.reader().steps(task_id)[-32:]
+        steps = store.reader().steps(context.task_id)[-32:]
     finally:
         store.close()
     projected = tuple(
@@ -159,7 +169,7 @@ def build_foundation_tool_runtime(
     memories: AutonomousMemoryStore,
 ) -> AutonomousToolRuntime:
     bindings = (
-        _binding("evidence.read", frozenset({"task_id"}), evidence_read_tool, "task_database", tasks.path),
+        _binding("evidence.read", frozenset(), evidence_read_tool, "task_database", tasks.path),
         _binding(
             "memory.search",
             frozenset({"scope", "subject_ref"}),
@@ -167,7 +177,7 @@ def build_foundation_tool_runtime(
             "memory_database",
             memories.path,
         ),
-        _binding("task.history", frozenset({"task_id"}), task_history_tool, "task_database", tasks.path),
+        _binding("task.history", frozenset(), task_history_tool, "task_database", tasks.path),
     )
     return AutonomousToolRuntime(bindings, utc_clock, worker_modules=frozenset({_WORKER_MODULE}))
 

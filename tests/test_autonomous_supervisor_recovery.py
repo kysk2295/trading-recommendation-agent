@@ -32,6 +32,7 @@ from trading_agent.autonomous_task_models import AutonomousAgentRole, Autonomous
 from trading_agent.autonomous_task_store import AutonomousTaskStore
 from trading_agent.autonomous_tool_runtime import (
     AutonomousToolBinding,
+    AutonomousToolExecutionContext,
     AutonomousToolInvocationError,
     AutonomousToolRuntime,
 )
@@ -54,19 +55,19 @@ def _zero() -> float:
     return 0.0
 
 
-def _empty_tool(_args: AutonomousToolArguments) -> str:
+def _empty_tool(_args: AutonomousToolArguments, _context: AutonomousToolExecutionContext) -> str:
     return "{}"
 
 
-def _observed_tool(_args: AutonomousToolArguments) -> str:
+def _observed_tool(_args: AutonomousToolArguments, _context: AutonomousToolExecutionContext) -> str:
     return '{"status":"observed"}'
 
 
-def _crash_tool(_args: AutonomousToolArguments) -> str:
+def _crash_tool(_args: AutonomousToolArguments, _context: AutonomousToolExecutionContext) -> str:
     raise CrashSentinel
 
 
-def _fail_tool(_args: AutonomousToolArguments) -> str:
+def _fail_tool(_args: AutonomousToolArguments, _context: AutonomousToolExecutionContext) -> str:
     raise AutonomousToolInvocationError(reason="fixture_tool_failure")
 
 

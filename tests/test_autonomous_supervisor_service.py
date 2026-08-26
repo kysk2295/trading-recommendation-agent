@@ -21,6 +21,9 @@ from trading_agent.autonomous_supervisor_service import (
     build_autonomous_supervisor,
 )
 from trading_agent.autonomous_task_store import AutonomousTaskStore, AutonomousTaskStoreError
+from trading_agent.autonomous_tool_runtime import (
+    AutonomousToolExecutionContext,
+)
 from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
 from trading_agent.research_agent_service_runtime import build_service_runtime
 from trading_agent.research_os_runtime import ResearchOsRuntimeReport, run_research_os_tick
@@ -101,6 +104,11 @@ def test_repeated_status_and_tools_close_owned_handles_and_reopen(tmp_path: Path
     adapter = build_autonomous_supervisor(config, client=_defer_client(), clock=lambda: NOW)
     result = adapter.tick(_evidence("day_trading", "a"), NOW)
     assert result.task_id is not None
+    context = AutonomousToolExecutionContext(
+        task_id=result.task_id,
+        agent_family_id="day_trading",
+        market_scope="kr_equities",
+    )
     descriptors = Path("/dev/fd")
     before = len(tuple(descriptors.iterdir()))
 
@@ -111,9 +119,10 @@ def test_repeated_status_and_tools_close_owned_handles_and_reopen(tmp_path: Path
             AutonomousAgentRole.SUPERVISOR,
             AutonomousToolCall(
                 tool_name="task.history",
-                args=AutonomousToolArguments({"task_id": result.task_id}),
+                args=AutonomousToolArguments({}),
                 reason="Read bounded history while checking owned resource closure.",
             ),
+            context,
         )
         assert status.total_tasks == 1
     adapter.close()
@@ -130,6 +139,11 @@ def test_foundation_tools_read_bounded_durable_state(tmp_path: Path) -> None:
     adapter = build_autonomous_supervisor(_config(tmp_path), client=_defer_client(), clock=lambda: NOW)
     result = adapter.tick(_evidence("day_trading", "a"), NOW)
     assert result.task_id is not None
+    context = AutonomousToolExecutionContext(
+        task_id=result.task_id,
+        agent_family_id="day_trading",
+        market_scope="kr_equities",
+    )
 
     # When: the supervisor invokes each foundation read tool.
     role = AutonomousAgentRole.SUPERVISOR
@@ -137,17 +151,19 @@ def test_foundation_tools_read_bounded_durable_state(tmp_path: Path) -> None:
         role,
         AutonomousToolCall(
             tool_name="evidence.read",
-            args=AutonomousToolArguments({"task_id": result.task_id}),
+            args=AutonomousToolArguments({}),
             reason="Read the bounded source evidence for this durable task.",
         ),
+        context,
     )
     history = adapter.runtime.tools.dispatch(
         role,
         AutonomousToolCall(
             tool_name="task.history",
-            args=AutonomousToolArguments({"task_id": result.task_id}),
+            args=AutonomousToolArguments({}),
             reason="Read the bounded durable step history for this task.",
         ),
+        context,
     )
     memories = adapter.runtime.tools.dispatch(
         role,
@@ -156,6 +172,7 @@ def test_foundation_tools_read_bounded_durable_state(tmp_path: Path) -> None:
             args=AutonomousToolArguments({"scope": "market", "subject_ref": "005930"}),
             reason="Search bounded durable memories for this market subject.",
         ),
+        context,
     )
 
     # Then: callbacks return canonical JSON without mutation authority.

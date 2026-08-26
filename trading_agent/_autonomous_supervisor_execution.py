@@ -14,11 +14,10 @@ from typing import Final, Literal, Protocol
 from pydantic import ValidationError
 
 from trading_agent._autonomous_supervisor_process import AutonomousExecutionError, reap_direct, reap_group
+from trading_agent._autonomous_supervisor_tool_worker import tool_worker
 from trading_agent._autonomous_supervisor_wire import (
     ReasonerWire,
-    ToolRuntimeWire,
     build_reasoner,
-    build_tools,
     reasoner_wire,
     tools_wire,
 )
@@ -32,7 +31,10 @@ from trading_agent.autonomous_reasoning import (
     InvalidAutonomousReasoningError,
 )
 from trading_agent.autonomous_task_models import AutonomousAgentRole, AutonomousTaskId
-from trading_agent.autonomous_tool_runtime import AutonomousToolRuntime, AutonomousToolRuntimeError
+from trading_agent.autonomous_tool_runtime import (
+    AutonomousToolExecutionContext,
+    AutonomousToolRuntime,
+)
 from trading_agent.private_directory_identity import (
     open_private_parent,
     require_open_directory_path,
@@ -58,7 +60,9 @@ class AutonomousExecutionCrash(BaseException):
 
 
 class AutonomousToolDispatcher(Protocol):
-    def dispatch(self, role: AutonomousAgentRole, call: AutonomousToolCall) -> AutonomousToolObservation: ...
+    def dispatch(
+        self, role: AutonomousAgentRole, call: AutonomousToolCall, context: AutonomousToolExecutionContext
+    ) -> AutonomousToolObservation: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,16 +74,34 @@ class BoundedAutonomousExecution:
 
     def next_step(self, request: AutonomousReasoningRequest) -> AutonomousReasoningResponse:
         payload = _call_in_worker(
-            "reason", self.reasoner, self.tools, request, None, None, self.timeout_seconds, self.total_timeout_seconds
+            "reason",
+            self.reasoner,
+            self.tools,
+            request,
+            None,
+            None,
+            None,
+            self.timeout_seconds,
+            self.total_timeout_seconds,
         )
         try:
             return AUTONOMOUS_REASONING_RESPONSE_ADAPTER.validate_json(payload)
         except ValidationError:
             raise AutonomousExecutionError(reason="autonomous_reasoning_result_invalid") from None
 
-    def dispatch(self, role: AutonomousAgentRole, call: AutonomousToolCall) -> AutonomousToolObservation:
+    def dispatch(
+        self, role: AutonomousAgentRole, call: AutonomousToolCall, context: AutonomousToolExecutionContext
+    ) -> AutonomousToolObservation:
         payload = _call_in_worker(
-            "tool", self.reasoner, self.tools, None, role, call, self.timeout_seconds, self.total_timeout_seconds
+            "tool",
+            self.reasoner,
+            self.tools,
+            None,
+            role,
+            call,
+            context,
+            self.timeout_seconds,
+            self.total_timeout_seconds,
         )
         try:
             return AutonomousToolObservation.model_validate_json(payload)
@@ -94,6 +116,7 @@ def _call_in_worker(
     request: AutonomousReasoningRequest | None,
     role: AutonomousAgentRole | None,
     call: AutonomousToolCall | None,
+    tool_context: AutonomousToolExecutionContext | None,
     callback_timeout: float,
     total_timeout: float,
 ) -> bytes:
@@ -103,9 +126,12 @@ def _call_in_worker(
     if operation == "reason" and request is not None:
         target = _reason_worker
         arguments = (send, reasoner_wire(reasoner), request.model_dump_json())
-    elif operation == "tool" and role is not None and call is not None:
-        target = _tool_worker
-        arguments = (send, tools_wire(tools), role.value, call.model_dump_json())
+    elif operation == "tool" and role is not None and call is not None and tool_context is not None:
+        target = tool_worker
+        arguments = (
+            send, tools_wire(tools), role.value, call.model_dump_json(),
+            tool_context.task_id, tool_context.agent_family_id, tool_context.market_scope,
+        )
     else:
         raise AutonomousExecutionError(reason="autonomous_execution_request_invalid")
     process = context.Process(target=target, args=arguments)
@@ -169,31 +195,6 @@ def _reason_worker(
         send.send_bytes(_ERROR + b"autonomous_reason_failed")
     except Exception:  # noqa: RUF100 # noqa: BROAD_EXCEPT_OK: isolate untrusted provider and tool callback failures
         send.send_bytes(_ERROR + b"autonomous_reason_failed")
-    except BaseException:  # noqa: RUF100 # noqa: BROAD_EXCEPT_OK: preserve process-crash semantics for restart replay
-        send.send_bytes(_CRASH)
-    finally:
-        send.close()
-
-
-def _tool_worker(
-    send: Connection,
-    tools_wire_spec: ToolRuntimeWire,
-    role_value: str,
-    call_json: str,
-) -> None:
-    try:
-        os.setsid()
-        send.send_bytes(_READY)
-        tools = build_tools(tools_wire_spec)
-        role = AutonomousAgentRole(role_value)
-        call = AutonomousToolCall.model_validate_json(call_json)
-        send.send_bytes(_ENTERED)
-        observation = tools.dispatch(role, call)
-        send.send_bytes(_OK + observation.model_dump_json().encode("utf-8"))
-    except AutonomousToolRuntimeError:
-        send.send_bytes(_ERROR + b"autonomous_tool_failed")
-    except Exception:  # noqa: RUF100 # noqa: BROAD_EXCEPT_OK: isolate untrusted host-tool callback failures
-        send.send_bytes(_ERROR + b"autonomous_tool_failed")
     except BaseException:  # noqa: RUF100 # noqa: BROAD_EXCEPT_OK: preserve process-crash semantics for restart replay
         send.send_bytes(_CRASH)
     finally:

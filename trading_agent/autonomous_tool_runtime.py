@@ -8,10 +8,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final, final
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from trading_agent.autonomous_reasoning import AutonomousToolArguments, AutonomousToolCall, AutonomousToolObservation
-from trading_agent.autonomous_task_models import AutonomousAgentRole
+from trading_agent.autonomous_task_models import AutonomousAgentRole, AutonomousResearchTask, AutonomousTaskId
+from trading_agent.dashboard_agent_family import AgentFamilyId
+from trading_agent.research_agent_cycle_models import MarketId
 
 _MAX_CONTENT_BYTES: Final = 16_384
 _SECRET_ARGUMENT: Final = re.compile(r"key|secret|token|password|authorization|account|credential", re.IGNORECASE)
@@ -44,12 +46,28 @@ class AutonomousToolInvocationError(RuntimeError):
         return self.reason
 
 
+class AutonomousToolExecutionContext(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    task_id: AutonomousTaskId = Field(pattern=r"^[a-f0-9]{64}$")
+    agent_family_id: AgentFamilyId
+    market_scope: MarketId
+
+
+def trusted_tool_context(task: AutonomousResearchTask) -> AutonomousToolExecutionContext:
+    return AutonomousToolExecutionContext(
+        task_id=task.task_id,
+        agent_family_id=task.agent_family_id,
+        market_scope=task.market_scope,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class AutonomousToolBinding:
     name: str
     allowed_roles: frozenset[AutonomousAgentRole]
     allowed_arguments: frozenset[str]
-    invoke: Callable[[AutonomousToolArguments], str]
+    invoke: Callable[[AutonomousToolArguments, AutonomousToolExecutionContext], str]
     evidence_refs: tuple[str, ...]
 
     def __post_init__(self) -> None:
@@ -86,10 +104,15 @@ class AutonomousToolRuntime:
     def allowed_tool_names(self) -> tuple[str, ...]:
         return tuple(sorted(self._bindings))
 
-    def dispatch(self, role: AutonomousAgentRole, call: AutonomousToolCall) -> AutonomousToolObservation:
+    def dispatch(
+        self,
+        role: AutonomousAgentRole,
+        call: AutonomousToolCall,
+        context: AutonomousToolExecutionContext,
+    ) -> AutonomousToolObservation:
         binding = self._authorized_binding(role, call)
         try:
-            raw_output = binding.invoke(call.args)
+            raw_output = binding.invoke(call.args, context)
         except AutonomousToolInvocationError:
             raise AutonomousToolRuntimeError(reason="autonomous_tool_invocation_failed") from None
         except Exception:  # noqa: RUF100 # noqa: BROAD_EXCEPT_OK: untrusted host callback must not leak implementation details or sensitive plugin exception text
@@ -149,7 +172,9 @@ def _utc_clock(value: dt.datetime) -> dt.datetime:
 
 __all__ = (
     "AutonomousToolBinding",
+    "AutonomousToolExecutionContext",
     "AutonomousToolInvocationError",
     "AutonomousToolRuntime",
     "AutonomousToolRuntimeError",
+    "trusted_tool_context",
 )

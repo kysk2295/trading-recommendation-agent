@@ -15,7 +15,7 @@ from trading_agent.autonomous_reasoning import (
     AutonomousToolArguments,
 )
 from trading_agent.autonomous_reasoning_codec import AutonomousStructuredReasoner
-from trading_agent.autonomous_tool_runtime import AutonomousToolInvocationError
+from trading_agent.autonomous_tool_runtime import AutonomousToolExecutionContext, AutonomousToolInvocationError
 from trading_agent.researcher_llm import FixtureLlmProposalClient, HermesCliProposalClient
 
 _EXECUTABLE = Path(__file__).parent / "fixtures" / "autonomous_reasoner"
@@ -58,12 +58,13 @@ def fixture_client_reasoner(response: AutonomousReasoningResponse) -> Autonomous
     return AutonomousStructuredReasoner(FixtureLlmProposalClient(response.model_dump_json().encode()))
 
 
-def observed_tool(_args: AutonomousToolArguments) -> str:
+def observed_tool(_args: AutonomousToolArguments, _context: AutonomousToolExecutionContext) -> str:
     return '{"status":"observed"}'
 
 
 def tool_operation(
     _args: AutonomousToolArguments,
+    context: AutonomousToolExecutionContext,
     *,
     behavior: str,
     primary: str = "",
@@ -85,13 +86,16 @@ def tool_operation(
             stream.write("invoked\n")
         time.sleep(0.1)
         return '{"status":"observed"}'
+    if behavior == "context":
+        Path(primary).write_text(context.task_id, encoding="ascii")
+        return '{"status":"observed"}'
     if behavior == "descendant":
         program = "import sys,time;from pathlib import Path;time.sleep(1);Path(sys.argv[1]).touch()"
         child = subprocess.Popen((sys.executable, "-c", program, secondary))
         Path(primary).write_text(str(child.pid), encoding="ascii")
         while True:
             time.sleep(0.005)
-    return observed_tool(_args)
+    return observed_tool(_args, context)
 
 
 def fixture_tool(behavior: str, *, primary: Path | None = None, secondary: Path | None = None):
