@@ -131,12 +131,12 @@ class ContinuousBrowserResearchSupervisor:
         with _ENSURE_LOCK:
             episode = self.episodes.latest()
             if episode is None:
-                episode = _episode(None, _initial_opened_at(now))
+                episode = _episode(None, now)
             task = self.supervisor.runtime.tasks.reader().task(episode.task_id)
             if task is not None and task.state not in {AutonomousTaskState.COMPLETED, AutonomousTaskState.ABANDONED}:
                 return task
             if task is not None:
-                episode = _episode(task, task.updated_at)
+                episode = _episode(task, now)
             evidence = _evidence(episode)
             _ = self.cycles.append_evidence(evidence)
             return self._admit(episode, evidence, now)
@@ -246,11 +246,6 @@ def _episode_from_evidence(evidence: ResearchAgentEvidenceV1) -> BrowserResearch
     ):
         raise InvalidBrowserResearchAgendaError(reason="agenda_episode_identity_invalid")
     return episode
-
-
-def _initial_opened_at(now: dt.datetime) -> dt.datetime:
-    current = now.astimezone(dt.UTC)
-    return current.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 __all__ = (

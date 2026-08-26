@@ -117,6 +117,34 @@ def test_terminal_episode_creates_a_lineage_linked_successor(tmp_path: Path) -> 
     assert len(services.episodes.all()) == 2
 
 
+def test_episodes_stamp_initial_and_successor_from_ensure_open_time(tmp_path: Path) -> None:
+    # Given: distinct non-midnight creation and successor recovery instants.
+    services = agenda_services_fixture(tmp_path)
+    initial_now = NOW + dt.timedelta(minutes=13, seconds=17)
+    successor_now = NOW + dt.timedelta(hours=2, minutes=7, seconds=41)
+
+    # When: the initial task is opened and its terminal predecessor rolls into a successor.
+    predecessor = services.ensure_open(initial_now)
+    predecessor_episode = services.episodes.get_by_task(predecessor.task_id)
+    predecessor_evidence = services.cycles.evidence(predecessor.root_source_evidence_id)
+    complete_task(services, str(predecessor.task_id), initial_now + dt.timedelta(minutes=1))
+    successor = services.ensure_open(successor_now)
+    successor_episode = services.episodes.get_by_task(successor.task_id)
+    successor_evidence = services.cycles.evidence(successor.root_source_evidence_id)
+
+    # Then: each persisted episode and synthetic evidence use its own validated ensure time.
+    assert predecessor_episode is not None
+    assert predecessor_evidence is not None
+    assert successor_episode is not None
+    assert successor_evidence is not None
+    assert predecessor_episode.opened_at == initial_now
+    assert predecessor_evidence.evidence.observed_at == initial_now
+    assert predecessor_evidence.evidence.available_at == initial_now
+    assert successor_episode.opened_at == successor_now
+    assert successor_evidence.evidence.observed_at == successor_now
+    assert successor_evidence.evidence.available_at == successor_now
+
+
 def test_concurrent_ensure_open_creates_one_durable_episode(tmp_path: Path) -> None:
     # Given: two simultaneous startup callers sharing one task and cycle store.
     services = agenda_services_fixture(tmp_path)
