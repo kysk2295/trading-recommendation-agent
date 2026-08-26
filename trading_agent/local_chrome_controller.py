@@ -21,10 +21,7 @@ from trading_agent.local_browser_profile_lease import (
     LocalBrowserProfileLeaseBusyError,
     acquire_local_browser_profile_lease,
 )
-from trading_agent.local_chrome_endpoint import (
-    ChromeDebugPort,
-    LocalChromeEndpoint,
-)
+from trading_agent.local_chrome_endpoint import ChromeDebugPort, LocalChromeEndpoint
 from trading_agent.local_chrome_endpoint import (
     PortRecord as _PortRecord,
 )
@@ -77,6 +74,7 @@ class SubprocessChromeLauncher:
             stderr=subprocess.DEVNULL,
             start_new_session=True,
             shell=False,
+            umask=0o077,
         )
 
 

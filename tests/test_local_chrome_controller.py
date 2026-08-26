@@ -112,12 +112,13 @@ def _controller(config: LocalBrowserGatewayConfig, launcher: FakeLauncher, probe
 def test_subprocess_launcher_uses_exact_command_and_safe_popen_flags(monkeypatch: pytest.MonkeyPatch,
                                                                       config: LocalBrowserGatewayConfig) -> None:
     # Given: the production launcher and a Popen recorder.
-    calls: list[tuple[tuple[str, ...], int, int, int, bool, bool]] = []
+    calls: list[tuple[tuple[str, ...], int, int, int, bool, bool, int]] = []
 
     def popen(
-        command: tuple[str, ...], *, stdin: int, stdout: int, stderr: int, start_new_session: bool, shell: bool
+        command: tuple[str, ...], *, stdin: int, stdout: int, stderr: int,
+        start_new_session: bool, shell: bool, umask: int,
     ) -> FakeProcess:
-        calls.append((command, stdin, stdout, stderr, start_new_session, shell))
+        calls.append((command, stdin, stdout, stderr, start_new_session, shell, umask))
         return FakeProcess(31337)
 
     monkeypatch.setattr(chrome.subprocess, "Popen", popen)
@@ -130,7 +131,7 @@ def test_subprocess_launcher_uses_exact_command_and_safe_popen_flags(monkeypatch
         str(config.chrome_executable), f"--user-data-dir={config.profile_root}", "--remote-debugging-address=127.0.0.1",
         "--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check", "about:blank",
     )
-    assert calls == [(command, subprocess.DEVNULL, subprocess.DEVNULL, subprocess.DEVNULL, True, False)]
+    assert calls == [(command, subprocess.DEVNULL, subprocess.DEVNULL, subprocess.DEVNULL, True, False, 0o077)]
 
 
 def test_ready_creates_exact_private_directories_and_reuses_owned_process(config: LocalBrowserGatewayConfig) -> None:
