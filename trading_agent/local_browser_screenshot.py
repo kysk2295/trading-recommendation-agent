@@ -52,11 +52,11 @@ def publish_private_screenshot(root: Path, payload: bytes, digest: str, owner_id
             expected: PrivateBrowserFile | None = None
             published = False
             try:
-                os.fchmod(descriptor, 0o600)
                 initial = os.fstat(descriptor)
+                expected = PrivateBrowserFile(b"", initial.st_dev, initial.st_ino)
                 if not _private_file(initial, owner_id, 0):
                     raise InvalidLocalBrowserScreenshotError()
-                expected = PrivateBrowserFile(b"", initial.st_dev, initial.st_ino)
+                os.fchmod(descriptor, 0o600)
                 view = memoryview(payload)
                 written = 0
                 while written < len(view):

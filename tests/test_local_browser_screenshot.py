@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,88 @@ import trading_agent.local_browser_screenshot as screenshot
 
 _PAYLOAD = b"private screenshot payload"
 _DIGEST = hashlib.sha256(_PAYLOAD).hexdigest()
+
+
+def test_regular_file_fchmod_failure_cleans_new_staging_inode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given: descriptor setup fails on the newly created regular staging file.
+    root = tmp_path / "screenshots"
+    original = screenshot.os.fchmod
+
+    def fail_regular(descriptor: int, mode: int) -> None:
+        if stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OSError("injected fchmod failure")
+        original(descriptor, mode)
+
+    monkeypatch.setattr(screenshot.os, "fchmod", fail_regular)
+    # When: publication fails before later validation can capture identity.
+    with pytest.raises(screenshot.InvalidLocalBrowserScreenshotError) as raised:
+        _ = screenshot.publish_private_screenshot(root, _PAYLOAD, _DIGEST, os.getuid())
+    # Then: the stable failure leaves no staging or final artifact.
+    assert raised.value.reason == "browser_navigation_blocked"
+    assert root.is_dir() and tuple(root.iterdir()) == ()
+
+
+def test_early_staging_verification_failure_cleans_exact_inode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given: the first regular-file verification reports an invalid initial size.
+    root = tmp_path / "screenshots"
+    original = screenshot.os.fstat
+    injected = False
+
+    def invalid_initial_size(descriptor: int) -> os.stat_result:
+        nonlocal injected
+        metadata = original(descriptor)
+        if stat.S_ISREG(metadata.st_mode) and not injected:
+            injected = True
+            return os.stat_result((*metadata[:6], 1, *metadata[7:]))
+        return metadata
+
+    monkeypatch.setattr(screenshot.os, "fstat", invalid_initial_size)
+    # When: initial staging verification fails.
+    with pytest.raises(screenshot.InvalidLocalBrowserScreenshotError) as raised:
+        _ = screenshot.publish_private_screenshot(root, _PAYLOAD, _DIGEST, os.getuid())
+    # Then: the observed inode is exact-cleaned and no final PNG appears.
+    assert raised.value.reason == "browser_navigation_blocked"
+    assert root.is_dir() and tuple(root.iterdir()) == ()
+
+
+def test_early_cleanup_preserves_replacement_of_staging_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given: initial verification fails and cleanup encounters a replacement inode.
+    root = tmp_path / "screenshots"
+    replacement = b"early replacement"
+    original_fstat = screenshot.os.fstat
+    original_unlink = screenshot.unlink_private_browser_file
+    injected = False
+
+    def invalid_initial_size(descriptor: int) -> os.stat_result:
+        nonlocal injected
+        metadata = original_fstat(descriptor)
+        if stat.S_ISREG(metadata.st_mode) and not injected:
+            injected = True
+            return os.stat_result((*metadata[:6], 1, *metadata[7:]))
+        return metadata
+
+    def replace_before_cleanup(
+        directory: screenshot.PrivateBrowserDirectory,
+        name: str,
+        expected: screenshot.PrivateBrowserFile,
+        owner_id: int,
+    ) -> None:
+        path = root / name
+        path.unlink()
+        path.write_bytes(replacement)
+        path.chmod(0o600)
+        original_unlink(directory, name, expected, owner_id)
+
+    monkeypatch.setattr(screenshot.os, "fstat", invalid_initial_size)
+    monkeypatch.setattr(screenshot, "unlink_private_browser_file", replace_before_cleanup)
+    # When: exact cleanup revalidates the staging name.
+    with pytest.raises(screenshot.InvalidLocalBrowserScreenshotError) as raised:
+        _ = screenshot.publish_private_screenshot(root, _PAYLOAD, _DIGEST, os.getuid())
+    # Then: stable failure preserves only the competing replacement.
+    entries = tuple(root.iterdir())
+    assert raised.value.reason == "browser_navigation_blocked"
+    assert len(entries) == 1 and entries[0].read_bytes() == replacement
+    assert entries[0].suffix == ".tmp"
 
 
 def test_partial_write_failure_exactly_cleans_staging_inode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
