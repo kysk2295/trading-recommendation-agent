@@ -182,6 +182,7 @@ class LoopbackChromeDevToolsTransport:
     def _exchange(self, websocket_url: str, request_id: int, payload: str, deadline: float) -> bytes:
         try:
             remaining = self._remaining(deadline)
+            matched: bytes | None = None
             with connect(
                 websocket_url,
                 open_timeout=remaining,
@@ -192,24 +193,32 @@ class LoopbackChromeDevToolsTransport:
                 max_size=_WS_MESSAGE_LIMIT,
                 max_queue=1,
             ) as connection:
-                connection.send(payload)
-                while True:
-                    remaining = self._remaining(deadline)
-                    message = connection.recv(timeout=remaining, decode=False)
-                    _ = self._remaining(deadline)
-                    match message:
-                        case bytes() as body:
-                            pass
-                        case str() as text:
-                            body = text.encode()
-                    if len(body) > _WS_MESSAGE_LIMIT:
-                        raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
-                    envelope = _CdpEnvelope.model_validate_json(body)
-                    if envelope.request_id is None:
-                        continue
-                    if envelope.request_id != request_id:
-                        raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
-                    return body
+                try:
+                    connection.send(payload)
+                    while True:
+                        remaining = self._remaining(deadline)
+                        message = connection.recv(timeout=remaining, decode=False)
+                        _ = self._remaining(deadline)
+                        match message:
+                            case bytes() as body:
+                                pass
+                            case str() as text:
+                                body = text.encode()
+                        if len(body) > _WS_MESSAGE_LIMIT:
+                            raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
+                        envelope = _CdpEnvelope.model_validate_json(body)
+                        if envelope.request_id is None:
+                            continue
+                        if envelope.request_id != request_id:
+                            raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
+                        matched = body
+                        break
+                finally:
+                    connection.close_timeout = max(0.0, deadline - self._clock.monotonic())
+            _ = self._remaining(deadline)
+            if matched is None:
+                raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
+            return matched
         except TimeoutError:
             raise InvalidChromeDevToolsError(reason="browser_cdp_timeout") from None
         except (OSError, ValidationError, WebSocketException):

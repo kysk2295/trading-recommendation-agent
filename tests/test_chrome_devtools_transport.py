@@ -179,6 +179,7 @@ class _FixtureWebSocket:
 
     responses: list[bytes]
     sent: list[str] = field(default_factory=list)
+    close_timeout: float | None = None
 
     def __enter__(self) -> _FixtureWebSocket:
         return self
