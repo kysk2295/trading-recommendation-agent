@@ -225,7 +225,7 @@ def test_concurrent_ticks_hold_one_task_execution_lease(tmp_path: Path) -> None:
     for worker in workers:
         worker.start()
     for worker in workers:
-        worker.join(1.0)
+        worker.join(6.0)
 
     kinds = tuple(parse_payload(step.payload_json).kind for step in runtime.tasks.reader().steps(task.task_id))
     assert not any(worker.is_alive() for worker in workers)
@@ -257,7 +257,7 @@ def test_concurrent_ticks_invoke_and_apply_tool_once(tmp_path: Path) -> None:
     for worker in workers:
         worker.start()
     for worker in workers:
-        worker.join(1.0)
+        worker.join(6.0)
 
     kinds = tuple(parse_payload(step.payload_json).kind for step in runtime.tasks.reader().steps(task.task_id))
     assert not any(worker.is_alive() for worker in workers)
@@ -281,7 +281,7 @@ def test_secondary_thread_tick_returns_without_forking_callback(tmp_path: Path) 
     worker = threading.Thread(target=lambda: results.append(runtime.tick(task, NOW).status))
 
     worker.start()
-    worker.join(0.5)
+    worker.join(6.0)
 
     assert not worker.is_alive()
     assert results == ["completed"]

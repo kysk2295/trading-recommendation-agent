@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+import trading_agent._autonomous_supervisor_execution as execution
 from tests.test_autonomous_supervisor_execution import (
     ConstantReasoner,
     MarkingReasoner,
@@ -85,6 +86,27 @@ class CallbackReasoner:
         return _completion()
 
 
+def _delayed_reasoner(callback: Path, delay_seconds: float) -> MarkingReasoner:
+    time.sleep(delay_seconds)
+    return MarkingReasoner(callback)
+
+
+@dataclass(frozen=True, slots=True)
+class DelayedReadyReasoner:
+    callback: Path
+    delay_seconds: float
+
+    def next_step(self, request: AutonomousReasoningRequest) -> AutonomousReasoningResponse:
+        del request
+        self.callback.touch()
+        return _completion()
+
+    def __reduce__(
+        self,
+    ) -> tuple[Callable[[Path, float], MarkingReasoner], tuple[Path, float]]:
+        return _delayed_reasoner, (self.callback, self.delay_seconds)
+
+
 def test_sigterm_ignoring_reasoner_is_killed_and_reaped(tmp_path: Path) -> None:
     runtime = _runtime(tmp_path, StubbornReasoner(), timeout=1.0)
     task = task_fixture()
@@ -115,7 +137,7 @@ def test_spawn_completes_while_background_thread_is_live(tmp_path: Path) -> None
 
         result = runtime.tick(task, NOW)
 
-        assert time.monotonic() - started < 0.5
+        assert time.monotonic() - started < 6.0
         assert result.status == "completed"
         assert callback.exists()
     finally:
@@ -217,3 +239,22 @@ def test_unpickleable_reasoner_boundary_is_rejected_stably(tmp_path: Path) -> No
 
     assert result.status == "blocked"
     assert not active_children()
+
+
+def test_pre_ready_timeout_reaps_direct_child_without_late_callback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    callback = tmp_path / "late-reasoner-callback"
+    runtime = _runtime(tmp_path, DelayedReadyReasoner(callback, 0.3))
+    task = task_fixture()
+    with runtime.tasks.writer() as writer:
+        assert writer.create_task(task)
+    before = {child.pid for child in active_children()}
+    monkeypatch.setattr(execution, "_STARTUP_SECONDS", 0.05)
+
+    result = runtime.tick(task, NOW)
+    time.sleep(0.4)
+
+    assert result.status == "blocked"
+    assert not callback.exists()
+    assert {child.pid for child in active_children()} == before

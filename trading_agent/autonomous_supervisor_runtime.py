@@ -183,7 +183,9 @@ class AutonomousSupervisorRuntime:
 
     def _execution(self, elapsed: float) -> BoundedAutonomousExecution:
         remaining = max(0.001, _RUNTIME_SECONDS - elapsed)
-        return BoundedAutonomousExecution(self.reasoner, self.tools, min(self.execution_timeout_seconds, remaining))
+        return BoundedAutonomousExecution(
+            self.reasoner, self.tools, min(self.execution_timeout_seconds, remaining), remaining
+        )
 
     def admit_evidence(
         self, task_id: AutonomousTaskId | str, evidence: ResearchAgentEvidenceV1, now: dt.datetime
