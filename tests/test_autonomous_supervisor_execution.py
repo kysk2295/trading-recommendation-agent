@@ -5,14 +5,13 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from multiprocessing import get_context
-from multiprocessing.connection import Connection
 from pathlib import Path
 
 from tests.test_autonomous_task_models import NOW, task_fixture
 from trading_agent._autonomous_supervisor_steps import parse_payload
 from trading_agent.autonomous_memory_store import AutonomousMemoryStore
 from trading_agent.autonomous_reasoning import (
+    AUTONOMOUS_REASONING_RESPONSE_ADAPTER,
     AutonomousComplete,
     AutonomousDefer,
     AutonomousReasoningClient,
@@ -27,15 +26,19 @@ from trading_agent.autonomous_task_store import AutonomousTaskStore
 from trading_agent.autonomous_tool_runtime import AutonomousToolBinding, AutonomousToolRuntime
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class ConstantReasoner:
-    response: AutonomousReasoningResponse
-    delay_seconds: float = 0.0
+    response_json: str
+    delay_seconds: float
+
+    def __init__(self, response: AutonomousReasoningResponse, delay_seconds: float = 0.0) -> None:
+        object.__setattr__(self, "response_json", response.model_dump_json())
+        object.__setattr__(self, "delay_seconds", delay_seconds)
 
     def next_step(self, request: AutonomousReasoningRequest) -> AutonomousReasoningResponse:
         del request
         time.sleep(self.delay_seconds)
-        return self.response
+        return AUTONOMOUS_REASONING_RESPONSE_ADAPTER.validate_json(self.response_json)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +52,63 @@ class HungReasoner:
         return _completion()
 
 
+@dataclass(frozen=True, slots=True)
+class HungTool:
+    release_path: Path
+    side_effect_path: Path
+
+    def __call__(self, _args: AutonomousToolArguments) -> str:
+        while not self.release_path.exists():
+            time.sleep(0.005)
+        self.side_effect_path.touch()
+        return '{"status":"late"}'
+
+
+@dataclass(frozen=True, slots=True)
+class DivergentReasoner:
+    model_calls: Path
+
+    def next_step(self, request: AutonomousReasoningRequest) -> AutonomousReasoningResponse:
+        del request
+        with self.model_calls.open("a", encoding="utf-8") as stream:
+            _ = stream.write("called\n")
+        time.sleep(0.1)
+        return AutonomousComplete(
+            summary=f"The bounded task completed through isolated worker process {os.getpid()}.",
+            completion_evidence_refs=("evidence:root",),
+            reason="The durable evidence is sufficient for an explicit bounded completion.",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RecordingTool:
+    invocations: Path
+
+    def __call__(self, _args: AutonomousToolArguments) -> str:
+        with self.invocations.open("a", encoding="utf-8") as stream:
+            _ = stream.write("invoked\n")
+        time.sleep(0.1)
+        return '{"status":"observed"}'
+
+
+@dataclass(frozen=True, slots=True)
+class MarkingReasoner:
+    callback: Path
+
+    def next_step(self, request: AutonomousReasoningRequest) -> AutonomousReasoningResponse:
+        del request
+        self.callback.touch()
+        return _completion()
+
+
+def observed_tool(_args: AutonomousToolArguments) -> str:
+    return '{"status":"observed"}'
+
+
+def now_clock() -> dt.datetime:
+    return NOW
+
+
 def _completion() -> AutonomousComplete:
     return AutonomousComplete(
         summary="The bounded supervisor task completed with durable evidence lineage.",
@@ -60,7 +120,7 @@ def _completion() -> AutonomousComplete:
 def _runtime(
     tmp_path: Path,
     reasoner: AutonomousReasoningClient,
-    invoke=lambda _args: '{"status":"observed"}',
+    invoke=observed_tool,
     *,
     timeout: float = 120.0,
 ) -> AutonomousSupervisorRuntime:
@@ -74,7 +134,7 @@ def _runtime(
                 evidence_refs=("evidence:tool",),
             ),
         ),
-        lambda: NOW,
+        now_clock,
     )
     return AutonomousSupervisorRuntime(
         tasks=AutonomousTaskStore(tmp_path / "tasks.sqlite3"),
@@ -111,14 +171,14 @@ def test_direct_tick_waiting_event_requires_matching_event(tmp_path: Path) -> No
 
 def test_hung_reasoner_is_terminated_within_configured_deadline(tmp_path: Path) -> None:
     release = tmp_path / "release-reasoner"
-    runtime = _runtime(tmp_path, HungReasoner(release), timeout=0.05)
+    runtime = _runtime(tmp_path, HungReasoner(release), timeout=1.0)
     task = task_fixture()
     with runtime.tasks.writer() as writer:
         assert writer.create_task(task)
     started = time.monotonic()
     result = runtime.tick(task, NOW)
 
-    assert time.monotonic() - started < 0.5
+    assert time.monotonic() - started < 2.0
     assert result.status == "waiting"
     assert tuple(parse_payload(step.payload_json).kind for step in runtime.tasks.reader().steps(task.task_id)) == (
         "wait",
@@ -129,18 +189,12 @@ def test_hung_tool_is_terminated_without_late_side_effect(tmp_path: Path) -> Non
     release = tmp_path / "release-tool"
     side_effect = tmp_path / "late-side-effect"
 
-    def hung_tool(_args) -> str:
-        while not release.exists():
-            time.sleep(0.005)
-        side_effect.touch()
-        return '{"status":"late"}'
-
     call = AutonomousToolCall(
         tool_name="evidence.read",
         args=AutonomousToolArguments({"evidence_id": "a" * 64}),
         reason="Read the bounded evidence through the authorized supervisor tool binding.",
     )
-    runtime = _runtime(tmp_path, ConstantReasoner(call), hung_tool, timeout=0.05)
+    runtime = _runtime(tmp_path, ConstantReasoner(call), HungTool(release, side_effect), timeout=1.0)
     task = task_fixture()
     with runtime.tasks.writer() as writer:
         assert writer.create_task(task)
@@ -149,7 +203,7 @@ def test_hung_tool_is_terminated_without_late_side_effect(tmp_path: Path) -> Non
     time.sleep(0.05)
 
     kinds = tuple(parse_payload(step.payload_json).kind for step in runtime.tasks.reader().steps(task.task_id))
-    assert time.monotonic() - started < 0.5
+    assert time.monotonic() - started < 3.0
     assert result.status == "waiting"
     assert kinds == ("decision", "wait")
     assert not side_effect.exists()
@@ -158,31 +212,16 @@ def test_hung_tool_is_terminated_without_late_side_effect(tmp_path: Path) -> Non
 def test_concurrent_ticks_hold_one_task_execution_lease(tmp_path: Path) -> None:
     model_calls = tmp_path / "model-calls"
 
-    @dataclass(frozen=True, slots=True)
-    class DivergentReasoner:
-        def next_step(self, request: AutonomousReasoningRequest) -> AutonomousReasoningResponse:
-            del request
-            with model_calls.open("a", encoding="utf-8") as stream:
-                _ = stream.write("called\n")
-            time.sleep(0.1)
-            return AutonomousComplete(
-                summary=f"The bounded task completed through isolated worker process {os.getpid()}.",
-                completion_evidence_refs=("evidence:root",),
-                reason="The durable evidence is sufficient for an explicit bounded completion.",
-            )
-
-    runtime = _runtime(tmp_path, DivergentReasoner())
+    runtime = _runtime(tmp_path, DivergentReasoner(model_calls))
     task = task_fixture()
     with runtime.tasks.writer() as writer:
         assert writer.create_task(task)
-    context = get_context("fork")
+    results: list[AutonomousSupervisorTickResult] = []
 
-    def run(send: Connection) -> None:
-        send.send(runtime.tick(task, NOW).model_dump_json())
-        send.close()
+    def run() -> None:
+        results.append(runtime.tick(task, NOW))
 
-    channels = (context.Pipe(duplex=False), context.Pipe(duplex=False))
-    workers = tuple(context.Process(target=run, args=(send,)) for _, send in channels)
+    workers = (threading.Thread(target=run), threading.Thread(target=run))
     for worker in workers:
         worker.start()
     for worker in workers:
@@ -190,8 +229,6 @@ def test_concurrent_ticks_hold_one_task_execution_lease(tmp_path: Path) -> None:
 
     kinds = tuple(parse_payload(step.payload_json).kind for step in runtime.tasks.reader().steps(task.task_id))
     assert not any(worker.is_alive() for worker in workers)
-    assert all(worker.exitcode == 0 for worker in workers)
-    results = tuple(AutonomousSupervisorTickResult.model_validate_json(receive.recv()) for receive, _ in channels)
     assert tuple(sorted(result.status for result in results)) == ("completed", "waiting")
     assert sum(result.next_wake_at == NOW + dt.timedelta(seconds=1) for result in results) == 1
     assert model_calls.read_text(encoding="utf-8").splitlines() == ["called"]
@@ -201,28 +238,21 @@ def test_concurrent_ticks_hold_one_task_execution_lease(tmp_path: Path) -> None:
 def test_concurrent_ticks_invoke_and_apply_tool_once(tmp_path: Path) -> None:
     invocations = tmp_path / "tool-invocations"
 
-    def tool(_args) -> str:
-        with invocations.open("a", encoding="utf-8") as stream:
-            _ = stream.write("invoked\n")
-        time.sleep(0.1)
-        return '{"status":"observed"}'
-
     call = AutonomousToolCall(
         tool_name="evidence.read",
         args=AutonomousToolArguments({"evidence_id": "a" * 64}),
         reason="Read the bounded evidence through the authorized supervisor tool binding.",
     )
-    runtime = _runtime(tmp_path, ConstantReasoner(call), tool)
+    runtime = _runtime(tmp_path, ConstantReasoner(call), RecordingTool(invocations))
     task = task_fixture()
     with runtime.tasks.writer() as writer:
         assert writer.create_task(task)
-    context = get_context("fork")
-    def run(send: Connection) -> None:
-        send.send(runtime.tick(task, NOW).model_dump_json())
-        send.close()
+    results: list[AutonomousSupervisorTickResult] = []
 
-    channels = (context.Pipe(duplex=False), context.Pipe(duplex=False))
-    workers = tuple(context.Process(target=run, args=(send,)) for _, send in channels)
+    def run() -> None:
+        results.append(runtime.tick(task, NOW))
+
+    workers = (threading.Thread(target=run), threading.Thread(target=run))
 
     for worker in workers:
         worker.start()
@@ -230,9 +260,8 @@ def test_concurrent_ticks_invoke_and_apply_tool_once(tmp_path: Path) -> None:
         worker.join(1.0)
 
     kinds = tuple(parse_payload(step.payload_json).kind for step in runtime.tasks.reader().steps(task.task_id))
-    assert all(worker.exitcode == 0 for worker in workers)
-    results = tuple(AutonomousSupervisorTickResult.model_validate_json(receive.recv()) for receive, _ in channels)
-    assert all(result.status == "waiting" for result in results)
+    assert not any(worker.is_alive() for worker in workers)
+    assert [result.status for result in results] == ["waiting", "waiting"], (results, kinds, invocations.exists())
     assert {result.next_wake_at for result in results} == {
         NOW + dt.timedelta(seconds=1),
         NOW + dt.timedelta(minutes=1),
@@ -244,14 +273,7 @@ def test_concurrent_ticks_invoke_and_apply_tool_once(tmp_path: Path) -> None:
 def test_secondary_thread_tick_returns_without_forking_callback(tmp_path: Path) -> None:
     callback = tmp_path / "reasoner-called"
 
-    @dataclass(frozen=True, slots=True)
-    class MarkingReasoner:
-        def next_step(self, request: AutonomousReasoningRequest) -> AutonomousReasoningResponse:
-            del request
-            callback.touch()
-            return _completion()
-
-    runtime = _runtime(tmp_path, MarkingReasoner())
+    runtime = _runtime(tmp_path, MarkingReasoner(callback))
     task = task_fixture()
     with runtime.tasks.writer() as writer:
         assert writer.create_task(task)
@@ -262,5 +284,5 @@ def test_secondary_thread_tick_returns_without_forking_callback(tmp_path: Path) 
     worker.join(0.5)
 
     assert not worker.is_alive()
-    assert results == ["blocked"]
-    assert not callback.exists()
+    assert results == ["completed"]
+    assert callback.exists()

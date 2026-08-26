@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import fcntl
 import os
+import pickle
+import signal
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -9,8 +11,6 @@ from multiprocessing import get_context
 from multiprocessing.connection import Connection
 from multiprocessing.process import BaseProcess
 from pathlib import Path
-from threading import current_thread, main_thread
-from threading import enumerate as live_threads
 from time import monotonic
 from typing import Final, Literal, Protocol
 
@@ -37,6 +37,7 @@ from trading_agent.systematic_regime_store_file import open_private_file, requir
 _ERROR: Final = b"E"
 _OK: Final = b"O"
 _CRASH: Final = b"X"
+_READY: Final = b"R"
 _REAP_GRACE_SECONDS: Final = 0.05
 type Operation = Literal["reason", "tool"]
 
@@ -91,13 +92,21 @@ def _call_in_worker(
     call: AutonomousToolCall | None,
     timeout: float,
 ) -> bytes:
-    if current_thread() is not main_thread() or any(
-        thread is not current_thread() and thread.is_alive() for thread in live_threads()
-    ):
-        raise AutonomousExecutionError(reason="autonomous_execution_main_thread_required")
-    context = get_context("fork")
+    context = get_context("spawn")
     receive, send = context.Pipe(duplex=False)
-    process = context.Process(target=_worker, args=(send, operation, reasoner, tools, request, role, call))
+    if operation == "reason" and request is not None:
+        target = _reason_worker
+        arguments = (send, reasoner, request.model_dump_json())
+    elif operation == "tool" and role is not None and call is not None:
+        target = _tool_worker
+        arguments = (send, tools, role.value, call.model_dump_json())
+    else:
+        raise AutonomousExecutionError(reason="autonomous_execution_request_invalid")
+    try:
+        _ = pickle.dumps(arguments)
+    except (AttributeError, pickle.PickleError, TypeError):
+        raise AutonomousExecutionError(reason="autonomous_execution_boundary_unpickleable") from None
+    process = context.Process(target=target, args=arguments)
     deadline = monotonic() + timeout
     started = False
     reaped = False
@@ -105,23 +114,27 @@ def _call_in_worker(
         process.start()
         started = True
         send.close()
+        if not receive.poll(max(0.0, deadline - monotonic())) or receive.recv_bytes() != _READY:
+            reaped = True
+            _reap_group(process, 0.0)
+            raise AutonomousExecutionError(reason="autonomous_execution_worker_not_ready")
         if not receive.poll(max(0.0, deadline - monotonic())):
             reaped = True
-            _reap(process, 0.0)
+            _reap_group(process, 0.0)
             raise AutonomousExecutionTimeoutError(reason=f"autonomous_{operation}_timeout")
         message = receive.recv_bytes()
         reaped = True
-        _reap(process, max(0.0, deadline - monotonic()))
+        _reap_group(process, max(0.0, deadline - monotonic()))
     except EOFError:
         if started and not reaped:
             reaped = True
-            _reap(process, 0.0)
+            _reap_group(process, 0.0)
         raise AutonomousExecutionCrash("autonomous_execution_worker_crashed") from None
     finally:
         receive.close()
         send.close()
         if started and not reaped:
-            _reap(process, 0.0)
+            _reap_group(process, 0.0)
     tag, payload = message[:1], message[1:]
     if tag == _OK:
         return payload
@@ -130,41 +143,64 @@ def _call_in_worker(
     raise AutonomousExecutionCrash("autonomous_execution_worker_crashed")
 
 
-def _reap(process: BaseProcess, initial_wait: float) -> None:
+def _reap_group(process: BaseProcess, initial_wait: float) -> None:
     process.join(initial_wait)
-    if process.is_alive():
-        process.terminate()
-        process.join(_REAP_GRACE_SECONDS)
-    if process.is_alive():
-        process.kill()
-        process.join(_REAP_GRACE_SECONDS)
+    _signal_group(process.pid, signal.SIGTERM)
+    process.join(_REAP_GRACE_SECONDS)
+    _signal_group(process.pid, signal.SIGKILL)
+    process.join(_REAP_GRACE_SECONDS)
     if process.is_alive():
         raise AutonomousExecutionError(reason="autonomous_execution_worker_reap_failed")
     process.close()
 
 
-def _worker(
+def _signal_group(group: int | None, requested: signal.Signals) -> None:
+    if group is None:
+        return
+    try:
+        os.killpg(group, requested)
+    except ProcessLookupError:
+        return
+
+
+def _reason_worker(
     send: Connection,
-    operation: Operation,
     reasoner: AutonomousReasoningClient,
-    tools: AutonomousToolRuntime,
-    request: AutonomousReasoningRequest | None,
-    role: AutonomousAgentRole | None,
-    call: AutonomousToolCall | None,
+    request_json: str,
 ) -> None:
     try:
-        if operation == "reason" and request is not None:
-            response = reasoner.next_step(request)
-            send.send_bytes(_OK + response.model_dump_json().encode("utf-8"))
-        elif operation == "tool" and role is not None and call is not None:
-            observation = tools.dispatch(role, call)
-            send.send_bytes(_OK + observation.model_dump_json().encode("utf-8"))
-        else:
-            send.send_bytes(_ERROR + b"autonomous_execution_request_invalid")
-    except (InvalidAutonomousReasoningError, AutonomousToolRuntimeError):
-        send.send_bytes(_ERROR + f"autonomous_{operation}_failed".encode("ascii"))
+        os.setsid()
+        send.send_bytes(_READY)
+        request = AutonomousReasoningRequest.model_validate_json(request_json)
+        response = reasoner.next_step(request)
+        send.send_bytes(_OK + response.model_dump_json().encode("utf-8"))
+    except InvalidAutonomousReasoningError:
+        send.send_bytes(_ERROR + b"autonomous_reason_failed")
     except Exception:  # noqa: RUF100 # noqa: BROAD_EXCEPT_OK: isolate untrusted provider and tool callback failures
-        send.send_bytes(_ERROR + f"autonomous_{operation}_failed".encode("ascii"))
+        send.send_bytes(_ERROR + b"autonomous_reason_failed")
+    except BaseException:  # noqa: RUF100 # noqa: BROAD_EXCEPT_OK: preserve process-crash semantics for restart replay
+        send.send_bytes(_CRASH)
+    finally:
+        send.close()
+
+
+def _tool_worker(
+    send: Connection,
+    tools: AutonomousToolRuntime,
+    role_value: str,
+    call_json: str,
+) -> None:
+    try:
+        os.setsid()
+        send.send_bytes(_READY)
+        role = AutonomousAgentRole(role_value)
+        call = AutonomousToolCall.model_validate_json(call_json)
+        observation = tools.dispatch(role, call)
+        send.send_bytes(_OK + observation.model_dump_json().encode("utf-8"))
+    except AutonomousToolRuntimeError:
+        send.send_bytes(_ERROR + b"autonomous_tool_failed")
+    except Exception:  # noqa: RUF100 # noqa: BROAD_EXCEPT_OK: isolate untrusted host-tool callback failures
+        send.send_bytes(_ERROR + b"autonomous_tool_failed")
     except BaseException:  # noqa: RUF100 # noqa: BROAD_EXCEPT_OK: preserve process-crash semantics for restart replay
         send.send_bytes(_CRASH)
     finally:

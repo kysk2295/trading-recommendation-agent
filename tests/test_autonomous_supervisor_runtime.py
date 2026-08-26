@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from tests.autonomous_supervisor_fixtures import FakeReasoner, now_clock, observed_tool, zero_clock
 from tests.test_autonomous_task_models import NOW, OTHER, task_fixture
 from tests.test_autonomous_task_store import task_for
 from trading_agent._autonomous_supervisor_steps import parse_payload
@@ -16,8 +17,6 @@ from trading_agent.autonomous_reasoning import (
     AutonomousComplete,
     AutonomousDefer,
     AutonomousDelegate,
-    AutonomousReasoningRequest,
-    AutonomousReasoningResponse,
     AutonomousRecordMemory,
     AutonomousSubmitArtifact,
     AutonomousToolArguments,
@@ -32,18 +31,6 @@ from trading_agent.research_agent_cycle_models import EvidenceId
 type SlowResponse = AutonomousToolCall | AutonomousDelegate | AutonomousRecordMemory | AutonomousSubmitArtifact
 
 
-@dataclass(frozen=True, slots=True)
-class FakeReasoner:
-    responses: tuple[AutonomousReasoningResponse, ...]
-    priority_routes: bool = False
-
-    def next_step(self, request: AutonomousReasoningRequest) -> AutonomousReasoningResponse:
-        index = sum(parse_payload(step.payload_json).kind == "decision" for step in request.prior_steps)
-        if self.priority_routes and request.task.priority != 90:
-            index += 2
-        return self.responses[index]
-
-
 def _runtime(tmp_path: Path, reasoner: FakeReasoner) -> AutonomousSupervisorRuntime:
     tools = AutonomousToolRuntime(
         (
@@ -51,19 +38,19 @@ def _runtime(tmp_path: Path, reasoner: FakeReasoner) -> AutonomousSupervisorRunt
                 name="evidence.read",
                 allowed_roles=frozenset({AutonomousAgentRole.SUPERVISOR}),
                 allowed_arguments=frozenset({"evidence_id"}),
-                invoke=lambda _args: '{"status":"observed"}',
+                invoke=observed_tool,
                 evidence_refs=("evidence:tool",),
             ),
         ),
-        lambda: NOW,
+        now_clock,
     )
     return AutonomousSupervisorRuntime(
         tasks=AutonomousTaskStore(tmp_path / "tasks.sqlite3"),
         memories=AutonomousMemoryStore(tmp_path / "memories.sqlite3"),
         reasoner=reasoner,
         tools=tools,
-        wall_clock=lambda: NOW,
-        monotonic=lambda: 0.0,
+        wall_clock=now_clock,
+        monotonic=zero_clock,
     )
 
 

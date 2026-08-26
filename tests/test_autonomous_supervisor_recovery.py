@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_autonomous_supervisor_runtime import FakeReasoner
+from tests.autonomous_supervisor_fixtures import FakeReasoner
 from tests.test_autonomous_task_models import NOW, task_fixture
 from trading_agent._autonomous_supervisor_execution import AutonomousExecutionCrash
 from trading_agent._autonomous_supervisor_steps import parse_payload
@@ -48,6 +48,30 @@ class CrashSentinel(BaseException):
     pass
 
 
+def _now() -> dt.datetime:
+    return NOW
+
+
+def _zero() -> float:
+    return 0.0
+
+
+def _empty_tool(_args: AutonomousToolArguments) -> str:
+    return "{}"
+
+
+def _observed_tool(_args: AutonomousToolArguments) -> str:
+    return '{"status":"observed"}'
+
+
+def _crash_tool(_args: AutonomousToolArguments) -> str:
+    raise CrashSentinel
+
+
+def _fail_tool(_args: AutonomousToolArguments) -> str:
+    raise AutonomousToolInvocationError(reason="fixture_tool_failure")
+
+
 @dataclass(frozen=True, slots=True)
 class FailingReasoner:
     requests: list[AutonomousReasoningRequest] = field(default_factory=list, compare=False)
@@ -75,9 +99,9 @@ def _runtime(
         tasks=AutonomousTaskStore(tmp_path / "tasks.sqlite3"),
         memories=AutonomousMemoryStore(tmp_path / "memories.sqlite3"),
         reasoner=reasoner,
-        tools=AutonomousToolRuntime((binding,), lambda: NOW),
-        wall_clock=lambda: NOW,
-        monotonic=lambda: 0.0,
+        tools=AutonomousToolRuntime((binding,), _now),
+        wall_clock=_now,
+        monotonic=_zero,
         max_steps=max_steps,
     )
 
@@ -94,7 +118,7 @@ def test_restart_replays_unapplied_tool_decision_once(tmp_path: Path) -> None:
     # Given: tool dispatch crashes the process after its model decision is durable.
     task = task_fixture()
     first_reasoner = FakeReasoner((_call(),))
-    crashed = _runtime(tmp_path, first_reasoner, lambda _args: (_ for _ in ()).throw(CrashSentinel()), max_steps=1)
+    crashed = _runtime(tmp_path, first_reasoner, _crash_tool, max_steps=1)
     with crashed.tasks.writer() as writer:
         assert writer.create_task(task)
 
@@ -102,7 +126,7 @@ def test_restart_replays_unapplied_tool_decision_once(tmp_path: Path) -> None:
     with pytest.raises(AutonomousExecutionCrash):
         crashed.tick(task, NOW)
     restarted_reasoner = FakeReasoner(())
-    restarted = _runtime(tmp_path, restarted_reasoner, lambda _args: '{"status":"observed"}', max_steps=1)
+    restarted = _runtime(tmp_path, restarted_reasoner, _observed_tool, max_steps=1)
     result = restarted.tick(task, NOW)
 
     # Then: the original decision is reused and exactly one observation becomes durable.
@@ -120,14 +144,14 @@ def test_restart_replays_decision_deferred_by_runtime_deadline(tmp_path: Path) -
         reason="The expired slice must preserve this decision without applying it early.",
     )
     first_reasoner = FakeReasoner((decision,))
-    runtime = _runtime(tmp_path, first_reasoner, lambda _args: "{}", max_steps=1)
+    runtime = _runtime(tmp_path, first_reasoner, _empty_tool, max_steps=1)
     runtime = replace(runtime, monotonic=iter((0.0, 0.0, 121.0)).__next__)
     task = task_fixture()
     with runtime.tasks.writer() as writer:
         assert writer.create_task(task)
     assert runtime.tick(task, NOW).status == "waiting"
     restarted_reasoner = FakeReasoner(())
-    restarted = replace(runtime, reasoner=restarted_reasoner, monotonic=lambda: 0.0)
+    restarted = replace(runtime, reasoner=restarted_reasoner, monotonic=_zero)
 
     # When: the one-minute wait becomes due in a fresh process-style runtime.
     result = restarted.tick(task, NOW + dt.timedelta(minutes=1))
@@ -149,7 +173,7 @@ def test_restart_reuses_memory_written_before_application_step(tmp_path: Path, m
         reason="The task reducer must link the already committed memory without a new version.",
     )
     reasoner = FakeReasoner((request,))
-    runtime = _runtime(tmp_path, reasoner, lambda _args: "{}", max_steps=1)
+    runtime = _runtime(tmp_path, reasoner, _empty_tool, max_steps=1)
     task = task_fixture()
     with runtime.tasks.writer() as writer:
         assert writer.create_task(task)
@@ -170,7 +194,7 @@ def test_restart_reuses_memory_written_before_application_step(tmp_path: Path, m
     with pytest.raises(CrashSentinel):
         runtime.tick(task, NOW)
     restarted_reasoner = FakeReasoner(())
-    restarted = _runtime(tmp_path, restarted_reasoner, lambda _args: "{}", max_steps=1)
+    restarted = _runtime(tmp_path, restarted_reasoner, _empty_tool, max_steps=1)
     result = restarted.tick(task, NOW)
 
     # Then: one memory version and one application step exist.
@@ -184,7 +208,7 @@ def test_restart_reuses_memory_written_before_application_step(tmp_path: Path, m
 def test_five_reasoning_failures_back_off_without_abandoning(tmp_path: Path) -> None:
     # Given: a typed reasoner fails on every due retry.
     reasoner = FailingReasoner()
-    runtime = _runtime(tmp_path, reasoner, lambda _args: "{}")
+    runtime = _runtime(tmp_path, reasoner, _empty_tool)
     task = task_fixture()
     with runtime.tasks.writer() as writer:
         assert writer.create_task(task)
@@ -215,10 +239,7 @@ def test_tool_and_memory_failures_persist_stable_blocked_retries(
     # Given: authorized tool invocation and memory persistence each fail through typed boundaries.
     tool_task = task_fixture()
 
-    def fail_tool(_args: AutonomousToolArguments) -> str:
-        raise AutonomousToolInvocationError(reason="fixture_tool_failure")
-
-    tool_runtime = _runtime(tmp_path / "tool", FakeReasoner((_call(),)), fail_tool)
+    tool_runtime = _runtime(tmp_path / "tool", FakeReasoner((_call(),)), _fail_tool)
     with tool_runtime.tasks.writer() as writer:
         assert writer.create_task(tool_task)
     memory_request = AutonomousRecordMemory(
@@ -229,7 +250,7 @@ def test_tool_and_memory_failures_persist_stable_blocked_retries(
         evidence_refs=("evidence:root",),
         reason="Persist the work memory or retain a deterministic retry wake for recovery.",
     )
-    memory_runtime = _runtime(tmp_path / "memory", FakeReasoner((memory_request,)), lambda _args: "{}")
+    memory_runtime = _runtime(tmp_path / "memory", FakeReasoner((memory_request,)), _empty_tool)
     with memory_runtime.tasks.writer() as writer:
         assert writer.create_task(tool_task)
 
@@ -260,7 +281,7 @@ def test_evidence_admission_replays_and_wakes_without_changing_root(tmp_path: Pa
         resume_condition="New source evidence is admitted to the durable task lineage.",
         next_wake_event="new_evidence",
     )
-    runtime = _runtime(tmp_path, FakeReasoner((defer,)), lambda _args: "{}")
+    runtime = _runtime(tmp_path, FakeReasoner((defer,)), _empty_tool)
     task = task_fixture()
     with runtime.tasks.writer() as writer:
         assert writer.create_task(task)
