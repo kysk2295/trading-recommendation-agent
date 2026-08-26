@@ -55,6 +55,7 @@ def test_launch_agent_has_exact_deterministic_contract_when_config_is_valid(gate
         "StandardOutPath": "/dev/null",
         "ThrottleInterval": 30,
         "Umask": 0o077,
+        "WorkingDirectory": str(gateway_fixture.config.project_root),
     }
     assert "EnvironmentVariables" not in document
     assert loaded == gateway_fixture.config

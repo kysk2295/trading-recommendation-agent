@@ -234,6 +234,7 @@ def _launch_agent_text(config: LocalBrowserGatewayConfig, config_path: Path) -> 
         "StandardOutPath": "/dev/null",
         "ThrottleInterval": 30,
         "Umask": 0o077,
+        "WorkingDirectory": str(config.project_root),
     }
     return plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=True).decode("utf-8")
 
