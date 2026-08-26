@@ -219,10 +219,22 @@ def _activate(args: argparse.Namespace, runner: CommandRunner) -> int:
     if runner(("/bin/launchctl", "bootstrap", domain, plist)) != 0:
         return 2
     target = f"{domain}/{config.label}"
-    if runner(("/bin/launchctl", "kickstart", target)) != 0:
+    try:
+        kickstart_failed = runner(("/bin/launchctl", "kickstart", target)) != 0
+    except Exception:  # noqa: RUF100  # noqa: BROAD_EXCEPT_OK: rollback before boundary redaction
+        _rollback_activation(runner, domain, plist)
+        raise
+    if not kickstart_failed:
+        return 0
+    _rollback_activation(runner, domain, plist)
+    return 2
+
+
+def _rollback_activation(runner: CommandRunner, domain: str, plist: str) -> None:
+    try:
         _ = runner(("/bin/launchctl", "bootout", domain, plist))
-        return 2
-    return 0
+    except Exception:  # noqa: RUF100  # noqa: BROAD_EXCEPT_OK: preserve original activation failure
+        return
 
 
 @contextmanager
