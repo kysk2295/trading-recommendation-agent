@@ -5,6 +5,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Self, assert_never, final
 
+from trading_agent import research_agent_supervisor_cycle_store as supervisor_cycles
 from trading_agent.dashboard_agent_family import AgentFamilyId
 from trading_agent.research_agent_cycle_evidence_store import append_evidence
 from trading_agent.research_agent_cycle_models import (
@@ -139,6 +140,9 @@ class ResearchAgentCycleStore:
             append_cycle_event(connection, replay, started_at)
             connection.commit()
             return replay
+
+    def start_supervisor_cycle(self, request: supervisor_cycles.SupervisorCycleStart) -> ResearchAgentCycleV1:
+        return supervisor_cycles.start_supervisor_cycle(self._database, request)
 
     def finish_cycle(self, cycle: ResearchAgentCycleV1, result: ResearchAgentResultV1) -> None:
         match result.status:

@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable
-from typing import Literal, final
-
-import anyio
+from typing import final
 
 from trading_agent.autonomous_supervisor_cycle_adapter import ResearchCycleEvidenceResolver
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
@@ -24,11 +21,14 @@ from trading_agent.research_agent_decision import (
     InvalidResearchAgentDecisionError,
     ResearchAgentDecisionRequest,
 )
+from trading_agent.research_agent_runtime_admission import primary_admission_required
+from trading_agent.research_agent_runtime_cycle import bounded_cycle, run_research_agent_forever
 from trading_agent.research_agent_runtime_lease import (
     ResearchAgentRuntimeLeaseUnavailableError,
     research_agent_runtime_lease,
 )
 from trading_agent.research_agent_runtime_models import (
+    DueResearchSupervisor,
     InvalidResearchAgentRuntimeError,
     PersistentResearchSupervisor,
     ResearchAgentBoundedCycleResult,
@@ -38,6 +38,7 @@ from trading_agent.research_agent_runtime_models import (
     RuntimeCycleOutcome,
 )
 from trading_agent.research_agent_runtime_selection import prior_failures, tick_result, work_matches_cycle
+from trading_agent.research_agent_runtime_supervisor import project_supervisor, resume_due_supervisor
 from trading_agent.research_agent_runtime_support import (
     RuntimeFailureContext,
     actor_wake_states,
@@ -80,24 +81,8 @@ class ResearchAgentRuntime:
         return self._tick(now, only_family=None, apply_debounce=True)
 
     def cycle(self, now: dt.datetime) -> ResearchAgentBoundedCycleResult:
-        outcomes: list[ResearchAgentTickResult] = []
-        for family in PRIMARY_AGENT_FAMILIES:
-            outcome = self._tick(now, only_family=family, apply_debounce=False)
-            if outcome.status != "idle":
-                outcomes.append(outcome)
-        families = tuple(item.agent_family_id for item in outcomes)
-        status: Literal["idle", "partial", "complete"]
-        if not families:
-            status = "idle"
-        elif families == PRIMARY_AGENT_FAMILIES:
-            status = "complete"
-        else:
-            status = "partial"
-        return ResearchAgentBoundedCycleResult(
-            status=status,
-            outcomes=tuple(outcomes),
-            model_calls=sum(item.model_calls for item in outcomes),
-            recovered_cycles=sum(item.recovered_cycles for item in outcomes),
+        return bounded_cycle(
+            lambda family: self._tick(now, only_family=family, apply_debounce=False)
         )
 
     def _tick(
@@ -111,9 +96,22 @@ class ResearchAgentRuntime:
         batch = self._collector.collect(now)
         failures = tuple(source_failure_evidence(failure) for failure in batch.failures)
         self.ingest((*batch.evidence, *failures))
+        if isinstance(self._supervisor_runtime, DueResearchSupervisor):
+            due = resume_due_supervisor(
+                self.store,
+                self._supervisor_runtime,
+                batch.evidence,
+                now,
+                len(recovered),
+            )
+            if due is not None:
+                return due
         pending = tuple(
             stored for family in PRIMARY_AGENT_FAMILIES for stored in self.store.runnable_evidence(family, now)
         )
+        if isinstance(self._supervisor_runtime, DueResearchSupervisor):
+            admitted = self._supervisor_runtime.admitted_evidence_ids()
+            pending = tuple(item for item in pending if item.evidence.evidence_id not in admitted)
         work = tuple(item for family in PRIMARY_AGENT_FAMILIES for item in self.store.open_work(family))
         states = actor_wake_states(self.store.latest_cycles(), work)
         selected = runnable_actors(
@@ -137,6 +135,26 @@ class ResearchAgentRuntime:
         resolver = ResearchCycleEvidenceResolver(self.store, now, self._supervisor_runtime is not None)
         resolved = resolver.resolve(actor)
         stored = resolved.stored
+        if (
+            isinstance(self._supervisor_runtime, DueResearchSupervisor)
+            and not stored.evidence.source_key.startswith("source_failure.")
+            and not primary_admission_required(stored.evidence, now)
+        ):
+            supervisor_result = self._supervisor_runtime.tick(stored.evidence, now)
+            projection = self._supervisor_runtime.projection_for_result(supervisor_result)
+            legacy_work = (
+                None
+                if resolved.legacy_work is None
+                else resolver.terminal_legacy_work(resolved.legacy_work)
+            )
+            return project_supervisor(
+                self.store,
+                self._supervisor_runtime,
+                projection,
+                now,
+                len(recovered),
+                legacy_work=legacy_work,
+            )
         cycle = self.store.start_cycle(
             stored,
             now,
@@ -229,18 +247,6 @@ class ResearchAgentRuntime:
         legacy_work: ResearchAgentOpenWorkV1 | None = None,
     ) -> None:
         persist_cycle_outcome(self.store, outcome, legacy_work)
-
-
-async def run_research_agent_forever(
-    runtime: ResearchAgentRuntime,
-    clock: Callable[[], dt.datetime],
-    tick_seconds: float = 30.0,
-) -> None:
-    if tick_seconds <= 0:
-        raise InvalidResearchAgentRuntimeError(reason="tick_seconds_invalid")
-    while True:
-        _ = runtime.tick(clock())
-        await anyio.sleep(tick_seconds)
 
 
 __all__ = (

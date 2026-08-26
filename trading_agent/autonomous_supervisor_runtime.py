@@ -166,11 +166,19 @@ class AutonomousSupervisorRuntime:
                 projected = self._task(task.task_id)
                 return tick_result(projected, outcome.status, model_calls, tool_calls)
 
-    def run_due(self, now: dt.datetime, events: Collection[str] = ()) -> tuple[AutonomousSupervisorTickResult, ...]:
+    def run_due(
+        self,
+        now: dt.datetime,
+        events: Collection[str] = (),
+        *,
+        max_tasks: int | None = None,
+    ) -> tuple[AutonomousSupervisorTickResult, ...]:
         current_now = utc_time(now)
+        runnable = self.tasks.reader().runnable(current_now, events=events)
+        selected = runnable if max_tasks is None else runnable[:max_tasks]
         return tuple(
             self.tick(task, current_now, events=events)
-            for task in self.tasks.reader().runnable(current_now, events=events)
+            for task in selected
         )
 
     def _task(self, task_id: AutonomousTaskId | str) -> Task:

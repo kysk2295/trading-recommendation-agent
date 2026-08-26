@@ -6,11 +6,13 @@ from typing import Literal, Protocol, Self, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from trading_agent.autonomous_supervisor_due_adapter import AutonomousSupervisorProjection
 from trading_agent.autonomous_task_models import AutonomousSupervisorTickResult
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
 from trading_agent.research_agent_actions import ResearchAgentActionClient
 from trading_agent.research_agent_cycle_models import (
     CycleId,
+    EvidenceId,
     ResearchAgentCycleV1,
     ResearchAgentEvidenceV1,
     ResearchAgentResultV1,
@@ -40,6 +42,22 @@ class PersistentResearchSupervisor(Protocol):
         result: AutonomousSupervisorTickResult,
         now: dt.datetime,
     ) -> ResearchAgentResultV1: ...
+
+
+@runtime_checkable
+class DueResearchSupervisor(PersistentResearchSupervisor, Protocol):
+    def admitted_evidence_ids(self) -> frozenset[EvidenceId]: ...
+
+    def admit_matching_evidence(self, evidence: ResearchAgentEvidenceV1, now: dt.datetime) -> bool: ...
+
+    def recoverable_projections(self) -> tuple[AutonomousSupervisorProjection, ...]: ...
+
+    def run_due(self, now: dt.datetime) -> tuple[AutonomousSupervisorProjection, ...]: ...
+
+    def projection_for_result(
+        self,
+        result: AutonomousSupervisorTickResult,
+    ) -> AutonomousSupervisorProjection: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +128,7 @@ class ResearchAgentBoundedCycleResult(BaseModel):
 
 
 __all__ = (
+    "DueResearchSupervisor",
     "InvalidResearchAgentRuntimeError",
     "PersistentResearchSupervisor",
     "ResearchAgentBoundedCycleResult",

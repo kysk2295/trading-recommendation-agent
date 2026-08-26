@@ -15,6 +15,13 @@ from trading_agent.autonomous_evidence_admission import (
     admit_evidence_with_writer,
     create_root_evidence_task,
 )
+from trading_agent.autonomous_supervisor_due_adapter import (
+    AutonomousSupervisorProjection,
+    admit_matching_evidence,
+    admitted_evidence_ids,
+    projection_for_result,
+    recoverable_projections,
+)
 from trading_agent.autonomous_supervisor_runtime import AutonomousSupervisorRuntime
 from trading_agent.autonomous_task_models import (
     AutonomousResearchTask,
@@ -23,6 +30,7 @@ from trading_agent.autonomous_task_models import (
     autonomous_task_id,
 )
 from trading_agent.research_agent_cycle_models import (
+    EvidenceId,
     ResearchAgentCycleV1,
     ResearchAgentEvidenceV1,
     ResearchAgentResultStatus,
@@ -103,6 +111,27 @@ class AutonomousSupervisorAdapter:
             if durable is None:
                 raise InvalidAutonomousSupervisorProjectionError(reason="autonomous_admission_task_missing")
             return durable
+
+    def admit_matching_evidence(self, evidence: ResearchAgentEvidenceV1, now: dt.datetime) -> bool:
+        return admit_matching_evidence(self.runtime, evidence, now)
+
+    def admitted_evidence_ids(self) -> frozenset[EvidenceId]:
+        return admitted_evidence_ids(self.runtime)
+
+    def recoverable_projections(self) -> tuple[AutonomousSupervisorProjection, ...]:
+        return recoverable_projections(self.runtime)
+
+    def run_due(self, now: dt.datetime) -> tuple[AutonomousSupervisorProjection, ...]:
+        return tuple(
+            projection_for_result(self.runtime, result)
+            for result in self.runtime.run_due(now, max_tasks=1)
+        )
+
+    def projection_for_result(
+        self,
+        result: AutonomousSupervisorTickResult,
+    ) -> AutonomousSupervisorProjection:
+        return projection_for_result(self.runtime, result)
 
     def project_tick(
         self,
