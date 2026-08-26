@@ -65,9 +65,7 @@ def config_from_provision_args(args: argparse.Namespace) -> ResearchAgentService
         swing_review_database=_absolute(args.source_swing_review_database),
         experiment_ledger=_absolute(args.source_experiment_ledger),
         lane_review_database=_absolute(args.source_lane_review_database),
-        kr_calendar_store=(
-            None if args.source_kr_calendar_store is None else _absolute(args.source_kr_calendar_store)
-        ),
+        kr_calendar_store=(None if args.source_kr_calendar_store is None else _absolute(args.source_kr_calendar_store)),
     )
     fixture = None if args.systematic_response_fixture is None else _absolute(args.systematic_response_fixture)
     systematic = SystematicResearchActionConfig(
@@ -93,7 +91,10 @@ def config_from_provision_args(args: argparse.Namespace) -> ResearchAgentService
         max_sessions=args.max_sessions,
         rss_limit_gib=args.rss_limit_gib,
     )
+    browser_gateway_config = None if args.browser_gateway_config is None else _absolute(args.browser_gateway_config)
     return ResearchAgentServiceConfig(
+        schema_version=2 if browser_gateway_config is None else 3,
+        browser_gateway_config=browser_gateway_config,
         label=RESEARCH_AGENT_SERVICE_LABEL,
         project_root=project_root,
         uv_path=uv_path,
@@ -125,6 +126,7 @@ def _add_provision_arguments(parser: argparse.ArgumentParser) -> None:
         parser.add_argument(f"--{option}", type=Path, required=True)
     parser.add_argument("--systematic-response-fixture", type=Path)
     parser.add_argument("--source-kr-calendar-store", type=Path)
+    parser.add_argument("--browser-gateway-config", type=Path)
     parser.add_argument("--model-id", required=True)
     parser.add_argument("--provider-id", required=True)
     parser.add_argument("--max-runtime-seconds", type=float, default=600.0)

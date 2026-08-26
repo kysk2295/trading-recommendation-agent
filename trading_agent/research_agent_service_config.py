@@ -6,10 +6,14 @@ import os
 import plistlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal, Self
+from typing import Final, Literal, Self, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from trading_agent.local_browser_gateway_config import (
+    InvalidLocalBrowserGatewayConfigError,
+    load_local_browser_gateway_config,
+)
 from trading_agent.private_immutable_file import (
     InvalidPrivateImmutableFileError,
     publish_private_immutable_text,
@@ -40,7 +44,8 @@ class InvalidResearchAgentServiceConfigError(RuntimeError):
 class ResearchAgentServiceConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
-    schema_version: Literal[2] = 2
+    schema_version: Literal[2, 3] = 2
+    browser_gateway_config: Path | None = None
     label: Literal["ai.trading-agent.research-agent-runtime"] = RESEARCH_AGENT_SERVICE_LABEL
     project_root: Path
     uv_path: Path
@@ -55,6 +60,15 @@ class ResearchAgentServiceConfig(BaseModel):
 
     @model_validator(mode="after")
     def require_absolute_bound_configuration(self) -> Self:
+        match self.schema_version:
+            case 2:
+                if self.browser_gateway_config is not None:
+                    raise InvalidResearchAgentServiceConfigError(reason="service_browser_binding_invalid")
+            case 3:
+                if self.browser_gateway_config is None or not self.browser_gateway_config.is_absolute():
+                    raise InvalidResearchAgentServiceConfigError(reason="service_browser_binding_invalid")
+            case unreachable:
+                assert_never(unreachable)
         direct = (
             self.project_root,
             self.uv_path,
@@ -134,6 +148,8 @@ def verify_research_agent_launch_agent(
     try:
         absolute_config = config_path.expanduser().absolute()
         config = load_research_agent_service_config(absolute_config)
+        if config.browser_gateway_config is not None:
+            _ = load_local_browser_gateway_config(config.browser_gateway_config)
         _ = load_systematic_input_activation(config.systematic.input_activation)
         plist_payload = read_private_text(plist_path.expanduser().absolute())
         if plist_payload != _launch_agent_text(config, absolute_config):
@@ -158,6 +174,7 @@ def verify_research_agent_launch_agent(
         )
     except (
         InvalidPrivateImmutableFileError,
+        InvalidLocalBrowserGatewayConfigError,
         InvalidResearchAgentServiceConfigError,
         InvalidSystematicInputActivationError,
         OSError,
@@ -169,7 +186,10 @@ def verify_research_agent_launch_agent(
 
 
 def _config_text(config: ResearchAgentServiceConfig) -> str:
-    return json.dumps(config.model_dump(mode="json"), ensure_ascii=True, separators=(",", ":"), sort_keys=True) + "\n"
+    payload = config.model_dump(mode="json")
+    if config.browser_gateway_config is None:
+        del payload["browser_gateway_config"]
+    return json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True) + "\n"
 
 
 def canonical_research_agent_service_config_sha256(config: ResearchAgentServiceConfig) -> str:

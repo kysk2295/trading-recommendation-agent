@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 import datetime as dt
+from contextlib import ExitStack
 from dataclasses import dataclass
 
+from trading_agent.autonomous_browser_tools import BrowserToolServices
 from trading_agent.autonomous_supervisor_service import build_autonomous_supervisor
+from trading_agent.browser_research_agenda import ContinuousBrowserResearchSupervisor
+from trading_agent.browser_social_evidence_store import (
+    BrowserSocialEvidenceStore,
+    InvalidBrowserSocialEvidenceStoreError,
+)
 from trading_agent.critic_agent import DeterministicHypothesisCritic
 from trading_agent.day_discovery_loop import DayDiscoveryActionExecutor, DayDiscoveryLoop, DayDiscoveryLoopConfig
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
@@ -11,6 +18,10 @@ from trading_agent.generated_strategy_artifact import GeneratedStrategyArtifactS
 from trading_agent.generated_strategy_execution import GeneratedStrategyLimits
 from trading_agent.generated_strategy_runtime import resolve_generated_strategy_runtime
 from trading_agent.generated_strategy_sandbox import GeneratedStrategySandbox
+from trading_agent.local_browser_gateway_config import (
+    InvalidLocalBrowserGatewayConfigError,
+    load_local_browser_gateway_config,
+)
 from trading_agent.research_agent_actions import (
     ResearchAgentActionConfig,
     ResearchAgentActionContext,
@@ -61,43 +72,65 @@ def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRu
     from trading_agent.research_agent_service_reporting import prepare_private_runtime_paths
 
     prepare_private_runtime_paths(config)
-    cycle_store = ResearchAgentCycleStore(config.cycle_database)
-    systematic = SystematicResearchActionExecutor(config.systematic, prior_results=cycle_store.results)
-    opportunity = OpportunityResearchActionExecutor(
-        hypothesis_creator=build_source_hypothesis_factory(
-            cycle_store.all_evidence,
-            config.source_paths.kr_calendar_store,
-        ),
-        hypothesis_sink=PrivateStrategyResearchWorkSink(
-            ExperimentLedgerStore(config.source_paths.experiment_ledger),
-            config.source_paths.outputs_root / "strategy-research" / "work",
-        ),
-    )
-    actions = ResearchAgentActionExecutor(
-        ResearchAgentActionConfig(
-            systematic=systematic,
-            opportunity=opportunity,
-            market_context=MarketContextResearchActionExecutor(cycle_store.results),
-            day=DayResearchActionExecutor(
-                config.source_paths.day_session_root,
-                discovery=_ConfiguredDayDiscoveryAction(config),
+    with ExitStack() as ownership:
+        cycle_store = ResearchAgentCycleStore(config.cycle_database)
+        ownership.callback(cycle_store.close)
+        systematic = SystematicResearchActionExecutor(config.systematic, prior_results=cycle_store.results)
+        opportunity = OpportunityResearchActionExecutor(
+            hypothesis_creator=build_source_hypothesis_factory(
+                cycle_store.all_evidence,
+                config.source_paths.kr_calendar_store,
             ),
-            swing=SwingResearchActionExecutor(config.source_paths.swing_shadow_database),
-            derivatives=DerivativesResearchActionExecutor(cycle_store.results),
-        )
-    )
-    return ResearchAgentRuntime(
-        ResearchAgentRuntimeServices(
-            store=cycle_store,
-            collector=ConfiguredResearchAgentEvidenceCollector(
-                config.source_paths,
-                systematic_review_root=config.systematic.review_root,
+            hypothesis_sink=PrivateStrategyResearchWorkSink(
+                ExperimentLedgerStore(config.source_paths.experiment_ledger),
+                config.source_paths.outputs_root / "strategy-research" / "work",
             ),
-            decisions=_decision_client(config),
-            actions=actions,
-            supervisor_runtime=build_autonomous_supervisor(config),
         )
-    )
+        actions = ResearchAgentActionExecutor(
+            ResearchAgentActionConfig(
+                systematic=systematic,
+                opportunity=opportunity,
+                market_context=MarketContextResearchActionExecutor(cycle_store.results),
+                day=DayResearchActionExecutor(
+                    config.source_paths.day_session_root,
+                    discovery=_ConfiguredDayDiscoveryAction(config),
+                ),
+                swing=SwingResearchActionExecutor(config.source_paths.swing_shadow_database),
+                derivatives=DerivativesResearchActionExecutor(cycle_store.results),
+            )
+        )
+        browser_path = config.browser_gateway_config
+        if browser_path is None:
+            supervisor = build_autonomous_supervisor(config)
+        else:
+            try:
+                gateway = load_local_browser_gateway_config(browser_path)
+                evidence_database = config.output_root / "autonomous-supervisor" / "browser-social-evidence.sqlite3"
+                browser = BrowserToolServices(gateway.socket_path, evidence_database)
+                supervisor = build_autonomous_supervisor(config, browser=browser)
+                ownership.callback(supervisor.close)
+                _ = BrowserSocialEvidenceStore(evidence_database).search("service-initialization", limit=1)
+            except (InvalidBrowserSocialEvidenceStoreError, InvalidLocalBrowserGatewayConfigError):
+                raise InvalidResearchAgentServiceRuntimeError from None
+        if browser_path is None:
+            ownership.callback(supervisor.close)
+        installed_supervisor = (
+            supervisor if browser_path is None else ContinuousBrowserResearchSupervisor(supervisor, cycle_store)
+        )
+        runtime = ResearchAgentRuntime(
+            ResearchAgentRuntimeServices(
+                store=cycle_store,
+                collector=ConfiguredResearchAgentEvidenceCollector(
+                    config.source_paths,
+                    systematic_review_root=config.systematic.review_root,
+                ),
+                decisions=_decision_client(config),
+                actions=actions,
+                supervisor_runtime=installed_supervisor,
+            )
+        )
+        _ = ownership.pop_all()
+        return runtime
 
 
 def _day_discovery_executor(
@@ -108,9 +141,7 @@ def _day_discovery_executor(
     receipts = ResearcherReceiptStore(systematic.receipt_root)
     ledger = ExperimentLedgerStore(config.source_paths.experiment_ledger)
     if systematic.response_fixture is not None:
-        proposal_client = FixtureLlmProposalClient(
-            load_private_canonical_llm_response(systematic.response_fixture)
-        )
+        proposal_client = FixtureLlmProposalClient(load_private_canonical_llm_response(systematic.response_fixture))
     elif systematic.hermes_executable is not None:
         proposal_client = HermesCliProposalClient(
             systematic.hermes_executable,

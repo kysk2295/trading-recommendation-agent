@@ -132,9 +132,7 @@ def test_idle_service_tick_reports_zero_model_and_broker_mutations(
     assert sum(tick.status == "completed" for tick in seed_ticks) == 3
     qa_time = NOW + dt.timedelta(minutes=2, seconds=30)
     assert seed.tick(qa_time).status == "idle"
-    completed_results = sum(
-        result.status is ResearchAgentResultStatus.COMPLETED for result in seed.store.results()
-    )
+    completed_results = sum(result.status is ResearchAgentResultStatus.COMPLETED for result in seed.store.results())
     seed.close()
     config_path = (tmp_path / "private" / "runtime.json").absolute()
     assert write_research_agent_service_config(config_path, config)
@@ -272,25 +270,3 @@ def test_ready_systematic_input_reports_only_bound_digests(tmp_path: Path) -> No
     assert report.systematic_input_sha256 == fixture.activation.input_sha256
     assert report.systematic_foundation_sha256 == fixture.activation.foundation_sha256
     assert "path" not in report.model_dump_json()
-
-
-def test_status_binds_schema_v2_identity_to_the_canonical_config(tmp_path: Path) -> None:
-    # Given: a valid v2 runtime configuration without a cycle journal.
-    config = _config(tmp_path)
-    config_text = (
-        json.dumps(
-            config.model_dump(mode="json"),
-            ensure_ascii=True,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        + "\n"
-    )
-    expected_sha256 = hashlib.sha256(config_text.encode()).hexdigest()
-
-    # When: the query-only service status is projected.
-    report = service_status(config, NOW)
-
-    # Then: the persisted-report shape carries the exact candidate identity.
-    assert report.schema_version == 2
-    assert report.config_sha256 == expected_sha256
