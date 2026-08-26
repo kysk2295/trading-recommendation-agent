@@ -28,6 +28,10 @@ class InvalidPrivateBrowserSocketError(RuntimeError):
     pass
 
 
+class PrivateBrowserSocketBusyError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class PrivateSocketIdentity:
     device: int
@@ -96,6 +100,13 @@ def bind_private_unix_socket(path: Path, owner_id: int) -> PrivateUnixSocketBind
         listener.listen(8)
         resources = PrivateSocketResources(listener, parent, lease, identity)
         return PrivateUnixSocketBinding(absolute, resources)
+    except PrivateBrowserSocketBusyError:
+        if listener is not None:
+            listener.close()
+        if lease is not None:
+            os.close(lease)
+        os.close(parent)
+        raise
     except (AtomicRenameConflictError, AtomicRenameUnavailableError, OSError, TypeError, ValueError):
         if listener is not None:
             listener.close()
@@ -155,7 +166,7 @@ def _acquire_lease(parent: int, owner_id: int) -> int:
     except BlockingIOError as error:
         os.close(descriptor)
         if error.errno in (errno.EACCES, errno.EAGAIN):
-            raise OSError from None
+            raise PrivateBrowserSocketBusyError from None
         raise
     except OSError:
         if locked:

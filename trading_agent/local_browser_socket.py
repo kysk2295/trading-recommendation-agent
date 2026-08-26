@@ -17,6 +17,7 @@ from trading_agent.local_browser_gateway_wire import (
 from trading_agent.local_browser_protocol import MAX_RESPONSE_BYTES, BrowserResponse
 from trading_agent.local_browser_socket_fs import (
     InvalidPrivateBrowserSocketError,
+    PrivateBrowserSocketBusyError,
     PrivateUnixSocketBinding,
     bind_private_unix_socket,
     require_private_socket_path,
@@ -29,6 +30,11 @@ class InvalidLocalBrowserSocketError(RuntimeError):
     def __init__(self, *, reason: str) -> None:
         self.reason = reason
         super().__init__(reason)
+
+
+class LocalBrowserSocketBusyError(InvalidLocalBrowserSocketError):
+    def __init__(self) -> None:
+        super().__init__(reason="browser_socket_busy")
 
 
 class BrowserGatewayHandler(Protocol):
@@ -80,6 +86,8 @@ class LocalBrowserSocketServer:
     def __enter__(self) -> LocalBrowserSocketServer:
         try:
             self._binding = bind_private_unix_socket(self._path, os.geteuid())
+        except PrivateBrowserSocketBusyError:
+            raise LocalBrowserSocketBusyError from None
         except InvalidPrivateBrowserSocketError:
             raise InvalidLocalBrowserSocketError(reason="browser_socket_invalid") from None
         return self
