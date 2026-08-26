@@ -59,14 +59,17 @@ def _is_valid_hostname(hostname: str) -> bool:
     if len(hostname.rstrip(".")) > 253:
         return False
     labels = hostname.rstrip(".").split(".")
-    return bool(labels and all(
-        label
-        and len(label) <= 63
-        and label[0] != "-"
-        and label[-1] != "-"
-        and all(character.isalnum() or character == "-" for character in label)
-        for label in labels
-    ))
+    return bool(
+        labels
+        and all(
+            label
+            and len(label) <= 63
+            and label[0] != "-"
+            and label[-1] != "-"
+            and all(character.isalnum() or character == "-" for character in label)
+            for label in labels
+        )
+    )
 
 
 def _literal_address(hostname: str) -> IPv4Address | IPv6Address | None:
@@ -130,11 +133,7 @@ def require_public_https_url(value: str) -> str:
             raise _protocol_error() from None
     if address is not None and (
         not address.is_global
-        or (
-            isinstance(address, IPv6Address)
-            and address.ipv4_mapped is not None
-            and not address.ipv4_mapped.is_global
-        )
+        or (isinstance(address, IPv6Address) and address.ipv4_mapped is not None and not address.ipv4_mapped.is_global)
         or address.is_loopback
         or address.is_link_local
         or address.is_private
@@ -247,6 +246,7 @@ class BrowserFailure(_StrictModel):
 
 class BrowserStatusPayload(_StrictModel):
     ready: bool
+    active_page_count: int = Field(ge=0, le=100)
 
 
 class BrowserResponse(_StrictModel):
@@ -278,10 +278,9 @@ class BrowserResponse(_StrictModel):
                                 "browser_response_status_payload", "status response payload is invalid"
                             )
                     case BrowserAction.SEARCH:
-                        if (
-                            "search_results" not in supplied_payload_fields
-                            or supplied_payload_fields != {"search_results"}
-                        ):
+                        if "search_results" not in supplied_payload_fields or supplied_payload_fields != {
+                            "search_results"
+                        }:
                             raise PydanticCustomError(
                                 "browser_response_search_payload", "search response payload is invalid"
                             )

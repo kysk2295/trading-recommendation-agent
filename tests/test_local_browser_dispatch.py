@@ -4,11 +4,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from trading_agent.chrome_devtools_types import ChromeDevToolsStatus, InvalidChromeDevToolsError
 from trading_agent.local_browser_gateway import (
     BrowserDispatchDependencies,
     BrowserRequestDispatcher,
 )
+from trading_agent.local_browser_gateway_wire import BrowserRequest, canonical_browser_response
 from trading_agent.local_browser_protocol import (
     BrowserAction,
     BrowserCaptureRequest,
@@ -26,8 +29,17 @@ from trading_agent.local_chrome_endpoint import ChromeDebugPort, LocalChromeEndp
 NOW = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
 
 
+class UnexpectedTestError(RuntimeError):
+    pass
+
+
 class FakeController:
+    def __init__(self, *, explode: bool = False) -> None:
+        self.explode = explode
+
     def ensure_ready(self) -> LocalChromeEndpoint:
+        if self.explode:
+            raise UnexpectedTestError("secret controller detail")
         return LocalChromeEndpoint(
             port=ChromeDebugPort(9222),
             browser_path="/devtools/browser/test",
@@ -37,13 +49,18 @@ class FakeController:
         )
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
 class FakeClient:
+    """Record calls while injecting test-only failures."""
+
     calls: list[tuple[str, str]] = field(default_factory=list)
+    explode: bool = False
 
     def status(self) -> ChromeDevToolsStatus:
+        if self.explode:
+            raise UnexpectedTestError("secret client detail")
         self.calls.append(("status", ""))
-        return ChromeDevToolsStatus(True, 1)
+        return ChromeDevToolsStatus(True, 7)
 
     def search(self, query: str, *, captured_at: datetime) -> BrowserPageObservation:
         self.calls.append(("search", query))
@@ -85,10 +102,13 @@ class FakeClient:
 
 
 class FakeFactory:
-    def __init__(self, client: FakeClient) -> None:
+    def __init__(self, client: FakeClient, *, explode: bool = False) -> None:
         self._client = client
+        self._explode = explode
 
     def create(self, endpoint: LocalChromeEndpoint) -> FakeClient:
+        if self._explode:
+            raise UnexpectedTestError("secret factory detail")
         assert endpoint.port == 9222
         return self._client
 
@@ -96,6 +116,21 @@ class FakeFactory:
 def _dispatcher(client: FakeClient, root: Path) -> BrowserRequestDispatcher:
     dependencies = BrowserDispatchDependencies(FakeController(), FakeFactory(client), lambda: NOW)
     return BrowserRequestDispatcher(dependencies, root)
+
+
+def _exploding_dispatcher(source: str, root: Path) -> BrowserRequestDispatcher:
+    controller = FakeController(explode=source == "controller")
+    factory = FakeFactory(FakeClient(explode=source == "client"), explode=source == "factory")
+    clock_calls = 0
+
+    def now() -> datetime:
+        nonlocal clock_calls
+        clock_calls += 1
+        if source == "clock" and clock_calls == 1:
+            raise UnexpectedTestError("secret clock detail")
+        return NOW
+
+    return BrowserRequestDispatcher(BrowserDispatchDependencies(controller, factory, now), root)
 
 
 def test_dispatches_exactly_the_six_protocol_actions(tmp_path: Path) -> None:
@@ -112,6 +147,8 @@ def test_dispatches_exactly_the_six_protocol_actions(tmp_path: Path) -> None:
     responses = tuple(dispatcher.dispatch(request) for request in requests)
     assert tuple(response.action for response in responses) == tuple(BrowserAction)
     assert all(response.status == "ok" for response in responses)
+    assert responses[0].status_payload is not None
+    assert responses[0].status_payload.active_page_count == 7
     assert responses[1].search_results[0].url == "https://example.org/result"
     assert responses[2].observation is not None
     assert responses[5].screenshot is not None
@@ -137,3 +174,26 @@ def test_dispatch_redacts_unreviewed_chrome_error_reason(tmp_path: Path) -> None
     assert response.status == "error"
     assert response.failure is not None
     assert response.failure.reason.value == "browser_navigation_blocked"
+
+
+@pytest.mark.parametrize("source", ("controller", "factory", "client", "clock"))
+def test_unexpected_dispatch_errors_are_stable_and_redacted(source: str, tmp_path: Path) -> None:
+    request: BrowserRequest = BrowserStatusRequest(request_id="b" * 64)
+    response = _exploding_dispatcher(source, tmp_path).dispatch(request)
+    assert canonical_browser_response(response) == (
+        b'{"action":"status","failure":{"reason":"browser_navigation_blocked"},'
+        b'"request_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",'
+        b'"status":"error"}'
+    )
+
+
+@pytest.mark.parametrize("interruption", (KeyboardInterrupt, SystemExit))
+def test_dispatch_does_not_catch_process_interruptions(interruption: type[BaseException], tmp_path: Path) -> None:
+    class InterruptingController(FakeController):
+        def ensure_ready(self) -> LocalChromeEndpoint:
+            raise interruption()
+
+    dependencies = BrowserDispatchDependencies(InterruptingController(), FakeFactory(FakeClient()), lambda: NOW)
+    dispatcher = BrowserRequestDispatcher(dependencies, tmp_path)
+    with pytest.raises(interruption):
+        dispatcher.dispatch(BrowserStatusRequest(request_id="c" * 64))

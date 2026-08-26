@@ -10,6 +10,7 @@ from trading_agent.local_browser_protocol import (
     BrowserPageObservation,
     BrowserResponse,
     BrowserSearchResult,
+    BrowserStatusPayload,
     BrowserVisibleLink,
     InvalidLocalBrowserProtocolError,
     require_public_https_url,
@@ -161,9 +162,7 @@ def test_response_rejects_canonical_json_over_16_kib() -> None:
 
 def test_response_error_requires_failure_and_forbids_success_payload() -> None:
     with pytest.raises(ValidationError):
-        BrowserResponse.model_validate(
-            {"request_id": "a" * 64, "action": BrowserAction.OPEN, "status": "error"}
-        )
+        BrowserResponse.model_validate({"request_id": "a" * 64, "action": BrowserAction.OPEN, "status": "error"})
     with pytest.raises(ValidationError):
         BrowserResponse.model_validate(
             {
@@ -182,9 +181,7 @@ def test_response_error_requires_failure_and_forbids_success_payload() -> None:
 
 def test_response_ok_requires_action_specific_payload_and_forbids_failure() -> None:
     with pytest.raises(ValidationError):
-        BrowserResponse.model_validate(
-            {"request_id": "a" * 64, "action": BrowserAction.OPEN, "status": "ok"}
-        )
+        BrowserResponse.model_validate({"request_id": "a" * 64, "action": BrowserAction.OPEN, "status": "ok"})
     with pytest.raises(ValidationError):
         BrowserResponse.model_validate(
             {
@@ -211,3 +208,11 @@ def test_response_rejects_action_payload_mismatch() -> None:
                 "search_results": (),
             }
         )
+
+
+def test_status_payload_preserves_bounded_active_page_count() -> None:
+    payload = BrowserStatusPayload(ready=True, active_page_count=7)
+    assert payload.model_dump_json() == '{"ready":true,"active_page_count":7}'
+    for invalid_count in (-1, 101):
+        with pytest.raises(ValidationError):
+            BrowserStatusPayload(ready=True, active_page_count=invalid_count)

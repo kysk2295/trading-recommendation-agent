@@ -85,7 +85,9 @@ class BrowserRequestDispatcher:
                     return BrowserResponse(
                         request_id=request.request_id,
                         action=action,
-                        status_payload=BrowserStatusPayload(ready=status.ready),
+                        status_payload=BrowserStatusPayload(
+                            ready=status.ready, active_page_count=status.active_page_count
+                        ),
                     )
                 case BrowserSearchRequest(query=query):
                     opened = client.search(query, captured_at=captured_at)
@@ -114,6 +116,8 @@ class BrowserRequestDispatcher:
             return _failure(request, BrowserFailureReason.NAVIGATION_BLOCKED)
         except ValidationError:
             return _failure(request, BrowserFailureReason.RESPONSE_TOO_LARGE)
+        except Exception:  # noqa: RUF100  # noqa: BROAD_EXCEPT_OK: redact unexpected dispatch failures
+            return _failure(request, BrowserFailureReason.NAVIGATION_BLOCKED)
 
     def now(self) -> datetime:
         return self._dependencies.now()

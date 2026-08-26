@@ -26,8 +26,10 @@ from trading_agent.local_browser_socket import (
 )
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
 class EchoGateway:
+    """Count real socket dispatches for replay assertions."""
+
     calls: int = 0
 
     def handle_bytes(self, payload: bytes) -> bytes:
@@ -38,7 +40,7 @@ class EchoGateway:
             BrowserResponse(
                 request_id=request.request_id,
                 action=BrowserAction.STATUS,
-                status_payload=BrowserStatusPayload(ready=True),
+                status_payload=BrowserStatusPayload(ready=True, active_page_count=7),
             )
         )
 
@@ -90,6 +92,7 @@ def test_real_socket_client_round_trip_is_private_and_peer_authenticated(short_r
         response = LocalBrowserSocketClient(socket_path, timeout_seconds=1.0).request(request)
         _finish_server(thread, errors)
     assert response.status_payload is not None and response.status_payload.ready
+    assert response.status_payload.active_page_count == 7
     assert gateway.calls == 1
     assert not socket_path.exists()
 
@@ -130,7 +133,7 @@ def test_client_rejects_response_for_another_request(short_root: Path) -> None:
                 BrowserResponse(
                     request_id="c" * 64,
                     action=BrowserAction.STATUS,
-                    status_payload=BrowserStatusPayload(ready=True),
+                    status_payload=BrowserStatusPayload(ready=True, active_page_count=7),
                 )
             )
 

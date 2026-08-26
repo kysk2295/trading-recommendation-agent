@@ -56,7 +56,7 @@ class CountingController:
 
 class StatusOnlyClient:
     def status(self) -> ChromeDevToolsStatus:
-        return ChromeDevToolsStatus(True, 1)
+        return ChromeDevToolsStatus(True, 7)
 
     def search(self, query: str, *, captured_at: datetime) -> BrowserPageObservation:
         raise InvalidChromeDevToolsError(reason=f"unsupported:{query}:{captured_at}")
@@ -106,6 +106,7 @@ def _round_trip(root: Path, controller: CountingController, request: BrowserStat
     response = LocalBrowserSocketClient(root / "gateway.sock", timeout_seconds=1.0).request(request)
     thread.join(timeout=2.0)
     assert response.status_payload is not None and response.status_payload.ready
+    assert response.status_payload.active_page_count == 7
     assert not thread.is_alive()
     assert errors == []
 
