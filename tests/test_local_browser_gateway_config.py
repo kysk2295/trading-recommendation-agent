@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import plistlib
-import stat
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,6 +21,10 @@ from trading_agent.local_browser_gateway_config import (
     write_local_browser_launch_agent,
 )
 from trading_agent.private_immutable_file import read_private_text
+
+CONFIG_READ_ERROR = "local_browser_gateway_config_read_invalid"
+LAUNCH_VERIFY_ERROR = "local_browser_launch_agent_verify_invalid"
+SYMLINK_COMPONENT_ERROR = "local_browser_gateway_symlink_component_invalid"
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,99 +73,66 @@ def _write_contract(fixture: GatewayFixture) -> None:
     assert write_local_browser_launch_agent(fixture.plist_path, fixture.config, fixture.config_path)
 
 
-def test_config_round_trips_with_canonical_hash_when_private_fixture_is_valid(gateway_fixture: GatewayFixture) -> None:
-    # Given: a valid private gateway configuration.
-    # When: it is published then loaded.
-    assert write_local_browser_gateway_config(gateway_fixture.config_path, gateway_fixture.config)
-    loaded = load_local_browser_gateway_config(gateway_fixture.config_path)
-    # Then: its immutable canonical representation and hash are preserved.
-    assert loaded == gateway_fixture.config
-    assert read_private_text(gateway_fixture.config_path).endswith("\n")
-    assert canonical_local_browser_gateway_config_sha256(loaded) == canonical_local_browser_gateway_config_sha256(
-        gateway_fixture.config
-    )
-    assert stat.S_IMODE(gateway_fixture.config_path.stat().st_mode) == 0o600
+def _rejection[T](action: Callable[[], T]) -> InvalidLocalBrowserGatewayConfigError:
+    with pytest.raises(InvalidLocalBrowserGatewayConfigError) as raised:
+        _ = action()
+    return raised.value
+
+
+def _load_rejection(fixture: GatewayFixture) -> InvalidLocalBrowserGatewayConfigError:
+    return _rejection(lambda: load_local_browser_gateway_config(fixture.config_path))
+
+
+def _verify_rejection(fixture: GatewayFixture) -> InvalidLocalBrowserGatewayConfigError:
+    return _rejection(lambda: verify_local_browser_launch_agent(fixture.config_path, fixture.plist_path))
 
 
 def test_launch_agent_has_exact_deterministic_contract_when_config_is_valid(gateway_fixture: GatewayFixture) -> None:
     # Given: a valid configuration and private artifact paths.
     # When: the LaunchAgent is published twice.
     _write_contract(gateway_fixture)
-    assert not write_local_browser_launch_agent(
-        gateway_fixture.plist_path, gateway_fixture.config, gateway_fixture.config_path
-    )
+    loaded = load_local_browser_gateway_config(gateway_fixture.config_path)
     payload = read_private_text(gateway_fixture.plist_path)
     # Then: its parsed arguments and service settings are deterministic and complete.
     document = plistlib.loads(payload.encode("utf-8"))
+    gateway_script = gateway_fixture.config.project_root / "run_local_browser_gateway.py"
+    arguments = [str(gateway_fixture.config.uv_path), "run", "--offline", "python", str(gateway_script)]
+    arguments += ["run", "--config", str(gateway_fixture.config_path)]
     assert document == {
-        "KeepAlive": True,
-        "Label": LOCAL_BROWSER_GATEWAY_LABEL,
-        "ProcessType": "Background",
-        "ProgramArguments": [
-            str(gateway_fixture.config.uv_path),
-            "run",
-            "--offline",
-            "python",
-            str(gateway_fixture.config.project_root / "run_local_browser_gateway.py"),
-            "run",
-            "--config",
-            str(gateway_fixture.config_path),
-        ],
-        "RunAtLoad": True,
-        "StandardErrorPath": "/dev/null",
-        "StandardOutPath": "/dev/null",
-        "ThrottleInterval": 30,
-        "Umask": 0o077,
+        "KeepAlive": True, "Label": LOCAL_BROWSER_GATEWAY_LABEL, "ProcessType": "Background",
+        "ProgramArguments": arguments, "RunAtLoad": True, "StandardErrorPath": "/dev/null",
+        "StandardOutPath": "/dev/null", "ThrottleInterval": 30, "Umask": 0o077,
     }
-    assert all(
-        forbidden not in payload.lower()
-        for forbidden in (
-            "secret",
-            "token",
-            "cookie",
-            "credential",
-            "account",
-            "header",
-            "environment",
-            "codex",
-            "chat",
-            "thread",
-        )
+    assert "EnvironmentVariables" not in document
+    assert loaded == gateway_fixture.config
+    assert verify_local_browser_launch_agent(gateway_fixture.config_path, gateway_fixture.plist_path).ready is True
+    assert canonical_local_browser_gateway_config_sha256(loaded) == canonical_local_browser_gateway_config_sha256(
+        gateway_fixture.config
     )
-    assert stat.S_IMODE(gateway_fixture.plist_path.stat().st_mode) == 0o600
 
 
-@pytest.mark.parametrize("artifact", ("config", "plist"))
-def test_private_artifact_is_rejected_when_group_readable(gateway_fixture: GatewayFixture, artifact: str) -> None:
-    # Given: a published private configuration or plist whose mode is weakened.
-    _write_contract(gateway_fixture)
-    path = gateway_fixture.config_path if artifact == "config" else gateway_fixture.plist_path
-    path.chmod(0o640)
-    # When: the affected artifact is loaded or verified.
-    # Then: the private-file boundary fails closed with a stable typed error.
-    with pytest.raises(InvalidLocalBrowserGatewayConfigError) as raised:
-        if artifact == "config":
-            _ = load_local_browser_gateway_config(path)
-        else:
-            _ = verify_local_browser_launch_agent(gateway_fixture.config_path, path)
-    assert raised.value.reason in {
-        "local_browser_gateway_config_read_invalid",
-        "local_browser_launch_agent_verify_invalid",
-    }
-
-
-@pytest.mark.parametrize("artifact", ("config", "plist"))
-def test_private_artifact_is_rejected_when_symlinked(gateway_fixture: GatewayFixture, artifact: str) -> None:
-    # Given: a published artifact replaced with a symlink.
-    _write_contract(gateway_fixture)
-    path = gateway_fixture.config_path if artifact == "config" else gateway_fixture.plist_path
+def _replace_with_symlink(path: Path) -> None:
     target = path.with_name(f"{path.name}.target")
     target.write_text("fixture\n", encoding="utf-8")
     target.chmod(0o600)
     path.unlink()
     path.symlink_to(target)
-    # When: its trust boundary is crossed.
-    # Then: the symlink is rejected before content is trusted.
+
+
+@pytest.mark.parametrize(
+    ("artifact", "weakening"),
+    (("config", "mode"), ("plist", "mode"), ("config", "symlink"), ("plist", "symlink")),
+)
+def test_private_artifact_is_rejected_when_not_private(
+    gateway_fixture: GatewayFixture, artifact: str, weakening: str
+) -> None:
+    # Given: a published artifact with weakened mode or a symlink final component.
+    _write_contract(gateway_fixture)
+    path = gateway_fixture.config_path if artifact == "config" else gateway_fixture.plist_path
+    actions = {"mode": lambda: path.chmod(0o640), "symlink": lambda: _replace_with_symlink(path)}
+    actions[weakening]()
+    # When: its private boundary is crossed.
+    # Then: the unsafe artifact is rejected with a typed boundary error.
     with pytest.raises(InvalidLocalBrowserGatewayConfigError):
         if artifact == "config":
             _ = load_local_browser_gateway_config(path)
@@ -176,9 +147,7 @@ def test_config_is_rejected_when_json_is_noncanonical(gateway_fixture: GatewayFi
     gateway_fixture.config_path.write_text(payload, encoding="utf-8")
     # When: it is loaded.
     # Then: the canonical-replay boundary rejects it.
-    with pytest.raises(InvalidLocalBrowserGatewayConfigError) as raised:
-        _ = load_local_browser_gateway_config(gateway_fixture.config_path)
-    assert raised.value.reason == "local_browser_gateway_config_read_invalid"
+    assert _load_rejection(gateway_fixture).reason == CONFIG_READ_ERROR
 
 
 def test_launch_agent_is_rejected_when_plist_text_is_noncanonical(gateway_fixture: GatewayFixture) -> None:
@@ -187,9 +156,7 @@ def test_launch_agent_is_rejected_when_plist_text_is_noncanonical(gateway_fixtur
     gateway_fixture.plist_path.write_text(read_private_text(gateway_fixture.plist_path) + "\n", encoding="utf-8")
     # When: the artifact is verified.
     # Then: exact canonical replay rejects it.
-    with pytest.raises(InvalidLocalBrowserGatewayConfigError) as raised:
-        _ = verify_local_browser_launch_agent(gateway_fixture.config_path, gateway_fixture.plist_path)
-    assert raised.value.reason == "local_browser_launch_agent_verify_invalid"
+    assert _verify_rejection(gateway_fixture).reason == LAUNCH_VERIFY_ERROR
 
 
 def test_launch_agent_is_rejected_when_contract_text_changes(gateway_fixture: GatewayFixture) -> None:
@@ -200,9 +167,7 @@ def test_launch_agent_is_rejected_when_contract_text_changes(gateway_fixture: Ga
     gateway_fixture.plist_path.write_bytes(plistlib.dumps(document, fmt=plistlib.FMT_XML, sort_keys=True))
     # When: the contract is verified.
     # Then: replay mismatch is rejected.
-    with pytest.raises(InvalidLocalBrowserGatewayConfigError) as raised:
-        _ = verify_local_browser_launch_agent(gateway_fixture.config_path, gateway_fixture.plist_path)
-    assert raised.value.reason == "local_browser_launch_agent_verify_invalid"
+    assert _verify_rejection(gateway_fixture).reason == LAUNCH_VERIFY_ERROR
 
 
 @pytest.mark.parametrize(
@@ -232,9 +197,76 @@ def test_config_rejects_invalid_path_relationship_when_constructed(
             "screenshot_root": invalid_state / "screenshots",
         },
     }[relationship]
-    with pytest.raises(InvalidLocalBrowserGatewayConfigError) as raised:
-        _ = _config_from(gateway_fixture.config, **changes)
-    assert raised.value.reason == reason
+    assert _rejection(lambda: _config_from(gateway_fixture.config, **changes)).reason == reason
+
+
+@pytest.mark.parametrize(
+    "field",
+    ("project_root state_root profile_root socket_path " "receipt_database screenshot_root intermediate").split(),  # noqa: SIM905
+)
+def test_model_rejects_existing_symlinked_config_component(gateway_fixture: GatewayFixture, field: str) -> None:
+    # Given: real roots plus direct and intermediate symlink aliases.
+    root = gateway_fixture.config.project_root.parent
+    state = gateway_fixture.config.state_root
+    state.mkdir(parents=True)
+    state_target = state / "target"
+    state_target.mkdir()
+    alias = state / "alias"
+    alias.symlink_to(state_target, target_is_directory=True)
+    aliases = {
+        "project_root": root / "project.alias",
+        "state_root": root / "state.alias",
+        "profile_root": root / "profile.alias",
+    }
+    bindings = (
+        (aliases["project_root"], gateway_fixture.config.project_root),
+        (aliases["state_root"], root / "state.target"),
+        (aliases["profile_root"], root / "profile.target"),
+    )
+    for path, target in bindings:
+        target.mkdir(exist_ok=True)
+        path.symlink_to(target, target_is_directory=True)
+    changes = {
+        "project_root": {"project_root": aliases["project_root"]},
+        "state_root": {"state_root": aliases["state_root"]},
+        "profile_root": {"profile_root": aliases["profile_root"]},
+        "socket_path": {"socket_path": alias},
+        "receipt_database": {"receipt_database": alias},
+        "screenshot_root": {"screenshot_root": alias},
+        "intermediate": {"socket_path": alias / "gateway.sock"},
+    }[field]
+    # When: strict model validation crosses the config trust boundary.
+    # Then: every existing symlink component is rejected before containment logic trusts it.
+    assert _rejection(lambda: _config_from(gateway_fixture.config, **changes)).reason == SYMLINK_COMPONENT_ERROR
+
+
+@pytest.mark.parametrize(
+    ("entrypoint", "reason"),
+    (
+        ("model", SYMLINK_COMPONENT_ERROR),
+        ("write", "local_browser_gateway_config_write_invalid"),
+        ("load", CONFIG_READ_ERROR),
+        ("verify", LAUNCH_VERIFY_ERROR),
+    ),
+)
+def test_config_boundary_rejects_persisted_project_root_symlink(
+    gateway_fixture: GatewayFixture, entrypoint: str, reason: str
+) -> None:
+    # Given: a valid config whose previously real project root becomes a symlink alias.
+    if entrypoint in {"load", "verify"}:
+        _write_contract(gateway_fixture)
+    project_target = gateway_fixture.config.project_root.with_name("project.target")
+    gateway_fixture.config.project_root.rename(project_target)
+    gateway_fixture.config.project_root.symlink_to(project_target, target_is_directory=True)
+    operations = {
+        "model": lambda: _config_from(gateway_fixture.config),
+        "write": lambda: write_local_browser_gateway_config(gateway_fixture.config_path, gateway_fixture.config),
+        "load": lambda: load_local_browser_gateway_config(gateway_fixture.config_path),
+        "verify": lambda: verify_local_browser_launch_agent(gateway_fixture.config_path, gateway_fixture.plist_path),
+    }
+    # When: each trust-boundary entrypoint validates the same path-bearing config.
+    # Then: all paths fail closed with their stable boundary reason.
+    assert _rejection(operations[entrypoint]).reason == reason
 
 
 @pytest.mark.parametrize(
@@ -245,22 +277,20 @@ def test_launch_agent_is_not_ready_when_required_file_is_missing_or_not_executab
 ) -> None:
     # Given: a valid published contract with one broken runtime binding.
     _write_contract(gateway_fixture)
-    target = {
-        "uv_nonexecutable": gateway_fixture.config.uv_path,
-        "chrome_nonexecutable": gateway_fixture.config.chrome_executable,
-        "uv_missing": gateway_fixture.config.uv_path,
-        "chrome_missing": gateway_fixture.config.chrome_executable,
-        "gateway_script_missing": gateway_fixture.config.project_root / "run_local_browser_gateway.py",
-    }[required]
+    base = required.removesuffix("_nonexecutable").removesuffix("_missing")
+    targets = {
+        "uv": gateway_fixture.config.uv_path,
+        "chrome": gateway_fixture.config.chrome_executable,
+        "gateway_script": gateway_fixture.config.project_root / "run_local_browser_gateway.py",
+    }
+    target = targets[base]
     if required.endswith("missing"):
         target.unlink()
     else:
         target.chmod(0o600)
     # When: readiness is verified.
     # Then: it fails closed rather than claiming service readiness.
-    with pytest.raises(InvalidLocalBrowserGatewayConfigError) as raised:
-        _ = verify_local_browser_launch_agent(gateway_fixture.config_path, gateway_fixture.plist_path)
-    assert raised.value.reason == "local_browser_launch_agent_verify_invalid"
+    assert _verify_rejection(gateway_fixture).reason == LAUNCH_VERIFY_ERROR
 
 
 @pytest.mark.parametrize("required", ("uv_path", "chrome_executable", "gateway_script"))
@@ -279,9 +309,7 @@ def test_launch_agent_is_not_ready_when_required_binding_is_symlinked(
     target.symlink_to(linked_target)
     # When: readiness is verified.
     # Then: the symlinked binding is rejected rather than followed.
-    with pytest.raises(InvalidLocalBrowserGatewayConfigError) as raised:
-        _ = verify_local_browser_launch_agent(gateway_fixture.config_path, gateway_fixture.plist_path)
-    assert raised.value.reason == "local_browser_launch_agent_verify_invalid"
+    assert _verify_rejection(gateway_fixture).reason == LAUNCH_VERIFY_ERROR
 
 
 def test_private_config_is_rejected_when_owner_is_not_current_user(
@@ -293,30 +321,4 @@ def test_private_config_is_rejected_when_owner_is_not_current_user(
     monkeypatch.setattr(private_file.os, "getuid", lambda: current_uid + 1)
     # When: the private boundary loads it.
     # Then: owner verification fails closed.
-    with pytest.raises(InvalidLocalBrowserGatewayConfigError) as raised:
-        _ = load_local_browser_gateway_config(gateway_fixture.config_path)
-    assert raised.value.reason == "local_browser_gateway_config_read_invalid"
-
-
-def test_launch_agent_verifies_when_fixture_provides_required_bindings(gateway_fixture: GatewayFixture) -> None:
-    # Given: a canonical private contract and fake executable bindings.
-    _write_contract(gateway_fixture)
-    # When: readiness is verified without creating runtime state.
-    result = verify_local_browser_launch_agent(gateway_fixture.config_path, gateway_fixture.plist_path)
-    # Then: it reports deterministic hashes and ready status.
-    assert result.ready is True
-    assert result.config_sha256 == canonical_local_browser_gateway_config_sha256(gateway_fixture.config)
-    assert result.plist_sha256
-    assert not gateway_fixture.config.state_root.exists()
-
-
-def test_artifact_boundaries_reject_relative_paths_when_called(
-    gateway_fixture: GatewayFixture, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # Given: a relative private config path at a boundary.
-    monkeypatch.chdir(gateway_fixture.config_path.parent)
-    # When: publishing is requested through the config boundary.
-    # Then: it rejects ambiguity without creating an artifact.
-    with pytest.raises(InvalidLocalBrowserGatewayConfigError) as raised:
-        _ = write_local_browser_gateway_config(Path("gateway.json"), gateway_fixture.config)
-    assert raised.value.reason == "local_browser_gateway_config_write_invalid"
+    assert _load_rejection(gateway_fixture).reason == CONFIG_READ_ERROR

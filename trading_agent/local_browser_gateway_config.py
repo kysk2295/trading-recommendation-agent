@@ -61,6 +61,8 @@ class LocalBrowserGatewayConfig(BaseModel):
         )
         if any(not path.is_absolute() for path in paths):
             raise InvalidLocalBrowserGatewayConfigError(reason="local_browser_gateway_path_not_absolute")
+        if any(_has_existing_symlink_component(path) for path in paths):
+            raise InvalidLocalBrowserGatewayConfigError(reason="local_browser_gateway_symlink_component_invalid")
         project_root, state_root, profile_root = (
             self.project_root.resolve(strict=False),
             self.state_root.resolve(strict=False),
@@ -185,6 +187,21 @@ def _is_regular_file(path: Path) -> bool:
         return not stat.S_ISLNK(mode) and stat.S_ISREG(mode)
     except OSError:
         return False
+
+
+def _has_existing_symlink_component(path: Path) -> bool:
+    current = Path(path.anchor)
+    for component in path.parts[1:]:
+        current /= component
+        try:
+            mode = os.lstat(current).st_mode
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return True
+        if stat.S_ISLNK(mode):
+            return True
+    return False
 
 
 def _absolute_private_path(path: Path) -> Path:
