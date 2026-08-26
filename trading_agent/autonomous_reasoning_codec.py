@@ -49,12 +49,6 @@ class AutonomousStructuredReasoner:
     def next_step(self, request: AutonomousReasoningRequest) -> AutonomousReasoningResponse:
         from trading_agent.autonomous_reasoning import (
             AUTONOMOUS_REASONING_RESPONSE_ADAPTER,
-            AutonomousComplete,
-            AutonomousDefer,
-            AutonomousDelegate,
-            AutonomousRecordMemory,
-            AutonomousSubmitArtifact,
-            AutonomousToolCall,
             InvalidAutonomousReasoningError,
         )
 
@@ -65,20 +59,39 @@ class AutonomousStructuredReasoner:
             response = AUTONOMOUS_REASONING_RESPONSE_ADAPTER.validate_json(raw)
         except (InvalidAutonomousReasoningError, ResearcherLlmError, UnicodeError, ValidationError):
             raise InvalidAutonomousReasoningError(reason="autonomous_reasoning_response_invalid") from None
-        match response:
-            case AutonomousDelegate(role=role) if role is request.current_role:
-                raise InvalidAutonomousReasoningError(reason="autonomous_delegate_role_denied")
-            case (
-                AutonomousToolCall()
-                | AutonomousDelegate()
-                | AutonomousSubmitArtifact()
-                | AutonomousRecordMemory()
-                | AutonomousDefer()
-                | AutonomousComplete()
-            ):
-                return response
-            case unreachable:
-                assert_never(unreachable)
+        validate_reasoning_response(request, response)
+        return response
+
+
+def validate_reasoning_response(request: AutonomousReasoningRequest, response: AutonomousReasoningResponse) -> None:
+    from trading_agent.autonomous_reasoning import (
+        AutonomousComplete,
+        AutonomousDefer,
+        AutonomousDelegate,
+        AutonomousRecordMemory,
+        AutonomousSubmitArtifact,
+        AutonomousToolCall,
+        InvalidAutonomousReasoningError,
+    )
+
+    match response:
+        case AutonomousDelegate(role=role) if role is request.current_role:
+            raise InvalidAutonomousReasoningError(reason="autonomous_delegate_role_denied")
+        case AutonomousDefer(next_wake_at=wake_at) if wake_at is not None and wake_at <= request.now:
+            raise InvalidAutonomousReasoningError(reason="autonomous_response_wake_not_future")
+        case AutonomousSubmitArtifact(next_wake_at=wake_at) if wake_at is not None and wake_at <= request.now:
+            raise InvalidAutonomousReasoningError(reason="autonomous_response_wake_not_future")
+        case (
+            AutonomousToolCall()
+            | AutonomousDelegate()
+            | AutonomousSubmitArtifact()
+            | AutonomousRecordMemory()
+            | AutonomousDefer()
+            | AutonomousComplete()
+        ):
+            return
+        case unreachable:
+            assert_never(unreachable)
 
 
 def require_sorted_unique(values: tuple[str, ...], *, reason: str) -> None:

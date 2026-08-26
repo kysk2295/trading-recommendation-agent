@@ -85,6 +85,8 @@ class AutonomousToolRuntime:
             raw_output = binding.invoke(call.args)
         except AutonomousToolInvocationError:
             raise AutonomousToolRuntimeError(reason="autonomous_tool_invocation_failed") from None
+        except Exception:  # noqa: RUF100 # noqa: BROAD_EXCEPT_OK: untrusted host callback must not leak implementation details or sensitive plugin exception text
+            raise AutonomousToolRuntimeError(reason="autonomous_tool_invocation_failed") from None
         bounded_json = _canonical_result(raw_output)
         call_json = _canonical_call(call)
         content_sha256 = hashlib.sha256(bounded_json.encode()).hexdigest()

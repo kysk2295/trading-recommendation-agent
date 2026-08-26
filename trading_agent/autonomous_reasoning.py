@@ -3,6 +3,8 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import re
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Annotated, Final, Literal, Protocol, Self, assert_never
 
 from pydantic import (
@@ -49,18 +51,20 @@ class InvalidAutonomousReasoningError(RuntimeError):
         return self.reason
 
 
-class AutonomousToolArguments(RootModel[dict[str, str]]):
+class AutonomousToolArguments(RootModel[Mapping[str, str]]):
     model_config = ConfigDict(frozen=True, strict=True)
 
-    root: dict[str, str]
+    root: Mapping[str, str]
 
     @model_validator(mode="after")
     def require_bounded_keys_and_values(self) -> Self:
-        if len(self.root) > 8 or any(
+        values = dict(self.root)
+        if len(values) > 8 or any(
             _ARGUMENT_KEY.fullmatch(key) is None or not value or len(value) > 500
-            for key, value in self.root.items()
+            for key, value in values.items()
         ):
             raise InvalidAutonomousReasoningError(reason="autonomous_tool_arguments_invalid")
+        object.__setattr__(self, "root", MappingProxyType(dict(sorted(values.items()))))
         return self
 
     @model_serializer
@@ -268,6 +272,15 @@ def canonical_reasoning_prompt(request: AutonomousReasoningRequest) -> str:
     return build_prompt(request, None)
 
 
+def validate_reasoning_response(
+    request: AutonomousReasoningRequest,
+    response: AutonomousReasoningResponse,
+) -> None:
+    from trading_agent.autonomous_reasoning_codec import validate_reasoning_response as validate
+
+    validate(request, response)
+
+
 __all__ = (
     "AUTONOMOUS_REASONING_RESPONSE_ADAPTER",
     "AutonomousComplete",
@@ -284,4 +297,5 @@ __all__ = (
     "AutonomousToolObservation",
     "InvalidAutonomousReasoningError",
     "canonical_reasoning_prompt",
+    "validate_reasoning_response",
 )
