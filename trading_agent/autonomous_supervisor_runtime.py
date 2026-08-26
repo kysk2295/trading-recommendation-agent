@@ -11,7 +11,7 @@ from trading_agent._autonomous_supervisor_execution import (
     BoundedAutonomousExecution,
     task_execution_lease,
 )
-from trading_agent._autonomous_supervisor_outcomes import budget_wait, failure
+from trading_agent._autonomous_supervisor_outcomes import budget_wait, failure, lease_wait
 from trading_agent._autonomous_supervisor_reducer import (
     ApplyContext,
     AutonomousSupervisorReducer,
@@ -94,7 +94,7 @@ class AutonomousSupervisorRuntime:
             return tick_result(durable, "blocked" if durable.state is AutonomousTaskState.BLOCKED else "waiting", 0, 0)
         with task_execution_lease(self.tasks.path, task.task_id) as acquired:
             if not acquired:
-                return tick_result(self._task(task.task_id), "failed", 0, 0)
+                return lease_wait(self._task(task.task_id), current_now)
             return self._tick_locked(task, current_now)
 
     def _tick_locked(self, task: AutonomousResearchTask, current_now: dt.datetime) -> AutonomousSupervisorTickResult:

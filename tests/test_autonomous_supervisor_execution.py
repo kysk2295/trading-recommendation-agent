@@ -6,6 +6,7 @@ import threading
 import time
 from dataclasses import dataclass
 from multiprocessing import get_context
+from multiprocessing.connection import Connection
 from pathlib import Path
 
 from tests.test_autonomous_task_models import NOW, task_fixture
@@ -21,7 +22,7 @@ from trading_agent.autonomous_reasoning import (
     AutonomousToolCall,
 )
 from trading_agent.autonomous_supervisor_runtime import AutonomousSupervisorRuntime
-from trading_agent.autonomous_task_models import AutonomousAgentRole
+from trading_agent.autonomous_task_models import AutonomousAgentRole, AutonomousSupervisorTickResult
 from trading_agent.autonomous_task_store import AutonomousTaskStore
 from trading_agent.autonomous_tool_runtime import AutonomousToolBinding, AutonomousToolRuntime
 
@@ -176,10 +177,12 @@ def test_concurrent_ticks_hold_one_task_execution_lease(tmp_path: Path) -> None:
         assert writer.create_task(task)
     context = get_context("fork")
 
-    def run() -> None:
-        _ = runtime.tick(task, NOW)
+    def run(send: Connection) -> None:
+        send.send(runtime.tick(task, NOW).model_dump_json())
+        send.close()
 
-    workers = (context.Process(target=run), context.Process(target=run))
+    channels = (context.Pipe(duplex=False), context.Pipe(duplex=False))
+    workers = tuple(context.Process(target=run, args=(send,)) for _, send in channels)
     for worker in workers:
         worker.start()
     for worker in workers:
@@ -188,6 +191,9 @@ def test_concurrent_ticks_hold_one_task_execution_lease(tmp_path: Path) -> None:
     kinds = tuple(parse_payload(step.payload_json).kind for step in runtime.tasks.reader().steps(task.task_id))
     assert not any(worker.is_alive() for worker in workers)
     assert all(worker.exitcode == 0 for worker in workers)
+    results = tuple(AutonomousSupervisorTickResult.model_validate_json(receive.recv()) for receive, _ in channels)
+    assert tuple(sorted(result.status for result in results)) == ("completed", "waiting")
+    assert sum(result.next_wake_at == NOW + dt.timedelta(seconds=1) for result in results) == 1
     assert model_calls.read_text(encoding="utf-8").splitlines() == ["called"]
     assert kinds == ("decision", "completion")
 
@@ -211,7 +217,12 @@ def test_concurrent_ticks_invoke_and_apply_tool_once(tmp_path: Path) -> None:
     with runtime.tasks.writer() as writer:
         assert writer.create_task(task)
     context = get_context("fork")
-    workers = tuple(context.Process(target=lambda: runtime.tick(task, NOW)) for _ in range(2))
+    def run(send: Connection) -> None:
+        send.send(runtime.tick(task, NOW).model_dump_json())
+        send.close()
+
+    channels = (context.Pipe(duplex=False), context.Pipe(duplex=False))
+    workers = tuple(context.Process(target=run, args=(send,)) for _, send in channels)
 
     for worker in workers:
         worker.start()
@@ -220,6 +231,12 @@ def test_concurrent_ticks_invoke_and_apply_tool_once(tmp_path: Path) -> None:
 
     kinds = tuple(parse_payload(step.payload_json).kind for step in runtime.tasks.reader().steps(task.task_id))
     assert all(worker.exitcode == 0 for worker in workers)
+    results = tuple(AutonomousSupervisorTickResult.model_validate_json(receive.recv()) for receive, _ in channels)
+    assert all(result.status == "waiting" for result in results)
+    assert {result.next_wake_at for result in results} == {
+        NOW + dt.timedelta(seconds=1),
+        NOW + dt.timedelta(minutes=1),
+    }
     assert invocations.read_text(encoding="utf-8").splitlines() == ["invoked"]
     assert kinds == ("decision", "observation", "wait")
 

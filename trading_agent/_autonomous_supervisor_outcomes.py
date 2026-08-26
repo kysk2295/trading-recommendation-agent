@@ -46,6 +46,16 @@ def budget_wait(
     return tick_result(tasks.reader().task(task.task_id) or task, "waiting", model_calls, tool_calls)
 
 
+def lease_wait(task: AutonomousResearchTask, now: dt.datetime) -> AutonomousSupervisorTickResult:
+    return AutonomousSupervisorTickResult(
+        status="waiting",
+        task_id=task.task_id,
+        agent_family_id=task.agent_family_id,
+        market_scope=task.market_scope,
+        next_wake_at=now + dt.timedelta(seconds=1),
+    )
+
+
 def failure(
     tasks: AutonomousTaskStore,
     task: AutonomousResearchTask,
@@ -78,4 +88,4 @@ def failure(
     return tick_result(tasks.reader().task(task.task_id) or task, "blocked", model_calls, tool_calls)
 
 
-__all__ = ("budget_wait", "failure")
+__all__ = ("budget_wait", "failure", "lease_wait")

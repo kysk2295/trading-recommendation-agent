@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import fcntl
 import os
-import stat
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from multiprocessing import get_context
 from multiprocessing.connection import Connection
+from multiprocessing.process import BaseProcess
 from pathlib import Path
 from threading import current_thread, main_thread
+from threading import enumerate as live_threads
 from time import monotonic
 from typing import Final, Literal, Protocol
 
@@ -26,10 +27,17 @@ from trading_agent.autonomous_reasoning import (
 )
 from trading_agent.autonomous_task_models import AutonomousAgentRole, AutonomousTaskId
 from trading_agent.autonomous_tool_runtime import AutonomousToolRuntime, AutonomousToolRuntimeError
+from trading_agent.private_directory_identity import (
+    open_private_parent,
+    require_open_directory_path,
+    require_private_directory,
+)
+from trading_agent.systematic_regime_store_file import open_private_file, require_private_file
 
 _ERROR: Final = b"E"
 _OK: Final = b"O"
 _CRASH: Final = b"X"
+_REAP_GRACE_SECONDS: Final = 0.05
 type Operation = Literal["reason", "tool"]
 
 
@@ -83,38 +91,56 @@ def _call_in_worker(
     call: AutonomousToolCall | None,
     timeout: float,
 ) -> bytes:
-    if current_thread() is not main_thread():
+    if current_thread() is not main_thread() or any(
+        thread is not current_thread() and thread.is_alive() for thread in live_threads()
+    ):
         raise AutonomousExecutionError(reason="autonomous_execution_main_thread_required")
     context = get_context("fork")
     receive, send = context.Pipe(duplex=False)
     process = context.Process(target=_worker, args=(send, operation, reasoner, tools, request, role, call))
     deadline = monotonic() + timeout
+    started = False
+    reaped = False
     try:
         process.start()
+        started = True
         send.close()
         if not receive.poll(max(0.0, deadline - monotonic())):
-            process.terminate()
-            process.join()
+            reaped = True
+            _reap(process, 0.0)
             raise AutonomousExecutionTimeoutError(reason=f"autonomous_{operation}_timeout")
         message = receive.recv_bytes()
-        process.join(max(0.0, deadline - monotonic()))
-        if process.is_alive():
-            process.terminate()
-            process.join()
+        reaped = True
+        _reap(process, max(0.0, deadline - monotonic()))
     except EOFError:
-        process.join()
+        if started and not reaped:
+            reaped = True
+            _reap(process, 0.0)
         raise AutonomousExecutionCrash("autonomous_execution_worker_crashed") from None
     finally:
         receive.close()
-        if process.is_alive():
-            process.terminate()
-            process.join()
+        send.close()
+        if started and not reaped:
+            _reap(process, 0.0)
     tag, payload = message[:1], message[1:]
     if tag == _OK:
         return payload
     if tag == _ERROR:
         raise AutonomousExecutionError(reason=payload.decode("ascii"))
     raise AutonomousExecutionCrash("autonomous_execution_worker_crashed")
+
+
+def _reap(process: BaseProcess, initial_wait: float) -> None:
+    process.join(initial_wait)
+    if process.is_alive():
+        process.terminate()
+        process.join(_REAP_GRACE_SECONDS)
+    if process.is_alive():
+        process.kill()
+        process.join(_REAP_GRACE_SECONDS)
+    if process.is_alive():
+        raise AutonomousExecutionError(reason="autonomous_execution_worker_reap_failed")
+    process.close()
 
 
 def _worker(
@@ -147,31 +173,48 @@ def _worker(
 
 @contextmanager
 def task_execution_lease(database: Path, task_id: AutonomousTaskId) -> Iterator[bool]:
+    parent = -1
     descriptor = -1
     acquired = False
-    lease_path = database.with_name(f".{database.name}.{task_id}.execution.lock")
+    name = f".{database.name}.{task_id}.execution.lock"
     try:
-        descriptor = os.open(
-            lease_path,
-            os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_RDWR,
-            stat.S_IRUSR | stat.S_IWUSR,
-        )
-        identity = os.fstat(descriptor)
-        if not stat.S_ISREG(identity.st_mode) or identity.st_uid != os.getuid() or identity.st_mode & 0o077:
-            raise AutonomousExecutionError(reason="autonomous_execution_lease_invalid")
+        parent = open_private_parent(database.parent, create=False)
+        require_private_directory(parent)
+        require_open_directory_path(database.parent, parent)
+        descriptor = _open_lease_file(parent, name)
+        _require_lease_identity(parent, name, descriptor)
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             acquired = True
         except BlockingIOError:
             acquired = False
         yield acquired
-    except OSError as error:
+        _require_lease_identity(parent, name, descriptor)
+        require_open_directory_path(database.parent, parent)
+    except (OSError, TypeError, ValueError) as error:
         raise AutonomousExecutionError(reason="autonomous_execution_lease_failed") from error
     finally:
         if acquired:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
         if descriptor >= 0:
             os.close(descriptor)
+        if parent >= 0:
+            os.close(parent)
+
+
+def _require_lease_identity(parent: int, name: str, descriptor: int) -> None:
+    named = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    opened = os.fstat(descriptor)
+    if (named.st_dev, named.st_ino) != (opened.st_dev, opened.st_ino):
+        raise AutonomousExecutionError(reason="autonomous_execution_lease_invalid")
+    require_private_file(descriptor)
+
+
+def _open_lease_file(parent: int, name: str) -> int:
+    try:
+        return open_private_file(parent, name, create=True, write=True)
+    except FileExistsError:
+        return open_private_file(parent, name, create=False, write=True)
 
 
 __all__ = (
