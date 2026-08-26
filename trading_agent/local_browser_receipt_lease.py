@@ -5,6 +5,7 @@ import os
 import stat
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 
 from trading_agent.local_browser_private_fs import (
     InvalidLocalBrowserPrivateFsError,
@@ -50,6 +51,22 @@ class LocalBrowserReceiptLease:
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
             finally:
                 os.close(descriptor)
+
+
+@contextmanager
+def hold_local_browser_receipt_initialization_lease(path: Path, owner_id: int) -> Iterator[None]:
+    try:
+        with open_private_browser_directory(path.parent, owner_id) as directory:
+            lease = acquire_local_browser_receipt_lease(directory, owner_id)
+            try:
+                yield
+            finally:
+                try:
+                    lease.require_current(directory)
+                finally:
+                    lease.release()
+    except InvalidLocalBrowserPrivateFsError:
+        raise InvalidLocalBrowserReceiptLeaseError() from None
 
 
 @contextmanager

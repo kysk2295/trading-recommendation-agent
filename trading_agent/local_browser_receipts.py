@@ -5,7 +5,7 @@ import json
 import os
 import sqlite3
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,8 +33,10 @@ from trading_agent.local_browser_protocol import (
 from trading_agent.local_browser_receipt_lease import (
     InvalidLocalBrowserReceiptLeaseError,
     hold_local_browser_receipt_execution_lease,
+    hold_local_browser_receipt_initialization_lease,
 )
 from trading_agent.local_browser_receipt_sqlite import (
+    InvalidPrivateBrowserReceiptDatabaseError,
     PrivateBrowserReceiptDatabase,
     open_private_browser_receipt_database,
 )
@@ -101,8 +103,21 @@ class LocalBrowserReceiptStore:
         if self._connection is not None:
             raise InvalidLocalBrowserReceiptError()
         try:
-            database = open_private_browser_receipt_database(self.path, self._owner_id)
-        except (InvalidLocalBrowserPrivateFsError, OSError, sqlite3.Error, TypeError, ValueError):
+            with ExitStack() as database_cleanup:
+                with hold_local_browser_receipt_initialization_lease(self.path, self._owner_id):
+                    database = open_private_browser_receipt_database(self.path, self._owner_id)
+                    database_cleanup.callback(database.close)
+                    database.require_current()
+                _ = database_cleanup.pop_all()
+        except (
+            InvalidLocalBrowserPrivateFsError,
+            InvalidLocalBrowserReceiptLeaseError,
+            InvalidPrivateBrowserReceiptDatabaseError,
+            OSError,
+            sqlite3.Error,
+            TypeError,
+            ValueError,
+        ):
             raise InvalidLocalBrowserReceiptError() from None
         self._connection = database.connection
         self._database = database

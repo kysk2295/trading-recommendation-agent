@@ -6,6 +6,9 @@ from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
+import pytest
+
+import trading_agent.local_browser_receipt_sqlite as receipt_sqlite
 from tests.test_local_browser_gateway import NOW, FakeClient, FakeClientFactory
 from trading_agent.local_browser_gateway import (
     BrowserDispatchDependencies,
@@ -16,7 +19,7 @@ from trading_agent.local_browser_gateway import (
 )
 from trading_agent.local_browser_gateway_wire import BrowserRequest
 from trading_agent.local_browser_protocol import BrowserOpenRequest, BrowserResponse, BrowserStatusRequest
-from trading_agent.local_browser_receipts import LocalBrowserReceiptStore
+from trading_agent.local_browser_receipts import InvalidLocalBrowserReceiptError, LocalBrowserReceiptStore
 from trading_agent.local_chrome_endpoint import ChromeDebugPort, LocalChromeEndpoint
 
 
@@ -109,6 +112,48 @@ def test_two_stores_serialize_same_request_before_dispatch(tmp_path: Path) -> No
         threading.Thread(target=_worker(path, controller, request, accepted, rejected, str(index)))
         for index in range(2)
     )
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=3.0)
+    assert not any(worker.is_alive() for worker in workers)
+    assert rejected == {}
+    assert len(accepted) == 2
+    assert len({canonical_browser_response(response) for response in accepted.values()}) == 1
+    assert controller.calls == 1
+    assert _receipt_counts(path) == (1, 1)
+
+
+def test_two_stores_initialize_fresh_database_before_serialized_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    path = state / "receipts.sqlite3"
+    prepare_gate = threading.Barrier(2)
+    start_gate = threading.Barrier(2)
+    original_prepare = receipt_sqlite._prepare_connection
+
+    def prepare_together(connection: sqlite3.Connection) -> None:
+        with suppress(threading.BrokenBarrierError):
+            prepare_gate.wait(timeout=0.5)
+        original_prepare(connection)
+
+    monkeypatch.setattr(receipt_sqlite, "_prepare_connection", prepare_together)
+    controller = RacingController()
+    request = BrowserStatusRequest(request_id="e" * 64)
+    accepted: dict[str, BrowserResponse] = {}
+    rejected: dict[str, str] = {}
+
+    def run(label: str) -> None:
+        start_gate.wait(timeout=2.0)
+        try:
+            with LocalBrowserReceiptStore(path) as store:
+                accepted[label] = LocalBrowserGateway(store, _dispatcher(controller, state)).handle(request)
+        except (InvalidLocalBrowserGatewayError, InvalidLocalBrowserReceiptError) as error:
+            rejected[label] = error.reason
+
+    workers = tuple(threading.Thread(target=run, args=(str(index),)) for index in range(2))
     for worker in workers:
         worker.start()
     for worker in workers:

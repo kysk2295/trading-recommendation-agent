@@ -98,3 +98,80 @@ def test_receipt_lease_closes_descriptor_when_lock_is_interrupted(
         assert len(interrupted_descriptors) == 1
         with pytest.raises(OSError):
             os.fstat(interrupted_descriptors[0])
+
+
+@pytest.mark.parametrize("kind", ("hardlink", "symlink"))
+def test_receipt_initialization_lease_rejects_unsafe_existing_entry(tmp_path: Path, kind: str) -> None:
+    root = tmp_path / "state"
+    root.mkdir(mode=0o700)
+    lease_path = root / lease_fs.LOCAL_BROWSER_RECEIPT_LEASE_NAME
+    target = root / "target"
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    if kind == "hardlink":
+        os.link(target, lease_path)
+    else:
+        lease_path.symlink_to(target)
+    with (
+        pytest.raises(lease_fs.InvalidLocalBrowserReceiptLeaseError),
+        lease_fs.hold_local_browser_receipt_initialization_lease(root / "receipts.sqlite3", os.getuid()),
+    ):
+        pass
+
+
+@pytest.mark.parametrize("interruption", (RuntimeError, KeyboardInterrupt, SystemExit))
+def test_receipt_initialization_lease_closes_descriptor_on_interruption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interruption: type[BaseException]
+) -> None:
+    root = tmp_path / "state"
+    path = root / "receipts.sqlite3"
+    original = lease_fs.acquire_local_browser_receipt_lease
+    descriptors: list[int] = []
+
+    def capture(directory: lease_fs.PrivateBrowserDirectory, owner_id: int) -> lease_fs.LocalBrowserReceiptLease:
+        lease = original(directory, owner_id)
+        descriptors.append(lease.descriptor)
+        return lease
+
+    monkeypatch.setattr(lease_fs, "acquire_local_browser_receipt_lease", capture)
+    with (
+        pytest.raises(interruption),
+        lease_fs.hold_local_browser_receipt_initialization_lease(path, os.getuid()),
+    ):
+        raise interruption()
+    assert len(descriptors) == 1
+    with pytest.raises(OSError):
+        os.fstat(descriptors[0])
+
+
+@pytest.mark.parametrize("replacement", ("name", "parent"))
+def test_receipt_initialization_lease_detects_replacement_and_closes_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replacement: str
+) -> None:
+    root = tmp_path / "state"
+    path = root / "receipts.sqlite3"
+    moved = tmp_path / "moved"
+    original = lease_fs.acquire_local_browser_receipt_lease
+    descriptors: list[int] = []
+
+    def capture(directory: lease_fs.PrivateBrowserDirectory, owner_id: int) -> lease_fs.LocalBrowserReceiptLease:
+        lease = original(directory, owner_id)
+        descriptors.append(lease.descriptor)
+        return lease
+
+    monkeypatch.setattr(lease_fs, "acquire_local_browser_receipt_lease", capture)
+    with (
+        pytest.raises(lease_fs.InvalidLocalBrowserReceiptLeaseError),
+        lease_fs.hold_local_browser_receipt_initialization_lease(path, os.getuid()),
+    ):
+        lease_path = root / lease_fs.LOCAL_BROWSER_RECEIPT_LEASE_NAME
+        if replacement == "name":
+            lease_path.unlink()
+            lease_path.write_bytes(b"")
+            lease_path.chmod(0o600)
+        else:
+            root.rename(moved)
+            root.mkdir(mode=0o700)
+    assert len(descriptors) == 1
+    with pytest.raises(OSError):
+        os.fstat(descriptors[0])

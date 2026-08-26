@@ -170,3 +170,34 @@ def test_receipt_execution_lease_rejects_parent_replacement_before_release(tmp_p
         moved.rename(state)
         with store.execution_lease():
             pass
+
+
+def test_two_stores_repeatedly_initialize_fresh_database(tmp_path: Path) -> None:
+    for iteration in range(50):
+        failures, entered, live_threads = _race_fresh_store_initialization(tmp_path / str(iteration))
+        assert entered == 2
+        assert live_threads == 0
+        assert failures == ()
+
+
+def _race_fresh_store_initialization(state: Path) -> tuple[tuple[str, ...], int, int]:
+    state.mkdir(mode=0o700)
+    path = state / "receipts.sqlite3"
+    start_gate = threading.Barrier(2)
+    failures: list[str] = []
+    entries: list[None] = []
+
+    def open_store() -> None:
+        start_gate.wait(timeout=2.0)
+        try:
+            with LocalBrowserReceiptStore(path):
+                entries.append(None)
+        except InvalidLocalBrowserReceiptError as error:
+            failures.append(error.reason)
+
+    workers = tuple(threading.Thread(target=open_store) for _index in range(2))
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=2.0)
+    return tuple(failures), len(entries), sum(worker.is_alive() for worker in workers)
