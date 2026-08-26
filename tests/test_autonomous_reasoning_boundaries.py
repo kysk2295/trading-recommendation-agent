@@ -46,6 +46,14 @@ def _request() -> AutonomousReasoningRequest:
     )
 
 
+def test_request_rejects_roleless_boundary_payload() -> None:
+    # Given / When / Then: a request must name the role used for delegation authority.
+    payload = _request().model_dump()
+    del payload["current_role"]
+    with pytest.raises(ValidationError):
+        AutonomousReasoningRequest.model_validate(payload)
+
+
 @pytest.mark.parametrize(
     "arguments",
     (

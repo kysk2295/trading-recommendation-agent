@@ -245,7 +245,7 @@ class AutonomousReasoningRequest(BaseModel):
     memories: tuple[AutonomousMemoryRecord, ...] = Field(max_length=16)
     allowed_tool_names: tuple[str, ...] = Field(max_length=16)
     remaining_budget: AutonomousRunBudget
-    current_role: AutonomousAgentRole | None = None
+    current_role: AutonomousAgentRole
 
     @field_validator("now", mode="after")
     @classmethod
