@@ -14,10 +14,12 @@
 - 기회 발견은 공시 중심이 아니라 SNS, 커뮤니티, 뉴스 확산 중심으로 한다.
 - 공시, 거래소 공지와 기업 IR은 사실 확인이 가능한 경우에 사용하는 보조 증거다.
 - Browser Research Agent는 전용 Chrome 프로필의 기존 로그인 세션을 사용한다.
-- DOM 기반 검색과 읽기를 우선하고 동적 화면이나 로그인 화면은 Computer Use로 읽는다.
+- DOM 기반 검색과 읽기를 우선하고 동적 화면이나 로그인 화면은 Local Computer Use Adapter로 읽는다.
+- Browser Session Gateway는 `launchd`가 소유하는 독립 로컬 서비스이며 Codex 대화, 터미널 세션 또는 현재 작업 thread에 의존하지 않는다.
 - 웹사이트 목록은 고정하지 않지만 브라우저 행동은 읽기 전용이다.
 - 로그인 정보 입력, 게시, 댓글, 구매, 다운로드와 CAPTCHA 우회는 하지 않는다.
 - 에이전트가 종목, 가설, 추가 조사, 진입 또는 관망을 자율적으로 결정한다.
+- 조사 사이트, 도구 순서, 반복 횟수와 중간 연구 노트는 에이전트가 정하며 코드는 고정 파이프라인을 강제하지 않는다.
 - 가격 격자, 손절, 목표, 포지션 크기와 가상체결은 검증된 결정론적 도구가 확정한다.
 - 공식 확인이 없는 SNS 가설도 현재 KRX 세션의 시장 반응이 확인되면 작은 가상 포지션으로 시험할 수 있다.
 - 한국시장 주문, 계좌, 잔고 또는 실제 포지션 변경 경로는 만들지 않는다.
@@ -28,6 +30,7 @@
 ### 2.1 포함 범위
 
 - 지속형 Chrome 조사 작업의 생성, 재개, 차단과 다음 wake
+- Codex와 독립된 Local Browser Gateway, 전용 Chrome 프로필과 typed local transport
 - SNS·커뮤니티·뉴스 후보의 탐색, 정규화, 복제 군집화와 확산 분석
 - URL, 게시 시각, 관찰 시각, 발췌, 화면 증거와 출처 신뢰도 저장
 - KIS 읽기 전용 현재 세션 데이터와 브라우저 증거의 결합
@@ -52,19 +55,25 @@
 
 ## 3. 설계 원칙
 
-### 3.1 자율성과 계산 정확성의 분리
+### 3.1 자유로운 연구 루프와 엄격한 외부 경계
+
+코드는 `브라우저 → KIS → 가설 → Critic` 같은 조사 순서를 강제하지 않는다. Agent는 현재 목표, 기억, 열린 가상 포지션과 직전 관찰을 보고 검색, 페이지 읽기, 출처 변경, KIS 확인, 과거 기억 조회, 가설 수정, Critic 호출, 추천 제출 또는 다음 wake를 자유롭게 선택한다. 같은 도구를 여러 번 호출하거나 필요하지 않은 도구를 건너뛸 수 있다.
+
+중간 research note, 질문, 가설과 조사 계획은 버전된 작업 기억으로 자유롭게 발전한다. 엄격한 typed 계약은 브라우저 행동 요청, 시장데이터 관찰, 최종 추천, 가상체결과 사용자 투영 같은 시스템 경계에만 적용한다. 특정 사이트 수, 페이지 수, 모델 호출 수 또는 고정 단계 완료를 추천 조건으로 사용하지 않는다.
+
+### 3.2 자율성과 계산 정확성의 분리
 
 에이전트는 무엇을 조사하고 어떤 가설을 세우며 어떤 행동을 선택할지 결정한다. 가격 단위, 포지션 한도, 손절·목표 충돌과 가상체결은 코드 도구가 계산한다. 이 경계는 자율 판단을 one-shot 규칙기로 축소하지 않으면서 숫자 오류와 체결 왜곡을 막는다.
 
-### 3.2 SNS는 발견 수단이고 KIS는 시장 사실의 기준이다
+### 3.3 SNS는 발견 수단이고 KIS는 시장 사실의 기준이다
 
 SNS의 속도와 다양성을 기회 발견에 사용하되 게시물 수를 사실의 수로 세지 않는다. 복사·재전파 관계를 군집화하고 독립 출처, 최초 시각, 계정 이력과 현재 시장 반응을 분리해 저장한다. 추천 시점의 가격과 거래대금은 최신 완료 KRX 봉과 현재 호가만 사용한다.
 
-### 3.3 열린 목표는 조용히 종료하지 않는다
+### 3.4 열린 목표는 조용히 종료하지 않는다
 
 검색 결과 없음, Chrome 실패, 로그인 만료, LLM 실패와 `no-trade`는 자동 완료가 아니다. 다음 조사 조건이나 시간이 있으면 `waiting_event`, `waiting_time` 또는 `blocked`로 보존한다. 가설이 해결되거나 명시적으로 폐기된 경우에만 terminal 상태가 된다.
 
-### 3.4 웹 콘텐츠는 명령이 아니라 불신 입력이다
+### 3.5 웹 콘텐츠는 명령이 아니라 불신 입력이다
 
 웹페이지의 프롬프트, 다운로드 유도, 브라우저 설정 변경 요청과 외부 명령은 조사 대상 텍스트로만 취급한다. 도구 관찰은 원문 위치와 시각을 포함한 제한된 구조로 변환한 뒤 모델에 전달한다.
 
@@ -76,22 +85,28 @@ SNS의 속도와 다양성을 기회 발견에 사용하되 게시물 수를 사
 
 ### 4.2 Browser Session Gateway
 
-전용 Chrome 프로필과 실제 브라우저 세션의 생명주기를 소유한다.
+전용 Chrome 프로필과 실제 브라우저 세션의 생명주기를 소유하는 독립 로컬 서비스다. `launchd`가 부팅과 로그인 뒤 서비스를 시작하며 Supervisor는 current-user-owned mode `600` Unix socket의 typed request만 사용한다. Gateway는 전용 user-data directory로 시작한 Chrome의 DevTools Protocol에 연결한다. DOM으로 해결되지 않는 화면은 screenshot과 제한된 action contract를 지원하는 Local Computer Use Adapter에 넘긴다.
 
+- Codex 앱, 열린 채팅, task/thread ID와 현재 터미널 없이 독립 실행
+- 단일 전용 Chrome 프로필과 profile lock 소유
+- Unix socket peer identity와 요청 task authority 확인
 - Chrome 실행 여부와 프로필 identity 확인
 - 이미 로그인된 세션의 사용 가능 여부 확인
 - DOM 읽기, 검색, 링크 이동과 탭 전환
-- 동적 화면에서 Computer Use fallback
+- 동적 화면에서 Local Computer Use Adapter fallback
 - 읽기 전용 행동 정책과 다운로드 차단
+- action·observation receipt와 현재 탭·URL의 redacted checkpoint 저장
 - 브라우저 충돌 뒤 동일 ResearchTask에서 세션 재개
 - 로그인 만료, CAPTCHA, 차단과 GUI 세션 부재의 구분
 
-Gateway는 브라우저 쿠키, 토큰, 전체 HTML, 원시 네트워크 헤더와 계정 식별자를 Task, 로그 또는 Dashboard에 저장하지 않는다.
+Gateway는 브라우저 쿠키, 토큰, 전체 HTML, 원시 네트워크 헤더와 계정 식별자를 Task, 로그 또는 Dashboard에 저장하지 않는다. Computer Use Adapter가 구성되지 않았거나 시각 전용 화면을 해석할 수 없으면 DOM 경로를 계속 사용하고 해당 화면 작업만 `blocked`로 보존한다. Codex의 대화형 Chrome 도구를 운영 의존성으로 대체할 수 없다.
 
 ### 4.3 Browser Research Agent
 
 시장 변화와 열린 가설을 입력으로 받아 조사 계획을 스스로 갱신한다.
 
+- 장전·장중·휴장별 open-ended research agenda 생성
+- 현재 watchlist 밖의 새로운 검색어·테마·출처를 스스로 탐색
 - X/Grok, 주식 커뮤니티, 종목 게시판, 공개 채널, 뉴스와 검색 결과 탐색
 - 새 테마, 촉매, 종목명, 별칭과 관련 종목 추출
 - 원 출처 추정과 복사·재전파 경로 조사
@@ -243,6 +258,7 @@ browser.open
 browser.read
 browser.follow
 browser.capture
+research.note.append
 social.evidence.search
 social.evidence.store
 social.signal.normalize
@@ -254,9 +270,12 @@ kr.position.reconcile
 kr.outcome.observe
 memory.search
 memory.write
+critic.request
 delivery.publish
 dashboard.project
 ```
+
+이 목록은 사용 가능한 능력이지 실행 순서가 아니다. Agent는 목표가 해결될 때까지 도구를 임의 순서로 반복·생략하고, 새 하위 질문을 만들고, 다른 역할에 위임하거나 다음 증거까지 defer할 수 있다. 예산이 끝나면 Task를 잃지 않고 다음 wake에서 이어간다.
 
 각 도구 호출은 현재 task ID와 root source evidence ID에 결속된다. 도구는 bounded observation만 반환하고 임의 shell, 임의 파일 쓰기, 브라우저 자격증명 추출 또는 공급자 mutation을 허용하지 않는다. Tool Runtime의 worker-module authority와 실행 예산을 통과하지 못하면 네트워크나 브라우저 행동 전에 거부한다.
 
@@ -264,23 +283,25 @@ dashboard.project
 
 ```text
 30초 Supervisor heartbeat
-→ 현재 KRX 세션·열린 Task·가상 포지션 확인
-→ SNS/커뮤니티/뉴스 변화 또는 시장 이상 감지
-→ Browser ResearchTask 생성 또는 재개
-→ Chrome 다단계 조사와 증거 저장
-→ 복제 군집·독립 출처·시간 순서 정규화
-→ KIS 현재 세션 데이터 결합
-→ Opportunity 가설과 반대 가설
-→ Trading Agent 행동 선택
-→ Deterministic Trade Planner
-→ Critic 검토
-→ 추천·관망·기각
-→ 내부 가상체결과 Position Manager wake
-→ Hermes·Dashboard 상태 변화 투영
+→ 목표·열린 Task·작업 기억·가상 포지션 복원
+→ Agent가 현재 목표에 필요한 다음 행동 선택
+   ├─ 새로운 SNS·커뮤니티·뉴스 출처 탐색
+   ├─ 현재 페이지 후속 링크·검색어 조사
+   ├─ social evidence 저장·검색·군집화
+   ├─ KIS 현재 시장 반응 확인
+   ├─ 과거 출처·테마·거래 기억 조회
+   ├─ research note·가설·반대 가설 수정
+   ├─ 다른 전문 역할 또는 Critic 호출
+   ├─ 추천·관망·기각 제출
+   └─ 다음 시간·시장·브라우저 event까지 defer
+→ 도구 관찰과 계획 변경을 durable history에 append
+→ 목표 해결, 명시적 폐기 또는 tick 예산까지 자유 루프 반복
+→ 최종 추천만 Deterministic Trade Planner와 Critic admission 통과
+→ 내부 가상체결·Position Manager·Hermes·Dashboard
 → 결과 관찰과 memory append
 ```
 
-중요 후보는 새 증거 또는 시장 변화가 있는 동안 최대 2분 이내에 재조사한다. 변화가 없는 페이지를 무한 새로고침하지 않는다. 사이트별 속도 제한, 오류 응답과 브라우저 상태를 반영해 다음 wake를 예약한다.
+새 시장 이상뿐 아니라 Agent가 스스로 만든 research agenda와 미완료 하위 질문도 Browser ResearchTask를 생성하거나 깨울 수 있다. 중요 후보는 새 증거 또는 시장 변화가 있는 동안 최대 2분 이내에 재조사한다. 이는 응답시간 목표이며 조사 단계나 페이지 수를 고정하지 않는다. 변화가 없는 페이지를 무한 새로고침하지 않고 사이트별 속도 제한, 오류 응답과 브라우저 상태를 반영해 다음 wake를 예약한다.
 
 ## 7. 시장별 운영 리듬
 
@@ -368,6 +389,7 @@ Hermes는 상태가 바뀔 때만 알린다. 같은 URL, 같은 content digest, 
 ### 10.1 단위·계약 테스트
 
 - Browser tool의 읽기 전용 행동과 credential·download·mutation 거부
+- Local Browser Gateway의 Unix socket peer, profile lock, Codex 비의존성과 restart receipt
 - bounded excerpt, URL, published/observed 시각과 content digest
 - 복사 게시물 군집화와 독립 출처 계산
 - 오래된 재게시와 시장 반응 뒤 발견된 게시물의 인과성 차단
@@ -377,6 +399,7 @@ Hermes는 상태가 바뀔 때만 알린다. 같은 URL, 같은 content digest, 
 - 같은 봉 손절·목표 충돌 시 손절 우선
 - 추천, 관망, 기각과 가상체결의 immutable outcome history
 - restart replay, 다음 wake와 root source lineage
+- 같은 입력에서도 열린 목표에 따라 서로 다른 도구 순서·반복·defer가 허용되고 고정 단계가 없는지 검증
 - Hermes deduplication과 Dashboard redaction
 
 ### 10.2 통합 테스트
@@ -386,7 +409,7 @@ Hermes는 상태가 바뀔 때만 알린다. 같은 URL, 같은 content digest, 
 ```text
 새 SNS 테마
 → Browser ResearchTask
-→ 복수 페이지 조사
+→ 목표에 따라 Agent가 선택한 Chrome 조사와 후속 도구 호출
 → 독립 출처 군집
 → KIS 시장 확인
 → 계획과 Critic
@@ -399,7 +422,7 @@ Hermes는 상태가 바뀔 때만 알린다. 같은 URL, 같은 content digest, 
 
 ### 10.3 실제 브라우저 수동 QA
 
-전용 Chrome 프로필에서 공개 페이지와 이미 로그인된 X/Grok·커뮤니티 페이지를 읽는다. 실제 화면에서 검색, 링크 이동, 동적 화면 fallback, 증거 캡처, Task 재개와 비밀정보 redaction을 관찰한다. 게시·댓글·다운로드·로그인 입력은 실행하지 않는다.
+Codex 앱과 현재 개발 터미널을 종료해도 `launchd`의 Local Browser Gateway와 Supervisor가 전용 Chrome 프로필에서 계속 동작해야 한다. 공개 페이지와 이미 로그인된 X/Grok·커뮤니티 페이지를 읽고 실제 화면에서 검색, 링크 이동, 동적 화면 fallback, 증거 캡처, Task 재개와 비밀정보 redaction을 관찰한다. 게시·댓글·다운로드·로그인 입력은 실행하지 않는다.
 
 ### 10.4 운영 검증
 
@@ -417,7 +440,7 @@ Hermes는 상태가 바뀔 때만 알린다. 같은 URL, 같은 content digest, 
 이번 릴리스는 다음 조건이 모두 관찰돼야 완료다.
 
 1. 새 SNS·커뮤니티 테마가 durable KR ResearchTask를 만든다.
-2. Agent가 Chrome에서 둘 이상의 관련 페이지를 자율적으로 조사한다.
+2. Agent가 페이지 수나 고정 단계 없이 현재 목표에 필요한 Chrome 조사 순서와 반복을 스스로 선택한다.
 3. 각 증거가 URL, 게시·관찰 시각, bounded excerpt, digest와 출처 군집을 가진다.
 4. KIS 현재 세션 데이터가 가설과 결합된다.
 5. Agent가 추천 또는 명시적 관망·기각을 제출한다.
@@ -429,17 +452,49 @@ Hermes는 상태가 바뀔 때만 알린다. 같은 URL, 같은 content digest, 
 11. 출처·테마·시장상태별 결과 memory와 Loop Engineer bundle이 append된다.
 12. KIS·LS 주문/계좌 mutation과 한국 실제 주문 경로가 존재하지 않는다.
 13. synthetic, replay 또는 shadow 결과를 실제 수익성으로 표현하지 않는다.
+14. Codex 앱·대화·터미널을 종료한 상태에서도 Local Browser Gateway가 `launchd` 아래에서 실제 Chrome Task를 계속 수행한다.
 
-## 12. 구현 순서
+## 12. 구현 하위 프로젝트
 
-구현 계획은 다음 수직 순서를 따른다.
+이 설계는 세 개의 독립적으로 시작·검증 가능한 구현 계획으로 나눈다. 각 계획은 자체 실제 사용 표면을 갖지만 세 번째 계획까지 끝나야 이번 제품 수직 경로가 완료된다.
 
-1. Browser session과 social evidence 경계
-2. Browser Research Agent 도구와 durable Task 연결
-3. Social signal 정규화·복제 군집·시간 인과성
-4. KIS current-session corroboration 도구
-5. Opportunity·Trading·Critic 다단계 루프
-6. Deterministic Trade Planner와 내부 가상체결 연결
-7. Position Manager, outcome memory와 Loop Engineer bundle
-8. Hermes·Dashboard projection
-9. launchd·Chrome restart 복구와 실제 브라우저 운영 검증
+### 12.1 Local Agent Browser Computer
+
+- Codex 비의존 Local Browser Gateway와 private Unix socket
+- 전용 Chrome profile, DevTools Protocol과 Local Computer Use Adapter
+- Browser action·observation receipt와 Social Evidence Store
+- 자유 도구 루프를 갖는 Browser Research Agent와 durable Task
+- 실제 Chrome 검색·읽기·재시작 복구 수동 QA
+
+이 하위 프로젝트의 완료 표면은 Codex를 종료한 상태에서 `launchd` Agent가 실제 Chrome 조사를 수행하고 durable social evidence를 남기는 것이다. 추천이나 가상체결은 만들지 않는다.
+
+### 12.2 KR Autonomous Decision and Virtual Trading
+
+- Social signal 정규화·복제 군집·시간 인과성
+- KIS current-session corroboration 도구
+- Opportunity·Trading·Critic의 자유 다단계 협업
+- Deterministic Trade Planner와 내부 가상체결
+- Position Manager와 restart reconciliation
+
+이 하위 프로젝트의 완료 표면은 실제 Chrome evidence와 현재 KIS 데이터가 추천 또는 명시적 관망으로 이어지고, 추천이 내부 가상체결과 terminal outcome을 남기는 것이다.
+
+### 12.3 Operator Surface and Outcome Learning
+
+- Hermes·Dashboard projection과 상태 변화 deduplication
+- 출처·테마·시장상태별 outcome memory
+- Loop Engineer evidence bundle
+- 장전·장중·장마감 운영 리듬
+- 전체 `launchd` restart soak와 열린 KRX 세션 검증
+
+이 하위 프로젝트의 완료 표면은 사용자에게 조사·판단·추천·가상체결·학습 lineage가 실시간으로 보이고, 장애 뒤 동일 Task와 포지션이 복구되는 것이다.
+
+## 13. 후속 릴리스 순서
+
+사용자의 핵심 목표인 자율 판단과 실제 결과 기반 개선을 먼저 닫기 위해 전체 순서를 다음처럼 조정한다.
+
+1. 이번 KR 자율 브라우저 리서치·가상매매 수직 경로
+2. KR 결과를 직접 소비하는 Loop Engineer 자기수정·challenger·승격·복귀 수직 경로
+3. 미국 Alpaca Paper 수직 경로
+4. Day·Swing·Systematic 전문 패밀리의 공통 Browser Research evidence 소비와 운영 표면 통합
+
+이번 설계는 첫 번째 릴리스에만 대한 구현 계약이다. 두 번째 릴리스가 끝나기 전에는 코드·도구·프롬프트가 스스로 개선된다고 주장하지 않는다.
