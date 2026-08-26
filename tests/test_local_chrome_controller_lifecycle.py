@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,7 @@ from trading_agent.local_browser_private_fs import (
     PrivateBrowserDirectory,
     PrivateBrowserFile,
 )
-from trading_agent.local_browser_profile_lease import LocalBrowserProfileLease
+from trading_agent.local_browser_profile_lease import LOCAL_BROWSER_PROFILE_LEASE_NAME, LocalBrowserProfileLease
 
 
 class Process:
@@ -155,3 +156,39 @@ def test_endpoint_published_after_lease_before_reread_is_attached_and_preserved(
     controller.close()
     assert endpoint.ownership == "attached" and endpoint.process_id is None
     assert launcher.commands == [] and (config.profile_root / "DevToolsActivePort").read_bytes() == delayed
+
+
+def test_owned_reuse_reaps_invalidated_lease_without_unlinking_endpoint(
+    config: LocalBrowserGatewayConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: an owned Chrome whose held lease name is replaced after readiness.
+    process, payload = Process(101), _payload()
+    first = _controller(config, Launcher(config.profile_root, process, payload))
+    assert first.ensure_ready().ownership == "owned"
+    lease = first._lease
+    assert lease is not None
+    descriptor = lease.descriptor
+    lock = config.profile_root / LOCAL_BROWSER_PROFILE_LEASE_NAME
+    lock.unlink()
+    lock.write_bytes(b"")
+    lock.chmod(0o600)
+
+    def reject_unlink(
+        directory: PrivateBrowserDirectory, name: str, expected: PrivateBrowserFile, owner_id: int
+    ) -> None:
+        raise AssertionError("invalidated lease must not unlink an endpoint")
+
+    monkeypatch.setattr(chrome, "unlink_private_browser_file", reject_unlink)
+    # When: readiness tries to reuse the owned process after the lease swap.
+    with pytest.raises(chrome.InvalidLocalChromeControllerError) as raised:
+        _ = first.ensure_ready()
+    # Then: the process and lease are released, while the endpoint is retained for attachment.
+    assert raised.value.reason == "local_chrome_profile_lease_invalid"
+    assert (process.terminated, process.waits, first._owned_file) == (1, 1, None)
+    assert (config.profile_root / "DevToolsActivePort").read_bytes() == payload
+    with pytest.raises(OSError):
+        os.fstat(descriptor)
+    second_launcher = Launcher(config.profile_root, Process(202), _payload(9223))
+    second = _controller(config, second_launcher)
+    attached = second.ensure_ready()
+    assert attached.ownership == "attached" and attached.process_id is None and second_launcher.commands == []

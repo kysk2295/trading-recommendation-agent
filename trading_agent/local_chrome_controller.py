@@ -119,8 +119,7 @@ class LocalChromeController:
             ):
                 return self._ensure(profile)
         except (InvalidLocalBrowserPrivateFsError, InvalidLocalBrowserProfileLeaseError) as error:
-            self._stop_owned_process()
-            self._release_lease()
+            self._discard_owned_state()
             reason = "local_chrome_profile_lease_invalid"
             if isinstance(error, InvalidLocalBrowserPrivateFsError):
                 reason = "local_chrome_private_directory_invalid"
@@ -129,13 +128,22 @@ class LocalChromeController:
             raise InvalidLocalChromeControllerError(reason=reason) from None
 
     def close(self) -> None:
-        file, self._owned_file = self._owned_file, None
-        self._stop_owned_process()
+        file = self._owned_file
+        if file is None and self._process is None:
+            self._release_lease()
+            return
         try:
-            if file is not None:
-                with open_private_browser_directory(self._config.profile_root, self._owner_id) as profile:
+            with open_private_browser_directory(self._config.profile_root, self._owner_id) as profile:
+                self._require_owned_lease(profile)
+                self._owned_file = None
+                self._stop_owned_process()
+                if file is not None:
                     unlink_private_browser_file(profile, _PORT_FILE, file, self._owner_id)
+        except InvalidLocalBrowserProfileLeaseError:
+            self._discard_owned_state()
+            raise InvalidLocalChromeControllerError(reason="local_chrome_profile_lease_invalid") from None
         except InvalidLocalBrowserPrivateFsError:
+            self._discard_owned_state()
             raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid") from None
         finally:
             self._release_lease()
@@ -144,13 +152,15 @@ class LocalChromeController:
         raw = read_private_browser_file(profile, _PORT_FILE, self._owner_id, _PORT_FILE_MAX_BYTES)
         record = _parse_port_file(raw)
         process = self._process
+        if process is not None:
+            self._require_owned_lease(profile)
         if raw is not None and record is None:
             if process is not None:
                 self._stop_and_unlink(profile, raw)
             raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid")
         if process is not None:
             if record is not None and process.poll() is None and self._probe.probe(record.port, record.browser_path):
-                return self._remember_owned_endpoint(record, process)
+                return self._remember_owned_endpoint(profile, record, process)
             self._stop_and_unlink(profile, raw)
             return self._acquire_and_launch(profile)
         if record is not None:
@@ -214,7 +224,7 @@ class LocalChromeController:
                 self._stop_and_unlink(profile, raw)
                 raise InvalidLocalChromeControllerError(reason="local_chrome_port_file_invalid")
             if record is not None and self._probe.probe(record.port, record.browser_path):
-                return self._remember_owned_endpoint(record, process)
+                return self._remember_owned_endpoint(profile, record, process)
             remaining = deadline - self._clock.monotonic()
             if remaining <= 0:
                 self._stop_and_unlink(profile, raw)
@@ -222,6 +232,7 @@ class LocalChromeController:
             self._clock.sleep(min(0.1, remaining))
 
     def _stop_and_unlink(self, profile: PrivateBrowserDirectory, file: PrivateBrowserFile | None) -> None:
+        self._require_owned_lease(profile)
         owned_file, self._owned_file = self._owned_file, None
         self._stop_owned_process()
         try:
@@ -232,7 +243,10 @@ class LocalChromeController:
         finally:
             self._release_lease()
 
-    def _remember_owned_endpoint(self, record: _PortRecord, process: ChromeProcess) -> LocalChromeEndpoint:
+    def _remember_owned_endpoint(
+        self, profile: PrivateBrowserDirectory, record: _PortRecord, process: ChromeProcess
+    ) -> LocalChromeEndpoint:
+        self._require_owned_lease(profile)
         self._owned_file = record.file
         return _endpoint(record, "owned", process.pid)
 
@@ -255,3 +269,14 @@ class LocalChromeController:
         lease, self._lease = self._lease, None
         if lease is not None:
             lease.release()
+
+    def _require_owned_lease(self, profile: PrivateBrowserDirectory) -> None:
+        lease = self._lease
+        if lease is None:
+            raise InvalidLocalBrowserProfileLeaseError()
+        lease.require_current(profile)
+
+    def _discard_owned_state(self) -> None:
+        self._owned_file = None
+        self._stop_owned_process()
+        self._release_lease()
