@@ -59,10 +59,11 @@ def test_browser_action_is_closed_read_only_set() -> None:
         "https://invalid-.example",
     ),
 )
-def test_navigation_rejects_non_public_https_urls(url: str) -> None:
-    with pytest.raises(InvalidLocalBrowserProtocolError) as error:
+def test_navigation_validation_redacts_non_public_https_urls(url: str) -> None:
+    with pytest.raises(ValidationError) as error:
         BrowserOpenRequest(request_id="a" * 64, url=url)
-    assert error.value.reason == "browser_url_not_public_https"
+    assert error.value.errors(include_input=False)[0]["type"] == "value_error"
+    assert url not in str(error.value)
 
 
 def test_public_https_url_is_normalized_without_fragment() -> None:

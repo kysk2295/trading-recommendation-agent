@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 import tempfile
 import threading
 from collections.abc import Iterator
@@ -119,3 +120,53 @@ def test_actual_socket_replays_receipt_after_gateway_restart_without_chrome(shor
     restarted_controller = CountingController()
     _round_trip(state, restarted_controller, request)
     assert (first_controller.calls, restarted_controller.calls) == (1, 0)
+
+
+def test_raw_hostile_open_is_redacted_and_gateway_keeps_serving_without_chrome(short_root: Path) -> None:
+    # Given: the real socket gateway is ready to serve a hostile frame followed by a valid request.
+    state = short_root / "state"
+    socket_path = state / "gateway.sock"
+    controller = CountingController()
+    hostile_handled = threading.Event()
+    ready = threading.Event()
+    errors: list[BaseException] = []
+
+    def serve() -> None:
+        try:
+            with (
+                LocalBrowserReceiptStore(state / "receipts.sqlite3") as store,
+                LocalBrowserSocketServer(socket_path, _gateway(store, controller, state)) as server,
+            ):
+                ready.set()
+                try:
+                    server.serve_once()
+                except InvalidLocalBrowserSocketError as error:
+                    assert error.reason == "browser_request_invalid"
+                    hostile_handled.set()
+                server.serve_once()
+        except BaseException as error:  # noqa: RUF100  # noqa: BROAD_EXCEPT_OK: capture boundary crash
+            errors.append(error)
+
+    thread = threading.Thread(target=serve)
+    thread.start()
+    assert ready.wait(timeout=2.0)
+
+    # When: an untyped client submits a canonical open frame with a forbidden HTTP URL.
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(1.0)
+        client.connect(str(socket_path))
+        client.sendall(b'{"action":"open","request_id":"' + b"a" * 64 + b'","url":"http://example.com"}\n')
+        client.shutdown(socket.SHUT_WR)
+        assert client.recv(1) == b""
+
+    # Then: the frame is redacted at the wire boundary, Chrome is untouched, and the gateway serves again.
+    assert hostile_handled.wait(timeout=2.0)
+    assert controller.calls == 0
+    response = LocalBrowserSocketClient(socket_path, timeout_seconds=1.0).request(
+        BrowserStatusRequest(request_id="b" * 64)
+    )
+    thread.join(timeout=2.0)
+    assert response.status_payload is not None and response.status_payload.ready
+    assert not thread.is_alive()
+    assert errors == []
+    assert controller.calls == 1

@@ -23,8 +23,10 @@ from trading_agent.private_directory_identity import (
 _QUARANTINE_PREFIX = ".browser-cleanup-"
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK: exceptions need writable traceback state
 class InvalidLocalBrowserPrivateFsError(RuntimeError):
+    """Carry a private-filesystem failure while permitting traceback attachment."""
+
     reason: str
 
     def __str__(self) -> str:

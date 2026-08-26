@@ -12,8 +12,10 @@ ChromeDebugPort = NewType("ChromeDebugPort", int)
 _PORT_FILE_TEXT = re.compile(r"([1-9][0-9]{0,4})\n(/devtools/browser/[A-Za-z0-9_-]{1,128})\n?\Z")
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK: exceptions need writable traceback state
 class InvalidLocalChromeEndpointInvariantError(ValueError):
+    """Carry an endpoint invariant failure while permitting traceback attachment."""
+
     reason: str = "local_chrome_endpoint_ownership_invalid"
 
     def __str__(self) -> str:

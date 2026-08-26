@@ -43,8 +43,10 @@ class BrowserFailureReason(StrEnum):
     RESPONSE_TOO_LARGE = "browser_response_too_large"
 
 
-@dataclass(frozen=True, slots=True)
-class InvalidLocalBrowserProtocolError(Exception):
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK: exceptions need writable traceback state
+class InvalidLocalBrowserProtocolError(ValueError):
+    """Represent a protocol rejection while allowing Python traceback attachment."""
+
     reason: str
 
     def __str__(self) -> str:

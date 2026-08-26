@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import assert_never
 
 from trading_agent.autonomous_browser_tool_results import (
     blocked_read_failure,
@@ -67,6 +68,8 @@ def browser_status_tool(
                     "status": "ok",
                 }
             )
+        case unreachable:
+            assert_never(unreachable)
 
 
 def browser_search_tool(
@@ -90,6 +93,8 @@ def browser_search_tool(
             if response.action is not BrowserAction.SEARCH:
                 return gateway_unavailable(request.request_id)
             return search_payload(response)
+        case unreachable:
+            assert_never(unreachable)
 
 
 def browser_open_tool(
@@ -156,6 +161,8 @@ def browser_read_tool(
                     "status": "ok",
                 }
             )
+        case unreachable:
+            assert_never(unreachable)
 
 
 def browser_follow_tool(
@@ -208,6 +215,8 @@ def browser_capture_tool(
                     "status": "ok",
                 }
             )
+        case unreachable:
+            assert_never(unreachable)
 
 
 def social_evidence_search_tool(

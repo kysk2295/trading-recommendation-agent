@@ -10,14 +10,18 @@ from typing import Final
 _DARWIN_RENAME_EXCL: Final = 0x00000004
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK: exceptions need writable traceback state
 class AtomicRenameConflictError(RuntimeError):
+    """Report an exclusive-rename collision without blocking traceback state."""
+
     def __str__(self) -> str:
         return "atomic rename destination exists"
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK: exceptions need writable traceback state
 class AtomicRenameUnavailableError(RuntimeError):
+    """Report unavailable atomic rename while permitting traceback attachment."""
+
     def __str__(self) -> str:
         return "atomic rename unavailable"
 

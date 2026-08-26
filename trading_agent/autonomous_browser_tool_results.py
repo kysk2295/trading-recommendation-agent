@@ -4,7 +4,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Final
+from typing import Final, assert_never
 
 from trading_agent.autonomous_reasoning import AutonomousToolArguments
 from trading_agent.autonomous_tool_runtime import AutonomousToolExecutionContext, AutonomousToolInvocationError
@@ -32,6 +32,14 @@ _MAX_RETURNED_LINKS: Final = 4
 type JsonValue = str | int | float | bool | None | tuple["JsonValue", ...] | Mapping[str, "JsonValue"]
 
 
+class InvalidBrowserToolResultError(ValueError):
+    __slots__ = ("reason",)
+
+    def __init__(self) -> None:
+        self.reason = "browser response failure missing"
+        super().__init__(self.reason)
+
+
 def canonical(value: Mapping[str, JsonValue]) -> str:
     return json.dumps(value, allow_nan=False, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
 
@@ -42,7 +50,7 @@ def gateway_unavailable(request_id: str) -> str:
 
 def failed_response(response: BrowserResponse) -> str:
     if response.failure is None:
-        raise ValueError("browser response failure missing")
+        raise InvalidBrowserToolResultError
     return canonical(
         {"browser_receipt_id": response.request_id, "reason": response.failure.reason.value, "status": "error"}
     )
@@ -50,7 +58,7 @@ def failed_response(response: BrowserResponse) -> str:
 
 def blocked_read_failure(response: BrowserResponse, target_id: str) -> str:
     if response.failure is None:
-        raise ValueError("browser response failure missing")
+        raise InvalidBrowserToolResultError
     return canonical(
         {
             "browser_receipt_id": response.request_id,
@@ -116,6 +124,8 @@ def page_response(request: BrowserOpenRequest | BrowserFollowRequest, response: 
             if response.action not in {BrowserAction.OPEN, BrowserAction.FOLLOW} or observation is None:
                 return gateway_unavailable(request.request_id)
             return canonical({**page_payload(observation), "browser_receipt_id": response.request_id, "status": "ok"})
+        case unreachable:
+            assert_never(unreachable)
 
 
 def required_argument(args: AutonomousToolArguments, name: str) -> str:
@@ -208,6 +218,7 @@ def _bounded_text(value: str, maximum_json_bytes: int) -> str:
 
 
 __all__ = (
+    "InvalidBrowserToolResultError",
     "blocked_read_failure",
     "blocked_read_page",
     "canonical",

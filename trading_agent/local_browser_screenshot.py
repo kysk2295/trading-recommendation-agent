@@ -22,8 +22,10 @@ from trading_agent.local_browser_private_fs import (
 from trading_agent.private_directory_identity import require_open_directory_path, require_same_file
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK: exceptions need writable traceback state
 class InvalidLocalBrowserScreenshotError(RuntimeError):
+    """Carry a screenshot failure while permitting traceback attachment."""
+
     reason: str = "browser_navigation_blocked"
 
     def __str__(self) -> str:

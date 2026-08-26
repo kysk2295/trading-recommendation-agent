@@ -12,8 +12,10 @@ from trading_agent.private_directory_identity import InvalidPrivateDirectoryIden
 LOCAL_BROWSER_PROFILE_LEASE_NAME = ".local-browser-profile.lease"
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK: exceptions need writable traceback state
 class InvalidLocalBrowserProfileLeaseError(RuntimeError):
+    """Carry a lease failure while permitting traceback attachment."""
+
     reason: str = "local_browser_profile_lease_invalid"
 
     def __str__(self) -> str:
@@ -24,7 +26,7 @@ class LocalBrowserProfileLeaseBusyError(RuntimeError):
     pass
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK: release invalidates the descriptor
 class LocalBrowserProfileLease:
     """A cooperative exclusive launch claim for the dedicated Chrome profile."""
 

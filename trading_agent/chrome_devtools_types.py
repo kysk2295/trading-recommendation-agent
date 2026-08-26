@@ -5,8 +5,10 @@ from enum import StrEnum
 from typing import Protocol
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK: exceptions need writable traceback state
 class InvalidChromeDevToolsError(RuntimeError):
+    """Carry a typed CDP failure while permitting traceback attachment."""
+
     reason: str
 
     def __str__(self) -> str:

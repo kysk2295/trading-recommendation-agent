@@ -37,8 +37,10 @@ _PORT_FILE = "DevToolsActivePort"
 _PORT_FILE_MAX_BYTES = 256
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK: exceptions need writable traceback state
 class InvalidLocalChromeControllerError(RuntimeError):
+    """Carry a controller failure while permitting traceback attachment."""
+
     reason: str
 
     def __str__(self) -> str:

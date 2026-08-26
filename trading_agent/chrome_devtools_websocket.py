@@ -38,8 +38,10 @@ class _CdpEnvelope(_BoundaryModel):
     method: str | None = Field(default=None, min_length=1, max_length=128)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK: navigation updates interception safety
 class _InterceptionState:
+    """Track whether request interception can be safely disabled."""
+
     disable_safe: bool = True
 
 
