@@ -30,7 +30,7 @@ class _SupervisorCloseError(Exception):
         return self.reason
 
 
-def agenda_services_fixture(tmp_path: Path) -> ContinuousBrowserResearchSupervisor:
+def agenda_services_fixture(tmp_path: Path, *, event_wait: bool = False) -> ContinuousBrowserResearchSupervisor:
     # Given: a real durable task/cycle-store pair and a reasoner that chooses a timed wait.
     runtime = AutonomousSupervisorRuntime(
         tasks=AutonomousTaskStore(tmp_path / "tasks.sqlite3"),
@@ -41,7 +41,8 @@ def agenda_services_fixture(tmp_path: Path) -> ContinuousBrowserResearchSupervis
                 AutonomousDefer(
                     reason="No new evidence is actionable; retain the durable research task for a later review.",
                     resume_condition="Resume when the next bounded research review time is reached.",
-                    next_wake_at=NOW + dt.timedelta(minutes=5),
+                    next_wake_at=None if event_wait else NOW + dt.timedelta(minutes=5),
+                    next_wake_event="new_market_evidence" if event_wait else None,
                 ),
             ),
         ),
@@ -249,6 +250,19 @@ def test_run_due_keeps_the_agenda_task_durable_at_a_timed_wait(tmp_path: Path) -
     assert services.run_due(NOW) == ()
     task = services.ensure_open(NOW)
     assert task.state is AutonomousTaskState.WAITING_TIME
+
+
+def test_continuous_agenda_converts_event_wait_to_periodic_review(tmp_path: Path) -> None:
+    services = agenda_services_fixture(tmp_path, event_wait=True)
+
+    results = services.run_due(NOW)
+
+    task = services.ensure_open(NOW)
+    assert len(results) == 1
+    assert task.state is AutonomousTaskState.WAITING_TIME
+    assert task.next_wake_event is None
+    assert task.next_wake_at == NOW + dt.timedelta(minutes=10)
+    assert results[0].result.next_wake_at == task.next_wake_at
 
 
 def test_agenda_rejects_a_naive_clock_before_durable_admission(tmp_path: Path) -> None:

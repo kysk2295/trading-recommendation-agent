@@ -92,7 +92,7 @@ class ArtifactPayload(_Payload):
 class WaitPayload(_Payload):
     kind: Literal["wait"] = "wait"
     decision_hash: str | None = Field(default=None, pattern=_HASH)
-    cause: Literal["defer", "no_trade", "budget"]
+    cause: Literal["defer", "no_trade", "budget", "periodic"]
     resume_condition: str | None = None
 
 

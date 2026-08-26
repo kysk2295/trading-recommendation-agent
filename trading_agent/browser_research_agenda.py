@@ -9,6 +9,7 @@ from typing import Final
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
 
+from trading_agent import _autonomous_supervisor_steps as steps
 from trading_agent._autonomous_supervisor_steps import SourceAdmissionPayload, canonical_json, payload_json, plain_step
 from trading_agent.autonomous_supervisor_adapter import AutonomousSupervisorAdapter
 from trading_agent.autonomous_supervisor_due_adapter import AutonomousSupervisorProjection
@@ -44,6 +45,7 @@ _PLAN: Final = (
     "wait durably when no useful action remains",
 )
 _ENSURE_LOCK: Final = threading.RLock()
+_PERIODIC_REVIEW: Final = dt.timedelta(minutes=10)
 
 
 class InvalidBrowserResearchAgendaError(RuntimeError):
@@ -139,7 +141,7 @@ class ContinuousBrowserResearchSupervisor:
                 episode = _episode(None, now)
             task = self.supervisor.runtime.tasks.reader().task(episode.task_id)
             if task is not None and task.state not in {AutonomousTaskState.COMPLETED, AutonomousTaskState.ABANDONED}:
-                return task
+                return self._schedule_event_wait(task, now)
             if task is not None:
                 episode = _episode(task, now)
             evidence = _evidence(episode)
@@ -148,7 +150,34 @@ class ContinuousBrowserResearchSupervisor:
 
     def run_due(self, now: dt.datetime) -> tuple[AutonomousSupervisorProjection, ...]:
         _ = self.ensure_open(now)
-        return self.supervisor.run_due(now)
+        projections = self.supervisor.run_due(now)
+        task = self.ensure_open(now)
+        return tuple(
+            self.supervisor.projection_for_result(
+                item.result.model_copy(update={"next_wake_at": task.next_wake_at, "next_wake_event": None})
+            )
+            if item.result.task_id == task.task_id and item.result.next_wake_event is not None
+            else item
+            for item in projections
+        )
+
+    def _schedule_event_wait(self, task: AutonomousResearchTask, now: dt.datetime) -> AutonomousResearchTask:
+        if task.state is not AutonomousTaskState.WAITING_EVENT:
+            return task
+        wake = max(task.updated_at + _PERIODIC_REVIEW, now + dt.timedelta(seconds=1))
+        step = plain_step(
+            task,
+            len(self.supervisor.runtime.tasks.reader().steps(task.task_id)) + 1,
+            now,
+            AutonomousTaskState.WAITING_TIME,
+            payload_json(steps.WaitPayload(cause="periodic", resume_condition="Resume continuous review.")),
+            task.source_evidence_ids,
+            task.evidence_refs,
+            wake=wake,
+        )
+        with self.supervisor.runtime.tasks.writer() as writer:
+            _ = writer.append_step(step)
+        return self.supervisor.runtime.tasks.reader().task(task.task_id) or task
 
     def _admit(
         self,
