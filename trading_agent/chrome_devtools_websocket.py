@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from websockets.exceptions import WebSocketException
 from websockets.sync.client import connect
 
+from trading_agent.chrome_cdp_response import require_cdp_success
 from trading_agent.chrome_devtools_types import CdpCommand, CdpMethod, InvalidChromeDevToolsError
 from trading_agent.chrome_paused_request import InvalidPausedRequestIdentityError, parse_paused_request
 
@@ -89,9 +90,7 @@ class SerializedChromeWebSocket:
                         envelope = _CdpEnvelope.model_validate_json(body)
                         if envelope.request_id is None:
                             continue
-                        if envelope.request_id != request_id:
-                            raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
-                        matched = body
+                        matched = require_cdp_success(body, request_id)
                         break
                 finally:
                     connection.close_timeout = max(0.0, deadline - self._clock.monotonic())
@@ -184,8 +183,9 @@ class SerializedChromeWebSocket:
                 pending_actions.add(self._send(connection, action))
                 continue
             if envelope.request_id == navigate_id:
-                navigation_response = body
+                navigation_response = require_cdp_success(body, navigate_id)
             elif envelope.request_id in pending_actions:
+                _ = require_cdp_success(body, envelope.request_id)
                 pending_actions.remove(envelope.request_id)
                 interception.disable_safe = not pending_actions
             elif envelope.request_id is not None:
@@ -214,10 +214,9 @@ class SerializedChromeWebSocket:
             if envelope.request_id is None:
                 continue
             if envelope.request_id == prior_request_id:
+                _ = require_cdp_success(body, envelope.request_id)
                 continue
-            if envelope.request_id != request_id:
-                raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
-            return body
+            return require_cdp_success(body, request_id)
 
     def _receive(self, connection: _WebSocketConnection, deadline: float) -> bytes:
         body = _message_bytes(connection.recv(timeout=self._remaining(deadline), decode=False))
