@@ -34,9 +34,13 @@ _KEY_SEPARATORS: Final = re.compile(r"[^a-z0-9]+")
 
 
 def has_sensitive_browser_url_metadata(path: str, query: str) -> bool:
-    return contains_browser_secret_text(unquote(path)) or any(
-        _normalized_key(name) in _SENSITIVE_QUERY_KEYS or contains_browser_secret_text(value)
-        for name, value in parse_qsl(query, keep_blank_values=True)
+    return (
+        contains_browser_secret_text(unquote(path))
+        or contains_browser_secret_text(unquote(query))
+        or any(
+            _normalized_key(name) in _SENSITIVE_QUERY_KEYS or contains_browser_secret_text(value)
+            for name, value in parse_qsl(query, keep_blank_values=True)
+        )
     )
 
 

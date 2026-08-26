@@ -127,6 +127,7 @@ def test_actual_socket_replays_receipt_after_gateway_restart_without_chrome(shor
     "hostile_url",
     (
         b"https://example.com/?api%5Fkey=withheld",
+        b"https://example.com/?token%3Dwithheld",
         b"https://example.com/anything/auth-token%3Dwithheld",
     ),
 )
