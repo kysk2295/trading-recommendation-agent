@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import plistlib
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, Self
@@ -88,7 +89,8 @@ def write_local_browser_gateway_config(path: Path, config: LocalBrowserGatewayCo
     try:
         private_path = _absolute_private_path(path)
         checked = LocalBrowserGatewayConfig.model_validate(config.model_dump(mode="python"))
-        return publish_private_immutable_text(private_path, _config_text(checked))
+        reparsed = LocalBrowserGatewayConfig.model_validate_json(_config_text(checked))
+        return publish_private_immutable_text(private_path, _config_text(reparsed))
     except (
         InvalidPrivateImmutableFileError,
         InvalidLocalBrowserGatewayConfigError,
@@ -153,7 +155,7 @@ def verify_local_browser_launch_agent(config_path: Path, plist_path: Path) -> Lo
             config.chrome_executable,
             config.project_root / _GATEWAY_SCRIPT,
         )
-        if not config.project_root.is_dir() or any(not path.is_file() for path in required_files):
+        if not config.project_root.is_dir() or any(not _is_regular_file(path) for path in required_files):
             raise InvalidLocalBrowserGatewayConfigError(reason="local_browser_launch_agent_binding_invalid")
         if any(not os.access(path, os.X_OK) for path in (config.uv_path, config.chrome_executable)):
             raise InvalidLocalBrowserGatewayConfigError(reason="local_browser_launch_agent_binding_invalid")
@@ -175,6 +177,14 @@ def verify_local_browser_launch_agent(config_path: Path, plist_path: Path) -> Lo
 
 def _is_descendant(path: Path, root: Path) -> bool:
     return path != root and path.is_relative_to(root)
+
+
+def _is_regular_file(path: Path) -> bool:
+    try:
+        mode = os.lstat(path).st_mode
+        return not stat.S_ISLNK(mode) and stat.S_ISREG(mode)
+    except OSError:
+        return False
 
 
 def _absolute_private_path(path: Path) -> Path:

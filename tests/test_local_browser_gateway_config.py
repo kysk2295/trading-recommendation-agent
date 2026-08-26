@@ -263,6 +263,27 @@ def test_launch_agent_is_not_ready_when_required_file_is_missing_or_not_executab
     assert raised.value.reason == "local_browser_launch_agent_verify_invalid"
 
 
+@pytest.mark.parametrize("required", ("uv_path", "chrome_executable", "gateway_script"))
+def test_launch_agent_is_not_ready_when_required_binding_is_symlinked(
+    gateway_fixture: GatewayFixture, required: str
+) -> None:
+    # Given: a valid contract whose required executable or script is replaced by a symlink.
+    _write_contract(gateway_fixture)
+    target = {
+        "uv_path": gateway_fixture.config.uv_path,
+        "chrome_executable": gateway_fixture.config.chrome_executable,
+        "gateway_script": gateway_fixture.config.project_root / "run_local_browser_gateway.py",
+    }[required]
+    linked_target = target.with_name(f"{target.name}.target")
+    target.rename(linked_target)
+    target.symlink_to(linked_target)
+    # When: readiness is verified.
+    # Then: the symlinked binding is rejected rather than followed.
+    with pytest.raises(InvalidLocalBrowserGatewayConfigError) as raised:
+        _ = verify_local_browser_launch_agent(gateway_fixture.config_path, gateway_fixture.plist_path)
+    assert raised.value.reason == "local_browser_launch_agent_verify_invalid"
+
+
 def test_private_config_is_rejected_when_owner_is_not_current_user(
     gateway_fixture: GatewayFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
