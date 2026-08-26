@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, assert_never
+
+from pydantic import ValidationError
+
+from trading_agent.researcher_llm import LlmProposalClient, ResearcherLlmError
+
+_MAX_PROMPT_BYTES = 256 * 1024
+
+if TYPE_CHECKING:
+    from trading_agent.autonomous_reasoning import AutonomousReasoningRequest, AutonomousReasoningResponse
+
+
+def canonical_reasoning_prompt(request: AutonomousReasoningRequest, client: LlmProposalClient | None) -> str:
+    from trading_agent.autonomous_reasoning import (
+        AUTONOMOUS_REASONING_RESPONSE_ADAPTER,
+        InvalidAutonomousReasoningError,
+    )
+
+    provider = {"model_id": "unbound", "seed": None, "temperature": 0.0}
+    if client is not None:
+        provider = {"model_id": client.model_id, "seed": client.seed, "temperature": client.temperature}
+    payload = {
+        "allowed_tool_names": request.allowed_tool_names,
+        "current_role": None if request.current_role is None else request.current_role.value,
+        "memories": tuple(memory.model_dump(mode="json") for memory in request.memories),
+        "now": request.now.isoformat(),
+        "observations": tuple(observation.model_dump(mode="json") for observation in request.observations),
+        "prior_steps": tuple(step.model_dump(mode="json") for step in request.prior_steps),
+        "provider": provider,
+        "remaining_budget": request.remaining_budget.model_dump(mode="json"),
+        "response_schema": AUTONOMOUS_REASONING_RESPONSE_ADAPTER.json_schema(),
+        "schema_version": 1,
+        "task": request.task.model_dump(mode="json"),
+    }
+    prompt = json.dumps(payload, allow_nan=False, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    if len(prompt.encode()) > _MAX_PROMPT_BYTES:
+        raise InvalidAutonomousReasoningError(reason="autonomous_reasoning_prompt_invalid")
+    return prompt
+
+
+@dataclass(frozen=True, slots=True)
+class AutonomousStructuredReasoner:
+    client: LlmProposalClient
+
+    def next_step(self, request: AutonomousReasoningRequest) -> AutonomousReasoningResponse:
+        from trading_agent.autonomous_reasoning import (
+            AUTONOMOUS_REASONING_RESPONSE_ADAPTER,
+            AutonomousComplete,
+            AutonomousDefer,
+            AutonomousDelegate,
+            AutonomousRecordMemory,
+            AutonomousSubmitArtifact,
+            AutonomousToolCall,
+            InvalidAutonomousReasoningError,
+        )
+
+        try:
+            raw = self.client.complete(canonical_reasoning_prompt(request, self.client))
+            if len(raw) > 32_768:
+                raise InvalidAutonomousReasoningError(reason="autonomous_reasoning_response_invalid")
+            response = AUTONOMOUS_REASONING_RESPONSE_ADAPTER.validate_json(raw)
+        except (InvalidAutonomousReasoningError, ResearcherLlmError, UnicodeError, ValidationError):
+            raise InvalidAutonomousReasoningError(reason="autonomous_reasoning_response_invalid") from None
+        match response:
+            case AutonomousDelegate(role=role) if role is request.current_role:
+                raise InvalidAutonomousReasoningError(reason="autonomous_delegate_role_denied")
+            case (
+                AutonomousToolCall()
+                | AutonomousDelegate()
+                | AutonomousSubmitArtifact()
+                | AutonomousRecordMemory()
+                | AutonomousDefer()
+                | AutonomousComplete()
+            ):
+                return response
+            case unreachable:
+                assert_never(unreachable)
+
+
+def require_sorted_unique(values: tuple[str, ...], *, reason: str) -> None:
+    from trading_agent.autonomous_reasoning import InvalidAutonomousReasoningError
+
+    if values != tuple(sorted(set(values))) or any(not value for value in values):
+        raise InvalidAutonomousReasoningError(reason=reason)
+
+
+def require_canonical_json(value: str, *, reason: str) -> None:
+    from trading_agent.autonomous_reasoning import InvalidAutonomousReasoningError
+
+    try:
+        decoded = json.loads(value)
+        canonical = json.dumps(decoded, allow_nan=False, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    except (TypeError, ValueError):
+        raise InvalidAutonomousReasoningError(reason=reason) from None
+    if canonical != value or len(value.encode()) > 16_384:
+        raise InvalidAutonomousReasoningError(reason=reason)
