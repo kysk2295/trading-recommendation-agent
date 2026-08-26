@@ -4,6 +4,7 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import Literal, assert_never
 
+from trading_agent._autonomous_supervisor_execution import AutonomousToolDispatcher
 from trading_agent._autonomous_supervisor_steps import (
     ArtifactPayload,
     CompletionPayload,
@@ -33,7 +34,6 @@ from trading_agent.autonomous_task_models import (
     AutonomousTaskStep,
 )
 from trading_agent.autonomous_task_store import AutonomousTaskStore
-from trading_agent.autonomous_tool_runtime import AutonomousToolRuntime
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +75,7 @@ class ApplyOutcome:
 class AutonomousSupervisorReducer:
     tasks: AutonomousTaskStore
     memories: AutonomousMemoryStore
-    tools: AutonomousToolRuntime
+    tools: AutonomousToolDispatcher
 
     def apply(self, context: ApplyContext) -> ApplyOutcome:
         response = parsed_response(context.decision)

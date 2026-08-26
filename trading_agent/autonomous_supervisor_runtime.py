@@ -3,8 +3,15 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import Final
 
+from trading_agent._autonomous_supervisor_execution import (
+    AutonomousExecutionError,
+    AutonomousExecutionTimeoutError,
+    BoundedAutonomousExecution,
+    task_execution_lease,
+)
+from trading_agent._autonomous_supervisor_outcomes import budget_wait, failure
 from trading_agent._autonomous_supervisor_reducer import (
     ApplyContext,
     AutonomousSupervisorReducer,
@@ -12,10 +19,8 @@ from trading_agent._autonomous_supervisor_reducer import (
 )
 from trading_agent._autonomous_supervisor_steps import (
     DecisionPayload,
-    FailurePayload,
     InvalidAutonomousSupervisorError,
     SourceAdmissionPayload,
-    WaitPayload,
     canonical_json,
     decision_payload,
     parsed_response,
@@ -51,7 +56,6 @@ from trading_agent.research_agent_cycle_models import ResearchAgentEvidenceV1
 _MODEL_CALLS: Final = 8
 _TOOL_CALLS: Final = 16
 _RUNTIME_SECONDS: Final = 120
-_RETRY_DELAYS: Final = (15, 60, 240, 720)
 type Task = AutonomousResearchTask
 type Tick = AutonomousSupervisorTickResult
 type DecisionRecord = tuple[AutonomousTaskStep, DecisionPayload]
@@ -66,26 +70,38 @@ class AutonomousSupervisorRuntime:
     wall_clock: Callable[[], dt.datetime]
     monotonic: Callable[[], float]
     max_steps: int = 12
+    execution_timeout_seconds: float = 120.0
 
     def __post_init__(self) -> None:
         utc_time(self.wall_clock())
         if not 1 <= self.max_steps <= 12:
             raise InvalidAutonomousSupervisorError(reason="autonomous_supervisor_max_steps_invalid")
+        if not 0 < self.execution_timeout_seconds <= _RUNTIME_SECONDS:
+            raise InvalidAutonomousSupervisorError(reason="autonomous_supervisor_timeout_invalid")
 
-    def tick(self, task: AutonomousResearchTask, now: dt.datetime) -> AutonomousSupervisorTickResult:
+    def tick(
+        self, task: AutonomousResearchTask, now: dt.datetime, events: Collection[str] = ()
+    ) -> AutonomousSupervisorTickResult:
         current_now = utc_time(now)
         durable = self._task(task.task_id)
+        if durable.state is AutonomousTaskState.WAITING_EVENT and durable.next_wake_event not in events:
+            return tick_result(durable, "waiting", 0, 0)
         if (
             durable.state in {AutonomousTaskState.WAITING_TIME, AutonomousTaskState.BLOCKED}
             and durable.next_wake_at is not None
             and durable.next_wake_at > current_now
         ):
             return tick_result(durable, "blocked" if durable.state is AutonomousTaskState.BLOCKED else "waiting", 0, 0)
+        with task_execution_lease(self.tasks.path, task.task_id) as acquired:
+            if not acquired:
+                return tick_result(self._task(task.task_id), "failed", 0, 0)
+            return self._tick_locked(task, current_now)
+
+    def _tick_locked(self, task: AutonomousResearchTask, current_now: dt.datetime) -> AutonomousSupervisorTickResult:
         started = self.monotonic()
         model_calls = 0
         tool_calls = 0
         iterations = 0
-        reducer = AutonomousSupervisorReducer(self.tasks, self.memories, self.tools)
         while True:
             durable = self._task(task.task_id)
             steps = self.tasks.reader().steps(task.task_id)
@@ -94,7 +110,7 @@ class AutonomousSupervisorRuntime:
             if decision is None and (
                 model_calls >= _MODEL_CALLS or iterations >= self.max_steps or elapsed >= _RUNTIME_SECONDS
             ):
-                return self._budget_wait(durable, current_now, model_calls, tool_calls)
+                return budget_wait(self.tasks, durable, current_now, model_calls, tool_calls)
             budget = run_budget(model_calls, tool_calls, elapsed)
             if decision is None:
                 try:
@@ -106,36 +122,44 @@ class AutonomousSupervisorRuntime:
                         current_now,
                         budget,
                     )
-                    response = self.reasoner.next_step(request)
+                    response = self._execution(elapsed).next_step(request)
                     validate_reasoning_response(request, response)
                     model_calls += 1
                     elapsed = self.monotonic() - started
                     decision = self._persist_decision(
                         durable, response, current_now, run_budget(model_calls, tool_calls, elapsed)
                     )
-                except InvalidAutonomousReasoningError:
-                    return self._failure(
+                except AutonomousExecutionTimeoutError:
+                    return budget_wait(self.tasks, durable, current_now, model_calls, tool_calls)
+                except (InvalidAutonomousReasoningError, AutonomousExecutionError):
+                    return failure(
+                        self.tasks,
                         durable, current_now, model_calls, tool_calls, "reasoning", "autonomous_reasoning_failed", None
                     )
             if elapsed >= _RUNTIME_SECONDS:
-                return self._budget_wait(durable, current_now, model_calls, tool_calls)
+                return budget_wait(self.tasks, durable, current_now, model_calls, tool_calls)
             response = parsed_response(decision[1])
             decision_hash = decision[1].decision_hash
             if isinstance(response, AutonomousToolCall) and tool_calls >= _TOOL_CALLS:
-                return self._budget_wait(durable, current_now, model_calls, tool_calls)
+                return budget_wait(self.tasks, durable, current_now, model_calls, tool_calls)
             try:
                 fresh = self._task(task.task_id)
+                reducer = AutonomousSupervisorReducer(self.tasks, self.memories, self._execution(elapsed))
                 outcome = reducer.apply(
                     ApplyContext(
                         fresh, decision[0], decision[1], run_budget(model_calls, tool_calls, elapsed), current_now
                     )
                 )
-            except AutonomousToolRuntimeError:
-                return self._failure(
+            except AutonomousExecutionTimeoutError:
+                return budget_wait(self.tasks, durable, current_now, model_calls, tool_calls)
+            except (AutonomousToolRuntimeError, AutonomousExecutionError):
+                return failure(
+                    self.tasks,
                     durable, current_now, model_calls, tool_calls, "tool", "autonomous_tool_failed", decision_hash
                 )
             except AutonomousMemoryStoreError:
-                return self._failure(
+                return failure(
+                    self.tasks,
                     durable, current_now, model_calls, tool_calls, "memory", "autonomous_memory_failed", decision_hash
                 )
             tool_calls += outcome.tool_calls
@@ -146,13 +170,20 @@ class AutonomousSupervisorRuntime:
 
     def run_due(self, now: dt.datetime, events: Collection[str] = ()) -> tuple[AutonomousSupervisorTickResult, ...]:
         current_now = utc_time(now)
-        return tuple(self.tick(task, current_now) for task in self.tasks.reader().runnable(current_now, events=events))
+        return tuple(
+            self.tick(task, current_now, events=events)
+            for task in self.tasks.reader().runnable(current_now, events=events)
+        )
 
     def _task(self, task_id: AutonomousTaskId | str) -> Task:
         task = self.tasks.reader().task(task_id)
         if task is None:
             raise InvalidAutonomousSupervisorError(reason="autonomous_supervisor_task_missing")
         return task
+
+    def _execution(self, elapsed: float) -> BoundedAutonomousExecution:
+        remaining = max(0.001, _RUNTIME_SECONDS - elapsed)
+        return BoundedAutonomousExecution(self.reasoner, self.tools, min(self.execution_timeout_seconds, remaining))
 
     def admit_evidence(
         self, task_id: AutonomousTaskId | str, evidence: ResearchAgentEvidenceV1, now: dt.datetime
@@ -209,52 +240,3 @@ class AutonomousSupervisorRuntime:
         with self.tasks.writer() as writer:
             _ = writer.append_step(step)
         return step, payload
-
-    def _budget_wait(self, task: Task, now: dt.datetime, model_calls: int, tool_calls: int) -> Tick:
-        wake = now + dt.timedelta(minutes=1)
-        payload = WaitPayload(cause="budget")
-        step = plain_step(
-            task,
-            len(self.tasks.reader().steps(task.task_id)) + 1,
-            now,
-            AutonomousTaskState.WAITING_TIME,
-            payload_json(payload),
-            task.source_evidence_ids,
-            task.evidence_refs,
-            run_budget(model_calls, tool_calls, 0),
-            wake,
-        )
-        with self.tasks.writer() as writer:
-            _ = writer.append_step(step)
-        return tick_result(self.tasks.reader().task(task.task_id) or task, "waiting", model_calls, tool_calls)
-
-    def _failure(
-        self,
-        task: AutonomousResearchTask,
-        now: dt.datetime,
-        model_calls: int,
-        tool_calls: int,
-        source: Literal["reasoning", "tool", "memory", "supervisor"],
-        reason: str,
-        decision_hash: str | None,
-    ) -> AutonomousSupervisorTickResult:
-        steps = self.tasks.reader().steps(task.task_id)
-        retry = 1 + sum(isinstance(safe_payload(step), FailurePayload) for step in steps)
-        minutes = _RETRY_DELAYS[retry - 1] if retry <= len(_RETRY_DELAYS) else 1440
-        wake = now + dt.timedelta(minutes=minutes)
-        payload = FailurePayload(decision_hash=decision_hash, source=source, stable_reason=reason, retry_count=retry)
-        step = plain_step(
-            task,
-            len(steps) + 1,
-            now,
-            AutonomousTaskState.BLOCKED,
-            payload_json(payload),
-            task.source_evidence_ids,
-            task.evidence_refs,
-            run_budget(model_calls, tool_calls, 0),
-            wake,
-            reason,
-        )
-        with self.tasks.writer() as writer:
-            _ = writer.append_step(step)
-        return tick_result(self.tasks.reader().task(task.task_id) or task, "blocked", model_calls, tool_calls)

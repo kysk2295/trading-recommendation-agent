@@ -27,7 +27,7 @@ from trading_agent.research_agent_cycle_models import EvidenceId, ResearchAgentE
 
 _HASH: Final = r"^[a-f0-9]{64}$"
 type JsonValue = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
-type TickStatus = Literal["waiting", "completed", "blocked"]
+type TickStatus = Literal["waiting", "completed", "blocked", "failed"]
 
 
 class InvalidAutonomousSupervisorError(RuntimeError):

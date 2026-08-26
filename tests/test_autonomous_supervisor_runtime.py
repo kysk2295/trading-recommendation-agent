@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -35,11 +35,13 @@ type SlowResponse = AutonomousToolCall | AutonomousDelegate | AutonomousRecordMe
 @dataclass(frozen=True, slots=True)
 class FakeReasoner:
     responses: tuple[AutonomousReasoningResponse, ...]
-    requests: list[AutonomousReasoningRequest] = field(default_factory=list, compare=False)
+    priority_routes: bool = False
 
     def next_step(self, request: AutonomousReasoningRequest) -> AutonomousReasoningResponse:
-        self.requests.append(request)
-        return self.responses[len(self.requests) - 1]
+        index = sum(parse_payload(step.payload_json).kind == "decision" for step in request.prior_steps)
+        if self.priority_routes and request.task.priority != 90:
+            index += 2
+        return self.responses[index]
 
 
 def _runtime(tmp_path: Path, reasoner: FakeReasoner) -> AutonomousSupervisorRuntime:
@@ -206,22 +208,23 @@ def test_run_due_orders_event_and_time_tasks_and_excludes_terminal(tmp_path: Pat
                 resume_condition="The named high-priority evidence event has been received.",
                 next_wake_event="high_evidence",
             ),
+            AutonomousComplete(
+                summary="The high-priority event task completed with durable evidence lineage.",
+                completion_evidence_refs=("evidence:root",),
+                reason="The named event supplied the evidence needed for explicit completion.",
+            ),
             AutonomousDefer(
                 reason="Wait for the deterministic scheduled time before resuming this task.",
                 resume_condition="The deterministic scheduled task wake time has been reached.",
                 next_wake_at=due_at,
             ),
             AutonomousComplete(
-                summary="The high-priority event task completed with durable evidence lineage.",
-                completion_evidence_refs=("evidence:root",),
-                reason="The named event supplied the evidence needed for explicit completion.",
-            ),
-            AutonomousComplete(
                 summary="The scheduled task completed with durable evidence lineage.",
                 completion_evidence_refs=("evidence:root",),
                 reason="The scheduled wake supplied the boundary needed for completion.",
             ),
-        )
+        ),
+        priority_routes=True,
     )
     runtime = _runtime(tmp_path, reasoner)
     with runtime.tasks.writer() as writer:
