@@ -70,10 +70,14 @@ class Clock:
 def config(tmp_path: Path) -> LocalBrowserGatewayConfig:
     private = (tmp_path / "private").absolute()
     return LocalBrowserGatewayConfig(
-        project_root=(tmp_path / "project").absolute(), uv_path=(tmp_path / "uv").absolute(),
-        chrome_executable=(tmp_path / "Chrome").absolute(), state_root=private / "state",
-        profile_root=private / "profile", socket_path=private / "state" / "gateway.sock",
-        receipt_database=private / "state" / "receipts.sqlite3", screenshot_root=private / "state" / "shots",
+        project_root=(tmp_path / "project").absolute(),
+        uv_path=(tmp_path / "uv").absolute(),
+        chrome_executable=(tmp_path / "Chrome").absolute(),
+        state_root=private / "state",
+        profile_root=private / "profile",
+        socket_path=private / "state" / "gateway.sock",
+        receipt_database=private / "state" / "receipts.sqlite3",
+        screenshot_root=private / "state" / "shots",
         startup_timeout_seconds=1.0,
     )
 

@@ -14,9 +14,7 @@ def _payload() -> bytes:
     return b"9222\n/devtools/browser/token\n"
 
 
-def _observed_endpoint(
-    directory: private_fs.PrivateBrowserDirectory, path: Path
-) -> private_fs.PrivateBrowserFile:
+def _observed_endpoint(directory: private_fs.PrivateBrowserDirectory, path: Path) -> private_fs.PrivateBrowserFile:
     path.write_bytes(_payload())
     path.chmod(0o600)
     observed = private_fs.read_private_browser_file(directory, path.name, os.getuid(), 256)
@@ -74,8 +72,18 @@ def test_private_file_rejects_post_open_growth(tmp_path: Path, monkeypatch: pyte
             if stat.S_ISDIR(metadata.st_mode):
                 return metadata
             return os.stat_result(
-                (metadata.st_mode, metadata.st_ino, metadata.st_dev, metadata.st_nlink, metadata.st_uid,
-                 metadata.st_gid, 257, metadata.st_atime, metadata.st_mtime, metadata.st_ctime)
+                (
+                    metadata.st_mode,
+                    metadata.st_ino,
+                    metadata.st_dev,
+                    metadata.st_nlink,
+                    metadata.st_uid,
+                    metadata.st_gid,
+                    257,
+                    metadata.st_atime,
+                    metadata.st_mtime,
+                    metadata.st_ctime,
+                )
             )
 
         monkeypatch.setattr(private_fs.os, "fstat", oversized)
@@ -323,8 +331,9 @@ def test_private_directory_closes_descriptor_for_its_own_validation_error(
     monkeypatch.setattr(private_fs, "require_private_directory", reject)
     monkeypatch.setattr(private_fs.os, "close", close)
     # When: context entry fails during its own validation.
-    with pytest.raises(private_fs.InvalidLocalBrowserPrivateFsError), private_fs.open_private_browser_directory(
-        root, os.getuid()
+    with (
+        pytest.raises(private_fs.InvalidLocalBrowserPrivateFsError),
+        private_fs.open_private_browser_directory(root, os.getuid()),
     ):
         pass
     # Then: the opened descriptor was closed despite the module-owned exception.

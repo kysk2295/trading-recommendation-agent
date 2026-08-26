@@ -94,8 +94,11 @@ def config(tmp_path: Path) -> LocalBrowserGatewayConfig:
         project_root=(tmp_path / "project").absolute(),
         uv_path=(tmp_path / "uv").absolute(),
         chrome_executable=(tmp_path / "Chrome").absolute(),
-        state_root=private / "state", profile_root=private / "profile", socket_path=private / "state" / "gateway.sock",
-        receipt_database=private / "state" / "receipts.sqlite3", screenshot_root=private / "state" / "screenshots",
+        state_root=private / "state",
+        profile_root=private / "profile",
+        socket_path=private / "state" / "gateway.sock",
+        receipt_database=private / "state" / "receipts.sqlite3",
+        screenshot_root=private / "state" / "screenshots",
         startup_timeout_seconds=1.0,
     )
 
@@ -104,19 +107,27 @@ def _payload(port: int = 9222, path: str = "/devtools/browser/token") -> bytes:
     return f"{port}\n{path}\n".encode()
 
 
-def _controller(config: LocalBrowserGatewayConfig, launcher: FakeLauncher, probe: FakeProbe,
-                clock: FakeClock | None = None) -> chrome.LocalChromeController:
+def _controller(
+    config: LocalBrowserGatewayConfig, launcher: FakeLauncher, probe: FakeProbe, clock: FakeClock | None = None
+) -> chrome.LocalChromeController:
     return chrome.LocalChromeController(config, launcher=launcher, probe=probe, clock=clock or FakeClock())
 
 
-def test_subprocess_launcher_uses_exact_command_and_safe_popen_flags(monkeypatch: pytest.MonkeyPatch,
-                                                                      config: LocalBrowserGatewayConfig) -> None:
+def test_subprocess_launcher_uses_exact_command_and_safe_popen_flags(
+    monkeypatch: pytest.MonkeyPatch, config: LocalBrowserGatewayConfig
+) -> None:
     # Given: the production launcher and a Popen recorder.
     calls: list[tuple[tuple[str, ...], int, int, int, bool, bool, int]] = []
 
     def popen(
-        command: tuple[str, ...], *, stdin: int, stdout: int, stderr: int,
-        start_new_session: bool, shell: bool, umask: int,
+        command: tuple[str, ...],
+        *,
+        stdin: int,
+        stdout: int,
+        stderr: int,
+        start_new_session: bool,
+        shell: bool,
+        umask: int,
     ) -> FakeProcess:
         calls.append((command, stdin, stdout, stderr, start_new_session, shell, umask))
         return FakeProcess(31337)
@@ -128,8 +139,13 @@ def test_subprocess_launcher_uses_exact_command_and_safe_popen_flags(monkeypatch
     # Then: it gets only the dedicated-profile invocation and detached null streams.
     assert process.pid == 31337
     assert command == (
-        str(config.chrome_executable), f"--user-data-dir={config.profile_root}", "--remote-debugging-address=127.0.0.1",
-        "--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check", "about:blank",
+        str(config.chrome_executable),
+        f"--user-data-dir={config.profile_root}",
+        "--remote-debugging-address=127.0.0.1",
+        "--remote-debugging-port=0",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "about:blank",
     )
     assert calls == [(command, subprocess.DEVNULL, subprocess.DEVNULL, subprocess.DEVNULL, True, False, 0o077)]
 
@@ -152,9 +168,14 @@ def test_ready_creates_exact_private_directories_and_reuses_owned_process(config
 @pytest.mark.parametrize(
     "payload,mode",
     (
-        (b"0\n/devtools/browser/token\n", 0o600), (_payload(path="/bad"), 0o600), (_payload() + b"extra\n", 0o600),
-        (_payload().replace(b"\n", b"\r\n"), 0o600), (_payload().replace(b"\n", b"\r"), 0o600),
-        (_payload().replace(b"\n", b"\v"), 0o600), (_payload().replace(b"\n", b"\f"), 0o600), (_payload(), 0o644),
+        (b"0\n/devtools/browser/token\n", 0o600),
+        (_payload(path="/bad"), 0o600),
+        (_payload() + b"extra\n", 0o600),
+        (_payload().replace(b"\n", b"\r\n"), 0o600),
+        (_payload().replace(b"\n", b"\r"), 0o600),
+        (_payload().replace(b"\n", b"\v"), 0o600),
+        (_payload().replace(b"\n", b"\f"), 0o600),
+        (_payload(), 0o644),
         (b"9" * 300, 0o600),
     ),
 )
@@ -221,8 +242,9 @@ def test_malformed_owned_port_file_reaps_owned_process_without_replacement(confi
     assert (process.terminated, process.waits, len(launcher.commands), port_file.exists()) == (1, 1, 1, False)
 
 
-def test_ready_rejects_profile_component_swap_before_launch(config: LocalBrowserGatewayConfig,
-                                                            monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ready_rejects_profile_component_swap_before_launch(
+    config: LocalBrowserGatewayConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Given: path verification that swaps the freshly pinned profile directory.
     original = private_fs.require_open_directory_path
 
@@ -240,8 +262,9 @@ def test_ready_rejects_profile_component_swap_before_launch(config: LocalBrowser
     assert raised.value.reason == "local_chrome_private_directory_invalid" and launcher.commands == []
 
 
-def test_owned_cleanup_preserves_replaced_port_file(config: LocalBrowserGatewayConfig,
-                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+def test_owned_cleanup_preserves_replaced_port_file(
+    config: LocalBrowserGatewayConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Given: an owned endpoint whose name is replaced immediately before cleanup.
     process = FakeProcess(101)
     launcher = FakeLauncher(config.profile_root, [process], [_payload()])
@@ -270,8 +293,12 @@ def test_owned_cleanup_preserves_replaced_port_file(config: LocalBrowserGatewayC
         _ = controller.ensure_ready()
     # Then: the replacement remains and no second Chrome starts.
     assert raised.value.reason == "local_chrome_port_file_invalid"
-    assert (process.terminated, process.waits, len(launcher.commands),
-            (config.profile_root / "DevToolsActivePort").read_bytes()) == (1, 1, 1, replacement)
+    assert (
+        process.terminated,
+        process.waits,
+        len(launcher.commands),
+        (config.profile_root / "DevToolsActivePort").read_bytes(),
+    ) == (1, 1, 1, replacement)
 
 
 def test_unhealthy_attached_endpoint_remains_unowned_and_unmodified(config: LocalBrowserGatewayConfig) -> None:
@@ -290,10 +317,16 @@ def test_unhealthy_attached_endpoint_remains_unowned_and_unmodified(config: Loca
     assert launcher.commands == [] and port_file.read_bytes() == _payload(9222)
 
 
-@pytest.mark.parametrize("process,payload,reason", ((FakeProcess(101, exit_code=1), None, "local_chrome_early_exit"),
-                                                      (FakeProcess(102), None, "local_chrome_startup_timeout")))
-def test_failed_startup_reaps_only_launched_process(config: LocalBrowserGatewayConfig, process: FakeProcess,
-                                                    payload: bytes | None, reason: str) -> None:
+@pytest.mark.parametrize(
+    "process,payload,reason",
+    (
+        (FakeProcess(101, exit_code=1), None, "local_chrome_early_exit"),
+        (FakeProcess(102), None, "local_chrome_startup_timeout"),
+    ),
+)
+def test_failed_startup_reaps_only_launched_process(
+    config: LocalBrowserGatewayConfig, process: FakeProcess, payload: bytes | None, reason: str
+) -> None:
     # Given: a launch that exits immediately or never publishes an endpoint.
     launcher = FakeLauncher(config.profile_root, [process], [payload])
     # When: bounded readiness fails.

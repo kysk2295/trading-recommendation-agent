@@ -42,9 +42,7 @@ def test_profile_lease_rejects_unsafe_existing_entry(tmp_path: Path, kind: str) 
         assert raised.value.reason == "local_browser_profile_lease_invalid"
 
 
-def test_profile_lease_rejects_name_replacement_after_lock(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_profile_lease_rejects_name_replacement_after_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / "profile"
     with open_private_browser_directory(root, os.getuid()) as directory:
         path = root / lease_fs.LOCAL_BROWSER_PROFILE_LEASE_NAME

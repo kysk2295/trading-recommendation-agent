@@ -43,9 +43,7 @@ class LocalBrowserProfileLease:
             os.close(descriptor)
 
 
-def acquire_local_browser_profile_lease(
-    directory: PrivateBrowserDirectory, owner_id: int
-) -> LocalBrowserProfileLease:
+def acquire_local_browser_profile_lease(directory: PrivateBrowserDirectory, owner_id: int) -> LocalBrowserProfileLease:
     _require_private_directory(directory, owner_id)
     descriptor: int | None = None
     try:

@@ -40,7 +40,8 @@ _PORT_FILE_MAX_BYTES = 256
 class InvalidLocalChromeControllerError(RuntimeError):
     reason: str
 
-    def __str__(self) -> str: return self.reason
+    def __str__(self) -> str:
+        return self.reason
 
 
 class ChromeProcess(Protocol):

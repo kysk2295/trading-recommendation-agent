@@ -99,9 +99,15 @@ def test_launch_agent_has_exact_deterministic_contract_when_config_is_valid(gate
     arguments = [str(gateway_fixture.config.uv_path), "run", "--offline", "python", str(gateway_script)]
     arguments += ["run", "--config", str(gateway_fixture.config_path)]
     assert document == {
-        "KeepAlive": True, "Label": LOCAL_BROWSER_GATEWAY_LABEL, "ProcessType": "Background",
-        "ProgramArguments": arguments, "RunAtLoad": True, "StandardErrorPath": "/dev/null",
-        "StandardOutPath": "/dev/null", "ThrottleInterval": 30, "Umask": 0o077,
+        "KeepAlive": True,
+        "Label": LOCAL_BROWSER_GATEWAY_LABEL,
+        "ProcessType": "Background",
+        "ProgramArguments": arguments,
+        "RunAtLoad": True,
+        "StandardErrorPath": "/dev/null",
+        "StandardOutPath": "/dev/null",
+        "ThrottleInterval": 30,
+        "Umask": 0o077,
     }
     assert "EnvironmentVariables" not in document
     assert loaded == gateway_fixture.config
@@ -202,7 +208,7 @@ def test_config_rejects_invalid_path_relationship_when_constructed(
 
 @pytest.mark.parametrize(
     "field",
-    ("project_root state_root profile_root socket_path " "receipt_database screenshot_root intermediate").split(),  # noqa: SIM905
+    ("project_root state_root profile_root socket_path receipt_database screenshot_root intermediate").split(),  # noqa: SIM905
 )
 def test_model_rejects_existing_symlinked_config_component(gateway_fixture: GatewayFixture, field: str) -> None:
     # Given: real roots plus direct and intermediate symlink aliases.

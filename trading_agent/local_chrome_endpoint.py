@@ -16,7 +16,8 @@ _PORT_FILE_TEXT = re.compile(r"([1-9][0-9]{0,4})\n(/devtools/browser/[A-Za-z0-9_
 class InvalidLocalChromeEndpointInvariantError(ValueError):
     reason: str = "local_chrome_endpoint_ownership_invalid"
 
-    def __str__(self) -> str: return self.reason
+    def __str__(self) -> str:
+        return self.reason
 
 
 class LocalChromeEndpoint(BaseModel):
