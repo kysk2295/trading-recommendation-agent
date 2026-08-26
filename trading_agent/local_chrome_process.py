@@ -28,10 +28,16 @@ class _ProcessGroupChromeProcess:
         return self._process.poll()
 
     def terminate(self) -> None:
-        os.killpg(self.pid, signal.SIGTERM)
+        try:
+            os.killpg(self.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
 
     def kill(self) -> None:
-        os.killpg(self.pid, signal.SIGKILL)
+        try:
+            os.killpg(self.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
 
     def wait(self, timeout: float) -> int:
         return self._process.wait(timeout)
