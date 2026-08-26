@@ -159,6 +159,16 @@ def test_search_rejects_empty_duplicate_or_unsorted_subject_refs(tmp_path: Path,
         reader.search(AutonomousMemoryScope.MARKET, subject_refs, limit=1)
 
 
+@pytest.mark.parametrize("subject_refs", [123, ("symbol:005930", 1)])
+def test_search_rejects_malformed_subject_refs_without_leaking_raw_input(
+    tmp_path: Path, subject_refs: int | tuple[str | int, ...]
+) -> None:
+    reader = AutonomousMemoryStore(tmp_path / "missing.sqlite3").reader()
+    with pytest.raises(InvalidAutonomousMemoryStoreError, match="search_subject_refs_invalid") as caught:
+        reader.search(AutonomousMemoryScope.MARKET, subject_refs, limit=1)
+    assert caught.value.reason == "search_subject_refs_invalid"
+
+
 @pytest.mark.parametrize("limit", [0, 33])
 def test_search_rejects_out_of_range_limits(tmp_path: Path, limit: int) -> None:
     reader = AutonomousMemoryStore(tmp_path / "missing.sqlite3").reader()

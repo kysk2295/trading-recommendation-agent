@@ -8,6 +8,8 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from pydantic import BaseModel, ConfigDict, ValidationError
+
 from trading_agent._autonomous_memory_store_sqlite import (
     AutonomousMemoryConflictError,
     AutonomousMemoryStoreError,
@@ -23,6 +25,14 @@ from trading_agent._autonomous_memory_store_sqlite import (
 )
 from trading_agent.autonomous_memory_models import AutonomousMemoryRecord, AutonomousMemoryScope
 from trading_agent.private_directory_identity import require_private_directory
+
+type SearchSubjectRefs = int | tuple[str | int, ...]
+
+
+class _SearchSubjects(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, hide_input_in_errors=True)
+
+    subject_refs: tuple[str, ...]
 
 
 class AutonomousMemoryStore:
@@ -141,25 +151,29 @@ class AutonomousMemoryReader:
         return self._records("WHERE memory_key=? ORDER BY version", (memory_key,))
 
     def search(
-        self, scope: AutonomousMemoryScope | str, subject_refs: tuple[str, ...], *, limit: int
+        self, scope: AutonomousMemoryScope | str, subject_refs: SearchSubjectRefs, *, limit: int
     ) -> tuple[AutonomousMemoryRecord, ...]:
         try:
             parsed_scope = AutonomousMemoryScope(scope)
         except ValueError as error:
             raise InvalidAutonomousMemoryStoreError(reason="search_scope_invalid") from error
+        try:
+            parsed_subject_refs = _SearchSubjects.model_validate({"subject_refs": subject_refs}).subject_refs
+        except ValidationError as error:
+            raise InvalidAutonomousMemoryStoreError(reason="search_subject_refs_invalid") from error
         if type(limit) is not int or not 1 <= limit <= 32:
             raise InvalidAutonomousMemoryStoreError(reason="search_limit_invalid")
         if (
-            not subject_refs
-            or any(not item for item in subject_refs)
-            or tuple(sorted(subject_refs)) != subject_refs
-            or len(set(subject_refs)) != len(subject_refs)
+            not parsed_subject_refs
+            or any(not item for item in parsed_subject_refs)
+            or tuple(sorted(parsed_subject_refs)) != parsed_subject_refs
+            or len(set(parsed_subject_refs)) != len(parsed_subject_refs)
         ):
             raise InvalidAutonomousMemoryStoreError(reason="search_subject_refs_invalid")
         matches = tuple(
             record
             for record in self._records("WHERE scope=?", (parsed_scope.value,))
-            if set(record.subject_refs) & set(subject_refs)
+            if set(record.subject_refs) & set(parsed_subject_refs)
         )
         return tuple(
             sorted(matches, key=lambda record: (-record.recorded_at.timestamp(), -record.version, record.memory_id))[
