@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import time
 from dataclasses import dataclass
@@ -66,16 +67,36 @@ class Clock(Protocol):
     def sleep(self, seconds: float) -> None: ...
 
 
+class _ProcessGroupChromeProcess:
+    def __init__(self, process: ChromeProcess) -> None:
+        self._process = process
+        self.pid = process.pid
+
+    def poll(self) -> int | None:
+        return self._process.poll()
+
+    def terminate(self) -> None:
+        os.killpg(self.pid, signal.SIGTERM)
+
+    def kill(self) -> None:
+        os.killpg(self.pid, signal.SIGKILL)
+
+    def wait(self, timeout: float) -> int:
+        return self._process.wait(timeout)
+
+
 class SubprocessChromeLauncher:
     def launch(self, command: tuple[str, ...]) -> ChromeProcess:
-        return subprocess.Popen(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-            shell=False,
-            umask=0o077,
+        return _ProcessGroupChromeProcess(
+            subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                shell=False,
+                umask=0o077,
+            )
         )
 
 
