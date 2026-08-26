@@ -42,6 +42,8 @@ class _FixtureWebSocket:
 
     def recv(self, *, timeout: float, decode: bool) -> bytes:
         assert timeout > 0 and decode is False
+        if not self.responses:
+            raise TimeoutError
         return self.responses.pop(0)
 
 

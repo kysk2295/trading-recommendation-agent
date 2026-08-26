@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from dataclasses import dataclass
 from typing import Final, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -9,7 +10,7 @@ from websockets.exceptions import WebSocketException
 from websockets.sync.client import connect
 
 from trading_agent.chrome_devtools_types import CdpCommand, CdpMethod, InvalidChromeDevToolsError
-from trading_agent.local_browser_protocol import InvalidLocalBrowserProtocolError, require_public_https_url
+from trading_agent.chrome_paused_request import InvalidPausedRequestIdentityError, parse_paused_request
 
 _COMMAND_LIMIT: Final = 16 * 1024
 _MESSAGE_LIMIT: Final = 1024 * 1024
@@ -36,17 +37,9 @@ class _CdpEnvelope(_BoundaryModel):
     method: str | None = Field(default=None, min_length=1, max_length=128)
 
 
-class _PausedRequest(_BoundaryModel):
-    url: str = Field(min_length=1, max_length=2_048)
-
-
-class _PausedParams(_BoundaryModel):
-    request_id: str = Field(alias="requestId", min_length=1, max_length=256)
-    request: _PausedRequest
-
-
-class _PausedEnvelope(_BoundaryModel):
-    params: _PausedParams
+@dataclass(slots=True)
+class _InterceptionState:
+    disable_safe: bool = True
 
 
 class SerializedChromeWebSocket:
@@ -67,7 +60,7 @@ class SerializedChromeWebSocket:
                 return self._guarded_exchange(websocket_url, url, deadline)
             except TimeoutError:
                 raise InvalidChromeDevToolsError(reason="browser_cdp_timeout") from None
-            except (OSError, ValidationError, WebSocketException):
+            except (InvalidPausedRequestIdentityError, OSError, ValidationError, WebSocketException):
                 raise InvalidChromeDevToolsError(reason="browser_navigation_blocked") from None
 
     def _next_request_id(self) -> int:
@@ -126,6 +119,7 @@ class SerializedChromeWebSocket:
         ) as connection:
             try:
                 navigate_id: int | None = None
+                interception = _InterceptionState()
                 enable_id = self._send(
                     connection,
                     CdpCommand(
@@ -139,10 +133,11 @@ class SerializedChromeWebSocket:
                         connection,
                         CdpCommand(CdpMethod.PAGE_NAVIGATE, json.dumps({"url": url}, separators=(",", ":"))),
                     )
-                    response = self._await_guarded_navigation(connection, navigate_id, deadline)
+                    response = self._await_guarded_navigation(connection, navigate_id, deadline, interception)
                 finally:
-                    disable_id = self._send(connection, CdpCommand(CdpMethod.FETCH_DISABLE, "{}"))
-                    _ = self._await_response(connection, disable_id, deadline, prior_request_id=navigate_id)
+                    if interception.disable_safe:
+                        disable_id = self._send(connection, CdpCommand(CdpMethod.FETCH_DISABLE, "{}"))
+                        _ = self._await_response(connection, disable_id, deadline, prior_request_id=navigate_id)
             finally:
                 connection.close_timeout = max(0.0, deadline - self._clock.monotonic())
         _ = self._remaining(deadline)
@@ -155,21 +150,24 @@ class SerializedChromeWebSocket:
         connection: _WebSocketConnection,
         navigate_id: int,
         deadline: float,
+        interception: _InterceptionState,
     ) -> bytes:
         pending_actions: set[int] = set()
         navigation_response: bytes | None = None
         blocked = False
         while True:
-            body = self._receive(connection, deadline)
-            envelope = _CdpEnvelope.model_validate_json(body)
+            try:
+                body = self._receive(connection, deadline)
+                envelope = _CdpEnvelope.model_validate_json(body)
+            except TimeoutError:
+                raise
+            except (InvalidChromeDevToolsError, OSError, ValidationError, WebSocketException):
+                interception.disable_safe = False
+                raise
             if envelope.method == CdpMethod.FETCH_REQUEST_PAUSED:
-                paused = _PausedEnvelope.model_validate_json(body).params
-                try:
-                    _ = require_public_https_url(paused.request.url)
-                    allowed = True
-                except InvalidLocalBrowserProtocolError:
-                    allowed = False
-                if blocked or not allowed:
+                interception.disable_safe = False
+                paused = parse_paused_request(body)
+                if blocked or not paused.allowed:
                     blocked = True
                     action = CdpCommand(
                         CdpMethod.FETCH_FAIL_REQUEST,
@@ -189,6 +187,7 @@ class SerializedChromeWebSocket:
                 navigation_response = body
             elif envelope.request_id in pending_actions:
                 pending_actions.remove(envelope.request_id)
+                interception.disable_safe = not pending_actions
             elif envelope.request_id is not None:
                 raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
             if blocked and not pending_actions:
