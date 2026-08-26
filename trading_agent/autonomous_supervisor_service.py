@@ -14,6 +14,7 @@ from typing import Final, Literal
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from trading_agent._autonomous_supervisor_steps import SourceAdmissionPayload, safe_payload
+from trading_agent.autonomous_browser_tools import BrowserToolServices, browser_bindings
 from trading_agent.autonomous_memory_store import AutonomousMemoryStore
 from trading_agent.autonomous_reasoning import AutonomousToolArguments
 from trading_agent.autonomous_reasoning_codec import AutonomousStructuredReasoner
@@ -167,8 +168,10 @@ def task_history_tool(
 def build_foundation_tool_runtime(
     tasks: AutonomousTaskStore,
     memories: AutonomousMemoryStore,
+    *,
+    browser: BrowserToolServices | None = None,
 ) -> AutonomousToolRuntime:
-    bindings = (
+    foundation_bindings = (
         _binding("evidence.read", frozenset(), evidence_read_tool, "task_database", tasks.path),
         _binding(
             "memory.search",
@@ -179,7 +182,21 @@ def build_foundation_tool_runtime(
         ),
         _binding("task.history", frozenset(), task_history_tool, "task_database", tasks.path),
     )
-    return AutonomousToolRuntime(bindings, utc_clock, worker_modules=frozenset({_WORKER_MODULE}))
+    bindings = foundation_bindings if browser is None else (*foundation_bindings, *browser_bindings(browser))
+    worker_modules = (
+        frozenset({_WORKER_MODULE})
+        if browser is None
+        else frozenset(
+            {
+                _WORKER_MODULE,
+                "trading_agent.autonomous_browser_tools",
+                "trading_agent.autonomous_browser_tool_actions",
+            }
+        )
+    )
+    return AutonomousToolRuntime(
+        tuple(sorted(bindings, key=lambda item: item.name)), utc_clock, worker_modules=worker_modules
+    )
 
 
 def build_autonomous_supervisor(
@@ -187,6 +204,7 @@ def build_autonomous_supervisor(
     *,
     client: LlmProposalClient | None = None,
     clock: Callable[[], dt.datetime] = utc_clock,
+    browser: BrowserToolServices | None = None,
 ) -> AutonomousSupervisorAdapter:
     proposal_client = configured_proposal_client(config.systematic) if client is None else client
     paths = autonomous_supervisor_paths(config)
@@ -201,7 +219,7 @@ def build_autonomous_supervisor(
         tasks,
         memories,
         AutonomousStructuredReasoner(proposal_client),
-        build_foundation_tool_runtime(tasks, memories),
+        build_foundation_tool_runtime(tasks, memories, browser=browser),
         clock,
         time.monotonic,
     )

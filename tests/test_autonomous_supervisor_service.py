@@ -65,6 +65,11 @@ def test_builder_creates_private_restart_safe_stores_and_safe_wire(tmp_path: Pat
     assert stat.S_IMODE(paths.task_database.stat().st_mode) == 0o600
     assert stat.S_IMODE(paths.memory_database.stat().st_mode) == 0o600
     assert adapter.runtime.tools.allowed_tool_names == ("evidence.read", "memory.search", "task.history")
+    assert adapter.runtime.tools.allowed_tools(AutonomousAgentRole.TRADING) == (
+        "evidence.read",
+        "memory.search",
+        "task.history",
+    )
     assert wire.worker_modules == frozenset({"trading_agent.autonomous_supervisor_service"})
 
 
@@ -93,9 +98,10 @@ def test_service_module_has_no_trading_or_credential_provider_imports() -> None:
         if isinstance(node, ast.ImportFrom)
     )
 
-    # Then: no trading, credential, shell, or browser provider is imported directly.
-    forbidden = ("alpaca", "broker", "order", "account", "credential", "kis", "ls_", "browser", "shell")
+    # Then: no trading, credential, shell, or browser-provider authority is imported directly.
+    forbidden = ("alpaca", "broker", "order", "account", "credential", "kis", "ls_", "shell")
     assert not any(fragment in module.lower() for module in imported for fragment in forbidden)
+    assert {module for module in imported if "browser" in module} <= {"trading_agent.autonomous_browser_tools"}
 
 
 def test_repeated_status_and_tools_close_owned_handles_and_reopen(tmp_path: Path) -> None:

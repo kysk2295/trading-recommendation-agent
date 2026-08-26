@@ -60,8 +60,7 @@ class AutonomousToolArguments(RootModel[Mapping[str, str]]):
     def require_bounded_keys_and_values(self) -> Self:
         values = dict(self.root)
         if len(values) > 8 or any(
-            _ARGUMENT_KEY.fullmatch(key) is None or not value or len(value) > 500
-            for key, value in values.items()
+            _ARGUMENT_KEY.fullmatch(key) is None or not value or len(value) > 500 for key, value in values.items()
         ):
             raise InvalidAutonomousReasoningError(reason="autonomous_tool_arguments_invalid")
         object.__setattr__(self, "root", MappingProxyType(dict(sorted(values.items()))))
@@ -226,8 +225,8 @@ class AutonomousToolObservation(BaseModel):
         require_sorted_unique(self.evidence_refs, reason="autonomous_observation_refs_invalid")
         call = AutonomousToolCall.model_validate_json(self.call_json)
         if (
-            call.tool_name != self.tool_name or
-            hashlib.sha256(self.call_json.encode()).hexdigest() != self.call_sha256
+            call.tool_name != self.tool_name
+            or hashlib.sha256(self.call_json.encode()).hexdigest() != self.call_sha256
             or hashlib.sha256(self.bounded_json.encode()).hexdigest() != self.content_sha256
             or self.content_sha256 not in self.evidence_refs
         ):
@@ -255,9 +254,7 @@ class AutonomousReasoningRequest(BaseModel):
     @model_validator(mode="after")
     def require_attributable_state(self) -> Self:
         require_sorted_unique(self.allowed_tool_names, reason="autonomous_allowed_tools_invalid")
-        if any(re.fullmatch(_TOOL_NAME, name) is None for name in self.allowed_tool_names) or any(
-            item.tool_name not in self.allowed_tool_names for item in self.observations
-        ):
+        if any(re.fullmatch(_TOOL_NAME, name) is None for name in self.allowed_tool_names):
             raise InvalidAutonomousReasoningError(reason="autonomous_observation_authority_invalid")
         return self
 

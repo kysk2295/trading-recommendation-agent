@@ -114,7 +114,7 @@ class AutonomousSupervisorRuntime:
                 try:
                     request = reasoning_request(
                         self.memories,
-                        self.tools.allowed_tool_names,
+                        self.tools.allowed_tools(durable.owner_role),
                         durable,
                         steps,
                         current_now,
@@ -132,7 +132,13 @@ class AutonomousSupervisorRuntime:
                 except (InvalidAutonomousReasoningError, AutonomousExecutionError):
                     return failure(
                         self.tasks,
-                        durable, current_now, model_calls, tool_calls, "reasoning", "autonomous_reasoning_failed", None
+                        durable,
+                        current_now,
+                        model_calls,
+                        tool_calls,
+                        "reasoning",
+                        "autonomous_reasoning_failed",
+                        None,
                     )
             if elapsed >= _RUNTIME_SECONDS:
                 return budget_wait(self.tasks, durable, current_now, model_calls, tool_calls)
@@ -153,12 +159,24 @@ class AutonomousSupervisorRuntime:
             except (AutonomousToolRuntimeError, AutonomousExecutionError):
                 return failure(
                     self.tasks,
-                    durable, current_now, model_calls, tool_calls, "tool", "autonomous_tool_failed", decision_hash
+                    durable,
+                    current_now,
+                    model_calls,
+                    tool_calls,
+                    "tool",
+                    "autonomous_tool_failed",
+                    decision_hash,
                 )
             except AutonomousMemoryStoreError:
                 return failure(
                     self.tasks,
-                    durable, current_now, model_calls, tool_calls, "memory", "autonomous_memory_failed", decision_hash
+                    durable,
+                    current_now,
+                    model_calls,
+                    tool_calls,
+                    "memory",
+                    "autonomous_memory_failed",
+                    decision_hash,
                 )
             tool_calls += outcome.tool_calls
             iterations += 1
@@ -176,10 +194,7 @@ class AutonomousSupervisorRuntime:
         current_now = utc_time(now)
         runnable = self.tasks.reader().runnable(current_now, events=events)
         selected = runnable if max_tasks is None else runnable[:max_tasks]
-        return tuple(
-            self.tick(task, current_now, events=events)
-            for task in selected
-        )
+        return tuple(self.tick(task, current_now, events=events) for task in selected)
 
     def _task(self, task_id: AutonomousTaskId | str) -> Task:
         task = self.tasks.reader().task(task_id)
