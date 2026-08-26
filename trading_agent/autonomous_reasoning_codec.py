@@ -75,6 +75,8 @@ def validate_reasoning_response(request: AutonomousReasoningRequest, response: A
     )
 
     match response:
+        case AutonomousToolCall(tool_name=tool_name) if tool_name not in request.allowed_tool_names:
+            raise InvalidAutonomousReasoningError(reason="autonomous_tool_not_allowed")
         case AutonomousDelegate(role=role) if role is request.current_role:
             raise InvalidAutonomousReasoningError(reason="autonomous_delegate_role_denied")
         case AutonomousDefer(next_wake_at=wake_at) if wake_at is not None and wake_at <= request.now:

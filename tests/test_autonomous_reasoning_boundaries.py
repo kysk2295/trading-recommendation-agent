@@ -209,6 +209,21 @@ def test_reasoner_rejects_past_wake_from_provider_response() -> None:
         AutonomousStructuredReasoner(_Client(response.model_dump_json().encode())).next_step(_request())
 
 
+def test_reasoner_rejects_unallowed_provider_tool_and_accepts_allowed_tool() -> None:
+    # Given: the provider proposes a broker-like tool absent from the durable request allowlist.
+    unallowed = AutonomousToolCall(
+        tool_name="broker.account.read",
+        args=AutonomousToolArguments({"scope": "current"}),
+        reason="Inspect an account payload before continuing the bounded research decision.",
+    )
+
+    # When / Then: reasoning rejects it before runtime dispatch but preserves the declared tool path.
+    with pytest.raises(InvalidAutonomousReasoningError, match=r"^autonomous_tool_not_allowed$"):
+        AutonomousStructuredReasoner(_Client(unallowed.model_dump_json().encode())).next_step(_request())
+    allowed = AutonomousStructuredReasoner(_Client(_call().model_dump_json().encode())).next_step(_request())
+    assert allowed.kind == "tool_call"
+
+
 def test_response_union_rejects_invalid_discriminator_extra_and_bounds() -> None:
     # Given: raw provider JSON crosses the strict tagged-union boundary.
     adapter = TypeAdapter(AutonomousToolCall | AutonomousDelegate | AutonomousDefer | AutonomousSubmitArtifact)
