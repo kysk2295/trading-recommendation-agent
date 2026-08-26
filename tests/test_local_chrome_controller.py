@@ -12,8 +12,10 @@ import trading_agent.local_chrome_controller as chrome
 from trading_agent.local_browser_gateway_config import LocalBrowserGatewayConfig
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
 class FakeProcess:
+    """Mutable fixture records process lifecycle effects."""
+
     pid: int
     exit_code: int | None = None
     waits: int = 0
@@ -39,8 +41,10 @@ class FakeProcess:
         return self.exit_code
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
 class FakeLauncher:
+    """Mutable fixture records launches and publishes test port files."""
+
     profile: Path
     processes: list[FakeProcess]
     payloads: list[bytes | None]
@@ -56,8 +60,10 @@ class FakeLauncher:
         return self.processes.pop(0)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
 class FakeProbe:
+    """Mutable fixture records deterministic health checks."""
+
     healthy: set[tuple[int, str]]
     calls: list[tuple[int, str]] = field(default_factory=list)
 
@@ -67,8 +73,10 @@ class FakeProbe:
         return value in self.healthy
 
 
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: RUF100  # noqa: MUTABLE_OK
 class FakeClock:
+    """Mutable fixture advances injected monotonic time without sleeping."""
+
     value: float = 0.0
 
     def monotonic(self) -> float:
@@ -103,15 +111,26 @@ def _controller(
     return chrome.LocalChromeController(config, launcher=launcher, probe=probe, clock=clock or FakeClock())
 
 
+@dataclass(frozen=True, slots=True)
+class PopenCall:
+    command: tuple[str, ...]
+    stdin: int
+    stdout: int
+    stderr: int
+    start_new_session: bool
+    shell: bool
+
+
 def test_subprocess_launcher_uses_exact_command_and_safe_popen_flags(
     monkeypatch: pytest.MonkeyPatch, config: LocalBrowserGatewayConfig
 ) -> None:
     # Given: the production launcher and a Popen recorder.
-    seen: dict[str, object] = {}
+    calls: list[PopenCall] = []
 
-    def popen(*arguments: object, **kwargs: object) -> FakeProcess:
-        seen["arguments"] = arguments
-        seen["kwargs"] = kwargs
+    def popen(
+        command: tuple[str, ...], *, stdin: int, stdout: int, stderr: int, start_new_session: bool, shell: bool
+    ) -> FakeProcess:
+        calls.append(PopenCall(command, stdin, stdout, stderr, start_new_session, shell))
         return FakeProcess(31337)
 
     monkeypatch.setattr(chrome.subprocess, "Popen", popen)
@@ -124,9 +143,7 @@ def test_subprocess_launcher_uses_exact_command_and_safe_popen_flags(
         str(config.chrome_executable), f"--user-data-dir={config.profile_root}", "--remote-debugging-address=127.0.0.1",
         "--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check", "about:blank",
     )
-    assert seen["arguments"] == (command,)
-    assert seen["kwargs"] == {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL,
-                               "start_new_session": True, "shell": False}
+    assert calls == [PopenCall(command, subprocess.DEVNULL, subprocess.DEVNULL, subprocess.DEVNULL, True, False)]
 
 
 def test_ready_creates_exact_private_directories_and_reuses_owned_process(config: LocalBrowserGatewayConfig) -> None:
@@ -168,8 +185,15 @@ def test_ready_rejects_nonprivate_directory(config: LocalBrowserGatewayConfig, w
     assert launcher.commands == []
 
 
-@pytest.mark.parametrize("payload,mode", ((b"0\n/devtools/browser/token\n", 0o600), (_payload(path="/bad"), 0o600),
-                                           (_payload() + b"extra\n", 0o600), (_payload(), 0o644), (b"9" * 300, 0o600)))
+@pytest.mark.parametrize(
+    "payload,mode",
+    (
+        (b"0\n/devtools/browser/token\n", 0o600), (_payload(path="/bad"), 0o600), (_payload() + b"extra\n", 0o600),
+        (_payload().replace(b"\n", b"\r\n"), 0o600), (_payload().replace(b"\n", b"\r"), 0o600),
+        (_payload().replace(b"\n", b"\v"), 0o600), (_payload().replace(b"\n", b"\f"), 0o600), (_payload(), 0o644),
+        (b"9" * 300, 0o600),
+    ),
+)
 def test_ready_rejects_invalid_port_file(config: LocalBrowserGatewayConfig, payload: bytes, mode: int) -> None:
     # Given: private roots and a malformed DevToolsActivePort file.
     config.state_root.mkdir(parents=True, mode=0o700)
@@ -184,6 +208,30 @@ def test_ready_rejects_invalid_port_file(config: LocalBrowserGatewayConfig, payl
     # Then: malformed, weak, or oversized input cannot trigger a launch.
     assert raised.value.reason == "local_chrome_port_file_invalid"
     assert launcher.commands == []
+
+
+def test_ready_rejects_file_that_grows_after_open(
+    config: LocalBrowserGatewayConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: an initially small valid port file and a post-open oversized fstat result.
+    config.state_root.mkdir(parents=True, mode=0o700)
+    config.profile_root.mkdir(mode=0o700)
+    port_file = config.profile_root / "DevToolsActivePort"
+    port_file.write_bytes(_payload())
+    port_file.chmod(0o600)
+    original = os.stat(port_file)
+
+    def oversized_fstat(descriptor: int) -> os.stat_result:
+        return os.stat_result((original.st_mode, original.st_ino, original.st_dev, original.st_nlink, original.st_uid,
+                               original.st_gid, 257, original.st_atime, original.st_mtime, original.st_ctime))
+
+    monkeypatch.setattr(chrome.os, "fstat", oversized_fstat)
+    launcher = FakeLauncher(config.profile_root, [], [])
+    # When: the file changes between lstat and the no-follow open validation.
+    with pytest.raises(chrome.InvalidLocalChromeControllerError) as raised:
+        _ = _controller(config, launcher, FakeProbe(set())).ensure_ready()
+    # Then: the post-open bound rejects it before probing or launching.
+    assert raised.value.reason == "local_chrome_port_file_invalid" and launcher.commands == []
 
 
 def test_ready_rejects_symlinked_port_file(config: LocalBrowserGatewayConfig) -> None:
@@ -232,6 +280,23 @@ def test_dead_owned_process_and_stale_endpoint_each_cause_one_safe_restart(confi
     endpoint = controller.ensure_ready()
     # Then: it reaps only its old process and returns the one replacement it owns.
     assert (endpoint.process_id, first.waits, len(launcher.commands)) == (202, 1, 2)
+
+
+def test_malformed_owned_port_file_reaps_owned_process_without_replacement(config: LocalBrowserGatewayConfig) -> None:
+    # Given: an owned healthy Chrome whose port file becomes malformed.
+    process = FakeProcess(101)
+    launcher = FakeLauncher(config.profile_root, [process], [_payload()])
+    controller = _controller(config, launcher, FakeProbe({(9222, "/devtools/browser/token")}))
+    assert controller.ensure_ready().process_id == 101
+    port_file = config.profile_root / "DevToolsActivePort"
+    port_file.write_bytes(_payload().replace(b"\n", b"\r\n"))
+    port_file.chmod(0o600)
+    # When: the owned endpoint file can no longer be parsed.
+    with pytest.raises(chrome.InvalidLocalChromeControllerError) as raised:
+        _ = controller.ensure_ready()
+    # Then: only the owned process is reaped and its exact stale file is removed.
+    assert raised.value.reason == "local_chrome_port_file_invalid"
+    assert (process.terminated, process.waits, len(launcher.commands), port_file.exists()) == (1, 1, 1, False)
 
 
 def test_unhealthy_attached_endpoint_is_removed_then_replaced(config: LocalBrowserGatewayConfig) -> None:
