@@ -107,6 +107,15 @@ class AutonomousToolRuntime:
     def allowed_tools(self, role: AutonomousAgentRole) -> tuple[str, ...]:
         return tuple(sorted(binding.name for binding in self._bindings.values() if role in binding.allowed_roles))
 
+    def allowed_tool_signatures(self, role: AutonomousAgentRole) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                f"{binding.name}({','.join(sorted(binding.allowed_arguments))})"
+                for binding in self._bindings.values()
+                if role in binding.allowed_roles
+            )
+        )
+
     def dispatch(
         self,
         role: AutonomousAgentRole,

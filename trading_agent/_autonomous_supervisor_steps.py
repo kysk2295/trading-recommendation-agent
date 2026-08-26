@@ -263,7 +263,7 @@ def linked_memories(store: AutonomousMemoryStore, task: AutonomousResearchTask) 
 
 def reasoning_request(
     store: AutonomousMemoryStore,
-    allowed_tools: tuple[str, ...],
+    allowed_tools: tuple[tuple[str, ...], tuple[str, ...]],
     task: AutonomousResearchTask,
     steps: tuple[AutonomousTaskStep, ...],
     now: dt.datetime,
@@ -282,7 +282,8 @@ def reasoning_request(
         prior_steps=steps[-32:],
         observations=observations,
         memories=linked_memories(store, task),
-        allowed_tool_names=allowed_tools,
+        allowed_tool_names=allowed_tools[0],
+        allowed_tool_signatures=allowed_tools[1],
         remaining_budget=budget,
         current_role=task.owner_role,
     )

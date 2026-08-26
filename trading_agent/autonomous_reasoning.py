@@ -34,6 +34,9 @@ from trading_agent.autonomous_task_models import (
 
 _HASH: Final = r"^[a-f0-9]{64}$"
 _TOOL_NAME: Final = r"^[a-z][a-z0-9_.-]{2,63}$"
+_TOOL_SIGNATURE: Final = re.compile(
+    r"^[a-z][a-z0-9_.-]{2,63}\((?:[a-z][a-z0-9_.-]{2,63}(?:,[a-z][a-z0-9_.-]{2,63})*)?\)$"
+)
 _ARGUMENT_KEY: Final = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
 _MAX_JSON_BYTES: Final = 16_384
 
@@ -243,6 +246,7 @@ class AutonomousReasoningRequest(BaseModel):
     observations: tuple[AutonomousToolObservation, ...] = Field(max_length=16)
     memories: tuple[AutonomousMemoryRecord, ...] = Field(max_length=16)
     allowed_tool_names: tuple[str, ...] = Field(max_length=16)
+    allowed_tool_signatures: tuple[str, ...] = Field(max_length=16)
     remaining_budget: AutonomousRunBudget
     current_role: AutonomousAgentRole
 
@@ -254,7 +258,13 @@ class AutonomousReasoningRequest(BaseModel):
     @model_validator(mode="after")
     def require_attributable_state(self) -> Self:
         require_sorted_unique(self.allowed_tool_names, reason="autonomous_allowed_tools_invalid")
-        if any(re.fullmatch(_TOOL_NAME, name) is None for name in self.allowed_tool_names):
+        require_sorted_unique(self.allowed_tool_signatures, reason="autonomous_allowed_tools_invalid")
+        signature_names = tuple(signature.partition("(")[0] for signature in self.allowed_tool_signatures)
+        if (
+            any(re.fullmatch(_TOOL_NAME, name) is None for name in self.allowed_tool_names)
+            or any(_TOOL_SIGNATURE.fullmatch(signature) is None for signature in self.allowed_tool_signatures)
+            or signature_names != self.allowed_tool_names
+        ):
             raise InvalidAutonomousReasoningError(reason="autonomous_observation_authority_invalid")
         return self
 

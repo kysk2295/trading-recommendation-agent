@@ -114,7 +114,10 @@ class AutonomousSupervisorRuntime:
                 try:
                     request = reasoning_request(
                         self.memories,
-                        self.tools.allowed_tools(durable.owner_role),
+                        (
+                            self.tools.allowed_tools(durable.owner_role),
+                            self.tools.allowed_tool_signatures(durable.owner_role),
+                        ),
                         durable,
                         steps,
                         current_now,

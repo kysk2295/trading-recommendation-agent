@@ -41,6 +41,7 @@ def _request() -> AutonomousReasoningRequest:
         observations=(),
         memories=(record_fixture(),),
         allowed_tool_names=("evidence.read",),
+        allowed_tool_signatures=("evidence.read(evidence_id)",),
         remaining_budget=budget(),
         current_role=AutonomousAgentRole.MARKET_OBSERVER,
     )
@@ -141,44 +142,62 @@ def test_request_boundary_rejects_nonfuture_wakes_and_same_role_delegate() -> No
 def test_wake_models_require_exact_selector_and_forbid_artifact_wakes() -> None:
     # Given / When / Then: wake selector rules are enforced before request-time comparison.
     for response, reason in (
-        (lambda: AutonomousDefer(
-            reason="Wait for the next completed bar before resuming the bounded analysis.",
-            resume_condition="A completed market bar is available for the current session.",
-        ), "autonomous_defer_wake_required"),
-        (lambda: AutonomousDefer(
-            reason="Wait for the next completed bar before resuming the bounded analysis.",
-            resume_condition="A completed market bar is available for the current session.",
-            next_wake_at=NOW + dt.timedelta(minutes=1),
-            next_wake_event="completed_bar",
-        ), "autonomous_defer_wake_required"),
-        (lambda: AutonomousSubmitArtifact(
-            artifact_kind="no_trade",
-            artifact_json="{}",
-            evidence_refs=("evidence:root",),
-            reason="No trade remains nonterminal until a current-session evidence event arrives.",
-        ), "autonomous_no_trade_wake_required"),
-        (lambda: AutonomousSubmitArtifact(
-            artifact_kind="no_trade",
-            artifact_json="{}",
-            evidence_refs=("evidence:root",),
-            next_wake_at=NOW + dt.timedelta(minutes=1),
-            next_wake_event="completed_bar",
-            reason="No trade remains nonterminal until a current-session evidence event arrives.",
-        ), "autonomous_no_trade_wake_required"),
-        (lambda: AutonomousSubmitArtifact(
-            artifact_kind="context",
-            artifact_json="{}",
-            evidence_refs=("evidence:root",),
-            next_wake_event="completed_bar",
-            reason="A terminal context artifact cannot carry a continuation wake selector.",
-        ), "autonomous_artifact_wake_forbidden"),
-        (lambda: AutonomousSubmitArtifact(
-            artifact_kind="review",
-            artifact_json="{}",
-            evidence_refs=("evidence:root",),
-            next_wake_at=NOW + dt.timedelta(minutes=1),
-            reason="A review artifact cannot carry a continuation wake selector after submission.",
-        ), "autonomous_artifact_wake_forbidden"),
+        (
+            lambda: AutonomousDefer(
+                reason="Wait for the next completed bar before resuming the bounded analysis.",
+                resume_condition="A completed market bar is available for the current session.",
+            ),
+            "autonomous_defer_wake_required",
+        ),
+        (
+            lambda: AutonomousDefer(
+                reason="Wait for the next completed bar before resuming the bounded analysis.",
+                resume_condition="A completed market bar is available for the current session.",
+                next_wake_at=NOW + dt.timedelta(minutes=1),
+                next_wake_event="completed_bar",
+            ),
+            "autonomous_defer_wake_required",
+        ),
+        (
+            lambda: AutonomousSubmitArtifact(
+                artifact_kind="no_trade",
+                artifact_json="{}",
+                evidence_refs=("evidence:root",),
+                reason="No trade remains nonterminal until a current-session evidence event arrives.",
+            ),
+            "autonomous_no_trade_wake_required",
+        ),
+        (
+            lambda: AutonomousSubmitArtifact(
+                artifact_kind="no_trade",
+                artifact_json="{}",
+                evidence_refs=("evidence:root",),
+                next_wake_at=NOW + dt.timedelta(minutes=1),
+                next_wake_event="completed_bar",
+                reason="No trade remains nonterminal until a current-session evidence event arrives.",
+            ),
+            "autonomous_no_trade_wake_required",
+        ),
+        (
+            lambda: AutonomousSubmitArtifact(
+                artifact_kind="context",
+                artifact_json="{}",
+                evidence_refs=("evidence:root",),
+                next_wake_event="completed_bar",
+                reason="A terminal context artifact cannot carry a continuation wake selector.",
+            ),
+            "autonomous_artifact_wake_forbidden",
+        ),
+        (
+            lambda: AutonomousSubmitArtifact(
+                artifact_kind="review",
+                artifact_json="{}",
+                evidence_refs=("evidence:root",),
+                next_wake_at=NOW + dt.timedelta(minutes=1),
+                reason="A review artifact cannot carry a continuation wake selector after submission.",
+            ),
+            "autonomous_artifact_wake_forbidden",
+        ),
     ):
         with pytest.raises(InvalidAutonomousReasoningError, match=rf"^{reason}$"):
             response()

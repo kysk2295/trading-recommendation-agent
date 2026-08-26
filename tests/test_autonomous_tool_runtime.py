@@ -62,6 +62,7 @@ def test_dispatch_canonicalizes_hashes_and_normalizes_clock() -> None:
 
     # Then: output is canonical, content-addressed, and timestamped in UTC.
     assert runtime.allowed_tool_names == ("evidence.read",)
+    assert runtime.allowed_tool_signatures(AutonomousAgentRole.MARKET_OBSERVER) == ("evidence.read(evidence_id)",)
     assert observation.bounded_json == '{"source":"fixture","symbol":"NVDA"}'
     assert observation.observed_at == NOW
     canonical_call = json.dumps(call.model_dump(mode="json"), ensure_ascii=True, separators=(",", ":"), sort_keys=True)
@@ -122,9 +123,7 @@ def test_runtime_rejects_duplicate_unknown_failure_invalid_output_and_invalid_cl
         AutonomousToolRuntime(
             bindings=(_binding(invoke=lambda arguments, context: "not-json"),),
             clock=lambda: NOW,
-        ).dispatch(
-            AutonomousAgentRole.MARKET_OBSERVER, _call(), CONTEXT
-        )
+        ).dispatch(AutonomousAgentRole.MARKET_OBSERVER, _call(), CONTEXT)
     with pytest.raises(AutonomousToolRuntimeError, match="autonomous_tool_result_too_large"):
         AutonomousToolRuntime(
             bindings=(_binding(invoke=lambda arguments, context: '"' + "x" * 16_384 + '"'),), clock=lambda: NOW

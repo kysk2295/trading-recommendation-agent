@@ -25,6 +25,7 @@ def canonical_reasoning_prompt(request: AutonomousReasoningRequest, client: LlmP
         provider = {"model_id": client.model_id, "seed": client.seed, "temperature": client.temperature}
     payload = {
         "allowed_tool_names": request.allowed_tool_names,
+        "allowed_tool_signatures": request.allowed_tool_signatures,
         "current_role": None if request.current_role is None else request.current_role.value,
         "memories": tuple(memory.model_dump(mode="json") for memory in request.memories),
         "now": request.now.isoformat(),
@@ -33,7 +34,7 @@ def canonical_reasoning_prompt(request: AutonomousReasoningRequest, client: LlmP
         "provider": provider,
         "remaining_budget": request.remaining_budget.model_dump(mode="json"),
         "response_schema": AUTONOMOUS_REASONING_RESPONSE_ADAPTER.json_schema(),
-        "schema_version": 1,
+        "schema_version": 2,
         "task": request.task.model_dump(mode="json"),
     }
     prompt = json.dumps(payload, allow_nan=False, ensure_ascii=True, separators=(",", ":"), sort_keys=True)

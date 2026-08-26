@@ -69,6 +69,7 @@ def _request(**updates: _RequestValue) -> AutonomousReasoningRequest:
         "observations": (),
         "memories": (record_fixture(),),
         "allowed_tool_names": ("evidence.read",),
+        "allowed_tool_signatures": ("evidence.read(evidence_id)",),
         "remaining_budget": budget(),
         "current_role": AutonomousAgentRole.MARKET_OBSERVER,
     }
@@ -206,13 +207,16 @@ def test_request_prompt_is_deterministic_and_validates_observation_attribution()
     # Then: routing fields, schema, hashes, and rehydrated observations are machine-readable and stable.
     payload = json.loads(first)
     assert first == second
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["allowed_tool_names"] == ["evidence.read"]
+    assert payload["allowed_tool_signatures"] == ["evidence.read(evidence_id)"]
     assert payload["provider"]["model_id"] == "unbound"
     assert payload["observations"][0]["call_sha256"] == observation.call_sha256
     assert "oneOf" in payload["response_schema"]
     with pytest.raises(InvalidAutonomousReasoningError):
         _request(observations=(observation.model_copy(update={"tool_name": "not.allowed"}),))
+    with pytest.raises(InvalidAutonomousReasoningError):
+        _request(allowed_tool_signatures=("browser.status()",))
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,17 +240,25 @@ class _Client:
 def test_structured_reasoner_rehydrates_state_without_session_and_hides_failures() -> None:
     # Given: sequential raw responses use only the request state supplied per invocation.
     first = _call().model_dump_json().encode()
-    second = AutonomousComplete(
-        summary="The observed evidence is now sufficient to close the bounded research task.",
-        completion_evidence_refs=("evidence:root",),
-        reason="The durable observation is present in the second stateless request payload.",
-    ).model_dump_json().encode()
+    second = (
+        AutonomousComplete(
+            summary="The observed evidence is now sufficient to close the bounded research task.",
+            completion_evidence_refs=("evidence:root",),
+            reason="The durable observation is present in the second stateless request payload.",
+        )
+        .model_dump_json()
+        .encode()
+    )
     invalid = b"not-json"
-    delegate = AutonomousDelegate(
-        role=AutonomousAgentRole.MARKET_OBSERVER,
-        objective="A same-role delegation must not bypass the explicit current-role boundary.",
-        reason="The request explicitly exposes its role, so identical delegation is unauthorized.",
-    ).model_dump_json().encode()
+    delegate = (
+        AutonomousDelegate(
+            role=AutonomousAgentRole.MARKET_OBSERVER,
+            objective="A same-role delegation must not bypass the explicit current-role boundary.",
+            reason="The request explicitly exposes its role, so identical delegation is unauthorized.",
+        )
+        .model_dump_json()
+        .encode()
+    )
     client = _Client((first, second, invalid, delegate), fail_on_call=5)
     reasoner = AutonomousStructuredReasoner(client)
 

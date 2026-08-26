@@ -40,6 +40,8 @@ def test_browser_tools_are_role_scoped_and_total_tool_count_stays_bounded(tmp_pa
         "task.history",
     )
     assert len(runtime.allowed_tools(AutonomousAgentRole.MARKET_OBSERVER)) <= 16
+    assert "browser.status()" in runtime.allowed_tool_signatures(AutonomousAgentRole.MARKET_OBSERVER)
+    assert "browser.search(query)" in runtime.allowed_tool_signatures(AutonomousAgentRole.MARKET_OBSERVER)
     assert runtime.allowed_tools(AutonomousAgentRole.TRADING) == (
         "evidence.read",
         "memory.search",
