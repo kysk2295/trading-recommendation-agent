@@ -113,9 +113,10 @@ def writer_lease(path: Path, parent: int) -> Iterator[None]:
 
 @contextmanager
 def reader_connection(path: Path) -> Iterator[sqlite3.Connection]:
-    parent = open_private_parent(path.parent, create=False)
+    parent = -1
     descriptor = -1
     try:
+        parent = open_private_parent(path.parent, create=False)
         require_private_directory_query_only(parent)
         require_open_directory_path(path.parent, parent)
         descriptor = open_database(parent, path.name, create=False, write=False)
@@ -136,7 +137,8 @@ def reader_connection(path: Path) -> Iterator[sqlite3.Connection]:
     finally:
         if descriptor >= 0:
             os.close(descriptor)
-        os.close(parent)
+        if parent >= 0:
+            os.close(parent)
 
 
 @contextmanager

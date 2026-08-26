@@ -136,6 +136,18 @@ def test_reader_rejects_mode_and_parent_path_that_are_no_longer_private(tmp_path
         AutonomousMemoryStore(path).reader().history("market.005930.catalyst")
 
 
+def test_reader_connection_normalizes_parent_symlink_failure(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir(mode=0o700)
+    alias = tmp_path / "alias"
+    alias.symlink_to(target, target_is_directory=True)
+    with (
+        pytest.raises(InvalidAutonomousMemoryStoreError, match="database_read_failed"),
+        reader_connection(alias / "memory.sqlite3"),
+    ):
+        pass
+
+
 def test_second_writer_lease_is_rejected_across_a_real_child_process(tmp_path: Path) -> None:
     path = tmp_path / "memory.sqlite3"
     with AutonomousMemoryStore(path).writer() as writer:
@@ -194,7 +206,7 @@ def test_generation_replacement_rejects_path_swap_after_atomic_replace(
 
     monkeypatch.setattr(memory_sqlite, "replace_sqlite_database", replace_then_swap)
     with (
-        pytest.raises(InvalidAutonomousMemoryStoreError, match="database_write_failed"),
+        pytest.raises(InvalidAutonomousMemoryStoreError, match="writer_generation_flush_failed"),
         AutonomousMemoryStore(path).writer() as writer,
     ):
         assert writer.append(record_fixture(memory_key="market.005930.next"))

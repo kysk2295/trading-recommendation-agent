@@ -24,7 +24,7 @@ from trading_agent._autonomous_memory_store_sqlite import (
     writer_lease,
 )
 from trading_agent.autonomous_memory_models import AutonomousMemoryRecord, AutonomousMemoryScope
-from trading_agent.private_directory_identity import require_private_directory
+from trading_agent.private_directory_identity import require_open_directory_path, require_private_directory
 
 type SearchSubjectRefs = int | tuple[str | int, ...]
 
@@ -49,6 +49,7 @@ class AutonomousMemoryStore:
         try:
             parent = open_private_parent(self.path.parent, create=True)
             require_private_directory(parent)
+            require_open_directory_path(self.path.parent, parent)
             with writer_lease(self.path, parent):
                 descriptor = open_database(parent, self.path.name, create=True, write=True)
                 identity = DatabaseIdentity(parent, self.path.name, descriptor, self.path)
@@ -66,6 +67,7 @@ class AutonomousMemoryStore:
                             writer.close()
                 finally:
                     os.close(identity.descriptor)
+            require_open_directory_path(self.path.parent, parent)
         except (OSError, sqlite3.Error, TypeError, ValueError) as error:
             if isinstance(error, AutonomousMemoryStoreError):
                 raise
@@ -119,8 +121,7 @@ class AutonomousMemoryWriter:
                     raise AutonomousMemoryConflictError(reason="memory_timestamp_invalid")
             _ = self._connection.execute("INSERT INTO autonomous_memories VALUES (?,?,?,?,?,?,?)", row)
             self._connection.commit()
-            self._flush()
-            self._reconcile()
+            self._flush_mutation()
             return True
         except AutonomousMemoryStoreError:
             self._connection.rollback()
@@ -135,6 +136,19 @@ class AutonomousMemoryWriter:
     def _require_active(self) -> None:
         if not self._active:
             raise InvalidAutonomousMemoryStoreError(reason="writer_closed")
+
+    def _flush_mutation(self) -> None:
+        try:
+            self._flush()
+        except (OSError, sqlite3.Error, TypeError, ValueError) as error:
+            try:
+                self._reconcile()
+            except (OSError, sqlite3.Error, TypeError, ValueError) as reconciliation_error:
+                self._active = False
+                raise InvalidAutonomousMemoryStoreError(
+                    reason="writer_generation_reconcile_failed"
+                ) from reconciliation_error
+            raise InvalidAutonomousMemoryStoreError(reason="writer_generation_flush_failed") from error
 
 
 class AutonomousMemoryReader:

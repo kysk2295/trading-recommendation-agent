@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from tests.test_autonomous_memory_store import NOW, TASK, record_fixture
+from trading_agent.autonomous_memory_models import AutonomousMemoryScope
 
 OTHER_TASK = hashlib.sha256(b"other-memory-source-task").hexdigest()
 
@@ -90,3 +91,20 @@ def test_record_requires_fact_or_inference_but_accepts_inference_only() -> None:
     assert inference_only.inference_refs == ("inference:market",)
     with pytest.raises(ValidationError, match="memory_lineage_required"):
         record_fixture(fact_refs=(), inference_refs=())
+
+
+def test_memory_id_changes_for_each_mutable_record_field() -> None:
+    baseline = record_fixture()
+    variants = (
+        record_fixture(memory_key="market.005930.catalyst-v2"),
+        record_fixture(version=2),
+        record_fixture(scope=AutonomousMemoryScope.STRATEGY),
+        record_fixture(summary="A changed evidence-linked summary remains bounded and independently identifiable."),
+        record_fixture(fact_refs=("fact:additional", "fact:session-catalyst")),
+        record_fixture(inference_refs=("inference:market",)),
+        record_fixture(subject_refs=("symbol:005930",)),
+        record_fixture(evidence_refs=("evidence:additional", "evidence:session-catalyst")),
+        record_fixture(source_task_ids=tuple(sorted((TASK, OTHER_TASK)))),
+        record_fixture(recorded_at=NOW + dt.timedelta(seconds=1)),
+    )
+    assert all(variant.memory_id != baseline.memory_id for variant in variants)
