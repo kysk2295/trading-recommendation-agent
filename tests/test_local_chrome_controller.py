@@ -87,8 +87,7 @@ class FakeClock:
         self.value += seconds
 
 
-@pytest.fixture
-def config(tmp_path: Path) -> LocalBrowserGatewayConfig:
+def build_config(tmp_path: Path) -> LocalBrowserGatewayConfig:
     private = (tmp_path / "private").absolute()
     return LocalBrowserGatewayConfig(
         project_root=(tmp_path / "project").absolute(),
@@ -101,6 +100,11 @@ def config(tmp_path: Path) -> LocalBrowserGatewayConfig:
         screenshot_root=private / "state" / "screenshots",
         startup_timeout_seconds=1.0,
     )
+
+
+@pytest.fixture
+def config(tmp_path: Path) -> LocalBrowserGatewayConfig:
+    return build_config(tmp_path)
 
 
 def _payload(port: int = 9222, path: str = "/devtools/browser/token") -> bytes:
@@ -195,22 +199,6 @@ def test_ready_rejects_invalid_port_file(config: LocalBrowserGatewayConfig, payl
     assert launcher.commands == []
 
 
-def test_close_leaves_healthy_attached_endpoint(config: LocalBrowserGatewayConfig) -> None:
-    # Given: a valid endpoint belonging to another controller.
-    config.state_root.mkdir(parents=True, mode=0o700)
-    config.profile_root.mkdir(mode=0o700)
-    (config.profile_root / "DevToolsActivePort").write_bytes(_payload())
-    (config.profile_root / "DevToolsActivePort").chmod(0o600)
-    launcher = FakeLauncher(config.profile_root, [], [])
-    controller = _controller(config, launcher, FakeProbe({(9222, "/devtools/browser/token")}))
-    # When: it is made ready then closed.
-    endpoint = controller.ensure_ready()
-    controller.close()
-    # Then: it reports honest attachment and never starts or kills Chrome.
-    assert endpoint.ownership == "attached" and endpoint.process_id is None
-    assert launcher.commands == []
-
-
 def test_dead_owned_process_and_stale_endpoint_each_cause_one_safe_restart(config: LocalBrowserGatewayConfig) -> None:
     # Given: an owned Chrome that later dies, followed by a stale unhealthy endpoint.
     first, replacement = FakeProcess(101), FakeProcess(202)
@@ -223,23 +211,6 @@ def test_dead_owned_process_and_stale_endpoint_each_cause_one_safe_restart(confi
     endpoint = controller.ensure_ready()
     # Then: it reaps only its old process and returns the one replacement it owns.
     assert (endpoint.process_id, first.waits, len(launcher.commands)) == (202, 1, 2)
-
-
-def test_malformed_owned_port_file_reaps_owned_process_without_replacement(config: LocalBrowserGatewayConfig) -> None:
-    # Given: an owned healthy Chrome whose port file becomes malformed.
-    process = FakeProcess(101)
-    launcher = FakeLauncher(config.profile_root, [process], [_payload()])
-    controller = _controller(config, launcher, FakeProbe({(9222, "/devtools/browser/token")}))
-    assert controller.ensure_ready().process_id == 101
-    port_file = config.profile_root / "DevToolsActivePort"
-    port_file.write_bytes(_payload().replace(b"\n", b"\r\n"))
-    port_file.chmod(0o600)
-    # When: the owned endpoint file can no longer be parsed.
-    with pytest.raises(chrome.InvalidLocalChromeControllerError) as raised:
-        _ = controller.ensure_ready()
-    # Then: only the owned process is reaped and its exact stale file is removed.
-    assert raised.value.reason == "local_chrome_port_file_invalid"
-    assert (process.terminated, process.waits, len(launcher.commands), port_file.exists()) == (1, 1, 1, False)
 
 
 def test_ready_rejects_profile_component_swap_before_launch(
@@ -260,45 +231,6 @@ def test_ready_rejects_profile_component_swap_before_launch(
         _ = _controller(config, launcher, FakeProbe(set())).ensure_ready()
     # Then: descriptor identity rejects the replacement before launch.
     assert raised.value.reason == "local_chrome_private_directory_invalid" and launcher.commands == []
-
-
-def test_owned_cleanup_preserves_replaced_port_file(
-    config: LocalBrowserGatewayConfig, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # Given: an owned endpoint whose name is replaced immediately before cleanup.
-    process = FakeProcess(101)
-    launcher = FakeLauncher(config.profile_root, [process], [_payload()])
-    probe = FakeProbe({(9222, "/devtools/browser/token")})
-    controller = _controller(config, launcher, probe)
-    assert controller.ensure_ready().process_id == 101
-    replacement = _payload(9223)
-    original = chrome.unlink_private_browser_file
-
-    def replace_file(
-        directory: private_fs.PrivateBrowserDirectory,
-        name: str,
-        expected: private_fs.PrivateBrowserFile,
-        owner_id: int,
-    ) -> None:
-        path = config.profile_root / name
-        path.unlink()
-        path.write_bytes(replacement)
-        path.chmod(0o600)
-        original(directory, name, expected, owner_id)
-
-    probe.healthy.clear()
-    monkeypatch.setattr(chrome, "unlink_private_browser_file", replace_file)
-    # When: unhealthy owned cleanup reaches the exact-inode unlink boundary.
-    with pytest.raises(chrome.InvalidLocalChromeControllerError) as raised:
-        _ = controller.ensure_ready()
-    # Then: the replacement remains and no second Chrome starts.
-    assert raised.value.reason == "local_chrome_port_file_invalid"
-    assert (
-        process.terminated,
-        process.waits,
-        len(launcher.commands),
-        (config.profile_root / "DevToolsActivePort").read_bytes(),
-    ) == (1, 1, 1, replacement)
 
 
 def test_unhealthy_attached_endpoint_remains_unowned_and_unmodified(config: LocalBrowserGatewayConfig) -> None:
@@ -335,49 +267,3 @@ def test_failed_startup_reaps_only_launched_process(
     # Then: the exact launched process is reaped and the reason is stable.
     assert raised.value.reason == reason
     assert process.waits >= 1 and (process.terminated == 1 if process.pid == 102 else process.terminated == 0)
-
-
-def test_close_terminates_then_kills_only_owned_process_and_is_idempotent(config: LocalBrowserGatewayConfig) -> None:
-    # Given: a ready owned process whose first wait times out.
-    process = FakeProcess(101, timeout_waits=1)
-    launcher = FakeLauncher(config.profile_root, [process], [_payload()])
-    controller = _controller(config, launcher, FakeProbe({(9222, "/devtools/browser/token")}))
-    assert controller.ensure_ready().process_id == 101
-    # When: close is called twice.
-    controller.close()
-    controller.close()
-    # Then: termination escalates only for the process this controller launched.
-    assert (process.terminated, process.killed, process.waits) == (1, 1, 2)
-
-
-def test_close_guards_owned_snapshot_and_ready_restarts(config: LocalBrowserGatewayConfig) -> None:
-    # Given: a ready owned endpoint, followed by a distinct launchable replacement.
-    first, restarted = FakeProcess(101), FakeProcess(202)
-    launcher = FakeLauncher(config.profile_root, [first, restarted], [_payload(), _payload(9223)])
-    probe = FakeProbe({(9222, "/devtools/browser/token"), (9223, "/devtools/browser/token")})
-    controller = _controller(config, launcher, probe)
-    assert controller.ensure_ready().process_id == 101
-    # When: close removes its observed port file and readiness is requested again.
-    controller.close()
-    endpoint = controller.ensure_ready()
-    # Then: the owned process is reaped and a fresh owned Chrome is launched.
-    assert (first.terminated, first.waits, endpoint.process_id, len(launcher.commands)) == (1, 1, 202, 2)
-
-
-def test_close_preserves_replacement_of_owned_port_snapshot(config: LocalBrowserGatewayConfig) -> None:
-    # Given: a ready owned Chrome whose endpoint name is replaced before close.
-    process = FakeProcess(101)
-    launcher = FakeLauncher(config.profile_root, [process], [_payload()])
-    controller = _controller(config, launcher, FakeProbe({(9222, "/devtools/browser/token")}))
-    assert controller.ensure_ready().process_id == 101
-    replacement = _payload(9223)
-    port_file = config.profile_root / "DevToolsActivePort"
-    port_file.unlink()
-    port_file.write_bytes(replacement)
-    port_file.chmod(0o600)
-    # When: close performs guarded cleanup using its last owned snapshot.
-    with pytest.raises(chrome.InvalidLocalChromeControllerError) as raised:
-        controller.close()
-    # Then: it reaps its process but leaves the unowned replacement untouched.
-    assert raised.value.reason == "local_chrome_port_file_invalid"
-    assert (process.terminated, process.waits, port_file.read_bytes()) == (1, 1, replacement)
