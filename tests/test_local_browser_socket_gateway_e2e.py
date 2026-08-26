@@ -123,7 +123,16 @@ def test_actual_socket_replays_receipt_after_gateway_restart_without_chrome(shor
     assert (first_controller.calls, restarted_controller.calls) == (1, 0)
 
 
-def test_raw_hostile_open_is_redacted_and_gateway_keeps_serving_without_chrome(short_root: Path) -> None:
+@pytest.mark.parametrize(
+    "hostile_url",
+    (
+        b"https://example.com/?api%5Fkey=withheld",
+        b"https://example.com/anything/auth-token%3Dwithheld",
+    ),
+)
+def test_raw_hostile_open_is_redacted_and_gateway_keeps_serving_without_chrome(
+    short_root: Path, hostile_url: bytes
+) -> None:
     # Given: the real socket gateway is ready to serve a hostile frame followed by a valid request.
     state = short_root / "state"
     socket_path = state / "gateway.sock"
@@ -152,13 +161,11 @@ def test_raw_hostile_open_is_redacted_and_gateway_keeps_serving_without_chrome(s
     thread.start()
     assert ready.wait(timeout=2.0)
 
-    # When: an untyped client submits a canonical open frame with sensitive query metadata.
+    # When: an untyped client submits a canonical open frame with sensitive URL metadata.
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         client.settimeout(1.0)
         client.connect(str(socket_path))
-        client.sendall(
-            b'{"action":"open","request_id":"' + b"a" * 64 + b'","url":"https://example.com/?api%5Fkey=withheld"}\n'
-        )
+        client.sendall(b'{"action":"open","request_id":"' + b"a" * 64 + b'","url":"' + hostile_url + b'"}\n')
         client.shutdown(socket.SHUT_WR)
         assert client.recv(1) == b""
 

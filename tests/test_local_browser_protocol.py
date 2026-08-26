@@ -114,12 +114,32 @@ def test_public_https_url_rejects_sensitive_query_metadata(url: str) -> None:
     assert error.value.reason == "browser_url_not_public_https"
 
 
+@pytest.mark.parametrize(
+    "url",
+    (
+        "https://example.com/anything/auth-token%3Dwithheld",
+        "https://example.com/anything/AUTH_TOKEN%3Awithheld",
+        "https://example.com/anything/refresh_key=withheld",
+        "https://example.com/anything/auth.secret=withheld",
+        "https://example.com/anything/Bearer%20withheld",
+        "https://example.com/anything/eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJjYW5hcnkifQ.notarealsecret",
+    ),
+)
+def test_public_https_url_rejects_sensitive_path_metadata(url: str) -> None:
+    with pytest.raises(InvalidLocalBrowserProtocolError) as error:
+        require_public_https_url(url)
+    assert error.value.reason == "browser_url_not_public_https"
+
+
 def test_public_https_url_preserves_normal_search_and_market_queries() -> None:
     assert require_public_https_url("https://www.google.com/search?q=TSLA+stock+news&oq=TSLA+stock+news") == (
         "https://www.google.com/search?q=TSLA+stock+news&oq=TSLA+stock+news"
     )
     assert require_public_https_url("https://finance.yahoo.com/quote/TSLA?p=TSLA") == (
         "https://finance.yahoo.com/quote/TSLA?p=TSLA"
+    )
+    assert require_public_https_url("https://example.com/research/token-economy/secret-sauce") == (
+        "https://example.com/research/token-economy/secret-sauce"
     )
 
 
