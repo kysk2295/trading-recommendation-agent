@@ -6,12 +6,10 @@ from dataclasses import dataclass
 from typing import Literal, Protocol, Self, assert_never, final
 
 import anyio
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from trading_agent.autonomous_task_models import AutonomousSupervisorTickResult
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
-from trading_agent.day_agent_runtime import DayAgentTaskResult
-from trading_agent.day_agent_task_models import DayAgentAction, DayAgentTaskRecordKind, DayAgentTaskState
-from trading_agent.day_agent_tool_models import DayAgentHypothesisSubmission, DayAgentThesisSubmission
 from trading_agent.research_agent_actions import (
     InvalidResearchAgentActionError,
     ResearchAgentActionClient,
@@ -21,14 +19,11 @@ from trading_agent.research_agent_configured_collector import ConfiguredResearch
 from trading_agent.research_agent_cycle_models import (
     CycleId,
     ResearchAgentCycleV1,
-    ResearchAgentDecisionKind,
     ResearchAgentEvidenceV1,
     ResearchAgentOpenWorkState,
     ResearchAgentOpenWorkV1,
     ResearchAgentResultStatus,
     ResearchAgentResultV1,
-    ResearchAgentWakeKind,
-    research_agent_result_id,
 )
 from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore, StoredResearchAgentEvidence
 from trading_agent.research_agent_decision import (
@@ -61,8 +56,19 @@ class ResearchAgentEvidenceCollector(Protocol):
     def collect(self, now: dt.datetime) -> ResearchAgentSourceCollectionBatch: ...
 
 
-class PersistentDayAgentRuntime(Protocol):
-    def tick(self, evidence: ResearchAgentEvidenceV1, now: dt.datetime) -> DayAgentTaskResult: ...
+class PersistentResearchSupervisor(Protocol):
+    def tick(
+        self,
+        evidence: ResearchAgentEvidenceV1,
+        now: dt.datetime,
+    ) -> AutonomousSupervisorTickResult: ...
+
+    def project_tick(
+        self,
+        cycle: ResearchAgentCycleV1,
+        result: AutonomousSupervisorTickResult,
+        now: dt.datetime,
+    ) -> ResearchAgentResultV1: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +77,7 @@ class ResearchAgentRuntimeServices:
     collector: ResearchAgentEvidenceCollector
     decisions: ResearchAgentDecisionClient
     actions: ResearchAgentActionClient
-    day_runtime: PersistentDayAgentRuntime | None = None
+    supervisor_runtime: PersistentResearchSupervisor | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +96,7 @@ class RuntimeCycleOutcome:
     prior_failures: int
     model_calls: int
     recovered_cycles: int
+    supervisor_owned: bool = False
 
 
 class InvalidResearchAgentRuntimeError(RuntimeError):
@@ -141,7 +148,7 @@ class ResearchAgentBoundedCycleResult(BaseModel):
 
 @final
 class ResearchAgentRuntime:
-    __slots__ = ("_actions", "_collector", "_day_runtime", "_decisions", "store")
+    __slots__ = ("_actions", "_collector", "_decisions", "_supervisor_runtime", "store")
 
     store: ResearchAgentCycleStore
 
@@ -150,7 +157,7 @@ class ResearchAgentRuntime:
         self._collector = services.collector
         self._decisions = services.decisions
         self._actions = services.actions
-        self._day_runtime = services.day_runtime
+        self._supervisor_runtime = services.supervisor_runtime
 
     def close(self) -> None:
         self.store.close()
@@ -237,16 +244,17 @@ class ResearchAgentRuntime:
             outcome = RuntimeCycleOutcome(cycle, stored.evidence, result, prior_failures, 0, len(recovered))
             self._persist(outcome)
             return _tick_result(outcome)
-        if cycle.agent_family_id == "day_trading" and self._day_runtime is not None:
-            day_result = self._day_runtime.tick(stored.evidence, now)
-            result = _project_day_result(cycle, day_result, now)
+        if self._supervisor_runtime is not None:
+            supervisor_result = self._supervisor_runtime.tick(stored.evidence, now)
+            result = self._supervisor_runtime.project_tick(cycle, supervisor_result, now)
             outcome = RuntimeCycleOutcome(
                 cycle,
                 stored.evidence,
                 result,
                 prior_failures,
-                day_result.model_calls,
+                supervisor_result.model_calls,
                 len(recovered),
+                supervisor_owned=True,
             )
             self._persist(outcome)
             return _tick_result(outcome)
@@ -314,7 +322,11 @@ class ResearchAgentRuntime:
         return next(item for item in reversed(candidates) if item.evidence.evidence_id == evidence.evidence_id)
 
     def _persist(self, outcome: RuntimeCycleOutcome) -> None:
-        normalized = normalize_failure_backoff(outcome.result, outcome.prior_failures)
+        normalized = (
+            outcome.result
+            if outcome.supervisor_owned
+            else normalize_failure_backoff(outcome.result, outcome.prior_failures)
+        )
         match normalized.status:
             case ResearchAgentResultStatus.COMPLETED | ResearchAgentResultStatus.NO_ACTION:
                 self.store.finish_cycle(outcome.cycle, normalized)
@@ -322,13 +334,14 @@ class ResearchAgentRuntime:
                 self.store.fail_cycle(outcome.cycle, normalized)
             case unreachable:
                 assert_never(unreachable)
-        state = ActorStateContext(
-            outcome.cycle,
-            outcome.evidence,
-            normalized,
-            outcome.prior_failures,
-        )
-        self.store.upsert_open_work(actor_state_work(state))
+        if not outcome.supervisor_owned:
+            state = ActorStateContext(
+                outcome.cycle,
+                outcome.evidence,
+                normalized,
+                outcome.prior_failures,
+            )
+            self.store.upsert_open_work(actor_state_work(state))
 
 
 async def run_research_agent_forever(
@@ -372,128 +385,10 @@ def _work_matches_cycle(item: ResearchAgentOpenWorkV1, cycle: ResearchAgentCycle
     return item.work_id == f"actor-state.day_trading.{cycle.market_id}"
 
 
-def _project_day_result(
-    cycle: ResearchAgentCycleV1,
-    day_result: DayAgentTaskResult,
-    now: dt.datetime,
-) -> ResearchAgentResultV1:
-    task = day_result.task
-    evidence_refs = tuple(sorted(task.evidence_refs))[:32]
-    match task.state:
-        case DayAgentTaskState.COMPLETED:
-            if not day_result.steps or day_result.steps[-1].record_kind is not DayAgentTaskRecordKind.DECISION:
-                return _invalid_completed_day_result(cycle, day_result, now)
-            match day_result.steps[-1].action:
-                case DayAgentAction.SUBMIT_TRADE_THESIS:
-                    try:
-                        _ = DayAgentThesisSubmission.model_validate_json(day_result.steps[-1].payload_json)
-                    except ValidationError:
-                        return _invalid_completed_day_result(cycle, day_result, now)
-                    if task.terminal_reason != "day_agent_trade_thesis_submitted":
-                        return _invalid_completed_day_result(cycle, day_result, now)
-                    decision_kind = ResearchAgentDecisionKind.PUBLISH_RECOMMENDATION
-                case DayAgentAction.SUBMIT_RESEARCH_HYPOTHESIS:
-                    try:
-                        _ = DayAgentHypothesisSubmission.model_validate_json(day_result.steps[-1].payload_json)
-                    except ValidationError:
-                        return _invalid_completed_day_result(cycle, day_result, now)
-                    if task.terminal_reason != "day_agent_research_hypothesis_submitted":
-                        return _invalid_completed_day_result(cycle, day_result, now)
-                    decision_kind = ResearchAgentDecisionKind.PROPOSE_HYPOTHESIS
-                case (
-                    DayAgentAction.INSPECT_SITUATION
-                    | DayAgentAction.READ_CATALYSTS
-                    | DayAgentAction.COMPARE_LEADERS
-                    | DayAgentAction.SEARCH_PAST_CASES
-                    | DayAgentAction.RUN_LIGHT_EXPERIMENT
-                    | DayAgentAction.ASK_CRITIC
-                    | DayAgentAction.DEFER
-                ):
-                    return _invalid_completed_day_result(cycle, day_result, now)
-                case unreachable:
-                    assert_never(unreachable)
-            return ResearchAgentResultV1(
-                result_id=research_agent_result_id(cycle.cycle_id),
-                cycle_id=cycle.cycle_id,
-                agent_family_id=cycle.agent_family_id,
-                market_id=cycle.market_id,
-                status=ResearchAgentResultStatus.COMPLETED,
-                question=task.question[:500],
-                summary=(task.current_hypothesis or task.objective)[:1_000],
-                evidence_refs=evidence_refs,
-                artifact_refs=(task.task_id,),
-                occurred_at=now,
-                next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
-                next_wake_at=None,
-                decision_kind=decision_kind,
-            )
-        case DayAgentTaskState.BLOCKED:
-            return ResearchAgentResultV1(
-                result_id=research_agent_result_id(cycle.cycle_id),
-                cycle_id=cycle.cycle_id,
-                agent_family_id=cycle.agent_family_id,
-                market_id=cycle.market_id,
-                status=ResearchAgentResultStatus.BLOCKED,
-                question=task.question[:500],
-                summary="The persistent Day research task stopped at a deterministic safety boundary.",
-                reason=task.terminal_reason,
-                continuation="Resume only after the blocking condition is resolved with new evidence.",
-                evidence_refs=evidence_refs,
-                artifact_refs=(),
-                occurred_at=now,
-                next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
-                next_wake_at=None,
-            )
-        case DayAgentTaskState.WAITING:
-            return ResearchAgentResultV1(
-                result_id=research_agent_result_id(cycle.cycle_id),
-                cycle_id=cycle.cycle_id,
-                agent_family_id=cycle.agent_family_id,
-                market_id=cycle.market_id,
-                status=ResearchAgentResultStatus.NO_ACTION,
-                question=task.question[:500],
-                summary="The persistent Day research task reached its scheduled bounded-work boundary.",
-                reason="day_agent_waiting",
-                continuation=task.resume_condition or "Resume the persistent Day task at its scheduled wake.",
-                evidence_refs=evidence_refs,
-                artifact_refs=(),
-                occurred_at=now,
-                next_wake_kind=ResearchAgentWakeKind.SCHEDULED,
-                next_wake_at=task.scheduled_wake_at,
-            )
-        case DayAgentTaskState.OPEN:
-            raise InvalidResearchAgentRuntimeError(reason="day_agent_boundary_not_terminal")
-        case unreachable:
-            assert_never(unreachable)
-
-
-def _invalid_completed_day_result(
-    cycle: ResearchAgentCycleV1,
-    day_result: DayAgentTaskResult,
-    now: dt.datetime,
-) -> ResearchAgentResultV1:
-    return ResearchAgentResultV1(
-        result_id=research_agent_result_id(cycle.cycle_id),
-        cycle_id=cycle.cycle_id,
-        agent_family_id=cycle.agent_family_id,
-        market_id=cycle.market_id,
-        status=ResearchAgentResultStatus.BLOCKED,
-        question=day_result.task.question[:500],
-        summary="The persistent Day task completed without a valid terminal submission record.",
-        reason="day_agent_completed_shape_invalid",
-        continuation="Preserve the research artifact and wait for a valid terminal submission record.",
-        evidence_refs=tuple(sorted(day_result.task.evidence_refs))[:32],
-        artifact_refs=(),
-        occurred_at=now,
-        next_wake_kind=ResearchAgentWakeKind.NEW_EVIDENCE,
-        next_wake_at=None,
-    )
-
-
 __all__ = (
     "ConfiguredResearchAgentEvidenceCollector",
     "InvalidResearchAgentRuntimeError",
-    "PersistentDayAgentRuntime",
+    "PersistentResearchSupervisor",
     "ResearchAgentBoundedCycleResult",
     "ResearchAgentEvidenceCollector",
     "ResearchAgentRuntime",
