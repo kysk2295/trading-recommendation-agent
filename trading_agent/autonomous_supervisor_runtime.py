@@ -211,7 +211,14 @@ class AutonomousSupervisorRuntime:
             evidence_id=evidence.evidence_id,
             evidence_json=evidence_json,
         )
-        refs = tuple(sorted(set(task.evidence_refs) | set(evidence.evidence_refs) | set(evidence.subject_refs)))
+        refs = tuple(
+            sorted(
+                set(task.evidence_refs)
+                | set(evidence.evidence_refs)
+                | set(evidence.subject_refs)
+                | {evidence.payload_sha256}
+            )
+        )
         step = plain_step(
             task,
             len(self.tasks.reader().steps(task.task_id)) + 1,

@@ -44,16 +44,18 @@ def _evidence(
     market: MarketId = "kr_equities",
     subjects: tuple[str, ...] = ("005930",),
     payload: str = '{"price":70000}',
+    evidence_ref: str | None = None,
 ) -> ResearchAgentEvidenceV1:
+    payload_hash = hashlib.sha256(payload.encode()).hexdigest()
     return ResearchAgentEvidenceV1(
         evidence_id=EvidenceId(identity * 64),
         agent_family_id=family,
         trigger_kind=ResearchAgentTriggerKind.NEW_DATA,
         source_key=f"adapter.{family}.{identity}",
-        evidence_refs=(hashlib.sha256(payload.encode()).hexdigest(),),
+        evidence_refs=(evidence_ref or payload_hash,),
         observed_at=NOW,
         available_at=NOW,
-        payload_sha256=hashlib.sha256(payload.encode()).hexdigest(),
+        payload_sha256=payload_hash,
         market_id=market,
         bounded_payload_json=payload if subjects else None,
         subject_refs=subjects,

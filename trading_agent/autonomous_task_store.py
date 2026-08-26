@@ -126,6 +126,50 @@ class AutonomousTaskWriter:
             self._connection.rollback()
             raise InvalidAutonomousTaskStoreError(reason="task_insert_failed") from error
 
+    def create_task_with_initial_step(
+        self,
+        task: AutonomousResearchTask,
+        step: AutonomousTaskStep,
+    ) -> bool:
+        self._require_active()
+        validate_autonomous_step_projection(task, step)
+        _require_appendable(task, (), step)
+        task_row = _task_row(task)
+        step_row = _step_row(step)
+        self._begin()
+        try:
+            existing_task = self._connection.execute(
+                "SELECT task_id,root_source_evidence_id,payload_sha256,payload_json "
+                "FROM autonomous_tasks WHERE task_id=?",
+                (task.task_id,),
+            ).fetchone()
+            existing_step = self._connection.execute(
+                "SELECT step_id,task_id,sequence,occurred_at,payload_sha256,payload_json "
+                "FROM autonomous_task_steps WHERE step_id=? OR (task_id=? AND sequence=?)",
+                (step.step_id, step.task_id, step.sequence),
+            ).fetchone()
+            if existing_task is not None or existing_step is not None:
+                if (
+                    existing_task is not None
+                    and existing_step is not None
+                    and tuple(existing_task) == task_row
+                    and tuple(existing_step) == step_row
+                ):
+                    self._connection.rollback()
+                    return False
+                raise AutonomousTaskConflictError(reason="initial_admission_replay_conflict")
+            _ = self._connection.execute("INSERT INTO autonomous_tasks VALUES (?,?,?,?)", task_row)
+            _ = self._connection.execute("INSERT INTO autonomous_task_steps VALUES (?,?,?,?,?,?)", step_row)
+            self._connection.commit()
+            self._flush_mutation()
+            return True
+        except AutonomousTaskStoreError:
+            self._connection.rollback()
+            raise
+        except sqlite3.Error as error:
+            self._connection.rollback()
+            raise InvalidAutonomousTaskStoreError(reason="initial_admission_insert_failed") from error
+
     def append_step(self, step: AutonomousTaskStep) -> bool:
         self._require_active()
         self._begin()

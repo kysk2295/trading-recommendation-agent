@@ -260,8 +260,7 @@ def _create_with_root_admission(
         task.evidence_refs,
     )
     with runtime.tasks.writer() as writer:
-        _ = writer.create_task(task)
-        _ = writer.append_step(step)
+        _ = writer.create_task_with_initial_step(task, step)
 
 
 __all__ = ("AutonomousSupervisorAdapter", "InvalidAutonomousSupervisorProjectionError")

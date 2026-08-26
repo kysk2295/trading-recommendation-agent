@@ -8,6 +8,7 @@ from typing import Literal, Protocol, Self, assert_never, final
 import anyio
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from trading_agent.autonomous_supervisor_cycle_adapter import ResearchCycleEvidenceResolver
 from trading_agent.autonomous_task_models import AutonomousSupervisorTickResult
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES, AgentFamilyId
 from trading_agent.research_agent_actions import (
@@ -25,7 +26,7 @@ from trading_agent.research_agent_cycle_models import (
     ResearchAgentResultStatus,
     ResearchAgentResultV1,
 )
-from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore, StoredResearchAgentEvidence
+from trading_agent.research_agent_cycle_store import ResearchAgentCycleStore
 from trading_agent.research_agent_decision import (
     InvalidResearchAgentDecisionError,
     ResearchAgentDecisionClient,
@@ -42,14 +43,12 @@ from trading_agent.research_agent_runtime_support import (
     actor_wake_states,
     normalize_failure_backoff,
     primary_admission_no_action,
-    retry_evidence,
     runtime_failure_result,
-    scheduled_evidence,
     source_failure_evidence,
 )
 from trading_agent.research_agent_sources import ResearchAgentSourceCollectionBatch
 from trading_agent.research_agent_systematic import InvalidSystematicResearchActionError
-from trading_agent.research_agent_wake_policy import ACTOR_WAKE_POLICIES, ActorWakeState, runnable_actors
+from trading_agent.research_agent_wake_policy import ActorWakeState, runnable_actors
 
 
 class ResearchAgentEvidenceCollector(Protocol):
@@ -78,14 +77,6 @@ class ResearchAgentRuntimeServices:
     decisions: ResearchAgentDecisionClient
     actions: ResearchAgentActionClient
     supervisor_runtime: PersistentResearchSupervisor | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class EvidenceResolution:
-    family: AgentFamilyId
-    stored: StoredResearchAgentEvidence | None
-    open_work: ResearchAgentOpenWorkV1 | None
-    now: dt.datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,8 +214,14 @@ class ResearchAgentRuntime:
                 recovered_cycles=len(recovered),
             )
         actor = selected[0]
-        stored = self._resolve_evidence(EvidenceResolution(actor.agent_family_id, actor.evidence, actor.open_work, now))
-        cycle = self.store.start_cycle(stored, now)
+        resolver = ResearchCycleEvidenceResolver(self.store, now, self._supervisor_runtime is not None)
+        resolved = resolver.resolve(actor)
+        stored = resolved.stored
+        cycle = self.store.start_cycle(
+            stored,
+            now,
+            preserve_authority=resolved.legacy_work is not None,
+        )
         prior_failures = _prior_failures(states, cycle.agent_family_id, cycle.market_id)
         no_action = primary_admission_no_action(cycle, stored.evidence, now)
         if no_action is not None:
@@ -257,6 +254,8 @@ class ResearchAgentRuntime:
                 supervisor_owned=True,
             )
             self._persist(outcome)
+            if resolved.legacy_work is not None:
+                resolver.close_legacy_work(resolved.legacy_work)
             return _tick_result(outcome)
         request = ResearchAgentDecisionRequest(
             cycle_id=cycle.cycle_id,
@@ -300,26 +299,6 @@ class ResearchAgentRuntime:
         outcome = RuntimeCycleOutcome(cycle, stored.evidence, result, prior_failures, 1, len(recovered))
         self._persist(outcome)
         return _tick_result(outcome)
-
-    def _resolve_evidence(self, selection: EvidenceResolution) -> StoredResearchAgentEvidence:
-        family = selection.family
-        stored = selection.stored
-        if stored is not None:
-            return stored
-        if selection.open_work is not None:
-            evidence = retry_evidence(selection.open_work, selection.now)
-        else:
-            policy = next(item for item in ACTOR_WAKE_POLICIES if item.family_id == family)
-            if policy.scheduled_interval is None:
-                raise InvalidResearchAgentRuntimeError(reason="scheduled_policy_interval_missing")
-            evidence = scheduled_evidence(
-                family,
-                selection.now,
-                int(policy.scheduled_interval.total_seconds() // 60),
-            )
-        _ = self.store.append_evidence(evidence)
-        candidates = self.store.runnable_evidence(family, selection.now)
-        return next(item for item in reversed(candidates) if item.evidence.evidence_id == evidence.evidence_id)
 
     def _persist(self, outcome: RuntimeCycleOutcome) -> None:
         normalized = (

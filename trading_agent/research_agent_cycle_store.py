@@ -8,6 +8,7 @@ from typing import Self, assert_never, final
 from trading_agent.dashboard_agent_family import AgentFamilyId
 from trading_agent.research_agent_cycle_models import (
     CycleId,
+    EvidenceId,
     ResearchAgentCycleState,
     ResearchAgentCycleV1,
     ResearchAgentEvidenceV1,
@@ -122,13 +123,19 @@ class ResearchAgentCycleStore:
             ).fetchall()
         return tuple(stored_evidence(row) for row in rows)
 
-    def start_cycle(self, stored: StoredResearchAgentEvidence, started_at: dt.datetime) -> ResearchAgentCycleV1:
+    def start_cycle(
+        self,
+        stored: StoredResearchAgentEvidence,
+        started_at: dt.datetime,
+        *,
+        preserve_authority: bool = False,
+    ) -> ResearchAgentCycleV1:
         cursor_before = (
             self.day_cursor(stored.evidence.market_id)
             if stored.evidence.agent_family_id == "day_trading"
             else self.cursor(stored.evidence.agent_family_id)
         )
-        if stored.sequence <= cursor_before:
+        if stored.sequence <= cursor_before and not preserve_authority:
             raise InvalidResearchAgentCycleStoreError(reason="evidence_already_consumed")
         cycle_id = research_agent_cycle_id(stored.evidence, cursor_before=cursor_before)
         candidate = ResearchAgentCycleV1(
@@ -246,6 +253,14 @@ class ResearchAgentCycleStore:
                 "SELECT sequence,evidence_id,agent_family_id,payload_json FROM evidence ORDER BY sequence"
             ).fetchall()
         return tuple(stored_evidence(row).evidence for row in rows)
+
+    def evidence(self, evidence_id: EvidenceId) -> StoredResearchAgentEvidence | None:
+        with self._database.reader() as connection:
+            row = connection.execute(
+                "SELECT sequence,evidence_id,agent_family_id,payload_json FROM evidence WHERE evidence_id=?",
+                (evidence_id,),
+            ).fetchone()
+        return None if row is None else stored_evidence(row)
 
     def cycle_events(self, cycle_id: CycleId) -> tuple[StoredResearchAgentCycleEvent, ...]:
         with self._database.reader() as connection:
