@@ -22,10 +22,10 @@ from trading_agent.chrome_devtools_types import (
     ChromeTarget,
     InvalidChromeDevToolsError,
 )
+from trading_agent.chrome_visible_dom import VISIBLE_DOM_EXPRESSION, parse_visible_page
 from trading_agent.local_browser_protocol import (
     BrowserPageObservation,
     BrowserScreenshotReceipt,
-    BrowserVisibleLink,
     InvalidLocalBrowserProtocolError,
     require_public_https_url,
 )
@@ -34,20 +34,9 @@ from trading_agent.local_browser_screenshot import (
     publish_private_screenshot,
 )
 
-_DOM_EXPRESSION: Final = """(() => JSON.stringify((() => {
-const body = document.body;
-const visible = Array.from(document.querySelectorAll('a[href]')).filter((anchor) => {
-  const style = getComputedStyle(anchor); const rect = anchor.getBoundingClientRect();
-  return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
-}).slice(0, 100).map((anchor) => ({label: (anchor.innerText || '').trim().slice(0, 200),
-url: String(anchor.href || '').slice(0, 2048)}));
-return {title: String(document.title || '').slice(0, 500), url: String(location.href || '').slice(0, 2048),
-text: String(body ? body.innerText : '').slice(0, 12000), links: visible};
-})()))()"""
 _READY_EXPRESSION: Final = "document.readyState"
 _METADATA_EXPRESSION: Final = (
-    "JSON.stringify({title:String(document.title||'').slice(0,500),"
-    "url:String(location.href||'').slice(0,2048)})"
+    "JSON.stringify({title:String(document.title||'').slice(0,500),url:String(location.href||'').slice(0,2048)})"
 )
 _SCREENSHOT_LIMIT: Final = 8 * 1024 * 1024
 
@@ -89,18 +78,6 @@ class _ScreenshotResult(_BoundaryModel):
 
 class _ScreenshotResponse(_BoundaryModel):
     result: _ScreenshotResult
-
-
-class _PageLink(_BoundaryModel):
-    label: str = Field(max_length=500)
-    url: str = Field(max_length=4_096)
-
-
-class _PagePayload(_BoundaryModel):
-    title: str = Field(max_length=1_000)
-    url: str = Field(max_length=4_096)
-    text: str = Field(max_length=1024 * 1024)
-    links: tuple[_PageLink, ...] = Field(max_length=100)
 
 
 class _MetadataPayload(_BoundaryModel):
@@ -186,39 +163,20 @@ class ChromeDevToolsClient:
     def _wait_ready(self, target_id: str) -> None:
         deadline = self._clock.monotonic() + self._timeout
         while True:
-            state = self._runtime_value(target_id, _READY_EXPRESSION)
-            if state in {"interactive", "complete"}:
-                return
             remaining = deadline - self._clock.monotonic()
             if remaining <= 0:
                 raise InvalidChromeDevToolsError(reason="browser_cdp_timeout")
+            state = self._runtime_value(target_id, _READY_EXPRESSION, timeout_seconds=remaining)
+            remaining = deadline - self._clock.monotonic()
+            if remaining <= 0:
+                raise InvalidChromeDevToolsError(reason="browser_cdp_timeout")
+            if state in {"interactive", "complete"}:
+                return
             self._clock.sleep(min(0.05, remaining))
 
     def _page(self, target_id: str, captured_at: datetime) -> BrowserPageObservation:
-        try:
-            payload = _PagePayload.model_validate_json(self._runtime_value(target_id, _DOM_EXPRESSION))
-            url = require_public_https_url(payload.url)
-            links: list[BrowserVisibleLink] = []
-            for candidate in payload.links:
-                if not 8 <= len(candidate.url) <= 2_048:
-                    continue
-                try:
-                    normalized = require_public_https_url(candidate.url)
-                except InvalidLocalBrowserProtocolError:
-                    continue
-                links.append(BrowserVisibleLink(label=candidate.label.strip()[:200], url=normalized))
-                if len(links) == 40:
-                    break
-            return BrowserPageObservation(
-                target_id=target_id,
-                url=url,
-                title=payload.title[:500],
-                visible_text=payload.text[:12_000],
-                links=tuple(links),
-                captured_at=captured_at,
-            )
-        except (InvalidLocalBrowserProtocolError, ValidationError):
-            raise InvalidChromeDevToolsError(reason="browser_navigation_blocked") from None
+        value = self._runtime_value(target_id, VISIBLE_DOM_EXPRESSION)
+        return parse_visible_page(target_id, value, captured_at)
 
     def _metadata(self, target_id: str, captured_at: datetime) -> BrowserPageObservation:
         try:
@@ -232,12 +190,16 @@ class ChromeDevToolsClient:
         except (InvalidLocalBrowserProtocolError, ValidationError):
             raise InvalidChromeDevToolsError(reason="browser_navigation_blocked") from None
 
-    def _runtime_value(self, target_id: str, expression: str) -> str:
+    def _runtime_value(self, target_id: str, expression: str, *, timeout_seconds: float | None = None) -> str:
         params = json.dumps(
             {"expression": expression, "returnByValue": True, "awaitPromise": False},
             separators=(",", ":"),
         )
-        response = self._command(target_id, CdpCommand(CdpMethod.RUNTIME_EVALUATE, params))
+        response = self._command(
+            target_id,
+            CdpCommand(CdpMethod.RUNTIME_EVALUATE, params),
+            timeout_seconds=timeout_seconds,
+        )
         try:
             value = _RuntimeResponse.model_validate_json(response).result.result
         except ValidationError:
@@ -246,8 +208,14 @@ class ChromeDevToolsClient:
             raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
         return value.value
 
-    def _command(self, target_id: str, command: CdpCommand) -> bytes:
-        return self._transport.command(target_id, command)
+    def _command(
+        self,
+        target_id: str,
+        command: CdpCommand,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> bytes:
+        return self._transport.command(target_id, command, timeout_seconds=timeout_seconds)
 
 
 def _require_target_id(target_id: str) -> None:

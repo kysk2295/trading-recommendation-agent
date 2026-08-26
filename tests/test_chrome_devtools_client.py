@@ -49,7 +49,14 @@ class FixtureCdpTransport:
         self.created += 1
         return self.target
 
-    def command(self, target_id: str, command: CdpCommand) -> bytes:
+    def command(
+        self,
+        target_id: str,
+        command: CdpCommand,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> bytes:
+        _ = timeout_seconds
         self.commands.append((target_id, command))
         return self.responses.pop(0)
 
@@ -74,13 +81,10 @@ def _png(width: int = 2, height: int = 3) -> bytes:
 
 def test_read_returns_only_bounded_visible_text_and_public_https_links() -> None:
     # Given: Chrome's constant DOM extractor returns long text and mixed links.
-    links = [
-        {"label": f" visible {index} ", "url": f"https://example.com/{index}"}
-        for index in range(45)
-    ] + [{"label": "local", "url": "http://127.0.0.1/private"}]
-    page = json.dumps(
-        {"title": "Story", "url": "https://example.com/story", "text": "x" * 13_000, "links": links}
-    )
+    links = [{"label": f" visible {index} ", "url": f"https://example.com/{index}"} for index in range(45)] + [
+        {"label": "local", "url": "http://127.0.0.1/private"}
+    ]
+    page = json.dumps({"title": "Story", "url": "https://example.com/story", "text": "x" * 13_000, "links": links})
     transport = FixtureCdpTransport([_response(page)])
     # When: the current page is read.
     observation = ChromeDevToolsClient(transport).read("target-1", captured_at=NOW)
@@ -89,15 +93,14 @@ def test_read_returns_only_bounded_visible_text_and_public_https_links() -> None
     assert len(observation.links) == 40
     assert all(link.url.startswith("https://example.com/") for link in observation.links)
     assert transport.commands[0][1].method is CdpMethod.RUNTIME_EVALUATE
-    assert "innerText" in transport.commands[0][1].params_json
+    assert "createTreeWalker" in transport.commands[0][1].params_json
+    assert "innerText" not in transport.commands[0][1].params_json
     assert "getComputedStyle" in transport.commands[0][1].params_json
 
 
 def test_open_revalidates_url_and_waits_for_ready_state() -> None:
     # Given: a fresh target that becomes interactive and reports its final location.
-    page = json.dumps(
-        {"title": "Final", "url": "https://example.com/final", "text": "not-open-output", "links": []}
-    )
+    page = json.dumps({"title": "Final", "url": "https://example.com/final", "text": "not-open-output", "links": []})
     transport = FixtureCdpTransport([_navigation_response(), _response("interactive"), _response(page)])
     # When: an allowed URL is opened.
     observation = ChromeDevToolsClient(transport).open("https://EXAMPLE.com/start#fragment", captured_at=NOW)
@@ -129,9 +132,7 @@ def test_search_url_encodes_query_before_navigation() -> None:
     # When: the agent searches with spaces.
     _ = ChromeDevToolsClient(transport).search("AI chips", captured_at=NOW)
     # Then: only an HTTPS Google URL reaches Page.navigate.
-    assert json.loads(transport.commands[0][1].params_json) == {
-        "url": "https://www.google.com/search?q=AI+chips"
-    }
+    assert json.loads(transport.commands[0][1].params_json) == {"url": "https://www.google.com/search?q=AI+chips"}
 
 
 def test_read_fails_honestly_when_visible_text_is_empty() -> None:
@@ -154,9 +155,7 @@ def test_follow_navigates_same_target_to_selected_revalidated_link() -> None:
             "links": [{"label": "Story", "url": "https://example.org/story"}],
         }
     )
-    final = json.dumps(
-        {"title": "Story", "url": "https://example.org/story", "text": "hidden-until-read", "links": []}
-    )
+    final = json.dumps({"title": "Story", "url": "https://example.org/story", "text": "hidden-until-read", "links": []})
     transport = FixtureCdpTransport(
         [_response(current), _navigation_response(), _response("complete"), _response(final)]
     )
@@ -190,9 +189,7 @@ def test_read_skips_oversized_https_link_without_losing_valid_links() -> None:
         }
     )
     # When: the bounded page is read.
-    observation = ChromeDevToolsClient(FixtureCdpTransport([_response(page)])).read(
-        "target-1", captured_at=NOW
-    )
+    observation = ChromeDevToolsClient(FixtureCdpTransport([_response(page)])).read("target-1", captured_at=NOW)
     # Then: the malformed candidate is excluded without discarding the page.
     assert tuple(link.url for link in observation.links) == ("https://example.org/story",)
 
@@ -204,9 +201,7 @@ def test_capture_writes_private_png_and_returns_digest_not_bytes(tmp_path: Path)
     response = json.dumps({"id": 1, "result": {"data": payload}}, separators=(",", ":")).encode()
     root = tmp_path / "screenshots"
     # When: the screenshot is captured.
-    receipt = ChromeDevToolsClient(FixtureCdpTransport([response])).capture(
-        "target-1", root, captured_at=NOW
-    )
+    receipt = ChromeDevToolsClient(FixtureCdpTransport([response])).capture("target-1", root, captured_at=NOW)
     # Then: only immutable private metadata is returned.
     path = Path(receipt.path)
     assert path.stat().st_mode & 0o777 == 0o600
@@ -224,9 +219,7 @@ def test_capture_rejects_png_over_eight_mib_without_writing(tmp_path: Path) -> N
     root = tmp_path / "screenshots"
     # When: capture parses the oversized response.
     with pytest.raises(InvalidChromeDevToolsError) as raised:
-        _ = ChromeDevToolsClient(FixtureCdpTransport([response])).capture(
-            "target-1", root, captured_at=NOW
-        )
+        _ = ChromeDevToolsClient(FixtureCdpTransport([response])).capture("target-1", root, captured_at=NOW)
     # Then: it fails with a stable reason and publishes nothing.
     assert raised.value.reason == "browser_navigation_blocked"
     assert not root.exists()
@@ -243,9 +236,7 @@ def test_capture_rejects_symlinked_screenshot_root(tmp_path: Path) -> None:
     ).encode()
     # When: capture reaches private publication.
     with pytest.raises(InvalidChromeDevToolsError) as raised:
-        _ = ChromeDevToolsClient(FixtureCdpTransport([response])).capture(
-            "target-1", root, captured_at=NOW
-        )
+        _ = ChromeDevToolsClient(FixtureCdpTransport([response])).capture("target-1", root, captured_at=NOW)
     # Then: publication fails closed and writes no artifact through the link.
     assert raised.value.reason == "browser_navigation_blocked"
     assert tuple(destination.iterdir()) == ()

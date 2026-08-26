@@ -44,4 +44,10 @@ class ChromeDevToolsTransport(Protocol):
 
     def create_target(self) -> ChromeTarget: ...
 
-    def command(self, target_id: str, command: CdpCommand) -> bytes: ...
+    def command(
+        self,
+        target_id: str,
+        command: CdpCommand,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> bytes: ...

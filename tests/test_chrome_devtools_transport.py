@@ -99,9 +99,7 @@ def test_loopback_http_uses_only_reviewed_chrome_paths(chrome_http: tuple[Thread
     _server, port = chrome_http
     transport = LoopbackChromeDevToolsTransport(ChromeDebugPort(port), timeout_seconds=1.0)
     # When: health, status, and target creation are requested.
-    assert LoopbackChromeHealthProbe(timeout_seconds=1.0).probe(
-        ChromeDebugPort(port), "/devtools/browser/token"
-    )
+    assert LoopbackChromeHealthProbe(timeout_seconds=1.0).probe(ChromeDebugPort(port), "/devtools/browser/token")
     status = transport.status()
     target = transport.create_target()
     # Then: the client never expands beyond the three exact endpoints.
@@ -120,9 +118,7 @@ def test_health_probe_rejects_browser_websocket_path_mismatch(
     # Given: a healthy loopback Chrome version endpoint.
     _server, port = chrome_http
     # When: the ownership file's browser path does not match Chrome's endpoint.
-    healthy = LoopbackChromeHealthProbe(timeout_seconds=1.0).probe(
-        ChromeDebugPort(port), "/devtools/browser/replaced"
-    )
+    healthy = LoopbackChromeHealthProbe(timeout_seconds=1.0).probe(ChromeDebugPort(port), "/devtools/browser/replaced")
     # Then: controller attachment fails closed without exposing a response body.
     assert healthy is False
 
@@ -140,9 +136,7 @@ def test_health_probe_rejects_oversized_http_body(chrome_http: tuple[ThreadingHT
     _server, port = chrome_http
     _ChromeHandler.version_padding = "x" * (65 * 1024)
     # When: health is probed.
-    healthy = LoopbackChromeHealthProbe(timeout_seconds=1.0).probe(
-        ChromeDebugPort(port), "/devtools/browser/token"
-    )
+    healthy = LoopbackChromeHealthProbe(timeout_seconds=1.0).probe(ChromeDebugPort(port), "/devtools/browser/token")
     # Then: the body is rejected without surfacing its content.
     assert healthy is False
 

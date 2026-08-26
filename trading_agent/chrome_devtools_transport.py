@@ -5,7 +5,7 @@ import re
 import socket
 import threading
 import time
-from typing import Final, Literal
+from typing import Final, Literal, Protocol
 from urllib.parse import urlsplit
 
 import httpx2 as httpx
@@ -27,6 +27,10 @@ _TARGET_LIMIT: Final = 100
 _PATH_TOKEN: Final = re.compile(r"[A-Za-z0-9_-]{1,256}")
 _HttpMethod = Literal["GET", "PUT"]
 _HttpPath = Literal["/json/version", "/json/list", "/json/new"]
+
+
+class _Clock(Protocol):
+    def monotonic(self) -> float: ...
 
 
 class _BoundaryModel(BaseModel):
@@ -56,55 +60,74 @@ _TARGETS = TypeAdapter(tuple[_TargetPayload, ...])
 class LoopbackChromeDevToolsTransport:
     """Mutable serialized CDP transport owns monotonic command identifiers."""
 
-    def __init__(self, port: ChromeDebugPort, *, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        port: ChromeDebugPort,
+        *,
+        timeout_seconds: float,
+        clock: _Clock | None = None,
+    ) -> None:
         if not 1 <= int(port) <= 65_535 or not 0 < timeout_seconds <= 60:
             raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
         self._port = port
         self._timeout = timeout_seconds
+        self._clock = clock or time
         self._request_id = 0
         self._lock = threading.Lock()
 
     def status(self) -> ChromeDevToolsStatus:
-        _ = self._version()
-        targets = self._targets()
+        deadline = self._deadline()
+        _ = self._version(deadline)
+        targets = self._targets(deadline)
         return ChromeDevToolsStatus(True, len(targets))
 
     def create_target(self) -> ChromeTarget:
         try:
-            payload = _TargetPayload.model_validate_json(self._request("PUT", "/json/new"))
+            payload = _TargetPayload.model_validate_json(self._request("PUT", "/json/new", self._deadline()))
         except ValidationError:
             raise InvalidChromeDevToolsError(reason="browser_navigation_blocked") from None
         if payload.kind != "page":
             raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
         return self._target(payload)
 
-    def command(self, target_id: str, command: CdpCommand) -> bytes:
-        target = next((candidate for candidate in self._targets() if candidate.target_id == target_id), None)
+    def command(
+        self,
+        target_id: str,
+        command: CdpCommand,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> bytes:
+        deadline = self._deadline(timeout_seconds)
+        target = next(
+            (candidate for candidate in self._targets(deadline) if candidate.target_id == target_id),
+            None,
+        )
         if target is None:
             raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
         with self._lock:
             self._request_id += 1
             request_id = self._request_id
             payload = (
-                f'{{"id":{request_id},"method":{json.dumps(command.method.value)},'
-                f'"params":{command.params_json}}}'
+                f'{{"id":{request_id},"method":{json.dumps(command.method.value)},"params":{command.params_json}}}'
             )
             if len(payload.encode()) > 16 * 1024:
                 raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
-            return self._exchange(target.websocket_url, request_id, payload)
+            return self._exchange(target.websocket_url, request_id, payload, deadline)
 
-    def _version(self) -> _VersionPayload:
+    def _version(self, deadline: float | None = None) -> _VersionPayload:
         try:
-            payload = _VersionPayload.model_validate_json(self._request("GET", "/json/version"))
+            payload = _VersionPayload.model_validate_json(
+                self._request("GET", "/json/version", deadline or self._deadline())
+            )
         except ValidationError:
             raise InvalidChromeDevToolsError(reason="browser_navigation_blocked") from None
         expected = "/devtools/browser/"
         _ = _loopback_websocket(payload.websocket_url, self._port, expected)
         return payload
 
-    def _targets(self) -> tuple[ChromeTarget, ...]:
+    def _targets(self, deadline: float | None = None) -> tuple[ChromeTarget, ...]:
         try:
-            payloads = _TARGETS.validate_json(self._request("GET", "/json/list"))
+            payloads = _TARGETS.validate_json(self._request("GET", "/json/list", deadline or self._deadline()))
         except ValidationError:
             raise InvalidChromeDevToolsError(reason="browser_navigation_blocked") from None
         pages = tuple(self._target(payload) for payload in payloads if payload.kind == "page")
@@ -120,8 +143,9 @@ class LoopbackChromeDevToolsTransport:
             raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
         return ChromeTarget(payload.target_id, payload.url, payload.title, websocket_url)
 
-    def _request(self, method: _HttpMethod, path: _HttpPath) -> bytes:
-        timeout = httpx.Timeout(self._timeout, connect=self._timeout)
+    def _request(self, method: _HttpMethod, path: _HttpPath, deadline: float) -> bytes:
+        remaining = self._remaining(deadline)
+        timeout = httpx.Timeout(remaining, connect=remaining)
         limits = httpx.Limits(max_connections=4, max_keepalive_connections=2, keepalive_expiry=5.0)
         transport = httpx.HTTPTransport(
             trust_env=False,
@@ -148,19 +172,20 @@ class LoopbackChromeDevToolsTransport:
                     body.extend(chunk)
                     if len(body) > _HTTP_BODY_LIMIT:
                         raise InvalidChromeDevToolsError(reason="browser_navigation_blocked")
+                _ = self._remaining(deadline)
                 return bytes(body)
         except httpx.TimeoutException:
             raise InvalidChromeDevToolsError(reason="browser_cdp_timeout") from None
         except httpx.HTTPError:
             raise InvalidChromeDevToolsError(reason="browser_navigation_blocked") from None
 
-    def _exchange(self, websocket_url: str, request_id: int, payload: str) -> bytes:
-        deadline = time.monotonic() + self._timeout
+    def _exchange(self, websocket_url: str, request_id: int, payload: str, deadline: float) -> bytes:
         try:
+            remaining = self._remaining(deadline)
             with connect(
                 websocket_url,
-                open_timeout=self._timeout,
-                close_timeout=self._timeout,
+                open_timeout=remaining,
+                close_timeout=remaining,
                 ping_interval=None,
                 compression=None,
                 proxy=None,
@@ -169,10 +194,9 @@ class LoopbackChromeDevToolsTransport:
             ) as connection:
                 connection.send(payload)
                 while True:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise InvalidChromeDevToolsError(reason="browser_cdp_timeout")
+                    remaining = self._remaining(deadline)
                     message = connection.recv(timeout=remaining, decode=False)
+                    _ = self._remaining(deadline)
                     match message:
                         case bytes() as body:
                             pass
@@ -190,6 +214,18 @@ class LoopbackChromeDevToolsTransport:
             raise InvalidChromeDevToolsError(reason="browser_cdp_timeout") from None
         except (OSError, ValidationError, WebSocketException):
             raise InvalidChromeDevToolsError(reason="browser_navigation_blocked") from None
+
+    def _deadline(self, timeout_seconds: float | None = None) -> float:
+        if timeout_seconds is not None and not 0 < timeout_seconds <= 60:
+            raise InvalidChromeDevToolsError(reason="browser_cdp_timeout")
+        timeout = self._timeout if timeout_seconds is None else min(timeout_seconds, self._timeout)
+        return self._clock.monotonic() + timeout
+
+    def _remaining(self, deadline: float) -> float:
+        remaining = deadline - self._clock.monotonic()
+        if remaining <= 0:
+            raise InvalidChromeDevToolsError(reason="browser_cdp_timeout")
+        return remaining
 
 
 class LoopbackChromeHealthProbe:
