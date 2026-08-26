@@ -197,15 +197,18 @@ def _flush_writer_generation(identity: _DatabaseIdentity, connection: sqlite3.Co
     replace_sqlite_database(identity.parent, identity.name, payload)
     replacement = _open_private_database(identity.parent, identity.name, create=False, write=True)
     original = identity.descriptor
+    adopted = False
     try:
         _require_generation_payload(replacement, payload)
         identity.descriptor = replacement
         _require_database_identity(identity)
-    except BaseException:
-        identity.descriptor = original
-        os.close(replacement)
-        raise
-    os.close(original)
+        adopted = True
+    finally:
+        if adopted:
+            os.close(original)
+        else:
+            identity.descriptor = original
+            os.close(replacement)
 
 
 def _require_generation_payload(descriptor: int, payload: bytes) -> None:
@@ -216,17 +219,20 @@ def _require_generation_payload(descriptor: int, payload: bytes) -> None:
 def _reconcile_writer_generation(identity: _DatabaseIdentity, connection: sqlite3.Connection) -> None:
     replacement = _open_private_database(identity.parent, identity.name, create=False, write=True)
     original = identity.descriptor
+    adopted = False
     try:
         identity.descriptor = replacement
         _require_database_identity(identity)
         _ = load_sqlite_database(connection, replacement)
         _enable_foreign_keys(connection)
         _require_schema(connection)
-    except BaseException:
-        identity.descriptor = original
-        os.close(replacement)
-        raise
-    os.close(original)
+        adopted = True
+    finally:
+        if adopted:
+            os.close(original)
+        else:
+            identity.descriptor = original
+            os.close(replacement)
 
 
 def _connect_descriptor(descriptor: int) -> sqlite3.Connection:
