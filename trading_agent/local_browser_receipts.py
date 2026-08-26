@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,7 +18,9 @@ from trading_agent.local_browser_gateway_wire import (
     parse_browser_response,
     request_action,
 )
-from trading_agent.local_browser_private_fs import InvalidLocalBrowserPrivateFsError
+from trading_agent.local_browser_private_fs import (
+    InvalidLocalBrowserPrivateFsError,
+)
 from trading_agent.local_browser_protocol import (
     BrowserCaptureRequest,
     BrowserFollowRequest,
@@ -25,6 +29,10 @@ from trading_agent.local_browser_protocol import (
     BrowserResponse,
     BrowserSearchRequest,
     BrowserStatusRequest,
+)
+from trading_agent.local_browser_receipt_lease import (
+    InvalidLocalBrowserReceiptLeaseError,
+    hold_local_browser_receipt_execution_lease,
 )
 from trading_agent.local_browser_receipt_sqlite import (
     PrivateBrowserReceiptDatabase,
@@ -132,6 +140,15 @@ class LocalBrowserReceiptStore:
             raise InvalidLocalBrowserReceiptError()
         return response
 
+    @contextmanager
+    def execution_lease(self) -> Iterator[None]:
+        database = self._require_database()
+        try:
+            with hold_local_browser_receipt_execution_lease(database):
+                yield
+        except InvalidLocalBrowserReceiptLeaseError:
+            raise InvalidLocalBrowserReceiptError() from None
+
     def append(self, receipt: BrowserReceipt) -> None:
         connection = self._require_open()
         replay = self.replay(receipt.request.request_id, receipt.request_sha256)
@@ -177,6 +194,11 @@ class LocalBrowserReceiptStore:
         if self._connection is None:
             raise InvalidLocalBrowserReceiptError(reason="browser_receipt_store_closed")
         return self._connection
+
+    def _require_database(self) -> PrivateBrowserReceiptDatabase:
+        if self._database is None:
+            raise InvalidLocalBrowserReceiptError(reason="browser_receipt_store_closed")
+        return self._database
 
 
 def _receipt_metadata(

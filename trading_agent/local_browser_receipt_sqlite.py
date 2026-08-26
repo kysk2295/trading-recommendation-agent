@@ -7,19 +7,35 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from trading_agent.local_browser_private_fs import open_private_browser_directory
+from trading_agent.local_browser_private_fs import (
+    InvalidLocalBrowserPrivateFsError,
+    open_private_browser_directory,
+)
 
 _SCHEMA_VERSION: Final = 1
+
+
+class InvalidPrivateBrowserReceiptDatabaseError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
 class PrivateBrowserReceiptDatabase:
     connection: sqlite3.Connection
     identity_descriptor: int
+    path: Path
+    owner_id: int
 
     def close(self) -> None:
         self.connection.close()
         os.close(self.identity_descriptor)
+
+    def require_current(self) -> None:
+        try:
+            with open_private_browser_directory(self.path.parent, self.owner_id) as parent:
+                _require_database_identity(parent.descriptor, self.path.name, self.identity_descriptor)
+        except (InvalidLocalBrowserPrivateFsError, OSError, TypeError, ValueError):
+            raise InvalidPrivateBrowserReceiptDatabaseError() from None
 
 
 def open_private_browser_receipt_database(path: Path, owner_id: int) -> PrivateBrowserReceiptDatabase:
@@ -37,7 +53,7 @@ def open_private_browser_receipt_database(path: Path, owner_id: int) -> PrivateB
             connection.close()
             os.close(descriptor)
             raise
-    return PrivateBrowserReceiptDatabase(connection, descriptor)
+    return PrivateBrowserReceiptDatabase(connection, descriptor, path, owner_id)
 
 
 def _open_database_entry(parent: int, name: str, owner_id: int) -> int:

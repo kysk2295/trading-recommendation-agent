@@ -41,17 +41,15 @@ class LocalBrowserGateway:
         canonical = canonical_browser_request(request)
         request_sha256 = hashlib.sha256(canonical).hexdigest()
         try:
-            replay = self._receipt_store.replay(request.request_id, request_sha256)
+            with self._receipt_store.execution_lease():
+                replay = self._receipt_store.replay(request.request_id, request_sha256)
+                if replay is not None:
+                    return replay
+                response = self._dispatcher.dispatch(request)
+                self._receipt_store.append(browser_receipt(request, response, self._dispatcher.now()))
+                return response
         except (InvalidLocalBrowserReceiptError, LocalBrowserReceiptConflictError) as error:
             raise InvalidLocalBrowserGatewayError(reason=error.reason) from None
-        if replay is not None:
-            return replay
-        response = self._dispatcher.dispatch(request)
-        try:
-            self._receipt_store.append(browser_receipt(request, response, self._dispatcher.now()))
-        except (InvalidLocalBrowserReceiptError, LocalBrowserReceiptConflictError) as error:
-            raise InvalidLocalBrowserGatewayError(reason=error.reason) from None
-        return response
 
     def handle_bytes(self, payload: bytes) -> bytes:
         try:

@@ -4,6 +4,7 @@ import hashlib
 import os
 import sqlite3
 import stat
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -119,3 +120,53 @@ def test_receipt_database_rejects_version_spoof_without_append_only_triggers(tmp
     database.chmod(0o600)
     with pytest.raises(InvalidLocalBrowserReceiptError), LocalBrowserReceiptStore(database):
         pass
+
+
+@pytest.mark.parametrize("interruption", (InvalidLocalBrowserReceiptError, KeyboardInterrupt, SystemExit))
+def test_receipt_execution_lease_releases_on_error_or_process_interruption(
+    tmp_path: Path, interruption: type[BaseException]
+) -> None:
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    path = state / "receipts.sqlite3"
+    with LocalBrowserReceiptStore(path) as first, LocalBrowserReceiptStore(path) as second:
+        with pytest.raises(interruption), first.execution_lease():
+            raise interruption()
+        acquired = threading.Event()
+
+        def acquire() -> None:
+            with second.execution_lease():
+                acquired.set()
+
+        worker = threading.Thread(target=acquire, daemon=True)
+        worker.start()
+        worker.join(timeout=1.0)
+        assert acquired.is_set()
+
+
+def test_receipt_execution_lease_rejects_database_name_replacement_before_release(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    path = state / "receipts.sqlite3"
+    with (
+        LocalBrowserReceiptStore(path) as store,
+        pytest.raises(InvalidLocalBrowserReceiptError),
+        store.execution_lease(),
+    ):
+        path.unlink()
+        path.touch(mode=0o600)
+
+
+def test_receipt_execution_lease_rejects_parent_replacement_before_release(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    path = state / "receipts.sqlite3"
+    moved = tmp_path / "moved"
+    with LocalBrowserReceiptStore(path) as store:
+        with pytest.raises(InvalidLocalBrowserReceiptError), store.execution_lease():
+            state.rename(moved)
+            state.mkdir(mode=0o700)
+        state.rmdir()
+        moved.rename(state)
+        with store.execution_lease():
+            pass
