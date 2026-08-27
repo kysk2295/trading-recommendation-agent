@@ -32,11 +32,22 @@ uv run --offline python run_kr_loop_automation.py install \
 
 ## Verification evidence
 
-- Focused and adjacent regression suite: 65 tests passed before the final integration additions.
+- Focused and adjacent regression suite: 67 tests passed after the installed-runtime calendar fix.
 - Full two-session fixture: isolated champion/challenger outcome memories produced `shadowed`, then `promoted`, changed the active manifest to `candidate`, and invoked one Research Agent restart.
 - Stale-health fixture: recorded `rolled_back`, changed the active manifest to `baseline`, and invoked the second restart.
+- Current-calendar regression: when a historical forecast and the current KIS snapshot both contain the same date, only the snapshot whose `base_date` is today is authoritative.
 - Ruff: changed Python files passed.
 - basedpyright: changed production Python files passed with zero errors and warnings.
 - Manual CLI gate: help rendered; a missing config returned exit 2 with the redacted error; valid fixture `status` and closed-session `tick` returned canonical JSON.
+
+## Installed local runtime
+
+- Automation config: `~/.config/trading-agent/kr-loop-automation-v1-0ac932e.json`
+- Active-release authority: `~/.config/trading-agent/kr-loop-active-release-v1.json`
+- Research Agent plist: `ai.trading-agent.research-agent-runtime-active-45a63a3e12c32fc4.plist`
+- Loop plist: `ai.trading-agent.kr-loop-automation-45a63a3e12c32fc4.plist`
+- The Research Agent was observed `running` through the active-release launcher with a fresh `ready` health report.
+- The Loop LaunchAgent was manually kicked once and was observed `not running`, `runs = 1`, `last exit code = 0`, which is the expected terminal state for a scheduled one-shot tick.
+- The real 2026-08-27 post-close tick selected official session `2026-08-27`, returned `idle`, and reported `candidate_count=0`; it did not fabricate a mutation or shadow result.
 
 The fixture and synthetic scores prove lifecycle behavior only. They do not prove profitability or a natural-session market outcome.
