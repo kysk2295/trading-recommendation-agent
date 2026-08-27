@@ -14,6 +14,7 @@ type JsonValue = str | int | float | bool | None | list["JsonValue"] | dict[str,
 
 if TYPE_CHECKING:
     from trading_agent.autonomous_reasoning import AutonomousReasoningRequest, AutonomousReasoningResponse
+    from trading_agent.autonomous_task_models import AutonomousTaskStep
 
 
 def canonical_reasoning_prompt(request: AutonomousReasoningRequest, client: LlmProposalClient | None) -> str:
@@ -29,7 +30,7 @@ def canonical_reasoning_prompt(request: AutonomousReasoningRequest, client: LlmP
         "memories": tuple(memory.model_dump(mode="json") for memory in request.memories),
         "now": request.now.isoformat(),
         "observations": tuple(observation.model_dump(mode="json") for observation in request.observations),
-        "prior_steps": tuple(step.model_dump(mode="json") for step in request.prior_steps),
+        "prior_steps": tuple(_compact_step(step) for step in request.prior_steps),
         "provider": provider,
         "remaining_budget": request.remaining_budget.model_dump(mode="json"),
         "response_schema": _autonomous_response_schema(),
@@ -40,6 +41,20 @@ def canonical_reasoning_prompt(request: AutonomousReasoningRequest, client: LlmP
     if len(prompt.encode()) > _MAX_PROMPT_BYTES:
         raise InvalidAutonomousReasoningError(reason="autonomous_reasoning_prompt_invalid")
     return prompt
+
+
+def _compact_step(step: AutonomousTaskStep) -> dict[str, JsonValue]:
+    return {
+        "blocked_reason": step.blocked_reason,
+        "next_wake_at": None if step.next_wake_at is None else step.next_wake_at.isoformat(),
+        "next_wake_event": step.next_wake_event,
+        "occurred_at": step.occurred_at.isoformat(),
+        "payload_json": step.payload_json,
+        "role": step.role.value,
+        "sequence": step.sequence,
+        "state": step.state.value,
+        "terminal_reason": step.terminal_reason,
+    }
 
 
 def _autonomous_response_schema() -> dict[str, JsonValue]:
