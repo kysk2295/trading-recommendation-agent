@@ -28,6 +28,10 @@ from trading_agent.kr_loop_engineer_models import (
     build_candidate_snapshot,
 )
 from trading_agent.kr_loop_engineer_policy import mutation_contract
+from trading_agent.kr_loop_release_artifacts import (
+    InvalidKrLoopReleaseArtifactError,
+    KrLoopReleaseArtifactStore,
+)
 from trading_agent.private_directory_identity import absolute_private_path
 from trading_agent.private_immutable_file import InvalidPrivateImmutableFileError, publish_private_immutable_text
 
@@ -120,6 +124,16 @@ class KrLoopMutationExecutor:
             patch_sha256 = hashlib.sha256(patch.encode()).hexdigest()
             artifact = self._artifact_root / f"{detected.candidate_id}.patch"
             _ = publish_private_immutable_text(artifact, patch)
+            _ = KrLoopReleaseArtifactStore(self._artifact_root).finalize(
+                repository=self._repository,
+                checkout=checkout,
+                task_root=self._task_root,
+                candidate_id=detected.candidate_id,
+                base_commit=base_commit,
+                candidate_commit=candidate_commit,
+                patch_sha256=patch_sha256,
+                created_at=now,
+            )
             ready = build_candidate_snapshot(
                 bundle_id=bundle.bundle_id,
                 base_commit=base_commit,
@@ -155,6 +169,7 @@ class KrLoopMutationExecutor:
             )
         except (
             GrokTaskRunnerError,
+            InvalidKrLoopReleaseArtifactError,
             InvalidPrivateImmutableFileError,
             KrLoopMutationExecutionError,
             OSError,

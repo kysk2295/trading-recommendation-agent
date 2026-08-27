@@ -198,6 +198,25 @@ class AutonomousMemoryReader:
             ]
         )
 
+    def recent(
+        self,
+        scope: AutonomousMemoryScope | str,
+        *,
+        limit: int,
+    ) -> tuple[AutonomousMemoryRecord, ...]:
+        try:
+            parsed_scope = AutonomousMemoryScope(scope)
+        except ValueError as error:
+            raise InvalidAutonomousMemoryStoreError(reason="search_scope_invalid") from error
+        if type(limit) is not int or not 1 <= limit <= 128:
+            raise InvalidAutonomousMemoryStoreError(reason="search_limit_invalid")
+        records = self._records("WHERE scope=?", (parsed_scope.value,))
+        return tuple(
+            sorted(records, key=lambda record: (-record.recorded_at.timestamp(), -record.version, record.memory_id))[
+                :limit
+            ]
+        )
+
     def _records(self, clause: str, parameters: tuple[str, ...]) -> tuple[AutonomousMemoryRecord, ...]:
         try:
             with reader_connection(self._path) as connection:

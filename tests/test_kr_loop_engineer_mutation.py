@@ -86,6 +86,7 @@ def test_isolated_mutation_publishes_private_immutable_patch(tmp_path: Path) -> 
     assert metadata.st_uid == os.getuid()
     assert "CHANGED" not in (repository / changed).read_text(encoding="utf-8")
     assert not tuple((tmp_path / "tasks").iterdir())
+    assert (tmp_path / "artifacts" / "releases" / result.snapshot.candidate_id / "candidate").is_dir()
 
 
 def test_out_of_scope_worker_change_is_rejected_without_artifact(tmp_path: Path) -> None:
