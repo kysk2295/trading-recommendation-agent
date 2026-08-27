@@ -44,8 +44,10 @@ class InvalidResearchAgentServiceConfigError(RuntimeError):
 class ResearchAgentServiceConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
-    schema_version: Literal[2, 3] = 2
+    schema_version: Literal[2, 3, 4] = 2
     browser_gateway_config: Path | None = None
+    kr_market_receipt_root: Path | None = None
+    kr_social_signal_database: Path | None = None
     label: Literal["ai.trading-agent.research-agent-runtime"] = RESEARCH_AGENT_SERVICE_LABEL
     project_root: Path
     uv_path: Path
@@ -62,11 +64,25 @@ class ResearchAgentServiceConfig(BaseModel):
     def require_absolute_bound_configuration(self) -> Self:
         match self.schema_version:
             case 2:
-                if self.browser_gateway_config is not None:
+                if self.browser_gateway_config is not None or self._has_kr_authority():
                     raise InvalidResearchAgentServiceConfigError(reason="service_browser_binding_invalid")
             case 3:
-                if self.browser_gateway_config is None or not self.browser_gateway_config.is_absolute():
+                if (
+                    self.browser_gateway_config is None
+                    or not self.browser_gateway_config.is_absolute()
+                    or self._has_kr_authority()
+                ):
                     raise InvalidResearchAgentServiceConfigError(reason="service_browser_binding_invalid")
+            case 4:
+                if (
+                    self.browser_gateway_config is None
+                    or not self.browser_gateway_config.is_absolute()
+                    or self.kr_market_receipt_root is None
+                    or not self.kr_market_receipt_root.is_absolute()
+                    or self.kr_social_signal_database is None
+                    or not self.kr_social_signal_database.is_absolute()
+                ):
+                    raise InvalidResearchAgentServiceConfigError(reason="service_kr_binding_invalid")
             case unreachable:
                 assert_never(unreachable)
         direct = (
@@ -82,6 +98,9 @@ class ResearchAgentServiceConfig(BaseModel):
         if self.systematic.project_root != self.project_root or self.systematic.uv_executable != self.uv_path:
             raise InvalidResearchAgentServiceConfigError(reason="systematic_service_binding_invalid")
         return self
+
+    def _has_kr_authority(self) -> bool:
+        return self.kr_market_receipt_root is not None or self.kr_social_signal_database is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,8 +206,9 @@ def verify_research_agent_launch_agent(
 
 def _config_text(config: ResearchAgentServiceConfig) -> str:
     payload = config.model_dump(mode="json")
-    if config.browser_gateway_config is None:
-        del payload["browser_gateway_config"]
+    for field in ("browser_gateway_config", "kr_market_receipt_root", "kr_social_signal_database"):
+        if payload[field] is None:
+            del payload[field]
     return json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True) + "\n"
 
 

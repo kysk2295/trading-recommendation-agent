@@ -41,6 +41,13 @@ def test_schema_v2_config_remains_canonical_without_browser_field(tmp_path: Path
     # Then: the old field set and nested null remain byte-for-byte canonical.
     assert payload["schema_version"] == 2
     assert "browser_gateway_config" not in payload
+    assert "kr_market_receipt_root" not in payload
+    assert "kr_social_signal_database" not in payload
+    assert set(payload) == set(config.model_dump(mode="json")) - {
+        "browser_gateway_config",
+        "kr_market_receipt_root",
+        "kr_social_signal_database",
+    }
     assert payload["source_paths"]["kr_calendar_store"] is None
     assert path.read_text(encoding="utf-8") == (
         json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True) + "\n"
@@ -48,6 +55,90 @@ def test_schema_v2_config_remains_canonical_without_browser_field(tmp_path: Path
     report = service_status(config, dt.datetime(2026, 8, 27, tzinfo=dt.UTC))
     assert report.schema_version == 2
     assert report.config_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_schema_v3_config_remains_canonical_without_kr_authority(tmp_path: Path) -> None:
+    # Given: the shipped schema-v3 browser-bound configuration.
+    source = _config(tmp_path)
+    _, gateway_path = browser_gateway_config(tmp_path / "browser-v3")
+    config = ResearchAgentServiceConfig.model_validate(
+        source.model_dump(mode="python") | {"schema_version": 3, "browser_gateway_config": gateway_path}
+    )
+    path = tmp_path / "private" / "service-v3.json"
+
+    # When: it is written through the canonical config boundary.
+    assert write_research_agent_service_config(path, config)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    # Then: schema v3 has exactly its old field set and no KR authority.
+    old_fields = set(source.model_dump(mode="json")) - {
+        "browser_gateway_config",
+        "kr_market_receipt_root",
+        "kr_social_signal_database",
+    }
+    assert set(payload) == old_fields | {"browser_gateway_config"}
+    assert "kr_market_receipt_root" not in payload
+    assert "kr_social_signal_database" not in payload
+    assert path.read_text(encoding="utf-8") == (
+        json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True) + "\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("schema_version", "market_root", "signal_database"),
+    (
+        (2, Path("/tmp/market"), Path("/tmp/signals.sqlite3")),
+        (3, Path("/tmp/market"), Path("/tmp/signals.sqlite3")),
+        (4, None, None),
+        (4, Path("/tmp/market"), None),
+        (4, None, Path("/tmp/signals.sqlite3")),
+        (4, Path("market"), Path("/tmp/signals.sqlite3")),
+        (4, Path("/tmp/market"), Path("signals.sqlite3")),
+    ),
+)
+def test_schema_version_requires_exact_kr_authority_pair(
+    tmp_path: Path,
+    schema_version: int,
+    market_root: Path | None,
+    signal_database: Path | None,
+) -> None:
+    # Given: a schema/path combination that could silently broaden authority.
+    source = _config(tmp_path)
+    _, gateway_path = browser_gateway_config(tmp_path / "browser-v4")
+    payload = source.model_dump(mode="python") | {
+        "schema_version": schema_version,
+        "browser_gateway_config": gateway_path if schema_version >= 3 else None,
+        "kr_market_receipt_root": market_root,
+        "kr_social_signal_database": signal_database,
+    }
+
+    # When/Then: the typed boundary rejects the invalid authority combination.
+    with pytest.raises(InvalidResearchAgentServiceConfigError):
+        ResearchAgentServiceConfig.model_validate(payload)
+
+
+def test_schema_v4_requires_and_serializes_absolute_kr_authority(tmp_path: Path) -> None:
+    # Given: all three schema-v4 authority paths are explicit and absolute.
+    source = _config(tmp_path)
+    _, gateway_path = browser_gateway_config(tmp_path / "browser-v4-valid")
+    config = ResearchAgentServiceConfig.model_validate(
+        source.model_dump(mode="python")
+        | {
+            "schema_version": 4,
+            "browser_gateway_config": gateway_path,
+            "kr_market_receipt_root": tmp_path / "market",
+            "kr_social_signal_database": tmp_path / "signals.sqlite3",
+        }
+    )
+    path = tmp_path / "private" / "service-v4.json"
+
+    # When: the canonical config is persisted.
+    assert write_research_agent_service_config(path, config)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    # Then: both bounded KR authorities are present together.
+    assert payload["kr_market_receipt_root"] == str(tmp_path / "market")
+    assert payload["kr_social_signal_database"] == str(tmp_path / "signals.sqlite3")
 
 
 @pytest.mark.parametrize(
