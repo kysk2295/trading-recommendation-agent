@@ -15,6 +15,10 @@ from trading_agent.dashboard_agent_runtime import (
     project_agent_runtime,
 )
 from trading_agent.dashboard_derivatives_options import OPTIONS_TRACE_ID
+from trading_agent.dashboard_kr_autonomous_operator import (
+    merge_kr_autonomous_operator,
+    project_kr_autonomous_operator,
+)
 from trading_agent.dashboard_market_calendar import project_market_calendar
 from trading_agent.dashboard_models_v2 import (
     CommandCenterV2,
@@ -47,6 +51,7 @@ from trading_agent.dashboard_system_current_authority import (
 )
 from trading_agent.dashboard_system_evidence import project_system_evidence
 from trading_agent.dashboard_us_day_live import DayAgentVersionReader, merge_us_day_live, project_us_day_live
+from trading_agent.kr_autonomous_operator_paths import KrAutonomousOperatorPaths
 
 ROOT_BY_WORKSPACE: Final[dict[WorkspaceName, str]] = {
     "command_center": "system",
@@ -75,6 +80,7 @@ def collect_dashboard_snapshot_v2(
     cycle_database: Path | None = None,
     day_version_reader: DayAgentVersionReader | None = None,
     kr_day_state_root: Path | None = None,
+    kr_operator_paths: KrAutonomousOperatorPaths | None = None,
 ) -> DashboardSnapshotV2:
     generated_at = dt.datetime.now(dt.UTC) if now is None else now
     if generated_at.tzinfo is None or generated_at.utcoffset() is None:
@@ -125,6 +131,13 @@ def collect_dashboard_snapshot_v2(
     day_agent = project_day_agent_facade(outputs, now=generated_at, kr_day_state_root=kr_day_state_root)
     projections["markets"] = merge_day_agent_facade(projections["markets"], day_agent, workspace="markets")
     projections["research"] = merge_day_agent_facade(projections["research"], day_agent, workspace="research")
+    if kr_operator_paths is not None:
+        kr_operator = project_kr_autonomous_operator(kr_operator_paths, now=generated_at)
+        projections["markets"] = merge_kr_autonomous_operator(projections["markets"], kr_operator, workspace="markets")
+        projections["research"] = merge_kr_autonomous_operator(
+            projections["research"], kr_operator, workspace="research"
+        )
+        projections["paper"] = merge_kr_autonomous_operator(projections["paper"], kr_operator, workspace="paper")
     projections["system"] = project_system_evidence(
         outputs,
         now=generated_at,
@@ -200,6 +213,7 @@ def collect_dashboard_snapshot_v2(
                 "fred-alfred-artifact-reader-v1",
                 "futures-security-master-reader-v1",
                 "kr-theme-provider-reader-v1",
+                "kr-autonomous-operator-reader-v1",
                 "market-calendar-reader-v2",
                 "hermes-session-terminal-reader-v1",
                 "lane-registry-reader-v1",

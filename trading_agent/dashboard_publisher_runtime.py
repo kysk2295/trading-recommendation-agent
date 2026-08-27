@@ -27,6 +27,7 @@ from trading_agent.dashboard_relay import (
     pairing_url,
 )
 from trading_agent.dashboard_system_current_authority import SystemAuthorityVerifierInput
+from trading_agent.kr_autonomous_operator_paths import KrAutonomousOperatorPaths
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +48,7 @@ class PublisherRelayRequest:
     system_authority_verifier: SystemAuthorityVerifierInput
     cycle_database: Path | None
     kr_day_state_root: Path
+    kr_operator_paths: KrAutonomousOperatorPaths | None
 
 
 async def run_publisher_relay(
@@ -66,10 +68,12 @@ async def run_publisher_relay(
             binding=binding,
             cycle_database=request.cycle_database,
             kr_day_state_root=request.kr_day_state_root,
+            kr_operator_paths=request.kr_operator_paths,
         ),
         pair_browser_once=_pair_browser_once,
         cycle_database=request.cycle_database,
         kr_day_state_root=request.kr_day_state_root,
+        kr_operator_paths=request.kr_operator_paths,
     )
 
 
@@ -83,6 +87,7 @@ async def _run_event_connection(
     binding: PublisherRuntimeBinding,
     cycle_database: Path | None,
     kr_day_state_root: Path,
+    kr_operator_paths: KrAutonomousOperatorPaths | None,
 ) -> None:
     send_lock = anyio.Lock()
     limiter = anyio.CapacityLimiter(1)
@@ -111,6 +116,7 @@ async def _run_event_connection(
                 system_authority_verifier,
                 cycle_database,
                 kr_day_state_root,
+                kr_operator_paths,
             )
             tasks.start_soon(receive_events, socket, receiver)
             tasks.start_soon(watch_pairing_signal, pairing_runtime)

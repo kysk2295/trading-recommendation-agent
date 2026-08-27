@@ -23,10 +23,12 @@ from trading_agent.dashboard_kr_autonomous_bridge import (
 )
 from trading_agent.dashboard_models_v2 import DashboardSnapshotV2
 from trading_agent.dashboard_native_watch import watch_native_changes
+from trading_agent.dashboard_publisher_watch_roots import watch_roots
 from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
 from trading_agent.dashboard_system_current_authority import (
     SystemAuthorityVerifierInput,
 )
+from trading_agent.kr_autonomous_operator_paths import KrAutonomousOperatorPaths
 
 MAX_RECONNECT_SECONDS = 60
 WATCH_DEBOUNCE_MS = 2_000
@@ -85,10 +87,15 @@ async def watch_output_events(
     system_authority_verifier: SystemAuthorityVerifierInput = None,
     cycle_database: Path | None = None,
     kr_day_state_root: Path | None = None,
+    kr_operator_paths: KrAutonomousOperatorPaths | None = None,
 ) -> None:
     event_source = watch_native_changes if watcher is None else watcher
     code_sha = current_code_sha()
-    roots = watch_roots(outputs, kr_day_state_root=kr_day_state_root)
+    roots = watch_roots(
+        outputs,
+        kr_day_state_root=kr_day_state_root,
+        kr_operator_paths=kr_operator_paths,
+    )
     while True:
         restarted = False
         iterator = event_source(
@@ -118,6 +125,7 @@ async def watch_output_events(
                         outputs,
                         system_authority_verifier=system_authority_verifier,
                         kr_day_state_root=kr_day_state_root,
+                        kr_operator_paths=kr_operator_paths,
                     )
                 else:
                     snapshot = collect_dashboard_snapshot_v2(
@@ -125,10 +133,15 @@ async def watch_output_events(
                         system_authority_verifier=system_authority_verifier,
                         cycle_database=cycle_database,
                         kr_day_state_root=kr_day_state_root,
+                        kr_operator_paths=kr_operator_paths,
                     )
                 async with send_lock:
                     await send_snapshot(socket, snapshot)
-                updated_roots = watch_roots(outputs, kr_day_state_root=kr_day_state_root)
+                updated_roots = watch_roots(
+                    outputs,
+                    kr_day_state_root=kr_day_state_root,
+                    kr_operator_paths=kr_operator_paths,
+                )
                 if updated_roots != roots:
                     roots = updated_roots
                     restarted = True
@@ -150,31 +163,6 @@ def publisher_url(dashboard_url: str) -> str:
     parsed = urlsplit(dashboard_url)
     scheme = "wss" if parsed.scheme == "https" else "ws"
     return urlunsplit((scheme, parsed.netloc, "/api/realtime/publish", "", ""))
-
-
-def watch_roots(outputs: Path, *, kr_day_state_root: Path | None = None) -> tuple[Path, ...]:
-    root = outputs.resolve()
-    candidates = (
-        root / "live_sessions",
-        root / "source_evidence",
-        root / "experiment_control",
-        root / "lane_control",
-        root / "kr_theme",
-        root / "derivatives",
-        root / "paper",
-        root / "hermes",
-        root / "system",
-    )
-    operational = ()
-    if kr_day_state_root is not None:
-        requested = kr_day_state_root.resolve()
-        parent = requested.parent
-        if requested.is_dir():
-            operational = (requested,)
-        elif parent.is_dir() and parent not in {Path.home().resolve(), Path(requested.anchor)}:
-            operational = (parent,)
-    existing = tuple(path for path in (*candidates, *operational) if path.is_dir())
-    return existing or (root,)
 
 
 def reconnect_delay_seconds(attempt: int) -> int:

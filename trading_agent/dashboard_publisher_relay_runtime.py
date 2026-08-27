@@ -17,6 +17,7 @@ from trading_agent.dashboard_snapshot_v2 import collect_dashboard_snapshot_v2
 from trading_agent.dashboard_system_current_authority import (
     SystemAuthorityVerifierInput,
 )
+from trading_agent.kr_autonomous_operator_paths import KrAutonomousOperatorPaths
 
 EventConnection = Callable[
     [
@@ -44,6 +45,7 @@ async def relay_snapshots(
     pair_browser_once: PairBrowserOnce,
     cycle_database: Path | None = None,
     kr_day_state_root: Path | None = None,
+    kr_operator_paths: KrAutonomousOperatorPaths | None = None,
 ) -> None:
     attempt = 0
     snapshot = initial_snapshot
@@ -83,15 +85,23 @@ async def relay_snapshots(
             attempt += 1
             if cycle_database is None:
                 if kr_day_state_root is None:
-                    snapshot = collect_dashboard_snapshot_v2(
-                        outputs,
-                        system_authority_verifier=system_authority_verifier,
-                    )
+                    if kr_operator_paths is None:
+                        snapshot = collect_dashboard_snapshot_v2(
+                            outputs,
+                            system_authority_verifier=system_authority_verifier,
+                        )
+                    else:
+                        snapshot = collect_dashboard_snapshot_v2(
+                            outputs,
+                            system_authority_verifier=system_authority_verifier,
+                            kr_operator_paths=kr_operator_paths,
+                        )
                 else:
                     snapshot = collect_dashboard_snapshot_v2(
                         outputs,
                         system_authority_verifier=system_authority_verifier,
                         kr_day_state_root=kr_day_state_root,
+                        kr_operator_paths=kr_operator_paths,
                     )
             else:
                 snapshot = collect_dashboard_snapshot_v2(
@@ -99,6 +109,7 @@ async def relay_snapshots(
                     system_authority_verifier=system_authority_verifier,
                     cycle_database=cycle_database,
                     kr_day_state_root=kr_day_state_root,
+                    kr_operator_paths=kr_operator_paths,
                 )
 
 

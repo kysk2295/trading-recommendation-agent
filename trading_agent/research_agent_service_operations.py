@@ -9,13 +9,10 @@ from trading_agent.dashboard_agent_cycle_runtime import read_cycle_runtime_obser
 from trading_agent.dashboard_agent_family import PRIMARY_AGENT_FAMILIES
 from trading_agent.hermes_delivery_models import HermesDeliveryKind
 from trading_agent.hermes_delivery_reader import HermesDeliveryReader
-from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.private_stable_report import write_private_stable_report
 from trading_agent.research_agent_cycle_models import ResearchAgentWakeKind
-from trading_agent.research_agent_hermes import project_research_agent_results
 from trading_agent.research_agent_runtime import (
     ResearchAgentBoundedCycleResult,
-    ResearchAgentRuntime,
     ResearchAgentTickResult,
 )
 from trading_agent.research_agent_runtime_lease import research_agent_runtime_lease
@@ -35,6 +32,7 @@ from trading_agent.research_agent_service_models import (
     ResearchAgentServiceReport,
     SystematicInputReportBinding,
 )
+from trading_agent.research_agent_service_projection import project_service_results as _project_results
 from trading_agent.research_agent_service_reporting import (
     prepare_private_runtime_paths,
     runtime_report_from_database,
@@ -48,7 +46,7 @@ def run_service_tick(config: ResearchAgentServiceConfig, now: dt.datetime) -> Re
     runtime = build_service_runtime(config)
     try:
         tick = runtime.tick(now)
-        projected = _project_results(config, runtime)
+        projected = _project_results(config, runtime, now)
         family_runtime, wake_kind, wake_at = runtime_report_from_store(runtime.store)
         report = _report(config, "tick", tick, projected, systematic, family_runtime, wake_kind, wake_at, now)
         write_service_report(config, report)
@@ -65,7 +63,7 @@ def run_service_cycle(
     runtime = build_service_runtime(config)
     try:
         cycle = runtime.cycle(now)
-        projected = _project_results(config, runtime)
+        projected = _project_results(config, runtime, now)
         family_runtime, wake_kind, wake_at = runtime_report_from_store(runtime.store)
         report = _cycle_report(config, cycle, projected, systematic, family_runtime, wake_kind, wake_at, now)
         write_service_report(config, report)
@@ -89,7 +87,7 @@ async def run_service_forever(
                 now = dt.datetime.now(dt.UTC)
                 systematic = systematic_input_report(config)
                 tick = runtime.tick(now)
-                projected = _project_results(config, runtime)
+                projected = _project_results(config, runtime, now)
                 family_runtime, wake_kind, wake_at = runtime_report_from_store(runtime.store)
                 write_service_report(
                     config,
@@ -121,8 +119,7 @@ def service_status(config: ResearchAgentServiceConfig, now: dt.datetime) -> Rese
     latest = max(observations, key=lambda item: item.observed_at, default=None)
     projected = (
         sum(
-            event.kind is HermesDeliveryKind.RESEARCH
-            for event in HermesDeliveryReader(config.hermes_database).events()
+            event.kind is HermesDeliveryKind.RESEARCH for event in HermesDeliveryReader(config.hermes_database).events()
         )
         if config.hermes_database.exists()
         else 0
@@ -185,20 +182,6 @@ def write_service_report(
         config.output_root,
         health_for_service_report(report.config_sha256, report.observed_at, report.status == "failed"),
     )
-
-
-def _project_results(config: ResearchAgentServiceConfig, runtime: ResearchAgentRuntime) -> int:
-    projected_ids = frozenset(
-        event.source_event_id for event in HermesDeliveryReader(config.hermes_database).events()
-    )
-    with HermesDeliveryStore(config.hermes_database).writer() as writer:
-        result = project_research_agent_results(
-            runtime.store.results(),
-            writer,
-            evidence=runtime.store.all_evidence(),
-            projected_result_ids=projected_ids,
-        )
-    return result.inserted
 
 
 def _report(

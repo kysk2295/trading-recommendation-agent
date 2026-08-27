@@ -9,9 +9,10 @@ from tests.dashboard_models_v2_fixtures import snapshot_payload
 from trading_agent.dashboard_models import DashboardCredentials
 from trading_agent.dashboard_models_v2 import DashboardSnapshotV2
 from trading_agent.dashboard_system_current_authority import SystemAuthorityVerifierInput
+from trading_agent.kr_autonomous_operator_paths import KrAutonomousOperatorPaths
 
 
-def test_dashboard_publisher_cli_default_targets_schema_v2_runtime_config(
+def test_dashboard_publisher_cli_default_targets_schema_v4_runtime_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -28,8 +29,9 @@ def test_dashboard_publisher_cli_default_targets_schema_v2_runtime_config(
     def fixed_credentials(_path: Path) -> DashboardCredentials:
         return credentials
 
-    def observe_cycle_database(config_path: Path) -> None:
+    def observe_research_binding(config_path: Path) -> run_dashboard_publisher.DashboardResearchBinding:
         observed_configs.append(config_path)
+        return run_dashboard_publisher.DashboardResearchBinding(None, None)
 
     def no_system_authority(_path: Path, *, untrusted_root: Path) -> None:
         return None
@@ -40,12 +42,13 @@ def test_dashboard_publisher_cli_default_targets_schema_v2_runtime_config(
         system_authority_verifier: SystemAuthorityVerifierInput = None,
         cycle_database: Path | None = None,
         kr_day_state_root: Path | None = None,
+        kr_operator_paths: KrAutonomousOperatorPaths | None = None,
     ) -> DashboardSnapshotV2:
         return snapshot
 
     monkeypatch.setattr(run_dashboard_publisher, "require_current_main_authority", lambda: None)
     monkeypatch.setattr(run_dashboard_publisher, "load_dashboard_credentials", fixed_credentials)
-    monkeypatch.setattr(run_dashboard_publisher, "_cycle_database", observe_cycle_database)
+    monkeypatch.setattr(run_dashboard_publisher, "_research_binding", observe_research_binding)
     monkeypatch.setattr(run_dashboard_publisher, "load_system_authority_verifier", no_system_authority)
     monkeypatch.setattr(run_dashboard_publisher, "collect_dashboard_snapshot_v2", fixed_snapshot)
 
@@ -55,8 +58,8 @@ def test_dashboard_publisher_cli_default_targets_schema_v2_runtime_config(
         ["publish", "--outputs", str(outputs), "--dry-run"],
     )
 
-    # Then: the CLI succeeds after passing the canonical schema-v2 default to the loader boundary
+    # Then: the CLI succeeds after passing the current schema-v4 service config to the loader boundary.
     assert result.exit_code == 0
     assert observed_configs == [
-        Path.home() / ".config" / "trading-agent" / "research-agent-runtime-v2.json",
+        Path.home() / ".config" / "trading-agent" / "research-agent-runtime-v14.json",
     ]

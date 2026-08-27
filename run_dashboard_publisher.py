@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
@@ -55,6 +56,10 @@ from trading_agent.dashboard_system_authority_config import (
 from trading_agent.dashboard_system_current_authority import (
     SystemAuthorityVerifierInput,
 )
+from trading_agent.kr_autonomous_operator_paths import (
+    KrAutonomousOperatorPaths,
+    kr_autonomous_operator_paths,
+)
 from trading_agent.research_agent_service_config import (
     InvalidResearchAgentServiceConfigError,
     load_research_agent_service_config,
@@ -68,11 +73,17 @@ DEFAULT_OUTPUTS = Path(__file__).resolve().parent / "outputs"
 DEFAULT_CREDENTIALS = Path.home() / ".config" / "trading-agent" / "dashboard.env"
 DEFAULT_SYSTEM_AUTHORITY_CONFIG = Path.home() / ".config" / "trading-agent" / "system-authority.json"
 DEFAULT_INTERACTIVE_STATE = Path.home() / ".local" / "state" / "trading-agent" / "dashboard-interactive"
-DEFAULT_RESEARCH_AGENT_CONFIG = Path.home() / ".config" / "trading-agent" / "research-agent-runtime-v2.json"
+DEFAULT_RESEARCH_AGENT_CONFIG = Path.home() / ".config" / "trading-agent" / "research-agent-runtime-v14.json"
 DEFAULT_KR_DAY_STATE_ROOT = Path.home() / ".local" / "state" / "trading-agent" / "kr-day-session"
 HERMES_EXECUTABLE = Path(shutil.which("hermes") or Path.home() / ".local/bin/hermes")
 WORKTREE = Path(__file__).resolve().parent
 register_execution_commands(app, DEFAULT_INTERACTIVE_STATE)
+
+
+@dataclass(frozen=True, slots=True)
+class DashboardResearchBinding:
+    cycle_database: Path | None
+    operator_paths: KrAutonomousOperatorPaths | None
 
 
 @app.callback()
@@ -148,7 +159,7 @@ def publish(
             "outputs_directory_missing",
             param_hint="--outputs",
         )
-    cycle_database = _cycle_database(research_agent_config)
+    research = _research_binding(research_agent_config)
     system_authority_verifier = load_system_authority_verifier(
         system_authority_config,
         untrusted_root=outputs,
@@ -156,8 +167,9 @@ def publish(
     snapshot = collect_dashboard_snapshot_v2(
         outputs,
         system_authority_verifier=system_authority_verifier,
-        cycle_database=cycle_database,
+        cycle_database=research.cycle_database,
         kr_day_state_root=kr_day_state_root,
+        kr_operator_paths=research.operator_paths,
     )
     if dry_run:
         typer.echo(snapshot.model_dump_json())
@@ -172,8 +184,9 @@ def publish(
             once,
             pair_browser,
             system_authority_verifier,
-            cycle_database,
+            research.cycle_database,
             kr_day_state_root,
+            research.operator_paths,
         )
         if once:
             rprint("[green]dashboard snapshot published by event relay[/green]")
@@ -192,6 +205,7 @@ async def _run_relay(
     system_authority_verifier: SystemAuthorityVerifierInput = None,
     cycle_database: Path | None = None,
     kr_day_state_root: Path = DEFAULT_KR_DAY_STATE_ROOT,
+    kr_operator_paths: KrAutonomousOperatorPaths | None = None,
 ) -> None:
     await run_publisher_relay(
         PublisherRelayRequest(
@@ -204,6 +218,7 @@ async def _run_relay(
             system_authority_verifier,
             cycle_database,
             kr_day_state_root,
+            kr_operator_paths,
         ),
         PublisherRuntimeBinding(HERMES_EXECUTABLE, WORKTREE, DEFAULT_INTERACTIVE_STATE),
     )
@@ -222,13 +237,18 @@ def _record_agent_readiness(outputs: Path) -> None:
     )
 
 
-def _cycle_database(config_path: Path) -> Path | None:
+def _research_binding(config_path: Path) -> DashboardResearchBinding:
     if not config_path.exists() and not config_path.is_symlink():
-        return None
+        return DashboardResearchBinding(None, None)
     try:
-        return load_research_agent_service_config(config_path).cycle_database
+        config = load_research_agent_service_config(config_path)
+        return DashboardResearchBinding(config.cycle_database, kr_autonomous_operator_paths(config))
     except InvalidResearchAgentServiceConfigError as error:
         raise typer.BadParameter("research_agent_config_invalid", param_hint="--research-agent-config") from error
+
+
+def _cycle_database(config_path: Path) -> Path | None:
+    return _research_binding(config_path).cycle_database
 
 
 __all__ = (
