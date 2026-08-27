@@ -11,6 +11,7 @@ from trading_agent.kr_loop_active_release import (
     InvalidKrLoopActiveReleaseError,
     active_release_for_event,
     bootstrap_active_release,
+    ensure_bootstrap_active_release,
     load_active_release,
     replace_active_release,
     resolve_active_source,
@@ -101,6 +102,19 @@ def test_bootstrap_active_release_runs_current_verified_repository(tmp_path: Pat
     assert replace_active_release(path, active)
     assert load_active_release(path).generation == 0
     assert resolve_active_source(path, repository, KrLoopReleaseArtifactStore(tmp_path / "artifacts")) == repository
+
+
+def test_bootstrap_active_release_refreshes_when_main_commit_advances(tmp_path: Path) -> None:
+    repository, base = _repository(tmp_path / "source")
+    path = tmp_path / "active.json"
+    assert ensure_bootstrap_active_release(path, repository, base, NOW)
+    (repository / "README.md").write_text("fixture advanced\n", encoding="utf-8")
+    _git(repository, "add", "README.md")
+    _git(repository, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "advance")
+    advanced = _git(repository, "rev-parse", "HEAD").strip()
+
+    assert ensure_bootstrap_active_release(path, repository, advanced, NOW + dt.timedelta(minutes=1))
+    assert load_active_release(path).active_commit == advanced
 
 
 def _release(tmp_path: Path):

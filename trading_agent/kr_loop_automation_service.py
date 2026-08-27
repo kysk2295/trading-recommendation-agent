@@ -57,7 +57,10 @@ def completed_kr_session(config: KrLoopAutomationConfig, now: dt.datetime) -> dt
     if calendar is None or local.time() < _POST_CLOSE:
         return None
     snapshots = KisKrSessionCalendarStore(calendar).snapshots()
-    days = tuple(day for snapshot in snapshots for day in snapshot.payload.days if day.session_date == local.date())
+    current = tuple(snapshot for snapshot in snapshots if snapshot.payload.base_date == local.date())
+    if len(current) != 1:
+        return None
+    days = tuple(day for day in current[0].payload.days if day.session_date == local.date())
     if len(days) != 1 or not days[0].business_day or not days[0].trading_day or not days[0].open_day:
         return None
     return local.date()

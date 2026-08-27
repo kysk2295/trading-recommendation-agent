@@ -13,9 +13,8 @@ from pydantic import ValidationError
 
 from trading_agent.kr_loop_active_release import (
     InvalidKrLoopActiveReleaseError,
-    bootstrap_active_release,
+    ensure_bootstrap_active_release,
     load_active_release,
-    replace_active_release,
 )
 from trading_agent.kr_loop_automation_config import (
     InvalidKrLoopAutomationConfigError,
@@ -44,14 +43,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         config = load_kr_loop_automation_config(args.config)
         if args.command == "provision":
-            try:
-                _ = load_active_release(config.active_release)
-            except InvalidKrLoopActiveReleaseError:
-                commit = current_main_commit(config.repository)
-                _ = replace_active_release(
-                    config.active_release,
-                    bootstrap_active_release(config.repository, commit, dt.datetime.now(dt.UTC)),
-                )
+            commit = current_main_commit(config.repository)
+            _ = ensure_bootstrap_active_release(
+                config.active_release,
+                config.repository,
+                commit,
+                dt.datetime.now(dt.UTC),
+            )
             paths = provision_kr_loop_launch_agents(config, args.config.expanduser().absolute())
             verification = verify_kr_loop_launch_agents(args.config)
             print(

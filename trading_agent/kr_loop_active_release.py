@@ -97,6 +97,22 @@ def bootstrap_active_release(
     )
 
 
+def ensure_bootstrap_active_release(
+    path: Path,
+    repository: Path,
+    active_commit: str,
+    now: dt.datetime,
+) -> bool:
+    try:
+        current = load_active_release(path)
+    except InvalidKrLoopActiveReleaseError:
+        current = None
+    if current is not None and current.generation != 0:
+        return False
+    desired = bootstrap_active_release(repository, active_commit, now)
+    return replace_active_release(path, desired)
+
+
 def baseline_active_release(
     artifacts: KrLoopReleaseArtifactStore,
     event: KrLoopReleaseEvent,
@@ -210,6 +226,7 @@ __all__ = (
     "active_release_for_event",
     "baseline_active_release",
     "bootstrap_active_release",
+    "ensure_bootstrap_active_release",
     "load_active_release",
     "replace_active_release",
     "resolve_active_source",

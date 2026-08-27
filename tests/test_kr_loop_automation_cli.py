@@ -15,9 +15,9 @@ def test_cli_help_and_bad_config_fail_closed(tmp_path: Path, capsys) -> None:
 
 
 def test_status_prints_redacted_control_plane_summary(tmp_path: Path, capsys) -> None:
-    from tests.test_kr_loop_automation import _automation_config
+    from tests.kr_loop_automation_support import automation_config
 
-    _config, path = _automation_config(tmp_path)
+    _config, path = automation_config(tmp_path)
     assert cli.main(("status", "--config", str(path))) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload == {
