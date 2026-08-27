@@ -25,6 +25,9 @@ from trading_agent.kr_autonomous_trade_models import (
     KrTradeRecommendation,
 )
 from trading_agent.kr_autonomous_trade_store import KrAutonomousTradeStore
+from trading_agent.kr_loop_engineer_hermes import kr_loop_hermes_fields
+from trading_agent.kr_loop_engineer_models import KrLoopCandidateSnapshot
+from trading_agent.kr_loop_engineer_store import KrLoopEngineerStore
 from trading_agent.kr_virtual_position_models import KrVirtualPositionEvent
 from trading_agent.kr_virtual_position_store import KrVirtualPositionStore
 
@@ -43,10 +46,12 @@ def project_kr_autonomous_state(
     trades = KrAutonomousTradeStore(paths.trade_database).events()
     positions = KrVirtualPositionStore(paths.position_database).all_events()
     memories = _memory_records(paths, trades)
+    loop_snapshots = KrLoopEngineerStore(paths.loop_database).snapshots()
     records = (
         *(_trade_record(event) for event in trades if event.event_id not in projected_source_ids),
         *(_position_record(event) for event in positions if event.event_id not in projected_source_ids),
         *(_memory_record(record) for record in memories if record.memory_id not in projected_source_ids),
+        *(_loop_record(snapshot) for snapshot in loop_snapshots if snapshot.snapshot_id not in projected_source_ids),
     )
     return project_outcomes(records, writer)
 
@@ -68,6 +73,11 @@ def _memory_records(
         for failure in KrLoopFailureCode:
             key = f"self_improvement.kr.{failure.value}.{subject_hash}"
             records.update((record.memory_id, record) for record in reader.history(key))
+    failure_refs = tuple(sorted(f"failure:{failure.value}" for failure in KrLoopFailureCode))
+    records.update(
+        (record.memory_id, record)
+        for record in reader.search(AutonomousMemoryScope.SELF_IMPROVEMENT, failure_refs, limit=32)
+    )
     return tuple(sorted(records.values(), key=lambda item: (item.recorded_at, item.memory_id)))
 
 
@@ -181,6 +191,21 @@ def _memory_record(record: AutonomousMemoryRecord) -> HermesProjectionRecord:
             raise InvalidKrAutonomousOutcomeError
         case unreachable:
             assert_never(unreachable)
+
+
+def _loop_record(snapshot: KrLoopCandidateSnapshot) -> HermesProjectionRecord:
+    fields = kr_loop_hermes_fields(snapshot)
+    return _record(
+        source_event_id=snapshot.snapshot_id,
+        root_source_event_id=None,
+        kind=fields.kind,
+        instrument_id=None,
+        occurred_at=snapshot.updated_at,
+        status=fields.status,
+        evidence_refs=fields.evidence_refs,
+        rendered_text=fields.rendered_text,
+        payload=snapshot.model_dump_json(),
+    )
 
 
 def _record(

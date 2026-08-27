@@ -15,6 +15,18 @@ class KrAutonomousOperatorPaths:
     position_database: Path
     market_receipt_root: Path
 
+    @property
+    def loop_database(self) -> Path:
+        return self.memory_database.parent / "kr-v1" / "kr-loop-engineer.sqlite3"
+
+    @property
+    def loop_task_root(self) -> Path:
+        return self.memory_database.parent / "kr-v1" / "loop-tasks"
+
+    @property
+    def loop_artifact_root(self) -> Path:
+        return self.memory_database.parent / "kr-v1" / "loop-artifacts"
+
 
 def kr_autonomous_operator_paths(
     config: ResearchAgentServiceConfig,

@@ -16,6 +16,8 @@ from trading_agent.kr_autonomous_operator_paths import KrAutonomousOperatorPaths
 from trading_agent.kr_autonomous_outcome_models import KrLoopFailureCode
 from trading_agent.kr_autonomous_trade_models import KrAutonomousTradeEvent
 from trading_agent.kr_autonomous_trade_store import KrAutonomousTradeStore
+from trading_agent.kr_loop_engineer_models import KrLoopCandidateSnapshot
+from trading_agent.kr_loop_engineer_store import KrLoopEngineerStore
 from trading_agent.kr_social_signal_models import KrSocialSignal
 from trading_agent.kr_social_signal_store import KrSocialSignalStore
 from trading_agent.kr_virtual_position_models import KrVirtualPositionEvent
@@ -48,6 +50,7 @@ def project_kr_autonomous_operator(
     trades = _latest_trades(KrAutonomousTradeStore(paths.trade_database).events())
     positions = _latest_positions(KrVirtualPositionStore(paths.position_database).all_events())
     outcomes, bundles = _memory_records(paths, trades)
+    loop_snapshots = _loop_snapshots(paths)
     signals = _signals(paths, trades)
     rendered = render_kr_autonomous_operator(
         tasks=tasks[:_CAP],
@@ -55,12 +58,16 @@ def project_kr_autonomous_operator(
         positions=positions[:_CAP],
         outcomes=outcomes[:_CAP],
         bundles=bundles[:_CAP],
+        loop_snapshots=loop_snapshots[:_CAP],
         signals=signals,
         now=now,
     )
     return KrAutonomousDashboardProjection(
         markets=KrAutonomousDashboardSlice(rendered.markets, len(trades)),
-        research=KrAutonomousDashboardSlice(rendered.research, len(tasks) + len(outcomes) + len(bundles)),
+        research=KrAutonomousDashboardSlice(
+            rendered.research,
+            len(tasks) + len(outcomes) + len(bundles) + len(loop_snapshots),
+        ),
         paper=KrAutonomousDashboardSlice(rendered.paper, len(positions)),
         nodes=rendered.nodes,
         edges=rendered.edges,
@@ -131,11 +138,26 @@ def _memory_records(
         for failure in KrLoopFailureCode:
             key = f"self_improvement.kr.{failure.value}.{digest}"
             records.update((record.memory_id, record) for record in reader.history(key))
+    failure_refs = tuple(sorted(f"failure:{failure.value}" for failure in KrLoopFailureCode))
+    records.update(
+        (record.memory_id, record)
+        for record in reader.search(AutonomousMemoryScope.SELF_IMPROVEMENT, failure_refs, limit=32)
+    )
     latest = {record.memory_key: record for record in records.values()}
     ordered = tuple(sorted(latest.values(), key=lambda item: (item.recorded_at, item.memory_id), reverse=True))
     return (
         tuple(item for item in ordered if item.scope is AutonomousMemoryScope.MARKET),
         tuple(item for item in ordered if item.scope is AutonomousMemoryScope.SELF_IMPROVEMENT),
+    )
+
+
+def _loop_snapshots(paths: KrAutonomousOperatorPaths) -> tuple[KrLoopCandidateSnapshot, ...]:
+    return tuple(
+        sorted(
+            KrLoopEngineerStore(paths.loop_database).snapshots(),
+            key=lambda item: (item.updated_at, item.snapshot_id),
+            reverse=True,
+        )
     )
 
 
