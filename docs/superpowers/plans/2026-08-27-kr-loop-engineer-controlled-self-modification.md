@@ -165,6 +165,6 @@ Run Ruff formatting/check, basedpyright on all changed Python files, `git diff -
 
 Run CLI help, a malformed private receipt, and a fixture happy path that reaches shadow, promotes only after two future sessions, then rolls back on a host health breach. Confirm zero KIS/LS/Alpaca calls and no secrets/paths/raw worker output in terminal, Hermes, or dashboard payloads.
 
-- [ ] **Step 4: Record evidence, commit, and merge locally**
+- [x] **Step 4: Record evidence, commit, and merge locally**
 
 Write exact commands/results and the natural-session observation caveat to the checkpoint, commit implementation and verification records, fast-forward local `main`, rerun the focused merged verification, then remove the owned worktree and feature branch while preserving all user-owned untracked files.
