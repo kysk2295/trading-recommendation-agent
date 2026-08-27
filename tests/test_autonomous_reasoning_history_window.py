@@ -14,7 +14,16 @@ def test_reasoning_prompt_compacts_repeated_step_authority_without_losing_histor
     tmp_path: Path,
 ) -> None:
     steps = tuple(
-        step_fixture(sequence=sequence, occurred_at=NOW + dt.timedelta(seconds=sequence)) for sequence in range(1, 7)
+        step_fixture(
+            sequence=sequence,
+            occurred_at=NOW + dt.timedelta(seconds=sequence),
+            payload_json=json.dumps(
+                {"detail": "bounded durable detail", "kind": "decision", "sequence": sequence},
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        )
+        for sequence in range(1, 7)
     )
 
     request = reasoning_request(
@@ -30,6 +39,8 @@ def test_reasoning_prompt_compacts_repeated_step_authority_without_losing_histor
 
     assert request.prior_steps == steps
     assert [item["sequence"] for item in rendered] == list(range(1, 7))
+    assert [item["payload_json"] for item in rendered[:2]] == ['{"kind":"decision"}'] * 2
+    assert [item["payload_json"] for item in rendered[2:]] == [step.payload_json for step in steps[2:]]
     assert all(
         set(item)
         == {

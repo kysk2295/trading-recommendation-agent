@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, assert_never
+from typing import TYPE_CHECKING, Final, assert_never
 
 from pydantic import ValidationError
 
 from trading_agent.researcher_llm import LlmProposalClient, ResearcherLlmError
 
 _MAX_PROMPT_BYTES = 256 * 1024
+_DETAILED_STEP_WINDOW: Final = 4
 
 type JsonValue = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
 
@@ -30,7 +31,10 @@ def canonical_reasoning_prompt(request: AutonomousReasoningRequest, client: LlmP
         "memories": tuple(memory.model_dump(mode="json") for memory in request.memories),
         "now": request.now.isoformat(),
         "observations": tuple(observation.model_dump(mode="json") for observation in request.observations),
-        "prior_steps": tuple(_compact_step(step) for step in request.prior_steps),
+        "prior_steps": tuple(
+            _compact_step(step, detailed=index >= len(request.prior_steps) - _DETAILED_STEP_WINDOW)
+            for index, step in enumerate(request.prior_steps)
+        ),
         "provider": provider,
         "remaining_budget": request.remaining_budget.model_dump(mode="json"),
         "response_schema": _autonomous_response_schema(),
@@ -43,18 +47,26 @@ def canonical_reasoning_prompt(request: AutonomousReasoningRequest, client: LlmP
     return prompt
 
 
-def _compact_step(step: AutonomousTaskStep) -> dict[str, JsonValue]:
+def _compact_step(step: AutonomousTaskStep, *, detailed: bool) -> dict[str, JsonValue]:
     return {
         "blocked_reason": step.blocked_reason,
         "next_wake_at": None if step.next_wake_at is None else step.next_wake_at.isoformat(),
         "next_wake_event": step.next_wake_event,
         "occurred_at": step.occurred_at.isoformat(),
-        "payload_json": step.payload_json,
+        "payload_json": step.payload_json if detailed else _payload_kind(step.payload_json),
         "role": step.role.value,
         "sequence": step.sequence,
         "state": step.state.value,
         "terminal_reason": step.terminal_reason,
     }
+
+
+def _payload_kind(payload_json: str) -> str:
+    decoded = json.loads(payload_json)
+    kind = decoded.get("kind") if isinstance(decoded, dict) else None
+    if not isinstance(kind, str):
+        return payload_json
+    return json.dumps({"kind": kind}, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
 
 
 def _autonomous_response_schema() -> dict[str, JsonValue]:
