@@ -19,6 +19,7 @@ from tests.test_kr_autonomous_trade_planner import _request
 from tests.test_kr_social_signal import _request as _social_request
 from tests.test_kr_social_signal import _selected_posts
 from tests.test_kr_virtual_position_engine import _bar
+from trading_agent.autonomous_task_models import AutonomousAgentRole
 from trading_agent.autonomous_task_store import AutonomousTaskStore
 from trading_agent.browser_social_evidence_store import BrowserSocialEvidenceStore
 from trading_agent.kr_autonomous_market_models import KrAutonomousMarketError
@@ -41,20 +42,47 @@ from trading_agent.kr_virtual_position_models import KrVirtualPositionReason, Kr
 from trading_agent.kr_virtual_position_store import KrVirtualPositionStore
 
 
-@pytest.mark.parametrize("order", ("observer_first", "research_repeat"))
+@pytest.mark.parametrize("order", ("observer_delegates", "research_combines"))
 def test_fixture_chain_reaches_terminal_virtual_outcome_and_exact_restart_replay(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    order: Literal["observer_first", "research_repeat"],
+    order: Literal["observer_delegates", "research_combines"],
 ) -> None:
     # Given: bounded browser and KIS fixtures with no provider mutation authority.
     # When: autonomous roles carry the evidence through the public KR tools.
     result = run_vertical(tmp_path, monkeypatch, order)
 
     # Then: the fixture reaches a durable terminal outcome in a model-selected order.
-    assert result.tool_order[-1] == "kr.position.reconcile"
-    assert result.tool_order.count("kr.market.corroborate") == (1 if order == "observer_first" else 2)
-    assert result.role_order[0].value == ("market_observer" if order == "observer_first" else "research")
+    assert result.tool_order == (
+        "social.signal.normalize",
+        "kr.market.corroborate",
+        "kr.trade.plan",
+        "critic.request",
+        "kr.virtual.execute",
+        "kr.position.reconcile",
+    )
+    expected_roles = (
+        (
+            AutonomousAgentRole.MARKET_OBSERVER,
+            AutonomousAgentRole.OPPORTUNITY,
+            AutonomousAgentRole.TRADING,
+            AutonomousAgentRole.CRITIC,
+            AutonomousAgentRole.TRADING,
+            AutonomousAgentRole.POSITION,
+        )
+        if order == "observer_delegates"
+        else (
+            AutonomousAgentRole.RESEARCH,
+            AutonomousAgentRole.TRADING,
+            AutonomousAgentRole.CRITIC,
+            AutonomousAgentRole.TRADING,
+            AutonomousAgentRole.POSITION,
+        )
+    )
+    assert result.delegate_roles == expected_roles
+    assert result.decision_kinds.count("tool_call") == 6
+    assert result.decision_kinds.count("delegate") == len(expected_roles)
+    assert result.decision_kinds[-1] == "complete"
     assert result.signal.repost_cluster_count == result.signal.independent_source_count == 2
     assert result.signal.evidence_ids == tuple(sorted(post.evidence_id for post in result.posts))
     assert result.market.social_signal_id == result.signal.signal_id
@@ -71,10 +99,21 @@ def test_fixture_chain_reaches_terminal_virtual_outcome_and_exact_restart_replay
     assert result.terminal.state is KrVirtualPositionState.STOPPED
     assert result.terminal.reason is KrVirtualPositionReason.STOP_FIRST
     assert result.terminal.fill_time is not None and result.terminal.fill_time > recommendation.timestamp
-    assert json.loads(result.exact_restart_json)["event_id"] == result.terminal.event_id
-    mutations = {name: count for name, count in result.mutation_counts.items() if name != "kis_read"}
-    assert mutations == {"kis_mutation": 0, "ls_mutation": 0, "alpaca": 0, "account": 0}
-    assert result.mutation_counts["kis_read"] == (1 if order == "observer_first" else 2)
+    assert result.startup.open_position_count == 1
+    assert result.startup.appended_event_count == result.startup.terminal_position_count == 0
+    assert result.open_restart_before == result.open_restart_after
+    assert json.loads(result.open_restart_after)[-1]["state"] == "ARMED"
+    assert result.replay_before == result.replay_after
+    assert json.loads(result.replay_json)["event_id"] == result.terminal.event_id
+    assert result.calls == tuple(
+        ("KIS", "GET", path)
+        for path in (
+            "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice",
+            "/uapi/domestic-stock/v1/quotations/inquire-price",
+            "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn",
+        )
+    )
+    assert not any(term in path for _, _, path in result.calls for term in ("accno", "order", "balance"))
     for post in result.posts:
         assert not BrowserSocialEvidenceStore(result.services.browser_evidence_database).append(post)
     assert not KrSocialSignalStore(result.services.social_signal_database).append(result.signal)
