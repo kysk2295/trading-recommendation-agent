@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import json
 import re
 from collections.abc import Mapping
 from types import MappingProxyType
@@ -62,10 +63,12 @@ class AutonomousToolArguments(RootModel[Mapping[str, str]]):
     @model_validator(mode="after")
     def require_bounded_keys_and_values(self) -> Self:
         values = dict(self.root)
-        if len(values) > 8 or any(
-            _ARGUMENT_KEY.fullmatch(key) is None or not value or len(value) > 500 for key, value in values.items()
-        ):
+        if len(values) > 8 or any(_ARGUMENT_KEY.fullmatch(key) is None or not value for key, value in values.items()):
             raise InvalidAutonomousReasoningError(reason="autonomous_tool_arguments_invalid")
+        require_canonical_json(
+            json.dumps(values, allow_nan=False, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+            reason="autonomous_tool_arguments_invalid",
+        )
         object.__setattr__(self, "root", MappingProxyType(dict(sorted(values.items()))))
         return self
 

@@ -169,6 +169,7 @@ class KrTradeRecommendation(BaseModel):
 
     outcome: Literal[KrAutonomousTradeOutcome.RECOMMEND] = KrAutonomousTradeOutcome.RECOMMEND
     event_id: str = Field(pattern=_SHA)
+    plan_id: str = Field(pattern=_SHA)
     previous_event_id: str | None = Field(default=None, pattern=_SHA)
     timestamp: AwareDatetime
     task_id: str = Field(pattern=_SHA)
@@ -226,6 +227,7 @@ class KrAutonomousNoTrade(BaseModel):
 
     outcome: Literal[KrAutonomousTradeOutcome.NO_TRADE] = KrAutonomousTradeOutcome.NO_TRADE
     event_id: str = Field(pattern=_SHA)
+    plan_id: str = Field(pattern=_SHA)
     previous_event_id: str | None = Field(default=None, pattern=_SHA)
     timestamp: AwareDatetime
     task_id: str = Field(pattern=_SHA)
@@ -249,6 +251,7 @@ class KrAutonomousRejected(BaseModel):
 
     outcome: Literal[KrAutonomousTradeOutcome.REJECTED] = KrAutonomousTradeOutcome.REJECTED
     event_id: str = Field(pattern=_SHA)
+    plan_id: str = Field(pattern=_SHA)
     previous_event_id: str | None = Field(default=None, pattern=_SHA)
     timestamp: AwareDatetime
     task_id: str = Field(pattern=_SHA)

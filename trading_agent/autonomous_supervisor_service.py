@@ -12,6 +12,7 @@ from typing import Final
 
 from trading_agent._autonomous_supervisor_steps import SourceAdmissionPayload, safe_payload
 from trading_agent.autonomous_browser_tools import BrowserToolServices, browser_bindings
+from trading_agent.autonomous_kr_tool_runtime import KrAutonomousToolServices, kr_tool_bindings
 from trading_agent.autonomous_memory_store import AutonomousMemoryStore
 from trading_agent.autonomous_reasoning import AutonomousToolArguments
 from trading_agent.autonomous_reasoning_codec import AutonomousStructuredReasoner
@@ -145,6 +146,7 @@ def build_foundation_tool_runtime(
     memories: AutonomousMemoryStore,
     *,
     browser: BrowserToolServices | None = None,
+    kr: KrAutonomousToolServices | None = None,
 ) -> AutonomousToolRuntime:
     foundation_bindings = (
         _binding("evidence.read", frozenset(), evidence_read_tool, "task_database", tasks.path),
@@ -157,17 +159,19 @@ def build_foundation_tool_runtime(
         ),
         _binding("task.history", frozenset(), task_history_tool, "task_database", tasks.path),
     )
-    bindings = foundation_bindings if browser is None else (*foundation_bindings, *browser_bindings(browser))
-    worker_modules = (
-        frozenset({_WORKER_MODULE})
-        if browser is None
-        else frozenset(
-            {
-                _WORKER_MODULE,
-                "trading_agent.autonomous_browser_tools",
-                "trading_agent.autonomous_browser_tool_actions",
-            }
-        )
+    browser_bindings_ = () if browser is None else browser_bindings(browser)
+    kr_bindings = () if kr is None else kr_tool_bindings(kr)
+    bindings = (*foundation_bindings, *browser_bindings_, *kr_bindings)
+    worker_modules = frozenset(
+        {
+            _WORKER_MODULE,
+            *(
+                ()
+                if browser is None
+                else ("trading_agent.autonomous_browser_tools", "trading_agent.autonomous_browser_tool_actions")
+            ),
+            *(() if kr is None else ("trading_agent.autonomous_kr_tools",)),
+        }
     )
     return AutonomousToolRuntime(
         tuple(sorted(bindings, key=lambda item: item.name)), utc_clock, worker_modules=worker_modules

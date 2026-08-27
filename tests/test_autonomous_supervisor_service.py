@@ -12,6 +12,7 @@ import trading_agent.autonomous_supervisor_service as service_module
 from tests.test_autonomous_supervisor_adapter import _evidence
 from tests.test_research_agent_service_cli import _config
 from trading_agent._autonomous_supervisor_wire import tools_wire
+from trading_agent.autonomous_kr_tool_runtime import KrAutonomousToolServices
 from trading_agent.autonomous_memory_store import AutonomousMemoryStore
 from trading_agent.autonomous_reasoning import AutonomousAgentRole, AutonomousToolArguments, AutonomousToolCall
 from trading_agent.autonomous_supervisor_adapter import AutonomousSupervisorAdapter
@@ -19,6 +20,7 @@ from trading_agent.autonomous_supervisor_service import (
     autonomous_supervisor_paths,
     autonomous_supervisor_status,
     build_autonomous_supervisor,
+    build_foundation_tool_runtime,
 )
 from trading_agent.autonomous_task_store import AutonomousTaskStore, AutonomousTaskStoreError
 from trading_agent.autonomous_tool_runtime import (
@@ -71,6 +73,37 @@ def test_builder_creates_private_restart_safe_stores_and_safe_wire(tmp_path: Pat
         "task.history",
     )
     assert wire.worker_modules == frozenset({"trading_agent.autonomous_supervisor_service"})
+
+
+def test_foundation_runtime_adds_kr_tools_only_when_explicitly_bound(tmp_path: Path) -> None:
+    # Given: durable foundation stores and an explicit private KR service binding.
+    tasks = AutonomousTaskStore(tmp_path / "tasks.sqlite3")
+    memories = AutonomousMemoryStore(tmp_path / "memory.sqlite3")
+    kr = KrAutonomousToolServices(
+        browser_evidence_database=tmp_path / "browser.sqlite3",
+        social_signal_database=tmp_path / "signals.sqlite3",
+        task_database=tasks.path,
+        service_config_json="{}",
+    )
+
+    # When: the foundation runtime is built with and without the optional KR binding.
+    baseline = build_foundation_tool_runtime(tasks, memories)
+    enabled = build_foundation_tool_runtime(tasks, memories, kr=kr)
+
+    # Then: the unbound foundation tuple is byte-for-byte unchanged and KR is wire-safe when enabled.
+    assert baseline.allowed_tool_names == ("evidence.read", "memory.search", "task.history")
+    assert enabled.allowed_tool_names == (
+        "critic.request",
+        "evidence.read",
+        "kr.market.corroborate",
+        "kr.trade.plan",
+        "memory.search",
+        "social.signal.normalize",
+        "task.history",
+    )
+    assert tools_wire(enabled).worker_modules == frozenset(
+        {"trading_agent.autonomous_kr_tools", "trading_agent.autonomous_supervisor_service"}
+    )
 
 
 def test_builder_rejects_symlinked_task_database(tmp_path: Path) -> None:

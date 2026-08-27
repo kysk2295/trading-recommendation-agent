@@ -60,8 +60,8 @@ def test_request_rejects_roleless_boundary_payload() -> None:
     (
         {str(index): "value" for index in range(9)},
         {"valid": ""},
-        {"valid": "v" * 501},
         {"bad key": "value"},
+        {"valid": "v" * 16_384},
     ),
 )
 def test_tool_arguments_reject_exact_invalid_bounds(arguments: dict[str, str]) -> None:
@@ -82,6 +82,17 @@ def test_tool_arguments_copy_input_and_reject_root_mutation() -> None:
         getattr(arguments.root, mutation)("changed", "denied")
     assert arguments.root == {"evidence_id": "a" * 64}
     assert _call(arguments).args.root == {"evidence_id": "a" * 64}
+
+
+def test_tool_arguments_accept_large_canonical_value_inside_total_envelope() -> None:
+    # Given: a single canonical thesis-sized value that exceeds the retired per-value cap.
+    raw = {"thesis_json": "v" * 1_107}
+
+    # When: the trusted arguments boundary parses it.
+    arguments = AutonomousToolArguments(raw)
+
+    # Then: its sorted immutable mapping remains bounded by the full canonical envelope.
+    assert arguments.root == raw
 
 
 def test_observation_rejects_exact_canonical_and_hash_failures() -> None:
