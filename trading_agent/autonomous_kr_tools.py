@@ -6,9 +6,9 @@ from pathlib import Path
 
 from trading_agent._autonomous_kr_tool_support import (
     canonical,
-    canonical_evidence_ids,
     deny,
     exact_arguments,
+    execute_virtual_tool,
     matching_final_event,
     nonrecommendation_response,
     observed_market,
@@ -16,12 +16,13 @@ from trading_agent._autonomous_kr_tool_support import (
     parse_thesis,
     pending_lineage_is_valid,
     plan_response,
+    reconcile_virtual_tool,
     trusted_task,
     utc_now,
 )
+from trading_agent.autonomous_kr_tool_runtime import normalize_tool_impl
 from trading_agent.autonomous_reasoning import AutonomousToolArguments
 from trading_agent.autonomous_tool_runtime import AutonomousToolExecutionContext
-from trading_agent.browser_social_evidence_store import BrowserSocialEvidenceStore
 from trading_agent.kr_autonomous_market_service import collect_and_project_kr_corroboration
 from trading_agent.kr_autonomous_pending_plan_models import KrAutonomousPendingPlan, pending_plan_id
 from trading_agent.kr_autonomous_pending_plan_store import KrAutonomousPendingPlanStore
@@ -36,7 +37,6 @@ from trading_agent.kr_autonomous_trade_models import (
 from trading_agent.kr_autonomous_trade_planner import finalize_kr_autonomous_trade, no_trade_kr_autonomous_trade
 from trading_agent.kr_autonomous_trade_proposal import precritic_no_trade_reasons, propose_kr_autonomous_trade
 from trading_agent.kr_autonomous_trade_store import InvalidKrAutonomousTradeStoreError, KrAutonomousTradeStore
-from trading_agent.kr_social_signal_models import KrSocialSignalRequest, normalize_kr_social_signal
 from trading_agent.kr_social_signal_store import KrSocialSignalStore
 
 
@@ -52,34 +52,36 @@ def normalize_tool(
     pending_plan_database: str,
 ) -> str:
     del service_config_json, trade_database, pending_plan_database
-    values = exact_arguments(args, {"claim_summary", "evidence_ids_json", "symbol", "theme"})
-    task = trusted_task(context, task_database)
-    evidence_ids = canonical_evidence_ids(values["evidence_ids_json"])
-    if task.root_source_evidence_id not in evidence_ids:
-        deny("kr_tool_root_evidence_denied")
-    records = tuple(BrowserSocialEvidenceStore(Path(browser_evidence_database)).get(item) for item in evidence_ids)
-    if any(item is None for item in records):
-        deny("kr_tool_evidence_missing")
-    signal = normalize_kr_social_signal(
-        KrSocialSignalRequest(
-            task_id=task.task_id,
-            symbol=values["symbol"],
-            theme=values["theme"],
-            claim_summary=values["claim_summary"],
-            evidence_ids=evidence_ids,
-            normalized_at=utc_now(),
-        ),
-        tuple(item for item in records if item is not None),
+    return normalize_tool_impl(
+        args,
+        context,
+        browser_evidence_database=browser_evidence_database,
+        social_signal_database=social_signal_database,
+        task_database=task_database,
+        normalized_at=utc_now(),
     )
-    KrSocialSignalStore(Path(social_signal_database)).append(signal)
-    return canonical(
-        {
-            "signal_id": signal.signal_id,
-            "status": "ok",
-            "symbol": signal.symbol,
-            "verification_state": signal.verification_state.value,
-        }
-    )
+
+
+def execute_tool(
+    args: AutonomousToolArguments,
+    context: AutonomousToolExecutionContext,
+    *,
+    position_database: str,
+    task_database: str,
+    trade_database: str,
+) -> str:
+    return execute_virtual_tool(args, context, position_database, task_database, trade_database, utc_now())
+
+
+def reconcile_tool(
+    args: AutonomousToolArguments,
+    context: AutonomousToolExecutionContext,
+    *,
+    position_database: str,
+    task_database: str,
+    trade_database: str,
+) -> str:
+    return reconcile_virtual_tool(args, context, position_database, task_database, trade_database, utc_now())
 
 
 def corroborate_tool(

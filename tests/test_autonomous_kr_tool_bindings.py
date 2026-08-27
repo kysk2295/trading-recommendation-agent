@@ -24,7 +24,9 @@ def test_kr_tool_bindings_expose_exact_role_scoped_signatures(tmp_path: Path) ->
     assert tuple(sorted(bindings)) == (
         "critic.request",
         "kr.market.corroborate",
+        "kr.position.reconcile",
         "kr.trade.plan",
+        "kr.virtual.execute",
         "social.signal.normalize",
     )
     assert bindings["social.signal.normalize"].allowed_arguments == frozenset(
@@ -41,6 +43,10 @@ def test_kr_tool_bindings_expose_exact_role_scoped_signatures(tmp_path: Path) ->
     assert bindings["kr.trade.plan"].allowed_roles == frozenset({AutonomousAgentRole.TRADING})
     assert bindings["critic.request"].allowed_arguments == frozenset({"plan_id"})
     assert bindings["critic.request"].allowed_roles == frozenset({AutonomousAgentRole.CRITIC})
+    assert bindings["kr.virtual.execute"].allowed_arguments == frozenset({"recommendation_id"})
+    assert bindings["kr.virtual.execute"].allowed_roles == frozenset({AutonomousAgentRole.TRADING})
+    assert bindings["kr.position.reconcile"].allowed_arguments == frozenset({"position_id"})
+    assert bindings["kr.position.reconcile"].allowed_roles == frozenset({AutonomousAgentRole.POSITION})
     runtime = AutonomousToolRuntime(
         tuple(bindings.values()),
         utc_clock,

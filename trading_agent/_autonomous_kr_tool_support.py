@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, assert_never
 
 from pydantic import ValidationError
 
@@ -21,7 +21,12 @@ from trading_agent.kr_autonomous_trade_models import (
     KrAutonomousTradeThesis,
     KrTradeRecommendation,
 )
+from trading_agent.kr_autonomous_trade_store import KrAutonomousTradeStore
 from trading_agent.kr_social_signal_models import KrSocialSignal
+from trading_agent.kr_theme_day_setup_progress import KrCompletedMinuteBar
+from trading_agent.kr_virtual_position_engine import advance_kr_virtual_position, arm_kr_virtual_position
+from trading_agent.kr_virtual_position_models import virtual_position_id
+from trading_agent.kr_virtual_position_store import KrVirtualPositionStore
 from trading_agent.research_agent_service_config import ResearchAgentServiceConfig
 
 
@@ -42,22 +47,6 @@ def trusted_task(
     if task is None or task.market_scope != "kr_equities" or task.agent_family_id != context.agent_family_id:
         deny("kr_tool_task_context_denied")
     return task
-
-
-def canonical_evidence_ids(raw: str) -> tuple[str, ...]:
-    try:
-        decoded = json.loads(raw)
-        canonical = json.dumps(decoded, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
-        values = tuple(decoded)
-    except (TypeError, ValueError):
-        deny("kr_tool_evidence_ids_invalid")
-    if (
-        raw != canonical
-        or values != tuple(sorted(set(values)))
-        or not all(isinstance(item, str) and len(item) == 64 for item in values)
-    ):
-        deny("kr_tool_evidence_ids_invalid")
-    return values
 
 
 def parse_thesis(raw: str) -> KrAutonomousTradeThesis:
@@ -98,30 +87,48 @@ def observed_market(
     deny("kr_tool_market_observation_missing")
 
 
+def observed_completed_bars(
+    task_database: str,
+    task: AutonomousResearchTask,
+    symbol: str,
+) -> tuple[KrCompletedMinuteBar, ...]:
+    bars: dict[str, KrCompletedMinuteBar] = {}
+    for step in AutonomousTaskStore(Path(task_database)).reader().steps(task.task_id):
+        try:
+            payload = safe_payload(step)
+            if not isinstance(payload, ObservationPayload) or payload.observation.tool_name != "kr.market.corroborate":
+                continue
+            market = KrAutonomousMarketCorroboration.model_validate_json(
+                json.dumps(json.loads(payload.observation.bounded_json)["market"])
+            )
+        except (AttributeError, TypeError, ValidationError, ValueError):
+            continue
+        if market.task_id == task.task_id and market.symbol == symbol:
+            bars[market.latest_completed_bar.evidence_ref.canonical_id] = market.latest_completed_bar
+    return tuple(sorted(bars.values(), key=lambda bar: (bar.end_at, bar.evidence_ref.canonical_id)))
+
+
 def plan_response(event: KrAutonomousPendingPlan | KrAutonomousTradeEvent) -> str:
-    payload: dict[str, str | int] = {
-        "plan_id": event.plan_id if isinstance(event, KrAutonomousPendingPlan) else event.event_id,
-        "status": "pending_critic",
+    payload: dict[str, str | int] = {"status": "pending_critic"}
+    match event:
+        case KrAutonomousPendingPlan(proposal=proposal):
+            payload["plan_id"] = event.plan_id
+            levels = proposal
+        case KrTradeRecommendation():
+            payload["plan_id"] = event.event_id
+            levels = event
+        case KrAutonomousNoTrade() | KrAutonomousRejected():
+            payload |= {"plan_id": event.event_id, "next_wake_at": event.next_wake_at.isoformat()}
+            return canonical(payload)
+        case unreachable:
+            assert_never(unreachable)
+    payload |= {
+        "entry": str(levels.entry),
+        "quantity": levels.quantity,
+        "stop": str(levels.stop),
+        "target_1": str(levels.targets[0]),
+        "target_2": str(levels.targets[1]),
     }
-    if isinstance(event, KrAutonomousPendingPlan):
-        proposal = event.proposal
-        payload |= {
-            "entry": str(proposal.entry),
-            "quantity": proposal.quantity,
-            "stop": str(proposal.stop),
-            "target_1": str(proposal.targets[0]),
-            "target_2": str(proposal.targets[1]),
-        }
-    elif isinstance(event, KrTradeRecommendation):
-        payload |= {
-            "entry": str(event.entry),
-            "quantity": event.quantity,
-            "stop": str(event.stop),
-            "target_1": str(event.targets[0]),
-            "target_2": str(event.targets[1]),
-        }
-    else:
-        payload["next_wake_at"] = event.next_wake_at.isoformat()
     return canonical(payload)
 
 
@@ -172,6 +179,63 @@ def canonical(value: dict[str, str | int]) -> str:
 
 def utc_now() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
+
+
+def execute_virtual_tool(
+    args: AutonomousToolArguments,
+    context: AutonomousToolExecutionContext,
+    position_database: str,
+    task_database: str,
+    trade_database: str,
+    now: dt.datetime,
+) -> str:
+    recommendation_id = exact_arguments(args, {"recommendation_id"})["recommendation_id"]
+    task = trusted_task(context, task_database)
+    recommendation = KrAutonomousTradeStore(Path(trade_database)).event(recommendation_id)
+    if (
+        not isinstance(recommendation, KrTradeRecommendation)
+        or recommendation.task_id != task.task_id
+        or not recommendation.virtual_only
+        or recommendation.trading_authority
+        or now >= recommendation.valid_until
+    ):
+        deny("kr_virtual_recommendation_denied")
+    store = KrVirtualPositionStore(Path(position_database))
+    position_id = virtual_position_id(recommendation)
+    events = store.events(position_id)
+    event = events[-1] if events else None
+    if event is None:
+        event = arm_kr_virtual_position(recommendation, now)
+        store.append(event)
+    elif event.recommendation_id != recommendation.event_id or event.task_id != task.task_id:
+        deny("kr_virtual_position_lineage_denied")
+    return canonical({"event_id": event.event_id, "position_id": event.position_id, "state": event.state.value})
+
+
+def reconcile_virtual_tool(
+    args: AutonomousToolArguments,
+    context: AutonomousToolExecutionContext,
+    position_database: str,
+    task_database: str,
+    trade_database: str,
+    now: dt.datetime,
+) -> str:
+    position_id = exact_arguments(args, {"position_id"})["position_id"]
+    task = trusted_task(context, task_database)
+    store = KrVirtualPositionStore(Path(position_database))
+    events = store.events(position_id)
+    event = events[-1] if events else None
+    if event is None or event.task_id != task.task_id:
+        deny("kr_virtual_position_lineage_denied")
+    recommendation = KrAutonomousTradeStore(Path(trade_database)).event(event.recommendation_id)
+    if not isinstance(recommendation, KrTradeRecommendation) or recommendation.task_id != task.task_id:
+        deny("kr_virtual_position_lineage_denied")
+    bars = observed_completed_bars(task_database, task, recommendation.symbol)
+    advanced = advance_kr_virtual_position(recommendation, event, bars, now)
+    for item in advanced:
+        store.append(item)
+    latest = advanced[-1] if advanced else event
+    return canonical({"event_id": latest.event_id, "position_id": latest.position_id, "state": latest.state.value})
 
 
 def deny(reason: str) -> NoReturn:

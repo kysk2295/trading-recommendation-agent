@@ -12,6 +12,7 @@ from typing import Final
 
 from trading_agent._autonomous_supervisor_steps import SourceAdmissionPayload, safe_payload
 from trading_agent.autonomous_browser_tools import BrowserToolServices, browser_bindings
+from trading_agent.autonomous_kr_service_builder import kr_tool_services_for_config
 from trading_agent.autonomous_kr_tool_runtime import KrAutonomousToolServices, kr_tool_bindings
 from trading_agent.autonomous_memory_store import AutonomousMemoryStore
 from trading_agent.autonomous_reasoning import AutonomousToolArguments
@@ -194,11 +195,12 @@ def build_autonomous_supervisor(
         pass
     with memories.writer():
         pass
+    kr = kr_tool_services_for_config(config, paths.task_database, clock)
     runtime = AutonomousSupervisorRuntime(
         tasks,
         memories,
         AutonomousStructuredReasoner(proposal_client),
-        build_foundation_tool_runtime(tasks, memories, browser=browser),
+        build_foundation_tool_runtime(tasks, memories, browser=browser, kr=kr),
         clock,
         time.monotonic,
     )
