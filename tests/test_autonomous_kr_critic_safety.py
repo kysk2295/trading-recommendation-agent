@@ -11,6 +11,7 @@ from trading_agent.autonomous_reasoning import AutonomousToolArguments
 from trading_agent.autonomous_task_models import AutonomousTaskId
 from trading_agent.autonomous_tool_runtime import AutonomousToolExecutionContext, AutonomousToolInvocationError
 from trading_agent.kr_autonomous_pending_plan_models import KrAutonomousPendingPlan, pending_plan_id
+from trading_agent.kr_autonomous_trade_models import KrAutonomousTradeEvent
 from trading_agent.kr_autonomous_trade_planner import plan_kr_autonomous_trade
 from trading_agent.kr_autonomous_trade_proposal import propose_kr_autonomous_trade
 from trading_agent.kr_autonomous_trade_store import InvalidKrAutonomousTradeStoreError, KrAutonomousTradeStore
@@ -45,7 +46,7 @@ def _invoke(plan: KrAutonomousPendingPlan) -> str:
 
 def test_critic_denies_forged_pending_lineage_before_trade_append(monkeypatch: pytest.MonkeyPatch) -> None:
     plan = _pending()
-    appended: list[object] = []
+    appended: list[KrAutonomousTradeEvent] = []
     monkeypatch.setattr(
         "trading_agent.autonomous_kr_tools.trusted_task",
         lambda *_: SimpleNamespace(task_id=plan.request.thesis.task_id, root_source_evidence_id="f" * 64),

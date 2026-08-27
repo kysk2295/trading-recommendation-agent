@@ -90,9 +90,11 @@ def test_pending_store_detects_replacement_between_descriptor_check_and_connect(
     replacement.touch(mode=0o600)
     original_connect = sqlite3.connect
 
-    def replace_then_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+    def replace_then_connect(
+        database: str | bytes | os.PathLike[str] | os.PathLike[bytes], *, uri: bool, timeout: float
+    ) -> sqlite3.Connection:
         os.replace(replacement, store.path)
-        return original_connect(*args, **kwargs)
+        return original_connect(database, uri=uri, timeout=timeout)
 
     monkeypatch.setattr("trading_agent.kr_autonomous_pending_plan_store.sqlite3.connect", replace_then_connect)
     with pytest.raises(InvalidKrAutonomousPendingPlanStoreError):
