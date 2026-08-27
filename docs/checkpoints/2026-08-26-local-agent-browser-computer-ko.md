@@ -1,6 +1,6 @@
 # Local Agent Browser Computer 운영 체크포인트
 
-구현 기준은 `main`의 `cae76a738050fb3e6d2ab2a2b748ecb2f5903cd7`이다. 이 체크포인트는
+구현 기준은 `main`의 `2320903dff2e79f8ffec8efe05cdf465997c3e6f`이다. 이 체크포인트는
 로컬 Mac의 실제 `launchd`와 전용 Chrome을 사용한 읽기 전용 브라우저 컴퓨터 및 schema v3
 Research Agent 배포를 기록한다. 수익성, 한국 종목 추천, 가상 체결 또는 실거래 성과를 주장하지
 않는다.
@@ -83,12 +83,25 @@ schema v2에 정확한 role-scoped 서명(`browser.status()`, `browser.search(qu
 않았다. 이를 provider/worker의 일시 실패로 분류하고 backoff 이력은 조작하지 않았으며, v13을
 activation exit 0, PID `81120`, PPID 1로 즉시 복구했다.
 
-최종 재확인에서 launchd는 동일 PID `81120`, `state=running`, `runs=1`, `last exit code=(never
-exited)`였다. 지속형 KR agenda episode는 위 task ID 하나이고 append-only step 7개와 다음
-재시도 `2026-08-26T23:50:32.629483Z`를 보존한다. 이 시점에는 에이전트가 `browser.read`를
-성공 완료하지 않았으므로 자동 browser social-evidence DB는 0건이다. 앞 절의 실제 Chrome
-관측은 Gateway receipt와 screenshot으로 별도 보존됐지만, 이를 자율 연구 결과라고 바꿔 말하지
-않는다.
+후속 scheduled retry에서 Claude CLI는 exit 0이었지만 `defer` variant의 필수 wake를 생성하지
+않았다. 인증·예산·rate-limit 장애가 아니라, Claude가 금지하는 top-level discriminated union을
+평탄화하면서 variant별 `required`와 Pydantic cross-field 제약을 버린 변환 결함이었다.
+`2320903dff2e79f8ffec8efe05cdf465997c3e6f`은 top-level을 required `response` envelope로
+바꾸고 원래 variant `$defs`와 `oneOf`를 보존하며, `AutonomousDefer`에는 시간 또는 이벤트 중
+정확히 하나의 non-null wake를 요구한다. 540 pure LOC였던 provider 파일은 class identity와
+기존 facade import를 유지한 채 역할별 250 LOC 이하 모듈로 분리했다.
+
+동일 운영 task, 8개 prior step, 10개 허용 도구의 실제 Claude 요청을 Research Agent만 중지한
+상태에서 다시 실행했다. 22.588초 안에 Pydantic 검증을 통과한 `defer`가 반환됐고 wake 수는
+정확히 1이었다. prompt와 raw 응답은 출력하지 않았다. 이어 운영 Gateway에 공개 한국시장
+검색·open·read를 수행해 browser social-evidence DB가 0건에서 1건으로 증가함을 관측했다.
+이 1건은 실제 Chrome/운영 DB 수직 경로의 수동 smoke evidence이며, scheduled agent가 선택한
+자율 연구 결과라고 주장하지 않는다.
+
+배포 후 launchd는 PID `90252`, `state=running`, `runs=1`, `last exit code=(never exited)`이다.
+지속형 KR agenda episode는 같은 task ID 하나와 append-only step 8개를 보존하며, 마지막 실패
+backoff도 조작하지 않아 다음 자연 재시도는 `2026-08-27T03:51:05.367252Z`이다. 현재 task
+상태는 `blocked`, broker mutation은 0이다.
 
 ## 자동·수동 검증
 
@@ -106,6 +119,11 @@ exited)`였다. 지속형 KR agenda episode는 위 task ID 하나이고 append-o
 - Research CLI: help exit 0, missing config/plist exit 2와 빈 stdout/stderr, 실제 v13 status exit 0,
   family 6, `broker_mutation=0`.
 - `git diff --check`: 통과.
+- Claude schema 보완 집중 회귀: `76 passed in 12.69s`.
+- 보완 변경 8개 파일 Ruff format/check 통과, basedpyright `0 errors`, 공식 no-excuse 0건.
+- 전체 suite: `6454 passed`, `34 failed`; 대표 실패 7개를 변경 전 기준 SHA의 깨끗한 임시
+  worktree에서 동일하게 재현해 dashboard 기본 config, ledger v9 fixture, import closure,
+  US close replay 등의 선행 결함으로 분리했다.
 
 ## 보존된 안전 경계와 다음 범위
 
