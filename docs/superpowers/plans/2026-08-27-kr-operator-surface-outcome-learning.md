@@ -217,11 +217,11 @@ git diff --check
 
 Expected: all new and relevant regression tests pass. Any unchanged baseline failure must be reproduced at `ff1cf6b` before being classified as pre-existing.
 
-- [ ] **Step 3: Run the manual user surface**
+- [x] **Step 3: Run the manual user surface**
 
 Run CLI help, one nonexistent config, and a fixture-backed schema-v4 tick. Then run Dashboard `--dry-run` against the fixture config and query the temporary Hermes delivery DB. Confirm the same safe IDs, action, price levels, position state, learning version, Loop Engineer trigger, and next wake are visible; inspect the output for credential/token/cookie/account/full-HTML patterns and require zero matches.
 
-- [ ] **Step 4: Record honest operating evidence**
+- [x] **Step 4: Record honest operating evidence**
 
 Write the checkpoint with exact SHA, test commands, redacted sample states, replay counts, broker/trading mutations `0`, and secrets `0`. State explicitly that fixture/replay/virtual output is not profitability and that a natural open-KRX-session recommendation/no-trade remains an external operating observation until it occurs.
 
