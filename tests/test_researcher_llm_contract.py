@@ -120,8 +120,7 @@ def test_day_prompt_contains_bounded_trigger_specific_view_and_feedback(trigger:
     assert payload["day_discovery"]["trigger_kind"] == trigger
     assert payload["day_discovery"]["remaining_budget"] == 2
     assert all(
-        term not in encoded
-        for term in ("exact_holdout", "symbol_contribution", "account_id", "provider", "api_key")
+        term not in encoded for term in ("exact_holdout", "symbol_contribution", "account_id", "provider", "api_key")
     )
 
 
@@ -150,7 +149,7 @@ def test_day_llm_plan_invokes_raw_completion_before_parse(tmp_path) -> None:
         generator.parse_raw(plan, completion, context)
 
 
-def test_claude_schema_flattens_top_level_discriminated_unions() -> None:
+def test_claude_schema_envelopes_top_level_discriminated_unions() -> None:
     # Given: Pydantic's top-level discriminated-union schema used by the Day reasoner.
     prompt = json.dumps(
         {
@@ -158,18 +157,26 @@ def test_claude_schema_flattens_top_level_discriminated_unions() -> None:
                 "$defs": {
                     "Defer": {
                         "type": "object",
-                        "properties": {"kind": {"const": "defer"}},
+                        "properties": {
+                            "kind": {"const": "defer"},
+                            "resume_condition": {"minLength": 8, "type": "string"},
+                        },
+                        "required": ["kind", "resume_condition"],
                     },
                     "Submit": {
                         "type": "object",
-                        "properties": {"kind": {"const": "submit"}},
+                        "properties": {
+                            "kind": {"const": "submit"},
+                            "artifact_json": {"minLength": 2, "type": "string"},
+                        },
+                        "required": ["kind", "artifact_json"],
                     },
                 },
                 "discriminator": {"propertyName": "kind"},
                 "oneOf": [
                     {"$ref": "#/$defs/Defer"},
                     {"$ref": "#/$defs/Submit"},
-                ]
+                ],
             }
         }
     )
@@ -177,11 +184,35 @@ def test_claude_schema_flattens_top_level_discriminated_unions() -> None:
     # When: the schema is adapted to Claude's structured-output tool contract.
     schema = researcher_llm._claude_response_schema(prompt)
 
-    # Then: the forbidden top-level union is flattened while discriminator choices stay explicit.
+    # Then: the forbidden top-level union is wrapped without losing variant constraints.
     assert schema["type"] == "object"
     assert "oneOf" not in schema
+    assert schema["required"] == ["response"]
     properties = schema["properties"]
     assert isinstance(properties, dict)
-    kind = properties["kind"]
-    assert isinstance(kind, dict)
-    assert kind["enum"] == ["defer", "submit"]
+    assert properties["response"] == {
+        "oneOf": [
+            {"$ref": "#/$defs/Defer"},
+            {"$ref": "#/$defs/Submit"},
+        ]
+    }
+    definitions = schema["$defs"]
+    assert isinstance(definitions, dict)
+    defer_definition = definitions["Defer"]
+    submit_definition = definitions["Submit"]
+    assert isinstance(defer_definition, dict)
+    assert isinstance(submit_definition, dict)
+    assert defer_definition["required"] == ["kind", "resume_condition"]
+    submit_properties = submit_definition["properties"]
+    assert isinstance(submit_properties, dict)
+    artifact_json = submit_properties["artifact_json"]
+    assert isinstance(artifact_json, dict)
+    assert artifact_json["minLength"] == 2
+
+
+def test_researcher_llm_facade_preserves_exact_runtime_classes() -> None:
+    from trading_agent.researcher_claude_cli import HermesCliProposalClient
+    from trading_agent.researcher_llm_contracts import FixtureLlmProposalClient
+
+    assert researcher_llm.HermesCliProposalClient is HermesCliProposalClient
+    assert researcher_llm.FixtureLlmProposalClient is FixtureLlmProposalClient

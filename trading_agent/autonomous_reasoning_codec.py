@@ -10,15 +10,14 @@ from trading_agent.researcher_llm import LlmProposalClient, ResearcherLlmError
 
 _MAX_PROMPT_BYTES = 256 * 1024
 
+type JsonValue = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
+
 if TYPE_CHECKING:
     from trading_agent.autonomous_reasoning import AutonomousReasoningRequest, AutonomousReasoningResponse
 
 
 def canonical_reasoning_prompt(request: AutonomousReasoningRequest, client: LlmProposalClient | None) -> str:
-    from trading_agent.autonomous_reasoning import (
-        AUTONOMOUS_REASONING_RESPONSE_ADAPTER,
-        InvalidAutonomousReasoningError,
-    )
+    from trading_agent.autonomous_reasoning import InvalidAutonomousReasoningError
 
     provider = {"model_id": "unbound", "seed": None, "temperature": 0.0}
     if client is not None:
@@ -33,7 +32,7 @@ def canonical_reasoning_prompt(request: AutonomousReasoningRequest, client: LlmP
         "prior_steps": tuple(step.model_dump(mode="json") for step in request.prior_steps),
         "provider": provider,
         "remaining_budget": request.remaining_budget.model_dump(mode="json"),
-        "response_schema": AUTONOMOUS_REASONING_RESPONSE_ADAPTER.json_schema(),
+        "response_schema": _autonomous_response_schema(),
         "schema_version": 2,
         "task": request.task.model_dump(mode="json"),
     }
@@ -41,6 +40,58 @@ def canonical_reasoning_prompt(request: AutonomousReasoningRequest, client: LlmP
     if len(prompt.encode()) > _MAX_PROMPT_BYTES:
         raise InvalidAutonomousReasoningError(reason="autonomous_reasoning_prompt_invalid")
     return prompt
+
+
+def _autonomous_response_schema() -> dict[str, JsonValue]:
+    from trading_agent.autonomous_reasoning import (
+        AUTONOMOUS_REASONING_RESPONSE_ADAPTER,
+        InvalidAutonomousReasoningError,
+    )
+
+    schema = AUTONOMOUS_REASONING_RESPONSE_ADAPTER.json_schema()
+    definitions = schema.get("$defs")
+    if not isinstance(definitions, dict):
+        raise InvalidAutonomousReasoningError(reason="autonomous_reasoning_prompt_invalid")
+    defer = definitions.get("AutonomousDefer")
+    if not isinstance(defer, dict):
+        raise InvalidAutonomousReasoningError(reason="autonomous_reasoning_prompt_invalid")
+    properties = defer.get("properties")
+    if not isinstance(properties, dict):
+        raise InvalidAutonomousReasoningError(reason="autonomous_reasoning_prompt_invalid")
+    wake_at = _non_null_property_schema(properties, "next_wake_at")
+    wake_event = _non_null_property_schema(properties, "next_wake_event")
+    at_branch: dict[str, JsonValue] = {
+        "properties": {
+            "next_wake_at": wake_at,
+            "next_wake_event": {"type": "null"},
+        },
+        "required": ["next_wake_at", "next_wake_event"],
+    }
+    event_branch: dict[str, JsonValue] = {
+        "properties": {
+            "next_wake_at": {"type": "null"},
+            "next_wake_event": wake_event,
+        },
+        "required": ["next_wake_at", "next_wake_event"],
+    }
+    defer["oneOf"] = list[JsonValue]((at_branch, event_branch))
+    return schema
+
+
+def _non_null_property_schema(
+    properties: dict[str, JsonValue],
+    name: str,
+) -> dict[str, JsonValue]:
+    from trading_agent.autonomous_reasoning import InvalidAutonomousReasoningError
+
+    property_schema = properties.get(name)
+    if isinstance(property_schema, dict):
+        choices = property_schema.get("anyOf")
+        if isinstance(choices, list):
+            for choice in choices:
+                if isinstance(choice, dict) and choice.get("type") != "null":
+                    return dict(choice)
+    raise InvalidAutonomousReasoningError(reason="autonomous_reasoning_prompt_invalid")
 
 
 @dataclass(frozen=True, slots=True)
