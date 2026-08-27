@@ -14,6 +14,7 @@ from trading_agent.autonomous_supervisor_service import (
 )
 from trading_agent.autonomous_supervisor_status import KrAutonomousSupervisorStatus
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
+from trading_agent.hermes_delivery_errors import HermesDeliveryWriterLeaseUnavailableError
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.private_directory_identity import open_private_parent, require_private_directory
 from trading_agent.private_stable_report import write_private_stable_report
@@ -113,7 +114,11 @@ async def run_research_os_forever(
     with research_agent_runtime_lease(config.output_root / "research-agent-runtime.lock"):
         _publish_runtime_readiness(config)
         while True:
-            _ = run_research_os_tick(config, dt.datetime.now(dt.UTC), operation="run")
+            try:
+                _ = run_research_os_tick(config, dt.datetime.now(dt.UTC), operation="run")
+            except HermesDeliveryWriterLeaseUnavailableError:
+                await anyio.sleep(tick_seconds)
+                continue
             await anyio.sleep(tick_seconds)
 
 
