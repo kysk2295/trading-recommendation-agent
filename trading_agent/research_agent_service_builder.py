@@ -117,7 +117,12 @@ def build_service_runtime(config: ResearchAgentServiceConfig) -> ResearchAgentRu
         installed_supervisor = (
             supervisor
             if browser_path is None
-            else ContinuousBrowserResearchSupervisor(supervisor, cycle_store, owns_cycles=False)
+            else ContinuousBrowserResearchSupervisor(
+                supervisor,
+                cycle_store,
+                owns_cycles=False,
+                agenda_version=2 if config.schema_version == 4 else 1,
+            )
         )
         runtime = ResearchAgentRuntime(
             ResearchAgentRuntimeServices(

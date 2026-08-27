@@ -148,6 +148,8 @@ def _legacy_pair(tmp_path: Path, repository: Path, name: str) -> tuple[Path, Pat
     config = _config(tmp_path, repository)
     payload = config.model_dump(mode="json")
     payload["schema_version"] = 1
+    for field in ("browser_gateway_config", "kr_market_receipt_root", "kr_social_signal_database"):
+        del payload[field]
     systematic = payload["systematic"]
     systematic["input_csv"] = str((tmp_path / "legacy" / "input.csv").absolute())
     systematic["data_foundation_manifest"] = str((tmp_path / "legacy" / "foundation.json").absolute())

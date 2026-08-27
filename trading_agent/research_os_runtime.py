@@ -12,6 +12,7 @@ from trading_agent.autonomous_supervisor_service import (
     AutonomousSupervisorStatus,
     autonomous_supervisor_status_for_config,
 )
+from trading_agent.autonomous_supervisor_status import KrAutonomousSupervisorStatus
 from trading_agent.experiment_ledger_store import ExperimentLedgerStore
 from trading_agent.hermes_delivery_store import HermesDeliveryStore
 from trading_agent.private_directory_identity import open_private_parent, require_private_directory
@@ -48,7 +49,7 @@ class ResearchOsRuntimeReport(BaseModel):
     schema_version: Literal[2] = 2
     operation: Literal["tick", "run"]
     role_agents: ResearchAgentServiceReport
-    autonomous_supervisor: AutonomousSupervisorStatus
+    autonomous_supervisor: KrAutonomousSupervisorStatus | AutonomousSupervisorStatus
     strategy_research: StrategyResearchRuntimeStatus
     day_discovery_markets: tuple[DayDiscoveryMarketRuntimeReport, ...] = ()
     daily_reports_projected: int = Field(default=0, ge=0)

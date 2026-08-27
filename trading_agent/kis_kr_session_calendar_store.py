@@ -115,6 +115,21 @@ class KisKrSessionCalendarStore:
             raise InvalidKisKrSessionCalendarStoreError from None
 
 
+def snapshots_from_sqlite_bytes(payload: bytes) -> tuple[KrSessionCalendarSnapshot, ...]:
+    try:
+        with closing(sqlite3.connect(":memory:")) as connection:
+            connection.deserialize(payload)
+            _ = connection.execute("PRAGMA query_only = ON")
+            _require_schema(connection)
+            rows: list[tuple[str, str, str, str, bytes, str, str]] = connection.execute(
+                "SELECT snapshot_key,base_date,observed_at,raw_sha256,raw_payload,"
+                "snapshot_sha256,snapshot_json FROM kis_kr_session_calendars ORDER BY base_date"
+            ).fetchall()
+        return tuple(_snapshot_from_row(row) for row in rows)
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        raise InvalidKisKrSessionCalendarStoreError from None
+
+
 def _row(
     receipt: KisKrSessionCalendarReceipt,
     snapshot: KrSessionCalendarSnapshot,

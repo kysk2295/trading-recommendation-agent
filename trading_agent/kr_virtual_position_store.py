@@ -74,19 +74,19 @@ class KrVirtualPositionStore:
 
     def events(self, position_id: str) -> tuple[KrVirtualPositionEvent, ...]:
         _require_id(position_id)
-        return tuple(event for event in self._all_events() if event.position_id == position_id)
+        return tuple(event for event in self.all_events() if event.position_id == position_id)
 
     def open_positions(self, task_id: str | None = None) -> tuple[KrVirtualPositionEvent, ...]:
         if task_id is not None:
             _require_id(task_id)
         latest: dict[str, KrVirtualPositionEvent] = {}
-        for event in self._all_events():
+        for event in self.all_events():
             latest[event.position_id] = event
         return tuple(
             event for event in latest.values() if not event.terminal and (task_id is None or event.task_id == task_id)
         )
 
-    def _all_events(self) -> tuple[KrVirtualPositionEvent, ...]:
+    def all_events(self) -> tuple[KrVirtualPositionEvent, ...]:
         if self.path.is_symlink():
             raise InvalidKrVirtualPositionStoreError
         if not self.path.exists():

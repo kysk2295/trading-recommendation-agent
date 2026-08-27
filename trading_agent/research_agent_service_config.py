@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import plistlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, Self, assert_never
@@ -18,6 +17,12 @@ from trading_agent.private_immutable_file import (
     InvalidPrivateImmutableFileError,
     publish_private_immutable_text,
     read_private_text,
+)
+from trading_agent.research_agent_launch_agent_contract import research_agent_launch_agent_text
+from trading_agent.research_agent_service_v4_verification import (
+    InvalidResearchAgentServiceV4BindingError,
+    require_v4_plist_filename,
+    verify_v4_launch_bindings,
 )
 from trading_agent.research_agent_sources import ResearchAgentSourcePaths
 from trading_agent.research_agent_systematic import SystematicResearchActionConfig
@@ -149,10 +154,12 @@ def write_research_agent_launch_agent(
     config_path: Path,
 ) -> bool:
     try:
-        return publish_private_immutable_text(path, _launch_agent_text(config, config_path))
+        require_v4_plist_filename(config, path)
+        return publish_private_immutable_text(path, research_agent_launch_agent_text(config, config_path))
     except (
         InvalidPrivateImmutableFileError,
         InvalidResearchAgentServiceConfigError,
+        InvalidResearchAgentServiceV4BindingError,
         OSError,
         TypeError,
         ValueError,
@@ -167,11 +174,12 @@ def verify_research_agent_launch_agent(
     try:
         absolute_config = config_path.expanduser().absolute()
         config = load_research_agent_service_config(absolute_config)
+        verify_v4_launch_bindings(config, plist_path)
         if config.browser_gateway_config is not None:
             _ = load_local_browser_gateway_config(config.browser_gateway_config)
         _ = load_systematic_input_activation(config.systematic.input_activation)
         plist_payload = read_private_text(plist_path.expanduser().absolute())
-        if plist_payload != _launch_agent_text(config, absolute_config):
+        if plist_payload != research_agent_launch_agent_text(config, absolute_config):
             raise InvalidResearchAgentServiceConfigError(reason="launch_agent_contract_invalid")
         required_files = (
             config.uv_path,
@@ -196,6 +204,7 @@ def verify_research_agent_launch_agent(
         InvalidLocalBrowserGatewayConfigError,
         InvalidResearchAgentServiceConfigError,
         InvalidSystematicInputActivationError,
+        InvalidResearchAgentServiceV4BindingError,
         OSError,
         TypeError,
         ValidationError,
@@ -214,31 +223,6 @@ def _config_text(config: ResearchAgentServiceConfig) -> str:
 
 def canonical_research_agent_service_config_sha256(config: ResearchAgentServiceConfig) -> str:
     return hashlib.sha256(_config_text(config).encode()).hexdigest()
-
-
-def _launch_agent_text(config: ResearchAgentServiceConfig, config_path: Path) -> str:
-    payload = {
-        "KeepAlive": True,
-        "Label": config.label,
-        "ProcessType": "Background",
-        "ProgramArguments": [
-            str(config.uv_path),
-            "run",
-            "--offline",
-            "python",
-            str(config.project_root / _SERVICE_SCRIPT),
-            "run",
-            "--config",
-            str(config_path.expanduser().absolute()),
-        ],
-        "RunAtLoad": True,
-        "StandardErrorPath": "/dev/null",
-        "StandardOutPath": "/dev/null",
-        "ThrottleInterval": 30,
-        "Umask": 0o077,
-        "WorkingDirectory": str(config.project_root),
-    }
-    return plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=True).decode("utf-8")
 
 
 __all__ = (

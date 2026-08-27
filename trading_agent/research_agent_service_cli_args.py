@@ -92,9 +92,18 @@ def config_from_provision_args(args: argparse.Namespace) -> ResearchAgentService
         rss_limit_gib=args.rss_limit_gib,
     )
     browser_gateway_config = None if args.browser_gateway_config is None else _absolute(args.browser_gateway_config)
+    market_arg = getattr(args, "kr_market_receipt_root", None)
+    signal_arg = getattr(args, "kr_social_signal_database", None)
+    market_root = None if market_arg is None else _absolute(market_arg)
+    signal_database = None if signal_arg is None else _absolute(signal_arg)
+    schema_version = (
+        4 if market_root is not None or signal_database is not None else 2 if browser_gateway_config is None else 3
+    )
     return ResearchAgentServiceConfig(
-        schema_version=2 if browser_gateway_config is None else 3,
+        schema_version=schema_version,
         browser_gateway_config=browser_gateway_config,
+        kr_market_receipt_root=market_root,
+        kr_social_signal_database=signal_database,
         label=RESEARCH_AGENT_SERVICE_LABEL,
         project_root=project_root,
         uv_path=uv_path,
@@ -127,6 +136,8 @@ def _add_provision_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--systematic-response-fixture", type=Path)
     parser.add_argument("--source-kr-calendar-store", type=Path)
     parser.add_argument("--browser-gateway-config", type=Path)
+    parser.add_argument("--kr-market-receipt-root", type=Path)
+    parser.add_argument("--kr-social-signal-database", type=Path)
     parser.add_argument("--model-id", required=True)
     parser.add_argument("--provider-id", required=True)
     parser.add_argument("--max-runtime-seconds", type=float, default=600.0)
