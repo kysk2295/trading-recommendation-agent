@@ -1,7 +1,7 @@
-#!/usr/bin/env -S uv run --python 3.12 --with httpx2[http2,brotli,zstd] --with pydantic python
+#!/usr/bin/env -S uv run --python 3.12 --with httpx2[http2,brotli,zstd] --with pydantic --with websockets>=16,<17 python
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["httpx2[http2,brotli,zstd]", "pydantic>=2.11"]
+# dependencies = ["httpx2[http2,brotli,zstd]", "pydantic>=2.11", "websockets>=16,<17"]
 # ///
 # How to run:
 # ./run_alpaca_paper_preflight.py --database outputs/paper_execution/paper_execution.sqlite3
